@@ -22,10 +22,13 @@ someone decide what to pick up next.
   surface, copy, border, navigation, focus and status roles. Home/dock, Chats,
   Friends, Moments, Profile, Settings, Notifications, Premium, modal chrome
   and shared controls migrate as complete surfaces; system status/navigation
-  icons follow brightness. Voice rooms, calls, recording/review, story viewing
-  and cropping remain explicitly immersive dark. Light no longer carries a
-  Beta label; Polish still does. Contrast contracts, 320/768/1440 at 200% text,
-  responsive journey tests and real-font light/dark Home PNGs guard the result.
+  icons follow brightness. Voice rooms, calls, room creation/settings/entry,
+  recording/review, story viewing, cropping, achievements and creator/staff
+  workspaces remain explicitly immersive dark with matching system chrome.
+  Light no longer carries a Beta label; Polish still does. Contrast contracts,
+  a real desktop sidebar/right-column gate, dark-route tests, 320/768/1440 at
+  200% text, responsive journeys and real-font light/dark Home PNGs guard the
+  result.
 
 - **Home Voice Moments are a truthful avatar-only story rail** (2026-08-29,
   ADR-123, **SOURCE ONLY; NATIVE STORE BUILD PENDING**): mobile and desktop now

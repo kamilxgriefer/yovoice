@@ -10,6 +10,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
+import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_theme.dart';
 import 'package:yovoice/features/home/data/services/home_feed_service.dart';
 import 'package:yovoice/features/home/presentation/screens/main_shell.dart';
@@ -467,17 +468,15 @@ void main() {
       for (final theme in [AppTheme.darkTheme, AppTheme.lightTheme]) {
         await pumpTheme(theme);
         final scheme = theme.colorScheme;
+        final palette = theme.extension<AppPalette>()!;
         final accent = theme.brightness == Brightness.dark
             ? const Color(0xFFD3A5FF)
             : scheme.primary;
         final activeBackground = Color.alphaBlend(
           accent.withValues(alpha: .18),
-          scheme.surface,
+          palette.navigationSurface,
         );
-        final momentBackground = Color.alphaBlend(
-          scheme.onSurface.withValues(alpha: .035),
-          scheme.surface,
-        );
+        final momentBackground = palette.surfaceRaised;
 
         expect(
           tester.widget<Icon>(find.byIcon(Icons.home_rounded)).color,
@@ -514,7 +513,7 @@ void main() {
         final focusBorder = focusedDecoration.border! as Border;
         expect(focusBorder.top.color, accent);
         expect(
-          _contrastRatio(focusBorder.top.color, scheme.surface),
+          _contrastRatio(focusBorder.top.color, palette.navigationSurface),
           greaterThanOrEqualTo(3),
         );
       }

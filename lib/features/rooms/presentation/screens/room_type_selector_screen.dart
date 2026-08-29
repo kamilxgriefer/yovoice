@@ -10,6 +10,7 @@ import 'package:yovoice/features/premium/premium_gates.dart';
 import 'package:yovoice/features/rooms/data/models/room_experience.dart';
 import 'package:yovoice/features/rooms/presentation/screens/create_room_screen.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
+import 'package:yovoice/shared/widgets/theme/yo_immersive_dark_surface.dart';
 
 class RoomTypeSelectorScreen extends StatelessWidget {
   const RoomTypeSelectorScreen({
@@ -119,7 +120,7 @@ class RoomTypeSelectorScreen extends StatelessWidget {
       ),
     ];
 
-    return Scaffold(
+    final content = Scaffold(
       backgroundColor: _background,
       appBar: AppBar(
         backgroundColor: _background,
@@ -179,6 +180,7 @@ class RoomTypeSelectorScreen extends StatelessWidget {
         ),
       ),
     );
+    return YoImmersiveDarkSurface(child: content);
   }
 }
 

@@ -21,9 +21,15 @@ import 'package:yovoice/core/theme/app_theme.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/home/data/services/home_feed_service.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/desktop_home.dart';
+import 'package:yovoice/features/home/presentation/widgets/desktop/desktop_sidebar.dart';
+import 'package:yovoice/features/home/presentation/widgets/desktop/followed_creators_card.dart';
+import 'package:yovoice/features/home/presentation/widgets/desktop/premium_desktop_card.dart';
+import 'package:yovoice/features/home/presentation/widgets/desktop/sponsored_card.dart';
+import 'package:yovoice/features/home/presentation/widgets/desktop/voice_trending_card.dart';
 import 'package:yovoice/features/home/presentation/widgets/mobile/mobile_home.dart';
 import 'package:yovoice/features/home/presentation/widgets/navigation/yo_floating_navigation_dock.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
+import 'package:yovoice/features/moments/data/services/moment_discovery_service.dart';
 import 'package:yovoice/features/profile/data/services/follow_service.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
@@ -358,6 +364,121 @@ Future<void> _render(
   expect(tester.takeException(), isNull);
 }
 
+/// The actual Pearl desktop chrome at the shipping 1440x900 viewport:
+/// fixed [DesktopSidebar], live Home content and the same four modules
+/// MainShell installs in its 344px right column. Kept separate from [_render]
+/// so none of the existing Home evidence frames changes composition.
+Future<void> _renderPearlDesktopShellChrome(WidgetTester tester) async {
+  const size = Size(1440, 900);
+  tester.view.physicalSize = size;
+  tester.view.devicePixelRatio = 1;
+  addTearDown(tester.view.reset);
+  ProfileService.resetCurrentProfileCache();
+
+  final db = await _seed(_FeedState.populated);
+  final auth = MockFirebaseAuth(
+    signedIn: true,
+    mockUser: MockUser(uid: _me, displayName: 'CeoGriefer'),
+  );
+  final rooms = RoomService(firestore: db, auth: auth);
+  final profiles = ProfileService(firestore: db, auth: auth);
+  final follows = FollowService(firestore: db, auth: auth);
+  final feed = HomeFeedService(firestore: db, auth: auth);
+
+  await tester.pumpWidget(
+    RepaintBoundary(
+      key: _capture,
+      child: MaterialApp(
+        debugShowCheckedModeBanner: false,
+        theme: AppTheme.lightTheme,
+        darkTheme: AppTheme.darkTheme,
+        themeMode: ThemeMode.light,
+        home: MediaQuery(
+          data: const MediaQueryData(size: size),
+          child: Scaffold(
+            body: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                DesktopSidebar(
+                  active: DesktopNavItem.home,
+                  unreadConversationCount: 7,
+                  unreadNotificationCount: 3,
+                  onSelect: (_) {},
+                  onCreateRoom: () {},
+                  onCreateMoment: () {},
+                  onOpenProfile: () {},
+                  onOpenProfileSettings: () {},
+                  profileService: profiles,
+                ),
+                Expanded(
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Expanded(
+                        child: _home(
+                          db: db,
+                          auth: auth,
+                          rooms: rooms,
+                          desktop: true,
+                        ),
+                      ),
+                      SizedBox(
+                        width: 344,
+                        child: ListView(
+                          primary: false,
+                          padding: const EdgeInsets.fromLTRB(6, 20, 20, 20),
+                          children: [
+                            FollowedCreatorsCard(
+                              currentUserId: _me,
+                              onOpenCreator: (_) {},
+                              onViewAll: () {},
+                              followService: follows,
+                              feedService: feed,
+                              roomService: rooms,
+                            ),
+                            const SizedBox(height: 16),
+                            VoiceTrendingCard(
+                              onOpenRoom: (_) {},
+                              onSeeAll: () {},
+                              onSeeAllRooms: () {},
+                              roomService: rooms,
+                              discoveryService: MomentDiscoveryService(
+                                firestore: db,
+                                auth: auth,
+                              ),
+                            ),
+                            const SizedBox(height: 16),
+                            const SponsoredCard(),
+                            const SizedBox(height: 16),
+                            PremiumDesktopCard(onCheckPlans: () {}),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+  await _settle(tester);
+  await tester.runAsync(
+    () => precacheImage(
+      const AssetImage('assets/images/logo.png'),
+      _capture.currentContext!,
+    ),
+  );
+  await tester.pump();
+  await tester.runAsync(
+    () => Future<void>.delayed(const Duration(milliseconds: 40)),
+  );
+  await tester.pump();
+  expect(tester.takeException(), isNull);
+}
+
 void main() {
   setUpAll(_loadRealFonts);
 
@@ -403,4 +524,9 @@ void main() {
       });
     }
   }
+
+  testWidgets('pearl-desktop-shell-chrome-1440x900', (tester) async {
+    await _renderPearlDesktopShellChrome(tester);
+    await _shoot(tester, 'pearl-desktop-shell-chrome-1440x900');
+  });
 }

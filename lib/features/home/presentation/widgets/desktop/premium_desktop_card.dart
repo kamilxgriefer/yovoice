@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/premium/data/premium_plans.dart';
 
 /// The desktop right column's Premium card: the three benefit tiles from
@@ -16,22 +17,31 @@ class PremiumDesktopCard extends StatelessWidget {
   final VoidCallback onCheckPlans;
 
   static const _icons = [
-    (Icons.mic_rounded, Color(0xFFD3A5FF)),
-    (Icons.workspace_premium_rounded, Color(0xFFFFC24D)),
-    (Icons.auto_awesome_rounded, Color(0xFFE879F9)),
+    Icons.mic_rounded,
+    Icons.workspace_premium_rounded,
+    Icons.auto_awesome_rounded,
   ];
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    final palette = context.appPalette;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final iconColors = <Color>[
+      colors.primary,
+      isDark ? const Color(0xFFFFC24D) : const Color(0xFF8C5A00),
+      palette.focus,
+    ];
     return Container(
+      key: const ValueKey('desktop-premium-card'),
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(22),
-        color: const Color(0xFF120C1D).withValues(alpha: .9),
-        border: Border.all(color: const Color(0xFF2E2140)),
+        color: palette.surface,
+        border: Border.all(color: palette.border),
         boxShadow: [
           BoxShadow(
-            color: AppColors.primary.withValues(alpha: .07),
+            color: palette.shadow.withValues(alpha: .08),
             blurRadius: 28,
           ),
         ],
@@ -46,8 +56,8 @@ class PremiumDesktopCard extends StatelessWidget {
                   if (i > 0) const SizedBox(width: 9),
                   Expanded(
                     child: _BenefitTile(
-                      icon: _icons[i].$1,
-                      iconColor: _icons[i].$2,
+                      icon: _icons[i],
+                      iconColor: iconColors[i],
                       title: PremiumPlans.benefits[i].$1,
                       subtitle: PremiumPlans.benefits[i].$2,
                     ),
@@ -79,12 +89,13 @@ class _BenefitTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 14),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(16),
-        color: Colors.white.withValues(alpha: .02),
-        border: Border.all(color: const Color(0xFF3A2A52)),
+        color: palette.surfaceMuted,
+        border: Border.all(color: palette.border),
       ),
       child: Column(
         children: [
@@ -108,8 +119,8 @@ class _BenefitTile extends StatelessWidget {
           Text(
             title,
             textAlign: TextAlign.center,
-            style: const TextStyle(
-              color: Colors.white,
+            style: TextStyle(
+              color: palette.textPrimary,
               fontSize: 11.5,
               height: 1.25,
               fontWeight: FontWeight.w800,
@@ -119,8 +130,8 @@ class _BenefitTile extends StatelessWidget {
           Text(
             subtitle,
             textAlign: TextAlign.center,
-            style: const TextStyle(
-              color: Color(0xFF9A90AC),
+            style: TextStyle(
+              color: palette.textSecondary,
               fontSize: 10,
               height: 1.3,
             ),
@@ -138,15 +149,14 @@ class _CheckPlansButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
     return SizedBox(
       width: double.infinity,
       height: 50,
       child: DecoratedBox(
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(999),
-          gradient: const LinearGradient(
-            colors: [AppColors.primary, AppColors.secondary],
-          ),
+          gradient: LinearGradient(colors: [colors.primary, colors.secondary]),
           boxShadow: [
             BoxShadow(
               color: AppColors.secondary.withValues(alpha: .35),
@@ -160,23 +170,23 @@ class _CheckPlansButton extends StatelessWidget {
           child: InkWell(
             borderRadius: BorderRadius.circular(999),
             onTap: onTap,
-            child: const Center(
+            child: Center(
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Text(
                     'Check plans',
                     style: TextStyle(
-                      color: Colors.white,
+                      color: colors.onPrimary,
                       fontSize: 15,
                       fontWeight: FontWeight.w800,
                     ),
                   ),
-                  SizedBox(width: 8),
+                  const SizedBox(width: 8),
                   Icon(
                     Icons.arrow_forward_rounded,
                     size: 18,
-                    color: Colors.white,
+                    color: colors.onPrimary,
                   ),
                 ],
               ),

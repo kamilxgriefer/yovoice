@@ -7901,10 +7901,12 @@ copy; purple is an accent rather than a page tint.
 Shared controls and normal journeys migrate complete surface/foreground atoms:
 shell, Home/dock, Chats, Friends, Moments, Profile, Settings, Notifications,
 Premium and shared modal/state components. Inputs use the strong boundary role;
-decorative cards may use the quiet border. Voice rooms, calls, recording and
-review, story viewing, cropping and image-led surfaces remain complete local
-dark treatments with their own readable copy and scrims. Those are intentional
-immersive islands, not permission to reuse dark literals on a Pearl page.
+decorative cards may use the quiet border. Voice rooms, calls, room
+creation/settings/entry, recording and review, story viewing, cropping,
+achievements, creator discovery/analytics and staff or moderation workspaces
+remain complete local dark treatments with their own readable copy, scrims and
+system chrome. Those are intentional immersive islands, not permission to
+reuse dark literals on a Pearl page.
 
 Light graduates from Beta; Polish remains Beta because colour completeness is
 independent of translation completeness. The branded launch splash stays dark

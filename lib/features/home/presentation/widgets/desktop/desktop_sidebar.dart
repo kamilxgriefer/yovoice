@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/timezone_world_map_card.dart';
 import 'package:yovoice/features/profile/data/models/user_profile.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
@@ -130,7 +131,7 @@ class DesktopSidebar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final copy = AppLocalizations.of(context);
-    final colors = Theme.of(context).colorScheme;
+    final palette = context.appPalette;
     // ONE measurement of the rail's true height, taken here because this is
     // the only place that has it. MainShell now keeps content-only chrome in
     // the content column, but direct preview/test hosts can still constrain
@@ -153,11 +154,12 @@ class DesktopSidebar extends StatelessWidget {
         final showSectionLabels =
             textScale <= 1 || railHeight == null || railHeight >= 900;
         return Container(
+          key: const ValueKey('desktop-sidebar-surface'),
           width: railWidth,
           padding: const EdgeInsets.fromLTRB(14, 16, 14, 14),
           decoration: BoxDecoration(
-            color: colors.surface,
-            border: Border(right: BorderSide(color: colors.outlineVariant)),
+            color: palette.navigationSurface,
+            border: Border(right: BorderSide(color: palette.border)),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -301,6 +303,7 @@ class _Wordmark extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final accent = DesktopSidebar._interactiveAccent(context);
     return Padding(
       padding: const EdgeInsets.only(left: 4),
       child: Row(
@@ -309,11 +312,8 @@ class _Wordmark extends StatelessWidget {
             'assets/images/logo.png',
             width: 30,
             height: 30,
-            errorBuilder: (_, __, ___) => const Icon(
-              Icons.graphic_eq_rounded,
-              color: DesktopSidebar._accentTint,
-              size: 26,
-            ),
+            errorBuilder: (_, __, ___) =>
+                Icon(Icons.graphic_eq_rounded, color: accent, size: 26),
           ),
           const SizedBox(width: 9),
           Flexible(
@@ -519,6 +519,8 @@ class _NavTileState extends State<_NavTile> {
   Widget build(BuildContext context) {
     final active = widget.active;
     final colors = Theme.of(context).colorScheme;
+    final palette = context.appPalette;
+    final accent = DesktopSidebar._interactiveAccent(context);
     return Padding(
       padding: const EdgeInsets.only(bottom: 3),
       child: Material(
@@ -543,9 +545,9 @@ class _NavTileState extends State<_NavTile> {
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(10),
                 color: active
-                    ? AppColors.primary.withValues(alpha: .16)
+                    ? colors.primaryContainer
                     : _hovered
-                    ? colors.onSurface.withValues(alpha: .05)
+                    ? palette.surfaceMuted
                     : Colors.transparent,
               ),
               child: Row(
@@ -558,16 +560,16 @@ class _NavTileState extends State<_NavTile> {
                     height: 16,
                     decoration: BoxDecoration(
                       borderRadius: BorderRadius.circular(2),
-                      color: active
-                          ? DesktopSidebar._accentTint
-                          : Colors.transparent,
+                      color: active ? accent : Colors.transparent,
                     ),
                   ),
                   const SizedBox(width: 9),
                   Icon(
                     widget.icon,
                     size: 19,
-                    color: active ? colors.onSurface : colors.onSurfaceVariant,
+                    color: active
+                        ? colors.onPrimaryContainer
+                        : colors.onSurfaceVariant,
                   ),
                   const SizedBox(width: 11),
                   Expanded(
@@ -577,7 +579,7 @@ class _NavTileState extends State<_NavTile> {
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                         color: active
-                            ? colors.onSurface
+                            ? colors.onPrimaryContainer
                             : colors.onSurfaceVariant,
                         fontSize: 13.5,
                         fontWeight: active ? FontWeight.w800 : FontWeight.w600,
@@ -608,6 +610,7 @@ class _Badge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
     return Container(
       // Explicit height: inside the fixed-height nav row an aligned
       // Container would otherwise stretch to the row's full height and
@@ -617,13 +620,13 @@ class _Badge extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 6),
       alignment: Alignment.center,
       decoration: BoxDecoration(
-        color: AppColors.primary,
+        color: colors.primary,
         borderRadius: BorderRadius.circular(999),
       ),
       child: Text(
         count > 99 ? '99+' : '$count',
-        style: const TextStyle(
-          color: Colors.white,
+        style: TextStyle(
+          color: colors.onPrimary,
           fontSize: 10.5,
           fontWeight: FontWeight.w800,
           height: 1,
@@ -642,15 +645,14 @@ class _CreateRoomButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
     return SizedBox(
       width: double.infinity,
       height: 46,
       child: DecoratedBox(
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(14),
-          gradient: const LinearGradient(
-            colors: [AppColors.primary, AppColors.secondary],
-          ),
+          gradient: LinearGradient(colors: [colors.primary, colors.secondary]),
           boxShadow: [
             BoxShadow(
               color: AppColors.primary.withValues(alpha: .32),
@@ -668,8 +670,8 @@ class _CreateRoomButton extends StatelessWidget {
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(Icons.add_rounded, color: Colors.white, size: 19),
-                  SizedBox(width: 7),
+                  Icon(Icons.add_rounded, color: colors.onPrimary, size: 19),
+                  const SizedBox(width: 7),
                   Flexible(
                     child: Text(
                       AppLocalizations.of(
@@ -677,8 +679,8 @@ class _CreateRoomButton extends StatelessWidget {
                       ).text('Create Room', 'Utwórz pokój'),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: Colors.white,
+                      style: TextStyle(
+                        color: colors.onPrimary,
                         fontSize: 14,
                         fontWeight: FontWeight.w800,
                       ),
@@ -716,6 +718,7 @@ class _CreateMomentButtonState extends State<_CreateMomentButton> {
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
+    final palette = context.appPalette;
     final accent = DesktopSidebar._interactiveAccent(context);
     final label = AppLocalizations.of(
       context,
@@ -733,12 +736,8 @@ class _CreateMomentButtonState extends State<_CreateMomentButton> {
           height: 46,
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(12),
-            color: _hovered
-                ? AppColors.primary.withValues(alpha: .16)
-                : colors.onSurface.withValues(alpha: .035),
-            border: Border.all(
-              color: _hovered ? accent : colors.outlineVariant,
-            ),
+            color: _hovered ? colors.primaryContainer : palette.surfaceRaised,
+            border: Border.all(color: _hovered ? accent : palette.borderStrong),
           ),
           padding: const EdgeInsets.symmetric(horizontal: 10),
           child: Center(
@@ -809,13 +808,14 @@ class _ProfileCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
+    final palette = context.appPalette;
     final copy = AppLocalizations.of(context);
     return Container(
       padding: const EdgeInsets.fromLTRB(10, 10, 6, 10),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(16),
-        color: colors.onSurface.withValues(alpha: .035),
-        border: Border.all(color: colors.outlineVariant),
+        color: palette.surfaceRaised,
+        border: Border.all(color: palette.border),
       ),
       child: StreamBuilder<UserProfile>(
         stream: _profileStream(),
@@ -899,15 +899,15 @@ class _ProfileCard extends StatelessWidget {
                   alignment: Alignment.center,
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
-                    color: AppColors.primary.withValues(alpha: .18),
+                    color: colors.primaryContainer,
                     border: Border.all(
-                      color: AppColors.primary.withValues(alpha: .45),
+                      color: colors.primary.withValues(alpha: .55),
                     ),
                   ),
-                  child: const Icon(
+                  child: Icon(
                     Icons.settings_rounded,
                     size: 17,
-                    color: DesktopSidebar._accentTint,
+                    color: colors.onPrimaryContainer,
                   ),
                 ),
               ),

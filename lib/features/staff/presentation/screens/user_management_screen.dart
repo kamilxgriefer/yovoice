@@ -7,6 +7,7 @@ import 'package:yovoice/features/staff/data/staff_capabilities.dart';
 import 'package:yovoice/features/staff/presentation/widgets/user_actions_menu.dart';
 import 'package:yovoice/shared/identity/public_identity_repository.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
+import 'package:yovoice/shared/widgets/theme/yo_immersive_dark_surface.dart';
 
 /// What a lookup returned: the authoritative role from the server, VIP
 /// separately (it is an entitlement, not a role), and account status.
@@ -320,7 +321,7 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
     final user = _user;
     final isSelf = user != null && user.uid == _myUid;
 
-    return Scaffold(
+    final content = Scaffold(
       backgroundColor: _background,
       appBar: AppBar(
         backgroundColor: _background,
@@ -560,6 +561,7 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
         ),
       ),
     );
+    return YoImmersiveDarkSurface(child: content);
   }
 }
 

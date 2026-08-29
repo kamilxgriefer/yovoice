@@ -11,6 +11,7 @@ import 'package:yovoice/features/rooms/presentation/screens/broadcast_room_scree
 import 'package:yovoice/features/rooms/presentation/widgets/room_ended_state.dart';
 import 'package:yovoice/shared/widgets/states/yo_error_state.dart';
 import 'package:yovoice/shared/widgets/states/yo_loading_indicator.dart';
+import 'package:yovoice/shared/widgets/theme/yo_immersive_dark_surface.dart';
 
 /// The one door into a room, whichever surface opened it.
 ///
@@ -63,7 +64,7 @@ class _RoomEntryScreenState extends State<RoomEntryScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return FutureBuilder<RoomVoiceEntry>(
+    final content = FutureBuilder<RoomVoiceEntry>(
       future: _entry,
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
@@ -131,5 +132,6 @@ class _RoomEntryScreenState extends State<RoomEntryScreen> {
         );
       },
     );
+    return YoImmersiveDarkSurface(child: content);
   }
 }

@@ -8,6 +8,7 @@ import 'package:yovoice/features/rooms/data/services/room_image_service.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
 import 'package:yovoice/features/rooms/presentation/room_cover_editor.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
+import 'package:yovoice/shared/widgets/theme/yo_immersive_dark_surface.dart';
 
 const _background = Color(0xFF080711);
 const _surface = Color(0xFF151020);
@@ -388,7 +389,7 @@ class _RoomSettingsScreenState extends State<RoomSettingsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    final content = Scaffold(
       backgroundColor: _background,
       appBar: AppBar(
         backgroundColor: _background,
@@ -692,6 +693,7 @@ class _RoomSettingsScreenState extends State<RoomSettingsScreen> {
         ),
       ),
     );
+    return YoImmersiveDarkSurface(child: content);
   }
 }
 

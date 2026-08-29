@@ -12,6 +12,7 @@ import 'package:yovoice/features/moderation/presentation/widgets/report_audit_ti
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
+import 'package:yovoice/shared/widgets/theme/yo_immersive_dark_surface.dart';
 
 /// The staff Moderation Center — the report queue and its detail panel,
 /// rendered inside the SAME fixed desktop shell as every other
@@ -205,10 +206,12 @@ class _ModerationCenterScreenState extends State<ModerationCenterScreen> {
     );
 
     if (widget.embedded) {
-      return Material(color: AppColors.background, child: content);
+      return YoImmersiveDarkSurface(
+        child: Material(color: AppColors.background, child: content),
+      );
     }
 
-    return Scaffold(
+    final scaffold = Scaffold(
       backgroundColor: AppColors.background,
       appBar: inShellSlot
           ? null
@@ -257,6 +260,7 @@ class _ModerationCenterScreenState extends State<ModerationCenterScreen> {
             ),
       body: content,
     );
+    return YoImmersiveDarkSurface(child: scaffold);
   }
 }
 

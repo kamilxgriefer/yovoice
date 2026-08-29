@@ -8,6 +8,7 @@ import 'package:yovoice/features/moments/data/models/voice_moment.dart';
 import 'package:yovoice/features/profile/data/models/user_profile.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
+import 'package:yovoice/shared/widgets/theme/yo_immersive_dark_surface.dart';
 
 /// Creator analytics that can be proven from data the app already stores.
 ///
@@ -39,7 +40,7 @@ class CreatorAnalyticsScreen extends StatelessWidget {
       moments: moments,
     );
 
-    return Scaffold(
+    final content = Scaffold(
       backgroundColor: AppColors.background,
       body: SafeArea(
         child: ResponsiveContentFrame(
@@ -165,6 +166,7 @@ class CreatorAnalyticsScreen extends StatelessWidget {
         ),
       ),
     );
+    return YoImmersiveDarkSurface(child: content);
   }
 }
 

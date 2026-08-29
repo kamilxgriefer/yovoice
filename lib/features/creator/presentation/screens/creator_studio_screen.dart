@@ -26,6 +26,7 @@ import 'package:yovoice/features/rooms/presentation/screens/room_entry_screen.da
 import 'package:yovoice/features/rooms/presentation/screens/room_type_selector_screen.dart';
 import 'package:yovoice/shared/widgets/buttons/yo_icon_button.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
+import 'package:yovoice/shared/widgets/theme/yo_immersive_dark_surface.dart';
 
 const _background = Color(0xFF09050F);
 const _surface = Color(0xFF17101F);
@@ -34,23 +35,34 @@ const _muted = Color(0xFFA99DB3);
 const _accent = Color(0xFFB932FF);
 
 class CreatorStudioScreen extends StatefulWidget {
-  const CreatorStudioScreen({this.isRootTab = false, super.key});
+  const CreatorStudioScreen({
+    this.isRootTab = false,
+    this.profileService,
+    this.roomService,
+    this.clubService,
+    this.momentService,
+    super.key,
+  });
 
   /// True when this screen IS the shell's current content (a desktop
   /// content slot) rather than a pushed route — the same flag
   /// FriendsScreen uses, so a root tab never renders a back button that
   /// has nothing to pop.
   final bool isRootTab;
+  final ProfileService? profileService;
+  final RoomService? roomService;
+  final ClubService? clubService;
+  final MomentService? momentService;
 
   @override
   State<CreatorStudioScreen> createState() => _CreatorStudioScreenState();
 }
 
 class _CreatorStudioScreenState extends State<CreatorStudioScreen> {
-  final _profileService = ProfileService();
-  final _roomService = RoomService();
-  final _clubService = ClubService();
-  final _momentService = MomentService();
+  late final ProfileService _profileService;
+  late final RoomService _roomService;
+  late final ClubService _clubService;
+  late final MomentService _momentService;
 
   // Created once instead of inline in build() -- see ADR-018 for why a
   // fresh watchX() call inside a StreamBuilder's `stream:` argument tears
@@ -67,6 +79,10 @@ class _CreatorStudioScreenState extends State<CreatorStudioScreen> {
   @override
   void initState() {
     super.initState();
+    _profileService = widget.profileService ?? ProfileService();
+    _roomService = widget.roomService ?? RoomService();
+    _clubService = widget.clubService ?? ClubService();
+    _momentService = widget.momentService ?? MomentService();
     _profile = _profileService.watchCurrentProfile();
     _rooms = _roomService.watchOwnedRooms();
     _clubs = _clubService.watchMyClubs();
@@ -96,7 +112,7 @@ class _CreatorStudioScreenState extends State<CreatorStudioScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    final content = Scaffold(
       backgroundColor: _background,
       body: SafeArea(
         child: ResponsiveContentFrame(
@@ -188,6 +204,7 @@ class _CreatorStudioScreenState extends State<CreatorStudioScreen> {
         ),
       ),
     );
+    return YoImmersiveDarkSurface(child: content);
   }
 }
 

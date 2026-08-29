@@ -10,6 +10,7 @@ import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
+import 'package:yovoice/shared/widgets/theme/yo_immersive_dark_surface.dart';
 
 enum _CreatorFilter { allCreators, verified }
 
@@ -148,7 +149,7 @@ class _FindCreatorsScreenState extends State<FindCreatorsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    final content = Scaffold(
       backgroundColor: _background,
       body: DecoratedBox(
         decoration: const BoxDecoration(
@@ -210,6 +211,7 @@ class _FindCreatorsScreenState extends State<FindCreatorsScreen> {
         ),
       ),
     );
+    return YoImmersiveDarkSurface(child: content);
   }
 
   void _selectFilter(_CreatorFilter value) {

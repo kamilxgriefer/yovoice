@@ -16,6 +16,7 @@ import 'package:yovoice/features/rooms/data/services/room_service.dart';
 import 'package:yovoice/features/rooms/presentation/room_cover_editor.dart';
 import 'package:yovoice/features/rooms/presentation/screens/room_entry_screen.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
+import 'package:yovoice/shared/widgets/theme/yo_immersive_dark_surface.dart';
 
 /// Creating a Community or Podcast room, in three steps.
 ///
@@ -317,7 +318,7 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
   @override
   Widget build(BuildContext context) {
     final identity = _identity;
-    return Scaffold(
+    final content = Scaffold(
       backgroundColor: _background,
       appBar: AppBar(
         backgroundColor: _background,
@@ -363,6 +364,7 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
         createLabel: _isBroadcast ? 'Create Podcast Room' : 'Create Room',
       ),
     );
+    return YoImmersiveDarkSurface(child: content);
   }
 
   // ---------------------------------------------------- step: identity
@@ -1060,6 +1062,7 @@ class _CoverPicker extends StatelessWidget {
                                   style: TextStyle(
                                     color: Colors.white,
                                     fontWeight: FontWeight.w800,
+                                    height: 1.2,
                                   ),
                                 ),
                               ],

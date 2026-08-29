@@ -4,7 +4,7 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 
-import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/time/timezone_label.dart';
 import 'package:yovoice/core/time/timezone_platform.dart';
 
@@ -203,6 +203,7 @@ class TimezoneWorldMapCardState extends State<TimezoneWorldMapCard>
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
+    final palette = context.appPalette;
     final use24Hour = MediaQuery.alwaysUse24HourFormatOf(context);
     final time = formatTime(_now, use24Hour: use24Hour);
     final reading = widget.source.reading();
@@ -223,13 +224,14 @@ class TimezoneWorldMapCardState extends State<TimezoneWorldMapCard>
           label: _semanticLabel(time, zone, region, reading.offset),
           excludeSemantics: true,
           child: Container(
+            key: const ValueKey('desktop-timezone-card'),
             // Lifted verbatim from _ProfileCard directly below it, so the
             // two read as one pinned pair rather than two loose blocks.
             padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(16),
-              color: colors.onSurface.withValues(alpha: .035),
-              border: Border.all(color: colors.outlineVariant),
+              color: palette.surfaceRaised,
+              border: Border.all(color: palette.border),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -247,8 +249,8 @@ class TimezoneWorldMapCardState extends State<TimezoneWorldMapCard>
                             time,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: Color(0xFFE8E2F2),
+                            style: TextStyle(
+                              color: palette.textPrimary,
                               fontSize: 21,
                               height: 1.0,
                               fontWeight: FontWeight.w800,
@@ -263,10 +265,8 @@ class TimezoneWorldMapCardState extends State<TimezoneWorldMapCard>
                             zone,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              // Lifted from 0xFF6E6683 (3.34:1): this is
-                              // 10px text and must clear 4.5:1.
-                              color: Color(0xFF9C93AB),
+                            style: TextStyle(
+                              color: palette.textSecondary,
                               fontSize: 10,
                               fontWeight: FontWeight.w600,
                               letterSpacing: .4,
@@ -285,8 +285,8 @@ class TimezoneWorldMapCardState extends State<TimezoneWorldMapCard>
                     region,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: Color(0xFF7E7895),
+                    style: TextStyle(
+                      color: palette.textTertiary,
                       fontSize: 9,
                       fontWeight: FontWeight.w600,
                       letterSpacing: .5,
@@ -306,6 +306,12 @@ class TimezoneWorldMapCardState extends State<TimezoneWorldMapCard>
                         painter: DottedWorldMapPainter(
                           utcOffset: reading.offset,
                           localHour: _now.hour,
+                          landColor: palette.textTertiary.withValues(
+                            alpha: .42,
+                          ),
+                          daytimeMarkerColor: colors.secondary,
+                          nighttimeMarkerColor: colors.primary,
+                          markerCoreColor: colors.onPrimary,
                         ),
                       ),
                     ),
@@ -350,16 +356,18 @@ class _OffsetChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(999),
-        color: AppColors.primary.withValues(alpha: .16),
+        color: colors.primaryContainer,
+        border: Border.all(color: colors.primary.withValues(alpha: .45)),
       ),
       child: Text(
         label,
-        style: const TextStyle(
-          color: Color(0xFFD3A5FF),
+        style: TextStyle(
+          color: colors.onPrimaryContainer,
           fontSize: 9,
           fontWeight: FontWeight.w700,
           letterSpacing: .3,
@@ -378,9 +386,20 @@ class _OffsetChip extends StatelessWidget {
 /// the block deliberately names no city and no country: the app has no
 /// geo data, and printing one would be an invention.
 class DottedWorldMapPainter extends CustomPainter {
-  DottedWorldMapPainter({required this.utcOffset, this.localHour});
+  DottedWorldMapPainter({
+    required this.utcOffset,
+    required this.landColor,
+    required this.daytimeMarkerColor,
+    required this.nighttimeMarkerColor,
+    required this.markerCoreColor,
+    this.localHour,
+  });
 
   final Duration utcOffset;
+  final Color landColor;
+  final Color daytimeMarkerColor;
+  final Color nighttimeMarkerColor;
+  final Color markerCoreColor;
 
   /// The user's local hour, 0-23, used only to warm or cool the glow.
   ///
@@ -440,7 +459,7 @@ class DottedWorldMapPainter extends CustomPainter {
     final cellHeight = size.height / rows;
     final dotRadius = math.min(cellWidth, cellHeight) * .28;
 
-    final dotPaint = Paint()..color = AppColors.textHint.withValues(alpha: .34);
+    final dotPaint = Paint()..color = landColor;
     for (var row = 0; row < rows && row < landRanges.length; row++) {
       final y = (row + .5) * cellHeight;
       for (final (start, end) in landRanges[row]) {
@@ -465,8 +484,8 @@ class DottedWorldMapPainter extends CustomPainter {
     // Warm violet by day, cooler by night. Both stay inside the brand
     // palette — this is a mood shift of a few percent, not a second theme.
     final halo = _isDaytime
-        ? AppColors.secondary.withValues(alpha: .52)
-        : AppColors.primary.withValues(alpha: .46);
+        ? daytimeMarkerColor.withValues(alpha: .52)
+        : nighttimeMarkerColor.withValues(alpha: .46);
     canvas.drawCircle(
       center,
       dotRadius * 4.6,
@@ -477,17 +496,17 @@ class DottedWorldMapPainter extends CustomPainter {
     canvas.drawCircle(
       center,
       dotRadius * 1.7,
-      Paint()..color = _isDaytime ? AppColors.secondary : AppColors.primary,
+      Paint()..color = _isDaytime ? daytimeMarkerColor : nighttimeMarkerColor,
     );
-    canvas.drawCircle(
-      center,
-      dotRadius * .8,
-      Paint()..color = AppColors.textPrimary,
-    );
+    canvas.drawCircle(center, dotRadius * .8, Paint()..color = markerCoreColor);
   }
 
   @override
   bool shouldRepaint(DottedWorldMapPainter oldDelegate) =>
       oldDelegate.utcOffset != utcOffset ||
-      oldDelegate._isDaytime != _isDaytime;
+      oldDelegate._isDaytime != _isDaytime ||
+      oldDelegate.landColor != landColor ||
+      oldDelegate.daytimeMarkerColor != daytimeMarkerColor ||
+      oldDelegate.nighttimeMarkerColor != nighttimeMarkerColor ||
+      oldDelegate.markerCoreColor != markerCoreColor;
 }

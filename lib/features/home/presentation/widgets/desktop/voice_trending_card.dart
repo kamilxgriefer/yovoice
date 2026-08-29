@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/friends/data/services/social_graph_service.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
 import 'package:yovoice/features/moments/data/services/moment_discovery_service.dart';
@@ -114,15 +114,17 @@ class _VoiceTrendingCardState extends State<VoiceTrendingCard> {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return Container(
+      key: const ValueKey('desktop-voice-trending-card'),
       padding: const EdgeInsets.fromLTRB(18, 18, 18, 14),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(22),
-        color: const Color(0xFF120C1D).withValues(alpha: .9),
-        border: Border.all(color: const Color(0xFF2E2140)),
+        color: palette.surface,
+        border: Border.all(color: palette.border),
         boxShadow: [
           BoxShadow(
-            color: AppColors.primary.withValues(alpha: .07),
+            color: palette.shadow.withValues(alpha: .08),
             blurRadius: 28,
           ),
         ],
@@ -130,10 +132,10 @@ class _VoiceTrendingCardState extends State<VoiceTrendingCard> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
+          Text(
             'Voice Trending',
             style: TextStyle(
-              color: Colors.white,
+              color: palette.textPrimary,
               fontSize: 17,
               fontWeight: FontWeight.w800,
             ),
@@ -237,10 +239,10 @@ class _VoiceTrendingCardState extends State<VoiceTrendingCard> {
                 minimumSize: Size.zero,
                 tapTargetSize: MaterialTapTargetSize.shrinkWrap,
               ),
-              child: const Text(
+              child: Text(
                 'View all',
                 style: TextStyle(
-                  color: Color(0xFFD3A5FF),
+                  color: Theme.of(context).colorScheme.primary,
                   fontSize: 12.5,
                   fontWeight: FontWeight.w700,
                 ),
@@ -260,10 +262,11 @@ class _SectionLabel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return Text(
       text,
-      style: const TextStyle(
-        color: Colors.white,
+      style: TextStyle(
+        color: palette.textPrimary,
         fontSize: 13.5,
         fontWeight: FontWeight.w700,
       ),
@@ -286,6 +289,7 @@ class _SectionHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
     return Row(
       children: [
         Expanded(child: _SectionLabel(label)),
@@ -298,8 +302,8 @@ class _SectionHeader extends StatelessWidget {
           ),
           child: Text(
             actionLabel,
-            style: const TextStyle(
-              color: AppColors.textSecondary,
+            style: TextStyle(
+              color: colors.primary,
               fontSize: 11.5,
               fontWeight: FontWeight.w700,
             ),
@@ -322,6 +326,7 @@ class _MomentRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final caption = moment.caption.trim();
+    final palette = context.appPalette;
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(14),
@@ -343,8 +348,8 @@ class _MomentRow extends StatelessWidget {
                     moment.authorName,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: AppColors.textPrimary,
+                    style: TextStyle(
+                      color: palette.textPrimary,
                       fontSize: 13.5,
                       fontWeight: FontWeight.w700,
                     ),
@@ -358,8 +363,8 @@ class _MomentRow extends StatelessWidget {
                               : 'Voice Moment'),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: AppColors.textSecondary,
+                    style: TextStyle(
+                      color: palette.textSecondary,
                       fontSize: 11.5,
                     ),
                   ),
@@ -370,16 +375,16 @@ class _MomentRow extends StatelessWidget {
             Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                const Icon(
+                Icon(
                   Icons.favorite_rounded,
                   size: 12,
-                  color: AppColors.textSecondary,
+                  color: palette.textSecondary,
                 ),
                 const SizedBox(width: 3),
                 Text(
                   compactCount(moment.likeCount),
-                  style: const TextStyle(
-                    color: AppColors.textSecondary,
+                  style: TextStyle(
+                    color: palette.textSecondary,
                     fontSize: 11,
                     fontWeight: FontWeight.w700,
                   ),
@@ -401,6 +406,7 @@ class _RoomRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     final subtitle = room.description.trim().isNotEmpty
         ? room.description.trim()
         : room.category;
@@ -425,8 +431,8 @@ class _RoomRow extends StatelessWidget {
                     room.name,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: Colors.white,
+                    style: TextStyle(
+                      color: palette.textPrimary,
                       fontSize: 13.5,
                       fontWeight: FontWeight.w700,
                     ),
@@ -436,8 +442,8 @@ class _RoomRow extends StatelessWidget {
                     subtitle,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: Color(0xFF9A90AC),
+                    style: TextStyle(
+                      color: palette.textSecondary,
                       fontSize: 11.5,
                     ),
                   ),
@@ -450,16 +456,16 @@ class _RoomRow extends StatelessWidget {
             Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                const Icon(
+                Icon(
                   Icons.people_alt_rounded,
                   size: 12,
-                  color: Color(0xFF9A90AC),
+                  color: palette.textSecondary,
                 ),
                 const SizedBox(width: 3),
                 Text(
                   compactCount(room.participantCount),
-                  style: const TextStyle(
-                    color: Color(0xFFCFC6DC),
+                  style: TextStyle(
+                    color: palette.textSecondary,
                     fontSize: 11,
                     fontWeight: FontWeight.w700,
                   ),
@@ -481,12 +487,13 @@ class _SectionNote extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return Padding(
       padding: const EdgeInsets.only(bottom: 4),
       child: Text(
         text,
-        style: const TextStyle(
-          color: Color(0xFF7E7895),
+        style: TextStyle(
+          color: palette.textTertiary,
           fontSize: 11.5,
           height: 1.35,
         ),
@@ -505,6 +512,7 @@ class _RowPlaceholder extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return Column(
       children: [
         for (var i = 0; i < count; i++)
@@ -513,8 +521,8 @@ class _RowPlaceholder extends StatelessWidget {
             margin: const EdgeInsets.only(bottom: 8),
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(12),
-              color: Colors.white.withValues(alpha: .03),
-              border: Border.all(color: const Color(0xFF241A33)),
+              color: palette.surfaceMuted,
+              border: Border.all(color: palette.border),
             ),
           ),
       ],
@@ -527,22 +535,23 @@ class _LivePill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(999),
-        color: AppColors.secondary.withValues(alpha: .18),
-        border: Border.all(color: AppColors.secondary.withValues(alpha: .5)),
+        color: colors.errorContainer,
+        border: Border.all(color: colors.error.withValues(alpha: .7)),
       ),
-      child: const Row(
+      child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(Icons.circle, size: 6, color: Color(0xFFE879F9)),
-          SizedBox(width: 5),
+          Icon(Icons.circle, size: 6, color: colors.error),
+          const SizedBox(width: 5),
           Text(
             'Live',
             style: TextStyle(
-              color: Color(0xFFE9B8FF),
+              color: colors.onErrorContainer,
               fontSize: 10.5,
               fontWeight: FontWeight.w800,
             ),

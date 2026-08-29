@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/home/data/services/home_feed_service.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
 import 'package:yovoice/features/profile/data/models/follow_user.dart';
@@ -117,6 +117,7 @@ class _FollowedCreatorsCardState extends State<FollowedCreatorsCard> {
             return StreamBuilder<List<VoiceMoment>>(
               stream: _moments,
               builder: (context, momentSnapshot) {
+                final palette = context.appPalette;
                 final hosting = <String, VoiceRoom>{
                   for (final room
                       in (roomSnapshot.data ?? const <VoiceRoom>[]).reversed)
@@ -144,22 +145,23 @@ class _FollowedCreatorsCardState extends State<FollowedCreatorsCard> {
                   });
 
                 return Container(
+                  key: const ValueKey('desktop-followed-creators-card'),
                   padding: const EdgeInsets.fromLTRB(16, 16, 16, 10),
                   decoration: BoxDecoration(
                     borderRadius: BorderRadius.circular(22),
-                    color: const Color(0xFF120C1D).withValues(alpha: .9),
-                    border: Border.all(color: const Color(0xFF2E2140)),
+                    color: palette.surface,
+                    border: Border.all(color: palette.border),
                   ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Row(
                         children: [
-                          const Expanded(
+                          Expanded(
                             child: Text(
                               'Top creators you follow',
                               style: TextStyle(
-                                color: Colors.white,
+                                color: palette.textPrimary,
                                 fontSize: 15.5,
                                 fontWeight: FontWeight.w800,
                               ),
@@ -217,6 +219,7 @@ class _ViewAllButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
     return TextButton(
       onPressed: onTap,
       style: TextButton.styleFrom(
@@ -224,19 +227,19 @@ class _ViewAllButton extends StatelessWidget {
         minimumSize: Size.zero,
         tapTargetSize: MaterialTapTargetSize.shrinkWrap,
       ),
-      child: const Row(
+      child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
           Text(
             'View all',
             style: TextStyle(
-              color: Color(0xFFD3A5FF),
+              color: colors.primary,
               fontSize: 12.5,
               fontWeight: FontWeight.w700,
             ),
           ),
-          SizedBox(width: 3),
-          Icon(Icons.chevron_right_rounded, size: 16, color: Color(0xFFD3A5FF)),
+          const SizedBox(width: 3),
+          Icon(Icons.chevron_right_rounded, size: 16, color: colors.primary),
         ],
       ),
     );
@@ -280,6 +283,8 @@ class _CreatorRowState extends State<_CreatorRow> {
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    final palette = context.appPalette;
     final room = widget.hostedRoom;
     final moment = widget.moment;
     final recent =
@@ -301,13 +306,9 @@ class _CreatorRowState extends State<_CreatorRow> {
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(14),
-          color: _hover
-              ? Colors.white.withValues(alpha: .04)
-              : Colors.transparent,
+          color: _hover ? colors.primaryContainer : Colors.transparent,
           border: Border.all(
-            color: _hover
-                ? AppColors.primary.withValues(alpha: .30)
-                : Colors.transparent,
+            color: _hover ? colors.primary : Colors.transparent,
           ),
         ),
         child: Row(
@@ -329,8 +330,8 @@ class _CreatorRowState extends State<_CreatorRow> {
                           widget.creator.displayName,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: Colors.white,
+                          style: TextStyle(
+                            color: palette.textPrimary,
                             fontSize: 13,
                             fontWeight: FontWeight.w700,
                           ),
@@ -354,8 +355,8 @@ class _CreatorRowState extends State<_CreatorRow> {
                       'New Moment · ${_age(moment.createdAt!)}',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: Color(0xFFE879F9),
+                      style: TextStyle(
+                        color: palette.focus,
                         fontSize: 11,
                         fontWeight: FontWeight.w600,
                       ),
@@ -365,8 +366,8 @@ class _CreatorRowState extends State<_CreatorRow> {
                       _handle,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: Color(0xFF9A90AC),
+                      style: TextStyle(
+                        color: palette.textSecondary,
                         fontSize: 11,
                       ),
                     ),
@@ -377,10 +378,10 @@ class _CreatorRowState extends State<_CreatorRow> {
             AnimatedOpacity(
               duration: const Duration(milliseconds: 130),
               opacity: _hover ? 1 : .45,
-              child: const Icon(
+              child: Icon(
                 Icons.chevron_right_rounded,
                 size: 18,
-                color: Color(0xFFD3A5FF),
+                color: colors.primary,
               ),
             ),
           ],
@@ -397,14 +398,15 @@ class _LiveSignal extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
     return Row(
       children: [
         Container(
           width: 6,
           height: 6,
-          decoration: const BoxDecoration(
+          decoration: BoxDecoration(
             shape: BoxShape.circle,
-            color: AppColors.live,
+            color: colors.error,
           ),
         ),
         const SizedBox(width: 5),
@@ -413,8 +415,8 @@ class _LiveSignal extends StatelessWidget {
             'Live · $roomName',
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              color: Color(0xFFFF7A93),
+            style: TextStyle(
+              color: colors.error,
               fontSize: 11,
               fontWeight: FontWeight.w700,
             ),
@@ -432,23 +434,24 @@ class _NoCreatorsState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.fromLTRB(14, 14, 14, 14),
       margin: const EdgeInsets.only(bottom: 6),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(16),
-        color: Colors.white.withValues(alpha: .02),
-        border: Border.all(color: const Color(0xFF241A33)),
+        color: palette.surfaceMuted,
+        border: Border.all(color: palette.border),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
+          Text(
             'The creators you follow will appear here — with what they '
             'are hosting and their latest Moments.',
             style: TextStyle(
-              color: Color(0xFF9A90AC),
+              color: palette.textSecondary,
               fontSize: 12.5,
               height: 1.4,
             ),

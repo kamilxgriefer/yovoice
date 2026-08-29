@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
+import 'package:yovoice/shared/widgets/theme/yo_immersive_dark_surface.dart';
 
 import '../../../profile/data/models/user_profile.dart';
 import '../../../profile/data/services/profile_service.dart';
@@ -34,7 +35,7 @@ class _AwardsHubScreenState extends State<AwardsHubScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return StreamBuilder<UserProfile>(
+    final content = StreamBuilder<UserProfile>(
       stream: _profiles.watchCurrentProfile(),
       builder: (context, snapshot) {
         if (snapshot.hasError) {
@@ -64,6 +65,7 @@ class _AwardsHubScreenState extends State<AwardsHubScreen> {
         return AchievementsScreen(profile: profile);
       },
     );
+    return YoImmersiveDarkSurface(child: content);
   }
 }
 
@@ -191,7 +193,7 @@ class _AchievementsScreenState extends State<AchievementsScreen> {
               .toList(growable: false);
     final textScale = MediaQuery.textScalerOf(context).scale(1).clamp(1.0, 2.0);
 
-    return Scaffold(
+    final content = Scaffold(
       backgroundColor: const Color(0xFF09050F),
       appBar: AppBar(
         backgroundColor: const Color(0xFF09050F),
@@ -294,6 +296,7 @@ class _AchievementsScreenState extends State<AchievementsScreen> {
         ),
       ),
     );
+    return YoImmersiveDarkSurface(child: content);
   }
 }
 

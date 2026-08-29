@@ -16,6 +16,7 @@ import 'package:yovoice/features/staff/presentation/sections/staff_overview_sect
 import 'package:yovoice/features/staff/presentation/sections/staff_section_shared.dart';
 import 'package:yovoice/features/staff/presentation/sections/staff_users_section.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
+import 'package:yovoice/shared/widgets/theme/yo_immersive_dark_surface.dart';
 
 /// The Staff Center — one screen, seven real sections, each rendered
 /// only when the SERVER-derived capability that backs it exists:
@@ -219,7 +220,7 @@ class _StaffCenterScreenState extends State<StaffCenterScreen> {
         widget.isRootTab && MediaQuery.sizeOf(context).width >= 980;
     final compactNavigation = MediaQuery.sizeOf(context).width < 980;
 
-    return Scaffold(
+    final content = Scaffold(
       backgroundColor: StaffCenterStyle.background,
       appBar: inShellSlot
           ? null
@@ -352,6 +353,7 @@ class _StaffCenterScreenState extends State<StaffCenterScreen> {
               ),
       ),
     );
+    return YoImmersiveDarkSurface(child: content);
   }
 
   Widget _rail(List<StaffSection> sections) {

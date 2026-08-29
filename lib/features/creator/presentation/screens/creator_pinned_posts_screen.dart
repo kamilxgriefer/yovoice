@@ -10,6 +10,7 @@ import 'package:yovoice/features/moments/presentation/widgets/moment_expiry_acce
 import 'package:yovoice/features/moments/presentation/widgets/moment_expiry_boundary.dart';
 import 'package:yovoice/shared/widgets/buttons/yo_icon_button.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
+import 'package:yovoice/shared/widgets/theme/yo_immersive_dark_surface.dart';
 
 const _background = Color(0xFF09050F);
 const _surface = Color(0xFF17101F);
@@ -119,7 +120,7 @@ class _CreatorPinnedPostsScreenState extends State<CreatorPinnedPostsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    final content = Scaffold(
       backgroundColor: _background,
       body: SafeArea(
         child: ResponsiveContentFrame(
@@ -168,6 +169,7 @@ class _CreatorPinnedPostsScreenState extends State<CreatorPinnedPostsScreen> {
         ),
       ),
     );
+    return YoImmersiveDarkSurface(child: content);
   }
 
   Widget _body(
