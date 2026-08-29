@@ -17,8 +17,8 @@ someone decide what to pick up next.
 ## Done
 
 - **Pearl light theme is a complete, premium normal-product experience**
-  (2026-08-29, ADR-127, **SOURCE ONLY; WEB HOSTING DEPLOYMENT PENDING; NATIVE
-  STORE BUILD PENDING**): a semantic `AppPalette` now owns paired canvas,
+  (2026-08-29, ADR-127, **WEB HOSTING DEPLOYED; NATIVE STORE BUILD PENDING**):
+  a semantic `AppPalette` now owns paired canvas,
   surface, copy, border, navigation, focus and status roles. Home/dock, Chats,
   Friends, Moments, Profile, Settings, Notifications, Premium, modal chrome
   and shared controls migrate as complete surfaces; system status/navigation

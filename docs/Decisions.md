@@ -7876,7 +7876,7 @@ non-interactive because the whole card already opens a profile.
 
 ## ADR-127: Pearl uses semantic colour roles and keeps voice/media surfaces explicitly immersive
 
-**Status**: Implemented in source; web Hosting and native store build pending
+**Status**: Implemented; web Hosting deployed; native store build pending
 **Date**: 2026-08-29
 
 ### Context
