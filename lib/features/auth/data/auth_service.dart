@@ -11,9 +11,12 @@ import 'package:yovoice/core/presence/presence_service.dart';
 import 'package:yovoice/features/auth/data/action_code_settings.dart';
 import 'package:yovoice/features/auth/data/auth_profile_identity.dart';
 import 'package:yovoice/features/auth/data/totp_mfa_service.dart';
+import 'package:yovoice/features/calls/data/services/direct_call_service.dart';
+import 'package:yovoice/features/calls/data/services/voice_call_service.dart';
 import 'package:yovoice/features/notifications/data/services/push_notification_service.dart';
 import 'package:yovoice/features/premium/data/services/entitlement_service.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
+import 'package:yovoice/features/rooms/data/services/room_service.dart';
 import 'package:yovoice/shared/models/app_user.dart';
 import 'package:yovoice/services/firestore_service.dart';
 
@@ -29,6 +32,13 @@ typedef AppleProviderProbe = Future<AppleSignInAvailability> Function();
 /// sign-out ordering can be asserted without a live Firebase Messaging.
 typedef DeviceTokenUnregister = Future<void> Function();
 
+typedef ActiveVoiceSessionReader =
+    ({String? directCallId, bool isActive, bool isRoomSession, String? roomId})
+    Function();
+typedef ActiveVoiceDisconnect = Future<void> Function();
+typedef ActiveRoomLeave = Future<void> Function(String roomId);
+typedef ActiveDirectCallEnd = Future<void> Function(String callId);
+
 class AuthService {
   AuthService({
     FirebaseAuth? firebaseAuth,
@@ -38,12 +48,20 @@ class AuthService {
     @visibleForTesting AppleProviderProbe? appleProviderProbe,
     @visibleForTesting PresenceService? presenceService,
     @visibleForTesting DeviceTokenUnregister? unregisterDeviceToken,
+    @visibleForTesting ActiveVoiceSessionReader? activeVoiceSessionReader,
+    @visibleForTesting ActiveVoiceDisconnect? disconnectActiveVoice,
+    @visibleForTesting ActiveRoomLeave? leaveActiveRoom,
+    @visibleForTesting ActiveDirectCallEnd? endActiveDirectCall,
     @visibleForTesting
     Duration bestEffortCleanupTimeout = const Duration(seconds: 10),
   }) : _firebaseAuth = firebaseAuth ?? FirebaseAuth.instance,
        _firestoreService = firestoreService ?? FirestoreService(),
        _injectedPresenceService = presenceService,
        _injectedUnregisterDeviceToken = unregisterDeviceToken,
+       _injectedActiveVoiceSessionReader = activeVoiceSessionReader,
+       _injectedDisconnectActiveVoice = disconnectActiveVoice,
+       _injectedLeaveActiveRoom = leaveActiveRoom,
+       _injectedEndActiveDirectCall = endActiveDirectCall,
        _bestEffortCleanupTimeout = bestEffortCleanupTimeout,
        _appleSignInFeatureEnabled =
            appleSignInFeatureEnabled ??
@@ -67,9 +85,15 @@ class AuthService {
   // that never sign out.
   final PresenceService? _injectedPresenceService;
   final DeviceTokenUnregister? _injectedUnregisterDeviceToken;
+  final ActiveVoiceSessionReader? _injectedActiveVoiceSessionReader;
+  final ActiveVoiceDisconnect? _injectedDisconnectActiveVoice;
+  final ActiveRoomLeave? _injectedLeaveActiveRoom;
+  final ActiveDirectCallEnd? _injectedEndActiveDirectCall;
   final Duration _bestEffortCleanupTimeout;
 
   final GoogleSignIn _googleSignIn = GoogleSignIn.instance;
+
+  static Future<void>? _signOutInFlight;
 
   Future<void>? _googleSignInInitialization;
   Future<AppleSignInAvailability>? _appleSignInAvailability;
@@ -355,7 +379,7 @@ class AuthService {
   ///
   /// Settings, Profile, the device-sessions screen, the 2FA
   /// expired-session path and [AuthController] all route through here, on
-  /// purpose: signing out has to mean the same thing everywhere. Two pieces
+  /// purpose: signing out has to mean the same thing everywhere. Three pieces
   /// of cleanup are only *permitted* while the session is still live, so
   /// they run before [FirebaseAuth.signOut] rather than in reaction to it:
   ///
@@ -367,8 +391,12 @@ class AuthService {
   ///  * **This device's FCM token.** Deleting `fcmTokens/{token}` needs
   ///    `isOwner(uid)` for the same reason. A token left behind means the
   ///    previous account keeps receiving push on a shared device.
+  ///  * **Active voice.** The process-wide LiveKit service intentionally
+  ///    survives room-screen disposal for the mini player. Logout therefore
+  ///    disconnects it centrally and, for a room session, leaves the server
+  ///    roster while Auth can still authorize that mutation.
   ///
-  /// Both are best-effort. A cleanup failure is reported and swallowed — it
+  /// All are best-effort. A cleanup failure is reported and swallowed — it
   /// must never trap someone in a session they asked to leave.
   ///
   /// This covers sign-out, not process death: an app that is force-quit or
@@ -376,15 +404,32 @@ class AuthService {
   /// nothing on the client can write for a session that no longer exists.
   /// Expiring stale presence in that case needs a server-side sweeper over
   /// `presenceUpdatedAt`, which does not exist yet.
-  Future<void> signOut() async {
+  Future<void> signOut() {
+    final existing = _signOutInFlight;
+    if (existing != null) return existing;
+
+    final operation = _performSignOut();
+    late final Future<void> tracked;
+    tracked = operation.whenComplete(() {
+      if (identical(_signOutInFlight, tracked)) _signOutInFlight = null;
+    });
+    _signOutInFlight = tracked;
+    return tracked;
+  }
+
+  Future<void> _performSignOut() async {
     final userId = _firebaseAuth.currentUser?.uid;
 
+    final cleanup = <Future<void>>[
+      _clearActiveVoiceSessionBestEffort(canLeaveRoom: userId != null),
+    ];
     if (userId != null) {
-      await Future.wait<void>([
+      cleanup.addAll([
         _unregisterDeviceTokenBestEffort(),
         _setOfflineBestEffort(userId),
       ]);
     }
+    await Future.wait<void>(cleanup);
 
     try {
       if (!kIsWeb) {
@@ -401,6 +446,65 @@ class AuthService {
       // account never inherits the previous user's replayed snapshots.
       ProfileService.resetCurrentProfileCache();
       EntitlementService.resetCache();
+    }
+  }
+
+  Future<void> _clearActiveVoiceSessionBestEffort({
+    required bool canLeaveRoom,
+  }) async {
+    try {
+      final voice = VoiceCallService.instance;
+      final session =
+          _injectedActiveVoiceSessionReader?.call() ??
+          (
+            directCallId: voice.directCallId,
+            isActive:
+                voice.roomId != null ||
+                voice.status != VoiceCallStatus.disconnected,
+            isRoomSession: voice.isRoomSession,
+            roomId: voice.roomId,
+          );
+      if (!session.isActive) return;
+
+      // VoiceCallService.disconnect clears its local room, microphone and
+      // identity fields synchronously before awaiting LiveKit disposal. Start
+      // it first so even a stalled network teardown cannot leave audio alive
+      // while the remaining account cleanup runs.
+      final disconnect =
+          _injectedDisconnectActiveVoice ??
+          () => voice.disconnect(playSound: false);
+      final pending = <Future<void>>[
+        disconnect().timeout(_bestEffortCleanupTimeout),
+      ];
+
+      final roomId = canLeaveRoom && session.isRoomSession
+          ? session.roomId
+          : null;
+      if (roomId != null && roomId.isNotEmpty) {
+        final leave =
+            _injectedLeaveActiveRoom ??
+            (roomId) => RoomService().leaveRoom(roomId);
+        pending.add(leave(roomId).timeout(_bestEffortCleanupTimeout));
+      }
+      final directCallId = canLeaveRoom ? session.directCallId : null;
+      if (directCallId != null && directCallId.isNotEmpty) {
+        final endCall =
+            _injectedEndActiveDirectCall ??
+            (callId) => DirectCallService(auth: _firebaseAuth).end(callId);
+        pending.add(endCall(directCallId).timeout(_bestEffortCleanupTimeout));
+      }
+
+      await Future.wait(pending);
+    } on TimeoutException {
+      debugPrint(
+        'AuthService.signOut: active voice cleanup exceeded the bounded '
+        'window. Local audio was disconnected and sign-out will continue.',
+      );
+    } catch (error) {
+      debugPrint(
+        'AuthService.signOut: active voice cleanup failed '
+        '(${error.runtimeType}). Sign-out will continue.',
+      );
     }
   }
 

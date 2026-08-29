@@ -20,6 +20,25 @@ about things that are broken, risky, or need verification.
 
 ## Security
 
+- **FIXED IN SOURCE 2026-08-29 — logout changed AuthGate but left private
+  routes, banners and live-room audio attached to the previous session.**
+  Profile and Settings are pushed above the first Navigator route, so replacing
+  MainShell with LoginScreen underneath them left the pushed screen visible;
+  its Firestore listener then rendered “You don't have permission to do that.”
+  The app now treats every signed-in principal as an auth epoch: logout,
+  direct account replacement and auth-stream failure replace the complete root
+  route stack with a zero-duration auth boundary, ignoring route pop vetoes.
+  Logout paints the real Login screen on that first replacement frame and
+  clears app-level notification SnackBars so account A cannot leave UI on
+  account B. The same central sign-out path now disconnects local LiveKit audio
+  immediately, best-effort leaves an active room roster and ends an active
+  direct-call record while Auth is still valid; bounded network failure can
+  never trap the account in-session. Remote Auth loss and direct A→B also force
+  the local audio disconnect even when roster/call authority is already gone.
+  Registration's intentional signed-out → signed-in Verify Email flow is
+  preserved. Route-stack, PopScope, direct A→B, real-Login, presence/FCM and
+  active-room/direct-call cleanup regressions cover the boundary.
+
 - **FIXED AND PARTIALLY DEPLOYED 2026-08-27 — the product sound was a retro synth-jingle
   system and one foreground notification could play two different cues.** All
   eight effects used notes, pentatonic rise/fall pairs, glass-bell partials,

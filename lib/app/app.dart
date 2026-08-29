@@ -10,7 +10,9 @@ import 'package:yovoice/core/audio/ui_sound_service.dart';
 import 'package:yovoice/core/preferences/app_preferences.dart';
 import 'package:yovoice/core/presence/presence_service.dart';
 import 'package:yovoice/core/theme/app_theme.dart';
+import 'package:yovoice/features/auth/presentation/navigation/auth_epoch_route_resetter.dart';
 import 'package:yovoice/features/auth/presentation/screens/auth_gate.dart';
+import 'package:yovoice/features/calls/data/services/voice_call_service.dart';
 import 'package:yovoice/features/calls/presentation/widgets/direct_call_coordinator.dart';
 import 'package:yovoice/features/messages/data/services/active_conversation_registry.dart';
 import 'package:yovoice/features/notifications/data/services/notification_service.dart';
@@ -21,6 +23,15 @@ import 'package:yovoice/features/notifications/presentation/notification_router.
 double foregroundNotificationBottomClearance(TextScaler textScaler) {
   final textScale = textScaler.scale(1);
   return 104.0 + 72.0 * ((textScale - 1.0).clamp(0.0, 1.0));
+}
+
+@visibleForTesting
+void clearSessionSnackBars(ScaffoldMessengerState messenger) {
+  // clearSnackBars removes the queue but animates the current banner away.
+  // removeCurrentSnackBar completes that removal in this same frame so copy
+  // from account A can never paint over Login or account B.
+  messenger.clearSnackBars();
+  messenger.removeCurrentSnackBar();
 }
 
 SnackBar buildForegroundNotificationBanner({
@@ -377,11 +388,22 @@ class YoVoiceApp extends StatefulWidget {
 class _YoVoiceAppState extends State<YoVoiceApp> {
   final _messengerKey = GlobalKey<ScaffoldMessengerState>();
   ForegroundNotificationStreamSource? _streamNotifications;
+  late final AuthEpochRouteResetter _authRouteResetter;
+  StreamSubscription<User?>? _authRouteSubscription;
   bool _foregroundRetryScheduled = false;
 
   @override
   void initState() {
     super.initState();
+    _authRouteResetter = AuthEpochRouteResetter(
+      navigatorKey: notificationNavigatorKey,
+      routeFactory: _authBoundaryRoute,
+      onPrincipalExit: _disconnectVoiceForAuthEpoch,
+    );
+    _authRouteSubscription = FirebaseAuth.instance.authStateChanges().listen(
+      (user) => _authRouteResetter.handlePrincipal(user?.uid),
+      onError: _authRouteResetter.handleError,
+    );
     PushNotificationService.instance.onNotificationTap =
         (type, targetId, actorId, notificationId) {
           NotificationRouter.route(
@@ -430,8 +452,62 @@ class _YoVoiceAppState extends State<YoVoiceApp> {
   void dispose() {
     PushNotificationService.instance.claimForegroundNotification = null;
     PushNotificationService.instance.onInAppForegroundNotification = null;
+    unawaited(_authRouteSubscription?.cancel());
     unawaited(_streamNotifications?.dispose());
     super.dispose();
+  }
+
+  Widget _authBoundary({
+    bool initiallySignedOut = false,
+    String? initialAuthError,
+  }) {
+    return DirectCallCoordinator(
+      child: PresenceLifecycle(
+        child: AuthGate(
+          initiallySignedOut: initiallySignedOut,
+          initialAuthError: initialAuthError,
+        ),
+      ),
+    );
+  }
+
+  Route<void> _authBoundaryRoute(AuthRouteResetTarget target) {
+    // ScaffoldMessenger lives above AuthGate, so banners from the previous
+    // account would otherwise survive the route reset and appear on Login or
+    // on the next account.
+    final messenger = _messengerKey.currentState;
+    if (messenger != null) clearSessionSnackBars(messenger);
+
+    return PageRouteBuilder<void>(
+      settings: const RouteSettings(name: '/auth-session'),
+      transitionDuration: Duration.zero,
+      reverseTransitionDuration: Duration.zero,
+      pageBuilder: (context, animation, secondaryAnimation) =>
+          switch (target.reason) {
+            AuthRouteResetReason.signedOut => _authBoundary(
+              initiallySignedOut: true,
+            ),
+            AuthRouteResetReason.principalChanged => _authBoundary(),
+            AuthRouteResetReason.authError => _authBoundary(
+              initialAuthError: target.error.toString(),
+            ),
+          },
+    );
+  }
+
+  void _disconnectVoiceForAuthEpoch() {
+    final voice = VoiceCallService.instance;
+    if (voice.roomId == null && voice.status == VoiceCallStatus.disconnected) {
+      return;
+    }
+    unawaited(
+      voice.disconnect(playSound: false).catchError((Object error) {
+        debugPrint(
+          'YoVoiceApp: local voice disposal failed during auth epoch change '
+          '(${error.runtimeType}).',
+        );
+      }),
+    );
   }
 
   bool _showForegroundBanner({
@@ -528,9 +604,7 @@ class _YoVoiceAppState extends State<YoVoiceApp> {
             GlobalWidgetsLocalizations.delegate,
             GlobalCupertinoLocalizations.delegate,
           ],
-          home: const DirectCallCoordinator(
-            child: PresenceLifecycle(child: AuthGate()),
-          ),
+          home: _authBoundary(),
         ),
       ),
     );

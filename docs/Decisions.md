@@ -7721,3 +7721,53 @@ only on Home.
 - Mobile and desktop share the same identity, playback and fail-closed
   contract. Automated coverage pins followed-only filtering, playable audio,
   per-author chains, 44 px create targets and 320 px layout at 200% text.
+
+## ADR-124: Auth identity is a root navigation epoch, not only an AuthGate child
+
+**Status**: Implemented in source; native store build pending
+**Date**: 2026-08-29
+
+### Context
+
+AuthGate occupies the first root Navigator route, while Profile, Settings,
+chat, rooms and notification destinations are pushed above it. Firebase logout
+therefore replaced MainShell underneath the current route without removing
+that route. Its authenticated Firestore streams continued after the token was
+cleared and rendered a permission error over the persistent private dock.
+App-level notification SnackBars and the singleton LiveKit room transport also
+outlived AuthGate, so changing only its child was not a complete session
+boundary.
+
+### Decision
+
+The app-level Firebase Auth subscription owns an auth epoch above the root
+Navigator. Signed-in → signed-out, signed-in account A → account B, and an auth
+stream failure replace the entire route stack with one zero-duration auth
+boundary through `pushAndRemoveUntil`; private `PopScope` vetoes cannot retain
+a route across that boundary. Logout's replacement AuthGate paints Login on
+its first frame rather than crossfading the previous authenticated subtree.
+The ordinary startup animation remains, and signed-out → signed-in does not
+force a stack reset so registration can retain its deliberate Verify Email
+route.
+
+The same transition clears app-level notification SnackBars. Before Firebase
+Auth is cleared, the central sign-out service starts local voice disconnect
+(which synchronously drops microphone/session state) and best-effort room
+roster leave beside presence and FCM cleanup. An active direct call also sends
+its authenticated server-side end action before the local service discards
+`directCallId`. Every network cleanup is bounded and may fail without trapping
+the user in the session. Remote Auth loss and direct A→B replacement can no
+longer mutate roster/call state after authority is gone, but still force the
+local LiveKit disconnect at the app auth-epoch boundary.
+
+### Consequences
+
+- No authenticated page, bottom navigation, notification banner or local
+  LiveKit transport can be inherited by Login or another account.
+- Every logout surface continues to call one `AuthService.signOut()`; screens
+  never reproduce routing or cleanup logic.
+- Root notification navigation and auth routing now intentionally share the
+  same Navigator key because both must address routes without a local context.
+- Automated regressions cover normal animated routes, a PopScope veto, direct
+  A→B replacement, registration preservation, the real immediate Login
+  surface, and bounded room/direct-call cleanup while Auth is still valid.

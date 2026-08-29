@@ -12,41 +12,70 @@ import 'package:yovoice/features/notifications/data/services/push_notification_s
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
 
 class AuthGate extends ConsumerWidget {
-  const AuthGate({super.key});
+  const AuthGate({
+    super.key,
+    this.initiallySignedOut = false,
+    this.initialAuthError,
+  });
+
+  /// A route-stack reset after logout already knows the session is gone. Show
+  /// LoginScreen on its first frame instead of flashing startup animation
+  /// while the new Auth stream delivers its initial null value.
+  final bool initiallySignedOut;
+
+  /// Preserves an auth-stream failure while the route stack is replaced, so a
+  /// private screen cannot remain above the boundary during an auth error.
+  final String? initialAuthError;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final authState = ref.watch(authStateChangesProvider);
-    final child = authState.when<Widget>(
-      loading: () => const KeyedSubtree(
-        key: ValueKey('auth-loading'),
-        child: StartupLoadingScreen(),
+    final immediateBoundary = switch (authState) {
+      AsyncLoading() when initiallySignedOut => const KeyedSubtree(
+        key: ValueKey('auth-signed-out'),
+        child: LoginScreen(),
       ),
-      error: (error, stackTrace) {
-        return KeyedSubtree(
-          key: const ValueKey('auth-error'),
-          child: _AuthErrorScreen(
-            message: error.toString(),
-            onRetry: () {
-              ref.invalidate(authStateChangesProvider);
-            },
+      AsyncLoading() when initialAuthError != null => KeyedSubtree(
+        key: const ValueKey('auth-error'),
+        child: _AuthErrorScreen(
+          message: initialAuthError!,
+          onRetry: () => ref.invalidate(authStateChangesProvider),
+        ),
+      ),
+      _ => null,
+    };
+    final child =
+        immediateBoundary ??
+        authState.when<Widget>(
+          loading: () => const KeyedSubtree(
+            key: ValueKey('auth-loading'),
+            child: StartupLoadingScreen(),
           ),
-        );
-      },
-      data: (user) {
-        if (user == null) {
-          return const KeyedSubtree(
-            key: ValueKey('auth-signed-out'),
-            child: LoginScreen(),
-          );
-        }
+          error: (error, stackTrace) {
+            return KeyedSubtree(
+              key: const ValueKey('auth-error'),
+              child: _AuthErrorScreen(
+                message: error.toString(),
+                onRetry: () {
+                  ref.invalidate(authStateChangesProvider);
+                },
+              ),
+            );
+          },
+          data: (user) {
+            if (user == null) {
+              return const KeyedSubtree(
+                key: ValueKey('auth-signed-out'),
+                child: LoginScreen(),
+              );
+            }
 
-        return KeyedSubtree(
-          key: ValueKey('auth-user-${user.uid}'),
-          child: const _AuthenticatedEntry(),
+            return KeyedSubtree(
+              key: ValueKey('auth-user-${user.uid}'),
+              child: const _AuthenticatedEntry(),
+            );
+          },
         );
-      },
-    );
 
     final reduceMotion = MediaQuery.disableAnimationsOf(context);
     return AnimatedSwitcher(
