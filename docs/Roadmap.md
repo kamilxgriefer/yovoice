@@ -17,7 +17,7 @@ someone decide what to pick up next.
 ## Done
 
 - **The central YO action now sits in a real sculpted dock cradle**
-  (2026-08-29, ADR-128, **WEB DEPLOYMENT PENDING; NATIVE STORE BUILD PENDING**):
+  (2026-08-29, ADR-128, **WEB HOSTING DEPLOYED; NATIVE STORE BUILD PENDING**):
   the shared mobile navigation surface no longer paints a circular logo over a
   complete rounded rectangle. Its border, translucent fill, clipping and
   shadows now follow one smooth tangent notch around the raised YO action in

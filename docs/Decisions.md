@@ -7927,7 +7927,7 @@ Flutter owns correct chrome from the first rendered app frame.
 
 ## ADR-128: The central YO action is cradled by the dock's actual outline
 
-**Status**: Implemented in source; web and native release pending
+**Status**: Implemented; web Hosting deployed; native store build pending
 **Date**: 2026-08-29
 
 ### Context

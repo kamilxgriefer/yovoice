@@ -15,6 +15,31 @@ deployables described in
 | Storage rules | `firebase deploy --only storage` | Manual |
 | `yovoice-website` | Vercel | Automatic, on push to `main` (separate repo) |
 
+### Released 2026-08-29: sculpted central YO dock cradle
+
+**WEB HOSTING RELEASED from
+`17b386bb9176621f3b13872f4a5b57dd654f0561`; NATIVE TESTER BUILD PENDING.**
+The shared mobile dock now owns one tangent notched outline for its fill,
+border, shadow and clipping, with a recessed semantic socket behind the
+64/68 px YO action. The entire circular ring remains tappable. Ordered
+keyboard focus, an explicit centre focus boundary and a full-label two-by-two
+layout at 160%+ text complete the accessibility pass without changing the
+five product destinations or their routing.
+
+Hosting workflow
+[33238217610](https://github.com/kamilxgriefer/yovoice/actions/runs/33238217610)
+passed the full pinned verification and deployed the artifact. The live
+`https://app.yovoice.app/main.dart.js` matches the workflow artifact at
+SHA-256
+`4e9f3c2abe99ce25c306d4a9afad92d9ff0f7311b8fc2903840d9496ce7605eb`.
+Push verification, CodeQL and the Chrome browser smoke all passed; local
+release evidence is Flutter VM **1617/1617**, targeted dock **14/14**, real
+Chrome audio **1/1**, Playwright **2/2**, clean analysis and a successful
+release web build. Dark/Pearl real-font captures cover 320/390/430 px,
+including 200% text. No iOS or Android package was created because native
+distribution remains intentionally queued for the next coordinated tester
+build.
+
 ### Released 2026-08-28: direct-chat reliability and mobile build 11
 
 **WEB, BACKEND AND BOTH PERMANENT MOBILE TESTER CHANNELS RELEASED from

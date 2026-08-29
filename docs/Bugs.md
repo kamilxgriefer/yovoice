@@ -2623,4 +2623,6 @@ permission flags).
   accessibility pass also gives the whole painted ring one circular hitbox,
   orders keyboard focus Home → Chats → YO → Moments → More, paints a visible
   YO focus boundary and switches 160%+ text to a taller two-by-two destination
-  layout instead of truncating labels.
+  layout instead of truncating labels. Firebase Hosting workflow
+  `33238217610` deployed the pinned `17b386b` artifact on 2026-08-29; the live
+  `main.dart.js` matches that artifact byte-for-byte.
