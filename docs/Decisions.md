@@ -7828,7 +7828,7 @@ ripple.
 
 ## ADR-126: Vibe links are explicit public-HTTPS actions, not trusted rich text
 
-**Status**: Implemented in source; native store build pending
+**Status**: Deployed to web Hosting and byte-verified; native store build pending
 **Date**: 2026-08-29
 
 ### Context

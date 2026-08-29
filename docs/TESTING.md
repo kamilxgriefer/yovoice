@@ -59,7 +59,9 @@ are kept in the movement log below as history.
 > themes. The existing failed-launch regression now also pins the paired error
 > surface at 4.5:1. A separate explicit real-theme harness rendered and passed
 > **10** Dark/Pearl frames at 320/390/768/1440 px plus 320 px/200% text. The
-> complete VM suite passed 1633/1633 and `flutter analyze` remained clean.
+> complete VM suite passed 1633/1633 and `flutter analyze` remained clean. The
+> production `main.dart.js` fetched through both Hosting domains is byte-exact
+> to the verified local release (SHA-256 `1a23f11d8e816a0d`, 6,445,943 bytes).
 
 **A trap worth naming, because it cost a full diagnosis pass.**
 `firestore-tests/storage.test.js` used to hardcode Firestore 8080 and Storage

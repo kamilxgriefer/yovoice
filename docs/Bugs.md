@@ -1251,7 +1251,7 @@ permission flags).
   plain text; false/throwing launch attempts stay visible inline without
   exposing platform errors. Parser, double-fire/cooldown, disposal,
   accessibility, preview-bio fallback and 320 px/200% regressions cover the
-  path. See ADR-126. **FOLLOW-UP FIXED IN SOURCE 2026-08-29 — the Dark Vibe
+  path. See ADR-126. **FOLLOW-UP FIXED AND RELEASED TO WEB 2026-08-29 — the Dark Vibe
   surface and identity chips used primary purple beneath primary-purple
   icons, collapsing the visual hierarchy and dropping informative icon
   contrast as low as 1.46:1.** Vibe now uses a calm opaque semantic surface
@@ -1261,7 +1261,9 @@ permission flags).
   external/voice/learning accents. Dark and Pearl contrast regressions pin
   text at 4.5:1 and informative icons at 3:1; exact production-card renders
   cover 320/390/768/1440 px plus 320 px at 200% text without clipping. The
-  native change still waits for the next coordinated tester build.
+  served `main.dart.js` on both Hosting domains is byte-identical to the
+  verified release (SHA-256 `1a23f11d8e816a0d`, 6,445,943 bytes). The native
+  change still waits for the next coordinated tester build.
 
 - **FIXED AND RELEASED TO WEB/MOBILE BETA 2026-08-28 — Podcast Room behaved like a recolored
   Community Room and ignored parts of its own creation contract.** The screen

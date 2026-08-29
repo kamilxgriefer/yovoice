@@ -1341,13 +1341,15 @@ someone decide what to pick up next.
   link semantics, double-fire, failure, disposal and 320 px/200% behavior are
   regression-tested. See ADR-126. The native change waits for the next
   coordinated tester build rather than creating a one-off store upload. A
-  second 2026-08-29 source follow-up separates Vibe and Voice identity
+  second 2026-08-29 web-released follow-up separates Vibe and Voice identity
   accents from their surfaces: Vibe is now a quiet semantic card, provider
   actions use the tertiary cyan/teal role, identity chips are neutral with
   external/voice/learning accents, and inline failure uses the paired error
   roles. Real Dark/Pearl production-card frames at 320/390/768/1440 px and
   320 px/200% text plus automated contrast gates prevent another
-  purple-on-purple regression.
+  purple-on-purple regression. Both Hosting domains serve the byte-identical
+  verified bundle (SHA-256 `1a23f11d8e816a0d`, 6,445,943 bytes); the native
+  tester build remains held for the coordinated queue release.
 - Full documentation system — Vision/Architecture/Features/Roadmap/
   Firebase/Backend/Flutter/UI/Decisions/Bugs plus this evolution pass
   (`02275bd`, `26d11a2`, and this session's commit).
