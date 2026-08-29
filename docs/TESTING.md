@@ -18,10 +18,10 @@ correction silently broke all three anchors.)*
 | Storage rules | `npm --prefix firestore-tests run test:storage` | **60** checks |
 | Family media (combined) | `npm --prefix firestore-tests run test:family-media` | **11** checks |
 | Cloud Functions | `npm --prefix functions test` | **920** tests (70 `*.test.js` files) |
-| Flutter VM | `flutter test` | **1629** tests (148 VM-compatible files) |
+| Flutter VM | `flutter test` | **1633** tests (148 VM-compatible files) |
 | Flutter browser | `flutter test --platform chrome test/web_audio_capture_browser_test.dart` | **1** test (1 browser-only file) |
 
-**Where these numbers came from.** Functions 920 and Flutter VM 1629 were
+**Where these numbers came from.** Functions 920 and Flutter VM 1633 were
 re-measured on 2026-08-29 against the exact current source; Rules 519 was last
 re-measured on 2026-08-28. A deliberately
 sequential full Functions run reached 901/903 because two unrelated suites
@@ -35,7 +35,7 @@ checks. A final direct-call lock audit added four emulator regressions for late
 cancel/decline/end and expiry preserving a replacement call's locks; the exact
 concurrent Functions gate then passed 907/907 on a fresh emulator pair. The
 later ADR-130 identity wave passed 920/920 on a fresh Auth/Firestore emulator
-pair. Flutter VM 1629 passed in one invocation, the real Chrome Blob lifecycle passed
+pair. Flutter VM 1633 passed in one invocation, the real Chrome Blob lifecycle passed
 1/1, and `flutter analyze` was clean on those bytes. Storage 60 and family
 media 11 also ran against fresh isolated emulators rather than an occupied
 local 8080 endpoint. Web and signed Android release compilation succeeded. The
@@ -51,6 +51,15 @@ are kept in the movement log below as history.
 > injected repository swap. Dark/Pearl real-font screenshot frames cover
 > 320/390/768/1100/1440 px plus 390 px at 200% text. The complete VM suite
 > passed 1629/1629 and `flutter analyze` remained clean.
+
+> **Movement, 2026-08-29 (Vibe and identity colour hierarchy).** Flutter VM
+> **1629 → 1633** adds exact production-card Dark/Pearl contrast gates for
+> the Vibe label, informative icons, provider actions and all three identity
+> chip tones, plus full-identity completeness at 320 px/200% text in both
+> themes. The existing failed-launch regression now also pins the paired error
+> surface at 4.5:1. A separate explicit real-theme harness rendered and passed
+> **10** Dark/Pearl frames at 320/390/768/1440 px plus 320 px/200% text. The
+> complete VM suite passed 1633/1633 and `flutter analyze` remained clean.
 
 **A trap worth naming, because it cost a full diagnosis pass.**
 `firestore-tests/storage.test.js` used to hardcode Firestore 8080 and Storage
@@ -655,7 +664,7 @@ provider checkout.
 
 ## Dart tests — real, but narrow
 
-`test/` — **1629 VM tests across 148 compatible files**, plus **1 real-Chrome
+`test/` — **1633 VM tests across 148 compatible files**, plus **1 real-Chrome
 test** in the repository's one browser-only file (**149 `*_test.dart` files
 total**), green in local verification, grown mostly
 out of real bugs rather than an even coverage discipline. The
@@ -692,7 +701,8 @@ pattern throughout: fake the Firebase backends
   JPEGs and that `statusMessage` survives the same Firestore/stream round trip.
 - **`profile_voice_identity_test.dart`** — renders the exact production Voice
   identity card and pins saved Vibe, the full 80-character value at
-  320 px/200% text, plus the long website-only populated state.
+  320 px/200% text, the long website-only populated state, and Dark/Pearl
+  contrast for Vibe, provider actions and external/voice/learning metadata.
 - **`friend_profile_responsive_test.dart`** — keeps that same saved Vibe on
   another member's full-profile route across 320–2560 px and in the 320 px/200%
   semantics pass.

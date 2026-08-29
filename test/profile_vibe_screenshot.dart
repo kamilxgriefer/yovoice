@@ -1,7 +1,6 @@
-// Developer-only VISUAL harness for actionable profile Vibes.
+// Developer-only VISUAL harness for the exact production Voice identity card.
 //
-// NOT a test; the name has no `_test` suffix so the normal suite skips it.
-// Run explicitly:
+// NOT a normal test; run explicitly:
 //
 //   flutter test test/profile_vibe_screenshot.dart
 //
@@ -15,7 +14,9 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:yovoice/features/profile/presentation/widgets/profile_vibe_headline.dart';
+import 'package:yovoice/core/theme/app_theme.dart';
+import 'package:yovoice/features/profile/data/models/user_profile.dart';
+import 'package:yovoice/features/profile/presentation/screens/profile_screen.dart';
 
 String get _fontRoot {
   const candidates = [
@@ -30,25 +31,66 @@ String get _fontRoot {
 final _capture = GlobalKey();
 
 Future<void> _loadRealFonts() async {
-  Future<ByteData> read(String name) async {
+  Future<ByteData> readMaterialFont(String name) async {
     final bytes = File('$_fontRoot/$name').readAsBytesSync();
     return ByteData.view(Uint8List.fromList(bytes).buffer);
   }
 
-  final roboto = FontLoader('Roboto');
-  for (final face in const [
-    'Roboto-Regular.ttf',
-    'Roboto-Medium.ttf',
-    'Roboto-Bold.ttf',
-    'Roboto-Black.ttf',
-  ]) {
-    roboto.addFont(read(face));
-  }
-  await roboto.load();
+  final inter = FontLoader('Inter')
+    ..addFont(
+      Future.value(
+        ByteData.view(
+          File('assets/fonts/InterVariable.ttf').readAsBytesSync().buffer,
+        ),
+      ),
+    )
+    ..addFont(
+      Future.value(
+        ByteData.view(
+          File(
+            'assets/fonts/InterVariable-Italic.ttf',
+          ).readAsBytesSync().buffer,
+        ),
+      ),
+    );
+  await inter.load();
   final icons = FontLoader('MaterialIcons')
-    ..addFont(read('MaterialIcons-Regular.otf'));
+    ..addFont(readMaterialFont('MaterialIcons-Regular.otf'));
   await icons.load();
 }
+
+UserProfile _profile() => UserProfile(
+  uid: 'vibe-preview',
+  email: 'vibe@yovoice.app',
+  displayName: 'CeoGriefer',
+  username: 'ceogriefer',
+  statusMessage:
+      'Linkin Park - In the End https://youtu.be/eVTXPUF4Oz4?si=YOvoice',
+  bio: 'CEO.',
+  country: 'Poland',
+  nativeLanguage: 'Polish',
+  spokenLanguages: const ['English'],
+  learningLanguages: const ['Japanese'],
+  photoUrl: null,
+  bannerUrl: null,
+  website: 'yovoice.app',
+  accountType: AccountType.creator,
+  friendCount: 2,
+  followerCount: 2,
+  followingCount: 2,
+  roomCount: 0,
+  communityCount: 0,
+  voiceMinutes: 0,
+  messageCount: 0,
+  activeDays: 0,
+  momentCount: 0,
+  reactionCount: 0,
+  hostMinutes: 0,
+  selectedTitleId: null,
+  unlockedTitleIds: const [],
+  unlockedTitleTimestamps: const {},
+  createdAt: DateTime(2026),
+);
 
 Future<void> _shoot(WidgetTester tester, String name) async {
   await tester.runAsync(() async {
@@ -68,68 +110,21 @@ Future<void> _shoot(WidgetTester tester, String name) async {
   });
 }
 
-Future<void> _pump(WidgetTester tester) async {
+Future<void> _pump(WidgetTester tester, {required ThemeData theme}) async {
   await tester.pumpWidget(
     RepaintBoundary(
       key: _capture,
       child: MaterialApp(
         debugShowCheckedModeBanner: false,
-        theme: ThemeData(
-          brightness: Brightness.dark,
-          useMaterial3: true,
-          fontFamily: 'Roboto',
-        ),
+        theme: theme,
         home: Scaffold(
-          backgroundColor: const Color(0xFF09050F),
           body: SafeArea(
             child: SingleChildScrollView(
               padding: const EdgeInsets.all(18),
               child: Center(
                 child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 720),
-                  child: Container(
-                    padding: const EdgeInsets.all(18),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF17101F),
-                      borderRadius: BorderRadius.circular(22),
-                      border: Border.all(color: const Color(0xFF3C2C45)),
-                    ),
-                    child: const Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            Icon(
-                              Icons.language_rounded,
-                              color: Color(0xFFB348FF),
-                            ),
-                            SizedBox(width: 12),
-                            Expanded(
-                              child: Text(
-                                'Voice identity',
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 22,
-                                  fontWeight: FontWeight.w900,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                        SizedBox(height: 16),
-                        ProfileVibeHeadline(
-                          vibe:
-                              'Linkin Park - In the End '
-                              'https://youtu.be/eVTXPUF4Oz4?si=YOvoice',
-                        ),
-                        SizedBox(height: 18),
-                        Text(
-                          'CEO.',
-                          style: TextStyle(color: Color(0xFFD9CFE3)),
-                        ),
-                      ],
-                    ),
-                  ),
+                  constraints: const BoxConstraints(maxWidth: 1040),
+                  child: ProfileVoiceIdentityCard(profile: _profile()),
                 ),
               ),
             ),
@@ -144,23 +139,39 @@ Future<void> _pump(WidgetTester tester) async {
 void main() {
   setUpAll(_loadRealFonts);
 
-  for (final size in const [Size(390, 844), Size(768, 1024)]) {
-    testWidgets('vibe-${size.width.toInt()}', (tester) async {
-      tester.view.physicalSize = size;
+  for (final theme in <(String, ThemeData)>[
+    ('dark', AppTheme.darkTheme),
+    ('pearl', AppTheme.lightTheme),
+  ]) {
+    for (final size in const [
+      Size(320, 568),
+      Size(390, 844),
+      Size(768, 1024),
+      Size(1440, 900),
+    ]) {
+      testWidgets(
+        'voice-identity-${theme.$1}-${size.width.toInt()}x${size.height.toInt()}',
+        (tester) async {
+          tester.view.physicalSize = size;
+          tester.view.devicePixelRatio = 1;
+          addTearDown(tester.view.reset);
+          await _pump(tester, theme: theme.$2);
+          await _shoot(
+            tester,
+            'profile-voice-identity-${theme.$1}-${size.width.toInt()}',
+          );
+        },
+      );
+    }
+
+    testWidgets('voice-identity-${theme.$1}-320-scale2', (tester) async {
+      tester.view.physicalSize = const Size(320, 844);
       tester.view.devicePixelRatio = 1;
+      tester.platformDispatcher.textScaleFactorTestValue = 2;
       addTearDown(tester.view.reset);
-      await _pump(tester);
-      await _shoot(tester, 'profile-vibe-${size.width.toInt()}');
+      addTearDown(tester.platformDispatcher.clearAllTestValues);
+      await _pump(tester, theme: theme.$2);
+      await _shoot(tester, 'profile-voice-identity-${theme.$1}-320-scale2');
     });
   }
-
-  testWidgets('vibe-320-scale2', (tester) async {
-    tester.view.physicalSize = const Size(320, 568);
-    tester.view.devicePixelRatio = 1;
-    tester.platformDispatcher.textScaleFactorTestValue = 2;
-    addTearDown(tester.view.reset);
-    addTearDown(tester.platformDispatcher.clearAllTestValues);
-    await _pump(tester);
-    await _shoot(tester, 'profile-vibe-320-scale2');
-  });
 }

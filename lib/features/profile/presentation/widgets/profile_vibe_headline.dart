@@ -77,17 +77,28 @@ class _ProfileVibeHeadlineState extends State<ProfileVibeHeadline> {
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
-    final scheme = Theme.of(context).colorScheme;
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
     final value = widget.vibe.trim();
     final links = ProfileVibeLink.fromText(value);
     final description = profileVibeDescription(value, links);
     final radius = BorderRadius.circular(widget.compact ? 14 : 16);
+    final surface = Color.alphaBlend(
+      scheme.primary.withValues(alpha: isDark ? .13 : .055),
+      palette.surfaceMuted,
+    );
+    final border = Color.alphaBlend(
+      palette.focus.withValues(alpha: isDark ? .44 : .28),
+      palette.border,
+    );
 
     return Material(
-      color: scheme.primaryContainer.withValues(alpha: .72),
+      key: const ValueKey('profile-vibe-surface'),
+      color: surface,
       shape: RoundedRectangleBorder(
         borderRadius: radius,
-        side: BorderSide(color: scheme.primary.withValues(alpha: .46)),
+        side: BorderSide(color: border),
       ),
       clipBehavior: Clip.antiAlias,
       child: Padding(
@@ -101,9 +112,10 @@ class _ProfileVibeHeadlineState extends State<ProfileVibeHeadline> {
                 Padding(
                   padding: const EdgeInsets.only(top: 1),
                   child: Icon(
+                    key: const ValueKey('profile-vibe-accent-icon'),
                     Icons.auto_awesome_rounded,
                     size: widget.compact ? 17 : 19,
-                    color: scheme.primary,
+                    color: palette.focus,
                   ),
                 ),
                 SizedBox(width: widget.compact ? 8 : 10),
@@ -113,8 +125,9 @@ class _ProfileVibeHeadlineState extends State<ProfileVibeHeadline> {
                     children: [
                       Text(
                         'VIBE',
+                        key: const ValueKey('profile-vibe-label'),
                         style: TextStyle(
-                          color: scheme.primary,
+                          color: palette.focus,
                           fontSize: 11,
                           fontWeight: FontWeight.w900,
                           letterSpacing: 1.25,
@@ -155,12 +168,26 @@ class _ProfileVibeHeadlineState extends State<ProfileVibeHeadline> {
               const SizedBox(height: 8),
               Semantics(
                 liveRegion: true,
-                child: Text(
-                  _openError!,
-                  style: TextStyle(
-                    color: scheme.error,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
+                child: Container(
+                  key: const ValueKey('profile-vibe-error'),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 7,
+                  ),
+                  decoration: BoxDecoration(
+                    color: scheme.errorContainer,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(
+                      color: scheme.error.withValues(alpha: .46),
+                    ),
+                  ),
+                  child: Text(
+                    _openError!,
+                    style: TextStyle(
+                      color: scheme.onErrorContainer,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
                 ),
               ),
@@ -195,7 +222,12 @@ class _VibeLinkRowState extends State<_VibeLinkRow> {
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
-    final scheme = Theme.of(context).colorScheme;
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final linkAccent = scheme.tertiary;
+    final linkSurface = theme.brightness == Brightness.dark
+        ? palette.surfaceSunken
+        : palette.surfaceRaised;
     const radius = BorderRadius.all(Radius.circular(14));
     return Semantics(
       container: true,
@@ -207,12 +239,12 @@ class _VibeLinkRowState extends State<_VibeLinkRow> {
       child: ExcludeSemantics(
         child: Material(
           key: ValueKey('profile-vibe-link-surface-${widget.link.uri}'),
-          color: palette.surfaceRaised.withValues(alpha: .9),
+          color: linkSurface,
           shape: RoundedRectangleBorder(
             borderRadius: radius,
             side: BorderSide(
-              color: _focused ? palette.focus : Colors.transparent,
-              width: 2,
+              color: _focused ? palette.focus : palette.border,
+              width: _focused ? 2 : 1,
             ),
           ),
           clipBehavior: Clip.antiAlias,
@@ -238,14 +270,17 @@ class _VibeLinkRowState extends State<_VibeLinkRow> {
                         dimension: 18,
                         child: CircularProgressIndicator(
                           strokeWidth: 2,
-                          color: scheme.primary,
+                          color: linkAccent,
                         ),
                       )
                     else
                       Icon(
+                        key: ValueKey(
+                          'profile-vibe-link-leading-${widget.link.uri}',
+                        ),
                         Icons.music_note_rounded,
                         size: 20,
-                        color: scheme.primary,
+                        color: linkAccent,
                       ),
                     const SizedBox(width: 10),
                     Expanded(
@@ -279,9 +314,12 @@ class _VibeLinkRowState extends State<_VibeLinkRow> {
                     ),
                     const SizedBox(width: 8),
                     Icon(
+                      key: ValueKey(
+                        'profile-vibe-link-trailing-${widget.link.uri}',
+                      ),
                       Icons.open_in_new_rounded,
                       size: 18,
-                      color: scheme.primary,
+                      color: linkAccent,
                     ),
                   ],
                 ),

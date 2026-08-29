@@ -3,6 +3,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/helpers/error_messages.dart';
+import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/achievements/data/achievement_catalog.dart';
 import 'package:yovoice/features/achievements/data/models/achievement_definition.dart';
@@ -499,19 +500,36 @@ class ProfileVoiceIdentityCard extends StatelessWidget {
               runSpacing: 8,
               children: [
                 if (profile.country.isNotEmpty)
-                  _Chip(profile.country, Icons.public_rounded),
+                  _Chip(
+                    profile.country,
+                    Icons.public_rounded,
+                    tone: _IdentityChipTone.external,
+                  ),
                 if (profile.website.isNotEmpty)
-                  _Chip(profile.website, Icons.link_rounded),
+                  _Chip(
+                    profile.website,
+                    Icons.link_rounded,
+                    tone: _IdentityChipTone.external,
+                  ),
                 if (profile.nativeLanguage.isNotEmpty)
                   _Chip(
                     'Native: ${profile.nativeLanguage}',
                     Icons.record_voice_over_rounded,
+                    tone: _IdentityChipTone.voice,
                   ),
                 ...profile.spokenLanguages.map(
-                  (item) => _Chip(item, Icons.translate_rounded),
+                  (item) => _Chip(
+                    item,
+                    Icons.translate_rounded,
+                    tone: _IdentityChipTone.voice,
+                  ),
                 ),
                 ...profile.learningLanguages.map(
-                  (item) => _Chip('Learning $item', Icons.school_rounded),
+                  (item) => _Chip(
+                    'Learning $item',
+                    Icons.school_rounded,
+                    tone: _IdentityChipTone.learning,
+                  ),
                 ),
               ],
             ),
@@ -987,33 +1005,68 @@ class _Header extends StatelessWidget {
   }
 }
 
+enum _IdentityChipTone { external, voice, learning }
+
 class _Chip extends StatelessWidget {
-  const _Chip(this.label, this.icon);
+  const _Chip(this.label, this.icon, {required this.tone});
   final String label;
   final IconData icon;
+  final _IdentityChipTone tone;
 
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
+    final theme = Theme.of(context);
     final colors = Theme.of(context).colorScheme;
+    final accent = switch (tone) {
+      _IdentityChipTone.external => colors.tertiary,
+      _IdentityChipTone.voice => palette.focus,
+      _IdentityChipTone.learning =>
+        theme.brightness == Brightness.dark
+            ? AppColors.vipGold
+            : Color.lerp(AppColors.vipGold, palette.textPrimary, .62)!,
+    };
+    final surface = Color.alphaBlend(
+      accent.withValues(
+        alpha: theme.brightness == Brightness.dark ? .055 : .03,
+      ),
+      palette.surfaceRaised,
+    );
+    final border = Color.alphaBlend(
+      accent.withValues(alpha: theme.brightness == Brightness.dark ? .18 : .12),
+      palette.border,
+    );
+    final usesLargeText = MediaQuery.textScalerOf(context).scale(12.5) >= 18;
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+      key: ValueKey('profile-identity-chip-$label'),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
       decoration: BoxDecoration(
-        color: colors.primaryContainer.withValues(alpha: .64),
+        color: surface,
         borderRadius: BorderRadius.circular(99),
-        border: Border.all(color: colors.primary.withValues(alpha: .34)),
+        border: Border.all(color: border),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, color: colors.primary, size: 15),
+          Icon(
+            icon,
+            key: ValueKey('profile-identity-chip-icon-$label'),
+            color: accent,
+            size: 16,
+          ),
           const SizedBox(width: 6),
           Flexible(
             child: Text(
               label,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(color: palette.textPrimary, fontSize: 12),
+              maxLines: usesLargeText ? 2 : 1,
+              overflow: usesLargeText
+                  ? TextOverflow.visible
+                  : TextOverflow.ellipsis,
+              style: TextStyle(
+                color: palette.textPrimary,
+                fontSize: 12.5,
+                fontWeight: FontWeight.w600,
+              ),
             ),
           ),
         ],

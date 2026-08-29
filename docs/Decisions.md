@@ -7869,6 +7869,13 @@ non-interactive because the whole card already opens a profile.
 - Scheme-less, HTTP and custom-scheme text deliberately stays non-actionable.
 - No Firestore field, projection, Security Rule or dependency changes are
   required; this is presentation and local input validation only.
+- Vibe is not rendered as primary content on a primary-tinted surface. Its
+  container is an opaque semantic surface, its label uses the focus role,
+  actionable provider icons use the tertiary role, and inline launch failure
+  uses the paired error container roles. Adjacent identity metadata remains
+  neutral with accessible external/voice/learning accents; this is a visual
+  semantic refinement only and does not change stored profile data or URL
+  trust rules.
 - Automated coverage pins multiple links, Unicode paths, punctuation,
   malicious hosts, exact launch URI, keyboard/screen-reader semantics,
   double-fire, failure/disposal and 320 px at 200% text. Real-font frames cover

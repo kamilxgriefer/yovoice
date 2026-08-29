@@ -210,6 +210,18 @@ void main() {
         await tester.tap(link);
         await tester.pump();
         expect(find.text("Couldn't open this link."), findsOneWidget);
+        final errorBox = tester.widget<Container>(
+          find.byKey(const ValueKey('profile-vibe-error')),
+        );
+        final errorSurface = (errorBox.decoration! as BoxDecoration).color!;
+        final errorText = tester
+            .widget<Text>(find.text("Couldn't open this link."))
+            .style!
+            .color!;
+        expect(
+          _contrastRatio(errorText, errorSurface),
+          greaterThanOrEqualTo(4.5),
+        );
 
         await tester.tap(link);
         await tester.pump();
@@ -269,6 +281,16 @@ void main() {
       expect(tester.takeException(), isNull);
     });
   });
+}
+
+double _contrastRatio(Color first, Color second) {
+  final lighter = first.computeLuminance() > second.computeLuminance()
+      ? first.computeLuminance()
+      : second.computeLuminance();
+  final darker = first.computeLuminance() > second.computeLuminance()
+      ? second.computeLuminance()
+      : first.computeLuminance();
+  return (lighter + .05) / (darker + .05);
 }
 
 Future<void> _pumpVibe(
