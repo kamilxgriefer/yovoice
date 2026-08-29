@@ -70,8 +70,18 @@ class IdentityBadgePill extends StatelessWidget {
   final IconData icon;
   final IdentityBadgeVariant variant;
 
+  Color _foreground(BuildContext context) {
+    if (Theme.of(context).brightness == Brightness.dark) return color;
+    // Bright role swatches are excellent accents on Dark, but several are
+    // below text contrast on Pearl. Preserve their hue while moving the
+    // display foreground into an AA-safe range; the canonical role colour
+    // itself remains unchanged and still owns the tint/border.
+    return Color.lerp(color, Colors.black, .50)!;
+  }
+
   @override
   Widget build(BuildContext context) {
+    final foreground = _foreground(context);
     if (variant == IdentityBadgeVariant.icon) {
       return Tooltip(
         message: label,
@@ -83,13 +93,14 @@ class IdentityBadgePill extends StatelessWidget {
             shape: BoxShape.circle,
             border: Border.all(color: color.withValues(alpha: .5), width: .8),
           ),
-          child: Icon(icon, size: 10, color: color),
+          child: Icon(icon, size: 10, color: foreground),
         ),
       );
     }
 
     final compact = variant == IdentityBadgeVariant.compact;
     return Container(
+      constraints: BoxConstraints(minHeight: compact ? 24 : 28),
       padding: EdgeInsets.symmetric(
         horizontal: compact ? 6 : 9,
         vertical: compact ? 2 : 4,
@@ -102,7 +113,7 @@ class IdentityBadgePill extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: compact ? 10 : 12, color: color),
+          Icon(icon, size: compact ? 10 : 12, color: foreground),
           SizedBox(width: compact ? 3 : 4),
           // Flexible so a pill wider than its surface ellipsizes instead
           // of overflowing — the badge itself is the last line of the
@@ -113,7 +124,7 @@ class IdentityBadgePill extends StatelessWidget {
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
-                color: color,
+                color: foreground,
                 fontSize: compact ? 9.5 : 11,
                 fontWeight: FontWeight.w800,
                 letterSpacing: .4,

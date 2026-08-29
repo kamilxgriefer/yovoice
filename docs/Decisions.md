@@ -8050,3 +8050,53 @@ only after explicit `--apply`.
 - Repair failures emit no document paths or account identifiers to the CLI.
 - Build 13 and a two-account Chats/Home smoke test remain native release
   evidence; automated coverage is not represented as physical-device proof.
+
+## ADR-131: Profile identity uses a two-level passport rail, not a badge staircase
+
+**Status**: Implemented in source; web Hosting pending; native tester build held
+**Date**: 2026-08-29
+
+### Context
+
+The compact Profile header still placed every identity marker in the narrow
+column beside a large avatar. An owner with VIP, Creator, Premium and a selected
+achievement therefore produced four visually unrelated floors below the
+pseudonym. The badges were all truthful, but their layout made authority,
+product access and cosmetics look like one undifferentiated stack and pushed
+the first content card far below the hero. Pearl exposed adjacent contrast
+defects in bright role and fallback-avatar colours.
+
+### Decision
+
+The profile hero becomes one responsive passport composition. Avatar and
+pseudonym remain the primary row; the pseudonym sits on a small semantic
+surface plate so it stays readable across arbitrary banners and both themes.
+Avatar diameter steps down from 96 to 88, 80 and 72 logical pixels as available
+width contracts. The display name is the heading and may occupy two lines;
+username remains complete whenever its own line fits.
+
+Identity labels use the full 18-pixel-gutter content width below that row. With
+an achievement selected, the first level is official authority (role + VIP)
+and the second is product/cosmetic identity (account type + Premium + title).
+Without a selected title, those compact labels share one Wrap to avoid buying a
+second row unnecessarily. Normal phone text fits the complete owner case in two
+levels. Enlarged text may wrap further rather than abbreviating, scrolling or
+hiding an identity.
+
+Canonical role colours still own tint and border, while Pearl may use a darker
+foreground of the same hue to meet contrast. The fallback avatar similarly uses
+the Pearl primary surface behind its white initial. None of these presentation
+choices changes entitlement or staff authority.
+
+### Consequences
+
+- The densest real owner profile stays below 295 logical pixels at 390 px and
+  all five labels remain visible at 320 px/200% text.
+- Authority reads first and independently from achievements; a cosmetic title
+  can no longer resemble an additional staff tier by placement.
+- Badge repository injection is a real lifecycle seam: changing repositories
+  detaches the old revision listener, resolves again and cannot retain a
+  disposed State.
+- Dark/Pearl real-font captures at 320–1440 px plus explicit contrast and
+  heading-semantics assertions are release evidence. Physical native evidence
+  waits for the next coordinated tester build, not a one-off upload.

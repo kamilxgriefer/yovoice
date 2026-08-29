@@ -14,13 +14,18 @@
 import 'dart:io';
 import 'dart:ui' as ui;
 
+import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:yovoice/core/theme/app_palette.dart';
+import 'package:yovoice/core/theme/app_theme.dart';
+import 'package:yovoice/features/achievements/data/models/achievement_definition.dart';
 import 'package:yovoice/features/profile/data/models/user_profile.dart';
 import 'package:yovoice/features/profile/presentation/widgets/profile_header.dart';
+import 'package:yovoice/shared/identity/public_identity_repository.dart';
 
 String get _fontRoot {
   const candidates = [
@@ -87,21 +92,41 @@ UserProfile _profile() => UserProfile(
   createdAt: DateTime(2026),
 );
 
+const _firstWord = AchievementDefinition(
+  id: 'messages_1',
+  title: 'First Word',
+  description: 'Send one written message.',
+  metric: 'messages',
+  threshold: 1,
+  rarity: AchievementRarity.common,
+);
+
+PublicIdentityRepository _identityRepository() => PublicIdentityRepository(
+  auth: MockFirebaseAuth(signedIn: true, mockUser: MockUser(uid: 'viewer')),
+  fetchOverride: (uids) async => {
+    for (final uid in uids)
+      uid: const {'staffRole': 'superAdmin', 'isVip': true},
+  },
+  flushDelay: const Duration(milliseconds: 1),
+);
+
 /// A stand-in for the content panels below the header, so alignment of
 /// the toolbar/banner against the page gutter is visible in the shots.
-Widget _contentPanel() => Padding(
-  padding: const EdgeInsets.fromLTRB(18, 14, 18, 0),
-  child: Container(
-    height: 110,
-    decoration: BoxDecoration(
-      color: const Color(0xFF17101F),
-      borderRadius: BorderRadius.circular(22),
-      border: Border.all(color: const Color(0xFF3C2C45)),
-    ),
-    alignment: Alignment.center,
-    child: const Text(
-      'content panel',
-      style: TextStyle(color: Color(0xFFA99DB3)),
+Widget _contentPanel() => Builder(
+  builder: (context) => Padding(
+    padding: const EdgeInsets.fromLTRB(18, 14, 18, 0),
+    child: Container(
+      height: 110,
+      decoration: BoxDecoration(
+        color: context.appPalette.surface,
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(color: context.appPalette.border),
+      ),
+      alignment: Alignment.center,
+      child: Text(
+        'content panel',
+        style: TextStyle(color: context.appPalette.textSecondary),
+      ),
     ),
   ),
 );
@@ -124,7 +149,7 @@ Future<void> _shoot(WidgetTester tester, String name) async {
   });
 }
 
-Future<void> _pump(WidgetTester tester) async {
+Future<void> _pump(WidgetTester tester, {required ThemeData theme}) async {
   final navigatorKey = GlobalKey<NavigatorState>();
   await tester.pumpWidget(
     RepaintBoundary(
@@ -132,10 +157,9 @@ Future<void> _pump(WidgetTester tester) async {
       child: MaterialApp(
         debugShowCheckedModeBanner: false,
         navigatorKey: navigatorKey,
-        theme: ThemeData(
-          brightness: Brightness.dark,
-          useMaterial3: true,
-          fontFamily: 'Roboto',
+        theme: theme.copyWith(
+          textTheme: theme.textTheme.apply(fontFamily: 'Roboto'),
+          primaryTextTheme: theme.primaryTextTheme.apply(fontFamily: 'Roboto'),
         ),
         home: const Scaffold(body: SizedBox()),
       ),
@@ -144,14 +168,18 @@ Future<void> _pump(WidgetTester tester) async {
   navigatorKey.currentState!.push(
     MaterialPageRoute<void>(
       builder: (_) => Scaffold(
-        backgroundColor: const Color(0xFF09050F),
         body: Align(
           alignment: Alignment.topCenter,
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 1040),
             child: ListView(
               children: [
-                ProfileHeader(profile: _profile(), onEdit: () {}),
+                ProfileHeader(
+                  profile: _profile(),
+                  title: _firstWord,
+                  identityRepository: _identityRepository(),
+                  onEdit: () {},
+                ),
                 _contentPanel(),
                 _contentPanel(),
               ],
@@ -182,10 +210,18 @@ void main() {
       tester.view.physicalSize = size;
       tester.view.devicePixelRatio = 1.0;
       addTearDown(tester.view.reset);
-      await _pump(tester);
-      await _shoot(tester, 'profile-header-${size.width.toInt()}');
+      await _pump(tester, theme: AppTheme.darkTheme);
+      await _shoot(tester, 'profile-header-dark-${size.width.toInt()}');
     });
   }
+
+  testWidgets('header-pearl-390x844', (tester) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    await _pump(tester, theme: AppTheme.lightTheme);
+    await _shoot(tester, 'profile-header-pearl-390');
+  });
 
   testWidgets('header-390-scale2', (tester) async {
     tester.view.physicalSize = const Size(390, 844);
@@ -193,7 +229,7 @@ void main() {
     tester.platformDispatcher.textScaleFactorTestValue = 2.0;
     addTearDown(tester.view.reset);
     addTearDown(tester.platformDispatcher.clearAllTestValues);
-    await _pump(tester);
-    await _shoot(tester, 'profile-header-390-scale2');
+    await _pump(tester, theme: AppTheme.darkTheme);
+    await _shoot(tester, 'profile-header-dark-390-scale2');
   });
 }

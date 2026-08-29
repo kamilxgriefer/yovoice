@@ -19,6 +19,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/core/theme/app_theme.dart';
+import 'package:yovoice/features/profile/data/models/user_profile.dart';
+import 'package:yovoice/features/profile/presentation/widgets/profile_header.dart';
 import 'package:yovoice/shared/identity/public_identity.dart';
 import 'package:yovoice/shared/identity/public_identity_repository.dart';
 import 'package:yovoice/shared/widgets/identity/official_role_badge.dart';
@@ -32,19 +35,33 @@ PublicIdentityRepository fakeRepository({
   MockFirebaseAuth? auth,
 }) {
   return PublicIdentityRepository(
-    auth: auth ??
+    auth:
+        auth ??
         MockFirebaseAuth(signedIn: true, mockUser: MockUser(uid: 'viewer')),
     fetchOverride: fetch,
     flushDelay: const Duration(milliseconds: 1),
   );
 }
 
-Widget host(Widget child, {double width = 600}) {
+Widget host(Widget child, {double width = 600, ThemeData? theme}) {
   return MaterialApp(
+    theme: theme,
     home: Scaffold(
-      body: Center(child: SizedBox(width: width, child: child)),
+      body: Center(
+        child: SizedBox(width: width, child: child),
+      ),
     ),
   );
+}
+
+double _contrast(Color first, Color second) {
+  final lighter = first.computeLuminance() > second.computeLuminance()
+      ? first.computeLuminance()
+      : second.computeLuminance();
+  final darker = first.computeLuminance() > second.computeLuminance()
+      ? second.computeLuminance()
+      : first.computeLuminance();
+  return (lighter + .05) / (darker + .05);
 }
 
 void main() {
@@ -88,6 +105,87 @@ void main() {
       }
     });
 
+    testWidgets('Pearl role labels retain AA contrast on the page canvas', (
+      tester,
+    ) async {
+      final canvas = AppTheme.lightTheme.scaffoldBackgroundColor;
+      for (final role in OfficialRole.values) {
+        await tester.pumpWidget(
+          host(OfficialRoleBadge(role: role), theme: AppTheme.lightTheme),
+        );
+        final text = tester.widget<Text>(find.text(role.label));
+        final tintedSurface = Color.alphaBlend(
+          role.color.withValues(alpha: .12),
+          canvas,
+        );
+        expect(
+          _contrast(text.style!.color!, tintedSurface),
+          greaterThanOrEqualTo(4.5),
+          reason: '${role.label} must stay legible in Pearl',
+        );
+      }
+    });
+
+    testWidgets('Pearl VIP label retains AA contrast on its tinted surface', (
+      tester,
+    ) async {
+      final canvas = AppTheme.lightTheme.scaffoldBackgroundColor;
+      await tester.pumpWidget(
+        host(
+          const VipBadge(variant: IdentityBadgeVariant.compact),
+          theme: AppTheme.lightTheme,
+        ),
+      );
+      final text = tester.widget<Text>(find.text('VIP'));
+      final tintedSurface = Color.alphaBlend(
+        AppColors.vipGold.withValues(alpha: .12),
+        canvas,
+      );
+      expect(
+        _contrast(text.style!.color!, tintedSurface),
+        greaterThanOrEqualTo(4.5),
+      );
+    });
+
+    testWidgets('Pearl account and Premium rail labels retain AA contrast', (
+      tester,
+    ) async {
+      final canvas = AppTheme.lightTheme.scaffoldBackgroundColor;
+      await tester.pumpWidget(
+        host(
+          const AccountTypeBadge(
+            accountType: AccountType.official,
+            compact: true,
+          ),
+          theme: AppTheme.lightTheme,
+        ),
+      );
+      final official = tester.widget<Text>(find.text('Official'));
+      final officialSurface = Color.alphaBlend(
+        const Color(0xFF4DA3FF).withValues(alpha: .14),
+        canvas,
+      );
+      expect(
+        _contrast(official.style!.color!, officialSurface),
+        greaterThanOrEqualTo(4.5),
+      );
+
+      await tester.pumpWidget(
+        host(
+          const PremiumIdentityChip(compact: true),
+          theme: AppTheme.lightTheme,
+        ),
+      );
+      final premium = tester.widget<Text>(find.text('Premium'));
+      expect(
+        _contrast(
+          premium.style!.color!,
+          AppTheme.lightTheme.colorScheme.primaryContainer,
+        ),
+        greaterThanOrEqualTo(4.5),
+      );
+    });
+
     testWidgets('an unresolved account still displays USER', (tester) async {
       final repository = fakeRepository(fetch: (_) async => {});
       await tester.pumpWidget(
@@ -121,10 +219,16 @@ void main() {
         await tester.pump(const Duration(milliseconds: 20));
         await tester.pumpAndSettle();
 
-        expect(find.text(role.label), findsOneWidget,
-            reason: '${role.wire} label');
-        expect(find.text('VIP'), findsOneWidget,
-            reason: '${role.wire} must coexist with VIP');
+        expect(
+          find.text(role.label),
+          findsOneWidget,
+          reason: '${role.wire} label',
+        );
+        expect(
+          find.text('VIP'),
+          findsOneWidget,
+          reason: '${role.wire} must coexist with VIP',
+        );
 
         // Order: the official role badge precedes the VIP badge.
         final roleCenter = tester.getCenter(find.byType(OfficialRoleBadge));
@@ -133,11 +237,13 @@ void main() {
       }
     });
 
-    testWidgets('the owner wire value renders OWNER · SUPER ADMIN + VIP',
-        (tester) async {
+    testWidgets('the owner wire value renders OWNER · SUPER ADMIN + VIP', (
+      tester,
+    ) async {
       final repository = fakeRepository(
         fetch: (uids) async => {
-          for (final uid in uids) uid: {'staffRole': 'superAdmin', 'isVip': true},
+          for (final uid in uids)
+            uid: {'staffRole': 'superAdmin', 'isVip': true},
         },
       );
       await tester.pumpWidget(
@@ -155,23 +261,28 @@ void main() {
       expect(find.text('VIP'), findsOneWidget);
     });
 
-    testWidgets('icon variant keeps the role reachable via tooltip',
-        (tester) async {
+    testWidgets('icon variant keeps the role reachable via tooltip', (
+      tester,
+    ) async {
       await tester.pumpWidget(
-        host(const OfficialRoleBadge(
-          role: OfficialRole.moderator,
-          variant: IdentityBadgeVariant.icon,
-        )),
+        host(
+          const OfficialRoleBadge(
+            role: OfficialRole.moderator,
+            variant: IdentityBadgeVariant.icon,
+          ),
+        ),
       );
       final tooltip = tester.widget<Tooltip>(find.byType(Tooltip));
       expect(tooltip.message, 'MODERATOR');
     });
 
-    testWidgets('long labels at narrow width wrap without overflow',
-        (tester) async {
+    testWidgets('long labels at narrow width wrap without overflow', (
+      tester,
+    ) async {
       final repository = fakeRepository(
         fetch: (uids) async => {
-          for (final uid in uids) uid: {'staffRole': 'superAdmin', 'isVip': true},
+          for (final uid in uids)
+            uid: {'staffRole': 'superAdmin', 'isVip': true},
         },
       );
       await tester.pumpWidget(
@@ -194,11 +305,53 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
+    testWidgets('repository swaps detach the old listener and re-resolve', (
+      tester,
+    ) async {
+      final first = fakeRepository(
+        fetch: (uids) async => {
+          for (final uid in uids)
+            uid: {'staffRole': 'moderator', 'isVip': false},
+        },
+      );
+      final second = fakeRepository(
+        fetch: (uids) async => {
+          for (final uid in uids) uid: {'staffRole': 'support', 'isVip': true},
+        },
+      );
+
+      await tester.pumpWidget(
+        host(UserIdentityBadges(uid: 'u1', repository: first)),
+      );
+      await tester.pump(const Duration(milliseconds: 20));
+      await tester.pumpAndSettle();
+      expect(find.text('MODERATOR'), findsOneWidget);
+
+      await tester.pumpWidget(
+        host(UserIdentityBadges(uid: 'u1', repository: second)),
+      );
+      await tester.pump(const Duration(milliseconds: 20));
+      await tester.pumpAndSettle();
+      expect(find.text('SUPPORT'), findsOneWidget);
+      expect(find.text('VIP'), findsOneWidget);
+
+      first.invalidate('u1');
+      await tester.pump();
+      expect(find.text('SUPPORT'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+
+      await tester.pumpWidget(host(const SizedBox.shrink()));
+      second.invalidate('u1');
+      await tester.pump();
+      expect(tester.takeException(), isNull);
+    });
+
     testWidgets('achievement cosmetics render after — never instead of — '
         'the official badges', (tester) async {
       final repository = fakeRepository(
         fetch: (uids) async => {
-          for (final uid in uids) uid: {'staffRole': 'moderator', 'isVip': true},
+          for (final uid in uids)
+            uid: {'staffRole': 'moderator', 'isVip': true},
         },
       );
       await tester.pumpWidget(
@@ -294,16 +447,23 @@ void main() {
           calls += 1;
           if (calls == 1) throw Exception('network down');
           return {
-            for (final uid in uids) uid: {'staffRole': 'support', 'isVip': false},
+            for (final uid in uids)
+              uid: {'staffRole': 'support', 'isVip': false},
           };
         },
       );
 
       final failed = await repository.resolve('sup');
-      expect(failed, PublicIdentity.fallback,
-          reason: 'failure answers the safe USER identity');
-      expect(repository.peek('sup'), isNull,
-          reason: 'a transient failure must not stick in the cache');
+      expect(
+        failed,
+        PublicIdentity.fallback,
+        reason: 'failure answers the safe USER identity',
+      );
+      expect(
+        repository.peek('sup'),
+        isNull,
+        reason: 'a transient failure must not stick in the cache',
+      );
 
       final recovered = await repository.resolve('sup');
       expect(recovered.role, OfficialRole.support);
@@ -313,8 +473,11 @@ void main() {
       final repository = fakeRepository(fetch: (_) async => {});
       final identity = await repository.resolve('plain');
       expect(identity, PublicIdentity.fallback);
-      expect(repository.peek('plain'), PublicIdentity.fallback,
-          reason: 'absence IS cacheable — it is the common case');
+      expect(
+        repository.peek('plain'),
+        PublicIdentity.fallback,
+        reason: 'absence IS cacheable — it is the common case',
+      );
     });
 
     test('invalidate forgets a uid and bumps the revision', () async {

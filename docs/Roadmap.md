@@ -16,6 +16,18 @@ someone decide what to pick up next.
 
 ## Done
 
+- **Profile identity is now a compact two-level passport, not a badge
+  staircase** (2026-08-29, ADR-131, **SOURCE + REAL-FONT DARK/PEARL RENDERS;
+  WEB HOSTING PENDING**): the avatar and pseudonym share one responsive hero
+  row with a small semantic name plate, while official role/VIP and
+  Creator/Premium/achievement identity use the full profile width beneath it.
+  The owner case that previously stacked into four floors now remains two
+  deliberate rows at normal phone text sizes; 320 px at 200% text wraps
+  without hiding or clipping any identity. Avatar size steps down at compact
+  breakpoints, the display name is a semantic heading, Pearl fallback initials
+  stay visible and every small role/account/Premium label has measured AA
+  contrast. Repository-swap coverage also pins badge-listener ownership.
+
 - **The signed iOS shell now follows YO Voice's selected runtime theme**
   (2026-08-29, ADR-129, **NATIVE STORE BUILD 12 PENDING**): the obsolete
   `UIUserInterfaceStyle=Dark` application-wide override is gone, so System can

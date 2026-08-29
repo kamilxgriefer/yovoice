@@ -1,8 +1,11 @@
+import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:yovoice/features/achievements/data/models/achievement_definition.dart';
 import 'package:yovoice/features/profile/data/models/user_profile.dart';
 import 'package:yovoice/features/profile/presentation/widgets/profile_header.dart';
+import 'package:yovoice/shared/identity/public_identity_repository.dart';
 
 /// Pins the compact profile header (P1 fix).
 ///
@@ -17,12 +20,15 @@ import 'package:yovoice/features/profile/presentation/widgets/profile_header.dar
 ///    aligned with the content frame (not the screen edge) on desktop;
 ///  * no RenderFlex overflow at 320 and 1440 with textScaleFactor 2.0;
 ///  * tapping Back actually pops (navigation semantics preserved).
-UserProfile _profile() {
+UserProfile _profile({
+  String displayName = 'Ada Lovelace',
+  String username = 'ada',
+}) {
   return UserProfile(
     uid: 'u1',
     email: 'ada@yovoice.app',
-    displayName: 'Ada Lovelace',
-    username: 'ada',
+    displayName: displayName,
+    username: username,
     bio: 'bio',
     country: '',
     nativeLanguage: '',
@@ -51,10 +57,33 @@ UserProfile _profile() {
   );
 }
 
+const _firstWord = AchievementDefinition(
+  id: 'messages_1',
+  title: 'First Word',
+  description: 'Send one written message.',
+  metric: 'messages',
+  threshold: 1,
+  rarity: AchievementRarity.common,
+);
+
+PublicIdentityRepository _ownerVipRepository() => PublicIdentityRepository(
+  auth: MockFirebaseAuth(signedIn: true, mockUser: MockUser(uid: 'viewer')),
+  fetchOverride: (uids) async => {
+    for (final uid in uids)
+      uid: const {'staffRole': 'superAdmin', 'isVip': true},
+  },
+  flushDelay: const Duration(milliseconds: 1),
+);
+
 /// Hosts the header on a PUSHED route, the way production always shows
 /// it (Profile has no desktop content slot — see main_shell.dart), so
 /// `Navigator.canPop()` is true and the Back button renders.
-Future<void> _pumpPushedHeader(WidgetTester tester) async {
+Future<void> _pumpPushedHeader(
+  WidgetTester tester, {
+  UserProfile? profile,
+  AchievementDefinition? title,
+  PublicIdentityRepository? identityRepository,
+}) async {
   final navigatorKey = GlobalKey<NavigatorState>();
   await tester.pumpWidget(
     MaterialApp(
@@ -67,7 +96,14 @@ Future<void> _pumpPushedHeader(WidgetTester tester) async {
       builder: (_) => Scaffold(
         backgroundColor: const Color(0xFF09050F),
         body: ListView(
-          children: [ProfileHeader(profile: _profile(), onEdit: () {})],
+          children: [
+            ProfileHeader(
+              profile: profile ?? _profile(),
+              title: title,
+              identityRepository: identityRepository,
+              onEdit: () {},
+            ),
+          ],
         ),
       ),
     ),
@@ -143,6 +179,91 @@ void main() {
     // Identity survives the squeeze: name and username still render.
     expect(find.text('Ada Lovelace'), findsOneWidget);
     expect(find.text('@ada'), findsOneWidget);
+  });
+
+  testWidgets('owner, VIP, account, Premium and achievement share one '
+      'full-width rail with at most two rows at 390px', (tester) async {
+    _setSize(tester, const Size(390, 844));
+    await _pumpPushedHeader(
+      tester,
+      title: _firstWord,
+      identityRepository: _ownerVipRepository(),
+    );
+    await tester.pump(const Duration(milliseconds: 20));
+    await tester.pump(const Duration(milliseconds: 20));
+
+    for (final label in const [
+      'OWNER · SUPER ADMIN',
+      'VIP',
+      'Creator',
+      'Premium',
+      'First Word',
+    ]) {
+      expect(find.text(label), findsOneWidget, reason: '$label stays visible');
+    }
+
+    final railRect = tester.getRect(
+      find.byKey(const Key('profile-header-badge-rail')),
+    );
+    expect(railRect.left, closeTo(18, .01));
+    expect(railRect.width, closeTo(354, .01));
+
+    final rowCenters = <double>[];
+    for (final label in const [
+      'OWNER · SUPER ADMIN',
+      'VIP',
+      'Creator',
+      'Premium',
+      'First Word',
+    ]) {
+      final y = tester.getCenter(find.text(label)).dy;
+      if (!rowCenters.any((existing) => (existing - y).abs() < 4)) {
+        rowCenters.add(y);
+      }
+    }
+    expect(
+      rowCenters.length,
+      lessThanOrEqualTo(2),
+      reason: 'ordinary phone text keeps every identity in two compact rows',
+    );
+    expect(
+      tester.getSize(find.byType(ProfileHeader)).height,
+      lessThanOrEqualTo(295),
+      reason: 'the complete owner identity stays substantially compact',
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('maximum identity remains complete at 320px and 200% text', (
+    tester,
+  ) async {
+    _setSize(tester, const Size(320, 568), textScale: 2);
+    await _pumpPushedHeader(
+      tester,
+      profile: _profile(
+        displayName: 'A very long creator display name',
+        username: 'a_very_long_creator_username',
+      ),
+      title: _firstWord,
+      identityRepository: _ownerVipRepository(),
+    );
+    await tester.pump(const Duration(milliseconds: 20));
+    await tester.pump(const Duration(milliseconds: 20));
+
+    expect(find.text('OWNER · SUPER ADMIN'), findsOneWidget);
+    expect(find.text('VIP'), findsOneWidget);
+    expect(find.text('First Word'), findsOneWidget);
+    expect(tester.takeException(), isNull, reason: 'no overflow at 200% text');
+  });
+
+  testWidgets('display name is exposed as the profile heading', (tester) async {
+    _setSize(tester, const Size(390, 844));
+    await _pumpPushedHeader(tester);
+
+    final semantics = tester
+        .getSemantics(find.text('Ada Lovelace'))
+        .getSemanticsData();
+    expect(semantics.flagsCollection.isHeader, isTrue);
   });
 
   testWidgets('1440x900 at 2.0 text scale: no overflow, toolbar aligned '

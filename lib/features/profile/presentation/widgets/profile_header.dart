@@ -4,6 +4,7 @@ import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/achievements/data/models/achievement_definition.dart';
 import 'package:yovoice/features/achievements/presentation/widgets/title_badge.dart';
 import 'package:yovoice/features/profile/data/models/user_profile.dart';
+import 'package:yovoice/shared/identity/public_identity_repository.dart';
 import 'package:yovoice/shared/widgets/identity/official_role_badge.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 import 'package:yovoice/shared/widgets/profile/profile_banner.dart';
@@ -32,12 +33,16 @@ class ProfileHeader extends StatelessWidget {
     required this.profile,
     required this.onEdit,
     this.title,
+    this.identityRepository,
     super.key,
   });
 
   final UserProfile profile;
   final AchievementDefinition? title;
   final VoidCallback onEdit;
+
+  /// Test/preview seam. Production resolves through the shared singleton.
+  final PublicIdentityRepository? identityRepository;
 
   /// Matches the 18px gutter of the content panels below
   /// (profile_screen's SliverPadding), so the toolbar and banner card
@@ -54,7 +59,13 @@ class ProfileHeader extends StatelessWidget {
       builder: (context, constraints) {
         final isWide = constraints.maxWidth >= 900;
         final bannerHeight = isWide ? 132.0 : 104.0;
-        final avatarOverlap = isWide ? 44.0 : 40.0;
+        final (avatarRadius, ringPadding) = switch (constraints.maxWidth) {
+          < 360 => (33.0, 3.0),
+          < 600 => (37.0, 3.0),
+          < 900 => (41.0, 3.0),
+          _ => (44.0, 4.0),
+        };
+        final avatarOverlap = avatarRadius + ringPadding;
 
         return Align(
           alignment: Alignment.topCenter,
@@ -70,6 +81,9 @@ class ProfileHeader extends StatelessWidget {
                   context: context,
                   bannerHeight: bannerHeight,
                   avatarOverlap: avatarOverlap,
+                  avatarRadius: avatarRadius,
+                  ringPadding: ringPadding,
+                  isWide: isWide,
                 ),
                 const SizedBox(height: 8),
               ],
@@ -150,6 +164,9 @@ class ProfileHeader extends StatelessWidget {
     required BuildContext context,
     required double bannerHeight,
     required double avatarOverlap,
+    required double avatarRadius,
+    required double ringPadding,
+    required bool isWide,
   }) {
     // Bottom-weighted scrim: keeps the banner's lower edge dark enough
     // that the name stays legible when it rides over the card's bottom
@@ -182,8 +199,13 @@ class ProfileHeader extends StatelessWidget {
           children: [
             SizedBox(height: bannerHeight - avatarOverlap),
             Padding(
-              padding: const EdgeInsets.fromLTRB(_gutter + 12, 0, _gutter, 0),
-              child: _identityBlock(context),
+              padding: const EdgeInsets.fromLTRB(_gutter, 0, _gutter, 0),
+              child: _identityBlock(
+                context,
+                avatarRadius: avatarRadius,
+                ringPadding: ringPadding,
+                isWide: isWide,
+              ),
             ),
           ],
         ),
@@ -191,88 +213,164 @@ class ProfileHeader extends StatelessWidget {
     );
   }
 
-  Widget _identityBlock(BuildContext context) {
+  Widget _identityBlock(
+    BuildContext context, {
+    required double avatarRadius,
+    required double ringPadding,
+    required bool isWide,
+  }) {
     final palette = context.appPalette;
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.end,
+    final nameSize = isWide ? 27.0 : 22.0;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Container(
-          key: const Key('profile-header-avatar'),
-          padding: const EdgeInsets.all(4),
-          decoration: const BoxDecoration(
-            shape: BoxShape.circle,
-            gradient: LinearGradient(
-              colors: [Color(0xFF6A00FF), Color(0xFFD12CFF)],
-            ),
-          ),
-          child: UserAvatar(
-            radius: 44,
-            photoUrl: profile.photoUrl,
-            displayName: profile.displayName,
-            backgroundColor: palette.surfaceSunken,
-            premium: profile.premiumIdentity,
-          ),
-        ),
-        const SizedBox(width: 14),
-        Expanded(
-          child: Padding(
-            padding: const EdgeInsets.only(bottom: 2),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  profile.displayName,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: palette.textPrimary,
-                    fontSize: 24,
-                    fontWeight: FontWeight.w900,
-                  ),
+        Row(
+          key: const Key('profile-header-identity-row'),
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            Container(
+              key: const Key('profile-header-avatar'),
+              padding: EdgeInsets.all(ringPadding),
+              decoration: const BoxDecoration(
+                shape: BoxShape.circle,
+                gradient: LinearGradient(
+                  colors: [Color(0xFF6A00FF), Color(0xFFD12CFF)],
                 ),
-                if (profile.username.isNotEmpty)
-                  Text(
-                    '@${profile.username.replaceAll(' ', '').toLowerCase()}',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: palette.textSecondary,
-                      fontSize: 14,
-                    ),
-                  ),
-                // The identity chips row (board screen 5). The official
-                // role badge leads and ALWAYS renders — an ordinary
-                // account reads USER — with VIP beside it when held,
-                // both resolved from the server-written public badge
-                // projection. After them: account type + the
-                // server-mirrored Premium mark. Only truthful chips —
-                // premiumIdentity is written by Cloud Functions, never
-                // computed locally.
-                Padding(
-                  padding: const EdgeInsets.only(top: 7),
-                  child: Wrap(
-                    spacing: 6,
-                    runSpacing: 6,
-                    crossAxisAlignment: WrapCrossAlignment.center,
-                    children: [
-                      UserIdentityBadges(
-                        uid: profile.uid,
-                        variant: IdentityBadgeVariant.full,
+              ),
+              child: UserAvatar(
+                radius: avatarRadius,
+                photoUrl: profile.photoUrl,
+                displayName: profile.displayName,
+                backgroundColor:
+                    Theme.of(context).brightness == Brightness.light
+                    ? Theme.of(context).colorScheme.primary
+                    : palette.surfaceSunken,
+                premium: profile.premiumIdentity,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Container(
+                  key: const Key('profile-header-name-plate'),
+                  constraints: const BoxConstraints(maxWidth: 420),
+                  padding: const EdgeInsets.fromLTRB(10, 6, 10, 7),
+                  decoration: BoxDecoration(
+                    color: palette.surfaceRaised.withValues(alpha: .94),
+                    borderRadius: BorderRadius.circular(13),
+                    border: Border.all(color: palette.border),
+                    boxShadow: [
+                      BoxShadow(
+                        color: palette.shadow.withValues(alpha: .16),
+                        blurRadius: 14,
+                        offset: const Offset(0, 5),
                       ),
-                      if (profile.accountType != AccountType.personal)
-                        AccountTypeBadge(accountType: profile.accountType),
-                      if (profile.premiumIdentity) const PremiumIdentityChip(),
+                    ],
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Semantics(
+                        header: true,
+                        child: Text(
+                          profile.displayName,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: palette.textPrimary,
+                            fontSize: nameSize,
+                            height: 1.02,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: -.35,
+                          ),
+                        ),
+                      ),
+                      if (profile.username.isNotEmpty) ...[
+                        const SizedBox(height: 2),
+                        Text(
+                          '@${profile.username.replaceAll(' ', '').toLowerCase()}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: palette.textSecondary,
+                            fontSize: isWide ? 14 : 13,
+                            fontWeight: FontWeight.w600,
+                            letterSpacing: .1,
+                          ),
+                        ),
+                      ],
                     ],
                   ),
                 ),
-                if (title != null) ...[
-                  const SizedBox(height: 8),
-                  TitleBadge(achievement: title!),
-                ],
-              ],
+              ),
             ),
-          ),
+          ],
+        ),
+        // One shared, full-width identity rail. The previous nested column
+        // forced role, VIP, account type, Premium and achievement title into
+        // as many as four floors beside the avatar. Two intentional levels
+        // now keep authority (official role + VIP) separate from product and
+        // achievement identity. Each level owns the whole content width;
+        // enlarged text may wrap further rather than hide identity.
+        const SizedBox(height: 8),
+        SizedBox(
+          key: const Key('profile-header-badge-rail'),
+          width: double.infinity,
+          child: title == null
+              ? Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    UserIdentityBadges(
+                      uid: profile.uid,
+                      variant: IdentityBadgeVariant.compact,
+                      repository: identityRepository,
+                    ),
+                    if (profile.accountType != AccountType.personal)
+                      AccountTypeBadge(
+                        accountType: profile.accountType,
+                        compact: true,
+                      ),
+                    if (profile.premiumIdentity)
+                      const PremiumIdentityChip(compact: true),
+                  ],
+                )
+              : Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 6,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        UserIdentityBadges(
+                          uid: profile.uid,
+                          variant: IdentityBadgeVariant.compact,
+                          repository: identityRepository,
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 6,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        if (profile.accountType != AccountType.personal)
+                          AccountTypeBadge(
+                            accountType: profile.accountType,
+                            compact: true,
+                          ),
+                        if (profile.premiumIdentity)
+                          const PremiumIdentityChip(compact: true),
+                        TitleBadge(achievement: title!, compact: true),
+                      ],
+                    ),
+                  ],
+                ),
         ),
       ],
     );
@@ -283,7 +381,9 @@ class ProfileHeader extends StatelessWidget {
 /// `profile.premiumIdentity`, the server-written public mirror of the
 /// entitlement. Companion to [AccountTypeBadge] in the header chips row.
 class PremiumIdentityChip extends StatelessWidget {
-  const PremiumIdentityChip({super.key});
+  const PremiumIdentityChip({this.compact = false, super.key});
+
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
@@ -292,7 +392,11 @@ class PremiumIdentityChip extends StatelessWidget {
     return Tooltip(
       message: 'YO Voice Premium member',
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+        constraints: BoxConstraints(minHeight: compact ? 24 : 28),
+        padding: EdgeInsets.symmetric(
+          horizontal: compact ? 7 : 9,
+          vertical: compact ? 2 : 4,
+        ),
         decoration: BoxDecoration(
           color: colors.primaryContainer,
           borderRadius: BorderRadius.circular(99),
@@ -301,8 +405,12 @@ class PremiumIdentityChip extends StatelessWidget {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.workspace_premium_rounded, size: 13, color: color),
-            const SizedBox(width: 4),
+            Icon(
+              Icons.workspace_premium_rounded,
+              size: compact ? 11 : 13,
+              color: color,
+            ),
+            SizedBox(width: compact ? 3 : 4),
             // Flexible + ellipsis: at 2.0 text scale on a 320px viewport
             // the badges column is narrower than the scaled label, and a
             // rigid Text overflows the chip.
@@ -313,7 +421,7 @@ class PremiumIdentityChip extends StatelessWidget {
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
                   color: color,
-                  fontSize: 11,
+                  fontSize: compact ? 9.5 : 11,
                   fontWeight: FontWeight.w800,
                 ),
               ),
@@ -331,27 +439,35 @@ class PremiumIdentityChip extends StatelessWidget {
 /// Creator Studio and Settings, but nothing on the profile itself said
 /// which kind of account you were looking at.
 class AccountTypeBadge extends StatelessWidget {
-  const AccountTypeBadge({required this.accountType, super.key});
+  const AccountTypeBadge({
+    required this.accountType,
+    this.compact = false,
+    super.key,
+  });
 
   final AccountType accountType;
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
     final isLight = Theme.of(context).brightness == Brightness.light;
-    final (icon, label, color) = switch (accountType) {
+    final (icon, label, accent, foreground) = switch (accountType) {
       AccountType.official => (
         Icons.verified_rounded,
         'Official',
         const Color(0xFF4DA3FF),
+        isLight ? const Color(0xFF075A97) : const Color(0xFF4DA3FF),
       ),
       AccountType.creator => (
         Icons.auto_awesome_rounded,
         'Creator',
         isLight ? const Color(0xFF7130A8) : const Color(0xFFD3A5FF),
+        isLight ? const Color(0xFF7130A8) : const Color(0xFFD3A5FF),
       ),
       AccountType.personal => (
         Icons.person_rounded,
         'Personal',
+        isLight ? const Color(0xFF594B63) : const Color(0xFFB8ADC1),
         isLight ? const Color(0xFF594B63) : const Color(0xFFB8ADC1),
       ),
     };
@@ -359,17 +475,21 @@ class AccountTypeBadge extends StatelessWidget {
     return Tooltip(
       message: '$label account',
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+        constraints: BoxConstraints(minHeight: compact ? 24 : 28),
+        padding: EdgeInsets.symmetric(
+          horizontal: compact ? 7 : 9,
+          vertical: compact ? 2 : 4,
+        ),
         decoration: BoxDecoration(
-          color: color.withValues(alpha: .14),
+          color: accent.withValues(alpha: .14),
           borderRadius: BorderRadius.circular(99),
-          border: Border.all(color: color.withValues(alpha: .45)),
+          border: Border.all(color: accent.withValues(alpha: .45)),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, size: 13, color: color),
-            const SizedBox(width: 4),
+            Icon(icon, size: compact ? 11 : 13, color: foreground),
+            SizedBox(width: compact ? 3 : 4),
             // Same rationale as PremiumIdentityChip: shrink, never
             // overflow, when text scaling outgrows the badges column.
             Flexible(
@@ -378,8 +498,8 @@ class AccountTypeBadge extends StatelessWidget {
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
-                  color: color,
-                  fontSize: 11,
+                  color: foreground,
+                  fontSize: compact ? 9.5 : 11,
                   fontWeight: FontWeight.w800,
                 ),
               ),

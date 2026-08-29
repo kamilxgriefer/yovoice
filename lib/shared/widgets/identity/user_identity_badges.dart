@@ -45,13 +45,12 @@ class UserIdentityBadges extends StatefulWidget {
 
 class _UserIdentityBadgesState extends State<UserIdentityBadges> {
   PublicIdentity _identity = PublicIdentity.fallback;
-
-  PublicIdentityRepository get _repository =>
-      widget.repository ?? PublicIdentityRepository.instance;
+  late PublicIdentityRepository _repository;
 
   @override
   void initState() {
     super.initState();
+    _repository = widget.repository ?? PublicIdentityRepository.instance;
     _repository.revision.addListener(_resolve);
     _resolve();
   }
@@ -59,7 +58,15 @@ class _UserIdentityBadgesState extends State<UserIdentityBadges> {
   @override
   void didUpdateWidget(UserIdentityBadges oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.uid != widget.uid) {
+    final nextRepository =
+        widget.repository ?? PublicIdentityRepository.instance;
+    final repositoryChanged = !identical(nextRepository, _repository);
+    if (repositoryChanged) {
+      _repository.revision.removeListener(_resolve);
+      _repository = nextRepository;
+      _repository.revision.addListener(_resolve);
+    }
+    if (oldWidget.uid != widget.uid || repositoryChanged) {
       _identity = PublicIdentity.fallback;
       _resolve();
     }
@@ -72,6 +79,7 @@ class _UserIdentityBadgesState extends State<UserIdentityBadges> {
   }
 
   void _resolve() {
+    if (!mounted) return;
     final cached = _repository.peek(widget.uid);
     if (cached != null) {
       if (cached != _identity) setState(() => _identity = cached);

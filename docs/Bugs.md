@@ -1606,8 +1606,15 @@ permission flags).
   (320/390/768/1100/1440, 2.0 text scale at 320 and 1440, header ≤ 30% of a
   390x844 viewport, Back pops) alongside the existing
   test/profile_header_layout_test.dart matrix, and rendered for visual
-  proof via test/profile_header_screenshot.dart. Live verification on a
-  deployed build is still pending.
+  proof via test/profile_header_screenshot.dart. A 2026-08-29 density
+  follow-up fixes the remaining owner-profile failure visible in production:
+  OWNER/VIP/Creator/Premium/title no longer form a four-floor staircase beside
+  the avatar. The pseudonym now sits on a compact theme-safe name plate and a
+  full-width two-level identity rail separates authority from product and
+  achievement labels. Dark/Pearl real-font frames, 320 px/200% text, heading
+  semantics, exact two-row owner geometry, Pearl AA contrast and repository
+  listener replacement are regression-tested. Live verification on the
+  deployed follow-up is still pending; see ADR-131.
 
 - **FIXED IN SOURCE 2026-08-29 — Light mode painted white-on-white headings,
   stale dark cards and the wrong system-bar icons.** The setting previously
