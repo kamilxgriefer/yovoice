@@ -5,6 +5,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/helpers/error_messages.dart';
+import 'package:yovoice/core/navigation/app_route_observer.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 
 import 'package:yovoice/features/auth/data/auth_service.dart';
@@ -30,6 +31,8 @@ import 'package:yovoice/features/home/presentation/widgets/navigation/yo_floatin
 import 'package:yovoice/features/home/presentation/widgets/navigation/yo_preserving_tab_transition.dart';
 import 'package:yovoice/features/notifications/data/services/notification_service.dart';
 import 'package:yovoice/features/notifications/presentation/screens/notifications_screen.dart';
+import 'package:yovoice/features/onboarding/data/guided_onboarding_progress.dart';
+import 'package:yovoice/features/onboarding/presentation/guided_onboarding_tour.dart';
 import 'package:yovoice/features/premium/data/models/subscription_entitlements.dart';
 import 'package:yovoice/features/premium/data/services/entitlement_service.dart';
 import 'package:yovoice/features/premium/premium_gates.dart';
@@ -61,6 +64,22 @@ bool shouldPresentIncomingMessageOverlay({
   required ActiveConversationRegistry activeConversations,
 }) => selectedIndex != 1 && !activeConversations.contains(conversationId);
 
+/// Sequences the automatic guide after startup-owned native modal surfaces.
+/// Readiness failures are intentionally fail-open: a broken optional prompt
+/// must not strand a new account or make guide eligibility network-dependent.
+@visibleForTesting
+Future<bool> evaluateGuidedOnboardingAfterReadiness({
+  Future<void>? readiness,
+  required Future<bool> Function() evaluate,
+}) async {
+  try {
+    await (readiness ?? Future<void>.value());
+  } catch (error) {
+    debugPrint('Guided onboarding readiness failed open: $error');
+  }
+  return evaluate();
+}
+
 /// Serializes presentation of the More menu without blocking the destination
 /// subsequently opened from it.
 ///
@@ -84,8 +103,55 @@ final class MoreMenuTransitionGuard {
   }
 }
 
+/// Keeps automatic onboarding and rapid Settings replays on one modal flight.
+/// The flag is acquired before the first await and released only after the
+/// dialog route's reverse transition completes.
+final class GuidedOnboardingPresentationGuard {
+  bool _active = false;
+
+  @visibleForTesting
+  bool get isActive => _active;
+
+  Future<T?> run<T>(Future<T?> Function() present) async {
+    if (_active) return null;
+    _active = true;
+    try {
+      return await present();
+    } finally {
+      _active = false;
+    }
+  }
+}
+
 class MainShell extends StatefulWidget {
-  const MainShell({super.key});
+  const MainShell({
+    this.onboardingProgress,
+    this.onboardingUserId,
+    this.onboardingCreationTime,
+    this.onboardingLastSignInTime,
+    this.onboardingReadiness,
+    super.key,
+  });
+
+  /// Optional seams keep the account gate deterministic without making the
+  /// rest of this Firebase-backed shell test-only or globally stateful.
+  @visibleForTesting
+  final GuidedOnboardingProgress? onboardingProgress;
+
+  @visibleForTesting
+  final String? onboardingUserId;
+
+  @visibleForTesting
+  final DateTime? onboardingCreationTime;
+
+  @visibleForTesting
+  final DateTime? onboardingLastSignInTime;
+
+  /// Resolves after startup-owned native modal surfaces (currently the push
+  /// permission prompt) have settled. Only automatic onboarding waits for it;
+  /// the shell and manual replay remain immediate.
+  @visibleForTesting
+  final Future<void>? onboardingReadiness;
 
   static const double desktopBreakpoint = 1100;
 
@@ -132,13 +198,29 @@ class MainShell extends StatefulWidget {
 }
 
 class _MainShellState extends State<MainShell>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, RouteAware {
   final MessageService _messageService = MessageService.live;
   final RoomService _roomService = RoomService();
   final AuthService _authService = AuthService();
   final EntitlementService _entitlementService = EntitlementService();
   final MoreMenuTransitionGuard _moreMenuTransition = MoreMenuTransitionGuard();
+  final GuidedOnboardingPresentationGuard _onboardingPresentation =
+      GuidedOnboardingPresentationGuard();
   bool _handledInitialRoomLink = false;
+
+  late final GuidedOnboardingProgress _onboardingProgress;
+  late final String _onboardingUserId;
+  late final DateTime? _onboardingCreationTime;
+  late final DateTime? _onboardingLastSignInTime;
+  ModalRoute<void>? _observedShellRoute;
+  bool _autoOnboardingChecked = false;
+  bool _onboardingPending = false;
+  bool get _onboardingOpen => _onboardingPresentation.isActive;
+
+  final Map<GuidedOnboardingTarget, GlobalKey> _onboardingAnchors = {
+    for (final target in GuidedOnboardingTarget.values)
+      target: GlobalKey(debugLabel: 'guided-onboarding-${target.name}'),
+  };
 
   Timer? _verificationCheckTimer;
   bool _showVerificationBanner =
@@ -228,7 +310,11 @@ class _MainShellState extends State<MainShell>
     }
     final destination = _slotDestinations[index];
     if (destination == null) return const SizedBox.shrink();
-    return moreDestinationScreen(destination, isRootTab: true);
+    return moreDestinationScreen(
+      destination,
+      isRootTab: true,
+      onReplayGuidedOnboarding: _replayGuidedOnboarding,
+    );
   }
 
   List<Widget> _slotChildren({
@@ -369,13 +455,22 @@ class _MainShellState extends State<MainShell>
   void initState() {
     super.initState();
 
+    final currentUser = FirebaseAuth.instance.currentUser;
+    _onboardingProgress =
+        widget.onboardingProgress ?? GuidedOnboardingProgress();
+    _onboardingUserId = widget.onboardingUserId ?? currentUser?.uid ?? '';
+    _onboardingCreationTime =
+        widget.onboardingCreationTime ?? currentUser?.metadata.creationTime;
+    _onboardingLastSignInTime =
+        widget.onboardingLastSignInTime ?? currentUser?.metadata.lastSignInTime;
+
     _conversationsStream = _messageService.watchConversations(
       includeArchived: true,
     );
     unawaited(_messageService.resumeOutbox());
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _openInitialRoomLink();
+      unawaited(_prepareGuidedOnboarding());
     });
 
     _conversationSubscription = _conversationsStream.listen(
@@ -428,6 +523,119 @@ class _MainShellState extends State<MainShell>
     }
   }
 
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final route = ModalRoute.of<void>(context);
+    if (identical(route, _observedShellRoute)) return;
+    if (_observedShellRoute != null) {
+      appRouteObserver.unsubscribe(this);
+    }
+    _observedShellRoute = route;
+    if (route != null) appRouteObserver.subscribe(this, route);
+  }
+
+  @override
+  void didPopNext() {
+    unawaited(_showPendingGuidedOnboarding());
+  }
+
+  Future<void> _prepareGuidedOnboarding() async {
+    // A valid cold-start room link owns the first route. Await its full visit
+    // so the tutorial never obscures room controls or starts underneath it.
+    await _openInitialRoomLink();
+    if (!mounted) return;
+
+    // Never place the guide underneath a native permission surface. The
+    // readiness future ends before token/network registration, so it does not
+    // turn onboarding into a connectivity-dependent feature.
+    final eligible = await evaluateGuidedOnboardingAfterReadiness(
+      readiness: widget.onboardingReadiness,
+      evaluate: () => _onboardingProgress.shouldAutoStart(
+        userId: _onboardingUserId,
+        creationTime: _onboardingCreationTime,
+        lastSignInTime: _onboardingLastSignInTime,
+      ),
+    );
+    if (!mounted || _autoOnboardingChecked) return;
+    _autoOnboardingChecked = true;
+    if (!mounted || !eligible) return;
+    _onboardingPending = true;
+    await _showPendingGuidedOnboarding();
+  }
+
+  Future<void> _showPendingGuidedOnboarding() async {
+    if (!_onboardingPending || _onboardingOpen || !mounted) return;
+    if (ModalRoute.of(context)?.isCurrent != true) return;
+    final outcome = await _presentGuidedOnboarding();
+    if (!mounted || outcome == null) return;
+    _onboardingPending = false;
+    try {
+      await _onboardingProgress.markDismissed(
+        _onboardingUserId,
+        outcome: outcome,
+      );
+    } catch (error) {
+      // The tour must never trap someone because local preferences cannot be
+      // written. A future launch may offer it again, while this session stays
+      // uninterrupted.
+      debugPrint('Guided onboarding progress could not be saved: $error');
+    }
+  }
+
+  Future<GuidedOnboardingOutcome?> _presentGuidedOnboarding() async {
+    if (!mounted) return null;
+    return _onboardingPresentation.run(() async {
+      if (ModalRoute.of(context)?.isCurrent != true) return null;
+      await _waitForShellTransition();
+      if (!mounted || ModalRoute.of(context)?.isCurrent != true) return null;
+
+      if (_selectedIndex != 0) _onDestinationSelected(0);
+      _removeMessageOverlay();
+      await WidgetsBinding.instance.endOfFrame;
+      if (!mounted || ModalRoute.of(context)?.isCurrent != true) return null;
+
+      return showGuidedOnboardingTour(
+        context,
+        anchors: _onboardingAnchors,
+        desktop: MainShell.usesDesktopLayout(MediaQuery.sizeOf(context)),
+        desktopLayoutFor: MainShell.usesDesktopLayout,
+      );
+    });
+  }
+
+  Future<void> _waitForShellTransition() async {
+    final animation = _observedShellRoute?.secondaryAnimation;
+    if (animation == null || animation.status == AnimationStatus.dismissed) {
+      return;
+    }
+    final settled = Completer<void>();
+    late AnimationStatusListener listener;
+    listener = (status) {
+      if (status != AnimationStatus.dismissed || settled.isCompleted) return;
+      animation.removeStatusListener(listener);
+      settled.complete();
+    };
+    animation.addStatusListener(listener);
+    if (animation.status == AnimationStatus.dismissed) {
+      listener(animation.status);
+    }
+    await settled.future;
+  }
+
+  Future<void> _replayGuidedOnboarding() async {
+    await _presentGuidedOnboarding();
+  }
+
+  Future<void> _replayGuidedOnboardingAfter(
+    MaterialPageRoute<void> route,
+  ) async {
+    if (_onboardingOpen) return;
+    if (route.isCurrent) Navigator.of(context).pop();
+    await route.completed;
+    if (mounted) await _replayGuidedOnboarding();
+  }
+
   Future<void> _checkVerification() async {
     final verified = await _authService.reloadCurrentUser();
     if (verified && mounted) {
@@ -478,6 +686,7 @@ class _MainShellState extends State<MainShell>
 
   @override
   void dispose() {
+    appRouteObserver.unsubscribe(this);
     _momentsVisible.dispose();
     _tabTransition.dispose();
     _conversationSubscription?.cancel();
@@ -535,6 +744,7 @@ class _MainShellState extends State<MainShell>
     }
 
     if (_hasInitialConversationSnapshot &&
+        !_onboardingOpen &&
         newestIncomingConversation != null &&
         shouldPresentIncomingMessageOverlay(
           selectedIndex: _selectedIndex,
@@ -769,29 +979,31 @@ class _MainShellState extends State<MainShell>
       }
     }
 
-    final screen = moreDestinationScreen(destination);
+    late final MaterialPageRoute<void> route;
+    final screen = moreDestinationScreen(
+      destination,
+      onReplayGuidedOnboarding: () => _replayGuidedOnboardingAfter(route),
+    );
 
-    await Navigator.of(context).push<void>(
-      MaterialPageRoute<void>(
-        builder: (_) => MoreDestinationHost(
-          body: screen,
-          selectedIndex: _selectedIndex,
-          moreSelected: openedFromMore,
-          unreadConversationCount: _unreadConversationCount,
-          unreadNotificationCount: _unreadNotificationCount,
-          activeDesktopItem: _desktopItemFor(destination),
-          onDestinationSelected: _onDestinationSelected,
-          onVoicePressed: _openVoiceAction,
-          onMorePressed: _openMoreMenu,
-          onDesktopNavSelected: (item) =>
-              unawaited(_onDesktopNavSelected(item)),
-          onCreateRoom: () => unawaited(_openCreateRoom()),
-          onCreateMoment: _openCreateMoment,
-          onOpenProfile: () => unawaited(_openProfile()),
-          onOpenProfileSettings: () => unawaited(_openProfileSettings()),
-        ),
+    route = MaterialPageRoute<void>(
+      builder: (_) => MoreDestinationHost(
+        body: screen,
+        selectedIndex: _selectedIndex,
+        moreSelected: openedFromMore,
+        unreadConversationCount: _unreadConversationCount,
+        unreadNotificationCount: _unreadNotificationCount,
+        activeDesktopItem: _desktopItemFor(destination),
+        onDestinationSelected: _onDestinationSelected,
+        onVoicePressed: _openVoiceAction,
+        onMorePressed: _openMoreMenu,
+        onDesktopNavSelected: (item) => unawaited(_onDesktopNavSelected(item)),
+        onCreateRoom: () => unawaited(_openCreateRoom()),
+        onCreateMoment: _openCreateMoment,
+        onOpenProfile: () => unawaited(_openProfile()),
+        onOpenProfileSettings: () => unawaited(_openProfileSettings()),
       ),
     );
+    await Navigator.of(context).push<void>(route);
   }
 
   /// Which rail item should read as active while a pushed destination is
@@ -1033,6 +1245,15 @@ class _MainShellState extends State<MainShell>
             // navigation into a shorter, scrollable lane.
             DesktopSidebar(
               moreItemKey: _moreItemKey,
+              tourItemKeys: {
+                DesktopNavItem.moments:
+                    _onboardingAnchors[GuidedOnboardingTarget.moments]!,
+                DesktopNavItem.chats:
+                    _onboardingAnchors[GuidedOnboardingTarget.chats]!,
+                DesktopNavItem.more:
+                    _onboardingAnchors[GuidedOnboardingTarget.more]!,
+              },
+              tourCreateKey: _onboardingAnchors[GuidedOnboardingTarget.create],
               active: _activeDesktopItem,
               unreadConversationCount: _unreadConversationCount,
               unreadNotificationCount: _unreadNotificationCount,
@@ -1116,6 +1337,12 @@ class _MainShellState extends State<MainShell>
           // connection is active, so it can sit here unconditionally.
           const RoomMiniBar(),
           YoFloatingNavigationDock(
+            tourDestinationKeys: {
+              1: _onboardingAnchors[GuidedOnboardingTarget.chats]!,
+              3: _onboardingAnchors[GuidedOnboardingTarget.moments]!,
+              4: _onboardingAnchors[GuidedOnboardingTarget.more]!,
+            },
+            tourVoiceKey: _onboardingAnchors[GuidedOnboardingTarget.create],
             selectedTabIndex: _mobileIndex,
             momentsTabIndex: _momentsSlot,
             unreadConversationCount: _unreadConversationCount,

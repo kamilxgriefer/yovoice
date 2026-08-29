@@ -18,10 +18,10 @@ correction silently broke all three anchors.)*
 | Storage rules | `npm --prefix firestore-tests run test:storage` | **60** checks |
 | Family media (combined) | `npm --prefix firestore-tests run test:family-media` | **11** checks |
 | Cloud Functions | `npm --prefix functions test` | **920** tests (70 `*.test.js` files) |
-| Flutter VM | `flutter test` | **1644** tests (148 VM-compatible files) |
+| Flutter VM | `flutter test` | **1672** tests (153 VM-compatible files) |
 | Flutter browser | `flutter test --platform chrome test/web_audio_capture_browser_test.dart test/image_crop_test.dart test/room_cover_editor_test.dart` | **18** tests (3 files) |
 
-**Where these numbers came from.** Functions 920 and Flutter VM 1644 were
+**Where these numbers came from.** Functions 920 and Flutter VM 1672 were
 re-measured on 2026-08-29 against the exact current source; Rules 519 was last
 re-measured on 2026-08-28. A deliberately
 sequential full Functions run reached 901/903 because two unrelated suites
@@ -35,14 +35,27 @@ checks. A final direct-call lock audit added four emulator regressions for late
 cancel/decline/end and expiry preserving a replacement call's locks; the exact
 concurrent Functions gate then passed 907/907 on a fresh emulator pair. The
 later ADR-130 identity wave passed 920/920 on a fresh Auth/Firestore emulator
-pair. Flutter VM 1644 passed in one invocation; the combined real-Chrome media
+pair. Flutter VM 1672 passed in one invocation; the combined real-Chrome media
 gate passed 18/18, and `flutter analyze` was clean on those bytes. Storage 60 and family
 media 11 also ran against fresh isolated emulators rather than an occupied
 local 8080 endpoint. Web and signed Android release compilation succeeded. The
-70 Functions files and 149 total Flutter test files (148 VM-compatible plus one
+70 Functions files and 154 total Flutter test files (153 VM-compatible plus one
 browser-only) are current `find` results rather than carried-forward estimates. The earlier
 figures this row used to carry (Rules 485, Functions 783/62, Flutter 1198/114)
 are kept in the movement log below as history.
+
+> **Movement, 2026-08-29 (first-run guided product tour).** Flutter VM
+> **1644 → 1672** adds per-account/version completion and fail-closed storage,
+> true-new-account startup eligibility, notification-prompt readiness on both
+> success, failure and bounded platform hangs, cold-start notification route
+> ownership before token/network work, single-flight and full reverse-route
+> ownership, modal blocking, keyboard focus retention, reduced motion, replay
+> from Settings and production dock/sidebar resize anchoring. The final
+> startup/route matrix passed 18/18; the complete VM suite passed 1672/1672 in
+> one invocation and `flutter
+> analyze` remained clean. Twelve Dark/Pearl real-theme frames cover 320×568
+> at 200% text, 390 px and 1440 px across the five-step route. Physical
+> VoiceOver/TalkBack behavior remains an explicit native tester smoke.
 
 > **Movement, 2026-08-29 (compact Profile identity passport).** Flutter VM
 > **1622 → 1629** adds exact two-level owner geometry, full-width badge-rail
@@ -692,8 +705,8 @@ provider checkout.
 
 ## Dart tests — real, but narrow
 
-`test/` — **1636 VM tests across 148 compatible files**, plus **18 real-Chrome
-tests across three files** (one browser-only and two shared; **149 `*_test.dart` files
+`test/` — **1672 VM tests across 153 compatible files**, plus **18 real-Chrome
+tests across three files** (one browser-only and two shared; **154 `*_test.dart` files
 total**), green in local verification, grown mostly
 out of real bugs rather than an even coverage discipline. The
 pattern throughout: fake the Firebase backends

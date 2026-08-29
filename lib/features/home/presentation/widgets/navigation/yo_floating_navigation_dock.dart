@@ -47,6 +47,8 @@ class YoFloatingNavigationDock extends StatefulWidget {
     required this.onVoicePressed,
     required this.onMorePressed,
     this.moreSelected = false,
+    this.tourDestinationKeys,
+    this.tourVoiceKey,
     super.key,
   });
 
@@ -67,6 +69,13 @@ class YoFloatingNavigationDock extends StatefulWidget {
   final VoidCallback onVoicePressed;
   final VoidCallback onMorePressed;
   final bool moreSelected;
+
+  /// Optional semantic anchors owned by MainShell's guided product tour.
+  /// Keys use visual slots (Chats = 1, Moments = 3, More = 4), not domain
+  /// indexes, so the dock's non-contiguous Moments index never leaks into the
+  /// presentation layer.
+  final Map<int, GlobalKey>? tourDestinationKeys;
+  final GlobalKey? tourVoiceKey;
 
   /// Exact vertical space reserved by the Scaffold bottom-navigation child.
   /// Keeping this calculation public prevents content-inset tests or future
@@ -160,6 +169,16 @@ class _YoFloatingNavigationDockState extends State<YoFloatingNavigationDock> {
       unawaited(HapticFeedback.selectionClick());
     }
     destination.onPressed();
+  }
+
+  Widget _tourDestinationAnchor(int slot, Widget child) {
+    final key = widget.tourDestinationKeys?[slot];
+    return key == null ? child : KeyedSubtree(key: key, child: child);
+  }
+
+  Widget _tourVoiceAnchor(Widget child) {
+    final key = widget.tourVoiceKey;
+    return key == null ? child : KeyedSubtree(key: key, child: child);
   }
 
   @override
@@ -380,15 +399,20 @@ class _YoFloatingNavigationDockState extends State<YoFloatingNavigationDock> {
                                                       width: expandedCellWidth,
                                                       height:
                                                           expandedCellHeight,
-                                                      child: _YoDockDestination(
-                                                        config: bySlot[slot]!,
-                                                        reduceMotion:
-                                                            reduceMotion,
-                                                        onPressed: () =>
-                                                            _select(
-                                                              bySlot[slot]!,
+                                                      child:
+                                                          _tourDestinationAnchor(
+                                                            slot,
+                                                            _YoDockDestination(
+                                                              config:
+                                                                  bySlot[slot]!,
+                                                              reduceMotion:
+                                                                  reduceMotion,
+                                                              onPressed: () =>
+                                                                  _select(
+                                                                    bySlot[slot]!,
+                                                                  ),
                                                             ),
-                                                      ),
+                                                          ),
                                                     ),
                                                 ],
                                               )
@@ -402,15 +426,18 @@ class _YoFloatingNavigationDockState extends State<YoFloatingNavigationDock> {
                                                     Expanded(
                                                       child: slot == 2
                                                           ? const SizedBox.expand()
-                                                          : _YoDockDestination(
-                                                              config:
-                                                                  bySlot[slot]!,
-                                                              reduceMotion:
-                                                                  reduceMotion,
-                                                              onPressed: () =>
-                                                                  _select(
+                                                          : _tourDestinationAnchor(
+                                                              slot,
+                                                              _YoDockDestination(
+                                                                config:
                                                                     bySlot[slot]!,
-                                                                  ),
+                                                                reduceMotion:
+                                                                    reduceMotion,
+                                                                onPressed: () =>
+                                                                    _select(
+                                                                      bySlot[slot]!,
+                                                                    ),
+                                                              ),
                                                             ),
                                                     ),
                                                 ],
@@ -471,10 +498,12 @@ class _YoFloatingNavigationDockState extends State<YoFloatingNavigationDock> {
                               height: centerDiameter,
                               child: FocusTraversalOrder(
                                 order: const NumericFocusOrder(2),
-                                child: _YoCenterActionButton(
-                                  diameter: centerDiameter,
-                                  onPressed: widget.onVoicePressed,
-                                  reduceMotion: reduceMotion,
+                                child: _tourVoiceAnchor(
+                                  _YoCenterActionButton(
+                                    diameter: centerDiameter,
+                                    onPressed: widget.onVoicePressed,
+                                    reduceMotion: reduceMotion,
+                                  ),
                                 ),
                               ),
                             ),

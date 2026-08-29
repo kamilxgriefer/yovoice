@@ -8138,3 +8138,68 @@ choices changes entitlement or staff authority.
 - Dark/Pearl real-font captures at 320–1440 px plus explicit contrast and
   heading-semantics assertions are release evidence. Physical native evidence
   waits for the next coordinated tester build, not a one-off upload.
+
+## ADR-132: First-run education is a route-aware shell tour, not another onboarding account step
+
+**Status**: Implemented and verified in source; web and native release pending
+**Date**: 2026-08-29
+
+### Context
+
+YO Voice opened a newly registered account directly onto Home without
+explaining that the centre YO action creates audio, that Moments is a primary
+feed, or where Chats and the broader product menu live. Adding another required
+registration page would delay the first useful screen and could not point at
+the controls users actually need. A generic carousel would have the same
+problem, while a global first-run boolean would leak progress between accounts
+sharing one device. Startup can also own a room deep link, a pushed route or a
+native notification-permission dialog, so an arbitrary delay cannot safely
+decide when a guide may appear.
+
+### Decision
+
+The authenticated `MainShell` owns a five-step, skippable product tour. It
+starts with one short value statement, then spotlights the real production
+anchors for YO creation, Moments, Chats and More on whichever responsive shell
+is currently rendered. The overlay blocks interaction underneath it and offers
+Skip, Back, Next and Done; Settings exposes **Quick app tour** for deliberate
+replay. English and Polish copy share the app localization boundary. Dark and
+Pearl use semantic surfaces and a dual-tone, theme-aware spotlight ring.
+
+Automatic presentation is limited to a Firebase account's initial session.
+Skip and Done persist in `SharedPreferences` under the normalized uid and tour
+version; existing accounts and unreadable local storage fail closed, while a
+new version can intentionally teach a materially changed shell later. No
+Firestore field, public identity projection or server write is introduced.
+
+The shell waits for its cold-start room hand-off, the full reverse transition
+of any route above it, and an explicit future that settles with the native
+notification permission prompt plus any cold-start notification destination.
+The prompt phase is bounded and releases the barrier on platform hangs. Local
+iOS notification initialization no longer asks independently; Firebase
+Messaging is the single permission owner. Initial-message lookup and routing
+are resolved before token binding, while token registration and other network
+work continue in parallel and never delay the shell. One synchronous
+single-flight guard is acquired before
+the first await and remains held through the guide route's reverse transition,
+so auto-start and rapid replay cannot stack dialogs. Anchors are remeasured
+after responsive layout changes and never reuse a desktop rectangle on mobile.
+
+The guide is one modal route with closed-loop focus, Escape and arrow-key
+shortcuts, a stable Next control across step changes, one live-region route
+label, 48 px actions and pinned header/footer around a scrollable copy region.
+Reduced motion removes route and progress animation.
+
+### Consequences
+
+- Registration stays short and the guide remains optional, but every new
+  account gets an immediate explanation in the context of the real app.
+- A device shared by multiple accounts stores independent outcomes; deleting
+  local app data can offer the guide again only if the account still satisfies
+  the narrow initial-session gate.
+- Responsive resize, 320×568 at 200% text, Dark/Pearl contrast, keyboard focus,
+  route blocking, duplicate launch, permission success/failure, persistence
+  and real dock/sidebar geometry are automated. Twelve real-theme visual
+  frames cover phone, accessible phone and desktop.
+- Physical VoiceOver/TalkBack behavior remains a native tester smoke item even
+  though widget semantics probes pass.

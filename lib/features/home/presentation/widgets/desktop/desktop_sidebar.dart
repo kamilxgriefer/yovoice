@@ -69,6 +69,8 @@ class DesktopSidebar extends StatelessWidget {
     this.profileService,
     this.moreItemKey,
     this.capabilityService,
+    this.tourItemKeys,
+    this.tourCreateKey,
     super.key,
   });
 
@@ -98,6 +100,11 @@ class DesktopSidebar extends StatelessWidget {
   /// Anchors the desktop More popover to the rail item.
   final GlobalKey? moreItemKey;
 
+  /// Optional anchors for the guided tour. They never own navigation state;
+  /// MainShell supplies them only to the currently rendered production rail.
+  final Map<DesktopNavItem, GlobalKey>? tourItemKeys;
+  final GlobalKey? tourCreateKey;
+
   static const double width = 264;
 
   /// Enlarged text needs real horizontal room, not an ellipsis that merely
@@ -126,6 +133,16 @@ class DesktopSidebar extends StatelessWidget {
     return theme.brightness == Brightness.dark
         ? _accentTint
         : theme.colorScheme.primary;
+  }
+
+  Widget _tourItemAnchor(DesktopNavItem item, Widget child) {
+    final key = tourItemKeys?[item];
+    return key == null ? child : KeyedSubtree(key: key, child: child);
+  }
+
+  Widget _tourCreateAnchor(Widget child) {
+    final key = tourCreateKey;
+    return key == null ? child : KeyedSubtree(key: key, child: child);
   }
 
   @override
@@ -200,12 +217,15 @@ class DesktopSidebar extends StatelessWidget {
                     // Moments sits directly above Discover: the rail is
                     // where the two coexist, and a discovery surface for
                     // voice belongs ahead of a discovery surface for rooms.
-                    _NavTile(
-                      item: DesktopNavItem.moments,
-                      icon: Icons.graphic_eq_rounded,
-                      label: copy.moments,
-                      active: active == DesktopNavItem.moments,
-                      onTap: onSelect,
+                    _tourItemAnchor(
+                      DesktopNavItem.moments,
+                      _NavTile(
+                        item: DesktopNavItem.moments,
+                        icon: Icons.graphic_eq_rounded,
+                        label: copy.moments,
+                        active: active == DesktopNavItem.moments,
+                        onTap: onSelect,
+                      ),
                     ),
                     _NavTile(
                       item: DesktopNavItem.discover,
@@ -221,13 +241,16 @@ class DesktopSidebar extends StatelessWidget {
                       active: active == DesktopNavItem.findCreators,
                       onTap: onSelect,
                     ),
-                    _NavTile(
-                      item: DesktopNavItem.chats,
-                      icon: Icons.chat_bubble_outline_rounded,
-                      label: copy.chats,
-                      badge: unreadConversationCount,
-                      active: active == DesktopNavItem.chats,
-                      onTap: onSelect,
+                    _tourItemAnchor(
+                      DesktopNavItem.chats,
+                      _NavTile(
+                        item: DesktopNavItem.chats,
+                        icon: Icons.chat_bubble_outline_rounded,
+                        label: copy.chats,
+                        badge: unreadConversationCount,
+                        active: active == DesktopNavItem.chats,
+                        onTap: onSelect,
+                      ),
                     ),
                     _NavTile(
                       item: DesktopNavItem.friends,
@@ -242,38 +265,45 @@ class DesktopSidebar extends StatelessWidget {
                         copy.text('CREATE', 'TWORZENIE'),
                         compact: useCompactCreateActions,
                       ),
-                    if (useCompactCreateActions)
-                      Row(
-                        children: [
-                          Expanded(
-                            child: _CreateRoomButton(onTap: onCreateRoom),
-                          ),
-                          const SizedBox(width: 8),
-                          _CreateMomentButton(
-                            onTap: onCreateMoment,
-                            compact: true,
-                          ),
-                        ],
-                      )
-                    else ...[
-                      _CreateRoomButton(onTap: onCreateRoom),
-                      const SizedBox(height: 6),
-                      _CreateMomentButton(onTap: onCreateMoment),
-                    ],
+                    _tourCreateAnchor(
+                      useCompactCreateActions
+                          ? Row(
+                              children: [
+                                Expanded(
+                                  child: _CreateRoomButton(onTap: onCreateRoom),
+                                ),
+                                const SizedBox(width: 8),
+                                _CreateMomentButton(
+                                  onTap: onCreateMoment,
+                                  compact: true,
+                                ),
+                              ],
+                            )
+                          : Column(
+                              children: [
+                                _CreateRoomButton(onTap: onCreateRoom),
+                                const SizedBox(height: 6),
+                                _CreateMomentButton(onTap: onCreateMoment),
+                              ],
+                            ),
+                    ),
                     SizedBox(height: useCompactCreateActions ? 8 : 12),
                     if (showSectionLabels)
                       _SectionLabel(
                         copy.text('MORE', 'WIĘCEJ'),
                         compact: useCompactCreateActions,
                       ),
-                    _NavTile(
-                      key: moreItemKey,
-                      item: DesktopNavItem.more,
-                      icon: Icons.more_horiz_rounded,
-                      label: copy.more,
-                      active: active == DesktopNavItem.more,
-                      trailingChevron: true,
-                      onTap: onSelect,
+                    _tourItemAnchor(
+                      DesktopNavItem.more,
+                      _NavTile(
+                        key: moreItemKey,
+                        item: DesktopNavItem.more,
+                        icon: Icons.more_horiz_rounded,
+                        label: copy.more,
+                        active: active == DesktopNavItem.more,
+                        trailingChevron: true,
+                        onTap: onSelect,
+                      ),
                     ),
                   ],
                 ),

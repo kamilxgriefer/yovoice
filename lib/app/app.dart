@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
+import 'package:yovoice/core/navigation/app_route_observer.dart';
 import 'package:yovoice/core/audio/ui_sound.dart';
 import 'package:yovoice/core/audio/ui_sound_service.dart';
 import 'package:yovoice/core/preferences/app_preferences.dart';
@@ -408,7 +409,7 @@ class _YoVoiceAppState extends State<YoVoiceApp> {
     );
     PushNotificationService.instance.onNotificationTap =
         (type, targetId, actorId, notificationId) {
-          NotificationRouter.route(
+          return NotificationRouter.route(
             type: type,
             targetId: targetId,
             actorId: actorId,
@@ -592,6 +593,7 @@ class _YoVoiceAppState extends State<YoVoiceApp> {
         controller: controller,
         child: MaterialApp(
           navigatorKey: notificationNavigatorKey,
+          navigatorObservers: [appRouteObserver],
           scaffoldMessengerKey: _messengerKey,
           debugShowCheckedModeBanner: false,
           title: 'YO Voice',

@@ -16,6 +16,21 @@ someone decide what to pick up next.
 
 ## Done
 
+- **New users now get a short, optional guided tour instead of an unexplained
+  Home screen** (2026-08-29, ADR-132, **SOURCE VERIFIED; WEB + NATIVE RELEASE
+  PENDING**): five focused steps introduce YO creation, Moments, Chats and
+  More using the real mobile dock or desktop rail as live spotlight anchors.
+  Skip, Back, Next and Done are always reachable; keyboard, reduced-motion,
+  Dark/Pearl and 320 px at 200% text are first-class states. The tour opens
+  automatically only for a genuinely new account's initial session, records
+  Skip/Done per account and version, and can always be replayed from Settings.
+  It waits for initial deep links, cold-start notification destinations,
+  reverse route transitions and the bounded native notification permission
+  prompt, while token/network work stays parallel and a single-flight guard
+  prevents rapid taps from stacking guides. Responsive resize, persistence,
+  modal blocking, focus retention, permission failure/hangs and twelve
+  real-theme visual frames are covered without adding a remote profile field.
+
 - **The collapsed live-room panel is now a single compact YO Live Capsule**
   (2026-08-29, ADR-102 amendment, `838bddb`, **WEB HOSTING DEPLOYED +
   BYTE-EXACT; NATIVE TESTER BUILD HELD**): the old multi-row mobile card is

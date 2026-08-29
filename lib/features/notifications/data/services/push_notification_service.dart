@@ -93,6 +93,49 @@ bool shouldSuppressForegroundNotification({
   return isConversationActivity && activeConversations.contains(targetId);
 }
 
+/// Runs only the native-permission phase and always releases the UI barrier.
+/// Kept platform-free so sequencing can be pinned in VM tests without loading
+/// Firebase or local-notification channels.
+@visibleForTesting
+Future<T> runInitialNotificationPermissionPhase<T>({
+  required Future<void> Function() initializeLocalNotifications,
+  required Future<T> Function() requestPermission,
+  required void Function() onSettled,
+  required Duration timeout,
+}) async {
+  try {
+    // Bound each await separately. If local setup times out, execution leaves
+    // this block and never starts a late permission request. If the already
+    // issued OS request times out, its eventual result is deliberately ignored
+    // and the service retries only after a process restart.
+    await initializeLocalNotifications().timeout(timeout);
+    return await requestPermission().timeout(timeout);
+  } finally {
+    onSettled();
+  }
+}
+
+/// Resolves a cold-start notification before first-run education may own the
+/// startup route. Only the local SDK lookup is bounded; once a real route is
+/// found it deliberately owns navigation until its destination is closed.
+@visibleForTesting
+Future<void> resolveInitialNotificationNavigation<T>({
+  required Future<T?> Function() getInitialMessage,
+  required Future<void> Function(T message) routeMessage,
+  required Duration timeout,
+}) async {
+  try {
+    final message = await getInitialMessage().timeout(timeout);
+    if (message == null) return;
+    await routeMessage(message);
+  } catch (error) {
+    debugPrint(
+      'PushNotificationService: initial notification intent was not '
+      'resolved (${error.runtimeType}); startup continues without it.',
+    );
+  }
+}
+
 /// Owns the FCM lifecycle end-to-end: permission request, token
 /// register/refresh/unregister, foreground local-notification display, and
 /// routing a tap back into the app. Every entry point is wrapped so a
@@ -112,6 +155,8 @@ class PushNotificationService {
   static const String _rotationPendingPreference =
       'push_token_rotation_pending_v1';
   static const Duration _signOutCleanupTimeout = Duration(seconds: 4);
+  static const Duration _initialPermissionPhaseTimeout = Duration(seconds: 60);
+  static const Duration _initialMessageTimeout = Duration(seconds: 5);
 
   /// Web push needs a VAPID public key, and there is no safe default for
   /// it: without one `getToken()` on web either throws or yields a token
@@ -176,14 +221,27 @@ class PushNotificationService {
   String? _registeredToken;
   String? _registeredUserId;
   Future<void> _registrationTail = Future<void>.value();
+  Future<void> _initialPermissionPromptSettled = Future<void>.value();
+  Future<void> _initialOnboardingReadiness = Future<void>.value();
   bool _initialized = false;
   bool _warnedAboutVapid = false;
+
+  /// Completes as soon as the first native notification permission prompt has
+  /// been resolved (or skipped/failed). Token and network work deliberately
+  /// continue afterward so UI such as the first-run guide waits only for the
+  /// competing system modal, never for push registration.
+  Future<void> get initialPermissionPromptSettled =>
+      _initialPermissionPromptSettled;
+
+  /// Completes after both the native prompt and a cold-start notification
+  /// route have settled. Token registration/network work is never part of it.
+  Future<void> get initialOnboardingReadiness => _initialOnboardingReadiness;
 
   /// Set by the widget layer once a navigator is available. Called with the
   /// notification's type, targetId, and actorId whenever a push is tapped,
   /// whether the app was foregrounded, backgrounded, or launched cold from
   /// it.
-  void Function(
+  Future<void> Function(
     NotificationType type,
     String? targetId,
     String? actorId,
@@ -243,6 +301,22 @@ class PushNotificationService {
       return;
     }
     _initialized = true;
+    final permissionPrompt = Completer<void>();
+    _initialPermissionPromptSettled = permissionPrompt.future;
+    final startupNavigation = Completer<void>();
+    _initialOnboardingReadiness = Future.wait<void>([
+      permissionPrompt.future,
+      startupNavigation.future,
+    ]);
+    var startupResolutionStarted = false;
+
+    void settlePermissionPrompt() {
+      if (!permissionPrompt.isCompleted) permissionPrompt.complete();
+    }
+
+    void settleStartupNavigation() {
+      if (!startupNavigation.isCompleted) startupNavigation.complete();
+    }
 
     // An unconfigured web build cannot register a token, so asking the
     // browser for notification permission would spend the user's single
@@ -255,23 +329,54 @@ class PushNotificationService {
         'activity feed, badge and foreground banners come from Firestore '
         'and keep working.',
       );
+      settlePermissionPrompt();
+      settleStartupNavigation();
       return;
     }
 
     try {
       FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
-      await _initLocalNotifications();
-
       final messaging = FirebaseMessaging.instance;
-      final settings = await messaging.requestPermission(
-        alert: true,
-        badge: true,
-        sound: true,
+      _openedAppSubscription = FirebaseMessaging.onMessageOpenedApp.listen(
+        (message) => unawaited(_routeFromMessage(message)),
+        onError: (_) {},
       );
-      if (settings.authorizationStatus == AuthorizationStatus.denied) {
+
+      NotificationSettings? settings;
+      try {
+        settings = await runInitialNotificationPermissionPhase(
+          initializeLocalNotifications: _initLocalNotifications,
+          requestPermission: () => messaging.requestPermission(
+            alert: true,
+            badge: true,
+            sound: true,
+          ),
+          onSettled: settlePermissionPrompt,
+          timeout: _initialPermissionPhaseTimeout,
+        );
+      } catch (error) {
+        debugPrint(
+          'PushNotificationService: notification permission phase failed '
+          '(${error.runtimeType}); token registration is skipped this session.',
+        );
+      }
+
+      startupResolutionStarted = true;
+      unawaited(
+        resolveInitialNotificationNavigation(
+          getInitialMessage: messaging.getInitialMessage,
+          routeMessage: _routeFromMessage,
+          timeout: _initialMessageTimeout,
+        ).whenComplete(settleStartupNavigation),
+      );
+
+      if (settings == null ||
+          settings.authorizationStatus == AuthorizationStatus.denied) {
         return;
       }
 
+      // Cold-start routing is resolved before any token/network work so it can
+      // never arrive late over the first-run guide.
       await _bindCurrentIdentity();
       _tokenRefreshSubscription = messaging.onTokenRefresh.listen(
         _handleTokenRefresh,
@@ -282,18 +387,16 @@ class PushNotificationService {
         _showLocalNotification,
         onError: (_) {},
       );
-      _openedAppSubscription = FirebaseMessaging.onMessageOpenedApp.listen(
-        _routeFromMessage,
-        onError: (_) {},
-      );
-
-      final initialMessage = await messaging.getInitialMessage();
-      if (initialMessage != null) _routeFromMessage(initialMessage);
     } catch (error, stackTrace) {
       debugPrint(
         'PushNotificationService.initialize failed (push will be '
         'unavailable this session): $error\n$stackTrace',
       );
+    } finally {
+      // Local-notification setup and platform messaging can both fail before
+      // the permission call. The onboarding barrier must never remain stuck.
+      settlePermissionPrompt();
+      if (!startupResolutionStarted) settleStartupNavigation();
     }
   }
 
@@ -559,7 +662,11 @@ class PushNotificationService {
     const androidSettings = AndroidInitializationSettings(
       '@mipmap/ic_launcher',
     );
-    const iosSettings = DarwinInitializationSettings();
+    const iosSettings = DarwinInitializationSettings(
+      requestAlertPermission: false,
+      requestBadgePermission: false,
+      requestSoundPermission: false,
+    );
     await _localNotifications.initialize(
       settings: const InitializationSettings(
         android: androidSettings,
@@ -581,7 +688,13 @@ class PushNotificationService {
         final notificationId = parts.length > 3 && parts[3].isNotEmpty
             ? parts[3]
             : null;
-        onNotificationTap?.call(type, targetId, actorId, notificationId);
+        final routing = onNotificationTap?.call(
+          type,
+          targetId,
+          actorId,
+          notificationId,
+        );
+        if (routing != null) unawaited(routing);
       },
     );
 
@@ -775,12 +888,12 @@ class PushNotificationService {
     }
   }
 
-  void _routeFromMessage(RemoteMessage message) {
+  Future<void> _routeFromMessage(RemoteMessage message) async {
     final type = NotificationType.fromName(message.data['type'] as String?);
     final targetId = message.data['targetId'] as String?;
     final actorId = message.data['actorId'] as String?;
     final notificationId = message.data['notificationId'] as String?;
-    onNotificationTap?.call(type, targetId, actorId, notificationId);
+    await onNotificationTap?.call(type, targetId, actorId, notificationId);
   }
 
   Future<bool> _ensureTokenRotationCompleted() async {

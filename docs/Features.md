@@ -325,6 +325,13 @@ explicitly. Downloaded audio is managed locally with the Voice Moment limits
 and platform behavior described above. See
 [ADR-073](Decisions.md#adr-073-firebase-session-management-exposes-account-wide-revocation-never-a-fabricated-device-list).
 
+New accounts receive one optional five-step product tour after authenticated
+startup settles. It points at the real YO creation action, Moments, Chats and
+More controls on the current mobile or desktop shell; users can skip it at any
+time and replay **Quick app tour** from Settings. Completion and Skip are kept
+locally per Firebase uid and tour version, so the guide does not add profile
+data or interrupt established accounts on a new device. See ADR-132.
+
 ## Notifications
 
 `lib/features/notifications/` — an in-app notification center with

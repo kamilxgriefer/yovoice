@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io' show Platform;
 
 import 'package:flutter/foundation.dart' show kIsWeb;
@@ -7,6 +8,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'package:yovoice/core/helpers/error_messages.dart';
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/preferences/app_preferences.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/shared/widgets/buttons/yo_icon_button.dart';
@@ -42,13 +44,21 @@ Color _warningForeground(BuildContext context) =>
     : const Color(0xFF8A4B00);
 
 class SettingsScreen extends StatefulWidget {
-  const SettingsScreen({this.isRootTab = false, super.key});
+  const SettingsScreen({
+    this.isRootTab = false,
+    this.onReplayGuidedOnboarding,
+    super.key,
+  });
 
   /// True when this screen IS the shell's current content (a desktop
   /// content slot) rather than a pushed route — the same flag
   /// FriendsScreen uses, so a root tab never renders a back button that
   /// has nothing to pop.
   final bool isRootTab;
+
+  /// Supplied by MainShell so replay can first leave this Settings route (or
+  /// desktop slot), reveal stable navigation anchors, then show the tour.
+  final Future<void> Function()? onReplayGuidedOnboarding;
 
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
@@ -421,6 +431,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Widget _buildContent(BuildContext context, UserProfile profile) {
+    final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
     final success = _successForeground(context);
@@ -787,6 +798,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
         const _GroupLabel('Help'),
         _SettingsGroup(
           children: [
+            if (widget.onReplayGuidedOnboarding != null)
+              _SettingsTile(
+                icon: Icons.explore_outlined,
+                title: copy.text('Quick app tour', 'Szybki przewodnik'),
+                subtitle: copy.text(
+                  'See the essentials again in five short steps',
+                  'Zobacz najważniejsze funkcje w pięciu krótkich krokach',
+                ),
+                onTap: () => unawaited(widget.onReplayGuidedOnboarding!.call()),
+              ),
             _SettingsTile(
               icon: Icons.help_outline_rounded,
               title: 'Help center',

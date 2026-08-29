@@ -111,6 +111,7 @@ class _AuthenticatedEntry extends StatefulWidget {
 
 class _AuthenticatedEntryState extends State<_AuthenticatedEntry> {
   late Future<void> _profileBootstrap;
+  Future<void> _pushOnboardingReadiness = Future<void>.value();
 
   @override
   void initState() {
@@ -125,7 +126,10 @@ class _AuthenticatedEntryState extends State<_AuthenticatedEntry> {
     // Bind push only after the private profile exists. Profile provisioning is
     // the authenticated-entry boundary; push remains best-effort and never
     // delays the shell once that boundary has succeeded.
-    unawaited(PushNotificationService.instance.initialize());
+    final push = PushNotificationService.instance;
+    final initialization = push.initialize();
+    _pushOnboardingReadiness = push.initialOnboardingReadiness;
+    unawaited(initialization);
   }
 
   void _retryProfileBootstrap() {
@@ -152,7 +156,7 @@ class _AuthenticatedEntryState extends State<_AuthenticatedEntry> {
           );
         }
 
-        return const MainShell();
+        return MainShell(onboardingReadiness: _pushOnboardingReadiness);
       },
     );
   }

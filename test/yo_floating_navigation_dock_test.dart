@@ -49,6 +49,8 @@ Future<SemanticsHandle> _pumpDock(
   double keyboardInset = 0,
   bool reduceMotion = false,
   ThemeData? theme,
+  Map<int, GlobalKey>? tourDestinationKeys,
+  GlobalKey? tourVoiceKey,
 }) async {
   tester.view.physicalSize = Size(width, height);
   tester.view.devicePixelRatio = 1;
@@ -67,7 +69,10 @@ Future<SemanticsHandle> _pumpDock(
           textScaler: TextScaler.linear(textScale),
           disableAnimations: reduceMotion,
         ),
-        child: const _DockHarness(),
+        child: _DockHarness(
+          tourDestinationKeys: tourDestinationKeys,
+          tourVoiceKey: tourVoiceKey,
+        ),
       ),
     ),
   );
@@ -76,7 +81,10 @@ Future<SemanticsHandle> _pumpDock(
 }
 
 class _DockHarness extends StatefulWidget {
-  const _DockHarness();
+  const _DockHarness({this.tourDestinationKeys, this.tourVoiceKey});
+
+  final Map<int, GlobalKey>? tourDestinationKeys;
+  final GlobalKey? tourVoiceKey;
 
   @override
   State<_DockHarness> createState() => _DockHarnessState();
@@ -104,6 +112,8 @@ class _DockHarnessState extends State<_DockHarness> {
         ),
       ),
       bottomNavigationBar: YoFloatingNavigationDock(
+        tourDestinationKeys: widget.tourDestinationKeys,
+        tourVoiceKey: widget.tourVoiceKey,
         selectedTabIndex: selected,
         momentsTabIndex: _momentsTab,
         unreadConversationCount: 3,
@@ -122,6 +132,54 @@ class _DockHarnessState extends State<_DockHarness> {
 }
 
 void main() {
+  testWidgets(
+    'guided-tour anchors follow Chats 1, Moments 3, More 4 and central YO',
+    (tester) async {
+      for (final textScale in [1.0, 2.0]) {
+        final destinationKeys = <int, GlobalKey>{
+          1: GlobalKey(debugLabel: 'tour-chats-$textScale'),
+          3: GlobalKey(debugLabel: 'tour-moments-$textScale'),
+          4: GlobalKey(debugLabel: 'tour-more-$textScale'),
+        };
+        final voiceKey = GlobalKey(debugLabel: 'tour-voice-$textScale');
+        final semantics = await _pumpDock(
+          tester,
+          width: textScale == 2 ? 320 : 390,
+          height: 700,
+          textScale: textScale,
+          reduceMotion: true,
+          tourDestinationKeys: destinationKeys,
+          tourVoiceKey: voiceKey,
+        );
+
+        for (final slot in [1, 3, 4]) {
+          final anchorRect = tester.getRect(find.byKey(destinationKeys[slot]!));
+          final productionControlRect = tester.getRect(
+            find.byKey(ValueKey('yo-destination-$slot')),
+          );
+          expect(anchorRect.left, closeTo(productionControlRect.left, .01));
+          expect(anchorRect.top, closeTo(productionControlRect.top, .01));
+          expect(anchorRect.right, closeTo(productionControlRect.right, .01));
+          expect(anchorRect.bottom, closeTo(productionControlRect.bottom, .01));
+        }
+
+        final voiceAnchorRect = tester.getRect(find.byKey(voiceKey));
+        final productionVoiceRect = tester.getRect(
+          find.byKey(const ValueKey('yo-center-action-boundary')),
+        );
+        expect(voiceAnchorRect.left, closeTo(productionVoiceRect.left, .01));
+        expect(voiceAnchorRect.top, closeTo(productionVoiceRect.top, .01));
+        expect(voiceAnchorRect.right, closeTo(productionVoiceRect.right, .01));
+        expect(
+          voiceAnchorRect.bottom,
+          closeTo(productionVoiceRect.bottom, .01),
+        );
+        expect(tester.takeException(), isNull);
+        semantics.dispose();
+      }
+    },
+  );
+
   testWidgets('dock chrome and active capsule follow both semantic themes', (
     tester,
   ) async {

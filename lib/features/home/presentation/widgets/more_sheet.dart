@@ -135,6 +135,7 @@ Future<MoreDestination?> showMoreSheet(
 Widget moreDestinationScreen(
   MoreDestination destination, {
   bool isRootTab = false,
+  Future<void> Function()? onReplayGuidedOnboarding,
 }) {
   final screen = switch (destination) {
     MoreDestination.friends => FriendsScreen(isRootTab: isRootTab),
@@ -147,7 +148,10 @@ Widget moreDestinationScreen(
     ),
     MoreDestination.achievements => const AwardsHubScreen(),
     MoreDestination.creatorStudio => CreatorStudioScreen(isRootTab: isRootTab),
-    MoreDestination.settings => SettingsScreen(isRootTab: isRootTab),
+    MoreDestination.settings => SettingsScreen(
+      isRootTab: isRootTab,
+      onReplayGuidedOnboarding: onReplayGuidedOnboarding,
+    ),
     MoreDestination.profile => const ProfileScreen(),
     // Re-checks staff authority on mount and renders an access-denied
     // state without querying anything if it fails. Menu visibility is
