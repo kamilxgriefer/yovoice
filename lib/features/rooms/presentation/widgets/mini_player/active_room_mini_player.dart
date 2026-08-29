@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/calls/data/services/voice_call_service.dart';
 import 'package:yovoice/features/rooms/data/models/room_message.dart';
 import 'package:yovoice/features/rooms/data/services/room_mute_coordinator.dart';
@@ -14,6 +15,7 @@ import 'package:yovoice/features/rooms/data/services/room_service.dart';
 import 'package:yovoice/features/rooms/presentation/screens/room_entry_screen.dart';
 import 'package:yovoice/features/rooms/presentation/widgets/mini_player/active_room_controls.dart';
 import 'package:yovoice/features/rooms/presentation/widgets/mini_player/active_room_info.dart';
+import 'package:yovoice/features/rooms/presentation/widgets/mini_player/compact_active_room_bar.dart';
 import 'package:yovoice/features/rooms/presentation/widgets/mini_player/expanded_mini_chat.dart';
 import 'package:yovoice/features/rooms/presentation/widgets/mini_player/live_chat_preview.dart';
 
@@ -123,6 +125,7 @@ class _ActiveRoomMiniPlayerState extends State<ActiveRoomMiniPlayer> {
     _voice.removeListener(_handleSessionChanged);
     unawaited(_latestSub?.cancel());
     _removeDesktopChatOverlay();
+    _dismissEndConfirmationIfOpen();
     super.dispose();
   }
 
@@ -158,6 +161,8 @@ class _ActiveRoomMiniPlayerState extends State<ActiveRoomMiniPlayer> {
     _hostEndsNow = false;
     _removeDesktopChatOverlay();
     _dismissMobileSheetIfOpen();
+    _dismissMobileActionsIfOpen();
+    _dismissEndConfirmationIfOpen();
     // A room that ended while the expanded chat was open must not leave
     // the "expanded" latch set, or the NEXT session's Expand would no-op.
     // (The mobile sheet also clears the latch itself when it pops.)
@@ -296,7 +301,10 @@ class _ActiveRoomMiniPlayerState extends State<ActiveRoomMiniPlayer> {
     if (roomId == null) return;
     if (_hostEndsNow) {
       final confirmed = await _confirmEnd();
-      if (confirmed != true || !mounted) return;
+      // The dialog belongs to the session captured above. A remote end can
+      // replace that session while it is open; a stale confirmation must
+      // never disconnect the new room that now owns VoiceCallService.
+      if (confirmed != true || !mounted || _watchedRoomId != roomId) return;
     }
     _collapseExpandedChat();
     // Same order and semantics as the room screens: audio first, then the
@@ -312,34 +320,62 @@ class _ActiveRoomMiniPlayerState extends State<ActiveRoomMiniPlayer> {
     }
   }
 
-  Future<bool?> _confirmEnd() {
-    return showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        backgroundColor: AppColors.surface,
-        title: const Text(
-          'End room?',
-          style: TextStyle(color: Colors.white, fontWeight: FontWeight.w900),
-        ),
-        content: const Text(
-          'You are the host. Leaving can end this live session for '
-          'everyone still inside.',
-          style: TextStyle(color: AppColors.textSecondary, height: 1.4),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            key: const ValueKey('mini-player-end-confirm'),
-            onPressed: () => Navigator.of(dialogContext).pop(true),
-            style: FilledButton.styleFrom(backgroundColor: AppColors.error),
-            child: const Text('End room'),
-          ),
-        ],
-      ),
-    );
+  NavigatorState? _endConfirmationNavigator;
+  bool _endConfirmationOpen = false;
+
+  Future<bool?> _confirmEnd() async {
+    if (_endConfirmationOpen) return false;
+    _endConfirmationOpen = true;
+    _endConfirmationNavigator = Navigator.of(context, rootNavigator: true);
+    try {
+      return await showDialog<bool>(
+        context: context,
+        useRootNavigator: true,
+        builder: (dialogContext) {
+          final palette = dialogContext.appPalette;
+          final colorScheme = Theme.of(dialogContext).colorScheme;
+          return AlertDialog(
+            backgroundColor: palette.surfaceRaised,
+            title: Text(
+              'End room?',
+              style: TextStyle(
+                color: palette.textPrimary,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+            content: Text(
+              'You are the host. Leaving can end this live session for '
+              'everyone still inside.',
+              style: TextStyle(color: palette.textSecondary, height: 1.4),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(false),
+                style: TextButton.styleFrom(foregroundColor: palette.focus),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                key: const ValueKey('mini-player-end-confirm'),
+                onPressed: () => Navigator.of(dialogContext).pop(true),
+                style: FilledButton.styleFrom(
+                  backgroundColor: colorScheme.error,
+                  foregroundColor: colorScheme.onError,
+                ),
+                child: const Text('End room'),
+              ),
+            ],
+          );
+        },
+      );
+    } finally {
+      _endConfirmationOpen = false;
+      _endConfirmationNavigator = null;
+    }
+  }
+
+  void _dismissEndConfirmationIfOpen() {
+    if (!_endConfirmationOpen) return;
+    _endConfirmationNavigator?.maybePop();
   }
 
   // ---------------------------------------------------------- expanded chat
@@ -387,6 +423,49 @@ class _ActiveRoomMiniPlayerState extends State<ActiveRoomMiniPlayer> {
 
   NavigatorState? _mobileSheetNavigator;
   bool _mobileSheetOpen = false;
+  ModalBottomSheetRoute<CompactRoomMoreAction>? _mobileActionsRoute;
+  bool _mobileActionsOpen = false;
+
+  Future<void> _openMobileActions() async {
+    final roomId = _watchedRoomId;
+    if (roomId == null || _mobileActionsOpen) return;
+
+    _mobileActionsOpen = true;
+    CompactRoomMoreAction? action;
+    try {
+      action = await showCompactRoomMoreSheet(
+        context,
+        endsRoomNow: _hostEndsNow,
+        onRouteCreated: (route) => _mobileActionsRoute = route,
+      );
+    } finally {
+      // Clear the route handle BEFORE running Return/Leave. Leave disconnects
+      // the session synchronously; keeping the handle alive until then would
+      // make the session-change cleanup pop the root route after this sheet's
+      // own reverse transition had already completed.
+      _mobileActionsOpen = false;
+      _mobileActionsRoute = null;
+    }
+    if (!mounted || _watchedRoomId != roomId) return;
+    switch (action) {
+      case CompactRoomMoreAction.returnToRoom:
+        await _returnToRoom();
+        break;
+      case CompactRoomMoreAction.leave:
+        await _leaveOrEnd();
+        break;
+      case null:
+        break;
+    }
+  }
+
+  /// Mirrors the expanded-chat teardown: a remotely ended session cannot
+  /// leave a controls sheet mounted over a mini player that no longer exists.
+  void _dismissMobileActionsIfOpen() {
+    final route = _mobileActionsRoute;
+    if (!_mobileActionsOpen || route == null || !route.isCurrent) return;
+    route.navigator?.pop();
+  }
 
   /// A remote room end while the MOBILE sheet is open: the desktop overlay
   /// is removed by session change, but a modal sheet is a real route and
@@ -520,56 +599,67 @@ class _ActiveRoomMiniPlayerState extends State<ActiveRoomMiniPlayer> {
             final isDock = constraints.maxWidth >= _dockBreakpoint;
             _lastLayoutIsDock = isDock;
 
-            final info = ActiveRoomInfo(
-              roomName: roomName,
-              reconnecting: reconnecting,
-              participantCount: participantCount,
-              onReturnToRoom: () => unawaited(_returnToRoom()),
-              compact: !isDock,
-              narrow: constraints.maxWidth < 360,
-            );
-            final preview = LiveChatPreview(
-              latest: _latest,
-              newCount: _newCount,
-              onExpand: () => unawaited(_expandChat()),
-              compact: !isDock,
-            );
-            final controls = ActiveRoomControls(
-              micState: _voice.micState,
-              muteBusy: _muteBusy,
-              isHost: _hostEndsNow,
-              onToggleMute: () => unawaited(_toggleMute()),
-              onReturnToRoom: () => unawaited(_returnToRoom()),
-              onLeave: () => unawaited(_leaveOrEnd()),
-              layout: isDock
-                  ? ActiveRoomControlsLayout.dock
-                  : ActiveRoomControlsLayout.grid,
-            );
+            final Widget surface;
+            if (isDock) {
+              // Desktop intentionally keeps the established four-zone dock.
+              // The requested density change is a phone/tablet concern only.
+              surface = _DockSurface(
+                info: ActiveRoomInfo(
+                  roomName: roomName,
+                  reconnecting: reconnecting,
+                  participantCount: participantCount,
+                  onReturnToRoom: () => unawaited(_returnToRoom()),
+                ),
+                preview: LiveChatPreview(
+                  latest: _latest,
+                  newCount: _newCount,
+                  onExpand: () => unawaited(_expandChat()),
+                ),
+                controls: ActiveRoomControls(
+                  micState: _voice.micState,
+                  muteBusy: _muteBusy,
+                  isHost: _hostEndsNow,
+                  onToggleMute: () => unawaited(_toggleMute()),
+                  onReturnToRoom: () => unawaited(_returnToRoom()),
+                  onLeave: () => unawaited(_leaveOrEnd()),
+                ),
+              );
+            } else {
+              surface = CompactActiveRoomBar(
+                roomName: roomName,
+                reconnecting: reconnecting,
+                participantCount: participantCount,
+                latest: _latest,
+                newCount: _newCount,
+                micState: _voice.micState,
+                muteBusy: _muteBusy,
+                onReturnToRoom: () => unawaited(_returnToRoom()),
+                onExpandChat: () => unawaited(_expandChat()),
+                onToggleMute: () => unawaited(_toggleMute()),
+                onMore: () => unawaited(_openMobileActions()),
+              );
+            }
 
-            final surface = isDock
-                ? _DockSurface(info: info, preview: preview, controls: controls)
-                : _CardSurface(
-                    info: info,
-                    preview: preview,
-                    controls: controls,
-                  );
-
-            // Density stays usable down to 320px: text scaling inside the
-            // player is honored up to 1.6x, then clamped so oversized text
-            // degrades metadata (ellipsis) before it can break controls.
-            return MediaQuery.withClampedTextScaling(
-              maxScaleFactor: 1.6,
-              child: KeyedSubtree(
-                key: const ValueKey('mini-player'),
-                child: SafeArea(
-                  top: false,
-                  bottom: false,
-                  child: CompositedTransformTarget(
-                    link: _dockLink,
-                    child: surface,
-                  ),
+            final player = KeyedSubtree(
+              key: const ValueKey('mini-player'),
+              child: SafeArea(
+                top: false,
+                bottom: false,
+                child: CompositedTransformTarget(
+                  link: _dockLink,
+                  child: surface,
                 ),
               ),
+            );
+
+            // Mobile honors the user's full text scale. The one-line title
+            // and metadata ellipsize before the 48pt controls can shrink or
+            // overlap. The established desktop dock keeps its documented
+            // 1.6x cap until that separate four-zone layout is redesigned.
+            if (!isDock) return player;
+            return MediaQuery.withClampedTextScaling(
+              maxScaleFactor: 1.6,
+              child: player,
             );
           },
         );
@@ -615,55 +705,6 @@ class _DockSurface extends StatelessWidget {
                     controls,
                   ],
                 ),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// Mobile: the taller card that sits above the bottom navigation — room
-/// info and the chat preview side by side, the control grid underneath.
-class _CardSurface extends StatelessWidget {
-  const _CardSurface({
-    required this.info,
-    required this.preview,
-    required this.controls,
-  });
-
-  final Widget info;
-  final Widget preview;
-  final Widget controls;
-
-  @override
-  Widget build(BuildContext context) {
-    return Align(
-      child: Container(
-        constraints: const BoxConstraints(maxWidth: 640),
-        margin: const EdgeInsets.fromLTRB(10, 6, 10, 8),
-        decoration: _playerDecoration(radius: 18),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(18),
-          child: Material(
-            color: Colors.transparent,
-            child: Padding(
-              padding: const EdgeInsets.all(10),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Expanded(flex: 5, child: info),
-                      const SizedBox(width: 10),
-                      Expanded(flex: 6, child: preview),
-                    ],
-                  ),
-                  const SizedBox(height: 9),
-                  controls,
-                ],
               ),
             ),
           ),

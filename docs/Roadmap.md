@@ -16,6 +16,17 @@ someone decide what to pick up next.
 
 ## Done
 
+- **The collapsed live-room panel is now a single compact YO Live Capsule**
+  (2026-08-29, ADR-102 amendment, **SOURCE VERIFIED; WEB HOSTING RELEASE
+  QUEUED; NATIVE TESTER BUILD HELD**): the old multi-row mobile card is
+  replaced below 880 px by an 82 px capsule with a dedicated room-return zone
+  and three 48 px circular Chat, Mic and More controls. Latest chat, unread,
+  audience and reconnecting state stay glanceable without occupying the Home
+  feed. Return and Leave/End move into a compact modal; temporary hosts still
+  receive the truthful destructive confirmation. Dark/Pearl, 320/390/430 px,
+  200% text, long copy and all interaction states were rendered against the
+  production YO dock. Desktop keeps its established four-zone dock.
+
 - **Profile identity is now a compact two-level passport, not a badge
   staircase** (2026-08-29, ADR-131, **WEB HOSTING DEPLOYED + BYTE-EXACT;
   NATIVE TESTER BUILD HELD**): the avatar and pseudonym share one responsive hero

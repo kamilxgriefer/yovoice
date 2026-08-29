@@ -6193,6 +6193,23 @@ principal's sheet-outlives-room and End-overclaim findings were all fixed
 before release. Known limits, recorded: the in-player 1.6x text clamp;
 real mobile-Safari insets and AT behaviour unverified headlessly.
 
+**Amendment, 2026-08-29 — mobile YO Live Capsule.** The controller and desktop
+four-zone dock remain unchanged, but widths below 880 px no longer render the
+multi-row collapsed card. Mobile now reserves one 82 px capsule: room identity
+is one isolated return target, while Chat, Mic and More are separate 48 px
+circular targets. Latest-chat, session-local unread, audience and reconnecting
+state are compressed into one-line metadata; Return and truthful Leave/End are
+secondary actions in a compact modal. Mobile honors the complete system text
+scale and ellipsizes visual metadata while retaining full semantic labels.
+The modal is owned by its exact `ModalBottomSheetRoute`; session cleanup may
+pop it only while that route is current, preventing a reverse-transition race
+from removing the underlying screen. Host confirmation is likewise bound to
+the captured room id, so a stale response cannot affect a replacement session.
+The focused matrix is now 26 tests, including gaps, busy Mute semantics,
+remote-end cleanup and a real sentinel-route race. Dark/Pearl stills at
+320/390/430 px and 200% text use the production YO dock; visual, accessibility
+and principal reviews all passed.
+
 ## ADR-103: The author chooses a Moment's availability — and a missing `expiresAt` now means permanent
 
 **Context.** ADR-101 fixed every Moment's life at 24 hours and read a

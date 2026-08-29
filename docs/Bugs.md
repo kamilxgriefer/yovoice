@@ -1229,6 +1229,18 @@ permission flags).
 
 ## UI
 
+- **FIXED IN SOURCE 2026-08-29 — collapsing a live-room chat exposed a large
+  multi-row control panel that obscured the Home feed.** Phone and compact-
+  tablet layouts now use one 82 px YO Live Capsule with a separate room-return
+  zone and circular 48 px Chat, Mic and More controls; low-frequency Return and
+  Leave/End actions live in a compact modal. The redesign also closes two
+  lifecycle hazards found during review: remote session replacement dismisses
+  only the exact controls route (never the underlying screen during the
+  sheet's reverse transition), and a stale host confirmation cannot disconnect
+  the next room. Busy Mute consumes input without advertising an accessibility
+  action; mobile honors the full system text scale. Twenty-six focused widget
+  regressions and Dark/Pearl production-dock renders cover these boundaries.
+
 - **Fixed in source 2026-08-29 — Home Moments rendered a large filler card,
   friend-only identities and profile suggestions without audio.** Mobile and
   desktop Home now render a story-style avatar rail: the signed-in avatar

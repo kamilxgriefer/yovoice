@@ -18,10 +18,10 @@ correction silently broke all three anchors.)*
 | Storage rules | `npm --prefix firestore-tests run test:storage` | **60** checks |
 | Family media (combined) | `npm --prefix firestore-tests run test:family-media` | **11** checks |
 | Cloud Functions | `npm --prefix functions test` | **920** tests (70 `*.test.js` files) |
-| Flutter VM | `flutter test` | **1636** tests (148 VM-compatible files) |
+| Flutter VM | `flutter test` | **1644** tests (148 VM-compatible files) |
 | Flutter browser | `flutter test --platform chrome test/web_audio_capture_browser_test.dart test/image_crop_test.dart test/room_cover_editor_test.dart` | **18** tests (3 files) |
 
-**Where these numbers came from.** Functions 920 and Flutter VM 1636 were
+**Where these numbers came from.** Functions 920 and Flutter VM 1644 were
 re-measured on 2026-08-29 against the exact current source; Rules 519 was last
 re-measured on 2026-08-28. A deliberately
 sequential full Functions run reached 901/903 because two unrelated suites
@@ -35,7 +35,7 @@ checks. A final direct-call lock audit added four emulator regressions for late
 cancel/decline/end and expiry preserving a replacement call's locks; the exact
 concurrent Functions gate then passed 907/907 on a fresh emulator pair. The
 later ADR-130 identity wave passed 920/920 on a fresh Auth/Firestore emulator
-pair. Flutter VM 1636 passed in one invocation; the combined real-Chrome media
+pair. Flutter VM 1644 passed in one invocation; the combined real-Chrome media
 gate passed 18/18, and `flutter analyze` was clean on those bytes. Storage 60 and family
 media 11 also ran against fresh isolated emulators rather than an occupied
 local 8080 endpoint. Web and signed Android release compilation succeeded. The
@@ -74,6 +74,18 @@ are kept in the movement log below as history.
 > read back through both `yovoice-ec54a.web.app` and `app.yovoice.app`; each
 > `main.dart.js` is byte-exact to the verified local release (SHA-256
 > `b15e426c3e44833f`, 6,467,715 bytes).
+
+> **Movement, 2026-08-29 (compact active-room YO Live Capsule).** Flutter VM
+> **1636 → 1644** adds exact 84 px maximum mobile geometry, 48 px circular
+> Chat/Mic/More targets, isolated gap behavior, complete tap semantics, busy
+> Mute swallowing without a false accessibility action, truthful host/member
+> actions and two remote-session cleanup races. The controls route regression
+> uses a real sentinel screen and advances 16 ms into the sheet's reverse
+> transition, proving cleanup cannot pop the route underneath it. The focused
+> interaction matrix passed **26/26**; the Dark/Pearl production-dock render
+> matrix passed **18/18** across 320/360/390/430 px, 200% text, long copy,
+> reconnecting, muted, unread, More and expanded states. The complete VM suite
+> passed 1644/1644 and `flutter analyze` remained clean.
 
 **A trap worth naming, because it cost a full diagnosis pass.**
 `firestore-tests/storage.test.js` used to hardcode Firestore 8080 and Storage

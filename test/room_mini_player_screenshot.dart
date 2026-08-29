@@ -8,14 +8,14 @@
 // PNGs land in test/.screenshots/ (git-ignored).
 //
 // Covers the desktop dock at 1280/1440/1920, the mobile card at
-// 320/360/390/430 above a bottom navigation, the expanded chat on both
-// platforms, muted, reconnecting, long title + long message, the "N new"
+// 320/360/390/430 above the production YO navigation dock, Dark + Pearl, the
+// expanded chat on both platforms, muted, reconnecting, long title + long
+// message, the "N new"
 // pill, host vs participant, and 200% text at the narrowest width.
 //
-// The bottom navigation here is a Material 3 stand-in with the shell's
-// five destinations: MainShell itself reads FirebaseAuth.instance in its
-// state and cannot be pumped in a widget test (same reason
-// desktop_shell_test.dart mirrors the composition instead of mounting it).
+// MainShell itself reads FirebaseAuth.instance and cannot be pumped in a
+// widget test, but this harness mounts its real YoFloatingNavigationDock so
+// capsule spacing, notch adjacency and both semantic themes are rendered.
 
 import 'dart:io';
 import 'dart:ui' as ui;
@@ -26,9 +26,9 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_theme.dart';
 import 'package:yovoice/features/calls/data/services/voice_call_service.dart';
+import 'package:yovoice/features/home/presentation/widgets/navigation/yo_floating_navigation_dock.dart';
 import 'package:yovoice/features/rooms/data/services/room_mute_coordinator.dart';
 import 'package:yovoice/features/rooms/presentation/widgets/room_mini_bar.dart';
 
@@ -114,34 +114,6 @@ VoiceParticipantViewData _person(String name, {bool speaking = false}) =>
       isMuted: false,
     );
 
-/// The shell's five mobile destinations, as a Material 3 stand-in.
-class _StandInBottomNav extends StatelessWidget {
-  const _StandInBottomNav();
-
-  @override
-  Widget build(BuildContext context) {
-    return NavigationBar(
-      selectedIndex: 0,
-      destinations: const [
-        NavigationDestination(icon: Icon(Icons.home_rounded), label: 'Home'),
-        NavigationDestination(
-          icon: Icon(Icons.chat_bubble_rounded),
-          label: 'Chats',
-        ),
-        NavigationDestination(icon: Icon(Icons.mic_rounded), label: 'Voice'),
-        NavigationDestination(
-          icon: Icon(Icons.auto_awesome_rounded),
-          label: 'Moments',
-        ),
-        NavigationDestination(
-          icon: Icon(Icons.grid_view_rounded),
-          label: 'More',
-        ),
-      ],
-    );
-  }
-}
-
 void main() {
   setUpAll(_loadFonts);
 
@@ -166,21 +138,25 @@ void main() {
     });
   }
 
-  Future<void> message(String id, String text, {String sender = 'Zosia',
-      required DateTime at}) {
+  Future<void> message(
+    String id,
+    String text, {
+    String sender = 'Zosia',
+    required DateTime at,
+  }) {
     return rooms.db
         .collection('rooms')
         .doc('room-1')
         .collection('messages')
         .doc(id)
         .set({
-      'senderId': sender.toLowerCase(),
-      'senderName': sender,
-      'senderPhotoUrl': null,
-      'text': text,
-      'createdAt': Timestamp.fromDate(at),
-      'reactions': <String, List<String>>{},
-    });
+          'senderId': sender.toLowerCase(),
+          'senderName': sender,
+          'senderPhotoUrl': null,
+          'text': text,
+          'createdAt': Timestamp.fromDate(at),
+          'reactions': <String, List<String>>{},
+        });
   }
 
   setUp(() {
@@ -206,6 +182,7 @@ void main() {
     required Size viewport,
     required bool desktop,
     double textScale = 1,
+    bool light = false,
   }) async {
     tester.view.devicePixelRatio = 1;
     tester.view.physicalSize = viewport;
@@ -221,18 +198,18 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         debugShowCheckedModeBanner: false,
-        theme: AppTheme.darkTheme,
+        theme: light ? AppTheme.lightTheme : AppTheme.darkTheme,
         builder: (context, child) => MediaQuery(
-          data: MediaQuery.of(
-            context,
-          ).copyWith(textScaler: TextScaler.linear(textScale)),
+          data: MediaQuery.of(context).copyWith(
+            textScaler: TextScaler.linear(textScale),
+            disableAnimations: true,
+          ),
           child: RepaintBoundary(key: _capture, child: child!),
         ),
         home: desktop
             // The desktop shell mount: the dock is the bottom-most element
             // of the window's root column.
             ? Scaffold(
-                backgroundColor: AppColors.background,
                 body: Column(
                   children: [
                     const Expanded(child: SizedBox.expand()),
@@ -242,13 +219,28 @@ void main() {
               )
             // The mobile shell mount: player directly above the bottom nav.
             : Scaffold(
-                backgroundColor: AppColors.background,
                 body: const SizedBox.expand(),
                 bottomNavigationBar: Column(
                   mainAxisSize: MainAxisSize.min,
-                  children: [player, const _StandInBottomNav()],
+                  children: [
+                    player,
+                    YoFloatingNavigationDock(
+                      selectedTabIndex: 0,
+                      momentsTabIndex: 5,
+                      unreadConversationCount: 0,
+                      onDestinationSelected: (_) {},
+                      onVoicePressed: () {},
+                      onMorePressed: () {},
+                    ),
+                  ],
                 ),
               ),
+      ),
+    );
+    await tester.runAsync(
+      () => precacheImage(
+        const AssetImage('assets/images/logo.png'),
+        _capture.currentContext!,
       ),
     );
     await _settle(tester);
@@ -261,8 +253,12 @@ void main() {
 
   testWidgets('dock 1280 populated (participant)', (tester) async {
     await seedRoom();
-    await message('m1', 'Witajcie! Super, ze jestescie — dzisiaj gadamy o '
-        'planach na niedzielny wieczor.', at: DateTime(2026, 8, 22, 10, 0));
+    await message(
+      'm1',
+      'Witajcie! Super, ze jestescie — dzisiaj gadamy o '
+          'planach na niedzielny wieczor.',
+      at: DateTime(2026, 8, 22, 10, 0),
+    );
     await pumpPlayer(tester, viewport: const Size(1280, 800), desktop: true);
     await _shoot(tester, 'mini-player-dock-1280');
   });
@@ -281,8 +277,8 @@ void main() {
     await message(
       'm1',
       'This is a deliberately very long chat message that has to clamp to '
-      'exactly two lines with an ellipsis and must never be allowed to grow '
-      'the dock taller, no matter how much someone types into the room chat.',
+          'exactly two lines with an ellipsis and must never be allowed to grow '
+          'the dock taller, no matter how much someone types into the room chat.',
       at: DateTime(2026, 8, 22, 10, 0),
     );
     await pumpPlayer(tester, viewport: const Size(1920, 1000), desktop: true);
@@ -295,18 +291,28 @@ void main() {
     await pumpPlayer(tester, viewport: const Size(1440, 900), desktop: true);
     await message('m2', 'Druga — swieza', at: DateTime(2026, 8, 22, 10, 1));
     await _settle(tester);
-    await message('m3', 'Trzecia — najswiezsza 🔥',
-        at: DateTime(2026, 8, 22, 10, 2));
+    await message(
+      'm3',
+      'Trzecia — najswiezsza 🔥',
+      at: DateTime(2026, 8, 22, 10, 2),
+    );
     await _settle(tester);
     await _shoot(tester, 'mini-player-dock-1440-newpill');
   });
 
   testWidgets('dock 1440 expanded chat popover', (tester) async {
     await seedRoom();
-    await message('m1', 'Witajcie! Super, ze jestescie.',
-        at: DateTime(2026, 8, 22, 10, 0));
-    await message('m2', 'Czesc wszystkim! Dobrze was slyszec.',
-        sender: 'Kamil', at: DateTime(2026, 8, 22, 10, 1));
+    await message(
+      'm1',
+      'Witajcie! Super, ze jestescie.',
+      at: DateTime(2026, 8, 22, 10, 0),
+    );
+    await message(
+      'm2',
+      'Czesc wszystkim! Dobrze was slyszec.',
+      sender: 'Kamil',
+      at: DateTime(2026, 8, 22, 10, 1),
+    );
     await pumpPlayer(tester, viewport: const Size(1440, 900), desktop: true);
     await tester.tap(find.byKey(const ValueKey('mini-player-expand-chat')));
     await _settle(tester);
@@ -348,10 +354,51 @@ void main() {
 
   testWidgets('card 390 populated (participant)', (tester) async {
     await seedRoom();
-    await message('m1', 'Witajcie! Super, ze jestescie — dzisiaj gadamy o '
-        'planach na niedzielny wieczor.', at: DateTime(2026, 8, 22, 10, 0));
+    await message(
+      'm1',
+      'Witajcie! Super, ze jestescie — dzisiaj gadamy o '
+          'planach na niedzielny wieczor.',
+      at: DateTime(2026, 8, 22, 10, 0),
+    );
     await pumpPlayer(tester, viewport: const Size(390, 844), desktop: false);
     await _shoot(tester, 'mini-player-card-390');
+  });
+
+  testWidgets('card 390 populated in Pearl', (tester) async {
+    await seedRoom();
+    await message(
+      'm1',
+      'Jasny motyw zachowuje czytelność i premium kontrast.',
+      at: DateTime(2026, 8, 22, 10, 0),
+    );
+    await pumpPlayer(
+      tester,
+      viewport: const Size(390, 844),
+      desktop: false,
+      light: true,
+    );
+    await _shoot(tester, 'mini-player-card-390-pearl');
+  });
+
+  testWidgets('card 390 More controls', (tester) async {
+    await seedRoom(hostId: 'me');
+    await pumpPlayer(tester, viewport: const Size(390, 844), desktop: false);
+    await tester.tap(find.byKey(const ValueKey('mini-player-more')));
+    await _settle(tester);
+    await _shoot(tester, 'mini-player-card-390-more');
+  });
+
+  testWidgets('card 390 More controls in Pearl', (tester) async {
+    await seedRoom(hostId: 'me');
+    await pumpPlayer(
+      tester,
+      viewport: const Size(390, 844),
+      desktop: false,
+      light: true,
+    );
+    await tester.tap(find.byKey(const ValueKey('mini-player-more')));
+    await _settle(tester);
+    await _shoot(tester, 'mini-player-card-390-more-pearl');
   });
 
   testWidgets('card 390 muted host', (tester) async {
@@ -368,18 +415,28 @@ void main() {
     await pumpPlayer(tester, viewport: const Size(390, 844), desktop: false);
     await message('m2', 'Druga — swieza', at: DateTime(2026, 8, 22, 10, 1));
     await _settle(tester);
-    await message('m3', 'Trzecia — najswiezsza 🔥',
-        at: DateTime(2026, 8, 22, 10, 2));
+    await message(
+      'm3',
+      'Trzecia — najswiezsza 🔥',
+      at: DateTime(2026, 8, 22, 10, 2),
+    );
     await _settle(tester);
     await _shoot(tester, 'mini-player-card-390-newpill');
   });
 
   testWidgets('card 390 expanded chat sheet', (tester) async {
     await seedRoom();
-    await message('m1', 'Witajcie! Super, ze jestescie.',
-        at: DateTime(2026, 8, 22, 10, 0));
-    await message('m2', 'Czesc wszystkim! Dobrze was slyszec.',
-        sender: 'Kamil', at: DateTime(2026, 8, 22, 10, 1));
+    await message(
+      'm1',
+      'Witajcie! Super, ze jestescie.',
+      at: DateTime(2026, 8, 22, 10, 0),
+    );
+    await message(
+      'm2',
+      'Czesc wszystkim! Dobrze was slyszec.',
+      sender: 'Kamil',
+      at: DateTime(2026, 8, 22, 10, 1),
+    );
     await pumpPlayer(tester, viewport: const Size(390, 844), desktop: false);
     await tester.tap(find.byKey(const ValueKey('mini-player-expand-chat')));
     await _settle(tester);
@@ -393,8 +450,8 @@ void main() {
     await message(
       'm1',
       'This is a deliberately very long chat message that has to clamp to '
-      'exactly two lines with an ellipsis and must never be allowed to grow '
-      'the card taller, no matter how much someone types into the room chat.',
+          'exactly two lines with an ellipsis and must never be allowed to grow '
+          'the card taller, no matter how much someone types into the room chat.',
       at: DateTime(2026, 8, 22, 10, 0),
     );
     await pumpPlayer(tester, viewport: const Size(430, 932), desktop: false);
@@ -403,8 +460,11 @@ void main() {
 
   testWidgets('card 320 at 200% text', (tester) async {
     await seedRoom();
-    await message('m1', 'Dwukrotna skala tekstu na najwezszym ekranie.',
-        at: DateTime(2026, 8, 22, 10, 0));
+    await message(
+      'm1',
+      'Dwukrotna skala tekstu na najwezszym ekranie.',
+      at: DateTime(2026, 8, 22, 10, 0),
+    );
     await pumpPlayer(
       tester,
       viewport: const Size(320, 844),
