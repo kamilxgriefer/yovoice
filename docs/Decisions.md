@@ -7597,7 +7597,7 @@ read their conversations but cannot forge another participant's state.
 
 ## ADR-122: Room covers publish one host-confirmed 21:9 artifact
 
-**Status**: Implemented in source and Chrome-verified; hosting/native build pending
+**Status**: Web deployed and Chrome-verified; native build pending
 **Date**: 2026-08-29
 
 ### Context

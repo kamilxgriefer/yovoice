@@ -70,7 +70,10 @@ are kept in the movement log below as history.
 > Blob lifecycle, JPEG/PNG/WebP decode, hostile bounds, EXIF rotation and the
 > complete picked-bytes → crop editor → canonical 1600×686 JPEG path. This is
 > the exact web seam that the VM-only safety tests missed when encoded
-> `ImageDescriptor` dimensions were introduced.
+> `ImageDescriptor` dimensions were introduced. Production Hosting was then
+> read back through both `yovoice-ec54a.web.app` and `app.yovoice.app`; each
+> `main.dart.js` is byte-exact to the verified local release (SHA-256
+> `b15e426c3e44833f`, 6,467,715 bytes).
 
 **A trap worth naming, because it cost a full diagnosis pass.**
 `firestore-tests/storage.test.js` used to hardcode Firestore 8080 and Storage

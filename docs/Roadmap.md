@@ -86,9 +86,8 @@ someone decide what to pick up next.
   Chats/Home smoke on coordinated tester build 13.
 
 - **Room covers can be composed by the host instead of being silently
-  center-cropped** (2026-08-29, ADR-122, **SOURCE + CHROME VERIFIED; HOSTING
-  AND NATIVE STORE BUILD PENDING**): Create Community/Podcast Room and Room
-  Settings now share a real
+  center-cropped** (2026-08-29, ADR-122, **DEPLOYED TO WEB; NATIVE STORE BUILD
+  PENDING**): Create Community/Podcast Room and Room Settings now share a real
   21:9 editor with pinch zoom, drag, reset, keyboard/single-pointer controls
   and a central compact-card safety guide. Only the confirmed 1600×686 JPEG is
   uploaded; cancelling Replace preserves the prior composition. Upload and

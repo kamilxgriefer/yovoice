@@ -146,7 +146,7 @@ about things that are broken, risky, or need verification.
   client parser ignores hostile legacy/Admin data and the decoder bounds both
   encoded dimensions and decoded memory. See ADR-122.
 
-- **FIXED IN SOURCE 2026-08-29 — the new room-cover crop flow rejected every
+- **FIXED AND DEPLOYED TO WEB 2026-08-29 — the new room-cover crop flow rejected every
   valid image on Web before the editor could open.** Its safety preflight read
   `ImageDescriptor.width/height` from an encoded descriptor, getters that the
   Flutter Web engine deliberately does not support. The resulting
