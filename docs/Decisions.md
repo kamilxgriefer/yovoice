@@ -836,7 +836,7 @@ should be free to evolve independently.
 
 ## ADR-016: Native Android and iOS window chrome is pinned dark, not OS-controlled
 
-**Status**: Accepted
+**Status**: Superseded for runtime appearance by ADR-129; dark launch retained
 **Date**: 2026-08-06
 
 ### Context
@@ -898,11 +898,11 @@ forgetting to set a background color.
 
 ### Consequences
 
-Native chrome (status bar style, window background, launch screen) no
-longer respects the system's light/dark setting on either platform — this
-is correct today because the app has no light theme, but if a light theme
-is ever added, this decision needs to be revisited alongside it (the
-native layer would need to switch dynamically instead of staying pinned).
+Native chrome (status bar style, window background, launch screen) initially
+stopped respecting the system's light/dark setting on either platform. That
+was correct while the app had no light theme. ADR-129 performs the explicitly
+required revisit after Pearl shipped: the branded launch remains dark, while
+iOS runtime appearance is no longer application-wide pinned.
 Required an unrelated fix to get iOS building at all in this session: the
 Podfile had no explicit `platform`, so CocoaPods defaulted a subset of pod
 targets below the 15.0 minimum Firebase's Swift Package Manager
@@ -7964,3 +7964,40 @@ indexes and routing remain unchanged.
   Dark and Pearl frames cover Home and Chats selection at 320/390/430 px.
 - A physical native visual/haptic pass remains release evidence for the next
   coordinated tester build; no native build is created by this source change.
+
+## ADR-129: Dark launch chrome does not globally pin Pearl's iOS runtime
+
+**Status**: Implemented in source; native tester build 12 pending
+**Date**: 2026-08-29
+
+### Context
+
+ADR-016 added `UIUserInterfaceStyle=Dark` when YO Voice was a dark-only
+product. Pearl later introduced a complete light theme and System preference,
+but the native override remained. On iOS that override controls the appearance
+reported to Flutter, so a store-installed app could keep resolving System to
+Dark even though the Dart theme and per-frame system-overlay handling were
+ready for Pearl.
+
+### Decision
+
+Remove the application-wide `UIUserInterfaceStyle` key from `Info.plist`.
+Keep the branded launch storyboard and the native window background dark, then
+let the persisted Flutter preference own `themeMode` and the rendered frame's
+status-bar icon brightness. Add a source-level regression that rejects a new
+global iOS appearance pin.
+
+### Reasoning
+
+Making the launch screen adaptive would expose an uninitialized system colour
+before local preferences load and could reintroduce the white transition flash
+ADR-016 fixed. Keeping the launch atom dark while releasing only the runtime
+appearance override preserves that protection without contradicting Pearl.
+
+### Consequences
+
+- System follows iOS appearance and explicit Dark/Pearl remains Flutter-owned.
+- Startup stays intentionally dark for the brief preference-loading boundary.
+- Immersive rooms, calls, recording and crop routes continue to apply their
+  complete local dark theme and system overlay explicitly.
+- A physical build-12 Dark/Pearl/System pass remains native release evidence.

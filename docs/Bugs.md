@@ -2626,3 +2626,12 @@ permission flags).
   layout instead of truncating labels. Firebase Hosting workflow
   `33238217610` deployed the pinned `17b386b` artifact on 2026-08-29; the live
   `main.dart.js` matches that artifact byte-for-byte.
+- **Fixed in source 2026-08-29 — iOS silently disabled System/Pearl at the
+  native application boundary.** ADR-016 correctly pinned a formerly
+  dark-only product to `UIUserInterfaceStyle=Dark`, but that override survived
+  the complete Pearl migration and forced iOS to keep reporting Dark even
+  when Flutter selected `ThemeMode.system`. The application-wide override is
+  removed for build 12. The launch storyboard and native window background
+  remain branded dark while device-local preferences load; Flutter then owns
+  the live surface and status-bar brightness. A source regression asserts the
+  global pin stays absent.

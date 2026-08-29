@@ -18,7 +18,7 @@ correction silently broke all three anchors.)*
 | Storage rules | `npm --prefix firestore-tests run test:storage` | **60** checks |
 | Family media (combined) | `npm --prefix firestore-tests run test:family-media` | **11** checks |
 | Cloud Functions | `npm --prefix functions test` | **907** tests (69 `*.test.js` files) |
-| Flutter VM | `flutter test` | **1617** tests (147 VM-compatible files) |
+| Flutter VM | `flutter test` | **1618** tests (148 VM-compatible files) |
 | Flutter browser | `flutter test --platform chrome test/web_audio_capture_browser_test.dart` | **1** test (1 browser-only file) |
 
 **Where these numbers came from.** Functions 907 and Rules 519 were re-measured
@@ -33,11 +33,11 @@ security matrices passed 47/47 Flutter, 9/9 pure Functions and 24/24 emulator
 checks. A final direct-call lock audit added four emulator regressions for late
 cancel/decline/end and expiry preserving a replacement call's locks; the exact
 concurrent Functions gate then passed 907/907 on a fresh emulator pair.
-Flutter VM 1617 passed in one invocation, the real Chrome Blob lifecycle passed
+Flutter VM 1618 passed in one invocation, the real Chrome Blob lifecycle passed
 1/1, and `flutter analyze` was clean on those bytes. Storage 60 and family
 media 11 also ran against fresh isolated emulators rather than an occupied
 local 8080 endpoint. Web and signed Android release compilation succeeded. The
-69 Functions files and 148 total Flutter test files (147 VM-compatible plus one
+69 Functions files and 149 total Flutter test files (148 VM-compatible plus one
 browser-only) are current `find` results rather than carried-forward estimates. The earlier
 figures this row used to carry (Rules 485, Functions 783/62, Flutter 1198/114)
 are kept in the movement log below as history.
@@ -194,6 +194,12 @@ suite, so isolated ports are real isolation rather than documentation only.
 > and the explicit visual harness passed and was inspected at 390 px, 768 px
 > and 320 px with 200% text. Rules, Functions, Storage, family media and the
 > browser-only lifecycle suite are unchanged.
+
+> **Movement, 2026-08-29 (ADR-129 native Pearl runtime boundary).** Flutter VM
+> **1617/147 → 1618/148** adds one source-level release regression proving the
+> iOS application no longer globally pins `UIUserInterfaceStyle=Dark`. The
+> branded dark launch storyboard remains unchanged; physical Dark/Pearl/System
+> behavior is part of signed build-12 acceptance.
 
 > **Movement, 2026-08-29 (ADR-127 premium Pearl light theme).** Flutter VM
 > **1551/137 → 1617/147** adds semantic light/dark palette contracts,
@@ -625,8 +631,8 @@ provider checkout.
 
 ## Dart tests — real, but narrow
 
-`test/` — **1617 VM tests across 147 compatible files**, plus **1 real-Chrome
-test** in the repository's one browser-only file (**148 `*_test.dart` files
+`test/` — **1618 VM tests across 148 compatible files**, plus **1 real-Chrome
+test** in the repository's one browser-only file (**149 `*_test.dart` files
 total**), green in local verification, grown mostly
 out of real bugs rather than an even coverage discipline. The
 pattern throughout: fake the Firebase backends

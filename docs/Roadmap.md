@@ -16,6 +16,14 @@ someone decide what to pick up next.
 
 ## Done
 
+- **The signed iOS shell now follows YO Voice's selected runtime theme**
+  (2026-08-29, ADR-129, **NATIVE STORE BUILD 12 PENDING**): the obsolete
+  `UIUserInterfaceStyle=Dark` application-wide override is gone, so System can
+  report the device appearance and Pearl can reach the Flutter surface and
+  platform controls. The branded launch storyboard and initial native window
+  stay dark while preferences load, preventing the old white startup flash.
+  A source-level release regression prevents a future global appearance pin.
+
 - **The central YO action now sits in a real sculpted dock cradle**
   (2026-08-29, ADR-128, **WEB HOSTING DEPLOYED; NATIVE STORE BUILD PENDING**):
   the shared mobile navigation surface no longer paints a circular logo over a
