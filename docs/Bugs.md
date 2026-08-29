@@ -2585,3 +2585,19 @@ permission flags).
   ADR-121. Physical two-device background push, APNs/FCM, LiveKit audio and
   weak-network media smoke remain release evidence rather than automated-test
   claims.
+- **Fixed in source 2026-08-29 — the mobile bottom navigation did not match the
+  approved compact floating-dock interaction.** The old private shell widget
+  mixed layout, routing and its centre action, used a standalone logo treatment
+  and transitioned whole pages vertically. One reusable floating dock now owns
+  the five responsive visual slots, one shared animated selection capsule,
+  the contained circular YO action, transient More selection, safe-area
+  reservation and reduced-motion behavior. `MainShell` remains the sole owner
+  of domain tab indexes and keeps its existing lazy page instances; a keyed
+  Offstage/TickerMode stack adds the 12 px directional fade-through without
+  dropping scroll, form or loaded state. The real centre room/Moment action,
+  More transition guard, unread badge and pop-before-action behavior are
+  preserved. Widget regressions cover 320 px, 1.3 text scale, gesture inset,
+  keyboard inset, rapid retargeting, actionable semantics, active-animation
+  disposal, Android system Back, final-row
+  visibility and retained page state. A physical iOS/Android visual and haptic
+  pass remains release evidence for the next native tester build.

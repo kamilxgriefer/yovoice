@@ -121,7 +121,7 @@ void main() {
       onVoicePressed: () => voiceOpened = true,
     );
 
-    await tester.tap(find.bySemanticsLabel('Use your voice'));
+    await tester.tap(find.bySemanticsLabel('Open voice actions'));
     await tester.pumpAndSettle();
 
     expect(voiceOpened, isTrue);
@@ -161,6 +161,25 @@ void main() {
     expect(moreOpenCount, 1);
     expect(find.text('SHELL'), findsOneWidget);
     expect(find.text('DESTINATION'), findsNothing);
+  });
+
+  testWidgets('Android system Back pops the hosted destination to the shell', (
+    tester,
+  ) async {
+    final navigatorKey = GlobalKey<NavigatorState>();
+    int? selected;
+    await pumpHost(
+      tester,
+      navigatorKey: navigatorKey,
+      onDestinationSelected: (index) => selected = index,
+    );
+
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+
+    expect(find.text('SHELL'), findsOneWidget);
+    expect(find.text('DESTINATION'), findsNothing);
+    expect(selected, isNull, reason: 'Back must not silently switch tabs');
   });
 
   test('the More transition guard rejects concurrent presentations', () async {

@@ -1,12 +1,10 @@
 import 'dart:async';
 
 import 'package:firebase_auth/firebase_auth.dart';
-import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/helpers/error_messages.dart';
-import 'package:yovoice/core/localization/app_localizations.dart';
 
 import 'package:yovoice/features/auth/data/auth_service.dart';
 import 'package:yovoice/features/auth/presentation/screens/verify_email_screen.dart';
@@ -27,6 +25,8 @@ import 'package:yovoice/features/home/presentation/widgets/desktop/premium_deskt
 import 'package:yovoice/features/home/presentation/widgets/desktop/sponsored_card.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/voice_trending_card.dart';
 import 'package:yovoice/features/home/presentation/widgets/more_sheet.dart';
+import 'package:yovoice/features/home/presentation/widgets/navigation/yo_floating_navigation_dock.dart';
+import 'package:yovoice/features/home/presentation/widgets/navigation/yo_preserving_tab_transition.dart';
 import 'package:yovoice/features/notifications/data/services/notification_service.dart';
 import 'package:yovoice/features/notifications/presentation/screens/notifications_screen.dart';
 import 'package:yovoice/features/premium/data/models/subscription_entitlements.dart';
@@ -44,7 +44,6 @@ import 'package:yovoice/features/moments/presentation/screens/moments_screen.dar
 import 'package:yovoice/features/moments/presentation/widgets/moment_sheet.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_story_viewer.dart';
 import 'package:yovoice/features/moments/presentation/screens/record_voice_moment_screen.dart';
-import 'package:yovoice/features/calls/data/services/voice_call_service.dart';
 import 'package:yovoice/features/friends/presentation/screens/friends_screen.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
 import 'package:yovoice/features/staff/data/staff_capabilities.dart';
@@ -134,7 +133,6 @@ class MainShell extends StatefulWidget {
 class _MainShellState extends State<MainShell>
     with SingleTickerProviderStateMixin {
   static const Color _background = Color(0xFF080711);
-  static const Color _primary = Color(0xFF9D20FF);
 
   final MessageService _messageService = MessageService.live;
   final RoomService _roomService = RoomService();
@@ -156,8 +154,11 @@ class _MainShellState extends State<MainShell>
   Timer? _messageOverlayTimer;
 
   int _selectedIndex = 0;
+  int _previousSelectedIndex = 0;
+  int _tabDirection = 1;
   int _unreadConversationCount = 0;
   bool _hasInitialConversationSnapshot = false;
+  bool _isMoreMenuActive = false;
 
   /// Desktop sidebar badge only — the same routed count the bell shows.
   int _unreadNotificationCount = 0;
@@ -358,10 +359,10 @@ class _MainShellState extends State<MainShell>
   /// and its state, scroll position and listeners stay alive in the
   /// IndexedStack. The dock renders no capsule while it is showing,
   /// rather than lighting a slot that is not where you are.
-  int get _mobileIndex =>
-      (_selectedIndex <= 2 || _selectedIndex == _momentsSlot)
-      ? _selectedIndex
-      : 0;
+  static int _mobileIndexFor(int index) =>
+      (index <= 2 || index == _momentsSlot) ? index : 0;
+
+  int get _mobileIndex => _mobileIndexFor(_selectedIndex);
 
   String get _currentUserId => FirebaseAuth.instance.currentUser?.uid ?? '';
 
@@ -586,12 +587,7 @@ class _MainShellState extends State<MainShell>
                 preview: preview,
                 onTap: () {
                   _removeMessageOverlay();
-
-                  if (mounted) {
-                    setState(() {
-                      _selectedIndex = 1;
-                    });
-                  }
+                  if (mounted) _onDestinationSelected(1);
                 },
                 onClose: _removeMessageOverlay,
               ),
@@ -617,13 +613,11 @@ class _MainShellState extends State<MainShell>
     _messageOverlay = null;
   }
 
-  // Drives the between-tab transition: IndexedStack swaps the child
-  // instantly (state fully preserved), and this controller layers a fast
-  // fade + tiny rise over the swap so switching feels connected rather
-  // than abrupt. 220ms, subtle enough that the app still feels instant.
+  // Drives a paint-only directional fade-through. The retained tab layers
+  // below remain mounted, so scroll/form/listener state is unaffected.
   late final AnimationController _tabTransition = AnimationController(
     vsync: this,
-    duration: const Duration(milliseconds: 220),
+    duration: const Duration(milliseconds: 250),
     value: 1,
   );
 
@@ -639,10 +633,16 @@ class _MainShellState extends State<MainShell>
     _removeMessageOverlay();
 
     setState(() {
+      _previousSelectedIndex = _selectedIndex;
+      _tabDirection = index > _selectedIndex ? 1 : -1;
       _selectedIndex = index;
     });
     _momentsVisible.value = index == _momentsSlot;
-    _tabTransition.forward(from: 0);
+    if (MediaQuery.disableAnimationsOf(context)) {
+      _tabTransition.value = 1;
+    } else {
+      _tabTransition.forward(from: 0);
+    }
   }
 
   Future<void> _openVoiceAction() async {
@@ -699,27 +699,34 @@ class _MainShellState extends State<MainShell>
   /// beside the rail item — no dimmed page, no drag handle.
   Future<void> _openMoreMenu() async {
     final destination = await _moreMenuTransition.run<MoreDestination>(() {
-      if (MainShell.usesDesktopLayout(MediaQuery.sizeOf(context))) {
-        final box =
-            _moreItemKey.currentContext?.findRenderObject() as RenderBox?;
-        final anchor = box == null
-            ? const Offset(16, 320)
-            : box.localToGlobal(Offset(box.size.width - 8, 0));
-        return showDesktopMoreMenu(
-          context,
-          anchor: anchor,
-          isStaff: _isStaff,
-          isOwner: _isOwner,
-          entitlements: _entitlements,
-        );
-      }
-      return showMoreSheet(context, entitlements: _entitlements);
+      return () async {
+        if (mounted) setState(() => _isMoreMenuActive = true);
+        try {
+          if (MainShell.usesDesktopLayout(MediaQuery.sizeOf(context))) {
+            final box =
+                _moreItemKey.currentContext?.findRenderObject() as RenderBox?;
+            final anchor = box == null
+                ? const Offset(16, 320)
+                : box.localToGlobal(Offset(box.size.width - 8, 0));
+            return showDesktopMoreMenu(
+              context,
+              anchor: anchor,
+              isStaff: _isStaff,
+              isOwner: _isOwner,
+              entitlements: _entitlements,
+            );
+          }
+          return showMoreSheet(context, entitlements: _entitlements);
+        } finally {
+          if (mounted) setState(() => _isMoreMenuActive = false);
+        }
+      }();
     });
     if (!mounted || destination == null) {
       return;
     }
 
-    await _openMoreDestination(destination);
+    await _openMoreDestination(destination, openedFromMore: true);
   }
 
   // Pushes the destination's own screen directly -- every destination
@@ -728,7 +735,10 @@ class _MainShellState extends State<MainShell>
   // another Scaffold+AppBar here used to double up chrome on every single
   // "More" destination: two stacked titles at best (Settings), a second
   // full Material AppBar at worst (Awards) -- see ADR-019.
-  Future<void> _openMoreDestination(MoreDestination destination) async {
+  Future<void> _openMoreDestination(
+    MoreDestination destination, {
+    bool openedFromMore = false,
+  }) async {
     final premiumFeature = premiumFeatureForMoreDestination(destination);
     if (premiumFeature != null &&
         !await PremiumGates.ensureFeatureAccess(
@@ -767,6 +777,7 @@ class _MainShellState extends State<MainShell>
         builder: (_) => MoreDestinationHost(
           body: screen,
           selectedIndex: _selectedIndex,
+          moreSelected: openedFromMore,
           unreadConversationCount: _unreadConversationCount,
           unreadNotificationCount: _unreadNotificationCount,
           activeDesktopItem: _desktopItemFor(destination),
@@ -940,28 +951,18 @@ class _MainShellState extends State<MainShell>
 
   Widget _tabContent({
     required int index,
+    required int previousIndex,
     required bool isDesktop,
     Widget? desktopHomeTrailing,
   }) {
-    return AnimatedBuilder(
+    return YoPreservingTabTransition(
+      selectedIndex: index,
+      previousIndex: previousIndex,
+      direction: _tabDirection,
       animation: _tabTransition,
-      builder: (context, child) {
-        final t = Curves.easeOutCubic.transform(_tabTransition.value);
-        return Opacity(
-          // Never fully transparent — no flash, no white frame.
-          opacity: .55 + .45 * t,
-          child: Transform.translate(
-            offset: Offset(0, 8 * (1 - t)),
-            child: child,
-          ),
-        );
-      },
-      child: IndexedStack(
-        index: index,
-        children: _slotChildren(
-          isDesktop: isDesktop,
-          desktopHomeTrailing: desktopHomeTrailing,
-        ),
+      children: _slotChildren(
+        isDesktop: isDesktop,
+        desktopHomeTrailing: desktopHomeTrailing,
       ),
     );
   }
@@ -1065,6 +1066,7 @@ class _MainShellState extends State<MainShell>
                               Expanded(
                                 child: _tabContent(
                                   index: _selectedIndex,
+                                  previousIndex: _previousSelectedIndex,
                                   isDesktop: true,
                                   desktopHomeTrailing: useRightRail
                                       ? null
@@ -1099,7 +1101,13 @@ class _MainShellState extends State<MainShell>
         children: [
           if (_showVerificationBanner)
             _VerificationBanner(onTap: _openVerifyEmail),
-          Expanded(child: _tabContent(index: _mobileIndex, isDesktop: false)),
+          Expanded(
+            child: _tabContent(
+              index: _mobileIndex,
+              previousIndex: _mobileIndexFor(_previousSelectedIndex),
+              isDesktop: false,
+            ),
+          ),
         ],
       ),
       bottomNavigationBar: Column(
@@ -1108,12 +1116,14 @@ class _MainShellState extends State<MainShell>
           // Live-room mini player: renders nothing unless a room
           // connection is active, so it can sit here unconditionally.
           const RoomMiniBar(),
-          _BottomNavigation(
-            selectedIndex: _mobileIndex,
+          YoFloatingNavigationDock(
+            selectedTabIndex: _mobileIndex,
+            momentsTabIndex: _momentsSlot,
             unreadConversationCount: _unreadConversationCount,
             onDestinationSelected: _onDestinationSelected,
             onVoicePressed: _openVoiceAction,
             onMorePressed: _openMoreMenu,
+            moreSelected: _isMoreMenuActive,
           ),
         ],
       ),
@@ -1203,7 +1213,7 @@ class _DesktopRightColumn extends StatelessWidget {
 /// NAVIGATION POLICY (deliberate, not incidental): main destinations
 /// reached from "More" are shell-level surfaces, so they keep the
 /// persistent bottom navigation — this host re-hosts the SAME
-/// [_BottomNavigation] widget wired back to the shell's state (one source
+/// [YoFloatingNavigationDock] widget wired back to the shell's state (one source
 /// of truth for the bar; nothing is reimplemented per screen). Deep
 /// detail flows pushed from WITHIN those screens (a friend's profile, a
 /// club's detail, a settings subpage, a chat, a room) continue to push
@@ -1221,6 +1231,7 @@ class MoreDestinationHost extends StatefulWidget {
     required this.onDestinationSelected,
     required this.onVoicePressed,
     required this.onMorePressed,
+    this.moreSelected = false,
     this.unreadNotificationCount = 0,
     this.activeDesktopItem,
     this.onDesktopNavSelected,
@@ -1237,6 +1248,7 @@ class MoreDestinationHost extends StatefulWidget {
   final ValueChanged<int> onDestinationSelected;
   final VoidCallback onVoicePressed;
   final VoidCallback onMorePressed;
+  final bool moreSelected;
 
   // Desktop-only wiring. When present (and the window is wide) the
   // destination renders INSIDE the persistent desktop shell — the mobile
@@ -1331,13 +1343,15 @@ class _MoreDestinationHostState extends State<MoreDestinationHost> {
         mainAxisSize: MainAxisSize.min,
         children: [
           const RoomMiniBar(),
-          _BottomNavigation(
-            selectedIndex: widget.selectedIndex,
+          YoFloatingNavigationDock(
+            selectedTabIndex: widget.selectedIndex,
+            momentsTabIndex: _MainShellState._momentsSlot,
             unreadConversationCount: widget.unreadConversationCount,
             onDestinationSelected: (index) =>
                 _popThen(() => widget.onDestinationSelected(index)),
             onVoicePressed: () => _popThen(widget.onVoicePressed),
             onMorePressed: () => _popThen(widget.onMorePressed),
+            moreSelected: widget.moreSelected,
           ),
         ],
       ),
@@ -1537,442 +1551,6 @@ class _IncomingMessageBanner extends StatelessWidget {
             ],
           ),
         ),
-      ),
-    );
-  }
-}
-
-class _BottomNavigation extends StatelessWidget {
-  const _BottomNavigation({
-    required this.selectedIndex,
-    required this.unreadConversationCount,
-    required this.onDestinationSelected,
-    required this.onVoicePressed,
-    required this.onMorePressed,
-  });
-
-  final int selectedIndex;
-  final int unreadConversationCount;
-  final ValueChanged<int> onDestinationSelected;
-  final VoidCallback onVoicePressed;
-  final VoidCallback onMorePressed;
-
-  /// Maps a selected index onto its SLOT in the five-slot dock row
-  /// (voice occupies slot 2), or null when the current destination has
-  /// no dock slot at all.
-  ///
-  /// Null is a real state, not a gap to paper over: Friends is still
-  /// primary tab 2 and mobile Home's "Your circle" selects it, but it no
-  /// longer owns a dock slot. Lighting the nearest slot would make the
-  /// bar lie about where you are, so the capsule is simply not drawn —
-  /// the same "nothing lit" the More item has always modelled.
-  static int? _slotFor(int tabIndex) => switch (tabIndex) {
-    0 => 0,
-    1 => 1,
-    _MainShellState._momentsSlot => 3,
-    _ => null,
-  };
-
-  @override
-  Widget build(BuildContext context) {
-    final copy = AppLocalizations.of(context);
-    final safeBottom = MediaQuery.paddingOf(context).bottom;
-    final colors = Theme.of(context).colorScheme;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-
-    // Floating dock: detached from the screen edges, soft surface, thin
-    // border, ambient shadow — navigation as part of the identity, not
-    // an edge-to-edge slab. The voice action lives IN the dock, slightly
-    // raised, instead of floating over it as an unrelated circle.
-    return Padding(
-      padding: EdgeInsets.fromLTRB(14, 0, 14, safeBottom > 0 ? safeBottom : 12),
-      child: Container(
-        height: 76,
-        decoration: BoxDecoration(
-          color: colors.surface.withValues(alpha: .97),
-          borderRadius: BorderRadius.circular(30),
-          border: Border.all(color: colors.outlineVariant),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: isDark ? .4 : .14),
-              blurRadius: 28,
-              offset: const Offset(0, 10),
-            ),
-            BoxShadow(
-              color: _MainShellState._primary.withValues(alpha: .13),
-              blurRadius: 40,
-            ),
-          ],
-        ),
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
-        child: Stack(
-          children: [
-            // The selection capsule TRAVELS between slots instead of
-            // blinking out and reappearing.
-            if (_slotFor(selectedIndex) case final int slot)
-              AnimatedAlign(
-                duration: const Duration(milliseconds: 260),
-                curve: Curves.easeOutCubic,
-                alignment: Alignment(slot / 2 - 1, 0),
-                child: FractionallySizedBox(
-                  widthFactor: 1 / 5,
-                  heightFactor: 1,
-                  child: Container(
-                    decoration: BoxDecoration(
-                      color: _MainShellState._primary.withValues(alpha: .16),
-                      borderRadius: BorderRadius.circular(22),
-                      border: Border.all(
-                        color: _MainShellState._primary.withValues(alpha: .35),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            Row(
-              children: [
-                Expanded(
-                  child: _NavigationItem(
-                    icon: Icons.home_outlined,
-                    selectedIcon: Icons.home_rounded,
-                    label: copy.home,
-                    isSelected: selectedIndex == 0,
-                    onPressed: () => onDestinationSelected(0),
-                  ),
-                ),
-                Expanded(
-                  child: _NavigationItem(
-                    icon: Icons.chat_bubble_outline_rounded,
-                    selectedIcon: Icons.chat_bubble_rounded,
-                    label: copy.chats,
-                    badgeCount: unreadConversationCount,
-                    isSelected: selectedIndex == 1,
-                    onPressed: () => onDestinationSelected(1),
-                  ),
-                ),
-                Expanded(child: _VoiceActionButton(onPressed: onVoicePressed)),
-                // Moments, not Friends. The dock stays at five slots
-                // (Material 3 caps a navigation bar at five, and 316 pt
-                // of usable row on a 360 pt phone cannot carry six), so
-                // promoting Moments to primary navigation meant one item
-                // giving up its slot. Friends lost it because it is a
-                // MANAGEMENT surface — accept a request, browse a list —
-                // visited deliberately and rarely, while Moments is a
-                // CONSUMPTION surface. Friends keeps its tab, its state,
-                // its rail item, its Home entry point, and moves to the
-                // first tile of the More sheet.
-                //
-                // Placed immediately after the create action: record,
-                // then hear what everyone else recorded.
-                Expanded(
-                  child: _NavigationItem(
-                    icon: Icons.graphic_eq_outlined,
-                    selectedIcon: Icons.graphic_eq_rounded,
-                    label: copy.moments,
-                    isSelected: selectedIndex == _MainShellState._momentsSlot,
-                    onPressed: () =>
-                        onDestinationSelected(_MainShellState._momentsSlot),
-                  ),
-                ),
-                Expanded(
-                  child: _NavigationItem(
-                    icon: Icons.grid_view_rounded,
-                    selectedIcon: Icons.grid_view_rounded,
-                    label: copy.more,
-                    isSelected: false,
-                    onPressed: onMorePressed,
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _NavigationItem extends StatelessWidget {
-  const _NavigationItem({
-    required this.icon,
-    required this.selectedIcon,
-    required this.label,
-    required this.isSelected,
-    required this.onPressed,
-    this.badgeCount = 0,
-  });
-
-  final IconData icon;
-  final IconData selectedIcon;
-  final String label;
-  final bool isSelected;
-  final VoidCallback onPressed;
-  final int badgeCount;
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).colorScheme;
-    final Color color = isSelected ? colors.onSurface : colors.onSurfaceVariant;
-
-    return Semantics(
-      button: true,
-      selected: isSelected,
-      label: badgeCount > 0
-          ? '$label, $badgeCount unread conversations'
-          : label,
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          onTap: onPressed,
-          borderRadius: BorderRadius.circular(22),
-          child: SizedBox.expand(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 4),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Stack(
-                    clipBehavior: Clip.none,
-                    children: [
-                      // The traveling capsule behind the row is the
-                      // selection surface; the icon itself just rises a
-                      // touch and brightens — felt more than noticed.
-                      AnimatedSlide(
-                        duration: const Duration(milliseconds: 200),
-                        curve: Curves.easeOutCubic,
-                        offset: isSelected
-                            ? const Offset(0, -.06)
-                            : Offset.zero,
-                        child: AnimatedScale(
-                          duration: const Duration(milliseconds: 200),
-                          curve: Curves.easeOutBack,
-                          scale: isSelected ? 1.06 : 1,
-                          child: SizedBox(
-                            width: 42,
-                            height: 30,
-                            child: Icon(
-                              isSelected ? selectedIcon : icon,
-                              color: color,
-                              size: 23,
-                            ),
-                          ),
-                        ),
-                      ),
-                      if (badgeCount > 0)
-                        Positioned(
-                          top: -5,
-                          right: -7,
-                          child: Container(
-                            constraints: const BoxConstraints(
-                              minWidth: 20,
-                              minHeight: 20,
-                            ),
-                            alignment: Alignment.center,
-                            padding: const EdgeInsets.symmetric(horizontal: 5),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFFFF3F72),
-                              borderRadius: BorderRadius.circular(12),
-                              border: Border.all(
-                                color: colors.surface,
-                                width: 2,
-                              ),
-                              boxShadow: const [
-                                BoxShadow(
-                                  color: Color(0x66FF3F72),
-                                  blurRadius: 8,
-                                ),
-                              ],
-                            ),
-                            child: Text(
-                              badgeCount > 99 ? '99+' : '$badgeCount',
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 9,
-                                fontWeight: FontWeight.w900,
-                              ),
-                            ),
-                          ),
-                        ),
-                    ],
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    label,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: color,
-                      fontSize: 11,
-                      fontWeight: isSelected
-                          ? FontWeight.w700
-                          : FontWeight.w500,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _VoiceActionButton extends StatelessWidget {
-  const _VoiceActionButton({required this.onPressed});
-
-  final VoidCallback onPressed;
-
-  /// The operator's responsive size guide, verbatim: 54-58 / 60-64 / 64-68.
-  static double _logoSizeFor(double width) {
-    if (width < 360) return 56;
-    if (width < 400) return 62;
-    return 66;
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    // THE STANDALONE LOGO, NO CIRCLE. The previous face was the logo
-    // inside a 58pt gradient disc with a ring and a circular BoxShadow —
-    // exactly what the operator's before/after spec removes: no circular
-    // background, no border ring, no filled shape, no disc. What remains
-    // is the transparent brand mark itself, larger, floating slightly
-    // above the dock, with a glow that follows the LOGO'S SILHOUETTE — a
-    // blurred copy of the same asset rendered behind it (logo-glow.png
-    // was inspected and rejected: it has no alpha channel, so it would
-    // paint its baked background). The waveform glyph stays as the
-    // fallback for an asset that cannot load.
-    //
-    // Liveness kept, circle-free: the ring used to say "on air" — now the
-    // silhouette glow warms to the live red and the accessible label says
-    // it, so the state survives without any circular decoration.
-    return ListenableBuilder(
-      listenable: VoiceCallService.instance,
-      builder: (context, _) {
-        final voice = VoiceCallService.instance;
-        final live =
-            voice.roomId != null &&
-            voice.status != VoiceCallStatus.disconnected &&
-            voice.status != VoiceCallStatus.failed;
-        final size = _logoSizeFor(MediaQuery.sizeOf(context).width);
-        final glow = live ? const Color(0xFFFF3F72) : _MainShellState._primary;
-
-        return Semantics(
-          button: true,
-          label: live
-              ? voice.isDirectCall
-                    ? 'Voice — private call active'
-                    : 'Voice — live in a room'
-              : 'Use your voice',
-          excludeSemantics: true,
-          child: Center(
-            child: Transform.translate(
-              // -5, down from the spec-guide -12: the operator looked at
-              // the shipped bar and called the mark too high. A slight
-              // float stays; the eye wins over the guide.
-              offset: const Offset(0, -5),
-              child: Material(
-                color: Colors.transparent,
-                child: InkWell(
-                  onTap: onPressed,
-                  // The interactive wrapper paints NOTHING: no splash, no
-                  // highlight, no hover surface — the logo is the visible
-                  // element and the 72pt box below is the invisible tap
-                  // target (the spec's 68-76 range). Keyboard activation
-                  // (Enter/Space) comes with InkWell itself.
-                  splashFactory: NoSplash.splashFactory,
-                  highlightColor: Colors.transparent,
-                  hoverColor: Colors.transparent,
-                  focusColor: Colors.transparent,
-                  child: SizedBox(
-                    width: 72,
-                    height: 72,
-                    child: Center(
-                      child: SizedBox(
-                        width: size,
-                        height: size,
-                        child: Stack(
-                          alignment: Alignment.center,
-                          clipBehavior: Clip.none,
-                          children: [
-                            // The silhouette glow: the same mark, blurred
-                            // and tinted, never a circular shadow.
-                            ImageFiltered(
-                              imageFilter: ui.ImageFilter.blur(
-                                sigmaX: 10,
-                                sigmaY: 10,
-                              ),
-                              child: Image.asset(
-                                'assets/images/logo.png',
-                                width: size,
-                                height: size,
-                                color: glow.withValues(alpha: live ? .85 : .6),
-                                errorBuilder: (_, __, ___) =>
-                                    const SizedBox.shrink(),
-                              ),
-                            ),
-                            Image.asset(
-                              'assets/images/logo.png',
-                              key: const ValueKey('dock-logo'),
-                              width: size,
-                              height: size,
-                              errorBuilder: (_, __, ___) =>
-                                  const _WaveformIcon(compact: true),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-        );
-      },
-    );
-  }
-}
-
-class _WaveformIcon extends StatelessWidget {
-  const _WaveformIcon({this.compact = false});
-
-  final bool compact;
-
-  @override
-  Widget build(BuildContext context) {
-    final scale = compact ? .68 : 1.0;
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      mainAxisAlignment: MainAxisAlignment.center,
-      crossAxisAlignment: CrossAxisAlignment.center,
-      children: [
-        _WaveBar(height: 14 * scale),
-        const SizedBox(width: 3),
-        _WaveBar(height: 25 * scale),
-        const SizedBox(width: 3),
-        _WaveBar(height: 35 * scale),
-        const SizedBox(width: 3),
-        _WaveBar(height: 25 * scale),
-        const SizedBox(width: 3),
-        _WaveBar(height: 14 * scale),
-      ],
-    );
-  }
-}
-
-class _WaveBar extends StatelessWidget {
-  const _WaveBar({required this.height});
-
-  final double height;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: 4,
-      height: height,
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(10),
       ),
     );
   }

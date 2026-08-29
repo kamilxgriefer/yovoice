@@ -7771,3 +7771,57 @@ local LiveKit disconnect at the app auth-epoch boundary.
 - Automated regressions cover normal animated routes, a PopScope veto, direct
   A→B replacement, registration preservation, the real immediate Login
   surface, and bounded room/direct-call cleanup while Auth is still valid.
+
+## ADR-125: The mobile dock presents navigation; `MainShell` still owns it
+
+**Status**: Implemented in source; native store build pending
+**Date**: 2026-08-29
+
+### Context
+
+YO Voice's visible phone navigation has five positions, but only four are tab
+destinations. Home, Chats and Moments map to existing shell domain indexes;
+Friends remains reachable elsewhere; the centre YO logo opens the existing
+room/Moment action; and More opens guarded navigation UI rather than an empty
+content tab. Encoding those visual positions as page indexes would either
+break the centre action, fabricate a More page or discard cached destination
+state during animation.
+
+### Decision
+
+`MainShell` remains the only owner of selected domain indexes and cached page
+instances. `YoFloatingNavigationDock` is a reusable presentation component
+with one five-slot configuration list. It maps selectable domain indexes to
+visual slots 0, 1 and 3, while More uses slot 4 only for the lifetime of its
+actual sheet/popover or a destination opened from it. The centre slot invokes
+the existing action callback independently and never mutates tab selection.
+
+One `LayoutBuilder` divides the available dock width into five equal slots and
+centres a single 64–72 px capsule within the selected slot; the circular YO
+button is painted last. The dock is supplied through `Scaffold.bottomNavigationBar`,
+so the Scaffold reserves its calculated 86 px visual height, 12 px top
+clearance and the one device bottom inset without duplicating SafeArea padding.
+The same component hosts pushed mobile More destinations, whose callbacks pop
+before forwarding to the shell.
+
+Tab content remains one keyed set of lazy children. A Stack makes only the
+selected and briefly outgoing layers visible, with hidden children Offstage
+and their tickers disabled. One shell controller retargets rapid selections;
+the incoming layer moves 12 px horizontally and fades from 0.82, while page
+objects, scroll controllers and nested state remain mounted. Reduced motion
+sets transitions immediately and disables the capsule breathing and centre
+ripple.
+
+### Consequences
+
+- Product tab indexes are not coupled to their visual dock positions.
+- More can look selected only while More UI is genuinely active; double taps
+  still go through the existing transition guard.
+- The YO action retains room/call-aware semantics and real behavior without a
+  fake destination.
+- The fixed dock itself does not rebuild cached destination pages on animation
+  frames.
+- Automated tests pin geometry, safe-area reservation, large text, keyboard
+  behavior, semantics, haptics, rapid taps, reduced motion, back-stack
+  forwarding and retained state. Physical platform rendering, haptic feel and
+  screen-reader cadence remain release checks for the next native tester build.

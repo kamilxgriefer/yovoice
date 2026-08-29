@@ -54,13 +54,18 @@ Future<SemanticsHandle> _pumpHost(
   await tester.pumpWidget(
     MaterialApp(
       theme: ThemeData.dark(useMaterial3: true),
-      home: MoreDestinationHost(
-        body: body,
-        selectedIndex: selectedIndex,
-        unreadConversationCount: 0,
-        onDestinationSelected: onDestinationSelected ?? (_) {},
-        onVoicePressed: onVoicePressed ?? () {},
-        onMorePressed: () {},
+      home: Builder(
+        builder: (context) => MediaQuery(
+          data: MediaQuery.of(context).copyWith(disableAnimations: true),
+          child: MoreDestinationHost(
+            body: body,
+            selectedIndex: selectedIndex,
+            unreadConversationCount: 0,
+            onDestinationSelected: onDestinationSelected ?? (_) {},
+            onVoicePressed: onVoicePressed ?? () {},
+            onMorePressed: () {},
+          ),
+        ),
       ),
     ),
   );
@@ -95,16 +100,14 @@ void main() {
       onVoicePressed: () => voiceOpened++,
     );
 
-    final logo = tester.widget<Image>(
-      find.byKey(const ValueKey('dock-logo')),
-    );
+    final logo = tester.widget<Image>(find.byKey(const ValueKey('dock-logo')));
     expect(
       (logo.image as AssetImage).assetName,
       'assets/images/logo.png',
       reason: 'the centre anchor renders the real brand asset',
     );
 
-    await tester.tap(find.bySemanticsLabel('Use your voice'));
+    await tester.tap(find.bySemanticsLabel('Open voice actions'));
     await tester.pump();
     expect(voiceOpened, 1, reason: 'same behaviour as ever, new face');
     semantics.dispose();
@@ -166,11 +169,7 @@ void main() {
     semantics.dispose();
   });
 
-  // THE CIRCLE IS GONE — the operator's before/after spec. These pins make
-  // a circular container around the mark unrepresentable in a green suite:
-  // any ancestor of the logo carrying a circle shape (BoxDecoration or
-  // CircleBorder) fails the test.
-  testWidgets('no circular decoration wraps the standalone dock logo', (
+  testWidgets('the approved circular centre fully contains the real logo', (
     tester,
   ) async {
     final semantics = await _pumpHost(
@@ -182,55 +181,59 @@ void main() {
     final logo = find.byKey(const ValueKey('dock-logo'));
     expect(logo, findsOneWidget);
 
-    bool circular(Widget w) {
-      if (w is Container) {
-        final d = w.decoration;
-        if (d is BoxDecoration && d.shape == BoxShape.circle) return true;
-        if (d is ShapeDecoration && d.shape is CircleBorder) return true;
-      }
-      if (w is Material && w.shape is CircleBorder) return true;
-      if (w is DecoratedBox) {
-        final d = w.decoration;
-        if (d is BoxDecoration && d.shape == BoxShape.circle) return true;
-      }
-      return false;
-    }
-
+    final boundary = find.byKey(const ValueKey('yo-center-action-boundary'));
+    expect(boundary, findsOneWidget);
+    final buttonRect = tester.getRect(boundary);
+    final logoRect = tester.getRect(logo);
+    expect(buttonRect.width, inInclusiveRange(64, 68));
+    expect(buttonRect.height, buttonRect.width);
+    expect(logoRect.width, inInclusiveRange(59, 60));
+    expect(logoRect.height, logoRect.width);
+    expect(logoRect.width * .814, inInclusiveRange(48, 52));
+    expect(logoRect.height * .844, inInclusiveRange(48, 52));
+    expect(buttonRect.contains(logoRect.topLeft), isTrue);
+    expect(buttonRect.contains(logoRect.bottomRight), isTrue);
     expect(
-      tester
-          .widgetList(
-            find.ancestor(
-              of: logo,
-              matching: find.byWidgetPredicate(circular),
-            ),
-          )
-          .toList(),
-      isEmpty,
-      reason: 'the mark must be standalone — no disc, ring or circular '
-          'container may wrap it',
+      find.ancestor(
+        of: logo,
+        matching: find.byWidgetPredicate(
+          (widget) => widget is Material && widget.shape is CircleBorder,
+        ),
+      ),
+      findsOneWidget,
+      reason: 'the approved centre uses one clipped circular surface',
     );
     semantics.dispose();
   });
 
-  testWidgets('the logo follows the responsive size guide and never clips '
-      'at the 320 floor', (tester) async {
-    final semantics = await _pumpHost(
-      tester,
-      body: const SizedBox.shrink(),
-      selectedIndex: 0,
-      onVoicePressed: () {},
-    );
-    tester.view.physicalSize = const Size(320, 700);
-    await tester.pump();
-    final small = tester.getSize(find.byKey(const ValueKey('dock-logo')));
-    expect(small.width, inInclusiveRange(54, 58));
-    expect(tester.takeException(), isNull);
+  testWidgets(
+    'the button and contained logo follow the responsive size guide',
+    (tester) async {
+      final semantics = await _pumpHost(
+        tester,
+        body: const SizedBox.shrink(),
+        selectedIndex: 0,
+        onVoicePressed: () {},
+      );
+      tester.view.physicalSize = const Size(320, 700);
+      await tester.pump();
+      final small = tester.getSize(find.byKey(const ValueKey('dock-logo')));
+      final smallButton = tester.getSize(
+        find.byKey(const ValueKey('yo-center-action-boundary')),
+      );
+      expect(smallButton.width, 64);
+      expect(small.width, 59);
+      expect(tester.takeException(), isNull);
 
-    tester.view.physicalSize = const Size(430, 900);
-    await tester.pump();
-    final large = tester.getSize(find.byKey(const ValueKey('dock-logo')));
-    expect(large.width, inInclusiveRange(64, 68));
-    semantics.dispose();
-  });
-
+      tester.view.physicalSize = const Size(430, 900);
+      await tester.pump();
+      final large = tester.getSize(find.byKey(const ValueKey('dock-logo')));
+      final largeButton = tester.getSize(
+        find.byKey(const ValueKey('yo-center-action-boundary')),
+      );
+      expect(largeButton.width, 68);
+      expect(large.width, 60);
+      semantics.dispose();
+    },
+  );
 }

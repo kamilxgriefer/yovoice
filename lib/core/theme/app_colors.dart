@@ -12,6 +12,7 @@ class AppColors {
 
   static const Color primary = Color(0xFF7B2FF7);
   static const Color secondary = Color(0xFFC026FF);
+  static const Color navigationPrimary = Color(0xFF8A2BE2);
   static const Color accent = Color(0xFF5CE1E6);
 
   // =========================
@@ -29,6 +30,7 @@ class AppColors {
   static const Color textPrimary = Colors.white;
   static const Color textSecondary = Color(0xFFB4ADC8);
   static const Color textHint = Color(0xFF7E7895);
+  static const Color navigationInactive = Color(0xFF9189A6);
 
   // =========================
   // Borders
