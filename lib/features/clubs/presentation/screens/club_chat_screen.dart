@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
 
 import 'package:yovoice/core/helpers/error_messages.dart';
+import 'package:yovoice/core/theme/app_palette.dart';
 
 import 'package:yovoice/features/clubs/data/models/club_channel.dart';
 import 'package:yovoice/features/clubs/data/models/club_chat_authority.dart';
@@ -40,18 +41,11 @@ class ClubChatScreen extends StatefulWidget {
 }
 
 class _ClubChatScreenState extends State<ClubChatScreen> {
-  static const _background = Color(0xFF080711);
-  static const _surface = Color(0xFF171120);
-  static const _border = Color(0xFF33263F);
-  static const _muted = Color(0xFF9F95A6);
-  static const _purple = Color(0xFF9D20FF);
-
   late final FirebaseFirestore _firestore =
       widget.firestore ?? FirebaseFirestore.instance;
   late final FirebaseAuth _auth = widget.auth ?? FirebaseAuth.instance;
   late final ClubChatService _service =
-      widget.chatService ??
-      ClubChatService(firestore: _firestore, auth: _auth);
+      widget.chatService ?? ClubChatService(firestore: _firestore, auth: _auth);
   final TextEditingController _controller = TextEditingController();
   final FocusNode _focusNode = FocusNode();
   bool _sending = false;
@@ -136,63 +130,66 @@ class _ClubChatScreenState extends State<ClubChatScreen> {
     final name = _safeSenderName(message);
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: _surface,
-        // Long copy at a large text scale is silently CLIPPED by
-        // AlertDialog's Flexible wrapper — no overflow stripe, no
-        // exception, just a vanished sentence. The vanished sentence here
-        // is the one naming what is about to happen and that it is
-        // recorded, so this is not optional polish.
-        scrollable: true,
-        // Without a cap the card tracks the window and the body becomes a
-        // single 700-1200 px line, with a long display name driving the
-        // width. docs/UI.md's modal measure, applied through the shared
-        // helper rather than a local number.
-        insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
-        title: Text(
-          moderating ? 'Remove this message?' : 'Delete message?',
-          style: const TextStyle(color: Colors.white),
-        ),
-        content: ConstrainedBox(
-          constraints:
-              ResponsiveContentFrame.adaptiveModalConstraints(
-                context,
-                maxWidth: 460,
-              ) ??
-              const BoxConstraints(),
-          child: Text(
-            moderating
-                ? 'This removes $name’s message for everyone in '
-                      '#${widget.channel.name}, and records your account '
-                      'against the removal.'
-                : 'This message will be replaced with “Message '
-                      'deleted”.',
-            style: const TextStyle(color: _muted),
+      builder: (dialogContext) {
+        final palette = dialogContext.appPalette;
+        final colors = Theme.of(dialogContext).colorScheme;
+        return AlertDialog(
+          backgroundColor: palette.surfaceRaised,
+          // Long copy at a large text scale is silently CLIPPED by
+          // AlertDialog's Flexible wrapper — no overflow stripe, no
+          // exception, just a vanished sentence. The vanished sentence here
+          // is the one naming what is about to happen and that it is
+          // recorded, so this is not optional polish.
+          scrollable: true,
+          // Without a cap the card tracks the window and the body becomes a
+          // single 700-1200 px line, with a long display name driving the
+          // width. docs/UI.md's modal measure, applied through the shared
+          // helper rather than a local number.
+          insetPadding: const EdgeInsets.symmetric(
+            horizontal: 24,
+            vertical: 24,
           ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            // The theme's primary is 3.16:1 on this surface — below AA,
-            // and it was the SAFE choice sitting next to a destructive
-            // one. Stated explicitly rather than inherited.
-            style: TextButton.styleFrom(
-              foregroundColor: const Color(0xFFEAE4ED),
+          title: Text(
+            moderating ? 'Remove this message?' : 'Delete message?',
+            style: TextStyle(color: palette.textPrimary),
+          ),
+          content: ConstrainedBox(
+            constraints:
+                ResponsiveContentFrame.adaptiveModalConstraints(
+                  dialogContext,
+                  maxWidth: 460,
+                ) ??
+                const BoxConstraints(),
+            child: Text(
+              moderating
+                  ? 'This removes $name’s message for everyone in '
+                        '#${widget.channel.name}, and records your account '
+                        'against the removal.'
+                  : 'This message will be replaced with “Message '
+                        'deleted”.',
+              style: TextStyle(color: palette.textSecondary),
             ),
-            child: const Text('Cancel'),
           ),
-          TextButton.icon(
-            onPressed: () => Navigator.pop(context, true),
-            style: TextButton.styleFrom(
-              foregroundColor: const Color(0xFFFF668B),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              // The theme's primary is 3.16:1 on this surface — below AA,
+              // and it was the SAFE choice sitting next to a destructive
+              // one. Stated explicitly rather than inherited.
+              style: TextButton.styleFrom(foregroundColor: palette.textPrimary),
+              child: const Text('Cancel'),
             ),
-            // An icon so the destructive action is not distinguished by
-            // colour weight alone.
-            icon: const Icon(Icons.delete_outline_rounded, size: 18),
-            label: Text(moderating ? 'Remove' : 'Delete'),
-          ),
-        ],
-      ),
+            TextButton.icon(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              style: TextButton.styleFrom(foregroundColor: colors.error),
+              // An icon so the destructive action is not distinguished by
+              // colour weight alone.
+              icon: const Icon(Icons.delete_outline_rounded, size: 18),
+              label: Text(moderating ? 'Remove' : 'Delete'),
+            ),
+          ],
+        );
+      },
     );
     if (confirmed != true) return;
     try {
@@ -242,22 +239,21 @@ class _ClubChatScreenState extends State<ClubChatScreen> {
       View.of(context),
       text,
       Directionality.of(context),
-      assertiveness: assertive
-          ? Assertiveness.assertive
-          : Assertiveness.polite,
+      assertiveness: assertive ? Assertiveness.assertive : Assertiveness.polite,
     );
   }
 
-
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return Scaffold(
-      backgroundColor: _background,
+      key: const ValueKey('club-chat-screen'),
+      backgroundColor: palette.background,
       appBar: AppBar(
-        backgroundColor: _background,
-        foregroundColor: Colors.white,
+        backgroundColor: palette.background,
+        foregroundColor: palette.textPrimary,
         titleSpacing: 0,
-        shape: const Border(bottom: BorderSide(color: _border)),
+        shape: Border(bottom: BorderSide(color: palette.border)),
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -267,7 +263,7 @@ class _ClubChatScreenState extends State<ClubChatScreen> {
             ),
             Text(
               widget.clubName,
-              style: const TextStyle(color: _muted, fontSize: 11),
+              style: TextStyle(color: palette.textSecondary, fontSize: 11),
             ),
           ],
         ),
@@ -315,7 +311,11 @@ class _ClubChatScreenState extends State<ClubChatScreen> {
         // regression, not a loading state.
         if (snapshot.connectionState == ConnectionState.waiting &&
             !snapshot.hasData) {
-          return const Center(child: CircularProgressIndicator(color: _purple));
+          return Center(
+            child: CircularProgressIndicator(
+              color: Theme.of(context).colorScheme.primary,
+            ),
+          );
         }
         if (snapshot.hasError) {
           return _ChatState(
@@ -404,6 +404,8 @@ class _ClubMessageTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     final hasPhoto = message.senderPhotoUrl?.isNotEmpty ?? false;
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
@@ -420,7 +422,7 @@ class _ClubMessageTile extends StatelessWidget {
           children: [
             CircleAvatar(
               radius: 19,
-              backgroundColor: const Color(0xFF6C2D9A),
+              backgroundColor: colors.primary,
               backgroundImage: hasPhoto
                   ? NetworkImage(message.senderPhotoUrl!)
                   : null,
@@ -434,8 +436,8 @@ class _ClubMessageTile extends StatelessWidget {
                         message.senderName.isEmpty
                             ? '?'
                             : message.senderName[0].toUpperCase(),
-                        style: const TextStyle(
-                          color: Colors.white,
+                        style: TextStyle(
+                          color: colors.onPrimary,
                           fontWeight: FontWeight.w900,
                         ),
                       ),
@@ -446,14 +448,12 @@ class _ClubMessageTile extends StatelessWidget {
               child: Container(
                 padding: const EdgeInsets.fromLTRB(13, 10, 13, 11),
                 decoration: BoxDecoration(
-                  color: isMine
-                      ? const Color(0xFF261436)
-                      : const Color(0xFF171120),
+                  color: isMine ? colors.primaryContainer : palette.surface,
                   borderRadius: BorderRadius.circular(16),
                   border: Border.all(
                     color: isMine
-                        ? const Color(0xFF5B2A7B)
-                        : const Color(0xFF33263F),
+                        ? colors.primary.withValues(alpha: .55)
+                        : palette.border,
                   ),
                 ),
                 child: Column(
@@ -466,8 +466,8 @@ class _ClubMessageTile extends StatelessWidget {
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
                           color: isMine
-                              ? const Color(0xFFD8A9FF)
-                              : Colors.white,
+                              ? colors.onPrimaryContainer
+                              : palette.textPrimary,
                           fontSize: 12,
                           fontWeight: FontWeight.w900,
                         ),
@@ -475,9 +475,9 @@ class _ClubMessageTile extends StatelessWidget {
                       badges: UserIdentityBadges(uid: message.senderId),
                       time: Text(
                         _formatTime(context, message.sentAt),
-                        style: const TextStyle(
+                        style: TextStyle(
                           // 0xFF817889 measured 4.38:1 here, under AA.
-                          color: Color(0xFF9F95A6),
+                          color: palette.textTertiary,
                           fontSize: 10,
                         ),
                       ),
@@ -487,8 +487,8 @@ class _ClubMessageTile extends StatelessWidget {
                       _bodyText(),
                       style: TextStyle(
                         color: message.isDeleted
-                            ? const Color(0xFF8E8595)
-                            : const Color(0xFFEAE4ED),
+                            ? palette.textTertiary
+                            : palette.textPrimary,
                         fontSize: 14,
                         height: 1.35,
                         fontStyle: message.isDeleted
@@ -607,6 +607,8 @@ class _Composer extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     return Container(
       padding: EdgeInsets.fromLTRB(
         12,
@@ -614,9 +616,9 @@ class _Composer extends StatelessWidget {
         12,
         10 + MediaQuery.paddingOf(context).bottom,
       ),
-      decoration: const BoxDecoration(
-        color: Color(0xFF100C17),
-        border: Border(top: BorderSide(color: Color(0xFF33263F))),
+      decoration: BoxDecoration(
+        color: palette.surfaceRaised,
+        border: Border(top: BorderSide(color: palette.border)),
       ),
       child: Row(
         children: [
@@ -628,24 +630,24 @@ class _Composer extends StatelessWidget {
               maxLines: 5,
               maxLength: 2000,
               textCapitalization: TextCapitalization.sentences,
-              style: const TextStyle(color: Colors.white),
+              style: TextStyle(color: palette.textPrimary),
               decoration: InputDecoration(
                 counterText: '',
                 hintText: hint,
-                hintStyle: const TextStyle(color: Color(0xFF817889)),
+                hintStyle: TextStyle(color: palette.textTertiary),
                 filled: true,
-                fillColor: const Color(0xFF171120),
+                fillColor: palette.surfaceSunken,
                 contentPadding: const EdgeInsets.symmetric(
                   horizontal: 16,
                   vertical: 13,
                 ),
                 enabledBorder: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(20),
-                  borderSide: const BorderSide(color: Color(0xFF33263F)),
+                  borderSide: BorderSide(color: palette.border),
                 ),
                 focusedBorder: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(20),
-                  borderSide: const BorderSide(color: Color(0xFF9D20FF)),
+                  borderSide: BorderSide(color: colors.primary),
                 ),
               ),
               onSubmitted: (_) => onSend(),
@@ -655,20 +657,21 @@ class _Composer extends StatelessWidget {
           IconButton.filled(
             onPressed: sending ? null : onSend,
             style: IconButton.styleFrom(
-              backgroundColor: const Color(0xFF9D20FF),
-              disabledBackgroundColor: const Color(0xFF513060),
+              backgroundColor: colors.primary,
+              foregroundColor: colors.onPrimary,
+              disabledBackgroundColor: palette.surfaceMuted,
               minimumSize: const Size(48, 48),
             ),
             icon: sending
-                ? const SizedBox(
+                ? SizedBox(
                     width: 19,
                     height: 19,
                     child: CircularProgressIndicator(
                       strokeWidth: 2,
-                      color: Colors.white,
+                      color: colors.onPrimary,
                     ),
                   )
-                : const Icon(Icons.arrow_upward_rounded, color: Colors.white),
+                : Icon(Icons.arrow_upward_rounded, color: colors.onPrimary),
           ),
         ],
       ),
@@ -689,19 +692,21 @@ class _ChatState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     return Center(
-      child: Padding(
+      child: SingleChildScrollView(
         padding: const EdgeInsets.all(28),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, color: const Color(0xFFC17BFF), size: 48),
+            Icon(icon, color: colors.primary, size: 48),
             const SizedBox(height: 14),
             Text(
               title,
               textAlign: TextAlign.center,
-              style: const TextStyle(
-                color: Colors.white,
+              style: TextStyle(
+                color: palette.textPrimary,
                 fontSize: 18,
                 fontWeight: FontWeight.w900,
               ),
@@ -710,7 +715,7 @@ class _ChatState extends StatelessWidget {
             Text(
               subtitle,
               textAlign: TextAlign.center,
-              style: const TextStyle(color: Color(0xFF9F95A6), height: 1.4),
+              style: TextStyle(color: palette.textSecondary, height: 1.4),
             ),
           ],
         ),

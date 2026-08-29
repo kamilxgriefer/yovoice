@@ -19,6 +19,7 @@ import 'package:yovoice/features/moments/presentation/widgets/moment_expiry_acce
 import 'package:yovoice/features/moments/presentation/widgets/moment_time_labels.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
+import 'package:yovoice/shared/widgets/theme/yo_immersive_dark_surface.dart';
 
 /// Opens one author's chain in the story viewer.
 ///
@@ -703,13 +704,15 @@ class _MomentStoryViewerState extends State<MomentStoryViewer> {
     // Deleting the last link empties the local chain and schedules the
     // pop; the route can still rebuild for a frame while the transition
     // runs, and there is no Moment left to draw.
-    if (_chainMoments.isEmpty) return const SizedBox.shrink();
+    if (_chainMoments.isEmpty) {
+      return const YoImmersiveDarkSurface(child: SizedBox.shrink());
+    }
 
     final loaded = _current;
     final uid = _uid;
     final live = _moments?.watchMoment(loaded.id);
 
-    return Focus(
+    final content = Focus(
       focusNode: _storyFocus,
       autofocus: true,
       onKeyEvent: _handleKey,
@@ -788,6 +791,7 @@ class _MomentStoryViewerState extends State<MomentStoryViewer> {
         },
       ),
     );
+    return YoImmersiveDarkSurface(child: content);
   }
 }
 

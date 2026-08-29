@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/desktop_home.dart'
     show RoomVisual;
 import 'package:yovoice/features/moments/data/models/moment_chain.dart';
@@ -40,6 +41,8 @@ class MobileSectionHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     return Padding(
       padding: const EdgeInsets.only(top: 18, bottom: 10),
       child: Row(
@@ -49,8 +52,8 @@ class MobileSectionHeader extends StatelessWidget {
               title,
               maxLines: 2,
               overflow: TextOverflow.visible,
-              style: const TextStyle(
-                color: Colors.white,
+              style: TextStyle(
+                color: palette.textPrimary,
                 fontSize: 16.5,
                 fontWeight: FontWeight.w800,
               ),
@@ -74,7 +77,7 @@ class MobileSectionHeader extends StatelessWidget {
               style: TextButton.styleFrom(
                 minimumSize: const Size(44, 44),
                 padding: const EdgeInsets.symmetric(horizontal: 8),
-                foregroundColor: const Color(0xFFD3A5FF),
+                foregroundColor: colors.primary,
               ),
               child: const Row(
                 mainAxisSize: MainAxisSize.min,
@@ -271,6 +274,7 @@ class _MomentBubble extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return Semantics(
       button: true,
       // Followed-author tiles are one atomic action. The own tile keeps
@@ -304,9 +308,9 @@ class _MomentBubble extends StatelessWidget {
                         ),
                         child: Container(
                           padding: const EdgeInsets.all(2),
-                          decoration: const BoxDecoration(
+                          decoration: BoxDecoration(
                             shape: BoxShape.circle,
-                            color: Color(0xFF0C0814),
+                            color: palette.surfaceSunken,
                           ),
                           child: UserAvatar(
                             radius: MobileMomentsStrip._tile / 2 - 9,
@@ -333,7 +337,7 @@ class _MomentBubble extends StatelessWidget {
                               colors: [AppColors.primary, AppColors.secondary],
                             ),
                             border: Border.all(
-                              color: const Color(0xFF0C0814),
+                              color: palette.surfaceSunken,
                               width: 2,
                             ),
                           ),
@@ -361,7 +365,7 @@ class _MomentBubble extends StatelessWidget {
                               shape: BoxShape.circle,
                               color: AppColors.primary,
                               border: Border.all(
-                                color: const Color(0xFF0C0814),
+                                color: palette.surfaceSunken,
                                 width: 2,
                               ),
                             ),
@@ -382,8 +386,8 @@ class _MomentBubble extends StatelessWidget {
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 textAlign: TextAlign.center,
-                style: const TextStyle(
-                  color: Color(0xFFCFC6DC),
+                style: TextStyle(
+                  color: palette.textSecondary,
                   fontSize: 10.5,
                   fontWeight: FontWeight.w600,
                 ),
@@ -497,6 +501,7 @@ class _MobileRoomCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return Semantics(
       button: true,
       label: '${room.name}, live, ${room.participantCount} listening',
@@ -508,8 +513,8 @@ class _MobileRoomCard extends StatelessWidget {
           padding: const EdgeInsets.all(10),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(18),
-            color: const Color(0xFF12101D),
-            border: Border.all(color: const Color(0xFF2C253B)),
+            color: palette.surface,
+            border: Border.all(color: palette.border),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -550,18 +555,18 @@ class _MobileRoomCard extends StatelessWidget {
                 room.name,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: Colors.white,
+                style: TextStyle(
+                  color: palette.textPrimary,
                   fontSize: 12.5,
                   fontWeight: FontWeight.w700,
                 ),
               ),
               Row(
                 children: [
-                  const Icon(
+                  Icon(
                     Icons.graphic_eq_rounded,
                     size: 11,
-                    color: Color(0xFF9D95AD),
+                    color: palette.textSecondary,
                   ),
                   const SizedBox(width: 4),
                   Flexible(
@@ -569,8 +574,8 @@ class _MobileRoomCard extends StatelessWidget {
                       '${room.participantCount}',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: Color(0xFF9D95AD),
+                      style: TextStyle(
+                        color: palette.textSecondary,
                         fontSize: 11,
                       ),
                     ),
@@ -606,22 +611,24 @@ class MobileVoiceTrending extends StatelessWidget {
   Widget build(BuildContext context) {
     final live = rooms.take(2).toList(growable: false);
     final people = creators.take(2).toList(growable: false);
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
 
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(18),
-        color: const Color(0xFF120C1D),
-        border: Border.all(color: const Color(0xFF241A33)),
+        color: palette.surface,
+        border: Border.all(color: palette.border),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Text(
+          Text(
             'Voice Trending',
             style: TextStyle(
-              color: Colors.white,
+              color: palette.textPrimary,
               fontSize: 16,
               fontWeight: FontWeight.w800,
             ),
@@ -671,7 +678,7 @@ class MobileVoiceTrending extends StatelessWidget {
               style: TextButton.styleFrom(
                 minimumSize: const Size(44, 44),
                 padding: EdgeInsets.zero,
-                foregroundColor: const Color(0xFFD3A5FF),
+                foregroundColor: colors.primary,
               ),
               child: const Text(
                 'See all',
@@ -693,8 +700,8 @@ class _MiniLabel extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Text(
     text,
-    style: const TextStyle(
-      color: Color(0xFF9A90AC),
+    style: TextStyle(
+      color: context.appPalette.textSecondary,
       fontSize: 11,
       fontWeight: FontWeight.w700,
     ),
@@ -711,7 +718,7 @@ class _MiniNote extends StatelessWidget {
     padding: const EdgeInsets.only(bottom: 4),
     child: Text(
       text,
-      style: const TextStyle(color: Color(0xFF7E7895), fontSize: 11.5),
+      style: TextStyle(color: context.appPalette.textTertiary, fontSize: 11.5),
     ),
   );
 }
@@ -720,21 +727,24 @@ class _MiniLivePill extends StatelessWidget {
   const _MiniLivePill();
 
   @override
-  Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-    decoration: BoxDecoration(
-      borderRadius: BorderRadius.circular(999),
-      color: AppColors.primary.withValues(alpha: .16),
-    ),
-    child: const Text(
-      'Live',
-      style: TextStyle(
-        color: Color(0xFFD3A5FF),
-        fontSize: 9,
-        fontWeight: FontWeight.w800,
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(999),
+        color: colors.primaryContainer,
       ),
-    ),
-  );
+      child: Text(
+        'Live',
+        style: TextStyle(
+          color: colors.onPrimaryContainer,
+          fontSize: 9,
+          fontWeight: FontWeight.w800,
+        ),
+      ),
+    );
+  }
 }
 
 class _MiniRow extends StatelessWidget {
@@ -758,6 +768,7 @@ class _MiniRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(12),
@@ -779,8 +790,8 @@ class _MiniRow extends StatelessWidget {
                           title,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: Colors.white,
+                          style: TextStyle(
+                            color: palette.textPrimary,
                             fontSize: 12.5,
                             fontWeight: FontWeight.w700,
                           ),
@@ -797,8 +808,8 @@ class _MiniRow extends StatelessWidget {
                       subtitle,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: Color(0xFF7E7895),
+                      style: TextStyle(
+                        color: palette.textTertiary,
                         fontSize: 11,
                       ),
                     ),
@@ -828,12 +839,13 @@ class MobilePremiumCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(18),
-        color: const Color(0xFF120C1D).withValues(alpha: .9),
-        border: Border.all(color: const Color(0xFF2E2140)),
+        color: palette.surface,
+        border: Border.all(color: palette.border),
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -851,16 +863,16 @@ class MobilePremiumCard extends StatelessWidget {
                     children: [
                       Text(
                         PremiumPlans.benefits[i].$1,
-                        style: const TextStyle(
-                          color: Colors.white,
+                        style: TextStyle(
+                          color: palette.textPrimary,
                           fontSize: 13,
                           fontWeight: FontWeight.w800,
                         ),
                       ),
                       Text(
                         PremiumPlans.benefits[i].$2,
-                        style: const TextStyle(
-                          color: Color(0xFF9A90AC),
+                        style: TextStyle(
+                          color: palette.textSecondary,
                           fontSize: 11.5,
                           height: 1.3,
                         ),
@@ -922,12 +934,14 @@ class MobileTopCreators extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(18),
-        color: const Color(0xFF120C1D),
-        border: Border.all(color: const Color(0xFF241A33)),
+        color: palette.surface,
+        border: Border.all(color: palette.border),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -935,13 +949,13 @@ class MobileTopCreators extends StatelessWidget {
         children: [
           Row(
             children: [
-              const Flexible(
+              Flexible(
                 child: Text(
                   'Top creators you follow',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    color: Colors.white,
+                    color: palette.textPrimary,
                     fontSize: 15,
                     fontWeight: FontWeight.w800,
                   ),
@@ -954,7 +968,7 @@ class MobileTopCreators extends StatelessWidget {
                   style: TextButton.styleFrom(
                     minimumSize: const Size(44, 44),
                     padding: const EdgeInsets.symmetric(horizontal: 6),
-                    foregroundColor: const Color(0xFFD3A5FF),
+                    foregroundColor: colors.primary,
                   ),
                   child: const Text(
                     'View all',
@@ -965,9 +979,9 @@ class MobileTopCreators extends StatelessWidget {
           ),
           if (creators.isEmpty) ...[
             const SizedBox(height: 6),
-            const Text(
+            Text(
               'You are not following anyone yet.',
-              style: TextStyle(color: Color(0xFF7E7895), fontSize: 11.5),
+              style: TextStyle(color: palette.textTertiary, fontSize: 11.5),
             ),
           ] else
             for (final creator in creators.take(4))

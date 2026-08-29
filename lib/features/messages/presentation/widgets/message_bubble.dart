@@ -5,6 +5,7 @@ import 'package:audioplayers/audioplayers.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/messages/data/models/message.dart';
 import 'package:yovoice/shared/widgets/interactions/accessible_context_action.dart';
 
@@ -25,15 +26,17 @@ class MessageBubble extends StatelessWidget {
   privateMediaLoader;
   final AudioPlayer Function()? audioPlayerFactory;
 
-  static const Color _surface = Color(0xFF17121F);
-  static const Color _border = Color(0xFF30263F);
-  static const Color _muted = Color(0xFF9D95AD);
-
   @override
   Widget build(BuildContext context) {
     final isMine = message.isMine(currentUserId);
     final wasRead = message.readBy.any((id) => id != currentUserId);
     final reactionSummary = _reactionSummary(message.reactions.values);
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
+    final bubbleForeground = isMine ? Colors.white : palette.textPrimary;
+    final bubbleMuted = isMine
+        ? Colors.white.withValues(alpha: .78)
+        : palette.textSecondary;
 
     return Align(
       alignment: isMine ? Alignment.centerRight : Alignment.centerLeft,
@@ -55,6 +58,11 @@ class MessageBubble extends StatelessWidget {
                 : CrossAxisAlignment.start,
             children: [
               Container(
+                key: ValueKey(
+                  isMine
+                      ? 'outgoing-message-bubble'
+                      : 'incoming-message-bubble',
+                ),
                 padding: const EdgeInsets.symmetric(
                   horizontal: 14,
                   vertical: 11,
@@ -67,14 +75,14 @@ class MessageBubble extends StatelessWidget {
                           colors: [Color(0xFFA72DFF), Color(0xFF7821E8)],
                         )
                       : null,
-                  color: isMine ? null : _surface,
+                  color: isMine ? null : palette.surfaceRaised,
                   borderRadius: BorderRadius.only(
                     topLeft: const Radius.circular(20),
                     topRight: const Radius.circular(20),
                     bottomLeft: Radius.circular(isMine ? 20 : 5),
                     bottomRight: Radius.circular(isMine ? 5 : 20),
                   ),
-                  border: isMine ? null : Border.all(color: _border),
+                  border: isMine ? null : Border.all(color: palette.border),
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -85,13 +93,13 @@ class MessageBubble extends StatelessWidget {
                         margin: const EdgeInsets.only(bottom: 8),
                         padding: const EdgeInsets.all(9),
                         decoration: BoxDecoration(
-                          color: Colors.black.withValues(alpha: .18),
+                          color: isMine
+                              ? Colors.black.withValues(alpha: .18)
+                              : palette.surfaceMuted,
                           borderRadius: BorderRadius.circular(11),
                           border: Border(
                             left: BorderSide(
-                              color: isMine
-                                  ? Colors.white70
-                                  : const Color(0xFFC35CFF),
+                              color: isMine ? Colors.white70 : palette.focus,
                               width: 3,
                             ),
                           ),
@@ -100,14 +108,16 @@ class MessageBubble extends StatelessWidget {
                           message.replyToContent!,
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: Colors.white70,
-                            fontSize: 12,
-                          ),
+                          style: TextStyle(color: bubbleMuted, fontSize: 12),
                         ),
                       ),
                     _MessageContent(
                       message: message,
+                      foregroundColor: bubbleForeground,
+                      mutedForegroundColor: bubbleMuted,
+                      errorForegroundColor: isMine
+                          ? const Color(0xFFFFE0E7)
+                          : colors.onErrorContainer,
                       privateMediaLoader: privateMediaLoader,
                       audioPlayerFactory: audioPlayerFactory,
                     ),
@@ -122,11 +132,14 @@ class MessageBubble extends StatelessWidget {
                     vertical: 4,
                   ),
                   decoration: BoxDecoration(
-                    color: const Color(0xFF21192D),
+                    color: palette.surfaceRaised,
                     borderRadius: BorderRadius.circular(14),
-                    border: Border.all(color: _border),
-                    boxShadow: const [
-                      BoxShadow(color: Color(0x44000000), blurRadius: 8),
+                    border: Border.all(color: palette.border),
+                    boxShadow: [
+                      BoxShadow(
+                        color: palette.shadow.withValues(alpha: .18),
+                        blurRadius: 8,
+                      ),
                     ],
                   ),
                   child: Text(
@@ -141,13 +154,16 @@ class MessageBubble extends StatelessWidget {
                 children: [
                   Text(
                     _formatTime(context, message.sentAt),
-                    style: const TextStyle(color: _muted, fontSize: 10),
+                    style: TextStyle(color: palette.textTertiary, fontSize: 10),
                   ),
                   if (message.editedAt != null) ...[
                     const SizedBox(width: 4),
-                    const Text(
+                    Text(
                       'edited',
-                      style: TextStyle(color: _muted, fontSize: 10),
+                      style: TextStyle(
+                        color: palette.textTertiary,
+                        fontSize: 10,
+                      ),
                     ),
                   ],
                   if (isMine) ...[
@@ -155,7 +171,7 @@ class MessageBubble extends StatelessWidget {
                     Icon(
                       wasRead ? Icons.done_all_rounded : Icons.done_rounded,
                       size: 15,
-                      color: wasRead ? const Color(0xFFD276FF) : _muted,
+                      color: wasRead ? palette.focus : palette.textTertiary,
                     ),
                   ],
                 ],
@@ -197,11 +213,17 @@ class MessageBubble extends StatelessWidget {
 class _MessageContent extends StatelessWidget {
   const _MessageContent({
     required this.message,
+    required this.foregroundColor,
+    required this.mutedForegroundColor,
+    required this.errorForegroundColor,
     required this.privateMediaLoader,
     required this.audioPlayerFactory,
   });
 
   final Message message;
+  final Color foregroundColor;
+  final Color mutedForegroundColor;
+  final Color errorForegroundColor;
   final Future<Uint8List?> Function(String? reference, int maxBytes)?
   privateMediaLoader;
   final AudioPlayer Function()? audioPlayerFactory;
@@ -209,15 +231,15 @@ class _MessageContent extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (message.isDeleted) {
-      return const Row(
+      return Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(Icons.block_rounded, color: Colors.white54, size: 16),
-          SizedBox(width: 7),
+          Icon(Icons.block_rounded, color: mutedForegroundColor, size: 16),
+          const SizedBox(width: 7),
           Text(
             'Message deleted',
             style: TextStyle(
-              color: Colors.white54,
+              color: mutedForegroundColor,
               fontSize: 14,
               fontStyle: FontStyle.italic,
             ),
@@ -230,19 +252,24 @@ class _MessageContent extends StatelessWidget {
       case MessageType.voice:
         return _VoiceMessageContent(
           message: message,
+          foregroundColor: foregroundColor,
+          mutedForegroundColor: mutedForegroundColor,
+          errorForegroundColor: errorForegroundColor,
           privateMediaLoader: privateMediaLoader,
           audioPlayerFactory: audioPlayerFactory,
         );
       case MessageType.image:
         return _ImageMessageContent(
           message: message,
+          foregroundColor: foregroundColor,
+          mutedForegroundColor: mutedForegroundColor,
           privateMediaLoader: privateMediaLoader,
         );
       case MessageType.text:
         return Text(
           message.content,
-          style: const TextStyle(
-            color: Colors.white,
+          style: TextStyle(
+            color: foregroundColor,
             fontSize: 14.5,
             height: 1.35,
           ),
@@ -254,11 +281,17 @@ class _MessageContent extends StatelessWidget {
 class _VoiceMessageContent extends StatefulWidget {
   const _VoiceMessageContent({
     required this.message,
+    required this.foregroundColor,
+    required this.mutedForegroundColor,
+    required this.errorForegroundColor,
     required this.privateMediaLoader,
     required this.audioPlayerFactory,
   });
 
   final Message message;
+  final Color foregroundColor;
+  final Color mutedForegroundColor;
+  final Color errorForegroundColor;
   final Future<Uint8List?> Function(String? reference, int maxBytes)?
   privateMediaLoader;
   final AudioPlayer Function()? audioPlayerFactory;
@@ -368,11 +401,11 @@ class _VoiceMessageContentState extends State<_VoiceMessageContent> {
           mainAxisSize: MainAxisSize.min,
           children: [
             if (_loading)
-              const SizedBox.square(
+              SizedBox.square(
                 dimension: 24,
                 child: CircularProgressIndicator(
                   strokeWidth: 2,
-                  color: Colors.white,
+                  color: widget.foregroundColor,
                 ),
               )
             else
@@ -382,7 +415,9 @@ class _VoiceMessageContentState extends State<_VoiceMessageContent> {
                     : _playing
                     ? Icons.pause_rounded
                     : Icons.play_arrow_rounded,
-                color: _failed ? const Color(0xFFFF9BB1) : Colors.white,
+                color: _failed
+                    ? widget.errorForegroundColor
+                    : widget.foregroundColor,
                 size: 27,
               ),
             const SizedBox(width: 6),
@@ -401,7 +436,9 @@ class _VoiceMessageContentState extends State<_VoiceMessageContent> {
                           height: height.toDouble(),
                           margin: const EdgeInsets.symmetric(horizontal: 1),
                           decoration: BoxDecoration(
-                            color: Colors.white.withValues(alpha: .82),
+                            color: widget.foregroundColor.withValues(
+                              alpha: .82,
+                            ),
                             borderRadius: BorderRadius.circular(20),
                           ),
                         ),
@@ -414,7 +451,10 @@ class _VoiceMessageContentState extends State<_VoiceMessageContent> {
             const SizedBox(width: 8),
             Text(
               '${duration ~/ 60}:${(duration % 60).toString().padLeft(2, '0')}',
-              style: const TextStyle(color: Colors.white70, fontSize: 11),
+              style: TextStyle(
+                color: widget.mutedForegroundColor,
+                fontSize: 11,
+              ),
             ),
           ],
         ),
@@ -426,10 +466,14 @@ class _VoiceMessageContentState extends State<_VoiceMessageContent> {
 class _ImageMessageContent extends StatefulWidget {
   const _ImageMessageContent({
     required this.message,
+    required this.foregroundColor,
+    required this.mutedForegroundColor,
     required this.privateMediaLoader,
   });
 
   final Message message;
+  final Color foregroundColor;
+  final Color mutedForegroundColor;
   final Future<Uint8List?> Function(String? reference, int maxBytes)?
   privateMediaLoader;
 
@@ -461,12 +505,12 @@ class _ImageMessageContentState extends State<_ImageMessageContent> {
     final mediaUrl = widget.message.mediaUrl?.trim() ?? '';
 
     if (mediaUrl.isEmpty) {
-      return const Row(
+      return Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(Icons.image_outlined, color: Colors.white70),
-          SizedBox(width: 8),
-          Text('Photo', style: TextStyle(color: Colors.white)),
+          Icon(Icons.image_outlined, color: widget.mutedForegroundColor),
+          const SizedBox(width: 8),
+          Text('Photo', style: TextStyle(color: widget.foregroundColor)),
         ],
       );
     }
@@ -480,11 +524,14 @@ class _ImageMessageContentState extends State<_ImageMessageContent> {
           height: 230,
           fit: BoxFit.cover,
           semanticLabel: 'Photo message',
-          errorBuilder: (_, _, _) => const SizedBox(
+          errorBuilder: (_, _, _) => SizedBox(
             width: 210,
             height: 130,
             child: Center(
-              child: Icon(Icons.broken_image_outlined, color: Colors.white54),
+              child: Icon(
+                Icons.broken_image_outlined,
+                color: widget.mutedForegroundColor,
+              ),
             ),
           ),
         ),
@@ -496,13 +543,13 @@ class _ImageMessageContentState extends State<_ImageMessageContent> {
       future: _image,
       builder: (context, snapshot) {
         if (snapshot.connectionState != ConnectionState.done) {
-          return const SizedBox(
+          return SizedBox(
             width: 210,
             height: 160,
             child: Center(
               child: CircularProgressIndicator(
                 strokeWidth: 2,
-                color: Colors.white,
+                color: widget.foregroundColor,
               ),
             ),
           );
@@ -511,6 +558,9 @@ class _ImageMessageContentState extends State<_ImageMessageContent> {
         if (snapshot.hasError || bytes == null || bytes.isEmpty) {
           return TextButton.icon(
             onPressed: () => setState(() => _image = _load()),
+            style: TextButton.styleFrom(
+              foregroundColor: widget.foregroundColor,
+            ),
             icon: const Icon(Icons.refresh_rounded),
             label: const Text('Photo unavailable — retry'),
           );

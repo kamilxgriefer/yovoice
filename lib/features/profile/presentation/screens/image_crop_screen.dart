@@ -6,6 +6,7 @@ import 'package:flutter/rendering.dart';
 
 import 'package:yovoice/features/profile/data/services/image_crop.dart';
 import 'package:yovoice/features/profile/data/services/profile_image_rules.dart';
+import 'package:yovoice/shared/widgets/theme/yo_immersive_dark_surface.dart';
 
 /// The shared image crop editor: pinch to zoom, drag to reposition,
 /// fixed-frame crop with a live preview of exactly what will be visible.
@@ -315,7 +316,7 @@ class _ImageCropScreenState extends State<ImageCropScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return PopScope(
+    final content = PopScope(
       // Encoding reads the decoded native image asynchronously. System Back
       // or Escape must not dispose that image underneath the renderer; the
       // route becomes dismissible again as soon as processing finishes.
@@ -598,6 +599,7 @@ class _ImageCropScreenState extends State<ImageCropScreen> {
         ),
       ),
     );
+    return YoImmersiveDarkSurface(child: content);
   }
 }
 

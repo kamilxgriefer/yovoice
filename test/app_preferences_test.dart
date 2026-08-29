@@ -102,6 +102,8 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(controller.value.theme, AppThemePreference.light);
+      expect(find.textContaining('Light · Beta'), findsNothing);
+      expect(find.textContaining('Pearl surfaces'), findsOneWidget);
       expect(store.values['appearance.theme.v1'], 'light');
       expect(
         Theme.of(tester.element(find.byType(Scaffold))).brightness,

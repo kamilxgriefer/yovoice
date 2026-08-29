@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_radius.dart';
 
 class YoIconButton extends StatelessWidget {
@@ -52,6 +52,7 @@ class YoIconButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     final targetSize = size < 44 ? 44.0 : size;
     final effectiveLabel = semanticLabel ?? tooltip ?? _inferredLabel;
     final button = IconButton(
@@ -70,9 +71,9 @@ class YoIconButton extends StatelessWidget {
         height: size,
         child: DecoratedBox(
           decoration: BoxDecoration(
-            color: backgroundColor ?? AppColors.surface,
+            color: backgroundColor ?? palette.surfaceRaised,
             borderRadius: AppRadius.md,
-            border: Border.all(color: borderColor ?? AppColors.border),
+            border: Border.all(color: borderColor ?? palette.borderStrong),
           ),
           child: Center(
             child: AnimatedSwitcher(
@@ -88,7 +89,7 @@ class YoIconButton extends StatelessWidget {
                       icon,
                       key: const ValueKey('icon'),
                       size: iconSize,
-                      color: foregroundColor ?? AppColors.textPrimary,
+                      color: foregroundColor ?? palette.textPrimary,
                     ),
             ),
           ),

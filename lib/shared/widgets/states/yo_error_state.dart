@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/helpers/error_messages.dart';
-import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_spacing.dart';
 import 'package:yovoice/core/theme/app_typography.dart';
 import 'package:yovoice/shared/widgets/buttons/yo_button.dart';
@@ -30,6 +30,8 @@ class YoErrorState extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final String text = message ?? friendlyErrorMessage(error!);
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
 
     return TweenAnimationBuilder<double>(
       tween: Tween<double>(begin: 0, end: 1),
@@ -56,26 +58,30 @@ class YoErrorState extends StatelessWidget {
               width: 76,
               height: 76,
               decoration: BoxDecoration(
-                color: AppColors.error.withValues(alpha: 0.12),
+                color: colors.errorContainer,
                 shape: BoxShape.circle,
               ),
-              child: const Icon(
+              child: Icon(
                 Icons.cloud_off_rounded,
                 size: 34,
-                color: AppColors.error,
+                color: colors.onErrorContainer,
               ),
             ),
             const SizedBox(height: AppSpacing.lg),
             Text(
               'Something went wrong',
               textAlign: TextAlign.center,
-              style: AppTypography.titleLarge,
+              style: AppTypography.titleLarge.copyWith(
+                color: palette.textPrimary,
+              ),
             ),
             const SizedBox(height: AppSpacing.sm),
             Text(
               text,
               textAlign: TextAlign.center,
-              style: AppTypography.bodyMedium,
+              style: AppTypography.bodyMedium.copyWith(
+                color: palette.textSecondary,
+              ),
             ),
             if (onRetry != null) ...<Widget>[
               const SizedBox(height: AppSpacing.lg),

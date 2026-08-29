@@ -62,7 +62,7 @@ class AppearanceLanguageSettingsSection extends StatelessWidget {
       switch (theme) {
         AppThemePreference.system => copy.systemTheme,
         AppThemePreference.dark => copy.darkTheme,
-        AppThemePreference.light => '${copy.lightTheme} · Beta',
+        AppThemePreference.light => copy.lightTheme,
       };
 
   static String _languageLabel(
@@ -105,7 +105,7 @@ class _PreferenceGroup extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
     return Material(
-      color: colors.surface,
+      color: colors.surfaceContainerLow,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(20),
         side: BorderSide(color: colors.outlineVariant),

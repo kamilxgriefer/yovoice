@@ -9,6 +9,7 @@ import 'package:yovoice/features/auth/presentation/screens/totp_challenge_screen
 import 'package:yovoice/features/auth/presentation/screens/verify_email_screen.dart';
 import 'package:yovoice/features/auth/presentation/widgets/auth_social_button.dart';
 import 'package:yovoice/shared/widgets/backgrounds/animated_waves_background.dart';
+import 'package:yovoice/shared/widgets/theme/yo_immersive_dark_surface.dart';
 
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({super.key, @visibleForTesting this.authService});
@@ -292,7 +293,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   @override
   Widget build(BuildContext context) {
     final copy = AppLocalizations.of(context);
-    return Scaffold(
+    final content = Scaffold(
       body: Stack(
         children: [
           const Positioned.fill(
@@ -628,6 +629,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
         ],
       ),
     );
+    return YoImmersiveDarkSurface(child: content);
   }
 }
 

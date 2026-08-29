@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 
@@ -22,16 +23,17 @@ class FollowListScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     final isFollowers = type == FollowListType.followers;
     final stream = isFollowers
         ? _service.watchFollowers(userId)
         : _service.watchFollowing(userId);
 
     return Scaffold(
-      backgroundColor: const Color(0xFF09050F),
+      backgroundColor: palette.background,
       appBar: AppBar(
-        backgroundColor: const Color(0xFF09050F),
-        foregroundColor: Colors.white,
+        backgroundColor: palette.background,
+        foregroundColor: palette.textPrimary,
         title: Text(isFollowers ? 'Followers' : 'Following'),
       ),
       body: ResponsiveContentFrame(
@@ -47,7 +49,7 @@ class FollowListScreen extends StatelessWidget {
                   child: Text(
                     'Could not load this list.\n${snapshot.error}',
                     textAlign: TextAlign.center,
-                    style: const TextStyle(color: Color(0xFFB8ADC1)),
+                    style: TextStyle(color: palette.textSecondary),
                   ),
                 ),
               );
@@ -62,10 +64,7 @@ class FollowListScreen extends StatelessWidget {
                   isFollowers
                       ? 'No followers yet.'
                       : 'Not following anyone yet.',
-                  style: const TextStyle(
-                    color: Color(0xFFB8ADC1),
-                    fontSize: 16,
-                  ),
+                  style: TextStyle(color: palette.textSecondary, fontSize: 16),
                 ),
               );
             }
@@ -78,9 +77,9 @@ class FollowListScreen extends StatelessWidget {
                 return Container(
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
-                    color: const Color(0xFF17101F),
+                    color: palette.surface,
                     borderRadius: BorderRadius.circular(18),
-                    border: Border.all(color: const Color(0xFF34263F)),
+                    border: Border.all(color: palette.border),
                   ),
                   child: Row(
                     children: [
@@ -111,8 +110,8 @@ class FollowListScreen extends StatelessWidget {
                               children: [
                                 Text(
                                   user.displayName,
-                                  style: const TextStyle(
-                                    color: Colors.white,
+                                  style: TextStyle(
+                                    color: palette.textPrimary,
                                     fontWeight: FontWeight.w800,
                                     fontSize: 15,
                                   ),
@@ -123,8 +122,8 @@ class FollowListScreen extends StatelessWidget {
                             if (user.username.isNotEmpty)
                               Text(
                                 '@${user.username.replaceAll(' ', '').toLowerCase()}',
-                                style: const TextStyle(
-                                  color: Color(0xFFA99DB3),
+                                style: TextStyle(
+                                  color: palette.textSecondary,
                                   fontSize: 13,
                                 ),
                               ),

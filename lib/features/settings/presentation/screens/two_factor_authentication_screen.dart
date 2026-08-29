@@ -3,16 +3,15 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/auth/data/auth_service.dart';
 import 'package:yovoice/features/auth/data/totp_mfa_service.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 
-const _background = Color(0xFF080711);
-const _surface = Color(0xFF17101F);
-const _border = Color(0xFF3B2949);
-const _muted = Color(0xFFA79DB5);
-const _primary = Color(0xFFB348FF);
-const _danger = Color(0xFFFF6F9C);
+Color _twoFactorSuccess(BuildContext context) =>
+    Theme.of(context).brightness == Brightness.dark
+    ? const Color(0xFF3FDA8E)
+    : const Color(0xFF087A44);
 
 class TwoFactorAuthenticationScreen extends StatefulWidget {
   const TwoFactorAuthenticationScreen({
@@ -208,23 +207,29 @@ class _TwoFactorAuthenticationScreenState
   Future<void> _remove(TotpFactorSummary factor) async {
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Remove authenticator?'),
-        content: const Text(
-          'You will no longer need a code from this authenticator when signing in.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('Keep it'),
+      builder: (dialogContext) {
+        final colors = Theme.of(dialogContext).colorScheme;
+        return AlertDialog(
+          title: const Text('Remove authenticator?'),
+          content: const Text(
+            'You will no longer need a code from this authenticator when signing in.',
           ),
-          FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: _danger),
-            onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('Remove'),
-          ),
-        ],
-      ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Keep it'),
+            ),
+            FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: colors.errorContainer,
+                foregroundColor: colors.onErrorContainer,
+              ),
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('Remove'),
+            ),
+          ],
+        );
+      },
     );
     if (confirmed != true || _busy) {
       return;
@@ -307,8 +312,10 @@ class _TwoFactorAuthenticationScreenState
   @override
   Widget build(BuildContext context) {
     final factors = _factors;
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     return Scaffold(
-      backgroundColor: _background,
+      backgroundColor: palette.background,
       appBar: widget.isRootTab
           ? null
           : AppBar(
@@ -322,18 +329,18 @@ class _TwoFactorAuthenticationScreenState
           child: ListView(
             padding: const EdgeInsets.fromLTRB(18, 22, 18, 64),
             children: [
-              const Text(
+              Text(
                 'Two-factor authentication',
                 style: TextStyle(
-                  color: Colors.white,
+                  color: palette.textPrimary,
                   fontSize: 28,
                   fontWeight: FontWeight.w900,
                 ),
               ),
               const SizedBox(height: 8),
-              const Text(
+              Text(
                 'Protect your account with a changing 6-digit code from an authenticator app. YO Voice never asks for your authenticator secret.',
-                style: TextStyle(color: _muted, height: 1.45),
+                style: TextStyle(color: palette.textSecondary, height: 1.45),
               ),
               const SizedBox(height: 24),
               if (_error != null) ...[
@@ -342,12 +349,12 @@ class _TwoFactorAuthenticationScreenState
                   child: Container(
                     padding: const EdgeInsets.all(14),
                     decoration: BoxDecoration(
-                      color: const Color(0xFF5C1B33),
+                      color: colors.errorContainer,
                       borderRadius: BorderRadius.circular(14),
                     ),
                     child: Text(
                       _error!,
-                      style: const TextStyle(color: Colors.white),
+                      style: TextStyle(color: colors.onErrorContainer),
                     ),
                   ),
                 ),
@@ -356,7 +363,7 @@ class _TwoFactorAuthenticationScreenState
               if (!_client.isSupportedPlatform)
                 const _UnsupportedPlatformCard()
               else if (factors == null)
-                const Center(child: CircularProgressIndicator(color: _primary))
+                Center(child: CircularProgressIndicator(color: colors.primary))
               else ...[
                 _StatusCard(enabled: factors.isNotEmpty),
                 const SizedBox(height: 18),
@@ -369,16 +376,21 @@ class _TwoFactorAuthenticationScreenState
                   const SizedBox(height: 12),
                 ],
                 if (_draft == null)
-                  SizedBox(
-                    height: 52,
-                    child: FilledButton.icon(
-                      onPressed: _busy ? null : _startSetup,
-                      icon: const Icon(Icons.add_moderator_rounded),
-                      label: Text(
-                        factors.isEmpty
-                            ? 'Set up authenticator'
-                            : 'Add another authenticator',
+                  FilledButton.icon(
+                    style: FilledButton.styleFrom(
+                      minimumSize: const Size.fromHeight(52),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 18,
+                        vertical: 14,
                       ),
+                    ),
+                    onPressed: _busy ? null : _startSetup,
+                    icon: const Icon(Icons.add_moderator_rounded),
+                    label: Text(
+                      factors.isEmpty
+                          ? 'Set up authenticator'
+                          : 'Add another authenticator',
+                      textAlign: TextAlign.center,
                     ),
                   )
                 else
@@ -411,24 +423,28 @@ class _UnsupportedPlatformCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return Semantics(
       liveRegion: true,
       child: Container(
         padding: const EdgeInsets.all(18),
         decoration: BoxDecoration(
-          color: _surface,
+          color: palette.surface,
           borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: _border),
+          border: Border.all(color: palette.border),
         ),
-        child: const Row(
+        child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Icon(Icons.desktop_access_disabled_rounded, color: _muted),
-            SizedBox(width: 14),
+            Icon(
+              Icons.desktop_access_disabled_rounded,
+              color: palette.textSecondary,
+            ),
+            const SizedBox(width: 14),
             Expanded(
               child: Text(
                 'Authenticator-based two-factor authentication is not supported by Firebase on Windows or Linux. Set it up from YO Voice on the web, Android, iPhone, iPad or Mac.',
-                style: TextStyle(color: _muted, height: 1.4),
+                style: TextStyle(color: palette.textSecondary, height: 1.4),
               ),
             ),
           ],
@@ -444,14 +460,15 @@ class _StatusCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = enabled ? const Color(0xFF3FDA8E) : _muted;
+    final palette = context.appPalette;
+    final color = enabled ? _twoFactorSuccess(context) : palette.textSecondary;
     return Container(
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
-        color: _surface,
+        color: palette.surface,
         borderRadius: BorderRadius.circular(20),
         border: Border.all(
-          color: enabled ? color.withValues(alpha: .45) : _border,
+          color: enabled ? color.withValues(alpha: .55) : palette.border,
         ),
       ),
       child: Row(
@@ -467,8 +484,8 @@ class _StatusCard extends StatelessWidget {
               children: [
                 Text(
                   enabled ? '2FA is enabled' : '2FA is not enabled',
-                  style: const TextStyle(
-                    color: Colors.white,
+                  style: TextStyle(
+                    color: palette.textPrimary,
                     fontWeight: FontWeight.w800,
                   ),
                 ),
@@ -477,7 +494,7 @@ class _StatusCard extends StatelessWidget {
                   enabled
                       ? 'A code is required after your password or social sign-in.'
                       : 'Add an authenticator to protect future sign-ins.',
-                  style: const TextStyle(color: _muted, height: 1.35),
+                  style: TextStyle(color: palette.textSecondary, height: 1.35),
                 ),
               ],
             ),
@@ -500,16 +517,18 @@ class _FactorCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: _surface,
+        color: palette.surface,
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: _border),
+        border: Border.all(color: palette.border),
       ),
       child: Row(
         children: [
-          const Icon(Icons.phonelink_lock_rounded, color: _primary),
+          Icon(Icons.phonelink_lock_rounded, color: colors.primary),
           const SizedBox(width: 13),
           Expanded(
             child: Column(
@@ -517,15 +536,15 @@ class _FactorCard extends StatelessWidget {
               children: [
                 Text(
                   factor.displayName,
-                  style: const TextStyle(
-                    color: Colors.white,
+                  style: TextStyle(
+                    color: palette.textPrimary,
                     fontWeight: FontWeight.w800,
                   ),
                 ),
                 const SizedBox(height: 3),
                 Text(
                   'Added ${_formatDate(factor.enrolledAt)}',
-                  style: const TextStyle(color: _muted),
+                  style: TextStyle(color: palette.textSecondary),
                 ),
               ],
             ),
@@ -533,7 +552,7 @@ class _FactorCard extends StatelessWidget {
           IconButton(
             tooltip: 'Remove authenticator',
             onPressed: busy ? null : onRemove,
-            icon: const Icon(Icons.delete_outline_rounded, color: _danger),
+            icon: Icon(Icons.delete_outline_rounded, color: colors.error),
           ),
         ],
       ),
@@ -563,28 +582,30 @@ class _EnrollmentCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     return Container(
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
-        color: _surface,
+        color: palette.surface,
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: _primary.withValues(alpha: .55)),
+        border: Border.all(color: colors.primary.withValues(alpha: .65)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          const Text(
+          Text(
             'Connect your authenticator',
             style: TextStyle(
-              color: Colors.white,
+              color: palette.textPrimary,
               fontSize: 18,
               fontWeight: FontWeight.w900,
             ),
           ),
           const SizedBox(height: 8),
-          const Text(
+          Text(
             'Scan this QR code with your authenticator app. You can also enter the setup key manually. Then enter the current 6-digit code.',
-            style: TextStyle(color: _muted, height: 1.4),
+            style: TextStyle(color: palette.textSecondary, height: 1.4),
           ),
           const SizedBox(height: 16),
           Center(
@@ -618,17 +639,20 @@ class _EnrollmentCard extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 10),
-          const Text(
+          Text(
             'Manual setup key',
-            style: TextStyle(color: _muted, fontWeight: FontWeight.w700),
+            style: TextStyle(
+              color: palette.textSecondary,
+              fontWeight: FontWeight.w700,
+            ),
           ),
           const SizedBox(height: 6),
           Semantics(
             label: 'Manual authenticator setup key',
             child: SelectableText(
               draft.secretKey,
-              style: const TextStyle(
-                color: Colors.white,
+              style: TextStyle(
+                color: palette.textPrimary,
                 fontFamily: 'monospace',
                 letterSpacing: 1.2,
               ),
@@ -652,7 +676,7 @@ class _EnrollmentCard extends StatelessWidget {
             const SizedBox(height: 12),
             Text(
               'Finish setup before ${_formatDeadline(draft.expiresAt!)}.',
-              style: const TextStyle(color: _muted),
+              style: TextStyle(color: palette.textSecondary),
             ),
           ],
           const SizedBox(height: 16),

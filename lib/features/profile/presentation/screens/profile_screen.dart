@@ -3,6 +3,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/helpers/error_messages.dart';
+import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/achievements/data/achievement_catalog.dart';
 import 'package:yovoice/features/achievements/data/models/achievement_definition.dart';
 import 'package:yovoice/features/achievements/data/services/achievement_service.dart';
@@ -134,15 +135,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   void _showMessage(String message, {bool isError = false}) {
     if (!mounted) return;
+    final colors = Theme.of(context).colorScheme;
 
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(
         SnackBar(
           content: Text(message),
-          backgroundColor: isError
-              ? const Color(0xFF9E244D)
-              : const Color(0xFF4B1671),
+          backgroundColor: isError ? colors.error : colors.primary,
         ),
       );
   }
@@ -158,7 +158,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
         final profile = snapshot.data;
         if (profile == null) {
           return const Scaffold(
-            backgroundColor: Color(0xFF09050F),
             body: Center(child: CircularProgressIndicator()),
           );
         }
@@ -172,7 +171,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               builder: (context, clubsSnapshot) {
                 final clubs = clubsSnapshot.data ?? const <Club>[];
                 return Scaffold(
-                  backgroundColor: const Color(0xFF09050F),
+                  backgroundColor: context.appPalette.background,
                   body: ResponsiveContentFrame(
                     width: ResponsiveContentWidth.feed,
                     child: _ProfileContent(
@@ -406,6 +405,7 @@ class _Stat extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return Expanded(
       child: InkWell(
         onTap: onTap,
@@ -416,8 +416,8 @@ class _Stat extends StatelessWidget {
             children: [
               Text(
                 compact(value),
-                style: const TextStyle(
-                  color: Colors.white,
+                style: TextStyle(
+                  color: palette.textPrimary,
                   fontSize: 24,
                   fontWeight: FontWeight.w900,
                 ),
@@ -425,7 +425,7 @@ class _Stat extends StatelessWidget {
               const SizedBox(height: 3),
               Text(
                 label,
-                style: const TextStyle(color: Color(0xFFA99DB3), fontSize: 13),
+                style: TextStyle(color: palette.textSecondary, fontSize: 13),
               ),
             ],
           ),
@@ -439,7 +439,7 @@ class _Divider extends StatelessWidget {
   const _Divider();
   @override
   Widget build(BuildContext context) =>
-      Container(width: 1, height: 34, color: const Color(0xFF3A2B43));
+      Container(width: 1, height: 34, color: context.appPalette.border);
 }
 
 /// The complete Voice identity card rendered on the member's profile.
@@ -455,6 +455,7 @@ class ProfileVoiceIdentityCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     final vibe = profile.statusMessage.trim();
     final bio = profile.bio.trim();
     final hasIdentity =
@@ -472,9 +473,9 @@ class ProfileVoiceIdentityCard extends StatelessWidget {
           const _Header(icon: Icons.language_rounded, title: 'Voice identity'),
           const SizedBox(height: 13),
           if (!hasIdentity)
-            const Text(
+            Text(
               'Add your vibe, bio or languages so people know you.',
-              style: TextStyle(color: Color(0xFFA99DB3)),
+              style: TextStyle(color: palette.textSecondary),
             )
           else ...[
             if (vibe.isNotEmpty)
@@ -490,7 +491,7 @@ class ProfileVoiceIdentityCard extends StatelessWidget {
                 padding: const EdgeInsets.only(bottom: 13),
                 child: Text(
                   bio,
-                  style: const TextStyle(color: Color(0xFFD9D1DE), height: 1.4),
+                  style: TextStyle(color: palette.textSecondary, height: 1.4),
                 ),
               ),
             Wrap(
@@ -540,6 +541,7 @@ class _CommunitiesCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     final total = communities.length + clubs.length;
     return _Panel(
       child: Column(
@@ -559,9 +561,9 @@ class _CommunitiesCard extends StatelessWidget {
               ),
             )
           else if (total == 0)
-            const Text(
+            Text(
               'Your communities and clubs will appear here after you join or create one.',
-              style: TextStyle(color: Color(0xFFA99DB3), height: 1.4),
+              style: TextStyle(color: palette.textSecondary, height: 1.4),
             )
           else
             SizedBox(
@@ -629,6 +631,8 @@ class _CommunityTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     final hasImage = imageUrl?.trim().isNotEmpty == true;
     return InkWell(
       borderRadius: BorderRadius.circular(18),
@@ -637,9 +641,9 @@ class _CommunityTile extends StatelessWidget {
         width: 154,
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
-          color: const Color(0xFF150C1D),
+          color: palette.surfaceRaised,
           borderRadius: BorderRadius.circular(18),
-          border: Border.all(color: const Color(0xFF473052)),
+          border: Border.all(color: palette.border),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -648,7 +652,7 @@ class _CommunityTile extends StatelessWidget {
               children: [
                 CircleAvatar(
                   radius: 20,
-                  backgroundColor: const Color(0xFF6D1CAB),
+                  backgroundColor: colors.primary,
                   backgroundImage: hasImage ? NetworkImage(imageUrl!) : null,
                   child: hasImage
                       ? null
@@ -676,13 +680,13 @@ class _CommunityTile extends StatelessWidget {
                     vertical: 3,
                   ),
                   decoration: BoxDecoration(
-                    color: const Color(0xFF3B174F),
+                    color: colors.primaryContainer,
                     borderRadius: BorderRadius.circular(99),
                   ),
                   child: Text(
                     badge,
-                    style: const TextStyle(
-                      color: Color(0xFFD67BFF),
+                    style: TextStyle(
+                      color: colors.onPrimaryContainer,
                       fontSize: 9,
                       fontWeight: FontWeight.w900,
                     ),
@@ -695,15 +699,15 @@ class _CommunityTile extends StatelessWidget {
               name,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: Colors.white,
+              style: TextStyle(
+                color: palette.textPrimary,
                 fontWeight: FontWeight.w800,
               ),
             ),
             const SizedBox(height: 3),
             Text(
               subtitle,
-              style: const TextStyle(color: Color(0xFFA99DB3), fontSize: 11),
+              style: TextStyle(color: palette.textSecondary, fontSize: 11),
             ),
           ],
         ),
@@ -724,6 +728,7 @@ class _AchievementsCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     final next = AchievementCatalog.all
         .where((item) => !profile.unlockedTitleIds.contains(item.id))
         .firstOrNull;
@@ -758,8 +763,8 @@ class _AchievementsCard extends StatelessWidget {
             else if (next != null) ...[
               Text(
                 'Next: ${next.title}',
-                style: const TextStyle(
-                  color: Colors.white,
+                style: TextStyle(
+                  color: palette.textPrimary,
                   fontWeight: FontWeight.w800,
                 ),
               ),
@@ -769,13 +774,13 @@ class _AchievementsCard extends StatelessWidget {
                 child: LinearProgressIndicator(
                   value: progress,
                   minHeight: 8,
-                  backgroundColor: const Color(0xFF2C2033),
+                  backgroundColor: palette.surfaceSunken,
                 ),
               ),
               const SizedBox(height: 7),
               Text(
                 '${profile.achievementStats[next.metric] ?? 0} / ${next.threshold} • ${next.description}',
-                style: const TextStyle(color: Color(0xFFA99DB3), fontSize: 12),
+                style: TextStyle(color: palette.textSecondary, fontSize: 12),
               ),
             ],
           ],
@@ -871,6 +876,7 @@ class _SuperAdminOption extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return Column(
       children: [
         ListTile(
@@ -892,8 +898,8 @@ class _SuperAdminOption extends StatelessWidget {
           ),
           title: Text(
             isActivated ? 'SuperAdmin active' : 'Activate SuperAdmin',
-            style: const TextStyle(
-              color: Colors.white,
+            style: TextStyle(
+              color: palette.textPrimary,
               fontWeight: FontWeight.w900,
             ),
           ),
@@ -901,7 +907,7 @@ class _SuperAdminOption extends StatelessWidget {
             isActivated
                 ? 'Role: $currentRole'
                 : 'Securely activate the owner role for this account.',
-            style: const TextStyle(color: Color(0xFFA99DB3), fontSize: 12),
+            style: TextStyle(color: palette.textSecondary, fontSize: 12),
           ),
           trailing: isLoading
               ? const SizedBox(
@@ -914,16 +920,11 @@ class _SuperAdminOption extends StatelessWidget {
                       ? Icons.verified_rounded
                       : Icons.chevron_right_rounded,
                   color: isActivated
-                      ? const Color(0xFFD16CFF)
-                      : const Color(0xFF8E8298),
+                      ? Theme.of(context).colorScheme.primary
+                      : palette.textTertiary,
                 ),
         ),
-        const Divider(
-          height: 1,
-          indent: 58,
-          endIndent: 16,
-          color: Color(0xFF33263B),
-        ),
+        Divider(height: 1, indent: 58, endIndent: 16, color: palette.border),
       ],
     );
   }
@@ -936,12 +937,13 @@ class _Panel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return Container(
       padding: padding,
       decoration: BoxDecoration(
-        color: const Color(0xFF17101F),
+        color: palette.surface,
         borderRadius: BorderRadius.circular(22),
-        border: Border.all(color: const Color(0xFF3C2C45)),
+        border: Border.all(color: palette.border),
       ),
       child: child,
     );
@@ -956,15 +958,17 @@ class _Header extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     return Row(
       children: [
-        Icon(icon, color: const Color(0xFFBC39FF)),
+        Icon(icon, color: colors.primary),
         const SizedBox(width: 10),
         Expanded(
           child: Text(
             title,
-            style: const TextStyle(
-              color: Colors.white,
+            style: TextStyle(
+              color: palette.textPrimary,
               fontSize: 19,
               fontWeight: FontWeight.w900,
             ),
@@ -973,8 +977,8 @@ class _Header extends StatelessWidget {
         if (action != null)
           Text(
             action!,
-            style: const TextStyle(
-              color: Color(0xFF9F2FFF),
+            style: TextStyle(
+              color: colors.primary,
               fontWeight: FontWeight.w800,
             ),
           ),
@@ -990,24 +994,26 @@ class _Chip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
       decoration: BoxDecoration(
-        color: const Color(0xFF25142F),
+        color: colors.primaryContainer.withValues(alpha: .64),
         borderRadius: BorderRadius.circular(99),
-        border: Border.all(color: const Color(0xFF492F58)),
+        border: Border.all(color: colors.primary.withValues(alpha: .34)),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, color: const Color(0xFFC34BFF), size: 15),
+          Icon(icon, color: colors.primary, size: 15),
           const SizedBox(width: 6),
           Flexible(
             child: Text(
               label,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(color: Color(0xFFE3D9E8), fontSize: 12),
+              style: TextStyle(color: palette.textPrimary, fontSize: 12),
             ),
           ),
         ],
@@ -1032,33 +1038,28 @@ class _Option extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = destructive ? const Color(0xFFFF6F9C) : Colors.white;
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
+    final color = destructive ? colors.error : palette.textPrimary;
     return Column(
       children: [
         ListTile(
           onTap: onTap,
           leading: Icon(
             icon,
-            color: destructive
-                ? const Color(0xFFFF6F9C)
-                : const Color(0xFFB932FF),
+            color: destructive ? colors.error : colors.primary,
           ),
           title: Text(
             title,
             style: TextStyle(color: color, fontWeight: FontWeight.w800),
           ),
-          trailing: const Icon(
+          trailing: Icon(
             Icons.chevron_right_rounded,
-            color: Color(0xFF8E8298),
+            color: palette.textTertiary,
           ),
         ),
         if (showDivider)
-          const Divider(
-            height: 1,
-            indent: 58,
-            endIndent: 16,
-            color: Color(0xFF33263B),
-          ),
+          Divider(height: 1, indent: 58, endIndent: 16, color: palette.border),
       ],
     );
   }
@@ -1070,15 +1071,16 @@ class _ErrorView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return Scaffold(
-      backgroundColor: const Color(0xFF09050F),
+      backgroundColor: palette.background,
       body: Center(
         child: Padding(
           padding: const EdgeInsets.all(24),
           child: Text(
             message,
             textAlign: TextAlign.center,
-            style: const TextStyle(color: Colors.white),
+            style: TextStyle(color: palette.textPrimary),
           ),
         ),
       ),

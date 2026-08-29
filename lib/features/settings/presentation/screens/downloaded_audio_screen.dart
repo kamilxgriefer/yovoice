@@ -52,15 +52,17 @@ class _DownloadedAudioScreenState extends State<DownloadedAudioScreen> {
 
   void _notice(String message, {bool error = false}) {
     if (!mounted) return;
+    final colors = Theme.of(context).colorScheme;
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(
         SnackBar(
-          content: Text(message),
+          content: Text(
+            message,
+            style: error ? TextStyle(color: colors.onErrorContainer) : null,
+          ),
           behavior: SnackBarBehavior.floating,
-          backgroundColor: error
-              ? Theme.of(context).colorScheme.errorContainer
-              : null,
+          backgroundColor: error ? colors.errorContainer : null,
         ),
       );
   }
@@ -129,22 +131,29 @@ class _DownloadedAudioScreenState extends State<DownloadedAudioScreen> {
     if (_busyId != null || _clearing) return;
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Remove all downloads?'),
-        content: const Text(
-          'Downloaded Voice Moments will no longer be available offline on this device.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
+      builder: (dialogContext) {
+        final colors = Theme.of(dialogContext).colorScheme;
+        return AlertDialog(
+          title: const Text('Remove all downloads?'),
+          content: const Text(
+            'Downloaded Voice Moments will no longer be available offline on this device.',
           ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Remove all'),
-          ),
-        ],
-      ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: colors.errorContainer,
+                foregroundColor: colors.onErrorContainer,
+              ),
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('Remove all'),
+            ),
+          ],
+        );
+      },
     );
     if (confirmed != true || !mounted) return;
     setState(() => _clearing = true);

@@ -4,6 +4,8 @@ import 'dart:math' as math;
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/shared/widgets/theme/yo_immersive_dark_surface.dart';
+
 import '../../data/services/voice_call_service.dart';
 import '../../../rooms/data/services/room_service.dart';
 
@@ -124,7 +126,7 @@ class _VoiceCallScreenState extends State<VoiceCallScreen>
   Widget build(BuildContext context) {
     final participants = _voice.participants;
 
-    return Scaffold(
+    final content = Scaffold(
       backgroundColor: const Color(0xFF05030A),
       body: SafeArea(
         child: Column(
@@ -172,6 +174,7 @@ class _VoiceCallScreenState extends State<VoiceCallScreen>
         ),
       ),
     );
+    return YoImmersiveDarkSurface(child: content);
   }
 }
 

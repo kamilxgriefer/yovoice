@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/premium/data/models/subscription_entitlements.dart';
 import 'package:yovoice/features/premium/data/premium_plans.dart';
 import 'package:yovoice/features/premium/data/services/entitlement_service.dart';
@@ -13,6 +14,8 @@ import 'package:yovoice/features/profile/data/models/user_profile.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
 import 'package:yovoice/shared/widgets/profile/premium_avatar_frame.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
+
+const _premiumGradientColors = [AppColors.primary, Color(0xFFB020E8)];
 
 /// The YO Voice Premium presentation — what a free member sees when they
 /// open Premium. Marketing surface only: the "Check plans" CTA leads to
@@ -63,11 +66,12 @@ class _PremiumScreenState extends State<PremiumScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return Scaffold(
-      backgroundColor: AppColors.background,
+      backgroundColor: palette.background,
       appBar: AppBar(
         backgroundColor: Colors.transparent,
-        foregroundColor: Colors.white,
+        foregroundColor: palette.textPrimary,
         elevation: 0,
       ),
       body: StreamBuilder<SubscriptionEntitlements>(
@@ -120,6 +124,7 @@ class _PremiumPresentationView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return Center(
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 560),
@@ -128,11 +133,11 @@ class _PremiumPresentationView extends StatelessWidget {
           children: [
             const Center(child: PremiumBadgePill()),
             const SizedBox(height: 18),
-            const Text(
+            Text(
               'More room\nfor your voice.',
               textAlign: TextAlign.center,
               style: TextStyle(
-                color: Colors.white,
+                color: palette.textPrimary,
                 fontSize: 32,
                 height: 1.12,
                 fontWeight: FontWeight.w900,
@@ -140,11 +145,11 @@ class _PremiumPresentationView extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 12),
-            const Text(
+            Text(
               'Create. Lead. Build communities.\nStand out.',
               textAlign: TextAlign.center,
               style: TextStyle(
-                color: AppColors.textSecondary,
+                color: palette.textSecondary,
                 fontSize: 14.5,
                 height: 1.45,
               ),
@@ -156,23 +161,42 @@ class _PremiumPresentationView extends StatelessWidget {
                   _PremiumHero(profile: snapshot.data),
             ),
             const SizedBox(height: 16),
-            IntrinsicHeight(
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  for (var i = 0; i < PremiumPlans.benefits.length; i++) ...[
-                    if (i > 0) const SizedBox(width: 10),
-                    Expanded(
-                      child: _BenefitCard(
-                        icon: _benefitIcons[i].$1,
-                        iconColor: _benefitIcons[i].$2,
-                        title: PremiumPlans.benefits[i].$1,
-                        subtitle: PremiumPlans.benefits[i].$2,
-                      ),
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final cards = [
+                  for (var i = 0; i < PremiumPlans.benefits.length; i++)
+                    _BenefitCard(
+                      icon: _benefitIcons[i].$1,
+                      iconColor: _benefitIcons[i].$2,
+                      title: PremiumPlans.benefits[i].$1,
+                      subtitle: PremiumPlans.benefits[i].$2,
                     ),
-                  ],
-                ],
-              ),
+                ];
+                final stacked =
+                    constraints.maxWidth < 420 ||
+                    MediaQuery.textScalerOf(context).scale(1) > 1.3;
+                if (stacked) {
+                  return Column(
+                    children: [
+                      for (var i = 0; i < cards.length; i++) ...[
+                        if (i > 0) const SizedBox(height: 10),
+                        cards[i],
+                      ],
+                    ],
+                  );
+                }
+                return IntrinsicHeight(
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      for (var i = 0; i < cards.length; i++) ...[
+                        if (i > 0) const SizedBox(width: 10),
+                        Expanded(child: cards[i]),
+                      ],
+                    ],
+                  ),
+                );
+              },
             ),
             const SizedBox(height: 26),
             _CheckPlansButton(onTap: onCheckPlans),
@@ -316,7 +340,7 @@ class _CrownChip extends StatelessWidget {
         gradient: const LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [AppColors.primary, AppColors.secondary],
+          colors: _premiumGradientColors,
         ),
         border: Border.all(color: Colors.white.withValues(alpha: .22)),
         boxShadow: [
@@ -343,29 +367,33 @@ class _HeroPill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(999),
-        color: AppColors.surface.withValues(alpha: .88),
-        border: Border.all(color: Colors.white.withValues(alpha: .12)),
-        boxShadow: const [
+        color: palette.surfaceRaised,
+        border: Border.all(color: palette.border),
+        boxShadow: [
           BoxShadow(
-            color: Colors.black45,
+            color: palette.shadow.withValues(alpha: .18),
             blurRadius: 12,
             offset: Offset(0, 3),
           ),
         ],
       ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
+      child: Wrap(
+        alignment: WrapAlignment.center,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        spacing: 6,
+        runSpacing: 3,
         children: [
-          Icon(icon, size: 13, color: const Color(0xFFD3A5FF)),
-          const SizedBox(width: 6),
+          Icon(icon, size: 13, color: colors.primary),
           Text(
             label,
-            style: const TextStyle(
-              color: Color(0xFFF3EFFA),
+            style: TextStyle(
+              color: palette.textPrimary,
               fontSize: 12,
               fontWeight: FontWeight.w700,
             ),
@@ -391,12 +419,13 @@ class _BenefitCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return Container(
       padding: const EdgeInsets.fromLTRB(10, 18, 10, 16),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(20),
-        color: AppColors.surface.withValues(alpha: .5),
-        border: Border.all(color: Colors.white.withValues(alpha: .08)),
+        color: palette.surface,
+        border: Border.all(color: palette.border),
       ),
       child: Column(
         children: [
@@ -405,8 +434,8 @@ class _BenefitCard extends StatelessWidget {
           Text(
             title,
             textAlign: TextAlign.center,
-            style: const TextStyle(
-              color: Colors.white,
+            style: TextStyle(
+              color: palette.textPrimary,
               fontSize: 13.5,
               height: 1.2,
               fontWeight: FontWeight.w800,
@@ -416,8 +445,8 @@ class _BenefitCard extends StatelessWidget {
           Text(
             subtitle,
             textAlign: TextAlign.center,
-            style: const TextStyle(
-              color: AppColors.textSecondary,
+            style: TextStyle(
+              color: palette.textSecondary,
               fontSize: 11.5,
               height: 1.35,
             ),
@@ -437,45 +466,48 @@ class _CheckPlansButton extends StatelessWidget {
   Widget build(BuildContext context) {
     return SizedBox(
       width: double.infinity,
-      height: 58,
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(999),
-          gradient: const LinearGradient(
-            colors: [AppColors.primary, AppColors.secondary],
-          ),
-          boxShadow: [
-            BoxShadow(
-              color: AppColors.secondary.withValues(alpha: .38),
-              blurRadius: 26,
-              offset: const Offset(0, 6),
-            ),
-          ],
-        ),
-        child: Material(
-          color: Colors.transparent,
-          child: InkWell(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minHeight: 58),
+        child: DecoratedBox(
+          decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(999),
-            onTap: onTap,
-            child: const Center(
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    'Check plans',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 16.5,
-                      fontWeight: FontWeight.w800,
+            gradient: const LinearGradient(colors: _premiumGradientColors),
+            boxShadow: [
+              BoxShadow(
+                color: AppColors.secondary.withValues(alpha: .38),
+                blurRadius: 26,
+                offset: const Offset(0, 6),
+              ),
+            ],
+          ),
+          child: Material(
+            color: Colors.transparent,
+            child: InkWell(
+              borderRadius: BorderRadius.circular(999),
+              onTap: onTap,
+              child: const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 18, vertical: 15),
+                child: Wrap(
+                  alignment: WrapAlignment.center,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  spacing: 8,
+                  runSpacing: 4,
+                  children: [
+                    Text(
+                      'Check plans',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 16.5,
+                        fontWeight: FontWeight.w800,
+                      ),
                     ),
-                  ),
-                  SizedBox(width: 8),
-                  Icon(
-                    Icons.arrow_forward_rounded,
-                    size: 19,
-                    color: Colors.white,
-                  ),
-                ],
+                    Icon(
+                      Icons.arrow_forward_rounded,
+                      size: 19,
+                      color: Colors.white,
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
@@ -502,12 +534,14 @@ class _PremiumActiveView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final periodEnd = entitlements.currentPeriodEnd;
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
 
-    return Center(
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 460),
-        child: Padding(
-          padding: const EdgeInsets.all(28),
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(28),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 460),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
@@ -535,17 +569,17 @@ class _PremiumActiveView extends StatelessWidget {
                     ? 'Welcome to YO Voice Premium'
                     : 'You have YO Voice Premium',
                 textAlign: TextAlign.center,
-                style: const TextStyle(
-                  color: Colors.white,
+                style: TextStyle(
+                  color: palette.textPrimary,
                   fontSize: 24,
                   fontWeight: FontWeight.w900,
                 ),
               ),
               const SizedBox(height: 8),
-              const Text(
+              Text(
                 'Your voice just got more room to grow.',
                 textAlign: TextAlign.center,
-                style: TextStyle(color: AppColors.textSecondary, fontSize: 14),
+                style: TextStyle(color: palette.textSecondary, fontSize: 14),
               ),
               const SizedBox(height: 18),
               Container(
@@ -554,9 +588,9 @@ class _PremiumActiveView extends StatelessWidget {
                   vertical: 12,
                 ),
                 decoration: BoxDecoration(
-                  color: AppColors.surface,
+                  color: palette.surface,
                   borderRadius: BorderRadius.circular(14),
-                  border: Border.all(color: AppColors.border),
+                  border: Border.all(color: palette.border),
                 ),
                 child: Text(
                   '${entitlements.plan.label} plan'
@@ -564,17 +598,15 @@ class _PremiumActiveView extends StatelessWidget {
                             '${periodEnd.day}.${periodEnd.month}.${periodEnd.year}'}'
                   '${entitlements.inGracePeriod ? ' · payment issue — check your billing' : ''}',
                   textAlign: TextAlign.center,
-                  style: const TextStyle(
-                    color: AppColors.textSecondary,
-                    fontSize: 13,
-                  ),
+                  style: TextStyle(color: palette.textSecondary, fontSize: 13),
                 ),
               ),
               const SizedBox(height: 24),
               FilledButton(
                 onPressed: onManageSubscription,
                 style: FilledButton.styleFrom(
-                  backgroundColor: AppColors.primary,
+                  backgroundColor: colors.primary,
+                  foregroundColor: colors.onPrimary,
                   padding: const EdgeInsets.symmetric(
                     horizontal: 28,
                     vertical: 14,
@@ -582,10 +614,7 @@ class _PremiumActiveView extends StatelessWidget {
                 ),
                 child: const Text(
                   'Manage subscription',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w800,
-                  ),
+                  style: TextStyle(fontWeight: FontWeight.w800),
                 ),
               ),
             ],

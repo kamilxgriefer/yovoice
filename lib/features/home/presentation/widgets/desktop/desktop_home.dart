@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import 'package:firebase_auth/firebase_auth.dart';
 
+import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/rooms/presentation/screens/room_settings_screen.dart';
 import 'package:yovoice/features/home/presentation/widgets/shared/home_room_board.dart';
 import 'package:yovoice/features/home/presentation/widgets/shared/recent_chats.dart';
@@ -375,6 +376,7 @@ class _GreetingHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return StreamBuilder<UserProfile>(
       stream: profile,
       builder: (context, snapshot) {
@@ -384,17 +386,17 @@ class _GreetingHeader extends StatelessWidget {
           children: [
             Text(
               name.isEmpty ? _partOfDay() : '${_partOfDay()}, $name',
-              style: const TextStyle(
-                color: Colors.white,
+              style: TextStyle(
+                color: palette.textPrimary,
                 fontSize: 24,
                 fontWeight: FontWeight.w800,
                 letterSpacing: -.4,
               ),
             ),
             const SizedBox(height: 4),
-            const Text(
+            Text(
               'Here is what sounds good right now.',
-              style: TextStyle(color: Color(0xFF9A90AC), fontSize: 13.5),
+              style: TextStyle(color: palette.textSecondary, fontSize: 13.5),
             ),
           ],
         );
@@ -532,12 +534,13 @@ class _RosterListState extends State<RoomRosterList> {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     if (participants.isEmpty) {
-      return const Padding(
-        padding: EdgeInsets.symmetric(horizontal: 6, vertical: 10),
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 10),
         child: Text(
           'Nobody is in this room yet.',
-          style: TextStyle(color: Color(0xFF9A90AC), fontSize: 12),
+          style: TextStyle(color: palette.textSecondary, fontSize: 12),
         ),
       );
     }
@@ -550,8 +553,8 @@ class _RosterListState extends State<RoomRosterList> {
           padding: const EdgeInsets.fromLTRB(6, 2, 6, 8),
           child: Text(
             '${participants.length} in the room',
-            style: const TextStyle(
-              color: Color(0xFF9A90AC),
+            style: TextStyle(
+              color: palette.textSecondary,
               fontSize: 11,
               fontWeight: FontWeight.w700,
             ),
@@ -598,16 +601,16 @@ class _RosterListState extends State<RoomRosterList> {
                                   participant.displayName,
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                    color: Colors.white,
+                                  style: TextStyle(
+                                    color: palette.textPrimary,
                                     fontSize: 12.5,
                                     fontWeight: FontWeight.w700,
                                   ),
                                 ),
                                 Text(
                                   _role(participant),
-                                  style: const TextStyle(
-                                    color: Color(0xFF7E7895),
+                                  style: TextStyle(
+                                    color: palette.textTertiary,
                                     fontSize: 10.5,
                                   ),
                                 ),
@@ -615,10 +618,10 @@ class _RosterListState extends State<RoomRosterList> {
                             ),
                           ),
                           if (participant.isMuted)
-                            const Icon(
+                            Icon(
                               Icons.mic_off_rounded,
                               size: 14,
-                              color: Color(0xFF7E7895),
+                              color: palette.textTertiary,
                             ),
                         ],
                       ),
@@ -645,47 +648,51 @@ class _HomeSectionTitle extends StatelessWidget {
   final VoidCallback? onViewAll;
 
   @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.only(bottom: 12),
-    child: Row(
-      children: [
-        Flexible(
-          child: Text(
-            text,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 19,
-              fontWeight: FontWeight.w800,
+  Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Row(
+        children: [
+          Flexible(
+            child: Text(
+              text,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: palette.textPrimary,
+                fontSize: 19,
+                fontWeight: FontWeight.w800,
+              ),
             ),
           ),
-        ),
-        if (onViewAll != null) ...[
-          const Spacer(),
-          TextButton(
-            onPressed: onViewAll,
-            style: TextButton.styleFrom(
-              minimumSize: const Size(44, 40),
-              padding: const EdgeInsets.symmetric(horizontal: 8),
-              foregroundColor: const Color(0xFFD3A5FF),
+          if (onViewAll != null) ...[
+            const Spacer(),
+            TextButton(
+              onPressed: onViewAll,
+              style: TextButton.styleFrom(
+                minimumSize: const Size(44, 40),
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                foregroundColor: colors.primary,
+              ),
+              child: const Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    'View all',
+                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+                  ),
+                  SizedBox(width: 2),
+                  Icon(Icons.chevron_right_rounded, size: 19),
+                ],
+              ),
             ),
-            child: const Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  'View all',
-                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
-                ),
-                SizedBox(width: 2),
-                Icon(Icons.chevron_right_rounded, size: 19),
-              ],
-            ),
-          ),
+          ],
         ],
-      ],
-    ),
-  );
+      ),
+    );
+  }
 }
 
 class _HomeSectionNote extends StatelessWidget {
@@ -694,20 +701,23 @@ class _HomeSectionNote extends StatelessWidget {
   final String text;
 
   @override
-  Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.all(16),
-    decoration: BoxDecoration(
-      borderRadius: BorderRadius.circular(18),
-      color: const Color(0xFF12101D),
-      border: Border.all(color: const Color(0xFF2C253B)),
-    ),
-    child: Text(
-      text,
-      style: const TextStyle(
-        color: Color(0xFF9D95AD),
-        fontSize: 13.5,
-        height: 1.35,
+  Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(18),
+        color: palette.surface,
+        border: Border.all(color: palette.border),
       ),
-    ),
-  );
+      child: Text(
+        text,
+        style: TextStyle(
+          color: palette.textSecondary,
+          fontSize: 13.5,
+          height: 1.35,
+        ),
+      ),
+    );
+  }
 }

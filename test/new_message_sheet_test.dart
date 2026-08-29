@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:yovoice/core/theme/app_theme.dart';
+import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/friends/data/models/friend_user.dart';
 import 'package:yovoice/features/messages/data/models/conversation.dart';
 import 'package:yovoice/features/messages/data/models/message.dart';
@@ -44,10 +45,11 @@ Future<void> _pumpSheet(
   WidgetTester tester, {
   required Stream<List<FriendUser>> friends,
   required Stream<List<Conversation>> conversations,
+  ThemeData? theme,
 }) async {
   await tester.pumpWidget(
     MaterialApp(
-      theme: AppTheme.darkTheme,
+      theme: theme ?? AppTheme.darkTheme,
       home: Scaffold(
         body: Column(
           children: [
@@ -79,6 +81,7 @@ Future<FocusNode> _openProductionRoute(
   required Size size,
   TextScaler textScaler = TextScaler.noScaling,
   EdgeInsets safeArea = EdgeInsets.zero,
+  ThemeData? theme,
 }) async {
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1;
@@ -96,7 +99,7 @@ Future<FocusNode> _openProductionRoute(
 
   await tester.pumpWidget(
     MaterialApp(
-      theme: AppTheme.darkTheme,
+      theme: theme ?? AppTheme.darkTheme,
       builder: (context, child) => MediaQuery(
         data: MediaQuery.of(context).copyWith(
           textScaler: textScaler,
@@ -188,7 +191,7 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets('shows the dark empty state when there are no friends', (
+    testWidgets('shows the themed empty state when there are no friends', (
       tester,
     ) async {
       final friendService = _FakeFriendsSource(const []);
@@ -208,7 +211,7 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets('stays on a dark surface when the friends stream errors', (
+    testWidgets('stays on the themed surface when the friends stream errors', (
       tester,
     ) async {
       final friendService = _FakeFriendsSource(
@@ -236,48 +239,72 @@ void main() {
       );
     });
 
-    testWidgets('owns its surface with a dark Material', (tester) async {
-      // The sheet must paint its own Material: showModalBottomSheet is
-      // called with a transparent background, and ListTile ink/background
-      // resolve against the nearest Material ancestor.
-      final friendService = _FakeFriendsSource([_friend('ava', 'Ava Stone')]);
-      addTearDown(friendService.dispose);
+    for (final entry in <String, ThemeData>{
+      'dark': AppTheme.darkTheme,
+      'light': AppTheme.lightTheme,
+    }.entries) {
+      testWidgets('owns its ${entry.key} semantic Material surface', (
+        tester,
+      ) async {
+        // The sheet must paint its own Material: showModalBottomSheet is
+        // transparent, and ListTile ink resolves against this exact surface.
+        final friendService = _FakeFriendsSource([_friend('ava', 'Ava Stone')]);
+        addTearDown(friendService.dispose);
 
+        await _pumpSheet(
+          tester,
+          friends: friendService.stream,
+          conversations: Stream<List<Conversation>>.value(
+            const [],
+          ).asBroadcastStream(),
+          theme: entry.value,
+        );
+        await tester.pump(const Duration(milliseconds: 10));
+
+        final palette = entry.value.extension<AppPalette>()!;
+        final surface = tester.widget<Material>(
+          find.byKey(const ValueKey('new-message-sheet-surface')),
+        );
+        expect(surface.color, palette.surfaceRaised);
+        final title = tester.widget<Text>(find.text('New message'));
+        expect(title.style?.color, palette.textPrimary);
+      });
+    }
+
+    testWidgets('light empty and error states remain product UI', (
+      tester,
+    ) async {
+      final emptySource = _FakeFriendsSource(const []);
+      addTearDown(emptySource.dispose);
       await _pumpSheet(
         tester,
-        friends: friendService.stream,
+        friends: emptySource.stream,
         conversations: Stream<List<Conversation>>.value(
           const [],
         ).asBroadcastStream(),
+        theme: AppTheme.lightTheme,
       );
       await tester.pump(const Duration(milliseconds: 10));
+      expect(find.text('Add friends to start messaging them here.'), findsOne);
+      expect(find.byType(ErrorWidget), findsNothing);
 
-      final surface = tester.widget<Material>(
-        find
-            .descendant(
-              of: find.byType(NewMessageSheet),
-              matching: find.byType(Material),
-            )
-            .first,
+      final errorSource = _FakeFriendsSource(
+        const [],
+        error: Exception('permission-denied'),
       );
-      expect(surface.color, const Color(0xFF120D1A));
-
-      // Nothing in the sheet may paint a light surface.
-      final lightSurfaces = tester.widgetList<Material>(
-        find.descendant(
-          of: find.byType(NewMessageSheet),
-          matching: find.byType(Material),
-        ),
+      addTearDown(errorSource.dispose);
+      await _pumpSheet(
+        tester,
+        friends: errorSource.stream,
+        conversations: Stream<List<Conversation>>.error(
+          Exception('permission-denied'),
+        ).asBroadcastStream(),
+        theme: AppTheme.lightTheme,
       );
-      for (final material in lightSurfaces) {
-        final color = material.color;
-        if (color == null || color.a == 0) continue;
-        expect(
-          color.computeLuminance(),
-          lessThan(0.5),
-          reason: 'Found a light Material surface inside the sheet: $color',
-        );
-      }
+      await tester.pump(const Duration(milliseconds: 10));
+      expect(find.text("We couldn't load your people"), findsOne);
+      expect(find.byType(ErrorWidget), findsNothing);
+      expect(tester.takeException(), isNull);
     });
   });
 
@@ -408,6 +435,27 @@ void main() {
         expect(rect.top, greaterThanOrEqualTo(0));
         expect(rect.right, lessThanOrEqualTo(size.width));
         expect(rect.bottom, lessThanOrEqualTo(size.height));
+        expect(tester.takeException(), isNull);
+      });
+    }
+
+    for (final width in const <double>[320, 768]) {
+      testWidgets('light theme stays usable at ${width.toInt()}px / 200%', (
+        tester,
+      ) async {
+        await _openProductionRoute(
+          tester,
+          size: Size(width, 900),
+          textScaler: const TextScaler.linear(2),
+          theme: AppTheme.lightTheme,
+        );
+
+        final palette = AppTheme.lightTheme.extension<AppPalette>()!;
+        final surface = tester.widget<Material>(
+          find.byKey(const ValueKey('new-message-sheet-surface')),
+        );
+        expect(surface.color, palette.surfaceRaised);
+        expect(find.bySemanticsLabel('Close New message'), findsOneWidget);
         expect(tester.takeException(), isNull);
       });
     }

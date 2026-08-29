@@ -6,6 +6,8 @@ import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:yovoice/core/theme/app_theme.dart';
+import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/messages/data/models/conversation.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
@@ -409,6 +411,7 @@ void main() {
         final auth = authFor(me);
         await tester.pumpWidget(
           MaterialApp(
+            theme: AppTheme.lightTheme,
             home: MediaQuery(
               data: const MediaQueryData(textScaler: TextScaler.linear(2)),
               child: NotificationsScreen(
@@ -447,6 +450,10 @@ void main() {
         );
 
         expect(title, findsOneWidget);
+        expect(
+          tester.widget<Scaffold>(find.byType(Scaffold).first).backgroundColor,
+          AppPalette.light.background,
+        );
         expect(tester.widget<Text>(title).maxLines, isNull);
         expect(tester.getSize(title).height, greaterThan(40));
         expect(

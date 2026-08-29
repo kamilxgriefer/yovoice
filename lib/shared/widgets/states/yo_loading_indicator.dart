@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_spacing.dart';
 import 'package:yovoice/core/theme/app_typography.dart';
 
@@ -23,6 +23,8 @@ class YoLoadingIndicator extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     final Widget content = TweenAnimationBuilder<double>(
       tween: Tween<double>(begin: 0, end: 1),
       duration: const Duration(milliseconds: 260),
@@ -39,9 +41,9 @@ class YoLoadingIndicator extends StatelessWidget {
           SizedBox(
             width: size,
             height: size,
-            child: const CircularProgressIndicator(
+            child: CircularProgressIndicator(
               strokeWidth: 2.6,
-              color: AppColors.primary,
+              color: colors.primary,
             ),
           ),
           if (message != null) ...<Widget>[
@@ -49,7 +51,9 @@ class YoLoadingIndicator extends StatelessWidget {
             Text(
               message!,
               textAlign: TextAlign.center,
-              style: AppTypography.bodyMedium,
+              style: AppTypography.bodyMedium.copyWith(
+                color: palette.textSecondary,
+              ),
             ),
           ],
         ],

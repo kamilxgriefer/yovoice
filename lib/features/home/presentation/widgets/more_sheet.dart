@@ -1,6 +1,7 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/achievements/presentation/screens/achievements_screen.dart';
 import 'package:yovoice/features/clubs/presentation/screens/clubs_screen.dart';
 import 'package:yovoice/features/creator/presentation/screens/creator_studio_screen.dart';
@@ -110,7 +111,7 @@ Future<MoreDestination?> showMoreSheet(
     ),
     backgroundColor: Colors.transparent,
     constraints: ResponsiveContentFrame.adaptiveModalConstraints(context),
-    modalBarrierColor: Colors.black.withValues(alpha: 0.72),
+    modalBarrierColor: context.appPalette.scrim.withValues(alpha: 0.72),
     showDragHandle: false,
     useSafeArea: true,
   );
@@ -177,6 +178,11 @@ Future<MoreDestination?> showDesktopMoreMenu(
   bool isOwner = false,
   SubscriptionEntitlements entitlements = SubscriptionEntitlements.free,
 }) {
+  final palette = context.appPalette;
+  final colors = Theme.of(context).colorScheme;
+  final lockColor = Theme.of(context).brightness == Brightness.dark
+      ? const Color(0xFFFFC24D)
+      : const Color(0xFF8C5A00);
   // Moments is deliberately absent: it is a rail item now, and listing
   // it here as well would show the same destination twice.
   final items = <(MoreDestination, IconData, String, String)>[
@@ -235,16 +241,16 @@ Future<MoreDestination?> showDesktopMoreMenu(
       anchor.dx + 280,
       anchor.dy + 320,
     ),
-    color: const Color(0xFF171021),
+    color: palette.surfaceRaised,
     surfaceTintColor: Colors.transparent,
     elevation: 10,
     // The default fully-opaque shadow rendered as a hard black ring
     // around the panel on the dark Home surface; a translucent one
     // reads as depth instead.
-    shadowColor: Colors.black.withValues(alpha: .55),
+    shadowColor: palette.shadow.withValues(alpha: .24),
     shape: RoundedRectangleBorder(
       borderRadius: BorderRadius.circular(18),
-      side: const BorderSide(color: MoreSheet._border),
+      side: BorderSide(color: palette.border),
     ),
     constraints: const BoxConstraints(minWidth: 264, maxWidth: 300),
     items: [
@@ -259,10 +265,10 @@ Future<MoreDestination?> showDesktopMoreMenu(
                 height: 34,
                 alignment: Alignment.center,
                 decoration: BoxDecoration(
-                  color: MoreSheet._primary.withValues(alpha: .18),
+                  color: colors.primaryContainer,
                   borderRadius: BorderRadius.circular(11),
                 ),
-                child: Icon(icon, size: 18, color: const Color(0xFFD28AFF)),
+                child: Icon(icon, size: 18, color: colors.primary),
               ),
               const SizedBox(width: 11),
               Expanded(
@@ -272,8 +278,8 @@ Future<MoreDestination?> showDesktopMoreMenu(
                   children: [
                     Text(
                       label,
-                      style: const TextStyle(
-                        color: Colors.white,
+                      style: TextStyle(
+                        color: palette.textPrimary,
                         fontSize: 13.5,
                         fontWeight: FontWeight.w700,
                       ),
@@ -282,8 +288,8 @@ Future<MoreDestination?> showDesktopMoreMenu(
                       subtitle,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: MoreSheet._muted,
+                      style: TextStyle(
+                        color: palette.textSecondary,
                         fontSize: 11,
                       ),
                     ),
@@ -295,7 +301,7 @@ Future<MoreDestination?> showDesktopMoreMenu(
                 Icon(
                   Icons.lock_rounded,
                   key: ValueKey('desktop-premium-lock-${destination.name}'),
-                  color: const Color(0xFFFFC24D),
+                  color: lockColor,
                   size: 16,
                 ),
               ],
@@ -386,12 +392,6 @@ class MoreSheet extends StatefulWidget {
   /// whether the tile displays its Premium lock.
   final SubscriptionEntitlements entitlements;
 
-  static const _surface = Color(0xFF151020);
-  static const _card = Color(0xFF20172C);
-  static const _border = Color(0xFF3A2D49);
-  static const _muted = Color(0xFFA69CB2);
-  static const _primary = Color(0xFF9D20FF);
-
   @override
   State<MoreSheet> createState() => _MoreSheetState();
 }
@@ -425,6 +425,7 @@ class _MoreSheetState extends State<MoreSheet> {
   @override
   Widget build(BuildContext context) {
     final isVeryNarrow = MediaQuery.sizeOf(context).width <= 350;
+    final palette = context.appPalette;
     final productEntries = <_MoreEntry>[
       const _MoreEntry(
         destination: MoreDestination.friends,
@@ -485,18 +486,18 @@ class _MoreSheetState extends State<MoreSheet> {
     ];
 
     final content = Container(
-      decoration: const BoxDecoration(
-        color: MoreSheet._surface,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
-        border: Border(top: BorderSide(color: MoreSheet._border)),
+      decoration: BoxDecoration(
+        color: palette.surfaceRaised,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(30)),
+        border: Border(top: BorderSide(color: palette.border)),
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const YoModalSheetChrome(
+          YoModalSheetChrome(
             key: ValueKey('more-sheet-drag-handle'),
             sheetLabel: 'More menu',
-            surfaceColor: MoreSheet._surface,
+            surfaceColor: palette.surfaceRaised,
           ),
           Flexible(
             child: SingleChildScrollView(
@@ -517,20 +518,20 @@ class _MoreSheetState extends State<MoreSheet> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            const Text(
+                            Text(
                               'More',
                               style: TextStyle(
-                                color: Colors.white,
+                                color: palette.textPrimary,
                                 fontSize: 27,
                                 fontWeight: FontWeight.w900,
                               ),
                             ),
                             if (!isVeryNarrow) ...[
                               const SizedBox(height: 3),
-                              const Text(
+                              Text(
                                 'Everything else, kept one tap away.',
                                 style: TextStyle(
-                                  color: MoreSheet._muted,
+                                  color: palette.textSecondary,
                                   fontSize: 13,
                                 ),
                               ),
@@ -648,10 +649,10 @@ class _MoreSheetState extends State<MoreSheet> {
           runSpacing: 6,
           crossAxisAlignment: WrapCrossAlignment.center,
           children: [
-            const Text(
+            Text(
               'Staff',
               style: TextStyle(
-                color: Colors.white,
+                color: context.appPalette.textPrimary,
                 fontSize: 13,
                 fontWeight: FontWeight.w900,
                 letterSpacing: .3,
@@ -713,6 +714,11 @@ class _MoreTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
+    final lockColor = Theme.of(context).brightness == Brightness.dark
+        ? const Color(0xFFFFC24D)
+        : const Color(0xFF8C5A00);
     final semanticLabel = [
       label,
       subtitle,
@@ -728,7 +734,7 @@ class _MoreTile extends StatelessWidget {
       onTap: open,
       excludeSemantics: true,
       child: Material(
-        color: MoreSheet._card,
+        color: palette.surface,
         borderRadius: BorderRadius.circular(16),
         child: InkWell(
           onTap: open,
@@ -737,7 +743,7 @@ class _MoreTile extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: MoreSheet._border),
+              border: Border.all(color: palette.border),
             ),
             child: Stack(
               children: [
@@ -747,14 +753,10 @@ class _MoreTile extends StatelessWidget {
                       width: 34,
                       height: 34,
                       decoration: BoxDecoration(
-                        color: MoreSheet._primary.withValues(alpha: .18),
+                        color: colors.primaryContainer,
                         borderRadius: BorderRadius.circular(11),
                       ),
-                      child: Icon(
-                        icon,
-                        color: const Color(0xFFD28AFF),
-                        size: 20,
-                      ),
+                      child: Icon(icon, color: colors.primary, size: 20),
                     ),
                     const SizedBox(width: 8),
                     Expanded(
@@ -766,8 +768,8 @@ class _MoreTile extends StatelessWidget {
                             label,
                             maxLines: 2,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: Colors.white,
+                            style: TextStyle(
+                              color: palette.textPrimary,
                               fontSize: 14,
                               fontWeight: FontWeight.w800,
                             ),
@@ -777,8 +779,8 @@ class _MoreTile extends StatelessWidget {
                             subtitle,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: MoreSheet._muted,
+                            style: TextStyle(
+                              color: palette.textSecondary,
                               fontSize: 11,
                             ),
                           ),
@@ -794,7 +796,7 @@ class _MoreTile extends StatelessWidget {
                     child: Icon(
                       Icons.lock_rounded,
                       key: ValueKey('mobile-premium-lock-${destination.name}'),
-                      color: const Color(0xFFFFC24D),
+                      color: lockColor,
                       size: 16,
                     ),
                   ),
@@ -829,7 +831,12 @@ class _WideMoreTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final accent = accentColor ?? const Color(0xFFD28AFF);
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
+    final accent = accentColor ?? colors.primary;
+    final lockColor = Theme.of(context).brightness == Brightness.dark
+        ? const Color(0xFFFFC24D)
+        : const Color(0xFF8C5A00);
     final semanticLabel = [
       label,
       subtitle,
@@ -845,7 +852,7 @@ class _WideMoreTile extends StatelessWidget {
       onTap: open,
       excludeSemantics: true,
       child: Material(
-        color: MoreSheet._card,
+        color: palette.surface,
         borderRadius: BorderRadius.circular(17),
         child: InkWell(
           onTap: open,
@@ -856,7 +863,7 @@ class _WideMoreTile extends StatelessWidget {
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(17),
               border: Border.all(
-                color: accentColor?.withValues(alpha: .5) ?? MoreSheet._border,
+                color: accentColor?.withValues(alpha: .5) ?? palette.border,
               ),
             ),
             child: Row(
@@ -865,7 +872,7 @@ class _WideMoreTile extends StatelessWidget {
                   width: 38,
                   height: 38,
                   decoration: BoxDecoration(
-                    color: (accentColor ?? MoreSheet._primary).withValues(
+                    color: (accentColor ?? colors.primary).withValues(
                       alpha: .18,
                     ),
                     borderRadius: BorderRadius.circular(12),
@@ -880,16 +887,16 @@ class _WideMoreTile extends StatelessWidget {
                     children: [
                       Text(
                         label,
-                        style: const TextStyle(
-                          color: Colors.white,
+                        style: TextStyle(
+                          color: palette.textPrimary,
                           fontWeight: FontWeight.w800,
                         ),
                       ),
                       const SizedBox(height: 2),
                       Text(
                         subtitle,
-                        style: const TextStyle(
-                          color: MoreSheet._muted,
+                        style: TextStyle(
+                          color: palette.textSecondary,
                           fontSize: 11,
                         ),
                       ),
@@ -901,15 +908,12 @@ class _WideMoreTile extends StatelessWidget {
                   Icon(
                     Icons.lock_rounded,
                     key: ValueKey('mobile-premium-lock-${destination.name}'),
-                    color: const Color(0xFFFFC24D),
+                    color: lockColor,
                     size: 17,
                   ),
                 ],
                 const SizedBox(width: 4),
-                const Icon(
-                  Icons.chevron_right_rounded,
-                  color: MoreSheet._muted,
-                ),
+                Icon(Icons.chevron_right_rounded, color: palette.textTertiary),
               ],
             ),
           ),

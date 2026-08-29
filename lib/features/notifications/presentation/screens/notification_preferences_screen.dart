@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/notifications/data/models/app_notification.dart';
 import 'package:yovoice/features/notifications/data/services/notification_service.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
@@ -84,13 +85,21 @@ String _labelFor(NotificationType type) {
 }
 
 class NotificationPreferencesScreen extends StatefulWidget {
-  const NotificationPreferencesScreen({this.isRootTab = false, super.key});
+  const NotificationPreferencesScreen({
+    this.isRootTab = false,
+    this.notificationService,
+    super.key,
+  });
 
   /// True when this screen IS the shell's current content (a desktop
   /// content slot) rather than a pushed route — the same flag
   /// FriendsScreen uses, so a root tab never renders a back button that
   /// has nothing to pop.
   final bool isRootTab;
+
+  /// Injectable so the real preferences surface can be exercised without a
+  /// process-global Firebase instance in widget tests.
+  final NotificationService? notificationService;
 
   @override
   State<NotificationPreferencesScreen> createState() =>
@@ -99,13 +108,8 @@ class NotificationPreferencesScreen extends StatefulWidget {
 
 class _NotificationPreferencesScreenState
     extends State<NotificationPreferencesScreen> {
-  static const _background = Color(0xFF080711);
-  static const _surface = Color(0xFF12101D);
-  static const _border = Color(0xFF2C253B);
-  static const _secondaryText = Color(0xFF9D95AD);
-  static const _primary = Color(0xFFB348FF);
-
-  final NotificationService _notificationService = NotificationService();
+  late final NotificationService _notificationService =
+      widget.notificationService ?? NotificationService();
   late final Stream<Map<String, bool>> _preferencesStream;
 
   final Set<NotificationType> _pending = <NotificationType>{};
@@ -127,9 +131,14 @@ class _NotificationPreferencesScreenState
         ..hideCurrentSnackBar()
         ..showSnackBar(
           SnackBar(
-            content: Text('Could not update preference: $error'),
+            content: Text(
+              'Could not update preference: $error',
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.onErrorContainer,
+              ),
+            ),
             behavior: SnackBarBehavior.floating,
-            backgroundColor: const Color(0xFF481C30),
+            backgroundColor: Theme.of(context).colorScheme.errorContainer,
           ),
         );
     } finally {
@@ -139,8 +148,9 @@ class _NotificationPreferencesScreenState
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return Scaffold(
-      backgroundColor: _background,
+      backgroundColor: palette.background,
       body: SafeArea(
         child: ResponsiveContentFrame(
           width: ResponsiveContentWidth.form,
@@ -154,19 +164,19 @@ class _NotificationPreferencesScreenState
                       IconButton(
                         onPressed: () => Navigator.of(context).pop(),
                         tooltip: 'Back',
-                        icon: const Icon(
+                        icon: Icon(
                           Icons.arrow_back_ios_new_rounded,
-                          color: Colors.white,
+                          color: palette.textPrimary,
                           size: 21,
                         ),
                       ),
                       const SizedBox(width: 4),
                     ],
-                    const Expanded(
+                    Expanded(
                       child: Text(
                         'Notification preferences',
                         style: TextStyle(
-                          color: Colors.white,
+                          color: palette.textPrimary,
                           fontSize: 20,
                           fontWeight: FontWeight.w800,
                           letterSpacing: -0.4,
@@ -184,13 +194,13 @@ class _NotificationPreferencesScreenState
                     return ListView(
                       padding: const EdgeInsets.fromLTRB(18, 4, 18, 32),
                       children: [
-                        const Text(
+                        Text(
                           'Choose which activity sends you a push '
                           'notification. In-app activity is always recorded '
                           'in your notification center regardless of these '
                           'settings.',
                           style: TextStyle(
-                            color: _secondaryText,
+                            color: palette.textSecondary,
                             fontSize: 12.5,
                             height: 1.5,
                           ),
@@ -199,8 +209,8 @@ class _NotificationPreferencesScreenState
                         for (final group in _kPreferenceGroups) ...[
                           Text(
                             group.title,
-                            style: const TextStyle(
-                              color: Colors.white,
+                            style: TextStyle(
+                              color: palette.textPrimary,
                               fontSize: 14,
                               fontWeight: FontWeight.w800,
                             ),
@@ -208,9 +218,9 @@ class _NotificationPreferencesScreenState
                           const SizedBox(height: 8),
                           Container(
                             decoration: BoxDecoration(
-                              color: _surface,
+                              color: palette.surface,
                               borderRadius: BorderRadius.circular(18),
-                              border: Border.all(color: _border),
+                              border: Border.all(color: palette.border),
                             ),
                             child: Column(
                               children: [
@@ -220,9 +230,9 @@ class _NotificationPreferencesScreenState
                                   index++
                                 ) ...[
                                   if (index > 0)
-                                    const Divider(
+                                    Divider(
                                       height: 1,
-                                      color: _border,
+                                      color: palette.border,
                                       indent: 16,
                                       endIndent: 16,
                                     ),
@@ -275,6 +285,8 @@ class _PreferenceRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
       child: Row(
@@ -282,27 +294,27 @@ class _PreferenceRow extends StatelessWidget {
           Expanded(
             child: Text(
               label,
-              style: const TextStyle(
-                color: Colors.white,
+              style: TextStyle(
+                color: palette.textPrimary,
                 fontSize: 13.5,
                 fontWeight: FontWeight.w600,
               ),
             ),
           ),
           if (isPending)
-            const SizedBox(
+            SizedBox(
               width: 20,
               height: 20,
               child: CircularProgressIndicator(
                 strokeWidth: 2,
-                color: _NotificationPreferencesScreenState._primary,
+                color: colors.primary,
               ),
             )
           else
             Switch.adaptive(
               value: value,
               onChanged: onChanged,
-              activeThumbColor: _NotificationPreferencesScreenState._primary,
+              activeThumbColor: colors.primary,
             ),
         ],
       ),

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/clubs/data/models/family_check_in.dart';
 import 'package:yovoice/features/clubs/data/services/club_service.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
@@ -34,8 +35,6 @@ class FamilyCheckInPanel extends StatefulWidget {
   final ClubService? clubService;
 
   static const emerald = Color(0xFF28D17C);
-  static const _surface = Color(0xFF12231D);
-  static const _border = Color(0xFF286447);
 
   @override
   State<FamilyCheckInPanel> createState() => _FamilyCheckInPanelState();
@@ -85,41 +84,45 @@ class _FamilyCheckInPanelState extends State<FamilyCheckInPanel> {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final accent = isDark
+        ? FamilyCheckInPanel.emerald
+        : const Color(0xFF08784E);
     return Container(
+      key: const ValueKey('family-check-in-panel'),
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: FamilyCheckInPanel._surface,
+        color: palette.successSurface,
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: FamilyCheckInPanel._border),
+        border: Border.all(color: accent.withValues(alpha: .55)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Row(
+          Row(
             children: [
-              Icon(
-                Icons.waving_hand_rounded,
-                size: 18,
-                color: FamilyCheckInPanel.emerald,
-              ),
+              Icon(Icons.waving_hand_rounded, size: 18, color: accent),
               SizedBox(width: 8),
-              Text(
-                'Quick check-ins',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 15.5,
-                  fontWeight: FontWeight.w800,
+              Expanded(
+                child: Text(
+                  'Quick check-ins',
+                  style: TextStyle(
+                    color: palette.textPrimary,
+                    fontSize: 15.5,
+                    fontWeight: FontWeight.w800,
+                  ),
                 ),
               ),
             ],
           ),
           const SizedBox(height: 4),
-          const Text(
+          Text(
             'A quick note to the family. Not an emergency feature, and no '
             'location is ever shared.',
             style: TextStyle(
-              color: Color(0xFF9BAFA4),
+              color: palette.textSecondary,
               fontSize: 12,
               height: 1.35,
             ),
@@ -142,16 +145,22 @@ class _FamilyCheckInPanelState extends State<FamilyCheckInPanel> {
             stream: _service.watchCheckIns(widget.clubId),
             builder: (context, snapshot) {
               if (snapshot.hasError) {
-                return const Text(
+                return Text(
                   'Check-ins are unavailable right now.',
-                  style: TextStyle(color: Color(0xFF9BAFA4), fontSize: 12.5),
+                  style: TextStyle(
+                    color: palette.textSecondary,
+                    fontSize: 12.5,
+                  ),
                 );
               }
               final checkIns = snapshot.data ?? const <FamilyCheckIn>[];
               if (checkIns.isEmpty) {
-                return const Text(
+                return Text(
                   'No check-ins yet.',
-                  style: TextStyle(color: Color(0xFF9BAFA4), fontSize: 12.5),
+                  style: TextStyle(
+                    color: palette.textSecondary,
+                    fontSize: 12.5,
+                  ),
                 );
               }
               return Column(
@@ -174,8 +183,8 @@ class _FamilyCheckInPanelState extends State<FamilyCheckInPanel> {
                               '${checkIn.status!.label}',
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                color: Color(0xFFDCEAE3),
+                              style: TextStyle(
+                                color: palette.textPrimary,
                                 fontSize: 13,
                                 fontWeight: FontWeight.w600,
                               ),
@@ -184,8 +193,8 @@ class _FamilyCheckInPanelState extends State<FamilyCheckInPanel> {
                           const SizedBox(width: 8),
                           Text(
                             _when(checkIn.createdAt),
-                            style: const TextStyle(
-                              color: Color(0xFF7E9389),
+                            style: TextStyle(
+                              color: palette.textTertiary,
                               fontSize: 11.5,
                             ),
                           ),
@@ -199,9 +208,9 @@ class _FamilyCheckInPanelState extends State<FamilyCheckInPanel> {
                               iconSize: 16,
                               visualDensity: VisualDensity.compact,
                               tooltip: 'Remove check-in',
-                              icon: const Icon(
+                              icon: Icon(
                                 Icons.close_rounded,
-                                color: Color(0xFF7E9389),
+                                color: palette.textTertiary,
                               ),
                             ),
                         ],
@@ -230,12 +239,15 @@ class _CheckInChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final accent = isDark
+        ? FamilyCheckInPanel.emerald
+        : const Color(0xFF08784E);
     return Material(
-      color: FamilyCheckInPanel.emerald.withValues(alpha: .13),
+      color: palette.successSurface,
       shape: StadiumBorder(
-        side: BorderSide(
-          color: FamilyCheckInPanel.emerald.withValues(alpha: .45),
-        ),
+        side: BorderSide(color: accent.withValues(alpha: .55)),
       ),
       child: InkWell(
         onTap: enabled ? onTap : null,
@@ -244,8 +256,8 @@ class _CheckInChip extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 10),
           child: Text(
             label,
-            style: const TextStyle(
-              color: Color(0xFF8CEFC0),
+            style: TextStyle(
+              color: accent,
               fontSize: 13,
               fontWeight: FontWeight.w700,
             ),

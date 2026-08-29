@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/features/discover/presentation/widgets/hero_live_room.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
@@ -12,7 +13,7 @@ import 'package:yovoice/shared/widgets/identity/official_role_badge.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 
 class DiscoverScreen extends StatefulWidget {
-  const DiscoverScreen({this.isRootTab = false, super.key});
+  const DiscoverScreen({this.isRootTab = false, this.roomService, super.key});
 
   /// True when this screen IS the shell's current content (the desktop
   /// rail's Discover slot) rather than a pushed route — the same flag
@@ -20,18 +21,15 @@ class DiscoverScreen extends StatefulWidget {
   /// would have nothing to pop.
   final bool isRootTab;
 
+  /// Injectable for focused rendering and error-state tests. Production keeps
+  /// the same default service and therefore the same live-room data source.
+  final RoomService? roomService;
+
   @override
   State<DiscoverScreen> createState() => _DiscoverScreenState();
 }
 
 class _DiscoverScreenState extends State<DiscoverScreen> {
-  static const Color _background = Color(0xFF080711);
-  static const Color _surface = Color(0xFF151020);
-  static const Color _surfaceLight = Color(0xFF21172D);
-  static const Color _border = Color(0xFF392B47);
-  static const Color _secondaryText = Color(0xFF9D95AD);
-  static const Color _primary = Color(0xFFAE35FF);
-
   static const List<_DiscoverCategory> _categories = [
     _DiscoverCategory(label: 'All', icon: Icons.grid_view_rounded),
     _DiscoverCategory(label: 'Talk', icon: Icons.record_voice_over_rounded),
@@ -42,7 +40,7 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
     _DiscoverCategory(label: 'Business', icon: Icons.work_rounded),
   ];
 
-  final RoomService _roomService = RoomService();
+  late final RoomService _roomService = widget.roomService ?? RoomService();
   final TextEditingController _searchController = TextEditingController();
 
   Timer? _searchDebounce;
@@ -135,13 +133,14 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
   }
 
   void _showError(String message) {
+    final colors = Theme.of(context).colorScheme;
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(
         SnackBar(
-          content: Text(message),
+          content: Text(message, style: TextStyle(color: colors.onError)),
           behavior: SnackBarBehavior.floating,
-          backgroundColor: const Color(0xFF481C30),
+          backgroundColor: colors.error,
           margin: const EdgeInsets.all(16),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(16),
@@ -306,16 +305,27 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
+    final dark = Theme.of(context).brightness == Brightness.dark;
     return Scaffold(
-      backgroundColor: _background,
+      key: const ValueKey('discover-screen'),
+      backgroundColor: palette.background,
       body: Container(
-        decoration: const BoxDecoration(
-          gradient: RadialGradient(
-            center: Alignment(-0.86, -0.94),
-            radius: 1.28,
-            colors: [Color(0xFF35144D), Color(0xFF170C22), _background],
-            stops: [0, 0.4, 1],
-          ),
+        key: const ValueKey('discover-canvas'),
+        decoration: BoxDecoration(
+          gradient: dark
+              ? RadialGradient(
+                  center: const Alignment(-0.86, -0.94),
+                  radius: 1.28,
+                  colors: [
+                    Color.lerp(palette.backgroundTop, colors.primary, .16)!,
+                    palette.backgroundTop,
+                    palette.background,
+                  ],
+                  stops: const [0, 0.4, 1],
+                )
+              : palette.backgroundGradient,
         ),
         child: SafeArea(
           bottom: false,
@@ -335,8 +345,8 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
                 final sections = _createSections(filteredRooms);
 
                 return RefreshIndicator(
-                  color: _primary,
-                  backgroundColor: _surface,
+                  color: colors.primary,
+                  backgroundColor: palette.surface,
                   onRefresh: () async {
                     setState(() {});
                     await Future<void>.delayed(
@@ -416,7 +426,7 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
             subtitle:
                 '${rooms.length} live ${rooms.length == 1 ? 'room' : 'rooms'}',
             icon: Icons.search_rounded,
-            accent: _primary,
+            accent: Theme.of(context).colorScheme.primary,
           ),
         ),
       ),
@@ -573,71 +583,78 @@ class _DiscoverHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
+    final largeText = MediaQuery.textScalerOf(context).scale(1) > 1.4;
+    final title = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Discover',
+          style: TextStyle(
+            color: palette.textPrimary,
+            fontSize: 31,
+            height: 1,
+            fontWeight: FontWeight.w900,
+            letterSpacing: -0.9,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          'Find voices worth staying for.',
+          style: TextStyle(
+            color: palette.textSecondary,
+            fontSize: 14,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+      ],
+    );
+    final back = YoIconButton(
+      icon: Icons.arrow_back_ios_new_rounded,
+      iconSize: 18,
+      size: 40,
+      backgroundColor: palette.surface,
+      borderColor: palette.border,
+      onPressed: () => Navigator.of(context).pop(),
+    );
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          children: [
-            if (!isRootTab) ...[
-              YoIconButton(
-                icon: Icons.arrow_back_ios_new_rounded,
-                iconSize: 18,
-                size: 40,
-                backgroundColor: _DiscoverScreenState._surface,
-                borderColor: _DiscoverScreenState._border,
-                onPressed: () => Navigator.of(context).pop(),
-              ),
-              const SizedBox(width: 10),
+        if (largeText) ...[
+          if (!isRootTab) ...[back, const SizedBox(height: 14)],
+          title,
+          const SizedBox(height: 14),
+          _LiveRoomCounter(count: liveRoomCount),
+        ] else
+          Row(
+            children: [
+              if (!isRootTab) ...[back, const SizedBox(width: 10)],
+              Expanded(child: title),
+              _LiveRoomCounter(count: liveRoomCount),
             ],
-            const Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Discover',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 31,
-                      height: 1,
-                      fontWeight: FontWeight.w900,
-                      letterSpacing: -0.9,
-                    ),
-                  ),
-                  SizedBox(height: 8),
-                  Text(
-                    'Find voices worth staying for.',
-                    style: TextStyle(
-                      color: _DiscoverScreenState._secondaryText,
-                      fontSize: 14,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            _LiveRoomCounter(count: liveRoomCount),
-          ],
-        ),
+          ),
         const SizedBox(height: 22),
         TextField(
+          key: const ValueKey('discover-search-field'),
           controller: searchController,
           onChanged: onSearchChanged,
           textInputAction: TextInputAction.search,
-          cursorColor: _DiscoverScreenState._primary,
-          style: const TextStyle(
-            color: Colors.white,
+          cursorColor: colors.primary,
+          style: TextStyle(
+            color: palette.textPrimary,
             fontSize: 15,
             fontWeight: FontWeight.w600,
           ),
           decoration: InputDecoration(
             hintText: 'Search rooms, hosts or topics...',
-            hintStyle: const TextStyle(
-              color: _DiscoverScreenState._secondaryText,
+            hintStyle: TextStyle(
+              color: palette.textSecondary,
               fontWeight: FontWeight.w500,
             ),
-            prefixIcon: const Icon(
+            prefixIcon: Icon(
               Icons.search_rounded,
-              color: _DiscoverScreenState._secondaryText,
+              color: palette.textSecondary,
             ),
             suffixIcon: ValueListenableBuilder<TextEditingValue>(
               valueListenable: searchController,
@@ -652,29 +669,23 @@ class _DiscoverHeader extends StatelessWidget {
                     searchController.clear();
                     onSearchChanged('');
                   },
-                  icon: const Icon(
-                    Icons.close_rounded,
-                    color: _DiscoverScreenState._secondaryText,
-                  ),
+                  icon: Icon(Icons.close_rounded, color: palette.textSecondary),
                 );
               },
             ),
             filled: true,
-            fillColor: _DiscoverScreenState._surface,
+            fillColor: palette.surface,
             contentPadding: const EdgeInsets.symmetric(
               horizontal: 16,
               vertical: 18,
             ),
             enabledBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(19),
-              borderSide: const BorderSide(color: _DiscoverScreenState._border),
+              borderSide: BorderSide(color: palette.border),
             ),
             focusedBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(19),
-              borderSide: const BorderSide(
-                color: _DiscoverScreenState._primary,
-                width: 1.5,
-              ),
+              borderSide: BorderSide(color: palette.focus, width: 1.5),
             ),
           ),
         ),
@@ -690,17 +701,17 @@ class _LiveRoomCounter extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
       decoration: BoxDecoration(
-        color: const Color(0xFF401528),
+        color: palette.dangerSurface,
         borderRadius: BorderRadius.circular(30),
-        border: Border.all(
-          color: const Color(0xFFFF416C).withValues(alpha: 0.8),
-        ),
+        border: Border.all(color: colors.error.withValues(alpha: 0.8)),
         boxShadow: [
           BoxShadow(
-            color: const Color(0xFFFF416C).withValues(alpha: 0.12),
+            color: colors.error.withValues(alpha: 0.12),
             blurRadius: 18,
           ),
         ],
@@ -708,12 +719,12 @@ class _LiveRoomCounter extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Icon(Icons.circle, color: Color(0xFFFF416C), size: 9),
+          Icon(Icons.circle, color: colors.error, size: 9),
           const SizedBox(width: 7),
           Text(
             '$count LIVE',
-            style: const TextStyle(
-              color: Colors.white,
+            style: TextStyle(
+              color: palette.textPrimary,
               fontSize: 10,
               fontWeight: FontWeight.w900,
               letterSpacing: 0.8,
@@ -738,8 +749,11 @@ class _CategorySelector extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
+    final largeText = MediaQuery.textScalerOf(context).scale(1) > 1.4;
     return SizedBox(
-      height: 47,
+      height: largeText ? 64 : 47,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
         physics: const BouncingScrollPhysics(),
@@ -758,18 +772,15 @@ class _CategorySelector extends StatelessWidget {
               boxShadow: selected
                   ? [
                       BoxShadow(
-                        color: _DiscoverScreenState._primary.withValues(
-                          alpha: 0.22,
-                        ),
+                        color: colors.primary.withValues(alpha: 0.22),
                         blurRadius: 18,
                       ),
                     ]
                   : null,
             ),
             child: Material(
-              color: selected
-                  ? _DiscoverScreenState._primary
-                  : _DiscoverScreenState._surface,
+              key: ValueKey('discover-category-${category.label}'),
+              color: selected ? colors.primary : palette.surface,
               borderRadius: BorderRadius.circular(30),
               child: InkWell(
                 onTap: () => onSelected(category.label),
@@ -779,19 +790,25 @@ class _CategorySelector extends StatelessWidget {
                   decoration: BoxDecoration(
                     borderRadius: BorderRadius.circular(30),
                     border: Border.all(
-                      color: selected
-                          ? _DiscoverScreenState._primary
-                          : _DiscoverScreenState._border,
+                      color: selected ? colors.primary : palette.border,
                     ),
                   ),
                   child: Row(
                     children: [
-                      Icon(category.icon, color: Colors.white, size: 17),
+                      Icon(
+                        category.icon,
+                        color: selected
+                            ? colors.onPrimary
+                            : palette.textSecondary,
+                        size: 17,
+                      ),
                       const SizedBox(width: 7),
                       Text(
                         category.label,
-                        style: const TextStyle(
-                          color: Colors.white,
+                        style: TextStyle(
+                          color: selected
+                              ? colors.onPrimary
+                              : palette.textPrimary,
                           fontSize: 12,
                           fontWeight: FontWeight.w800,
                         ),
@@ -823,6 +840,7 @@ class _SectionHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return Row(
       crossAxisAlignment: CrossAxisAlignment.end,
       children: [
@@ -832,8 +850,8 @@ class _SectionHeader extends StatelessWidget {
             children: [
               Text(
                 title,
-                style: const TextStyle(
-                  color: Colors.white,
+                style: TextStyle(
+                  color: palette.textPrimary,
                   fontSize: 21,
                   fontWeight: FontWeight.w900,
                   letterSpacing: -0.25,
@@ -842,8 +860,8 @@ class _SectionHeader extends StatelessWidget {
               const SizedBox(height: 4),
               Text(
                 subtitle,
-                style: const TextStyle(
-                  color: _DiscoverScreenState._secondaryText,
+                style: TextStyle(
+                  color: palette.textSecondary,
                   fontSize: 12,
                   fontWeight: FontWeight.w500,
                 ),
@@ -965,8 +983,11 @@ class _FeaturedRoomCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final accent = _accent;
+    final palette = context.appPalette;
+    final dark = Theme.of(context).brightness == Brightness.dark;
 
     return Material(
+      key: ValueKey('discover-featured-surface-${room.id}'),
       color: Colors.transparent,
       child: InkWell(
         onTap: onPressed,
@@ -977,9 +998,14 @@ class _FeaturedRoomCard extends StatelessWidget {
             gradient: LinearGradient(
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
-              colors: room.isBroadcast
-                  ? const [Color(0xFF381326), Color(0xFF17101F)]
-                  : const [Color(0xFF301643), Color(0xFF17101F)],
+              colors: dark
+                  ? (room.isBroadcast
+                        ? const [Color(0xFF381326), Color(0xFF17101F)]
+                        : const [Color(0xFF301643), Color(0xFF17101F)])
+                  : [
+                      Color.lerp(palette.surfaceRaised, accent, .07)!,
+                      palette.surface,
+                    ],
             ),
             border: Border.all(color: accent.withValues(alpha: 0.55)),
             boxShadow: [
@@ -1033,8 +1059,8 @@ class _FeaturedRoomCard extends StatelessWidget {
                       room.name,
                       maxLines: expandedLayout ? 3 : 2,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: Colors.white,
+                      style: TextStyle(
+                        color: palette.textPrimary,
                         fontSize: 17,
                         height: 1.12,
                         fontWeight: FontWeight.w900,
@@ -1047,8 +1073,8 @@ class _FeaturedRoomCard extends StatelessWidget {
                           : room.description,
                       maxLines: expandedLayout ? 4 : 2,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: _DiscoverScreenState._secondaryText,
+                      style: TextStyle(
+                        color: palette.textSecondary,
                         fontSize: 11,
                         height: 1.35,
                       ),
@@ -1085,6 +1111,7 @@ class _FeaturedRoomFooter extends StatelessWidget {
   final bool expandedLayout;
 
   Widget _host(BuildContext context) {
+    final palette = context.appPalette;
     return Row(
       children: [
         _HostAvatar(
@@ -1099,8 +1126,8 @@ class _FeaturedRoomFooter extends StatelessWidget {
             room.hostName,
             maxLines: expandedLayout ? 2 : 1,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              color: Colors.white70,
+            style: TextStyle(
+              color: palette.textSecondary,
               fontSize: 10,
               fontWeight: FontWeight.w700,
             ),
@@ -1115,7 +1142,8 @@ class _FeaturedRoomFooter extends StatelessWidget {
     );
   }
 
-  Widget _audience() {
+  Widget _audience(BuildContext context) {
+    final palette = context.appPalette;
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -1129,8 +1157,8 @@ class _FeaturedRoomFooter extends StatelessWidget {
         const SizedBox(width: 5),
         Text(
           '${room.participantCount}',
-          style: const TextStyle(
-            color: Colors.white,
+          style: TextStyle(
+            color: palette.textPrimary,
             fontSize: 11,
             fontWeight: FontWeight.w900,
           ),
@@ -1144,7 +1172,11 @@ class _FeaturedRoomFooter extends StatelessWidget {
     if (expandedLayout) {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
-        children: [_host(context), const SizedBox(height: 10), _audience()],
+        children: [
+          _host(context),
+          const SizedBox(height: 10),
+          _audience(context),
+        ],
       );
     }
 
@@ -1152,7 +1184,7 @@ class _FeaturedRoomFooter extends StatelessWidget {
       children: [
         Expanded(child: _host(context)),
         const SizedBox(width: 8),
-        _audience(),
+        _audience(context),
       ],
     );
   }
@@ -1207,12 +1239,15 @@ class _PremiumRoomCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final accent = _accent;
+    final palette = context.appPalette;
+    final dark = Theme.of(context).brightness == Brightness.dark;
     final maximum = room.maxParticipants;
     final occupancy = maximum == null || maximum <= 0
         ? null
         : (room.participantCount / maximum).clamp(0.0, 1.0);
 
     return Material(
+      key: ValueKey('discover-room-surface-${room.id}'),
       color: Colors.transparent,
       child: InkWell(
         onTap: onPressed,
@@ -1223,9 +1258,14 @@ class _PremiumRoomCard extends StatelessWidget {
             gradient: LinearGradient(
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
-              colors: room.isBroadcast
-                  ? const [Color(0xFF321322), Color(0xFF151020)]
-                  : const [Color(0xFF29153B), Color(0xFF151020)],
+              colors: dark
+                  ? (room.isBroadcast
+                        ? const [Color(0xFF321322), Color(0xFF151020)]
+                        : const [Color(0xFF29153B), Color(0xFF151020)])
+                  : [
+                      Color.lerp(palette.surfaceRaised, accent, .06)!,
+                      palette.surface,
+                    ],
             ),
             borderRadius: BorderRadius.circular(24),
             border: Border.all(color: accent.withValues(alpha: 0.46)),
@@ -1275,8 +1315,8 @@ class _PremiumRoomCard extends StatelessWidget {
                       room.name,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: Colors.white,
+                      style: TextStyle(
+                        color: palette.textPrimary,
                         fontSize: 17,
                         fontWeight: FontWeight.w900,
                         letterSpacing: -0.2,
@@ -1289,8 +1329,8 @@ class _PremiumRoomCard extends StatelessWidget {
                           : room.description,
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: _DiscoverScreenState._secondaryText,
+                      style: TextStyle(
+                        color: palette.textSecondary,
                         fontSize: 12,
                         height: 1.35,
                       ),
@@ -1313,8 +1353,8 @@ class _PremiumRoomCard extends StatelessWidget {
                                   room.hostName,
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                    color: Colors.white70,
+                                  style: TextStyle(
+                                    color: palette.textSecondary,
                                     fontSize: 11,
                                     fontWeight: FontWeight.w700,
                                   ),
@@ -1358,7 +1398,7 @@ class _PremiumRoomCard extends StatelessWidget {
                         child: LinearProgressIndicator(
                           value: occupancy,
                           minHeight: 4,
-                          backgroundColor: Colors.white.withValues(alpha: 0.08),
+                          backgroundColor: palette.surfaceSunken,
                           color: occupancy >= 0.9
                               ? const Color(0xFFFF416C)
                               : accent,
@@ -1457,16 +1497,21 @@ class _RoomAvatarFallback extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     final normalized = fallbackText.trim();
 
     return Stack(
       alignment: Alignment.center,
       children: [
-        Icon(icon, color: Colors.white.withValues(alpha: 0.18), size: 43),
+        Icon(
+          icon,
+          color: palette.textTertiary.withValues(alpha: 0.35),
+          size: 43,
+        ),
         Text(
           normalized.isEmpty ? 'YV' : normalized[0].toUpperCase(),
           style: TextStyle(
-            color: Color.lerp(Colors.white, accent, 0.15),
+            color: Color.lerp(palette.textPrimary, accent, 0.15),
             fontSize: 20,
             fontWeight: FontWeight.w900,
           ),
@@ -1491,6 +1536,7 @@ class _HostAvatar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     final normalizedUrl = photoUrl?.trim();
     final initial = hostName.trim().isEmpty
         ? 'Y'
@@ -1516,7 +1562,7 @@ class _HostAvatar extends StatelessWidget {
                 return Text(
                   initial,
                   style: TextStyle(
-                    color: Colors.white,
+                    color: palette.textPrimary,
                     fontSize: size * 0.38,
                     fontWeight: FontWeight.w900,
                   ),
@@ -1526,7 +1572,7 @@ class _HostAvatar extends StatelessWidget {
           : Text(
               initial,
               style: TextStyle(
-                color: Colors.white,
+                color: palette.textPrimary,
                 fontSize: size * 0.38,
                 fontWeight: FontWeight.w900,
               ),
@@ -1616,6 +1662,7 @@ class _RankBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     final topRank = rank <= 3;
 
     return Container(
@@ -1624,13 +1671,9 @@ class _RankBadge extends StatelessWidget {
       alignment: Alignment.center,
       decoration: BoxDecoration(
         shape: BoxShape.circle,
-        color: topRank
-            ? const Color(0xFFFFB84D)
-            : _DiscoverScreenState._surfaceLight,
+        color: topRank ? const Color(0xFFFFB84D) : palette.surfaceRaised,
         border: Border.all(
-          color: topRank
-              ? const Color(0xFFFFD58A)
-              : _DiscoverScreenState._border,
+          color: topRank ? const Color(0xFFFFD58A) : palette.border,
         ),
         boxShadow: [
           if (topRank)
@@ -1643,7 +1686,7 @@ class _RankBadge extends StatelessWidget {
       child: Text(
         '$rank',
         style: TextStyle(
-          color: topRank ? const Color(0xFF2B1700) : Colors.white,
+          color: topRank ? const Color(0xFF2B1700) : palette.textPrimary,
           fontSize: 10,
           fontWeight: FontWeight.w900,
         ),
@@ -1660,17 +1703,18 @@ class _RoomTag extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
       decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.065),
+        color: palette.surfaceMuted,
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
+        border: Border.all(color: palette.border),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, color: _DiscoverScreenState._secondaryText, size: 13),
+          Icon(icon, color: palette.textSecondary, size: 13),
           const SizedBox(width: 5),
           ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 120),
@@ -1678,8 +1722,8 @@ class _RoomTag extends StatelessWidget {
               label,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: Colors.white70,
+              style: TextStyle(
+                color: palette.textSecondary,
                 fontSize: 10,
                 fontWeight: FontWeight.w700,
               ),
@@ -1696,13 +1740,14 @@ class _DiscoverLoadingState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Center(
+    return Center(
+      key: const ValueKey('discover-loading-state'),
       child: SizedBox(
         width: 31,
         height: 31,
         child: CircularProgressIndicator(
           strokeWidth: 2.5,
-          color: _DiscoverScreenState._primary,
+          color: Theme.of(context).colorScheme.primary,
         ),
       ),
     );
@@ -1722,7 +1767,10 @@ class _DiscoverEmptyState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     return Center(
+      key: const ValueKey('discover-empty-state'),
       child: Padding(
         padding: const EdgeInsets.fromLTRB(28, 18, 28, 120),
         child: Column(
@@ -1732,17 +1780,20 @@ class _DiscoverEmptyState extends StatelessWidget {
               width: 76,
               height: 76,
               decoration: BoxDecoration(
-                gradient: const LinearGradient(
+                gradient: LinearGradient(
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight,
-                  colors: [Color(0xFF2E1740), _DiscoverScreenState._surface],
+                  colors: [
+                    Color.lerp(palette.surfaceRaised, colors.primary, .09)!,
+                    palette.surface,
+                  ],
                 ),
                 borderRadius: BorderRadius.circular(24),
-                border: Border.all(color: _DiscoverScreenState._border),
+                border: Border.all(color: palette.border),
               ),
-              child: const Icon(
+              child: Icon(
                 Icons.explore_off_rounded,
-                color: _DiscoverScreenState._primary,
+                color: colors.primary,
                 size: 37,
               ),
             ),
@@ -1752,8 +1803,8 @@ class _DiscoverEmptyState extends StatelessWidget {
                   ? 'No matching rooms'
                   : 'No rooms are live right now',
               textAlign: TextAlign.center,
-              style: const TextStyle(
-                color: Colors.white,
+              style: TextStyle(
+                color: palette.textPrimary,
                 fontSize: 19,
                 fontWeight: FontWeight.w900,
               ),
@@ -1764,8 +1815,8 @@ class _DiscoverEmptyState extends StatelessWidget {
                   ? 'Try another search phrase or clear the selected category.'
                   : 'Live public Community and Podcast rooms will appear here automatically.',
               textAlign: TextAlign.center,
-              style: const TextStyle(
-                color: _DiscoverScreenState._secondaryText,
+              style: TextStyle(
+                color: palette.textSecondary,
                 fontSize: 13,
                 height: 1.45,
               ),
@@ -1775,8 +1826,8 @@ class _DiscoverEmptyState extends StatelessWidget {
               FilledButton.icon(
                 onPressed: onClear,
                 style: FilledButton.styleFrom(
-                  backgroundColor: _DiscoverScreenState._primary,
-                  foregroundColor: Colors.white,
+                  backgroundColor: colors.primary,
+                  foregroundColor: colors.onPrimary,
                   padding: const EdgeInsets.symmetric(
                     horizontal: 19,
                     vertical: 14,
@@ -1810,7 +1861,10 @@ class _DiscoverErrorState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     return Center(
+      key: const ValueKey('discover-error-state'),
       child: Padding(
         padding: const EdgeInsets.all(28),
         child: Column(
@@ -1820,23 +1874,21 @@ class _DiscoverErrorState extends StatelessWidget {
               width: 76,
               height: 76,
               decoration: BoxDecoration(
-                color: const Color(0xFF311421),
+                color: palette.dangerSurface,
                 borderRadius: BorderRadius.circular(24),
-                border: Border.all(
-                  color: const Color(0xFFFF6B81).withValues(alpha: 0.45),
-                ),
+                border: Border.all(color: colors.error.withValues(alpha: 0.45)),
               ),
-              child: const Icon(
+              child: Icon(
                 Icons.cloud_off_rounded,
-                color: Color(0xFFFF6B81),
+                color: colors.error,
                 size: 39,
               ),
             ),
             const SizedBox(height: 18),
-            const Text(
+            Text(
               'Could not load Discover',
               style: TextStyle(
-                color: Colors.white,
+                color: palette.textPrimary,
                 fontSize: 19,
                 fontWeight: FontWeight.w900,
               ),
@@ -1845,8 +1897,8 @@ class _DiscoverErrorState extends StatelessWidget {
             Text(
               message,
               textAlign: TextAlign.center,
-              style: const TextStyle(
-                color: _DiscoverScreenState._secondaryText,
+              style: TextStyle(
+                color: palette.textSecondary,
                 fontSize: 13,
                 height: 1.45,
               ),

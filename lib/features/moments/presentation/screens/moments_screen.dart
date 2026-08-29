@@ -5,7 +5,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
-import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/home/data/services/home_feed_service.dart';
 import 'package:yovoice/features/moderation/data/services/content_report_service.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
@@ -134,7 +134,7 @@ class _MomentsScreenState extends State<MomentsScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppColors.background,
+      backgroundColor: context.appPalette.background,
       body: SafeArea(
         child: Column(
           children: [
@@ -183,6 +183,7 @@ class _MomentsHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return LayoutBuilder(
       builder: (context, constraints) {
         // Compact is measured in TEXT-SCALED space, not raw pixels: at a
@@ -209,7 +210,7 @@ class _MomentsHeader extends StatelessWidget {
                   child: IconButton(
                     onPressed: () => Navigator.of(context).pop(),
                     icon: const Icon(Icons.arrow_back_rounded),
-                    color: AppColors.textPrimary,
+                    color: palette.textPrimary,
                     tooltip: 'Back',
                   ),
                 ),
@@ -217,12 +218,12 @@ class _MomentsHeader extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text(
+                    Text(
                       'Voice Moments',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
-                        color: AppColors.textPrimary,
+                        color: palette.textPrimary,
                         fontSize: 26,
                         fontWeight: FontWeight.w900,
                       ),
@@ -233,7 +234,7 @@ class _MomentsHeader extends StatelessWidget {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
-                        color: AppColors.textSecondary.withValues(alpha: .95),
+                        color: palette.textSecondary,
                         fontSize: 13,
                         fontWeight: FontWeight.w600,
                       ),
@@ -259,6 +260,7 @@ class _CreateMomentButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
     if (compact) {
       // On a phone the title block and a full label cannot share the row;
       // the icon button keeps a 48 pt target.
@@ -266,29 +268,23 @@ class _CreateMomentButton extends StatelessWidget {
         key: const ValueKey('moments-create-cta'),
         onPressed: onTap,
         tooltip: 'Create your Moment',
-        style: IconButton.styleFrom(backgroundColor: AppColors.primary),
-        icon: const Icon(Icons.mic_rounded, color: AppColors.textPrimary),
+        style: IconButton.styleFrom(backgroundColor: colors.primary),
+        icon: Icon(Icons.mic_rounded, color: colors.onPrimary),
       );
     }
     return FilledButton.icon(
       key: const ValueKey('moments-create-cta'),
       onPressed: onTap,
       style: FilledButton.styleFrom(
-        backgroundColor: AppColors.primary,
+        backgroundColor: colors.primary,
+        foregroundColor: colors.onPrimary,
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
       ),
-      icon: const Icon(
-        Icons.mic_rounded,
-        size: 18,
-        color: AppColors.textPrimary,
-      ),
-      label: const Text(
+      icon: Icon(Icons.mic_rounded, size: 18, color: colors.onPrimary),
+      label: Text(
         'Create your Moment',
-        style: TextStyle(
-          color: AppColors.textPrimary,
-          fontWeight: FontWeight.w800,
-        ),
+        style: TextStyle(color: colors.onPrimary, fontWeight: FontWeight.w800),
       ),
     );
   }

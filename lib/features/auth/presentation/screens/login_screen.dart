@@ -9,6 +9,7 @@ import 'package:yovoice/features/auth/presentation/screens/totp_challenge_screen
 import 'package:yovoice/features/auth/presentation/widgets/auth_social_button.dart';
 import 'package:yovoice/shared/widgets/backgrounds/animated_waves_background.dart';
 import 'package:yovoice/features/auth/presentation/screens/register_screen.dart';
+import 'package:yovoice/shared/widgets/theme/yo_immersive_dark_surface.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -202,7 +203,7 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   Widget build(BuildContext context) {
     final copy = AppLocalizations.of(context);
-    return Scaffold(
+    final content = Scaffold(
       body: Stack(
         children: [
           const Positioned.fill(
@@ -541,6 +542,7 @@ class _LoginScreenState extends State<LoginScreen> {
         ],
       ),
     );
+    return YoImmersiveDarkSurface(child: content);
   }
 }
 

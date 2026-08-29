@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
-import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_radius.dart';
 import 'package:yovoice/core/theme/app_typography.dart';
 
@@ -30,6 +30,7 @@ class YoSocialButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return SizedBox(
       width: double.infinity,
       height: 58,
@@ -37,24 +38,24 @@ class YoSocialButton extends StatelessWidget {
         onPressed: _enabled ? onPressed : null,
         style: OutlinedButton.styleFrom(
           elevation: 0,
-          backgroundColor: AppColors.surface,
-          disabledBackgroundColor: AppColors.surface,
-          foregroundColor: AppColors.textPrimary,
-          disabledForegroundColor: AppColors.textHint,
-          side: const BorderSide(color: AppColors.border, width: 1),
+          backgroundColor: palette.surfaceRaised,
+          disabledBackgroundColor: palette.surfaceMuted,
+          foregroundColor: palette.textPrimary,
+          disabledForegroundColor: palette.textTertiary,
+          side: BorderSide(color: palette.borderStrong, width: 1),
           shape: const RoundedRectangleBorder(borderRadius: AppRadius.lg),
           padding: const EdgeInsets.symmetric(horizontal: 20),
         ),
         child: AnimatedSwitcher(
           duration: const Duration(milliseconds: 180),
           child: isLoading
-              ? const SizedBox(
+              ? SizedBox(
                   key: ValueKey('loading'),
                   width: 24,
                   height: 24,
                   child: CircularProgressIndicator(
                     strokeWidth: 2.4,
-                    color: AppColors.white,
+                    color: palette.textPrimary,
                   ),
                 )
               : Row(
@@ -72,7 +73,7 @@ class YoSocialButton extends StatelessWidget {
                             : Icon(
                                 icon,
                                 size: iconSize,
-                                color: AppColors.textPrimary,
+                                color: palette.textPrimary,
                               ),
                       ),
                     ),
@@ -81,7 +82,7 @@ class YoSocialButton extends StatelessWidget {
                         label,
                         textAlign: TextAlign.center,
                         style: AppTypography.titleMedium.copyWith(
-                          color: AppColors.textPrimary,
+                          color: palette.textPrimary,
                         ),
                       ),
                     ),

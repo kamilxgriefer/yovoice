@@ -3,6 +3,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/moderation/data/services/content_report_service.dart';
 import 'package:yovoice/features/moderation/presentation/report_content_flow.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
@@ -44,12 +45,6 @@ class MomentCommentsScreen extends StatefulWidget {
 }
 
 class _MomentCommentsScreenState extends State<MomentCommentsScreen> {
-  static const _background = Color(0xFF080711);
-  static const _surface = Color(0xFF14101D);
-  static const _border = Color(0xFF352642);
-  static const _muted = Color(0xFFA79DAF);
-  static const _primary = Color(0xFFA51FFF);
-
   final TextEditingController _controller = TextEditingController();
   late final FirebaseFirestore _firestore =
       widget.firestore ?? FirebaseFirestore.instance;
@@ -142,11 +137,14 @@ class _MomentCommentsScreenState extends State<MomentCommentsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     return Scaffold(
-      backgroundColor: _background,
+      key: const ValueKey('moment-comments-screen'),
+      backgroundColor: palette.background,
       appBar: AppBar(
-        backgroundColor: _background,
-        foregroundColor: Colors.white,
+        backgroundColor: palette.background,
+        foregroundColor: palette.textPrimary,
         title: const Text('Comments'),
       ),
       body: SafeArea(
@@ -162,10 +160,10 @@ class _MomentCommentsScreenState extends State<MomentCommentsScreen> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Text(
+                  Text(
                     'This Voice Moment is no longer available.',
                     textAlign: TextAlign.center,
-                    style: TextStyle(color: _muted),
+                    style: TextStyle(color: palette.textSecondary),
                   ),
                   const SizedBox(height: 16),
                   FilledButton(
@@ -189,22 +187,26 @@ class _MomentCommentsScreenState extends State<MomentCommentsScreen> {
                         .snapshots(),
                     builder: (context, snapshot) {
                       if (snapshot.hasError) {
-                        return const Center(
+                        return Center(
                           child: Text(
                             'Could not load comments.',
-                            style: TextStyle(color: _muted),
+                            style: TextStyle(color: palette.textSecondary),
                           ),
                         );
                       }
                       if (!snapshot.hasData) {
-                        return const Center(child: CircularProgressIndicator());
+                        return Center(
+                          child: CircularProgressIndicator(
+                            color: colors.primary,
+                          ),
+                        );
                       }
                       final comments = snapshot.data!.docs;
                       if (comments.isEmpty) {
-                        return const Center(
+                        return Center(
                           child: Text(
                             'Be the first to comment.',
-                            style: TextStyle(color: _muted),
+                            style: TextStyle(color: palette.textSecondary),
                           ),
                         );
                       }
@@ -238,9 +240,9 @@ class _MomentCommentsScreenState extends State<MomentCommentsScreen> {
                 ),
                 Container(
                   padding: const EdgeInsets.fromLTRB(14, 10, 14, 12),
-                  decoration: const BoxDecoration(
-                    color: _surface,
-                    border: Border(top: BorderSide(color: _border)),
+                  decoration: BoxDecoration(
+                    color: palette.surfaceRaised,
+                    border: Border(top: BorderSide(color: palette.border)),
                   ),
                   child: Row(
                     children: [
@@ -251,12 +253,12 @@ class _MomentCommentsScreenState extends State<MomentCommentsScreen> {
                           maxLines: 4,
                           textInputAction: TextInputAction.send,
                           onSubmitted: (_) => _sendComment(),
-                          style: const TextStyle(color: Colors.white),
+                          style: TextStyle(color: palette.textPrimary),
                           decoration: InputDecoration(
                             hintText: 'Write a comment...',
-                            hintStyle: const TextStyle(color: _muted),
+                            hintStyle: TextStyle(color: palette.textTertiary),
                             filled: true,
-                            fillColor: _background,
+                            fillColor: palette.surfaceSunken,
                             border: OutlineInputBorder(
                               borderRadius: BorderRadius.circular(18),
                               borderSide: BorderSide.none,
@@ -267,14 +269,17 @@ class _MomentCommentsScreenState extends State<MomentCommentsScreen> {
                       const SizedBox(width: 10),
                       IconButton.filled(
                         onPressed: _sending ? null : _sendComment,
-                        style: IconButton.styleFrom(backgroundColor: _primary),
+                        style: IconButton.styleFrom(
+                          backgroundColor: colors.primary,
+                          foregroundColor: colors.onPrimary,
+                        ),
                         icon: _sending
-                            ? const SizedBox(
+                            ? SizedBox(
                                 width: 18,
                                 height: 18,
                                 child: CircularProgressIndicator(
                                   strokeWidth: 2,
-                                  color: Colors.white,
+                                  color: colors.onPrimary,
                                 ),
                               )
                             : const Icon(Icons.send_rounded),
@@ -371,19 +376,23 @@ class _CommentCardState extends State<_CommentCard> {
   Widget build(BuildContext context) {
     final text = widget.data['text'] as String? ?? '';
     final duration = widget.data['durationSeconds'] as int? ?? 0;
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     return Container(
+      key: ValueKey('moment-comment-card-${widget.commentId}'),
       padding: const EdgeInsets.all(13),
       decoration: BoxDecoration(
-        color: _MomentCommentsScreenState._surface,
+        color: palette.surface,
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: _MomentCommentsScreenState._border),
+        border: Border.all(color: palette.border),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           CircleAvatar(
             radius: 20,
-            backgroundColor: _MomentCommentsScreenState._primary,
+            backgroundColor: colors.primary,
+            foregroundColor: colors.onPrimary,
             backgroundImage: widget.photo?.isNotEmpty == true
                 ? NetworkImage(widget.photo!)
                 : null,
@@ -404,8 +413,8 @@ class _CommentCardState extends State<_CommentCard> {
                   children: [
                     Text(
                       widget.name,
-                      style: const TextStyle(
-                        color: Colors.white,
+                      style: TextStyle(
+                        color: palette.textPrimary,
                         fontWeight: FontWeight.w800,
                       ),
                     ),
@@ -424,7 +433,7 @@ class _CommentCardState extends State<_CommentCard> {
                         vertical: 10,
                       ),
                       decoration: BoxDecoration(
-                        color: const Color(0xFF271335),
+                        color: colors.secondaryContainer,
                         borderRadius: BorderRadius.circular(14),
                       ),
                       child: Row(
@@ -433,22 +442,24 @@ class _CommentCardState extends State<_CommentCard> {
                             _playing
                                 ? Icons.pause_rounded
                                 : Icons.play_arrow_rounded,
-                            color: Colors.white,
+                            color: colors.onSecondaryContainer,
                           ),
                           const SizedBox(width: 8),
-                          const Expanded(
+                          Expanded(
                             child: Text(
                               'Voice reply',
                               style: TextStyle(
-                                color: Colors.white,
+                                color: colors.onSecondaryContainer,
                                 fontWeight: FontWeight.w700,
                               ),
                             ),
                           ),
                           Text(
                             '0:${duration.toString().padLeft(2, '0')}',
-                            style: const TextStyle(
-                              color: _MomentCommentsScreenState._muted,
+                            style: TextStyle(
+                              color: colors.onSecondaryContainer.withValues(
+                                alpha: .75,
+                              ),
                             ),
                           ),
                         ],
@@ -457,13 +468,13 @@ class _CommentCardState extends State<_CommentCard> {
                   ),
                   if (text.isNotEmpty) ...[
                     const SizedBox(height: 7),
-                    Text(text, style: const TextStyle(color: Colors.white70)),
+                    Text(text, style: TextStyle(color: palette.textSecondary)),
                   ],
                 ] else ...[
                   const SizedBox(height: 4),
                   Text(
                     text,
-                    style: const TextStyle(color: Colors.white, height: 1.35),
+                    style: TextStyle(color: palette.textPrimary, height: 1.35),
                   ),
                 ],
               ],
@@ -480,10 +491,10 @@ class _CommentCardState extends State<_CommentCard> {
               padding: EdgeInsets.zero,
               tooltip: 'Report this comment',
               onPressed: _report,
-              icon: const Icon(
+              icon: Icon(
                 Icons.flag_outlined,
                 size: 18,
-                color: _MomentCommentsScreenState._muted,
+                color: palette.textSecondary,
               ),
             ),
         ],

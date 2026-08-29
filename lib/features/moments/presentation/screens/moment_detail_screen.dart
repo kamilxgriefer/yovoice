@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:share_plus/share_plus.dart';
 
 import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/home/data/services/home_feed_service.dart';
 import 'package:yovoice/features/moderation/data/services/content_report_service.dart';
 import 'package:yovoice/features/moderation/presentation/report_content_flow.dart';
@@ -388,30 +389,37 @@ class _MomentDetailScreenState extends State<MomentDetailScreen> {
     final navigator = Navigator.of(context);
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        backgroundColor: AppColors.surfaceLight,
-        title: const Text(
-          'Delete this moment?',
-          style: TextStyle(color: AppColors.textPrimary),
-        ),
-        content: const Text(
-          'This cannot be undone.',
-          style: TextStyle(color: AppColors.textSecondary),
-        ),
-        actions: [
-          TextButton(
-            key: const ValueKey('moment-detail-delete-cancel'),
-            onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: const Text('Cancel'),
+      builder: (dialogContext) {
+        final palette = dialogContext.appPalette;
+        final colors = Theme.of(dialogContext).colorScheme;
+        return AlertDialog(
+          backgroundColor: palette.surfaceRaised,
+          title: Text(
+            'Delete this moment?',
+            style: TextStyle(color: palette.textPrimary),
           ),
-          FilledButton(
-            key: const ValueKey('moment-detail-delete-confirm'),
-            style: FilledButton.styleFrom(backgroundColor: AppColors.error),
-            onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: const Text('Delete'),
+          content: Text(
+            'This cannot be undone.',
+            style: TextStyle(color: palette.textSecondary),
           ),
-        ],
-      ),
+          actions: [
+            TextButton(
+              key: const ValueKey('moment-detail-delete-cancel'),
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              key: const ValueKey('moment-detail-delete-confirm'),
+              style: FilledButton.styleFrom(
+                backgroundColor: colors.error,
+                foregroundColor: colors.onError,
+              ),
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: const Text('Delete'),
+            ),
+          ],
+        );
+      },
     );
     if (confirmed != true || !mounted) return;
 
@@ -477,13 +485,16 @@ class _MomentDetailScreenState extends State<MomentDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     final gone =
         (_missing && !_selfDeleted) ||
         _expiredByDeadline ||
         !_moment.isActiveAt(_effectiveNow());
 
     return Scaffold(
-      backgroundColor: AppColors.background,
+      key: const ValueKey('moment-detail-screen'),
+      backgroundColor: palette.background,
       body: SafeArea(
         child: gone
             ? _GoneState(
@@ -519,8 +530,8 @@ class _MomentDetailScreenState extends State<MomentDetailScreen> {
                                   const SizedBox(height: 8),
                                   Text(
                                     _playbackError!,
-                                    style: const TextStyle(
-                                      color: AppColors.error,
+                                    style: TextStyle(
+                                      color: colors.error,
                                       fontSize: 12.5,
                                     ),
                                   ),
@@ -529,10 +540,7 @@ class _MomentDetailScreenState extends State<MomentDetailScreen> {
                                 _engagementRow(),
                                 _reactionsSection(),
                                 const SizedBox(height: 16),
-                                const Divider(
-                                  color: AppColors.divider,
-                                  height: 1,
-                                ),
+                                Divider(color: palette.border, height: 1),
                                 const SizedBox(height: 14),
                                 _commentsSection(),
                               ],
@@ -551,6 +559,7 @@ class _MomentDetailScreenState extends State<MomentDetailScreen> {
 
   Widget _authorBlock() {
     final moment = _moment;
+    final palette = context.appPalette;
     final age = momentRelativeAge(moment.createdAt);
     // The author sees the availability fact even for a permanent Moment
     // ("Stays until deleted"); everyone else only a real countdown.
@@ -587,8 +596,8 @@ class _MomentDetailScreenState extends State<MomentDetailScreen> {
                       moment.authorName,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: AppColors.textPrimary,
+                      style: TextStyle(
+                        color: palette.textPrimary,
                         fontSize: 15.5,
                         fontWeight: FontWeight.w800,
                       ),
@@ -605,8 +614,8 @@ class _MomentDetailScreenState extends State<MomentDetailScreen> {
                   if (age.isNotEmpty)
                     Text(
                       age,
-                      style: const TextStyle(
-                        color: AppColors.textSecondary,
+                      style: TextStyle(
+                        color: palette.textSecondary,
                         fontSize: 12,
                       ),
                     ),
@@ -618,8 +627,10 @@ class _MomentDetailScreenState extends State<MomentDetailScreen> {
                         // A permanent Moment's label is a calm fact, not
                         // a warning-coloured countdown.
                         color: moment.isPermanent
-                            ? AppColors.textHint
-                            : AppColors.warning,
+                            ? palette.textTertiary
+                            : Theme.of(context).brightness == Brightness.dark
+                            ? AppColors.warning
+                            : const Color(0xFF8A4B00),
                         fontSize: 12,
                         fontWeight: FontWeight.w700,
                       ),
@@ -641,8 +652,8 @@ class _MomentDetailScreenState extends State<MomentDetailScreen> {
       caption.isEmpty ? 'Voice Moment' : caption,
       maxLines: 6,
       overflow: TextOverflow.ellipsis,
-      style: const TextStyle(
-        color: AppColors.textPrimary,
+      style: TextStyle(
+        color: context.appPalette.textPrimary,
         fontSize: 20,
         height: 1.35,
         fontWeight: FontWeight.w800,
@@ -652,6 +663,9 @@ class _MomentDetailScreenState extends State<MomentDetailScreen> {
 
   Widget _playerPanel() {
     final moment = _moment;
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     final totalSeconds = _duration?.inSeconds ?? moment.durationSeconds;
     final hasTotal = totalSeconds > 0;
     final progress = hasTotal
@@ -666,12 +680,12 @@ class _MomentDetailScreenState extends State<MomentDetailScreen> {
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
           colors: [
-            AppColors.primary.withValues(alpha: .5),
-            AppColors.secondary.withValues(alpha: .26),
-            AppColors.surface,
+            Color.lerp(palette.surface, colors.primary, isDark ? .5 : .14)!,
+            Color.lerp(palette.surface, colors.secondary, isDark ? .26 : .08)!,
+            palette.surface,
           ],
         ),
-        border: Border.all(color: AppColors.primary.withValues(alpha: .35)),
+        border: Border.all(color: colors.primary.withValues(alpha: .35)),
       ),
       padding: const EdgeInsets.fromLTRB(20, 22, 20, 18),
       child: Column(
@@ -704,7 +718,7 @@ class _MomentDetailScreenState extends State<MomentDetailScreen> {
             button: true,
             label: _isPlaying ? 'Pause this Moment' : 'Play this Moment',
             child: Material(
-              color: AppColors.primary,
+              color: colors.primary,
               shape: const CircleBorder(),
               child: InkWell(
                 key: const ValueKey('moment-detail-play'),
@@ -715,7 +729,7 @@ class _MomentDetailScreenState extends State<MomentDetailScreen> {
                   height: 62,
                   child: Icon(
                     _isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
-                    color: AppColors.textPrimary,
+                    color: colors.onPrimary,
                     size: 34,
                   ),
                 ),
@@ -727,8 +741,8 @@ class _MomentDetailScreenState extends State<MomentDetailScreen> {
             hasTotal
                 ? '${_clock(_position.inSeconds)} / ${_clock(totalSeconds)}'
                 : '',
-            style: const TextStyle(
-              color: AppColors.textPrimary,
+            style: TextStyle(
+              color: palette.textPrimary,
               fontSize: 12.5,
               fontWeight: FontWeight.w700,
             ),
@@ -842,6 +856,7 @@ class _MomentDetailScreenState extends State<MomentDetailScreen> {
     return FutureBuilder<List<MomentReactor>>(
       future: reactions,
       builder: (context, snapshot) {
+        final palette = context.appPalette;
         final reactors = snapshot.data ?? const <MomentReactor>[];
         if (reactors.isEmpty) return const SizedBox.shrink();
         final remainder = likeCount - reactors.length;
@@ -850,10 +865,10 @@ class _MomentDetailScreenState extends State<MomentDetailScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text(
+              Text(
                 'Top reactions',
                 style: TextStyle(
-                  color: AppColors.textPrimary,
+                  color: palette.textPrimary,
                   fontSize: 14,
                   fontWeight: FontWeight.w800,
                 ),
@@ -887,14 +902,14 @@ class _MomentDetailScreenState extends State<MomentDetailScreen> {
                       alignment: Alignment.center,
                       decoration: BoxDecoration(
                         borderRadius: BorderRadius.circular(999),
-                        color: AppColors.surfaceLight,
-                        border: Border.all(color: AppColors.border),
+                        color: palette.surfaceRaised,
+                        border: Border.all(color: palette.border),
                       ),
                       child: Text(
                         '+$remainder',
                         maxLines: 1,
-                        style: const TextStyle(
-                          color: AppColors.textSecondary,
+                        style: TextStyle(
+                          color: palette.textSecondary,
                           fontSize: 10,
                           fontWeight: FontWeight.w800,
                         ),
@@ -913,6 +928,7 @@ class _MomentDetailScreenState extends State<MomentDetailScreen> {
 
   Widget _commentsSection() {
     final service = _moments;
+    final palette = context.appPalette;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -929,26 +945,26 @@ class _MomentDetailScreenState extends State<MomentDetailScreen> {
               : (_loadedCommentCount! > 0
                     ? 'Comments ($_loadedCommentCount)'
                     : 'Comments'),
-          style: const TextStyle(
-            color: AppColors.textPrimary,
+          style: TextStyle(
+            color: palette.textPrimary,
             fontSize: 14,
             fontWeight: FontWeight.w800,
           ),
         ),
         const SizedBox(height: 10),
         if (service == null)
-          const Text(
+          Text(
             'Comments are unavailable right now.',
-            style: TextStyle(color: AppColors.textHint, fontSize: 12.5),
+            style: TextStyle(color: palette.textTertiary, fontSize: 12.5),
           )
         else
           StreamBuilder<List<MomentComment>>(
             stream: service.watchComments(_moment.id),
             builder: (context, snapshot) {
               if (snapshot.hasError) {
-                return const Text(
+                return Text(
                   'Could not load comments.',
-                  style: TextStyle(color: AppColors.textHint, fontSize: 12.5),
+                  style: TextStyle(color: palette.textTertiary, fontSize: 12.5),
                 );
               }
               if (!snapshot.hasData) {
@@ -972,9 +988,9 @@ class _MomentDetailScreenState extends State<MomentDetailScreen> {
                 });
               }
               if (comments.isEmpty) {
-                return const Text(
+                return Text(
                   'Be the first to comment.',
-                  style: TextStyle(color: AppColors.textHint, fontSize: 12.5),
+                  style: TextStyle(color: palette.textTertiary, fontSize: 12.5),
                 );
               }
               return Column(
@@ -990,10 +1006,13 @@ class _MomentDetailScreenState extends State<MomentDetailScreen> {
   }
 
   Widget _composerBar() {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     return Container(
       padding: const EdgeInsets.fromLTRB(14, 8, 14, 10),
-      decoration: const BoxDecoration(
-        border: Border(top: BorderSide(color: AppColors.divider)),
+      decoration: BoxDecoration(
+        color: palette.surfaceRaised,
+        border: Border(top: BorderSide(color: palette.border)),
       ),
       child: Row(
         children: [
@@ -1007,12 +1026,12 @@ class _MomentDetailScreenState extends State<MomentDetailScreen> {
               textInputAction: TextInputAction.send,
               onSubmitted: (_) => unawaited(_send()),
               enabled: _moments != null,
-              style: const TextStyle(color: AppColors.textPrimary),
+              style: TextStyle(color: palette.textPrimary),
               decoration: InputDecoration(
                 hintText: 'Write a comment...',
-                hintStyle: const TextStyle(color: AppColors.textHint),
+                hintStyle: TextStyle(color: palette.textTertiary),
                 filled: true,
-                fillColor: AppColors.surface,
+                fillColor: palette.surfaceSunken,
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(16),
                   borderSide: BorderSide.none,
@@ -1030,14 +1049,17 @@ class _MomentDetailScreenState extends State<MomentDetailScreen> {
             onPressed: _sending || _moments == null
                 ? null
                 : () => unawaited(_send()),
-            style: IconButton.styleFrom(backgroundColor: AppColors.primary),
+            style: IconButton.styleFrom(
+              backgroundColor: colors.primary,
+              foregroundColor: colors.onPrimary,
+            ),
             icon: _sending
-                ? const SizedBox(
+                ? SizedBox(
                     width: 16,
                     height: 16,
                     child: CircularProgressIndicator(
                       strokeWidth: 2,
-                      color: AppColors.textPrimary,
+                      color: colors.onPrimary,
                     ),
                   )
                 : const Icon(Icons.send_rounded, size: 19),
@@ -1058,6 +1080,7 @@ class _Header extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return Padding(
       padding: const EdgeInsets.fromLTRB(6, 6, 6, 2),
       child: Row(
@@ -1070,19 +1093,16 @@ class _Header extends StatelessWidget {
               minimumSize: const Size(48, 48),
               tapTargetSize: MaterialTapTargetSize.padded,
             ),
-            icon: const Icon(
-              Icons.arrow_back_rounded,
-              color: AppColors.textPrimary,
-            ),
+            icon: Icon(Icons.arrow_back_rounded, color: palette.textPrimary),
           ),
-          const Expanded(
+          Expanded(
             child: Text(
               'Moment',
               textAlign: TextAlign.center,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
-                color: AppColors.textPrimary,
+                color: palette.textPrimary,
                 fontSize: 15,
                 fontWeight: FontWeight.w800,
               ),
@@ -1096,10 +1116,7 @@ class _Header extends StatelessWidget {
               minimumSize: const Size(48, 48),
               tapTargetSize: MaterialTapTargetSize.padded,
             ),
-            icon: const Icon(
-              Icons.share_outlined,
-              color: AppColors.textPrimary,
-            ),
+            icon: Icon(Icons.share_outlined, color: palette.textPrimary),
           ),
         ],
       ),
@@ -1118,6 +1135,7 @@ class _GoneState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return Center(
       key: const ValueKey('moment-detail-gone'),
       child: SingleChildScrollView(
@@ -1125,28 +1143,28 @@ class _GoneState extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(
+            Icon(
               Icons.timer_off_outlined,
               size: 34,
-              color: AppColors.textSecondary,
+              color: palette.textSecondary,
             ),
             const SizedBox(height: 14),
-            const Text(
+            Text(
               'This Moment is no longer available',
               textAlign: TextAlign.center,
               style: TextStyle(
-                color: AppColors.textPrimary,
+                color: palette.textPrimary,
                 fontSize: 18,
                 fontWeight: FontWeight.w800,
               ),
             ),
             const SizedBox(height: 8),
-            const Text(
+            Text(
               'It reached the end of its availability or was deleted by '
               'its author.',
               textAlign: TextAlign.center,
               style: TextStyle(
-                color: AppColors.textSecondary,
+                color: palette.textSecondary,
                 fontSize: 13.5,
                 height: 1.45,
               ),
@@ -1172,6 +1190,7 @@ class _CommentRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: Row(
@@ -1193,8 +1212,8 @@ class _CommentRow extends StatelessWidget {
                   children: [
                     Text(
                       comment.authorName,
-                      style: const TextStyle(
-                        color: AppColors.textPrimary,
+                      style: TextStyle(
+                        color: palette.textPrimary,
                         fontSize: 12.5,
                         fontWeight: FontWeight.w800,
                       ),
@@ -1205,8 +1224,8 @@ class _CommentRow extends StatelessWidget {
                     ),
                     Text(
                       momentRelativeAge(comment.createdAt),
-                      style: const TextStyle(
-                        color: AppColors.textHint,
+                      style: TextStyle(
+                        color: palette.textTertiary,
                         fontSize: 11,
                       ),
                     ),
@@ -1219,8 +1238,8 @@ class _CommentRow extends StatelessWidget {
                   Text(
                     'Voice reply · ${comment.durationSeconds}s'
                     '${comment.text.isNotEmpty ? ' — ${comment.text}' : ''}',
-                    style: const TextStyle(
-                      color: AppColors.textSecondary,
+                    style: TextStyle(
+                      color: palette.textSecondary,
                       fontSize: 13,
                       height: 1.4,
                     ),
@@ -1228,8 +1247,8 @@ class _CommentRow extends StatelessWidget {
                 else
                   Text(
                     comment.text,
-                    style: const TextStyle(
-                      color: AppColors.textSecondary,
+                    style: TextStyle(
+                      color: palette.textSecondary,
                       fontSize: 13,
                       height: 1.4,
                     ),
@@ -1266,14 +1285,16 @@ class _ActionChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     final tint = destructive
-        ? AppColors.error
-        : (active ? AppColors.secondary : AppColors.textSecondary);
+        ? colors.error
+        : (active ? colors.secondary : palette.textSecondary);
     return Semantics(
       button: onTap != null,
       label: semanticLabel ?? label,
       child: Material(
-        color: AppColors.surface.withValues(alpha: .55),
+        color: destructive ? palette.dangerSurface : palette.surface,
         borderRadius: BorderRadius.circular(14),
         child: InkWell(
           onTap: onTap,
@@ -1292,9 +1313,7 @@ class _ActionChip extends StatelessWidget {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
-                      color: destructive
-                          ? AppColors.error
-                          : AppColors.textSecondary,
+                      color: destructive ? colors.error : palette.textSecondary,
                       fontSize: 12.5,
                       fontWeight: FontWeight.w700,
                     ),

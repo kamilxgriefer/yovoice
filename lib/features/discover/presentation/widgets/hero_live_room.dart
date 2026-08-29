@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 
 class HeroLiveRoom extends StatefulWidget {
@@ -18,8 +19,6 @@ class _HeroLiveRoomState extends State<HeroLiveRoom>
   static const Color _purple = Color(0xFF9D20FF);
   static const Color _pink = Color(0xFFFF3F8E);
   static const Color _red = Color(0xFFFF416C);
-  static const Color _muted = Color(0xFFC9BDD5);
-
   late final AnimationController _animationController;
 
   @override
@@ -116,6 +115,41 @@ class _HeroLiveRoomState extends State<HeroLiveRoom>
   Widget build(BuildContext context) {
     final room = widget.room;
     final accent = _accent;
+    final palette = context.appPalette;
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final largeText = MediaQuery.textScalerOf(context).scale(1) > 1.4;
+    final occupancyStatus = Text(
+      _occupancyLabel,
+      style: TextStyle(
+        color: _occupancy != null && _occupancy! >= 0.9
+            ? Theme.of(context).colorScheme.error
+            : palette.textSecondary,
+        fontSize: 11,
+        fontWeight: FontWeight.w700,
+      ),
+    );
+    final joinButton = FilledButton.icon(
+      onPressed: widget.onJoin,
+      style: FilledButton.styleFrom(
+        backgroundColor: accent,
+        foregroundColor: _foregroundForAccent(accent),
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 13),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        elevation: 0,
+      ),
+      icon: Icon(
+        room.isBroadcast ? Icons.headphones_rounded : Icons.login_rounded,
+        size: 18,
+      ),
+      label: const Text(
+        'JOIN ROOM',
+        style: TextStyle(
+          fontSize: 11,
+          fontWeight: FontWeight.w900,
+          letterSpacing: 0.7,
+        ),
+      ),
+    );
 
     return AnimatedBuilder(
       animation: _animationController,
@@ -124,6 +158,7 @@ class _HeroLiveRoomState extends State<HeroLiveRoom>
         final pulse = 0.5 + math.sin(animationValue * math.pi * 2) * 0.5;
 
         return Container(
+          key: ValueKey('discover-hero-${room.id}'),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(30),
             boxShadow: [
@@ -146,11 +181,17 @@ class _HeroLiveRoomState extends State<HeroLiveRoom>
                   gradient: LinearGradient(
                     begin: Alignment.topLeft,
                     end: Alignment.bottomRight,
-                    colors: [
-                      Color.lerp(const Color(0xFF39164D), accent, 0.17)!,
-                      const Color(0xFF1B1028),
-                      const Color(0xFF100A19),
-                    ],
+                    colors: dark
+                        ? [
+                            Color.lerp(const Color(0xFF39164D), accent, 0.17)!,
+                            const Color(0xFF1B1028),
+                            const Color(0xFF100A19),
+                          ]
+                        : [
+                            Color.lerp(palette.surfaceRaised, accent, .08)!,
+                            palette.surface,
+                            palette.surfaceRaised,
+                          ],
                     stops: const [0, 0.5, 1],
                   ),
                   border: Border.all(color: accent.withValues(alpha: 0.7)),
@@ -178,6 +219,7 @@ class _HeroLiveRoomState extends State<HeroLiveRoom>
                         child: CustomPaint(
                           painter: _HeroPatternPainter(
                             accent: accent,
+                            dotColor: palette.textPrimary,
                             animationValue: animationValue,
                           ),
                         ),
@@ -230,8 +272,8 @@ class _HeroLiveRoomState extends State<HeroLiveRoom>
                                       room.name,
                                       maxLines: 2,
                                       overflow: TextOverflow.ellipsis,
-                                      style: const TextStyle(
-                                        color: Colors.white,
+                                      style: TextStyle(
+                                        color: palette.textPrimary,
                                         fontSize: 24,
                                         height: 1.08,
                                         fontWeight: FontWeight.w900,
@@ -245,8 +287,8 @@ class _HeroLiveRoomState extends State<HeroLiveRoom>
                                           : room.description,
                                       maxLines: 2,
                                       overflow: TextOverflow.ellipsis,
-                                      style: const TextStyle(
-                                        color: _muted,
+                                      style: TextStyle(
+                                        color: palette.textSecondary,
                                         fontSize: 13,
                                         height: 1.42,
                                         fontWeight: FontWeight.w500,
@@ -292,9 +334,7 @@ class _HeroLiveRoomState extends State<HeroLiveRoom>
                                     child: LinearProgressIndicator(
                                       value: _occupancy,
                                       minHeight: 5,
-                                      backgroundColor: Colors.white.withValues(
-                                        alpha: 0.09,
-                                      ),
+                                      backgroundColor: palette.surfaceSunken,
                                       color: _occupancy! >= 0.9 ? _red : accent,
                                     ),
                                   ),
@@ -302,8 +342,8 @@ class _HeroLiveRoomState extends State<HeroLiveRoom>
                                 const SizedBox(width: 11),
                                 Text(
                                   '${room.participantCount}/${room.maxParticipants}',
-                                  style: const TextStyle(
-                                    color: Colors.white,
+                                  style: TextStyle(
+                                    color: palette.textPrimary,
                                     fontSize: 11,
                                     fontWeight: FontWeight.w800,
                                   ),
@@ -312,52 +352,22 @@ class _HeroLiveRoomState extends State<HeroLiveRoom>
                             ),
                           ],
                           const SizedBox(height: 11),
-                          Row(
-                            children: [
-                              Expanded(
-                                child: Text(
-                                  _occupancyLabel,
-                                  style: TextStyle(
-                                    color:
-                                        _occupancy != null && _occupancy! >= 0.9
-                                        ? const Color(0xFFFF829D)
-                                        : _muted,
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                                ),
-                              ),
-                              FilledButton.icon(
-                                onPressed: widget.onJoin,
-                                style: FilledButton.styleFrom(
-                                  backgroundColor: accent,
-                                  foregroundColor: Colors.white,
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 18,
-                                    vertical: 13,
-                                  ),
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(16),
-                                  ),
-                                  elevation: 0,
-                                ),
-                                icon: Icon(
-                                  room.isBroadcast
-                                      ? Icons.headphones_rounded
-                                      : Icons.login_rounded,
-                                  size: 18,
-                                ),
-                                label: const Text(
-                                  'JOIN ROOM',
-                                  style: TextStyle(
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.w900,
-                                    letterSpacing: 0.7,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
+                          if (largeText)
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                occupancyStatus,
+                                const SizedBox(height: 11),
+                                joinButton,
+                              ],
+                            )
+                          else
+                            Row(
+                              children: [
+                                Expanded(child: occupancyStatus),
+                                joinButton,
+                              ],
+                            ),
                         ],
                       ),
                     ),
@@ -425,6 +435,8 @@ class _RoomArtwork extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final imageUrl = room.imageUrl?.trim();
+    final palette = context.appPalette;
+    final dark = Theme.of(context).brightness == Brightness.dark;
 
     return Container(
       width: 82,
@@ -435,10 +447,12 @@ class _RoomArtwork extends StatelessWidget {
         gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [
-            accent.withValues(alpha: 0.42),
-            accent.withValues(alpha: 0.12),
-          ],
+          colors: dark
+              ? [accent.withValues(alpha: 0.42), accent.withValues(alpha: 0.12)]
+              : [
+                  Color.lerp(palette.surfaceRaised, accent, .22)!,
+                  Color.lerp(palette.surface, accent, .07)!,
+                ],
         ),
         border: Border.all(color: accent.withValues(alpha: 0.82)),
         boxShadow: [
@@ -453,24 +467,25 @@ class _RoomArtwork extends StatelessWidget {
               imageUrl,
               fit: BoxFit.cover,
               errorBuilder: (_, __, ___) {
-                return _RoomArtworkFallback(room: room);
+                return _RoomArtworkFallback(room: room, accent: accent);
               },
             )
-          : _RoomArtworkFallback(room: room),
+          : _RoomArtworkFallback(room: room, accent: accent),
     );
   }
 }
 
 class _RoomArtworkFallback extends StatelessWidget {
-  const _RoomArtworkFallback({required this.room});
+  const _RoomArtworkFallback({required this.room, required this.accent});
 
   final VoiceRoom room;
+  final Color accent;
 
   @override
   Widget build(BuildContext context) {
     return Icon(
       room.isBroadcast ? Icons.podcasts_rounded : Icons.graphic_eq_rounded,
-      color: Colors.white,
+      color: _foregroundForAccent(accent),
       size: 39,
     );
   }
@@ -484,17 +499,18 @@ class _HeroInfoChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
       decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.075),
+        color: palette.surfaceMuted,
         borderRadius: BorderRadius.circular(30),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.09)),
+        border: Border.all(color: palette.border),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, color: _HeroLiveRoomState._muted, size: 14),
+          Icon(icon, color: palette.textSecondary, size: 14),
           const SizedBox(width: 6),
           ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 135),
@@ -502,8 +518,8 @@ class _HeroInfoChip extends StatelessWidget {
               label,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: Colors.white,
+              style: TextStyle(
+                color: palette.textPrimary,
                 fontSize: 10,
                 fontWeight: FontWeight.w700,
               ),
@@ -523,6 +539,7 @@ class _HostAndSpeakersPreview extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     final visiblePeople = math.min(math.max(room.participantCount, 1), 4);
 
     return Row(
@@ -554,8 +571,8 @@ class _HostAndSpeakersPreview extends StatelessWidget {
                 room.hostName,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: Colors.white,
+                style: TextStyle(
+                  color: palette.textPrimary,
                   fontSize: 11,
                   fontWeight: FontWeight.w800,
                 ),
@@ -567,8 +584,8 @@ class _HostAndSpeakersPreview extends StatelessWidget {
                     : 'Host and active speakers',
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: _HeroLiveRoomState._muted,
+                style: TextStyle(
+                  color: palette.textSecondary,
                   fontSize: 10,
                   fontWeight: FontWeight.w600,
                 ),
@@ -603,6 +620,7 @@ class _HostAvatar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     final normalizedUrl = photoUrl?.trim();
     final initial = hostName.trim().isEmpty
         ? 'Y'
@@ -616,7 +634,7 @@ class _HostAvatar extends StatelessWidget {
       decoration: BoxDecoration(
         shape: BoxShape.circle,
         color: accent.withValues(alpha: 0.28),
-        border: Border.all(color: const Color(0xFF160D20), width: 2),
+        border: Border.all(color: palette.surface, width: 2),
       ),
       child: normalizedUrl != null && normalizedUrl.isNotEmpty
           ? Image.network(
@@ -627,8 +645,8 @@ class _HostAvatar extends StatelessWidget {
               errorBuilder: (_, __, ___) {
                 return Text(
                   initial,
-                  style: const TextStyle(
-                    color: Colors.white,
+                  style: TextStyle(
+                    color: palette.textPrimary,
                     fontSize: 11,
                     fontWeight: FontWeight.w900,
                   ),
@@ -637,8 +655,8 @@ class _HostAvatar extends StatelessWidget {
             )
           : Text(
               initial,
-              style: const TextStyle(
-                color: Colors.white,
+              style: TextStyle(
+                color: palette.textPrimary,
                 fontSize: 11,
                 fontWeight: FontWeight.w900,
               ),
@@ -655,18 +673,19 @@ class _SpeakerPlaceholder extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return Container(
       width: 36,
       height: 36,
       alignment: Alignment.center,
       decoration: BoxDecoration(
         shape: BoxShape.circle,
-        color: Color.lerp(accent, const Color(0xFF22152E), index * 0.17),
-        border: Border.all(color: const Color(0xFF160D20), width: 2),
+        color: Color.lerp(accent, palette.surfaceRaised, index * 0.17),
+        border: Border.all(color: palette.surface, width: 2),
       ),
       child: Icon(
         index.isEven ? Icons.graphic_eq_rounded : Icons.person_rounded,
-        color: Colors.white,
+        color: palette.textPrimary,
         size: 16,
       ),
     );
@@ -695,10 +714,12 @@ class _GlowOrb extends StatelessWidget {
 class _HeroPatternPainter extends CustomPainter {
   const _HeroPatternPainter({
     required this.accent,
+    required this.dotColor,
     required this.animationValue,
   });
 
   final Color accent;
+  final Color dotColor;
   final double animationValue;
 
   @override
@@ -708,7 +729,7 @@ class _HeroPatternPainter extends CustomPainter {
       ..style = PaintingStyle.stroke;
 
     final dotPaint = Paint()
-      ..color = Colors.white.withValues(alpha: 0.1)
+      ..color = dotColor.withValues(alpha: 0.1)
       ..style = PaintingStyle.fill;
 
     final center = Offset(size.width * 0.88, size.height * 0.24);
@@ -740,6 +761,13 @@ class _HeroPatternPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant _HeroPatternPainter oldDelegate) {
     return oldDelegate.animationValue != animationValue ||
-        oldDelegate.accent != accent;
+        oldDelegate.accent != accent ||
+        oldDelegate.dotColor != dotColor;
   }
+}
+
+Color _foregroundForAccent(Color accent) {
+  return accent.computeLuminance() > .52
+      ? const Color(0xFF211629)
+      : Colors.white;
 }

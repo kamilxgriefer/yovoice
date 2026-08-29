@@ -8,6 +8,7 @@ import 'package:share_plus/share_plus.dart';
 
 import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_gradients.dart';
+import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/home/data/services/home_feed_service.dart';
 import 'package:yovoice/features/moderation/data/services/content_report_service.dart';
 import 'package:yovoice/features/moderation/presentation/report_content_flow.dart';
@@ -651,30 +652,37 @@ class _MomentsFeedViewState extends State<MomentsFeedView> {
     final messenger = ScaffoldMessenger.maybeOf(context);
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        backgroundColor: AppColors.surfaceLight,
-        title: const Text(
-          'Delete this moment?',
-          style: TextStyle(color: AppColors.textPrimary),
-        ),
-        content: const Text(
-          'This cannot be undone.',
-          style: TextStyle(color: AppColors.textSecondary),
-        ),
-        actions: [
-          TextButton(
-            key: const ValueKey('moment-delete-cancel'),
-            onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: const Text('Cancel'),
+      builder: (dialogContext) {
+        final palette = dialogContext.appPalette;
+        final colors = Theme.of(dialogContext).colorScheme;
+        return AlertDialog(
+          backgroundColor: palette.surfaceRaised,
+          title: Text(
+            'Delete this moment?',
+            style: TextStyle(color: palette.textPrimary),
           ),
-          FilledButton(
-            key: const ValueKey('moment-delete-confirm'),
-            style: FilledButton.styleFrom(backgroundColor: AppColors.error),
-            onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: const Text('Delete'),
+          content: Text(
+            'This cannot be undone.',
+            style: TextStyle(color: palette.textSecondary),
           ),
-        ],
-      ),
+          actions: [
+            TextButton(
+              key: const ValueKey('moment-delete-cancel'),
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              key: const ValueKey('moment-delete-confirm'),
+              style: FilledButton.styleFrom(
+                backgroundColor: colors.error,
+                foregroundColor: colors.onError,
+              ),
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: const Text('Delete'),
+            ),
+          ],
+        );
+      },
     );
     if (confirmed != true || !mounted) return;
 
@@ -884,6 +892,7 @@ class _MomentsFeedViewState extends State<MomentsFeedView> {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return LayoutBuilder(
       builder: (context, constraints) {
         final width = constraints.maxWidth;
@@ -891,7 +900,8 @@ class _MomentsFeedViewState extends State<MomentsFeedView> {
         final compact = width < _tabletWidth;
 
         return Container(
-          color: AppColors.background,
+          key: const ValueKey('moments-feed-view'),
+          color: palette.background,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
@@ -1150,6 +1160,7 @@ class _FilterChips extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return Padding(
       padding: EdgeInsets.fromLTRB(compact ? 16 : 24, 2, compact ? 8 : 16, 8),
       child: Row(
@@ -1179,10 +1190,7 @@ class _FilterChips extends StatelessWidget {
             focusNode: recoveryFocusNode,
             onPressed: onRefresh,
             tooltip: 'Reload Moments',
-            icon: const Icon(
-              Icons.refresh_rounded,
-              color: AppColors.textSecondary,
-            ),
+            icon: Icon(Icons.refresh_rounded, color: palette.textSecondary),
           ),
         ],
       ),
@@ -1206,14 +1214,14 @@ class _FilterChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     return Semantics(
       button: true,
       selected: selected,
       label: label,
       child: Material(
-        color: selected
-            ? AppColors.primary
-            : AppColors.surface.withValues(alpha: .55),
+        color: selected ? colors.primary : palette.surfaceMuted,
         // Full pills, matching the mockup's chip grammar.
         borderRadius: BorderRadius.circular(999),
         child: InkWell(
@@ -1228,9 +1236,7 @@ class _FilterChip extends StatelessWidget {
                 Icon(
                   icon,
                   size: 17,
-                  color: selected
-                      ? AppColors.textPrimary
-                      : AppColors.textSecondary,
+                  color: selected ? colors.onPrimary : palette.textSecondary,
                 ),
                 const SizedBox(width: 7),
                 Text(
@@ -1238,9 +1244,7 @@ class _FilterChip extends StatelessWidget {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    color: selected
-                        ? AppColors.textPrimary
-                        : AppColors.textSecondary,
+                    color: selected ? colors.onPrimary : palette.textSecondary,
                     fontSize: 13,
                     fontWeight: FontWeight.w700,
                   ),
@@ -1421,6 +1425,8 @@ class _ChainCircle extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     final label = chain.length > 1
         ? '${chain.authorName}, ${chain.length} Moments'
         : chain.authorName;
@@ -1449,13 +1455,13 @@ class _ChainCircle extends StatelessWidget {
                       gradient: unviewed ? AppGradients.primary : null,
                       border: unviewed
                           ? null
-                          : Border.all(color: AppColors.border, width: 1.4),
+                          : Border.all(color: palette.border, width: 1.4),
                     ),
                     child: Container(
                       padding: const EdgeInsets.all(2),
-                      decoration: const BoxDecoration(
+                      decoration: BoxDecoration(
                         shape: BoxShape.circle,
-                        color: AppColors.background,
+                        color: palette.background,
                       ),
                       child: Opacity(
                         opacity: unviewed ? 1 : .6,
@@ -1478,16 +1484,16 @@ class _ChainCircle extends StatelessWidget {
                         ),
                         decoration: BoxDecoration(
                           borderRadius: BorderRadius.circular(999),
-                          color: AppColors.primary,
+                          color: colors.primary,
                           border: Border.all(
-                            color: AppColors.background,
+                            color: palette.background,
                             width: 2,
                           ),
                         ),
                         child: Text(
                           '${chain.length}',
-                          style: const TextStyle(
-                            color: AppColors.textPrimary,
+                          style: TextStyle(
+                            color: colors.onPrimary,
                             fontSize: 10.5,
                             fontWeight: FontWeight.w800,
                           ),
@@ -1503,9 +1509,7 @@ class _ChainCircle extends StatelessWidget {
                 overflow: TextOverflow.ellipsis,
                 textAlign: TextAlign.center,
                 style: TextStyle(
-                  color: unviewed
-                      ? AppColors.textPrimary
-                      : AppColors.textSecondary,
+                  color: unviewed ? palette.textPrimary : palette.textSecondary,
                   fontSize: 11,
                   fontWeight: FontWeight.w700,
                 ),
@@ -1540,6 +1544,9 @@ class _FeaturedCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     final age = momentRelativeAge(moment.createdAt);
     final expiry = momentExpiryLabel(moment.expiresAt);
     return Semantics(
@@ -1553,8 +1560,8 @@ class _FeaturedCard extends StatelessWidget {
           clipBehavior: Clip.antiAlias,
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(20),
-            color: AppColors.surface.withValues(alpha: .6),
-            border: Border.all(color: AppColors.primary.withValues(alpha: .35)),
+            color: palette.surface,
+            border: Border.all(color: colors.primary.withValues(alpha: .35)),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -1572,9 +1579,17 @@ class _FeaturedCard extends StatelessWidget {
                           begin: Alignment.topLeft,
                           end: Alignment.bottomRight,
                           colors: [
-                            AppColors.primary.withValues(alpha: .55),
-                            AppColors.secondary.withValues(alpha: .3),
-                            AppColors.surface,
+                            Color.lerp(
+                              palette.surface,
+                              colors.primary,
+                              isDark ? .55 : .16,
+                            )!,
+                            Color.lerp(
+                              palette.surface,
+                              colors.secondary,
+                              isDark ? .3 : .1,
+                            )!,
+                            palette.surface,
                           ],
                         ),
                       ),
@@ -1590,19 +1605,19 @@ class _FeaturedCard extends StatelessWidget {
                         button: true,
                         label: 'Play this featured Moment',
                         child: Material(
-                          color: AppColors.primary,
+                          color: colors.primary,
                           shape: const CircleBorder(),
                           child: InkWell(
                             key: ValueKey('moment-featured-play-${moment.id}'),
                             onTap: onPlay,
                             customBorder: const CircleBorder(),
-                            child: const SizedBox(
+                            child: SizedBox(
                               width: 44,
                               height: 44,
                               child: Icon(
                                 Icons.play_arrow_rounded,
                                 size: 26,
-                                color: AppColors.textPrimary,
+                                color: colors.onPrimary,
                               ),
                             ),
                           ),
@@ -1646,8 +1661,8 @@ class _FeaturedCard extends StatelessWidget {
                           : moment.caption,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: AppColors.textPrimary,
+                      style: TextStyle(
+                        color: palette.textPrimary,
                         fontSize: 13,
                         fontWeight: FontWeight.w700,
                       ),
@@ -1657,8 +1672,8 @@ class _FeaturedCard extends StatelessWidget {
                       moment.authorName,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: AppColors.textSecondary,
+                      style: TextStyle(
+                        color: palette.textSecondary,
                         fontSize: 11.5,
                         fontWeight: FontWeight.w600,
                       ),
@@ -1675,8 +1690,8 @@ class _FeaturedCard extends StatelessWidget {
                           const SizedBox(width: 3),
                           Text(
                             '${moment.likeCount}',
-                            style: const TextStyle(
-                              color: AppColors.textSecondary,
+                            style: TextStyle(
+                              color: palette.textSecondary,
                               fontSize: 11,
                               fontWeight: FontWeight.w700,
                             ),
@@ -1684,16 +1699,16 @@ class _FeaturedCard extends StatelessWidget {
                           const SizedBox(width: 8),
                         ],
                         if (moment.commentCount > 0) ...[
-                          const Icon(
+                          Icon(
                             Icons.mode_comment_rounded,
                             size: 11,
-                            color: AppColors.textSecondary,
+                            color: palette.textSecondary,
                           ),
                           const SizedBox(width: 3),
                           Text(
                             '${moment.commentCount}',
-                            style: const TextStyle(
-                              color: AppColors.textSecondary,
+                            style: TextStyle(
+                              color: palette.textSecondary,
                               fontSize: 11,
                               fontWeight: FontWeight.w700,
                             ),
@@ -1716,8 +1731,10 @@ class _FeaturedCard extends StatelessWidget {
                             textAlign: TextAlign.right,
                             style: TextStyle(
                               color: expiry != null
-                                  ? AppColors.warning
-                                  : AppColors.textHint,
+                                  ? (isDark
+                                        ? AppColors.warning
+                                        : const Color(0xFF8A4B00))
+                                  : palette.textTertiary,
                               fontSize: 11,
                               fontWeight: expiry != null
                                   ? FontWeight.w700
@@ -1768,6 +1785,9 @@ class _MomentRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     final age = momentRelativeAge(moment.createdAt);
     // The author sees their Moment's real availability — including
     // "Stays until deleted" for a permanent one. Everyone else sees a
@@ -1785,8 +1805,8 @@ class _MomentRow extends StatelessWidget {
             '${_uploading ? ', still uploading' : ''}',
         child: Material(
           color: selected
-              ? AppColors.primary.withValues(alpha: .16)
-              : AppColors.surface.withValues(alpha: .5),
+              ? colors.primary.withValues(alpha: isDark ? .16 : .1)
+              : palette.surface,
           borderRadius: BorderRadius.circular(18),
           child: InkWell(
             onTap: onTap,
@@ -1797,8 +1817,8 @@ class _MomentRow extends StatelessWidget {
                 borderRadius: BorderRadius.circular(18),
                 border: Border.all(
                   color: selected
-                      ? AppColors.primary.withValues(alpha: .55)
-                      : AppColors.border.withValues(alpha: .45),
+                      ? colors.primary.withValues(alpha: .55)
+                      : palette.border,
                 ),
               ),
               child: Row(
@@ -1816,13 +1836,14 @@ class _MomentRow extends StatelessWidget {
                         ? 'Still uploading'
                         : 'Play this Moment',
                     style: IconButton.styleFrom(
-                      backgroundColor: AppColors.primary.withValues(
+                      backgroundColor: colors.primary.withValues(
                         alpha: _uploading ? .25 : 1,
                       ),
+                      foregroundColor: colors.onPrimary,
                     ),
-                    icon: const Icon(
+                    icon: Icon(
                       Icons.play_arrow_rounded,
-                      color: AppColors.textPrimary,
+                      color: colors.onPrimary,
                       size: 22,
                     ),
                   ),
@@ -1849,8 +1870,8 @@ class _MomentRow extends StatelessWidget {
                                   : moment.caption,
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                color: AppColors.textPrimary,
+                              style: TextStyle(
+                                color: palette.textPrimary,
                                 fontSize: 13.5,
                                 fontWeight: FontWeight.w700,
                               ),
@@ -1873,8 +1894,8 @@ class _MomentRow extends StatelessWidget {
                                     moment.authorName,
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
-                                      color: AppColors.textSecondary,
+                                    style: TextStyle(
+                                      color: palette.textSecondary,
                                       fontSize: 11.5,
                                       fontWeight: FontWeight.w700,
                                     ),
@@ -1888,10 +1909,10 @@ class _MomentRow extends StatelessWidget {
                               ],
                             ),
                             if (_uploading)
-                              const Text(
+                              Text(
                                 'Uploading…',
                                 style: TextStyle(
-                                  color: AppColors.textHint,
+                                  color: palette.textTertiary,
                                   fontSize: 11.5,
                                 ),
                               )
@@ -1902,8 +1923,10 @@ class _MomentRow extends StatelessWidget {
                                   // A permanent Moment's label is a calm
                                   // fact, not a warning-coloured countdown.
                                   color: permanent
-                                      ? AppColors.textHint
-                                      : AppColors.warning,
+                                      ? palette.textTertiary
+                                      : (isDark
+                                            ? AppColors.warning
+                                            : const Color(0xFF8A4B00)),
                                   fontSize: 11.5,
                                   fontWeight: FontWeight.w700,
                                 ),
@@ -1931,8 +1954,8 @@ class _MomentRow extends StatelessWidget {
                             moment.durationLabel,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: AppColors.textHint,
+                            style: TextStyle(
+                              color: palette.textTertiary,
                               fontSize: 11,
                             ),
                           ),
@@ -1941,8 +1964,8 @@ class _MomentRow extends StatelessWidget {
                             age,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: AppColors.textHint,
+                            style: TextStyle(
+                              color: palette.textTertiary,
                               fontSize: 11,
                             ),
                           ),
@@ -1960,8 +1983,8 @@ class _MomentRow extends StatelessWidget {
                                 const SizedBox(width: 3),
                                 Text(
                                   '${moment.likeCount}',
-                                  style: const TextStyle(
-                                    color: AppColors.textSecondary,
+                                  style: TextStyle(
+                                    color: palette.textSecondary,
                                     fontSize: 11.5,
                                     fontWeight: FontWeight.w700,
                                   ),
@@ -1975,16 +1998,16 @@ class _MomentRow extends StatelessWidget {
                             child: Row(
                               mainAxisSize: MainAxisSize.min,
                               children: [
-                                const Icon(
+                                Icon(
                                   Icons.mode_comment_rounded,
                                   size: 11,
-                                  color: AppColors.textSecondary,
+                                  color: palette.textSecondary,
                                 ),
                                 const SizedBox(width: 3),
                                 Text(
                                   '${moment.commentCount}',
-                                  style: const TextStyle(
-                                    color: AppColors.textSecondary,
+                                  style: TextStyle(
+                                    color: palette.textSecondary,
                                     fontSize: 11.5,
                                     fontWeight: FontWeight.w700,
                                   ),
@@ -1998,11 +2021,11 @@ class _MomentRow extends StatelessWidget {
                   PopupMenuButton<String>(
                     key: ValueKey('moment-row-menu-${moment.id}'),
                     tooltip: 'More',
-                    color: AppColors.surfaceLight,
-                    icon: const Icon(
+                    color: palette.surfaceRaised,
+                    icon: Icon(
                       Icons.more_vert_rounded,
                       size: 20,
-                      color: AppColors.textSecondary,
+                      color: palette.textSecondary,
                     ),
                     onSelected: (value) {
                       if (value == 'details') onOpenDetail();
@@ -2016,19 +2039,19 @@ class _MomentRow extends StatelessWidget {
                       // would tell an author mid-upload their brand-new
                       // Moment was deleted.
                       if (!_uploading)
-                        const PopupMenuItem<String>(
+                        PopupMenuItem<String>(
                           value: 'details',
                           child: Row(
                             children: [
                               Icon(
                                 Icons.info_outline_rounded,
                                 size: 18,
-                                color: AppColors.textSecondary,
+                                color: palette.textSecondary,
                               ),
-                              SizedBox(width: 8),
+                              const SizedBox(width: 8),
                               Text(
                                 'Details',
-                                style: TextStyle(color: AppColors.textPrimary),
+                                style: TextStyle(color: palette.textPrimary),
                               ),
                             ],
                           ),
@@ -2041,17 +2064,17 @@ class _MomentRow extends StatelessWidget {
                         PopupMenuItem<String>(
                           key: ValueKey('moment-row-delete-${moment.id}'),
                           value: 'delete',
-                          child: const Row(
+                          child: Row(
                             children: [
                               Icon(
                                 Icons.delete_outline_rounded,
                                 size: 18,
-                                color: AppColors.error,
+                                color: colors.error,
                               ),
-                              SizedBox(width: 8),
+                              const SizedBox(width: 8),
                               Text(
                                 'Delete',
-                                style: TextStyle(color: AppColors.error),
+                                style: TextStyle(color: colors.error),
                               ),
                             ],
                           ),
@@ -2060,17 +2083,17 @@ class _MomentRow extends StatelessWidget {
                         PopupMenuItem<String>(
                           key: ValueKey('moment-row-report-${moment.id}'),
                           value: 'report',
-                          child: const Row(
+                          child: Row(
                             children: [
                               Icon(
                                 Icons.flag_outlined,
                                 size: 18,
-                                color: AppColors.textSecondary,
+                                color: palette.textSecondary,
                               ),
-                              SizedBox(width: 8),
+                              const SizedBox(width: 8),
                               Text(
                                 'Report',
-                                style: TextStyle(color: AppColors.textPrimary),
+                                style: TextStyle(color: palette.textPrimary),
                               ),
                             ],
                           ),
@@ -2098,6 +2121,7 @@ class _PoolFooter extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     final noun = total == 1 ? 'Moment' : 'Moments';
     return Text(
       moreExists
@@ -2107,11 +2131,7 @@ class _PoolFooter extends StatelessWidget {
                 ? 'That is the only live Moment right now.'
                 : 'That is all $total live Moments right now.'),
       textAlign: TextAlign.center,
-      style: const TextStyle(
-        color: AppColors.textHint,
-        fontSize: 12,
-        height: 1.4,
-      ),
+      style: TextStyle(color: palette.textTertiary, fontSize: 12, height: 1.4),
     );
   }
 }
@@ -2127,12 +2147,13 @@ class _SectionTitle extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     final title = Text(
       text,
       maxLines: 1,
       overflow: TextOverflow.ellipsis,
-      style: const TextStyle(
-        color: AppColors.textPrimary,
+      style: TextStyle(
+        color: palette.textPrimary,
         fontSize: 16,
         fontWeight: FontWeight.w800,
       ),
@@ -2247,6 +2268,9 @@ class _MomentDetailPanelState extends State<MomentDetailPanel> {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     final moment = widget.moment;
     final age = momentRelativeAge(moment.createdAt);
     // The author sees the availability fact even for a permanent Moment
@@ -2265,8 +2289,8 @@ class _MomentDetailPanelState extends State<MomentDetailPanel> {
 
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: AppColors.surface.withValues(alpha: .45),
-        border: const Border(left: BorderSide(color: AppColors.divider)),
+        color: palette.surface,
+        border: Border(left: BorderSide(color: palette.border)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -2307,8 +2331,8 @@ class _MomentDetailPanelState extends State<MomentDetailPanel> {
                                     moment.authorName,
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
-                                      color: AppColors.textPrimary,
+                                    style: TextStyle(
+                                      color: palette.textPrimary,
                                       fontSize: 15.5,
                                       fontWeight: FontWeight.w800,
                                     ),
@@ -2325,8 +2349,8 @@ class _MomentDetailPanelState extends State<MomentDetailPanel> {
                                 if (age.isNotEmpty)
                                   Text(
                                     age,
-                                    style: const TextStyle(
-                                      color: AppColors.textSecondary,
+                                    style: TextStyle(
+                                      color: palette.textSecondary,
                                       fontSize: 12,
                                     ),
                                   ),
@@ -2338,8 +2362,10 @@ class _MomentDetailPanelState extends State<MomentDetailPanel> {
                                       // A permanent Moment's label is a
                                       // calm fact, not a countdown.
                                       color: moment.isPermanent
-                                          ? AppColors.textHint
-                                          : AppColors.warning,
+                                          ? palette.textTertiary
+                                          : (isDark
+                                                ? AppColors.warning
+                                                : const Color(0xFF8A4B00)),
                                       fontSize: 12,
                                       fontWeight: FontWeight.w700,
                                     ),
@@ -2357,8 +2383,8 @@ class _MomentDetailPanelState extends State<MomentDetailPanel> {
                       moment.caption,
                       maxLines: 8,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: AppColors.textPrimary,
+                      style: TextStyle(
+                        color: palette.textPrimary,
                         fontSize: 14.5,
                         height: 1.42,
                       ),
@@ -2368,10 +2394,7 @@ class _MomentDetailPanelState extends State<MomentDetailPanel> {
                     const SizedBox(height: 8),
                     Text(
                       widget.playbackError!,
-                      style: const TextStyle(
-                        color: AppColors.error,
-                        fontSize: 12.5,
-                      ),
+                      style: TextStyle(color: colors.error, fontSize: 12.5),
                     ),
                   ],
                   const SizedBox(height: 12),
@@ -2383,7 +2406,7 @@ class _MomentDetailPanelState extends State<MomentDetailPanel> {
                             ? 'Pause this Moment'
                             : 'Play this Moment',
                         child: Material(
-                          color: AppColors.primary,
+                          color: colors.primary,
                           shape: const CircleBorder(),
                           child: InkWell(
                             key: const ValueKey('detail-play-toggle'),
@@ -2396,7 +2419,7 @@ class _MomentDetailPanelState extends State<MomentDetailPanel> {
                                 widget.isPlaying
                                     ? Icons.pause_rounded
                                     : Icons.play_arrow_rounded,
-                                color: AppColors.textPrimary,
+                                color: colors.onPrimary,
                                 size: 30,
                               ),
                             ),
@@ -2443,8 +2466,8 @@ class _MomentDetailPanelState extends State<MomentDetailPanel> {
                                   ? '${_clock(widget.elapsed.inSeconds)} / '
                                         '${_clock(totalSeconds)}'
                                   : '',
-                              style: const TextStyle(
-                                color: AppColors.textHint,
+                              style: TextStyle(
+                                color: palette.textTertiary,
                                 fontSize: 12,
                                 fontWeight: FontWeight.w700,
                               ),
@@ -2465,15 +2488,15 @@ class _MomentDetailPanelState extends State<MomentDetailPanel> {
                     onDelete: widget.onDelete,
                   ),
                   const SizedBox(height: 16),
-                  const Divider(color: AppColors.divider, height: 1),
+                  Divider(color: palette.border, height: 1),
                   const SizedBox(height: 12),
                   Row(
                     children: [
-                      const Expanded(
+                      Expanded(
                         child: Text(
                           'Comments',
                           style: TextStyle(
-                            color: AppColors.textPrimary,
+                            color: palette.textPrimary,
                             fontSize: 14,
                             fontWeight: FontWeight.w800,
                           ),
@@ -2505,8 +2528,9 @@ class _MomentDetailPanelState extends State<MomentDetailPanel> {
           ),
           Container(
             padding: const EdgeInsets.fromLTRB(14, 8, 14, 12),
-            decoration: const BoxDecoration(
-              border: Border(top: BorderSide(color: AppColors.divider)),
+            decoration: BoxDecoration(
+              color: palette.surfaceRaised,
+              border: Border(top: BorderSide(color: palette.border)),
             ),
             child: Row(
               children: [
@@ -2519,12 +2543,12 @@ class _MomentDetailPanelState extends State<MomentDetailPanel> {
                     textInputAction: TextInputAction.send,
                     onSubmitted: (_) => unawaited(_send()),
                     enabled: widget.momentService != null,
-                    style: const TextStyle(color: AppColors.textPrimary),
+                    style: TextStyle(color: palette.textPrimary),
                     decoration: InputDecoration(
                       hintText: 'Write a comment...',
-                      hintStyle: const TextStyle(color: AppColors.textHint),
+                      hintStyle: TextStyle(color: palette.textTertiary),
                       filled: true,
-                      fillColor: AppColors.background,
+                      fillColor: palette.surfaceSunken,
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(16),
                         borderSide: BorderSide.none,
@@ -2543,15 +2567,16 @@ class _MomentDetailPanelState extends State<MomentDetailPanel> {
                       ? null
                       : _send,
                   style: IconButton.styleFrom(
-                    backgroundColor: AppColors.primary,
+                    backgroundColor: colors.primary,
+                    foregroundColor: colors.onPrimary,
                   ),
                   icon: _sending
-                      ? const SizedBox(
+                      ? SizedBox(
                           width: 16,
                           height: 16,
                           child: CircularProgressIndicator(
                             strokeWidth: 2,
-                            color: AppColors.textPrimary,
+                            color: colors.onPrimary,
                           ),
                         )
                       : const Icon(Icons.send_rounded, size: 19),
@@ -2693,14 +2718,16 @@ class _SmallChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     final tint = destructive
-        ? AppColors.error
-        : (active ? AppColors.secondary : AppColors.textSecondary);
+        ? colors.error
+        : (active ? AppColors.secondary : palette.textSecondary);
     return Semantics(
       button: onTap != null,
       label: semanticLabel ?? label,
       child: Material(
-        color: AppColors.surface.withValues(alpha: .55),
+        color: destructive ? palette.dangerSurface : palette.surfaceMuted,
         borderRadius: BorderRadius.circular(14),
         child: InkWell(
           onTap: onTap,
@@ -2719,9 +2746,7 @@ class _SmallChip extends StatelessWidget {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
-                      color: destructive
-                          ? AppColors.error
-                          : AppColors.textSecondary,
+                      color: destructive ? colors.error : palette.textSecondary,
                       fontSize: 12.5,
                       fontWeight: FontWeight.w700,
                     ),
@@ -2750,13 +2775,14 @@ class MomentCommentsInline extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     final service = momentService;
     if (service == null) {
-      return const Padding(
-        padding: EdgeInsets.symmetric(vertical: 10),
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 10),
         child: Text(
           'Comments are unavailable right now.',
-          style: TextStyle(color: AppColors.textHint, fontSize: 12.5),
+          style: TextStyle(color: palette.textTertiary, fontSize: 12.5),
         ),
       );
     }
@@ -2764,11 +2790,11 @@ class MomentCommentsInline extends StatelessWidget {
       stream: service.watchComments(momentId),
       builder: (context, snapshot) {
         if (snapshot.hasError) {
-          return const Padding(
-            padding: EdgeInsets.symmetric(vertical: 10),
+          return Padding(
+            padding: const EdgeInsets.symmetric(vertical: 10),
             child: Text(
               'Could not load comments.',
-              style: TextStyle(color: AppColors.textHint, fontSize: 12.5),
+              style: TextStyle(color: palette.textTertiary, fontSize: 12.5),
             ),
           );
         }
@@ -2786,11 +2812,11 @@ class MomentCommentsInline extends StatelessWidget {
         }
         final comments = snapshot.data!;
         if (comments.isEmpty) {
-          return const Padding(
-            padding: EdgeInsets.symmetric(vertical: 10),
+          return Padding(
+            padding: const EdgeInsets.symmetric(vertical: 10),
             child: Text(
               'Be the first to comment.',
-              style: TextStyle(color: AppColors.textHint, fontSize: 12.5),
+              style: TextStyle(color: palette.textTertiary, fontSize: 12.5),
             ),
           );
         }
@@ -2819,16 +2845,16 @@ class MomentCommentsInline extends StatelessWidget {
                             children: [
                               Text(
                                 comment.authorName,
-                                style: const TextStyle(
-                                  color: AppColors.textPrimary,
+                                style: TextStyle(
+                                  color: palette.textPrimary,
                                   fontSize: 12,
                                   fontWeight: FontWeight.w800,
                                 ),
                               ),
                               Text(
                                 momentRelativeAge(comment.createdAt),
-                                style: const TextStyle(
-                                  color: AppColors.textHint,
+                                style: TextStyle(
+                                  color: palette.textTertiary,
                                   fontSize: 11,
                                 ),
                               ),
@@ -2839,8 +2865,8 @@ class MomentCommentsInline extends StatelessWidget {
                             Text(
                               'Voice reply · ${comment.durationSeconds}s'
                               '${comment.text.isNotEmpty ? ' — ${comment.text}' : ''}',
-                              style: const TextStyle(
-                                color: AppColors.textSecondary,
+                              style: TextStyle(
+                                color: palette.textSecondary,
                                 fontSize: 12.5,
                                 height: 1.35,
                               ),
@@ -2848,8 +2874,8 @@ class MomentCommentsInline extends StatelessWidget {
                           else
                             Text(
                               comment.text,
-                              style: const TextStyle(
-                                color: AppColors.textSecondary,
+                              style: TextStyle(
+                                color: palette.textSecondary,
                                 fontSize: 12.5,
                                 height: 1.35,
                               ),
@@ -2872,11 +2898,12 @@ class _LoadingState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     Widget bone(double width, double height, [double radius = 10]) => Container(
       width: width,
       height: height,
       decoration: BoxDecoration(
-        color: AppColors.surfaceLight.withValues(alpha: .6),
+        color: palette.surfaceMuted,
         borderRadius: BorderRadius.circular(radius),
       ),
     );
@@ -2921,6 +2948,8 @@ class _ErrorState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     return Center(
       key: const ValueKey('moments-discovery-error'),
       child: SingleChildScrollView(
@@ -2928,27 +2957,23 @@ class _ErrorState extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(
-              Icons.cloud_off_rounded,
-              size: 34,
-              color: AppColors.error,
-            ),
+            Icon(Icons.cloud_off_rounded, size: 34, color: colors.error),
             const SizedBox(height: 14),
-            const Text(
+            Text(
               'Moments could not load',
               textAlign: TextAlign.center,
               style: TextStyle(
-                color: AppColors.textPrimary,
+                color: palette.textPrimary,
                 fontSize: 18,
                 fontWeight: FontWeight.w800,
               ),
             ),
             const SizedBox(height: 8),
-            const Text(
+            Text(
               'Something went wrong reaching the Voice Moments feed.',
               textAlign: TextAlign.center,
               style: TextStyle(
-                color: AppColors.textSecondary,
+                color: palette.textSecondary,
                 fontSize: 13.5,
                 height: 1.45,
               ),
@@ -2958,10 +2983,7 @@ class _ErrorState extends StatelessWidget {
               SelectableText(
                 '$error',
                 textAlign: TextAlign.center,
-                style: const TextStyle(
-                  color: AppColors.textHint,
-                  fontSize: 11.5,
-                ),
+                style: TextStyle(color: palette.textTertiary, fontSize: 11.5),
               ),
             ],
             const SizedBox(height: 20),
@@ -2991,6 +3013,7 @@ class _EmptyState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return Center(
       key: const ValueKey('moments-discovery-empty'),
       child: SingleChildScrollView(
@@ -2998,13 +3021,13 @@ class _EmptyState extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, size: 34, color: AppColors.textSecondary),
+            Icon(icon, size: 34, color: palette.textSecondary),
             const SizedBox(height: 14),
             Text(
               title,
               textAlign: TextAlign.center,
-              style: const TextStyle(
-                color: AppColors.textPrimary,
+              style: TextStyle(
+                color: palette.textPrimary,
                 fontSize: 18,
                 fontWeight: FontWeight.w800,
               ),
@@ -3013,8 +3036,8 @@ class _EmptyState extends StatelessWidget {
             Text(
               body,
               textAlign: TextAlign.center,
-              style: const TextStyle(
-                color: AppColors.textSecondary,
+              style: TextStyle(
+                color: palette.textSecondary,
                 fontSize: 13.5,
                 height: 1.45,
               ),

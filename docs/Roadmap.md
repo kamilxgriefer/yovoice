@@ -16,6 +16,17 @@ someone decide what to pick up next.
 
 ## Done
 
+- **Pearl light theme is a complete, premium normal-product experience**
+  (2026-08-29, ADR-127, **SOURCE ONLY; WEB HOSTING DEPLOYMENT PENDING; NATIVE
+  STORE BUILD PENDING**): a semantic `AppPalette` now owns paired canvas,
+  surface, copy, border, navigation, focus and status roles. Home/dock, Chats,
+  Friends, Moments, Profile, Settings, Notifications, Premium, modal chrome
+  and shared controls migrate as complete surfaces; system status/navigation
+  icons follow brightness. Voice rooms, calls, recording/review, story viewing
+  and cropping remain explicitly immersive dark. Light no longer carries a
+  Beta label; Polish still does. Contrast contracts, 320/768/1440 at 200% text,
+  responsive journey tests and real-font light/dark Home PNGs guard the result.
+
 - **Home Voice Moments are a truthful avatar-only story rail** (2026-08-29,
   ADR-123, **SOURCE ONLY; NATIVE STORE BUILD PENDING**): mobile and desktop now
   keep the signed-in avatar first and show only followed authors who have
@@ -579,12 +590,12 @@ someone decide what to pick up next.
 
 - **Device-local Appearance, Polish Beta and offline Voice Moment playback**
   (2026-08-18, web/PWA deployed from `8fa0192`; native store release pending):
-  Appearance now offers System/Dark/Light Beta and app language offers
+  Appearance introduced System/Dark/Light (Light was labelled Beta at this
+  point and later graduated as Pearl in ADR-127) and app language offers
   System/English/Polish Beta,
   persisted locally with backward-compatible Dark/English fallbacks. Coverage is intentionally
-  bounded to the shared theme plus migrated navigation, auth, Settings and
-  framework controls; remaining inline-dark/English screens are still tracked
-  work, not silently described as translated. Published Voice Moments can be
+  initially bounded to the shared theme plus migrated navigation, auth,
+  Settings and framework controls. Published Voice Moments can be
   downloaded into account-isolated storage on the current device, with a
   12 MB item cap, 250 MB device/account cap, real usage display, direct native
   file playback, web Cache Storage playback and removal controls. Neither
@@ -1342,29 +1353,19 @@ someone decide what to pick up next.
 
 ### App-wide theme migration
 
-- **Status**: In progress — the root System/Dark/Light Beta switch and shared
-  light/dark themes are complete in source; per-feature-area passes remain.
+- **Status**: Completed for normal product journeys on 2026-08-29 (ADR-127).
 - **Description**: `lib/core/theme/` (`AppColors`, `AppTypography`, etc.)
   and `lib/shared/widgets/` (`YoButton`, `YoCard`, the `Yo*State` widgets)
-  exist as the intended long-term design system, but most screens still
-  define their own consistent-but-duplicated inline hex color constants
-  instead of importing them. The new root Light mode cannot override those
-  literals, which is why it remains explicitly Beta — see [UI.md](UI.md) for
-  the two systems in detail and ADR-072 for the preference boundary.
-- **Dependencies**: None technical — this is pure migration effort, one
-  feature area at a time (home/friends/notifications/messages; discover/
-  clubs/profile/achievements; auth screens; rooms; messages/moments/
-  notification-prefs; a final consistency pass).
-- **Priority**: Low-Medium. Not urgent — the inline convention already
-  reads as visually consistent to a user, so this is an internal
-  maintainability concern, not a user-facing bug. Worth finishing before
-  the two systems drift further apart, since every new screen written
-  against the old convention is more code that eventually needs migrating.
+  now install `AppPalette` as the semantic brightness contract. Normal product
+  journeys use it; media/voice workspaces retain a complete local dark visual
+  contract by design rather than masquerading as partially themed pages.
+- **Dependencies**: None remaining for Pearl.
+- **Priority**: Done. Future work is regression prevention, not completion of
+  the user-facing theme.
 - **Future considerations**: Migrate a screen wholesale, not widget by
   widget — mixing both systems in one file is worse than either alone.
-  Once complete, consider a lint rule or a code-review checklist item that
-  flags a new raw `Color(0xFF...)` literal outside `lib/core/theme/`, so
-  the migration doesn't quietly regress.
+  Add a lint or review check that flags new raw surface/text hex literals
+  outside the theme and explicitly documented immersive components.
 
 ### `app.yovoice.app` — DNS DONE, one website-side step left
 

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/premium/presentation/screens/premium_screen.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
@@ -34,6 +35,8 @@ class _PremiumUpsellSheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     final (icon, title, body) = switch (upsellContext) {
       PremiumUpsellContext.creator => (
         Icons.auto_awesome_rounded,
@@ -62,96 +65,92 @@ class _PremiumUpsellSheet extends StatelessWidget {
     };
 
     return Material(
-      color: const Color(0xFF120D1A),
+      key: const ValueKey('premium-upsell-surface'),
+      color: palette.surfaceRaised,
       clipBehavior: Clip.antiAlias,
       borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
       child: SafeArea(
         top: false,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(24, 14, 24, 28),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const YoModalSheetChrome(
-                sheetLabel: 'Premium offer',
-                surfaceColor: Color(0xFF120D1A),
-              ),
-              const SizedBox(height: 6),
-              Container(
-                width: 68,
-                height: 68,
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  gradient: LinearGradient(
-                    colors: [
-                      const Color(0xFF7B2FF7).withValues(alpha: .25),
-                      const Color(0xFFC026FF).withValues(alpha: .12),
-                    ],
+        child: SingleChildScrollView(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(24, 14, 24, 28),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                YoModalSheetChrome(
+                  sheetLabel: 'Premium offer',
+                  surfaceColor: palette.surfaceRaised,
+                ),
+                const SizedBox(height: 6),
+                Container(
+                  width: 68,
+                  height: 68,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: colors.primaryContainer,
+                    border: Border.all(
+                      color: colors.primary.withValues(alpha: .65),
+                    ),
                   ),
-                  border: Border.all(
-                    color: const Color(0xFFC026FF).withValues(alpha: .45),
+                  child: Icon(icon, color: colors.onPrimaryContainer, size: 30),
+                ),
+                const SizedBox(height: 18),
+                Text(
+                  title,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: palette.textPrimary,
+                    fontSize: 21,
+                    fontWeight: FontWeight.w900,
                   ),
                 ),
-                child: Icon(icon, color: const Color(0xFFE9B8FF), size: 30),
-              ),
-              const SizedBox(height: 18),
-              Text(
-                title,
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 21,
-                  fontWeight: FontWeight.w900,
+                const SizedBox(height: 8),
+                Text(
+                  body,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: palette.textSecondary,
+                    fontSize: 13.5,
+                    height: 1.45,
+                  ),
                 ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                body,
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                  color: Color(0xFF9D95AD),
-                  fontSize: 13.5,
-                  height: 1.45,
-                ),
-              ),
-              const SizedBox(height: 24),
-              SizedBox(
-                width: double.infinity,
-                child: FilledButton(
-                  onPressed: () {
-                    Navigator.of(context).pop();
-                    Navigator.of(context).push(
-                      MaterialPageRoute<void>(
-                        builder: (_) => const PremiumScreen(),
+                const SizedBox(height: 24),
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton(
+                    onPressed: () {
+                      Navigator.of(context).pop();
+                      Navigator.of(context).push(
+                        MaterialPageRoute<void>(
+                          builder: (_) => const PremiumScreen(),
+                        ),
+                      );
+                    },
+                    style: FilledButton.styleFrom(
+                      backgroundColor: colors.primary,
+                      foregroundColor: colors.onPrimary,
+                      padding: const EdgeInsets.symmetric(vertical: 15),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16),
                       ),
-                    );
-                  },
-                  style: FilledButton.styleFrom(
-                    backgroundColor: const Color(0xFF7B2FF7),
-                    padding: const EdgeInsets.symmetric(vertical: 15),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(16),
                     ),
-                  ),
-                  child: const Text(
-                    'Explore Premium',
-                    style: TextStyle(
-                      fontWeight: FontWeight.w800,
-                      color: Colors.white,
+                    child: const Text(
+                      'Explore Premium',
+                      style: TextStyle(fontWeight: FontWeight.w800),
                     ),
                   ),
                 ),
-              ),
-              const SizedBox(height: 8),
-              TextButton(
-                onPressed: () => Navigator.of(context).pop(),
-                child: const Text(
-                  'Not now',
-                  style: TextStyle(color: Color(0xFF9D95AD)),
+                const SizedBox(height: 8),
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: Text(
+                    'Not now',
+                    style: TextStyle(color: palette.textSecondary),
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),

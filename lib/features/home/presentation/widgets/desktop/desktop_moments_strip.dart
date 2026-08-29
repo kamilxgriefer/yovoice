@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/friends/data/models/friend_user.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/home/data/services/home_feed_service.dart';
@@ -289,6 +290,8 @@ class _StripHeading extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: Row(
@@ -298,12 +301,12 @@ class _StripHeading extends StatelessWidget {
               key: const ValueKey('desktop-home-moments-heading'),
               focusNode: expiryRecoveryFocus,
               semanticLabel: 'Moments from your circle',
-              child: const Align(
+              child: Align(
                 alignment: Alignment.centerLeft,
                 child: Text(
                   'Moments from your circle',
                   style: TextStyle(
-                    color: Colors.white,
+                    color: palette.textPrimary,
                     fontSize: 16.5,
                     fontWeight: FontWeight.w800,
                   ),
@@ -318,6 +321,7 @@ class _StripHeading extends StatelessWidget {
                 padding: const EdgeInsets.symmetric(horizontal: 8),
                 minimumSize: const Size(44, 44),
                 tapTargetSize: MaterialTapTargetSize.padded,
+                foregroundColor: colors.primary,
               ),
               child: const Row(
                 mainAxisSize: MainAxisSize.min,
@@ -325,17 +329,12 @@ class _StripHeading extends StatelessWidget {
                   Text(
                     'See all',
                     style: TextStyle(
-                      color: Color(0xFFD3A5FF),
                       fontSize: 12.5,
                       fontWeight: FontWeight.w700,
                     ),
                   ),
                   SizedBox(width: 3),
-                  Icon(
-                    Icons.chevron_right_rounded,
-                    size: 16,
-                    color: Color(0xFFD3A5FF),
-                  ),
+                  Icon(Icons.chevron_right_rounded, size: 16),
                 ],
               ),
             ),
@@ -360,6 +359,7 @@ class _MomentRing extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return Container(
       width: size + 8,
       height: size + 8,
@@ -375,14 +375,14 @@ class _MomentRing extends StatelessWidget {
             : null,
         border: highlighted
             ? null
-            : Border.all(color: const Color(0xFF2E2140), width: 1.4),
+            : Border.all(color: palette.border, width: 1.4),
       ),
       child: Container(
         padding: const EdgeInsets.all(2),
         clipBehavior: Clip.antiAlias,
-        decoration: const BoxDecoration(
+        decoration: BoxDecoration(
           shape: BoxShape.circle,
-          color: Color(0xFF0C0814),
+          color: palette.surfaceSunken,
         ),
         child: child,
       ),
@@ -436,6 +436,8 @@ class _MomentTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final fresh = _isNew;
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
 
     return SizedBox(
       width: widthFor(context),
@@ -484,9 +486,7 @@ class _MomentTile extends StatelessWidget {
                       fresh ? 'New' : moment.durationLabel,
                       maxLines: 1,
                       style: TextStyle(
-                        color: fresh
-                            ? const Color(0xFFE879F9)
-                            : const Color(0xFF9A90AC),
+                        color: fresh ? colors.secondary : palette.textSecondary,
                         fontSize: 10.5,
                         fontWeight: fresh ? FontWeight.w800 : FontWeight.w600,
                       ),
@@ -512,6 +512,7 @@ class _MomentNameLabel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return SizedBox(
       width: double.infinity,
       height: _MomentTile.nameHeightFor(context),
@@ -522,8 +523,8 @@ class _MomentNameLabel extends StatelessWidget {
           overflow: TextOverflow.ellipsis,
           softWrap: true,
           textAlign: TextAlign.center,
-          style: const TextStyle(
-            color: Colors.white,
+          style: TextStyle(
+            color: palette.textPrimary,
             fontSize: 11.5,
             height: 1.08,
             fontWeight: FontWeight.w700,
@@ -544,6 +545,7 @@ class _PresenceDot extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (!online) return child;
+    final palette = context.appPalette;
     return Stack(
       children: [
         child,
@@ -556,7 +558,7 @@ class _PresenceDot extends StatelessWidget {
             decoration: BoxDecoration(
               shape: BoxShape.circle,
               color: const Color(0xFF22C55E),
-              border: Border.all(color: const Color(0xFF0C0814), width: 2),
+              border: Border.all(color: palette.surfaceSunken, width: 2),
             ),
           ),
         ),
@@ -601,6 +603,8 @@ class _YourMomentTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final newest = mine.isEmpty ? null : mine.last;
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     final fresh =
         newest?.createdAt != null &&
         DateTime.now().difference(newest!.createdAt!) <
@@ -665,7 +669,7 @@ class _YourMomentTile extends StatelessWidget {
                               colors: [AppColors.primary, AppColors.secondary],
                             ),
                             border: Border.all(
-                              color: const Color(0xFF0C0814),
+                              color: palette.surfaceSunken,
                               width: 2,
                             ),
                           ),
@@ -710,7 +714,7 @@ class _YourMomentTile extends StatelessWidget {
                                     ],
                                   ),
                                   border: Border.all(
-                                    color: const Color(0xFF0C0814),
+                                    color: palette.surfaceSunken,
                                     width: 2,
                                   ),
                                 ),
@@ -743,8 +747,8 @@ class _YourMomentTile extends StatelessWidget {
                     maxLines: 1,
                     style: TextStyle(
                       color: newest == null || !fresh
-                          ? const Color(0xFF9A90AC)
-                          : const Color(0xFFE879F9),
+                          ? palette.textSecondary
+                          : colors.secondary,
                       fontSize: 10.5,
                       fontWeight: fresh ? FontWeight.w800 : FontWeight.w600,
                     ),

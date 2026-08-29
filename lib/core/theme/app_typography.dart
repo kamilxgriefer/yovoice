@@ -1,7 +1,5 @@
 import 'package:flutter/material.dart';
 
-import 'app_colors.dart';
-
 class AppTypography {
   AppTypography._();
 
@@ -12,7 +10,6 @@ class AppTypography {
     fontSize: 36,
     height: 1.15,
     fontWeight: FontWeight.w700,
-    color: AppColors.textPrimary,
     letterSpacing: -1.2,
   );
 
@@ -21,7 +18,6 @@ class AppTypography {
     fontSize: 30,
     height: 1.2,
     fontWeight: FontWeight.w700,
-    color: AppColors.textPrimary,
     letterSpacing: -0.8,
   );
 
@@ -30,7 +26,6 @@ class AppTypography {
     fontSize: 26,
     height: 1.25,
     fontWeight: FontWeight.w700,
-    color: AppColors.textPrimary,
     letterSpacing: -0.5,
   );
 
@@ -39,7 +34,6 @@ class AppTypography {
     fontSize: 22,
     height: 1.3,
     fontWeight: FontWeight.w700,
-    color: AppColors.textPrimary,
     letterSpacing: -0.3,
   );
 
@@ -48,7 +42,6 @@ class AppTypography {
     fontSize: 20,
     height: 1.3,
     fontWeight: FontWeight.w600,
-    color: AppColors.textPrimary,
   );
 
   static const TextStyle titleLarge = TextStyle(
@@ -56,7 +49,6 @@ class AppTypography {
     fontSize: 18,
     height: 1.35,
     fontWeight: FontWeight.w600,
-    color: AppColors.textPrimary,
   );
 
   static const TextStyle titleMedium = TextStyle(
@@ -64,7 +56,6 @@ class AppTypography {
     fontSize: 16,
     height: 1.4,
     fontWeight: FontWeight.w600,
-    color: AppColors.textPrimary,
   );
 
   static const TextStyle titleSmall = TextStyle(
@@ -72,7 +63,6 @@ class AppTypography {
     fontSize: 14,
     height: 1.4,
     fontWeight: FontWeight.w600,
-    color: AppColors.textPrimary,
   );
 
   static const TextStyle bodyLarge = TextStyle(
@@ -80,7 +70,6 @@ class AppTypography {
     fontSize: 16,
     height: 1.5,
     fontWeight: FontWeight.w400,
-    color: AppColors.textPrimary,
   );
 
   static const TextStyle bodyMedium = TextStyle(
@@ -88,7 +77,6 @@ class AppTypography {
     fontSize: 14,
     height: 1.5,
     fontWeight: FontWeight.w400,
-    color: AppColors.textSecondary,
   );
 
   static const TextStyle bodySmall = TextStyle(
@@ -96,7 +84,6 @@ class AppTypography {
     fontSize: 12,
     height: 1.45,
     fontWeight: FontWeight.w400,
-    color: AppColors.textSecondary,
   );
 
   static const TextStyle labelLarge = TextStyle(
@@ -104,7 +91,6 @@ class AppTypography {
     fontSize: 14,
     height: 1.2,
     fontWeight: FontWeight.w700,
-    color: AppColors.textPrimary,
     letterSpacing: 0.2,
   );
 
@@ -113,7 +99,6 @@ class AppTypography {
     fontSize: 12,
     height: 1.2,
     fontWeight: FontWeight.w600,
-    color: AppColors.textSecondary,
     letterSpacing: 0.3,
   );
 
@@ -122,7 +107,6 @@ class AppTypography {
     fontSize: 10,
     height: 1.2,
     fontWeight: FontWeight.w600,
-    color: AppColors.textHint,
     letterSpacing: 0.5,
   );
 

@@ -15,6 +15,7 @@ import 'package:yovoice/features/moments/data/services/moment_service.dart';
 import 'package:yovoice/features/moments/data/services/recorded_audio.dart';
 import 'package:yovoice/features/moments/data/services/voice_moment_recorder.dart';
 import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
+import 'package:yovoice/shared/widgets/theme/yo_immersive_dark_surface.dart';
 
 /// The states this screen can actually be in.
 ///
@@ -986,7 +987,7 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
   Widget build(BuildContext context) {
     final busy = _phase == VoiceMomentRecordingPhase.publishing;
 
-    return PopScope<Object?>(
+    final content = PopScope<Object?>(
       // Every exit goes through `_leave`, which releases microphone/player
       // resources and discards the local take before the route is removed.
       canPop: _leaving,
@@ -1022,6 +1023,7 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
         ),
       ),
     );
+    return YoImmersiveDarkSurface(child: content);
   }
 
   Widget _header(bool busy) {

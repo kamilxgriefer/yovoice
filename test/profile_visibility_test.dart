@@ -2,6 +2,8 @@ import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:yovoice/core/theme/app_palette.dart';
+import 'package:yovoice/core/theme/app_theme.dart';
 import 'package:yovoice/features/profile/data/models/profile_visibility.dart';
 import 'package:yovoice/features/profile/data/models/user_profile.dart';
 import 'package:yovoice/features/profile/data/services/profile_visibility_service.dart';
@@ -88,6 +90,7 @@ void main() {
       tester.view.physicalSize = size;
       await tester.pumpWidget(
         MaterialApp(
+          theme: AppTheme.lightTheme,
           home: MediaQuery(
             data: const MediaQueryData(textScaler: TextScaler.linear(2)),
             child: ProfileVisibilityScreen(
@@ -105,6 +108,10 @@ void main() {
       );
       expect(frame.width, lessThanOrEqualTo(880));
       expect(frame.left, greaterThanOrEqualTo(0));
+      expect(
+        tester.widget<Scaffold>(find.byType(Scaffold)).backgroundColor,
+        AppPalette.light.background,
+      );
       expect(tester.takeException(), isNull, reason: '$size at 200%');
     }
   });

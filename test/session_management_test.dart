@@ -2,6 +2,7 @@ import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:yovoice/core/theme/app_theme.dart';
 import 'package:yovoice/features/settings/data/services/session_management_service.dart';
 import 'package:yovoice/features/settings/presentation/screens/device_sessions_screen.dart';
 
@@ -19,10 +20,14 @@ SessionManagementService service({
       revoke ?? () async => {'revoked': true, 'completeWithinSeconds': 3600},
 );
 
-Widget app(Widget child, {Size size = const Size(390, 844)}) => MaterialApp(
-  theme: ThemeData.dark(useMaterial3: true),
+Widget app(
+  Widget child, {
+  Size size = const Size(390, 844),
+  double textScale = 1,
+}) => MaterialApp(
+  theme: AppTheme.lightTheme,
   home: MediaQuery(
-    data: MediaQueryData(size: size),
+    data: MediaQueryData(size: size, textScaler: TextScaler.linear(textScale)),
     child: child,
   ),
 );
@@ -138,6 +143,7 @@ void main() {
           signOutCurrentDevice: () async {},
         ),
         size: const Size(320, 568),
+        textScale: 2,
       ),
     );
     await tester.pumpAndSettle();

@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/premium/data/models/subscription_entitlements.dart';
 import 'package:yovoice/features/premium/data/services/entitlement_service.dart';
 import 'package:yovoice/features/premium/presentation/widgets/premium_upsell_sheet.dart';
@@ -386,11 +387,13 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     return Scaffold(
-      backgroundColor: const Color(0xFF09050F),
+      backgroundColor: palette.background,
       appBar: AppBar(
-        backgroundColor: const Color(0xFF09050F),
-        foregroundColor: Colors.white,
+        backgroundColor: palette.background,
+        foregroundColor: palette.textPrimary,
         title: const Text('Edit profile'),
         actions: [
           TextButton(
@@ -452,9 +455,9 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                 ),
                 if (_hasPendingImages) ...[
                   const SizedBox(height: 10),
-                  const Text(
+                  Text(
                     'New images are applied when you press Save.',
-                    style: TextStyle(color: Color(0xFFD3A5FF), fontSize: 12),
+                    style: TextStyle(color: colors.primary, fontSize: 12),
                   ),
                 ],
                 const SizedBox(height: 26),
@@ -547,6 +550,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     String? Function(String?)? validator,
     String? semanticLabel,
   }) {
+    final palette = context.appPalette;
     return Padding(
       padding: const EdgeInsets.only(bottom: 14),
       child: Semantics(
@@ -558,7 +562,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           maxLines: maxLines,
           maxLength: maxLength,
           readOnly: readOnly,
-          style: const TextStyle(color: Colors.white),
+          style: TextStyle(color: palette.textPrimary),
           validator:
               validator ??
               (required
@@ -578,18 +582,18 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                     semanticLabel: 'Change limit active',
                   )
                 : null,
-            labelStyle: const TextStyle(color: Color(0xFFB3A7BC)),
-            hintStyle: const TextStyle(color: Color(0xFF766B80)),
-            helperStyle: const TextStyle(color: Color(0xFF9E92A8)),
+            labelStyle: TextStyle(color: palette.textSecondary),
+            hintStyle: TextStyle(color: palette.textTertiary),
+            helperStyle: TextStyle(color: palette.textSecondary),
             filled: true,
-            fillColor: const Color(0xFF17101F),
+            fillColor: palette.surfaceRaised,
             border: OutlineInputBorder(
               borderRadius: BorderRadius.circular(16),
-              borderSide: const BorderSide(color: Color(0xFF3B2B48)),
+              borderSide: BorderSide(color: palette.borderStrong),
             ),
             enabledBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(16),
-              borderSide: const BorderSide(color: Color(0xFF3B2B48)),
+              borderSide: BorderSide(color: palette.borderStrong),
             ),
           ),
         ),
@@ -682,12 +686,13 @@ class _SectionLabel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: Text(
         text.toUpperCase(),
-        style: const TextStyle(
-          color: Color(0xFF9E92A8),
+        style: TextStyle(
+          color: palette.textSecondary,
           fontSize: 11,
           fontWeight: FontWeight.w800,
           letterSpacing: 1.4,
@@ -715,6 +720,7 @@ class _ProfileImagePreview extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     final pendingBannerBytes = pendingBanner?.bytes;
     final pendingAvatarBytes = pendingAvatar?.bytes;
 
@@ -755,7 +761,7 @@ class _ProfileImagePreview extends StatelessWidget {
                         radius: 34,
                         photoUrl: profile.photoUrl,
                         displayName: profile.displayName,
-                        backgroundColor: const Color(0xFF281133),
+                        backgroundColor: palette.surfaceSunken,
                       ),
               ),
             ),
@@ -783,8 +789,10 @@ class _ImageAction extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     return Material(
-      color: const Color(0xFF17101F),
+      color: palette.surface,
       borderRadius: BorderRadius.circular(18),
       child: InkWell(
         onTap: loading ? null : onTap,
@@ -796,7 +804,7 @@ class _ImageAction extends StatelessWidget {
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
           decoration: BoxDecoration(
-            border: Border.all(color: const Color(0xFF3B2B48)),
+            border: Border.all(color: palette.borderStrong),
             borderRadius: BorderRadius.circular(14),
           ),
           child: Row(
@@ -811,7 +819,7 @@ class _ImageAction extends StatelessWidget {
                 Icon(
                   onClear == null ? icon : Icons.check_circle_rounded,
                   size: 20,
-                  color: const Color(0xFFB33BFF),
+                  color: colors.primary,
                 ),
               const SizedBox(width: 10),
               Expanded(
@@ -819,8 +827,8 @@ class _ImageAction extends StatelessWidget {
                   label,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Colors.white,
+                  style: TextStyle(
+                    color: palette.textPrimary,
                     fontSize: 13,
                     fontWeight: FontWeight.w700,
                   ),
@@ -831,10 +839,10 @@ class _ImageAction extends StatelessWidget {
                   onPressed: onClear,
                   visualDensity: VisualDensity.compact,
                   tooltip: 'Undo',
-                  icon: const Icon(
+                  icon: Icon(
                     Icons.close_rounded,
                     size: 16,
-                    color: Color(0xFF9E92A8),
+                    color: palette.textSecondary,
                   ),
                 ),
             ],
@@ -864,29 +872,31 @@ class _AccountTypePicker extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: const Color(0xFF17101F),
+        color: palette.surface,
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: const Color(0xFF3B2B48)),
+        border: Border.all(color: palette.border),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
+          Text(
             'Account type',
             style: TextStyle(
-              color: Colors.white,
+              color: palette.textPrimary,
               fontSize: 16,
               fontWeight: FontWeight.w800,
             ),
           ),
           const SizedBox(height: 6),
-          const Text(
+          Text(
             'Creator accounts are prepared for public followers, podcasts and creator tools.',
             style: TextStyle(
-              color: Color(0xFF9E92A8),
+              color: palette.textSecondary,
               fontSize: 12,
               height: 1.35,
             ),
@@ -920,20 +930,20 @@ class _AccountTypePicker extends StatelessWidget {
           ),
           if (creatorLocked && !creatorPaused) ...[
             const SizedBox(height: 10),
-            const Row(
+            Row(
               children: [
                 Icon(
                   Icons.workspace_premium_rounded,
-                  color: Color(0xFFFFC24D),
+                  color: colors.primary,
                   size: 16,
                 ),
-                SizedBox(width: 7),
+                const SizedBox(width: 7),
                 Expanded(
                   child: Text(
                     'Premium is required to activate Creator.',
                     key: ValueKey('creator-premium-required'),
                     style: TextStyle(
-                      color: Color(0xFFFFD985),
+                      color: palette.textPrimary,
                       fontSize: 11,
                       fontWeight: FontWeight.w700,
                     ),
@@ -944,18 +954,18 @@ class _AccountTypePicker extends StatelessWidget {
           ],
           if (value == AccountType.official) ...[
             const SizedBox(height: 10),
-            const Text(
+            Text(
               'Official status is verified by YO Voice and cannot be selected manually.',
-              style: TextStyle(color: Color(0xFFD3A5FF), fontSize: 11),
+              style: TextStyle(color: colors.primary, fontSize: 11),
             ),
           ],
           if (creatorPaused) ...[
             const SizedBox(height: 10),
-            const Text(
+            Text(
               'Creator tools are paused — your Premium subscription has '
               'ended. Your Studio data stays safe. Renew Premium, then '
               'reactivate Creator in Edit profile.',
-              style: TextStyle(color: Color(0xFFFFB547), fontSize: 11),
+              style: TextStyle(color: colors.error, fontSize: 11),
             ),
           ],
         ],

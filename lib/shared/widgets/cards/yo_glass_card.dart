@@ -2,7 +2,7 @@ import 'dart:ui';
 
 import 'package:flutter/material.dart';
 
-import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_radius.dart';
 import 'package:yovoice/core/theme/app_spacing.dart';
 
@@ -24,6 +24,7 @@ class YoGlassCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     final Widget content = ClipRRect(
       borderRadius: AppRadius.lg,
       child: BackdropFilter(
@@ -32,9 +33,9 @@ class YoGlassCard extends StatelessWidget {
           margin: margin,
           padding: padding,
           decoration: BoxDecoration(
-            color: AppColors.surface.withValues(alpha: 0.72),
+            color: palette.surface.withValues(alpha: 0.84),
             borderRadius: AppRadius.lg,
-            border: Border.all(color: AppColors.border.withValues(alpha: 0.75)),
+            border: Border.all(color: palette.border.withValues(alpha: 0.88)),
           ),
           child: child,
         ),

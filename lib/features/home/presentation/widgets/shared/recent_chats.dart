@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
+import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/messages/data/models/conversation.dart';
 import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
@@ -161,10 +162,11 @@ class _RecentChatCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     final otherUserId = conversation.otherUserId(currentUserId);
     final unread = conversation.unreadCountFor(currentUserId);
     return Material(
-      color: const Color(0xFF181122),
+      color: palette.surface,
       borderRadius: BorderRadius.circular(20),
       child: InkWell(
         onTap: onTap,
@@ -173,7 +175,7 @@ class _RecentChatCard extends StatelessWidget {
           padding: const EdgeInsets.all(12),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: const Color(0xFF332641)),
+            border: Border.all(color: palette.border),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -194,8 +196,8 @@ class _RecentChatCard extends StatelessWidget {
                 conversation.displayNameFor(otherUserId),
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: Colors.white,
+                style: TextStyle(
+                  color: palette.textPrimary,
                   fontSize: 13.5,
                   height: 1.15,
                   fontWeight: FontWeight.w800,
@@ -206,8 +208,8 @@ class _RecentChatCard extends StatelessWidget {
                 conversation.previewFor(currentUserId),
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: Color(0xFFA69CB2),
+                style: TextStyle(
+                  color: palette.textSecondary,
                   fontSize: 11,
                   height: 1.2,
                 ),
@@ -276,6 +278,9 @@ class _BackdropRecentChatCard extends StatelessWidget {
       semanticLabel: semanticLabel,
       tooltip: openLabel,
       borderRadius: 18,
+      // This artwork can be any uploaded photo. AccessibleTapRegion draws
+      // the complementary white ring too, so black is the robust paired
+      // focus treatment over arbitrary light and dark pixels.
       focusContrastColor: Colors.black,
       child: ExcludeSemantics(
         child: Container(
@@ -613,22 +618,24 @@ class _RecentChatsMessage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     return Container(
       constraints: const BoxConstraints(minHeight: 104),
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: const Color(0xFF181122),
+        color: palette.surface,
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: const Color(0xFF332641)),
+        border: Border.all(color: palette.border),
       ),
       child: Row(
         children: [
-          Icon(icon, color: const Color(0xFFC985FF)),
+          Icon(icon, color: colors.primary),
           const SizedBox(width: 12),
           Expanded(
             child: Text(
               text,
-              style: const TextStyle(color: Color(0xFFA69CB2), fontSize: 13),
+              style: TextStyle(color: palette.textSecondary, fontSize: 13),
             ),
           ),
           if (onAction != null)

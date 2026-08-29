@@ -5,6 +5,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/helpers/error_messages.dart';
+import 'package:yovoice/core/theme/app_palette.dart';
 
 import 'package:yovoice/features/auth/data/auth_service.dart';
 import 'package:yovoice/features/auth/presentation/screens/verify_email_screen.dart';
@@ -132,8 +133,6 @@ class MainShell extends StatefulWidget {
 
 class _MainShellState extends State<MainShell>
     with SingleTickerProviderStateMixin {
-  static const Color _background = Color(0xFF080711);
-
   final MessageService _messageService = MessageService.live;
   final RoomService _roomService = RoomService();
   final AuthService _authService = AuthService();
@@ -1300,7 +1299,7 @@ class _MoreDestinationHostState extends State<MoreDestinationHost> {
 
     if (isDesktop && widget.onDesktopNavSelected != null) {
       return Scaffold(
-        backgroundColor: _MainShellState._background,
+        backgroundColor: Theme.of(context).scaffoldBackgroundColor,
         body: Row(
           key: const ValueKey('desktop-shell-row'),
           children: [
@@ -1337,7 +1336,7 @@ class _MoreDestinationHostState extends State<MoreDestinationHost> {
     }
 
     return Scaffold(
-      backgroundColor: _MainShellState._background,
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       body: widget.body,
       bottomNavigationBar: Column(
         mainAxisSize: MainAxisSize.min,
@@ -1366,8 +1365,11 @@ class _VerificationBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final accent = isDark ? const Color(0xFFFFC94D) : const Color(0xFF8C5A00);
     return Material(
-      color: const Color(0xFF2E2410),
+      color: isDark ? const Color(0xFF2E2410) : const Color(0xFFFFF4D8),
       child: InkWell(
         onTap: onTap,
         child: SafeArea(
@@ -1376,36 +1378,28 @@ class _VerificationBanner extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
             child: Row(
               children: [
-                const Icon(
-                  Icons.mark_email_unread_outlined,
-                  color: Color(0xFFFFC94D),
-                  size: 18,
-                ),
+                Icon(Icons.mark_email_unread_outlined, color: accent, size: 18),
                 const SizedBox(width: 10),
-                const Expanded(
+                Expanded(
                   child: Text(
                     "Your email isn't verified yet.",
                     style: TextStyle(
-                      color: Color(0xFFFFE1A6),
+                      color: palette.textPrimary,
                       fontSize: 13,
                       fontWeight: FontWeight.w600,
                     ),
                   ),
                 ),
-                const Text(
+                Text(
                   'Verify now',
                   style: TextStyle(
-                    color: Color(0xFFFFC94D),
+                    color: accent,
                     fontSize: 13,
                     fontWeight: FontWeight.w800,
                   ),
                 ),
                 const SizedBox(width: 4),
-                const Icon(
-                  Icons.chevron_right_rounded,
-                  color: Color(0xFFFFC94D),
-                  size: 18,
-                ),
+                Icon(Icons.chevron_right_rounded, color: accent, size: 18),
               ],
             ),
           ),

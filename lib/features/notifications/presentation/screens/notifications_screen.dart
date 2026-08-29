@@ -2,6 +2,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
 
+import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/friends/data/models/friend_request.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/messages/data/models/conversation.dart';
@@ -12,6 +13,11 @@ import 'package:yovoice/features/notifications/data/services/notification_servic
 import 'package:yovoice/features/notifications/presentation/notification_router.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
+
+Color _notificationSuccess(BuildContext context) =>
+    Theme.of(context).brightness == Brightness.dark
+    ? const Color(0xFF54DB8C)
+    : const Color(0xFF087A44);
 
 class NotificationsScreen extends StatefulWidget {
   const NotificationsScreen({
@@ -45,12 +51,6 @@ class NotificationsScreen extends StatefulWidget {
 }
 
 class _NotificationsScreenState extends State<NotificationsScreen> {
-  static const Color _background = Color(0xFF080711);
-  static const Color _surface = Color(0xFF12101D);
-  static const Color _border = Color(0xFF2C253B);
-  static const Color _secondaryText = Color(0xFF9D95AD);
-  static const Color _primary = Color(0xFFB348FF);
-
   late final FriendService _friendService =
       widget.friendService ?? FriendService();
   late final MessageService _messageService =
@@ -167,15 +167,17 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   }
 
   void _showMessage(String message, {bool isError = false}) {
+    final colors = Theme.of(context).colorScheme;
     final messenger = ScaffoldMessenger.of(context);
     messenger.hideCurrentSnackBar();
     messenger.showSnackBar(
       SnackBar(
-        content: Text(message),
+        content: Text(
+          message,
+          style: isError ? TextStyle(color: colors.onErrorContainer) : null,
+        ),
         behavior: SnackBarBehavior.floating,
-        backgroundColor: isError
-            ? const Color(0xFF481C30)
-            : const Color(0xFF203D2C),
+        backgroundColor: isError ? colors.errorContainer : null,
         margin: const EdgeInsets.all(16),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
       ),
@@ -198,15 +200,21 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     return Scaffold(
-      backgroundColor: _background,
+      backgroundColor: palette.background,
       body: Container(
         key: const ValueKey('notifications-background'),
-        decoration: const BoxDecoration(
+        decoration: BoxDecoration(
           gradient: RadialGradient(
             center: Alignment(-0.85, -0.95),
             radius: 1.25,
-            colors: [Color(0xFF24103B), Color(0xFF100B1B), _background],
+            colors: [
+              colors.primaryContainer.withValues(alpha: .68),
+              palette.backgroundTop,
+              palette.background,
+            ],
             stops: [0, 0.38, 1],
           ),
         ),
@@ -228,6 +236,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   }
 
   Widget _buildHeader() {
+    final palette = context.appPalette;
     return Padding(
       padding: const EdgeInsets.fromLTRB(10, 10, 18, 10),
       child: Row(
@@ -236,32 +245,32 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
             IconButton(
               onPressed: () => Navigator.of(context).pop(),
               tooltip: 'Back',
-              icon: const Icon(
+              icon: Icon(
                 Icons.arrow_back_ios_new_rounded,
-                color: Colors.white,
+                color: palette.textPrimary,
                 size: 21,
               ),
             ),
             const SizedBox(width: 4),
           ],
-          const Expanded(
+          Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
                   'Notifications',
                   style: TextStyle(
-                    color: Colors.white,
+                    color: palette.textPrimary,
                     fontSize: 23,
                     fontWeight: FontWeight.w800,
                     letterSpacing: -0.5,
                   ),
                 ),
-                SizedBox(height: 3),
+                const SizedBox(height: 3),
                 Text(
                   'Friend requests, messages and activity',
                   style: TextStyle(
-                    color: _secondaryText,
+                    color: palette.textSecondary,
                     fontSize: 13,
                     fontWeight: FontWeight.w500,
                   ),
@@ -275,6 +284,8 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   }
 
   Widget _buildContent() {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     return StreamBuilder<List<FriendRequest>>(
       stream: _friendRequestsStream,
       builder: (context, friendSnapshot) {
@@ -304,10 +315,10 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                     !notificationSnapshot.hasData;
 
                 if (feedLoading) {
-                  return const Center(
+                  return Center(
                     child: CircularProgressIndicator(
                       strokeWidth: 2.5,
-                      color: _primary,
+                      color: colors.primary,
                     ),
                   );
                 }
@@ -430,8 +441,8 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                           padding: const EdgeInsets.fromLTRB(2, 6, 2, 8),
                           child: Text(
                             entry.key,
-                            style: const TextStyle(
-                              color: _secondaryText,
+                            style: TextStyle(
+                              color: palette.textSecondary,
                               fontSize: 11,
                               fontWeight: FontWeight.w800,
                               letterSpacing: 0.4,
@@ -453,10 +464,10 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                           child: TextButton(
                             onPressed: () =>
                                 setState(() => _notificationsLimit += 50),
-                            child: const Text(
+                            child: Text(
                               'Load more',
                               style: TextStyle(
-                                color: _secondaryText,
+                                color: palette.textSecondary,
                                 fontSize: 12,
                                 fontWeight: FontWeight.w700,
                               ),
@@ -513,13 +524,15 @@ class _SectionHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     return Row(
       children: [
         Expanded(
           child: Text(
             title,
-            style: const TextStyle(
-              color: Colors.white,
+            style: TextStyle(
+              color: palette.textPrimary,
               fontSize: 17,
               fontWeight: FontWeight.w800,
             ),
@@ -528,13 +541,13 @@ class _SectionHeader extends StatelessWidget {
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
           decoration: BoxDecoration(
-            color: const Color(0xFF8A2BE2),
+            color: colors.primary,
             borderRadius: BorderRadius.circular(20),
           ),
           child: Text(
             count > 99 ? '99+' : '$count',
-            style: const TextStyle(
-              color: Colors.white,
+            style: TextStyle(
+              color: colors.onPrimary,
               fontSize: 11,
               fontWeight: FontWeight.w800,
             ),
@@ -553,6 +566,7 @@ class _ActivityHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
     return LayoutBuilder(
       builder: (context, constraints) {
         final scaledBodySize = MediaQuery.textScalerOf(context).scale(14);
@@ -563,10 +577,10 @@ class _ActivityHeader extends StatelessWidget {
                 key: const ValueKey('notifications-mark-all-read'),
                 onPressed: onMarkAllRead,
                 style: TextButton.styleFrom(minimumSize: const Size(48, 48)),
-                child: const Text(
+                child: Text(
                   'Mark all read',
                   style: TextStyle(
-                    color: _NotificationsScreenState._primary,
+                    color: colors.primary,
                     fontSize: 12,
                     fontWeight: FontWeight.w700,
                   ),
@@ -611,74 +625,109 @@ class _FriendRequestCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     final name = request.senderName.trim().isNotEmpty
         ? request.senderName.trim()
         : 'YO Voice user';
 
+    final identity = Row(
+      children: [
+        _Avatar(name: name, photoUrl: request.senderPhotoUrl ?? ''),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Wrap(
+                spacing: 6,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  Text(
+                    name,
+                    style: TextStyle(
+                      color: palette.textPrimary,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  UserIdentityBadges(uid: request.senderId),
+                ],
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'Sent you a friend request',
+                style: TextStyle(color: palette.textSecondary, fontSize: 12),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+    final controls = isProcessing
+        ? SizedBox(
+            width: 48,
+            height: 48,
+            child: Center(
+              child: SizedBox(
+                width: 24,
+                height: 24,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2.2,
+                  color: colors.primary,
+                ),
+              ),
+            ),
+          )
+        : Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              IconButton(
+                tooltip: 'Decline',
+                onPressed: onDecline,
+                icon: Icon(Icons.close_rounded, color: colors.error),
+              ),
+              IconButton(
+                tooltip: 'Accept',
+                onPressed: onAccept,
+                icon: Icon(
+                  Icons.check_rounded,
+                  color: _notificationSuccess(context),
+                ),
+              ),
+            ],
+          );
+
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: _NotificationsScreenState._surface,
+        color: palette.surface,
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: _NotificationsScreenState._border),
+        border: Border.all(color: palette.border),
       ),
-      child: Row(
-        children: [
-          _Avatar(name: name, photoUrl: request.senderPhotoUrl ?? ''),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final useStacked =
+              MediaQuery.textScalerOf(context).scale(14) >= 21 &&
+              constraints.maxWidth < 500;
+          if (useStacked) {
+            return Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Wrap(
-                  spacing: 6,
-                  crossAxisAlignment: WrapCrossAlignment.center,
-                  children: [
-                    Text(
-                      name,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 14,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                    UserIdentityBadges(uid: request.senderId),
-                  ],
-                ),
-                const SizedBox(height: 4),
-                const Text(
-                  'Sent you a friend request',
-                  style: TextStyle(
-                    color: _NotificationsScreenState._secondaryText,
-                    fontSize: 12,
-                  ),
-                ),
+                identity,
+                const SizedBox(height: 8),
+                Align(alignment: Alignment.centerRight, child: controls),
               ],
-            ),
-          ),
-          const SizedBox(width: 8),
-          if (isProcessing)
-            const SizedBox(
-              width: 24,
-              height: 24,
-              child: CircularProgressIndicator(
-                strokeWidth: 2.2,
-                color: _NotificationsScreenState._primary,
-              ),
-            )
-          else ...[
-            IconButton(
-              tooltip: 'Decline',
-              onPressed: onDecline,
-              icon: const Icon(Icons.close_rounded, color: Color(0xFFFF6F8E)),
-            ),
-            IconButton(
-              tooltip: 'Accept',
-              onPressed: onAccept,
-              icon: const Icon(Icons.check_rounded, color: Color(0xFF54DB8C)),
-            ),
-          ],
-        ],
+            );
+          }
+          return Row(
+            children: [
+              Expanded(child: identity),
+              const SizedBox(width: 8),
+              controls,
+            ],
+          );
+        },
       ),
     );
   }
@@ -697,6 +746,8 @@ class _UnreadMessageCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     final otherUserId = conversation.otherUserId(currentUserId);
     final name = conversation.displayNameFor(otherUserId);
     final unreadCount = conversation.unreadCountFor(currentUserId);
@@ -705,7 +756,7 @@ class _UnreadMessageCard extends StatelessWidget {
         : conversation.lastMessage.trim();
 
     return Material(
-      color: _NotificationsScreenState._surface,
+      color: palette.surface,
       borderRadius: BorderRadius.circular(18),
       child: InkWell(
         onTap: onTap,
@@ -714,7 +765,7 @@ class _UnreadMessageCard extends StatelessWidget {
           padding: const EdgeInsets.all(14),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(18),
-            border: Border.all(color: _NotificationsScreenState._border),
+            border: Border.all(color: palette.border),
           ),
           child: Row(
             children: [
@@ -729,8 +780,8 @@ class _UnreadMessageCard extends StatelessWidget {
                   children: [
                     Text(
                       name,
-                      style: const TextStyle(
-                        color: Colors.white,
+                      style: TextStyle(
+                        color: palette.textPrimary,
                         fontSize: 14,
                         fontWeight: FontWeight.w800,
                       ),
@@ -740,8 +791,8 @@ class _UnreadMessageCard extends StatelessWidget {
                       preview,
                       maxLines: 2,
                       overflow: TextOverflow.fade,
-                      style: const TextStyle(
-                        color: _NotificationsScreenState._secondaryText,
+                      style: TextStyle(
+                        color: palette.textSecondary,
                         fontSize: 12,
                       ),
                     ),
@@ -753,21 +804,21 @@ class _UnreadMessageCard extends StatelessWidget {
                 constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
                 padding: const EdgeInsets.symmetric(horizontal: 7),
                 alignment: Alignment.center,
-                decoration: const BoxDecoration(
-                  color: Color(0xFFFF426F),
+                decoration: BoxDecoration(
+                  color: colors.error,
                   shape: BoxShape.circle,
                 ),
                 child: Text(
                   unreadCount > 99 ? '99+' : '$unreadCount',
-                  style: const TextStyle(
-                    color: Colors.white,
+                  style: TextStyle(
+                    color: colors.onError,
                     fontSize: 10,
                     fontWeight: FontWeight.w800,
                   ),
                 ),
               ),
               const SizedBox(width: 4),
-              const Icon(Icons.chevron_right_rounded, color: Color(0xFF766D82)),
+              Icon(Icons.chevron_right_rounded, color: palette.textTertiary),
             ],
           ),
         ),
@@ -818,6 +869,8 @@ class _NotificationCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     final scaledBodySize = MediaQuery.textScalerOf(context).scale(14);
     final usesLargeText = scaledBodySize >= 21;
 
@@ -832,13 +885,13 @@ class _NotificationCard extends StatelessWidget {
           bottom: -2,
           child: Container(
             padding: const EdgeInsets.all(4),
-            decoration: const BoxDecoration(
-              color: Color(0xFF1B1730),
+            decoration: BoxDecoration(
+              color: palette.surfaceRaised,
               shape: BoxShape.circle,
             ),
             child: Icon(
               _icons[notification.type] ?? Icons.notifications_rounded,
-              color: _NotificationsScreenState._primary,
+              color: colors.primary,
               size: 13,
             ),
           ),
@@ -863,8 +916,8 @@ class _NotificationCard extends StatelessWidget {
                 child: Text(
                   notification.title,
                   key: ValueKey('notification-title-${notification.id}'),
-                  style: const TextStyle(
-                    color: Colors.white,
+                  style: TextStyle(
+                    color: palette.textPrimary,
                     fontSize: 13.5,
                     fontWeight: FontWeight.w700,
                     height: 1.3,
@@ -879,10 +932,7 @@ class _NotificationCard extends StatelessWidget {
         const SizedBox(height: 4),
         Text(
           _relativeTime(notification.createdAt),
-          style: const TextStyle(
-            color: _NotificationsScreenState._secondaryText,
-            fontSize: 11.5,
-          ),
+          style: TextStyle(color: palette.textSecondary, fontSize: 11.5),
         ),
       ],
     );
@@ -892,8 +942,8 @@ class _NotificationCard extends StatelessWidget {
             child: Container(
               width: 9,
               height: 9,
-              decoration: const BoxDecoration(
-                color: _NotificationsScreenState._primary,
+              decoration: BoxDecoration(
+                color: colors.primary,
                 shape: BoxShape.circle,
               ),
             ),
@@ -901,21 +951,18 @@ class _NotificationCard extends StatelessWidget {
     final actions = PopupMenuButton<_NotificationMenuAction>(
       key: ValueKey('notification-actions-${notification.id}'),
       tooltip: 'Notification actions',
-      icon: const Icon(
-        Icons.more_vert_rounded,
-        color: _NotificationsScreenState._secondaryText,
-      ),
+      icon: Icon(Icons.more_vert_rounded, color: palette.textSecondary),
       onSelected: (action) {
         if (action == _NotificationMenuAction.delete) onDismissed();
       },
-      itemBuilder: (context) => const [
+      itemBuilder: (context) => [
         PopupMenuItem(
           value: _NotificationMenuAction.delete,
           child: Row(
             children: [
-              Icon(Icons.delete_outline_rounded, color: Color(0xFFFF6F8E)),
-              SizedBox(width: 10),
-              Expanded(child: Text('Delete notification')),
+              Icon(Icons.delete_outline_rounded, color: colors.error),
+              const SizedBox(width: 10),
+              const Expanded(child: Text('Delete notification')),
             ],
           ),
         ),
@@ -934,13 +981,16 @@ class _NotificationCard extends StatelessWidget {
           alignment: Alignment.centerRight,
           padding: const EdgeInsets.symmetric(horizontal: 20),
           decoration: BoxDecoration(
-            color: const Color(0xFF481C30),
+            color: colors.errorContainer,
             borderRadius: BorderRadius.circular(18),
           ),
-          child: const Icon(Icons.delete_outline_rounded, color: Colors.white),
+          child: Icon(
+            Icons.delete_outline_rounded,
+            color: colors.onErrorContainer,
+          ),
         ),
         child: Material(
-          color: _NotificationsScreenState._surface,
+          color: palette.surface,
           borderRadius: BorderRadius.circular(18),
           child: InkWell(
             onTap: onTap,
@@ -951,10 +1001,8 @@ class _NotificationCard extends StatelessWidget {
                 borderRadius: BorderRadius.circular(18),
                 border: Border.all(
                   color: notification.isRead
-                      ? _NotificationsScreenState._border
-                      : _NotificationsScreenState._primary.withValues(
-                          alpha: 0.45,
-                        ),
+                      ? palette.border
+                      : colors.primary.withValues(alpha: 0.55),
                 ),
               ),
               child: LayoutBuilder(
@@ -1065,23 +1113,24 @@ class _DegradedNotice extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(12),
-        color: const Color(0xFF12101D),
-        border: Border.all(color: const Color(0xFF2C253B)),
+        color: palette.surface,
+        border: Border.all(color: palette.border),
       ),
-      child: const Row(
+      child: Row(
         children: [
-          Icon(Icons.cloud_off_rounded, size: 16, color: Color(0xFF9D95AD)),
-          SizedBox(width: 9),
+          Icon(Icons.cloud_off_rounded, size: 16, color: palette.textSecondary),
+          const SizedBox(width: 9),
           Expanded(
             child: Text(
               'Friend requests and unread messages could not be loaded. '
               'Your activity below is up to date.',
               style: TextStyle(
-                color: Color(0xFF9D95AD),
+                color: palette.textSecondary,
                 fontSize: 12,
                 height: 1.35,
               ),
@@ -1111,6 +1160,8 @@ class _EmptyState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     return Center(
       child: SingleChildScrollView(
         padding: const EdgeInsets.fromLTRB(28, 24, 28, 50),
@@ -1121,23 +1172,17 @@ class _EmptyState extends StatelessWidget {
               width: 72,
               height: 72,
               decoration: BoxDecoration(
-                color: _NotificationsScreenState._primary.withValues(
-                  alpha: 0.15,
-                ),
+                color: colors.primaryContainer,
                 borderRadius: BorderRadius.circular(22),
               ),
-              child: Icon(
-                icon,
-                color: _NotificationsScreenState._primary,
-                size: 35,
-              ),
+              child: Icon(icon, color: colors.onPrimaryContainer, size: 35),
             ),
             const SizedBox(height: 18),
             Text(
               title,
               textAlign: TextAlign.center,
-              style: const TextStyle(
-                color: Colors.white,
+              style: TextStyle(
+                color: palette.textPrimary,
                 fontSize: 18,
                 fontWeight: FontWeight.w800,
               ),
@@ -1146,8 +1191,8 @@ class _EmptyState extends StatelessWidget {
             Text(
               subtitle,
               textAlign: TextAlign.center,
-              style: const TextStyle(
-                color: _NotificationsScreenState._secondaryText,
+              style: TextStyle(
+                color: palette.textSecondary,
                 fontSize: 13,
                 height: 1.45,
               ),
@@ -1156,10 +1201,10 @@ class _EmptyState extends StatelessWidget {
               const SizedBox(height: 14),
               TextButton(
                 onPressed: onRetry,
-                child: const Text(
+                child: Text(
                   'Try again',
                   style: TextStyle(
-                    color: _NotificationsScreenState._primary,
+                    color: colors.primary,
                     fontSize: 13,
                     fontWeight: FontWeight.w700,
                   ),

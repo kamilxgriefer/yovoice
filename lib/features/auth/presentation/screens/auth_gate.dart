@@ -10,6 +10,7 @@ import 'package:yovoice/features/auth/providers/auth_provider.dart';
 import 'package:yovoice/features/home/presentation/screens/main_shell.dart';
 import 'package:yovoice/features/notifications/data/services/push_notification_service.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
+import 'package:yovoice/shared/widgets/theme/yo_immersive_dark_surface.dart';
 
 class AuthGate extends ConsumerWidget {
   const AuthGate({
@@ -197,7 +198,7 @@ class _ProfileBootstrapErrorScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    final content = Scaffold(
       backgroundColor: const Color(0xFF0D0618),
       body: SafeArea(
         child: Center(
@@ -262,6 +263,7 @@ class _ProfileBootstrapErrorScreen extends StatelessWidget {
         ),
       ),
     );
+    return YoImmersiveDarkSurface(child: content);
   }
 }
 
@@ -273,7 +275,7 @@ class _AuthErrorScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    final content = Scaffold(
       backgroundColor: const Color(0xFF0D0618),
       body: SafeArea(
         child: Center(
@@ -349,5 +351,6 @@ class _AuthErrorScreen extends StatelessWidget {
         ),
       ),
     );
+    return YoImmersiveDarkSurface(child: content);
   }
 }

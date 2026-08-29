@@ -3,6 +3,8 @@ import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:yovoice/core/theme/app_palette.dart';
+import 'package:yovoice/core/theme/app_theme.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/friends/presentation/screens/friends_screen.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
@@ -42,7 +44,7 @@ void main() {
     });
   });
 
-  Widget app({TextScaler textScaler = TextScaler.noScaling}) {
+  Widget app({TextScaler textScaler = TextScaler.noScaling, ThemeData? theme}) {
     final friends = FriendService(
       firestore: db,
       auth: auth,
@@ -60,6 +62,7 @@ void main() {
       },
     );
     return MaterialApp(
+      theme: theme ?? AppTheme.darkTheme,
       builder: (context, child) => MediaQuery(
         data: MediaQuery.of(context).copyWith(textScaler: textScaler),
         child: child!,
@@ -126,7 +129,9 @@ void main() {
     addTearDown(tester.view.reset);
     await seedRequest(name: 'A deliberately long friend name');
 
-    await tester.pumpWidget(app(textScaler: const TextScaler.linear(2)));
+    await tester.pumpWidget(
+      app(textScaler: const TextScaler.linear(2), theme: AppTheme.lightTheme),
+    );
     await tester.pumpAndSettle();
 
     final accept = find.byKey(const ValueKey('friend-request-accept'));
@@ -138,5 +143,45 @@ void main() {
     expect(tester.getSize(accept).height, greaterThanOrEqualTo(48));
     expect(tester.getSize(decline).height, greaterThanOrEqualTo(48));
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('friend request chrome uses semantic Pearl and dark palettes', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(768, 1024);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await seedRequest();
+
+    for (final themeCase in <({ThemeData theme, AppPalette palette})>[
+      (theme: AppTheme.lightTheme, palette: AppPalette.light),
+      (theme: AppTheme.darkTheme, palette: AppPalette.dark),
+    ]) {
+      await tester.pumpWidget(app(theme: themeCase.theme));
+      await tester.pumpAndSettle();
+
+      final scaffold = tester.widget<Scaffold>(
+        find.byKey(const ValueKey('friends-screen')),
+      );
+      expect(scaffold.backgroundColor, themeCase.palette.background);
+
+      final requestCard = tester.widget<Container>(
+        find.byKey(const ValueKey('friend-request-card-sender')),
+      );
+      final decoration = requestCard.decoration! as BoxDecoration;
+      expect(decoration.color, themeCase.palette.surface);
+      expect(
+        (decoration.border! as Border).top.color,
+        themeCase.palette.border,
+      );
+
+      final name = tester.widget<Text>(find.text('Ola'));
+      expect(name.style!.color, themeCase.palette.textPrimary);
+      final subtitle = tester.widget<Text>(
+        find.text('Wants to be your friend'),
+      );
+      expect(subtitle.style!.color, themeCase.palette.textSecondary);
+      expect(tester.takeException(), isNull);
+    }
   });
 }

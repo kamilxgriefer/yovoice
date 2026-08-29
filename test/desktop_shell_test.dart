@@ -10,7 +10,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
-import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_theme.dart';
 import 'package:yovoice/features/home/data/services/home_feed_service.dart';
 import 'package:yovoice/features/home/presentation/screens/main_shell.dart';
@@ -470,7 +469,7 @@ void main() {
         final scheme = theme.colorScheme;
         final accent = theme.brightness == Brightness.dark
             ? const Color(0xFFD3A5FF)
-            : AppColors.primary;
+            : scheme.primary;
         final activeBackground = Color.alphaBlend(
           accent.withValues(alpha: .18),
           scheme.surface,

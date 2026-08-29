@@ -4,6 +4,7 @@ import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/home/data/services/home_feed_service.dart';
 import 'package:yovoice/features/moderation/data/services/content_report_service.dart';
 import 'package:yovoice/features/moderation/presentation/report_content_flow.dart';
@@ -173,6 +174,9 @@ class _MomentCardState extends State<MomentCard> {
               error is OfflineAudioException
                   ? error.message
                   : 'The Voice Moment could not be downloaded.',
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.onErrorContainer,
+              ),
             ),
           ),
         );
@@ -231,14 +235,16 @@ class _MomentCardState extends State<MomentCard> {
   Widget build(BuildContext context) {
     final moment = widget.moment;
     final playable = (moment.audioUrl?.trim().isNotEmpty ?? false);
+    final palette = context.appPalette;
 
     return Container(
+      key: ValueKey('moment-card-${moment.id}'),
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(20),
-        color: AppColors.surface.withValues(alpha: .5),
-        border: Border.all(color: AppColors.border.withValues(alpha: .45)),
+        color: palette.surface,
+        border: Border.all(color: palette.border),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -276,8 +282,8 @@ class _MomentCardState extends State<MomentCard> {
                             moment.authorName,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: AppColors.textPrimary,
+                            style: TextStyle(
+                              color: palette.textPrimary,
                               fontSize: 13.5,
                               fontWeight: FontWeight.w800,
                             ),
@@ -289,8 +295,8 @@ class _MomentCardState extends State<MomentCard> {
                     ),
                     Text(
                       _age(moment.createdAt),
-                      style: const TextStyle(
-                        color: AppColors.textSecondary,
+                      style: TextStyle(
+                        color: palette.textSecondary,
                         fontSize: 11.5,
                       ),
                     ),
@@ -298,11 +304,11 @@ class _MomentCardState extends State<MomentCard> {
                 ),
               ),
               if (!moment.isPublished)
-                const Padding(
-                  padding: EdgeInsets.only(left: 6),
+                Padding(
+                  padding: const EdgeInsets.only(left: 6),
                   child: Text(
                     'Uploading…',
-                    style: TextStyle(color: AppColors.textHint, fontSize: 11),
+                    style: TextStyle(color: palette.textTertiary, fontSize: 11),
                   ),
                 ),
             ],
@@ -311,8 +317,8 @@ class _MomentCardState extends State<MomentCard> {
             const SizedBox(height: 10),
             Text(
               moment.caption,
-              style: const TextStyle(
-                color: AppColors.textPrimary,
+              style: TextStyle(
+                color: palette.textPrimary,
                 fontSize: 13.5,
                 height: 1.35,
               ),
@@ -330,8 +336,8 @@ class _MomentCardState extends State<MomentCard> {
               if (moment.durationSeconds > 0)
                 Text(
                   moment.durationLabel,
-                  style: const TextStyle(
-                    color: AppColors.textHint,
+                  style: TextStyle(
+                    color: palette.textTertiary,
                     fontSize: 12,
                     fontWeight: FontWeight.w700,
                   ),
@@ -354,17 +360,17 @@ class _MomentCardState extends State<MomentCard> {
                   padding: const EdgeInsets.symmetric(horizontal: 10),
                   minimumSize: const Size(0, 44),
                 ),
-                icon: const Icon(
+                icon: Icon(
                   Icons.mode_comment_outlined,
                   size: 17,
-                  color: AppColors.textSecondary,
+                  color: palette.textSecondary,
                 ),
                 label: Text(
                   moment.commentCount == 0
                       ? 'Comment'
                       : '${moment.commentCount}',
-                  style: const TextStyle(
-                    color: AppColors.textSecondary,
+                  style: TextStyle(
+                    color: palette.textSecondary,
                     fontSize: 12,
                     fontWeight: FontWeight.w700,
                   ),
@@ -385,10 +391,7 @@ class _MomentCardState extends State<MomentCard> {
                   ),
                   tooltip: 'Report this Voice Moment',
                   onPressed: _report,
-                  icon: const Icon(
-                    Icons.flag_outlined,
-                    color: AppColors.textSecondary,
-                  ),
+                  icon: Icon(Icons.flag_outlined, color: palette.textSecondary),
                 ),
               if (playable && moment.isPublished && !moment.isDeleted)
                 IconButton(
@@ -412,7 +415,7 @@ class _MomentCardState extends State<MomentCard> {
                               : Icons.download_for_offline_outlined,
                           color: _downloaded
                               ? AppColors.secondary
-                              : AppColors.textSecondary,
+                              : palette.textSecondary,
                         ),
                 ),
             ],
@@ -475,6 +478,7 @@ class _LikeButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return Semantics(
       button: onTap != null,
       label: liked ? 'Unlike this Moment' : 'Like this Moment',
@@ -491,12 +495,12 @@ class _LikeButton extends StatelessWidget {
           // Tint carries STATE, never meaning. The count label stays
           // textSecondary: `secondary` on `background` is roughly 4:1,
           // fine for a glyph and not for 12 pt text.
-          color: liked ? AppColors.secondary : AppColors.textSecondary,
+          color: liked ? AppColors.secondary : palette.textSecondary,
         ),
         label: Text(
           label,
-          style: const TextStyle(
-            color: AppColors.textSecondary,
+          style: TextStyle(
+            color: palette.textSecondary,
             fontSize: 12,
             fontWeight: FontWeight.w700,
           ),
@@ -519,13 +523,12 @@ class _PlayButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
     return Semantics(
       button: enabled,
       label: playing ? 'Pause this Moment' : 'Play this Moment',
       child: Material(
-        color: enabled
-            ? AppColors.primary
-            : AppColors.primary.withValues(alpha: .25),
+        color: enabled ? colors.primary : colors.primary.withValues(alpha: .25),
         shape: const CircleBorder(),
         child: InkWell(
           customBorder: const CircleBorder(),
@@ -535,7 +538,7 @@ class _PlayButton extends StatelessWidget {
             height: 44,
             child: Icon(
               playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
-              color: AppColors.textPrimary,
+              color: colors.onPrimary,
               size: 22,
             ),
           ),
@@ -599,4 +602,3 @@ class _Waveform extends StatelessWidget {
     );
   }
 }
-

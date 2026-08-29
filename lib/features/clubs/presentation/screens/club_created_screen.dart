@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/space_identity.dart';
 import 'package:yovoice/features/clubs/data/models/club.dart';
 import 'package:yovoice/features/clubs/presentation/screens/club_overview_screen.dart';
@@ -12,13 +13,15 @@ class ClubCreatedScreen extends StatelessWidget {
 
   final Club club;
 
-  static const _background = Color(0xFF080711);
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     final isFamily = club.isFamilyRoom;
     final identity = isFamily ? SpaceIdentity.family : SpaceIdentity.club;
     return Scaffold(
-      backgroundColor: _background,
+      key: const ValueKey('club-created-screen'),
+      backgroundColor: palette.background,
       body: SafeArea(
         child: ResponsiveContentFrame(
           width: ResponsiveContentWidth.form,
@@ -69,7 +72,7 @@ class ClubCreatedScreen extends StatelessWidget {
                             : 'Your Club is ready',
                         textAlign: TextAlign.center,
                         style: TextStyle(
-                          color: Colors.white,
+                          color: palette.textPrimary,
                           fontSize: 30,
                           fontWeight: FontWeight.w900,
                         ),
@@ -91,7 +94,7 @@ class ClubCreatedScreen extends StatelessWidget {
                             : 'General chat, announcements and Club Lounge have been created. You are the Owner.',
                         textAlign: TextAlign.center,
                         style: TextStyle(
-                          color: Color(0xFFA69CAF),
+                          color: palette.textSecondary,
                           fontSize: 15,
                           height: 1.5,
                         ),
@@ -100,9 +103,9 @@ class ClubCreatedScreen extends StatelessWidget {
                       Container(
                         padding: const EdgeInsets.all(17),
                         decoration: BoxDecoration(
-                          color: const Color(0xFF171121),
+                          color: palette.surface,
                           borderRadius: BorderRadius.circular(22),
-                          border: Border.all(color: const Color(0xFF3A2C49)),
+                          border: Border.all(color: palette.border),
                         ),
                         child: Column(
                           children: [
@@ -112,14 +115,14 @@ class ClubCreatedScreen extends StatelessWidget {
                               value: isFamily ? 'Organizer' : 'Owner',
                               accent: identity.accent,
                             ),
-                            const Divider(color: Color(0xFF35283F), height: 25),
+                            Divider(color: palette.border, height: 25),
                             _SummaryRow(
                               icon: Icons.language_rounded,
                               label: 'Language',
                               value: club.defaultLanguage,
                               accent: identity.accent,
                             ),
-                            const Divider(color: Color(0xFF35283F), height: 25),
+                            Divider(color: palette.border, height: 25),
                             _SummaryRow(
                               icon: Icons.lock_outline_rounded,
                               label: 'Privacy',
@@ -142,6 +145,7 @@ class ClubCreatedScreen extends StatelessWidget {
                               ),
                           style: FilledButton.styleFrom(
                             backgroundColor: identity.primary,
+                            foregroundColor: colors.onPrimary,
                             minimumSize: const Size.fromHeight(58),
                             padding: const EdgeInsets.symmetric(vertical: 16),
                             shape: RoundedRectangleBorder(
@@ -197,20 +201,21 @@ class _SummaryRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return Row(
       children: [
         Icon(icon, color: accent, size: 22),
         const SizedBox(width: 12),
         Expanded(
-          child: Text(label, style: const TextStyle(color: Color(0xFFA69CAF))),
+          child: Text(label, style: TextStyle(color: palette.textSecondary)),
         ),
         const SizedBox(width: 12),
         Flexible(
           child: Text(
             value,
             textAlign: TextAlign.end,
-            style: const TextStyle(
-              color: Colors.white,
+            style: TextStyle(
+              color: palette.textPrimary,
               fontWeight: FontWeight.w800,
             ),
           ),

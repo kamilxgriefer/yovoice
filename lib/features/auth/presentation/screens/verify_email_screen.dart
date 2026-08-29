@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 
 import 'package:yovoice/features/auth/data/auth_service.dart';
 import 'package:yovoice/shared/widgets/backgrounds/animated_waves_background.dart';
+import 'package:yovoice/shared/widgets/theme/yo_immersive_dark_surface.dart';
 
 const _kResendCooldownSeconds = 60;
 const _kAutoCheckInterval = Duration(seconds: 5);
@@ -118,7 +119,7 @@ class _VerifyEmailScreenState extends State<VerifyEmailScreen> {
   Widget build(BuildContext context) {
     final email = _user?.email ?? 'your email';
 
-    return Scaffold(
+    final content = Scaffold(
       body: Stack(
         children: [
           const Positioned.fill(
@@ -244,6 +245,7 @@ class _VerifyEmailScreenState extends State<VerifyEmailScreen> {
         ],
       ),
     );
+    return YoImmersiveDarkSurface(child: content);
   }
 }
 

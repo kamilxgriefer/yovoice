@@ -2,6 +2,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:share_plus/share_plus.dart';
 
+import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/clubs/data/models/club.dart';
 import 'package:yovoice/features/clubs/data/models/club_channel.dart';
 import 'package:yovoice/features/clubs/data/models/club_member.dart';
@@ -27,10 +28,6 @@ class ClubOverviewScreen extends StatefulWidget {
 }
 
 class _ClubOverviewScreenState extends State<ClubOverviewScreen> {
-  static const Color _background = Color(0xFF080711);
-  static const Color _surface = Color(0xFF171120);
-  static const Color _purple = Color(0xFF9D20FF);
-
   final ClubService _clubService = ClubService();
 
   /// The signed-in uid, for "is this my check-in" and role lookups.
@@ -144,16 +141,19 @@ class _ClubOverviewScreenState extends State<ClubOverviewScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     return Scaffold(
-      backgroundColor: _background,
+      key: const ValueKey('club-overview-screen'),
+      backgroundColor: palette.background,
       body: ResponsiveContentFrame(
         width: ResponsiveContentWidth.feed,
         child: StreamBuilder<Club>(
           stream: _club,
           builder: (context, snapshot) {
             if (snapshot.connectionState == ConnectionState.waiting) {
-              return const Center(
-                child: CircularProgressIndicator(color: _purple),
+              return Center(
+                child: CircularProgressIndicator(color: colors.primary),
               );
             }
 
@@ -167,7 +167,7 @@ class _ClubOverviewScreenState extends State<ClubOverviewScreen> {
                 SliverAppBar(
                   pinned: true,
                   expandedHeight: 238,
-                  backgroundColor: _background,
+                  backgroundColor: palette.background,
                   surfaceTintColor: Colors.transparent,
                   leading: IconButton.filledTonal(
                     onPressed: () => Navigator.of(context).pop(),
@@ -193,8 +193,8 @@ class _ClubOverviewScreenState extends State<ClubOverviewScreen> {
                       children: [
                         Text(
                           club.name,
-                          style: const TextStyle(
-                            color: Colors.white,
+                          style: TextStyle(
+                            color: palette.textPrimary,
                             fontSize: 28,
                             fontWeight: FontWeight.w900,
                             letterSpacing: -0.5,
@@ -205,8 +205,8 @@ class _ClubOverviewScreenState extends State<ClubOverviewScreen> {
                           club.description.isEmpty
                               ? 'A permanent place for your people.'
                               : club.description,
-                          style: const TextStyle(
-                            color: Color(0xFFB6ACBB),
+                          style: TextStyle(
+                            color: palette.textSecondary,
                             fontSize: 13,
                             height: 1.45,
                           ),
@@ -259,19 +259,20 @@ class _ClubOverviewScreenState extends State<ClubOverviewScreen> {
                                     ? null
                                     : () => _openClubLounge(club),
                                 style: FilledButton.styleFrom(
-                                  backgroundColor: _purple,
+                                  backgroundColor: colors.primary,
+                                  foregroundColor: colors.onPrimary,
                                   minimumSize: const Size.fromHeight(52),
                                   shape: RoundedRectangleBorder(
                                     borderRadius: BorderRadius.circular(16),
                                   ),
                                 ),
                                 icon: _openingLounge
-                                    ? const SizedBox(
+                                    ? SizedBox(
                                         width: 18,
                                         height: 18,
                                         child: CircularProgressIndicator(
                                           strokeWidth: 2.2,
-                                          color: Colors.white,
+                                          color: colors.onPrimary,
                                         ),
                                       )
                                     : const Icon(Icons.graphic_eq_rounded),
@@ -287,13 +288,11 @@ class _ClubOverviewScreenState extends State<ClubOverviewScreen> {
                               tooltip: 'Invite members',
                               style: IconButton.styleFrom(
                                 minimumSize: const Size(52, 52),
-                                side: const BorderSide(
-                                  color: Color(0xFF4A385A),
-                                ),
+                                side: BorderSide(color: palette.borderStrong),
                               ),
-                              icon: const Icon(
+                              icon: Icon(
                                 Icons.person_add_alt_1_rounded,
-                                color: Colors.white,
+                                color: palette.textPrimary,
                               ),
                             ),
                           ],
@@ -418,13 +417,14 @@ class _ClubStat extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return Expanded(
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 11),
         decoration: BoxDecoration(
-          color: _ClubOverviewScreenState._surface,
+          color: palette.surface,
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: const Color(0xFF33263F)),
+          border: Border.all(color: palette.border),
         ),
         child: Column(
           children: [
@@ -432,8 +432,8 @@ class _ClubStat extends StatelessWidget {
               value,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: Colors.white,
+              style: TextStyle(
+                color: palette.textPrimary,
                 fontSize: 15,
                 fontWeight: FontWeight.w900,
               ),
@@ -441,8 +441,8 @@ class _ClubStat extends StatelessWidget {
             const SizedBox(height: 3),
             Text(
               label,
-              style: const TextStyle(
-                color: Color(0xFF9D93A4),
+              style: TextStyle(
+                color: palette.textTertiary,
                 fontSize: 9,
                 fontWeight: FontWeight.w700,
               ),
@@ -462,11 +462,13 @@ class _ClubTabs extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     const labels = ['Channels', 'Members'];
     return Container(
       padding: const EdgeInsets.all(4),
       decoration: BoxDecoration(
-        color: const Color(0xFF15101D),
+        color: palette.surfaceMuted,
         borderRadius: BorderRadius.circular(16),
       ),
       child: Row(
@@ -481,7 +483,7 @@ class _ClubTabs extends StatelessWidget {
                 padding: const EdgeInsets.symmetric(vertical: 11),
                 decoration: BoxDecoration(
                   color: selected
-                      ? const Color(0xFF38204B)
+                      ? colors.primaryContainer
                       : Colors.transparent,
                   borderRadius: BorderRadius.circular(13),
                 ),
@@ -489,7 +491,9 @@ class _ClubTabs extends StatelessWidget {
                   labels[index],
                   textAlign: TextAlign.center,
                   style: TextStyle(
-                    color: selected ? Colors.white : const Color(0xFF9F95A6),
+                    color: selected
+                        ? colors.onPrimaryContainer
+                        : palette.textSecondary,
                     fontWeight: FontWeight.w800,
                     fontSize: 12,
                   ),
@@ -516,14 +520,16 @@ class _ChannelsPreview extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     return StreamBuilder<List<ClubChannel>>(
       stream: stream,
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Center(
+          return Center(
             child: Padding(
-              padding: EdgeInsets.all(30),
-              child: CircularProgressIndicator(color: Color(0xFF9D20FF)),
+              padding: const EdgeInsets.all(30),
+              child: CircularProgressIndicator(color: colors.primary),
             ),
           );
         }
@@ -532,10 +538,10 @@ class _ChannelsPreview extends StatelessWidget {
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
+            Text(
               'Club spaces',
               style: TextStyle(
-                color: Colors.white,
+                color: palette.textPrimary,
                 fontSize: 18,
                 fontWeight: FontWeight.w900,
               ),
@@ -569,6 +575,8 @@ class _ChannelTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     final (icon, subtitle) = switch (channel.type) {
       ClubChannelType.voice => (
         Icons.graphic_eq_rounded,
@@ -597,35 +605,32 @@ class _ChannelTile extends StatelessWidget {
           ),
         );
       },
-      tileColor: const Color(0xFF171120),
+      tileColor: palette.surface,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(17),
-        side: const BorderSide(color: Color(0xFF33263F)),
+        side: BorderSide(color: palette.border),
       ),
       leading: Container(
         width: 42,
         height: 42,
         decoration: BoxDecoration(
-          color: const Color(0xFF2D1B3A),
+          color: colors.primaryContainer,
           borderRadius: BorderRadius.circular(13),
         ),
-        child: Icon(icon, color: const Color(0xFFC17BFF)),
+        child: Icon(icon, color: colors.onPrimaryContainer),
       ),
       title: Text(
         channel.name,
-        style: const TextStyle(
-          color: Colors.white,
+        style: TextStyle(
+          color: palette.textPrimary,
           fontWeight: FontWeight.w800,
         ),
       ),
       subtitle: Text(
         subtitle,
-        style: const TextStyle(color: Color(0xFF9F95A6), fontSize: 11),
+        style: TextStyle(color: palette.textSecondary, fontSize: 11),
       ),
-      trailing: const Icon(
-        Icons.chevron_right_rounded,
-        color: Color(0xFF8D8295),
-      ),
+      trailing: Icon(Icons.chevron_right_rounded, color: palette.textTertiary),
     );
   }
 }
@@ -638,14 +643,16 @@ class _MembersPreview extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     return StreamBuilder<List<ClubMember>>(
       stream: stream,
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Center(
+          return Center(
             child: Padding(
-              padding: EdgeInsets.all(30),
-              child: CircularProgressIndicator(color: Color(0xFF9D20FF)),
+              padding: const EdgeInsets.all(30),
+              child: CircularProgressIndicator(color: colors.primary),
             ),
           );
         }
@@ -656,8 +663,8 @@ class _MembersPreview extends StatelessWidget {
           children: [
             Text(
               '${members.length} members',
-              style: const TextStyle(
-                color: Colors.white,
+              style: TextStyle(
+                color: palette.textPrimary,
                 fontSize: 18,
                 fontWeight: FontWeight.w900,
               ),
@@ -682,6 +689,8 @@ class _MemberTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     final hasPhoto = member.photoUrl?.isNotEmpty ?? false;
     final initial = member.displayName.trim().isEmpty
         ? '?'
@@ -696,24 +705,24 @@ class _MemberTile extends StatelessWidget {
           ),
         );
       },
-      tileColor: const Color(0xFF171120),
+      tileColor: palette.surface,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(17),
-        side: const BorderSide(color: Color(0xFF33263F)),
+        side: BorderSide(color: palette.border),
       ),
       leading: Stack(
         clipBehavior: Clip.none,
         children: [
           CircleAvatar(
             radius: 22,
-            backgroundColor: const Color(0xFF7230A5),
+            backgroundColor: colors.primary,
             backgroundImage: hasPhoto ? NetworkImage(member.photoUrl!) : null,
             child: hasPhoto
                 ? null
                 : Text(
                     initial,
-                    style: const TextStyle(
-                      color: Colors.white,
+                    style: TextStyle(
+                      color: colors.onPrimary,
                       fontWeight: FontWeight.w900,
                     ),
                   ),
@@ -726,10 +735,12 @@ class _MemberTile extends StatelessWidget {
               height: 13,
               decoration: BoxDecoration(
                 color: member.isOnline
-                    ? const Color(0xFF49D58A)
-                    : const Color(0xFF5B5362),
+                    ? (Theme.of(context).brightness == Brightness.dark
+                          ? const Color(0xFF49D58A)
+                          : const Color(0xFF08784E))
+                    : palette.navigationInactive,
                 shape: BoxShape.circle,
-                border: Border.all(color: const Color(0xFF171120), width: 2),
+                border: Border.all(color: palette.surface, width: 2),
               ),
             ),
           ),
@@ -737,14 +748,14 @@ class _MemberTile extends StatelessWidget {
       ),
       title: Text(
         member.displayName,
-        style: const TextStyle(
-          color: Colors.white,
+        style: TextStyle(
+          color: palette.textPrimary,
           fontWeight: FontWeight.w800,
         ),
       ),
       subtitle: Text(
         member.isOnline ? 'Online' : 'Offline',
-        style: const TextStyle(color: Color(0xFF9F95A6), fontSize: 11),
+        style: TextStyle(color: palette.textSecondary, fontSize: 11),
       ),
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
@@ -752,20 +763,20 @@ class _MemberTile extends StatelessWidget {
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
             decoration: BoxDecoration(
-              color: const Color(0xFF2E1C3A),
+              color: colors.primaryContainer,
               borderRadius: BorderRadius.circular(20),
             ),
             child: Text(
               member.role.label,
-              style: const TextStyle(
-                color: Color(0xFFD19CFF),
+              style: TextStyle(
+                color: colors.onPrimaryContainer,
                 fontSize: 10,
                 fontWeight: FontWeight.w800,
               ),
             ),
           ),
           const SizedBox(width: 6),
-          const Icon(Icons.chevron_right_rounded, color: Color(0xFF7E7485)),
+          Icon(Icons.chevron_right_rounded, color: palette.textTertiary),
         ],
       ),
     );
@@ -779,6 +790,8 @@ class _ClubLoadError extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     return SafeArea(
       child: Center(
         child: Padding(
@@ -786,16 +799,12 @@ class _ClubLoadError extends StatelessWidget {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Icon(
-                Icons.error_outline_rounded,
-                color: Color(0xFFFF6B8E),
-                size: 48,
-              ),
+              Icon(Icons.error_outline_rounded, color: colors.error, size: 48),
               const SizedBox(height: 14),
-              const Text(
+              Text(
                 'Could not open this club',
                 style: TextStyle(
-                  color: Colors.white,
+                  color: palette.textPrimary,
                   fontSize: 18,
                   fontWeight: FontWeight.w900,
                 ),
@@ -805,7 +814,7 @@ class _ClubLoadError extends StatelessWidget {
                 Text(
                   message!.replaceFirst('Bad state: ', ''),
                   textAlign: TextAlign.center,
-                  style: const TextStyle(color: Color(0xFFA99FAC)),
+                  style: TextStyle(color: palette.textSecondary),
                 ),
               ],
               const SizedBox(height: 18),
@@ -836,28 +845,30 @@ class _ClubOptionsSheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     return SafeArea(
       top: false,
       child: Container(
         padding: const EdgeInsets.fromLTRB(18, 12, 18, 24),
-        decoration: const BoxDecoration(
-          color: Color(0xFF171120),
-          borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+        decoration: BoxDecoration(
+          color: palette.surfaceRaised,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const YoModalSheetChrome(
+            YoModalSheetChrome(
               sheetLabel: 'Club options',
-              surfaceColor: Color(0xFF171120),
+              surfaceColor: palette.surfaceRaised,
             ),
             const SizedBox(height: 2),
-            const Align(
+            Align(
               alignment: Alignment.centerLeft,
               child: Text(
                 'Club options',
                 style: TextStyle(
-                  color: Colors.white,
+                  color: palette.textPrimary,
                   fontSize: 23,
                   fontWeight: FontWeight.w900,
                 ),
@@ -867,53 +878,50 @@ class _ClubOptionsSheet extends StatelessWidget {
             if (canManage)
               ListTile(
                 onTap: onSettings,
-                leading: const Icon(
-                  Icons.settings_rounded,
-                  color: Color(0xFFB348FF),
-                ),
-                title: const Text(
+                leading: Icon(Icons.settings_rounded, color: colors.primary),
+                title: Text(
                   'Club settings',
                   style: TextStyle(
-                    color: Colors.white,
+                    color: palette.textPrimary,
                     fontWeight: FontWeight.w800,
                   ),
                 ),
-                subtitle: const Text(
+                subtitle: Text(
                   'Name, description, privacy and language',
-                  style: TextStyle(color: Color(0xFF9D95AD)),
+                  style: TextStyle(color: palette.textSecondary),
                 ),
               ),
             ListTile(
               onTap: onMembers,
-              leading: const Icon(
+              leading: Icon(
                 Icons.manage_accounts_rounded,
-                color: Color(0xFFB348FF),
+                color: colors.primary,
               ),
-              title: const Text(
+              title: Text(
                 'Manage members',
                 style: TextStyle(
-                  color: Colors.white,
+                  color: palette.textPrimary,
                   fontWeight: FontWeight.w800,
                 ),
               ),
-              subtitle: const Text(
+              subtitle: Text(
                 'View members and manage roles',
-                style: TextStyle(color: Color(0xFF9D95AD)),
+                style: TextStyle(color: palette.textSecondary),
               ),
             ),
             ListTile(
               onTap: onShare,
-              leading: const Icon(Icons.link_rounded, color: Color(0xFFB348FF)),
-              title: const Text(
+              leading: Icon(Icons.link_rounded, color: colors.primary),
+              title: Text(
                 'Share invite link',
                 style: TextStyle(
-                  color: Colors.white,
+                  color: palette.textPrimary,
                   fontWeight: FontWeight.w800,
                 ),
               ),
-              subtitle: const Text(
+              subtitle: Text(
                 'Invite people through any app',
-                style: TextStyle(color: Color(0xFF9D95AD)),
+                style: TextStyle(color: palette.textSecondary),
               ),
             ),
           ],
@@ -977,39 +985,41 @@ class _InviteFriendsSheetState extends State<_InviteFriendsSheet> {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     return SafeArea(
       top: false,
       child: Container(
         height: MediaQuery.sizeOf(context).height * .72,
         padding: const EdgeInsets.fromLTRB(18, 12, 18, 20),
-        decoration: const BoxDecoration(
-          color: Color(0xFF171120),
-          borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+        decoration: BoxDecoration(
+          color: palette.surfaceRaised,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
         ),
         child: Column(
           children: [
-            const YoModalSheetChrome(
+            YoModalSheetChrome(
               sheetLabel: 'Invite friends',
-              surfaceColor: Color(0xFF171120),
+              surfaceColor: palette.surfaceRaised,
             ),
             const SizedBox(height: 2),
-            const Align(
+            Align(
               alignment: Alignment.centerLeft,
               child: Text(
                 'Invite friends',
                 style: TextStyle(
-                  color: Colors.white,
+                  color: palette.textPrimary,
                   fontSize: 23,
                   fontWeight: FontWeight.w900,
                 ),
               ),
             ),
             const SizedBox(height: 6),
-            const Align(
+            Align(
               alignment: Alignment.centerLeft,
               child: Text(
                 'They will join only after accepting your invitation.',
-                style: TextStyle(color: Color(0xFF9D95AD)),
+                style: TextStyle(color: palette.textSecondary),
               ),
             ),
             const SizedBox(height: 16),
@@ -1022,25 +1032,25 @@ class _InviteFriendsSheetState extends State<_InviteFriendsSheet> {
                     stream: _friends.watchFriends(),
                     builder: (context, snapshot) {
                       if (!snapshot.hasData) {
-                        return const Center(
+                        return Center(
                           child: CircularProgressIndicator(
-                            color: Color(0xFF9D20FF),
+                            color: colors.primary,
                           ),
                         );
                       }
                       final items = snapshot.data!;
                       if (items.isEmpty) {
-                        return const Center(
+                        return Center(
                           child: Text(
                             'Add friends first, then invite them here.',
-                            style: TextStyle(color: Color(0xFF9D95AD)),
+                            style: TextStyle(color: palette.textSecondary),
                           ),
                         );
                       }
                       return ListView.separated(
                         itemCount: items.length,
                         separatorBuilder: (_, __) =>
-                            const Divider(color: Color(0xFF30263F)),
+                            Divider(color: palette.border),
                         itemBuilder: (context, index) {
                           final friend = items[index];
                           final busy = _busy.contains(friend.id);
@@ -1058,8 +1068,8 @@ class _InviteFriendsSheetState extends State<_InviteFriendsSheet> {
                             ),
                             title: Text(
                               friend.displayName,
-                              style: const TextStyle(
-                                color: Colors.white,
+                              style: TextStyle(
+                                color: palette.textPrimary,
                                 fontWeight: FontWeight.w800,
                               ),
                             ),
@@ -1071,8 +1081,8 @@ class _InviteFriendsSheetState extends State<_InviteFriendsSheet> {
                                   : friend.email,
                               style: TextStyle(
                                 color: invited
-                                    ? const Color(0xFFC982FF)
-                                    : const Color(0xFF9D95AD),
+                                    ? colors.primary
+                                    : palette.textSecondary,
                               ),
                             ),
                             trailing: FilledButton(
@@ -1081,8 +1091,11 @@ class _InviteFriendsSheetState extends State<_InviteFriendsSheet> {
                                   : () => _sendInvite(friend, invited),
                               style: FilledButton.styleFrom(
                                 backgroundColor: invited
-                                    ? const Color(0xFF30243C)
-                                    : const Color(0xFF7D25F4),
+                                    ? palette.surfaceMuted
+                                    : colors.primary,
+                                foregroundColor: invited
+                                    ? palette.textPrimary
+                                    : colors.onPrimary,
                               ),
                               child: busy
                                   ? const SizedBox(

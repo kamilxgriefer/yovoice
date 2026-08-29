@@ -2,7 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
-import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/premium/data/models/subscription_entitlements.dart';
 import 'package:yovoice/features/premium/data/services/entitlement_service.dart';
 import 'package:yovoice/features/premium/premium_gates.dart';
@@ -118,9 +118,14 @@ class _PremiumFeatureGateState extends State<PremiumFeatureGate> {
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting &&
             !snapshot.hasData) {
-          return const Scaffold(
-            backgroundColor: AppColors.background,
-            body: Center(child: CircularProgressIndicator()),
+          final palette = context.appPalette;
+          return Scaffold(
+            backgroundColor: palette.background,
+            body: Center(
+              child: CircularProgressIndicator(
+                color: Theme.of(context).colorScheme.primary,
+              ),
+            ),
           );
         }
 
@@ -153,13 +158,15 @@ class _PremiumLockedDestination extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     return Scaffold(
-      backgroundColor: AppColors.background,
+      backgroundColor: palette.background,
       appBar: isRootTab
           ? null
           : AppBar(
               backgroundColor: Colors.transparent,
-              foregroundColor: Colors.white,
+              foregroundColor: palette.textPrimary,
               elevation: 0,
             ),
       body: SafeArea(
@@ -179,20 +186,15 @@ class _PremiumLockedDestination extends StatelessWidget {
                     alignment: Alignment.center,
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
-                      gradient: LinearGradient(
-                        colors: [
-                          AppColors.primary.withValues(alpha: .28),
-                          AppColors.secondary.withValues(alpha: .12),
-                        ],
-                      ),
+                      color: colors.primaryContainer,
                       border: Border.all(
-                        color: AppColors.secondary.withValues(alpha: .42),
+                        color: colors.primary.withValues(alpha: .65),
                       ),
                     ),
-                    child: const Icon(
+                    child: Icon(
                       Icons.lock_rounded,
                       key: ValueKey('premium-destination-lock'),
-                      color: Color(0xFFE9B8FF),
+                      color: colors.onPrimaryContainer,
                       size: 34,
                     ),
                   ),
@@ -200,8 +202,8 @@ class _PremiumLockedDestination extends StatelessWidget {
                   Text(
                     '${feature.label} requires Premium',
                     textAlign: TextAlign.center,
-                    style: const TextStyle(
-                      color: Colors.white,
+                    style: TextStyle(
+                      color: palette.textPrimary,
                       fontSize: 25,
                       fontWeight: FontWeight.w900,
                     ),
@@ -210,8 +212,8 @@ class _PremiumLockedDestination extends StatelessWidget {
                   Text(
                     feature.lockedDescription,
                     textAlign: TextAlign.center,
-                    style: const TextStyle(
-                      color: AppColors.textSecondary,
+                    style: TextStyle(
+                      color: palette.textSecondary,
                       fontSize: 14,
                       height: 1.45,
                     ),
@@ -228,8 +230,8 @@ class _PremiumLockedDestination extends StatelessWidget {
                       icon: const Icon(Icons.workspace_premium_rounded),
                       label: const Text('Explore Premium'),
                       style: FilledButton.styleFrom(
-                        backgroundColor: AppColors.primary,
-                        foregroundColor: Colors.white,
+                        backgroundColor: colors.primary,
+                        foregroundColor: colors.onPrimary,
                         padding: const EdgeInsets.symmetric(vertical: 15),
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(16),

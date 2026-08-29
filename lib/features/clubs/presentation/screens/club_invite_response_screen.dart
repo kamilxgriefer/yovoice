@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/clubs/data/models/club_invite.dart';
 import 'package:yovoice/features/clubs/data/services/club_service.dart';
 import 'package:yovoice/features/clubs/presentation/screens/club_overview_screen.dart';
@@ -106,11 +107,14 @@ class _ClubInviteResponseScreenState extends State<ClubInviteResponseScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     return Scaffold(
-      backgroundColor: const Color(0xFF080711),
+      key: const ValueKey('club-invite-response-screen'),
+      backgroundColor: palette.background,
       appBar: AppBar(
-        backgroundColor: const Color(0xFF080711),
-        foregroundColor: Colors.white,
+        backgroundColor: palette.background,
+        foregroundColor: palette.textPrimary,
         title: const Text('Club invitation'),
       ),
       body: ResponsiveContentFrame(
@@ -140,9 +144,9 @@ class _ClubInviteResponseScreenState extends State<ClubInviteResponseScreen> {
                   constraints: const BoxConstraints(maxWidth: 480),
                   child: DecoratedBox(
                     decoration: BoxDecoration(
-                      color: const Color(0xFF171121),
+                      color: palette.surface,
                       borderRadius: BorderRadius.circular(24),
-                      border: Border.all(color: const Color(0xFF3A2C49)),
+                      border: Border.all(color: palette.border),
                     ),
                     child: Padding(
                       padding: const EdgeInsets.all(24),
@@ -151,14 +155,14 @@ class _ClubInviteResponseScreenState extends State<ClubInviteResponseScreen> {
                         children: [
                           CircleAvatar(
                             radius: 38,
-                            backgroundColor: const Color(0xFF392052),
+                            backgroundColor: colors.primaryContainer,
                             backgroundImage: invite.clubAvatarUrl == null
                                 ? null
                                 : NetworkImage(invite.clubAvatarUrl!),
                             child: invite.clubAvatarUrl == null
-                                ? const Icon(
+                                ? Icon(
                                     Icons.groups_rounded,
-                                    color: Color(0xFFD89BFF),
+                                    color: colors.onPrimaryContainer,
                                     size: 36,
                                   )
                                 : null,
@@ -167,8 +171,8 @@ class _ClubInviteResponseScreenState extends State<ClubInviteResponseScreen> {
                           Text(
                             invite.clubName,
                             textAlign: TextAlign.center,
-                            style: const TextStyle(
-                              color: Colors.white,
+                            style: TextStyle(
+                              color: palette.textPrimary,
                               fontSize: 24,
                               fontWeight: FontWeight.w900,
                             ),
@@ -177,8 +181,8 @@ class _ClubInviteResponseScreenState extends State<ClubInviteResponseScreen> {
                           Text(
                             '${invite.inviterName} invited you to join.',
                             textAlign: TextAlign.center,
-                            style: const TextStyle(
-                              color: Color(0xFFA69CAF),
+                            style: TextStyle(
+                              color: palette.textSecondary,
                               fontSize: 16,
                             ),
                           ),
@@ -187,7 +191,7 @@ class _ClubInviteResponseScreenState extends State<ClubInviteResponseScreen> {
                             Text(
                               _error!,
                               textAlign: TextAlign.center,
-                              style: const TextStyle(color: Color(0xFFFF8FA8)),
+                              style: TextStyle(color: colors.error),
                             ),
                           ],
                           const SizedBox(height: 24),
@@ -262,13 +266,14 @@ class _InviteMessage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(24),
         child: Text(
           message,
           textAlign: TextAlign.center,
-          style: const TextStyle(color: Color(0xFFA69CAF), fontSize: 16),
+          style: TextStyle(color: palette.textSecondary, fontSize: 16),
         ),
       ),
     );

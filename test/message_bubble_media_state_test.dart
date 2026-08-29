@@ -6,10 +6,62 @@ import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:yovoice/core/theme/app_palette.dart';
+import 'package:yovoice/core/theme/app_theme.dart';
 import 'package:yovoice/features/messages/data/models/message.dart';
 import 'package:yovoice/features/messages/presentation/widgets/message_bubble.dart';
 
 void main() {
+  for (final entry in <String, ThemeData>{
+    'dark': AppTheme.darkTheme,
+    'light': AppTheme.lightTheme,
+  }.entries) {
+    testWidgets('${entry.key} voice loading and failure stay readable', (
+      tester,
+    ) async {
+      final load = Completer<Uint8List?>();
+      await _pumpBubble(
+        tester,
+        _voiceMessage(id: 'voice-${entry.key}', mediaUrl: _voiceOne),
+        loader: (_, _) => load.future,
+        playerFactory: _FakeAudioPlayer.new,
+        theme: entry.value,
+      );
+
+      await tester.tap(find.byIcon(Icons.play_arrow_rounded));
+      await tester.pump();
+      final palette = entry.value.extension<AppPalette>()!;
+      final loading = tester.widget<CircularProgressIndicator>(
+        find.byType(CircularProgressIndicator),
+      );
+      expect(loading.color, palette.textPrimary);
+
+      load.complete(null);
+      await tester.pumpAndSettle();
+      expect(find.byIcon(Icons.refresh_rounded), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('${entry.key} image loading and error expose retry', (
+      tester,
+    ) async {
+      final load = Completer<Uint8List?>();
+      await _pumpBubble(
+        tester,
+        _imageMessage(id: 'image-${entry.key}', mediaUrl: _imageOne),
+        loader: (_, _) => load.future,
+        theme: entry.value,
+      );
+      await tester.pump();
+      expect(find.byType(CircularProgressIndicator), findsOneWidget);
+
+      load.complete(null);
+      await tester.pumpAndSettle();
+      expect(find.text('Photo unavailable — retry'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+  }
+
   testWidgets('paused voice resumes from the same source and a new message '
       'drops cached bytes before playback', (tester) async {
     final player = _FakeAudioPlayer();
@@ -214,9 +266,11 @@ Future<void> _pumpBubble(
   Message message, {
   required Future<Uint8List?> Function(String? reference, int maxBytes) loader,
   AudioPlayer Function()? playerFactory,
+  ThemeData? theme,
 }) {
   return tester.pumpWidget(
     MaterialApp(
+      theme: theme ?? AppTheme.darkTheme,
       home: Scaffold(
         body: MessageBubble(
           message: message,

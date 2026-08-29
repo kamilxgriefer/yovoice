@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/shared/widgets/theme/yo_immersive_dark_surface.dart';
 
 @visibleForTesting
 double startupRingOpacity(double localProgress) =>
@@ -54,7 +55,7 @@ class _StartupLoadingScreenState extends State<StartupLoadingScreen>
     final width = MediaQuery.sizeOf(context).width;
     final compact = width < 420;
 
-    return Scaffold(
+    final content = Scaffold(
       backgroundColor: AppColors.background,
       body: Semantics(
         liveRegion: true,
@@ -168,6 +169,7 @@ class _StartupLoadingScreenState extends State<StartupLoadingScreen>
         ),
       ),
     );
+    return YoImmersiveDarkSurface(child: content);
   }
 }
 

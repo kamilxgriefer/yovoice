@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/clubs/data/models/club_member.dart';
 import 'package:yovoice/features/clubs/data/services/club_service.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
@@ -21,10 +22,6 @@ class ClubMemberManagementScreen extends StatefulWidget {
 
 class _ClubMemberManagementScreenState
     extends State<ClubMemberManagementScreen> {
-  static const _background = Color(0xFF080711);
-  static const _surface = Color(0xFF171120);
-  static const _purple = Color(0xFF9D20FF);
-
   final ClubService _service = ClubService();
   bool _saving = false;
 
@@ -55,31 +52,36 @@ class _ClubMemberManagementScreenState
   Future<void> _transferOwnership() async {
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: _surface,
-        title: const Text(
-          'Transfer ownership?',
-          style: TextStyle(color: Colors.white),
-        ),
-        content: Text(
-          '${widget.member.displayName} will become the club owner. You will '
-          'be demoted to Co-owner. This cannot be undone by you alone.',
-          style: const TextStyle(color: Color(0xFFB8AFBD)),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Cancel'),
+      builder: (dialogContext) {
+        final palette = dialogContext.appPalette;
+        final colors = Theme.of(dialogContext).colorScheme;
+        return AlertDialog(
+          backgroundColor: palette.surfaceRaised,
+          title: Text(
+            'Transfer ownership?',
+            style: TextStyle(color: palette.textPrimary),
           ),
-          FilledButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            style: FilledButton.styleFrom(
-              backgroundColor: const Color(0xFFB72D55),
+          content: Text(
+            '${widget.member.displayName} will become the club owner. You will '
+            'be demoted to Co-owner. This cannot be undone by you alone.',
+            style: TextStyle(color: palette.textSecondary),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('Cancel'),
             ),
-            child: const Text('Transfer'),
-          ),
-        ],
-      ),
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              style: FilledButton.styleFrom(
+                backgroundColor: colors.error,
+                foregroundColor: colors.onError,
+              ),
+              child: const Text('Transfer'),
+            ),
+          ],
+        );
+      },
     );
     if (confirmed != true || _saving) return;
     setState(() => _saving = true);
@@ -108,30 +110,35 @@ class _ClubMemberManagementScreenState
   Future<void> _removeMember() async {
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: _surface,
-        title: const Text(
-          'Remove member?',
-          style: TextStyle(color: Colors.white),
-        ),
-        content: Text(
-          '${widget.member.displayName} will lose access to this club, its chat and Club Lounge.',
-          style: const TextStyle(color: Color(0xFFB8AFBD)),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Cancel'),
+      builder: (dialogContext) {
+        final palette = dialogContext.appPalette;
+        final colors = Theme.of(dialogContext).colorScheme;
+        return AlertDialog(
+          backgroundColor: palette.surfaceRaised,
+          title: Text(
+            'Remove member?',
+            style: TextStyle(color: palette.textPrimary),
           ),
-          FilledButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            style: FilledButton.styleFrom(
-              backgroundColor: const Color(0xFFB72D55),
+          content: Text(
+            '${widget.member.displayName} will lose access to this club, its chat and Club Lounge.',
+            style: TextStyle(color: palette.textSecondary),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('Cancel'),
             ),
-            child: const Text('Remove'),
-          ),
-        ],
-      ),
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              style: FilledButton.styleFrom(
+                backgroundColor: colors.error,
+                foregroundColor: colors.onError,
+              ),
+              child: const Text('Remove'),
+            ),
+          ],
+        );
+      },
     );
     if (confirmed != true || _saving) return;
     setState(() => _saving = true);
@@ -157,11 +164,14 @@ class _ClubMemberManagementScreenState
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     return Scaffold(
-      backgroundColor: _background,
+      key: const ValueKey('club-member-management-screen'),
+      backgroundColor: palette.background,
       appBar: AppBar(
-        backgroundColor: _background,
-        foregroundColor: Colors.white,
+        backgroundColor: palette.background,
+        foregroundColor: palette.textPrimary,
         title: const Text('Member role'),
       ),
       body: ResponsiveContentFrame(
@@ -192,10 +202,10 @@ class _ClubMemberManagementScreenState
               children: [
                 _MemberHeader(member: widget.member),
                 const SizedBox(height: 22),
-                const Text(
+                Text(
                   'CLUB ROLE',
                   style: TextStyle(
-                    color: Color(0xFF9F95A6),
+                    color: palette.textTertiary,
                     fontSize: 11,
                     fontWeight: FontWeight.w900,
                     letterSpacing: 1.2,
@@ -216,10 +226,10 @@ class _ClubMemberManagementScreenState
                   ),
                 if (!canManage) ...[
                   const SizedBox(height: 14),
-                  const Text(
+                  Text(
                     'Only a higher-ranking Owner or Co-owner can change this member’s role.',
                     style: TextStyle(
-                      color: Color(0xFF968C9D),
+                      color: palette.textTertiary,
                       fontSize: 12,
                       height: 1.4,
                     ),
@@ -230,8 +240,8 @@ class _ClubMemberManagementScreenState
                   OutlinedButton.icon(
                     onPressed: _saving ? null : _transferOwnership,
                     style: OutlinedButton.styleFrom(
-                      foregroundColor: const Color(0xFFD19CFF),
-                      side: const BorderSide(color: Color(0xFF5A3A73)),
+                      foregroundColor: colors.primary,
+                      side: BorderSide(color: palette.borderStrong),
                       minimumSize: const Size.fromHeight(52),
                     ),
                     icon: const Icon(Icons.workspace_premium_rounded),
@@ -243,8 +253,8 @@ class _ClubMemberManagementScreenState
                   OutlinedButton.icon(
                     onPressed: _saving ? null : _removeMember,
                     style: OutlinedButton.styleFrom(
-                      foregroundColor: const Color(0xFFFF6B8E),
-                      side: const BorderSide(color: Color(0xFF6B2940)),
+                      foregroundColor: colors.error,
+                      side: BorderSide(color: colors.error),
                       minimumSize: const Size.fromHeight(52),
                     ),
                     icon: const Icon(Icons.person_remove_rounded),
@@ -253,8 +263,8 @@ class _ClubMemberManagementScreenState
                 ],
                 if (_saving) ...[
                   const SizedBox(height: 20),
-                  const Center(
-                    child: CircularProgressIndicator(color: _purple),
+                  Center(
+                    child: CircularProgressIndicator(color: colors.primary),
                   ),
                 ],
               ],
@@ -277,26 +287,28 @@ class _MemberHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     final hasPhoto = member.photoUrl?.isNotEmpty ?? false;
     return Container(
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
-        color: const Color(0xFF171120),
+        color: palette.surface,
         borderRadius: BorderRadius.circular(22),
-        border: Border.all(color: const Color(0xFF392A46)),
+        border: Border.all(color: palette.border),
       ),
       child: Row(
         children: [
           CircleAvatar(
             radius: 31,
-            backgroundColor: const Color(0xFF7230A5),
+            backgroundColor: colors.primary,
             backgroundImage: hasPhoto ? NetworkImage(member.photoUrl!) : null,
             child: hasPhoto
                 ? null
                 : Text(
                     member.initial,
-                    style: const TextStyle(
-                      color: Colors.white,
+                    style: TextStyle(
+                      color: colors.onPrimary,
                       fontSize: 24,
                       fontWeight: FontWeight.w900,
                     ),
@@ -309,8 +321,8 @@ class _MemberHeader extends StatelessWidget {
               children: [
                 Text(
                   member.displayName,
-                  style: const TextStyle(
-                    color: Colors.white,
+                  style: TextStyle(
+                    color: palette.textPrimary,
                     fontSize: 18,
                     fontWeight: FontWeight.w900,
                   ),
@@ -318,8 +330,8 @@ class _MemberHeader extends StatelessWidget {
                 const SizedBox(height: 5),
                 Text(
                   member.role.label,
-                  style: const TextStyle(
-                    color: Color(0xFFD19CFF),
+                  style: TextStyle(
+                    color: colors.primary,
                     fontWeight: FontWeight.w700,
                   ),
                 ),
@@ -346,6 +358,8 @@ class _RoleTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     final subtitle = switch (role) {
       ClubRole.coOwner => 'Manage roles, club settings and channels',
       ClubRole.admin => 'Manage channels and club operations',
@@ -359,32 +373,32 @@ class _RoleTile extends StatelessWidget {
       child: ListTile(
         enabled: enabled,
         onTap: enabled ? onTap : null,
-        tileColor: selected ? const Color(0xFF352047) : const Color(0xFF171120),
+        tileColor: selected ? colors.primaryContainer : palette.surface,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(17),
-          side: BorderSide(
-            color: selected ? const Color(0xFF9D20FF) : const Color(0xFF33263F),
-          ),
+          side: BorderSide(color: selected ? colors.primary : palette.border),
         ),
         leading: Icon(
           selected ? Icons.verified_rounded : Icons.shield_outlined,
           color: enabled || selected
-              ? const Color(0xFFC17BFF)
-              : const Color(0xFF5E5664),
+              ? colors.primary
+              : palette.navigationInactive,
         ),
         title: Text(
           role.label,
           style: TextStyle(
-            color: enabled || selected ? Colors.white : const Color(0xFF756D7B),
+            color: enabled || selected
+                ? palette.textPrimary
+                : palette.navigationInactive,
             fontWeight: FontWeight.w800,
           ),
         ),
         subtitle: Text(
           subtitle,
-          style: const TextStyle(color: Color(0xFF9F95A6), fontSize: 11),
+          style: TextStyle(color: palette.textSecondary, fontSize: 11),
         ),
         trailing: selected
-            ? const Icon(Icons.check_circle_rounded, color: Color(0xFFB85CFF))
+            ? Icon(Icons.check_circle_rounded, color: colors.primary)
             : null,
       ),
     );

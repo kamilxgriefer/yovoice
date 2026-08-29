@@ -6,6 +6,7 @@ import 'package:crypto/crypto.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:yovoice/core/theme/app_theme.dart';
 import 'package:yovoice/features/moments/data/models/downloaded_voice_moment.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
 import 'package:yovoice/features/moments/data/services/offline_audio_storage.dart';
@@ -317,6 +318,7 @@ void main() {
       addTearDown(() => tester.binding.setSurfaceSize(null));
       await tester.pumpWidget(
         MaterialApp(
+          theme: AppTheme.lightTheme,
           home: MediaQuery(
             data: MediaQueryData(
               size: Size(width, 844),

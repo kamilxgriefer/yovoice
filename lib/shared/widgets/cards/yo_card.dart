@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_radius.dart';
 import 'package:yovoice/core/theme/app_spacing.dart';
 
@@ -20,14 +20,15 @@ class YoCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     final card = AnimatedContainer(
       duration: const Duration(milliseconds: 180),
       margin: margin,
       padding: padding,
       decoration: BoxDecoration(
-        color: AppColors.surface,
+        color: palette.surface,
         borderRadius: AppRadius.lg,
-        border: Border.all(color: AppColors.border),
+        border: Border.all(color: palette.border),
       ),
       child: child,
     );

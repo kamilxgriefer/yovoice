@@ -1609,14 +1609,14 @@ permission flags).
   proof via test/profile_header_screenshot.dart. Live verification on a
   deployed build is still pending.
 
-- **OPEN migration limit — Light mode is a working Beta, not yet a complete
-  app-wide light theme.** The root `MaterialApp` now follows System/Dark/Light
-  and migrated surfaces use the light color scheme, but many legacy screens
-  still own inline dark colors. Those screens can remain visually dark or have
-  local contrast defects when Light is selected. The picker states this
-  limitation and the remaining wholesale migration is tracked under
-  [App-wide theme migration](Roadmap.md#app-wide-theme-migration); do not remove
-  the Beta label based only on the root theme switch working.
+- **FIXED IN SOURCE 2026-08-29 — Light mode painted white-on-white headings,
+  stale dark cards and the wrong system-bar icons.** The setting previously
+  changed only the root Material theme while Home, dock, modals and most
+  journeys still owned dark literals. Pearl now has one semantic palette,
+  brightness-aware native chrome, migrated normal-product surfaces and
+  explicit immersive-dark voice/media islands. Automated contrast,
+  responsive/200% text and real light/dark render checks cover the release;
+  see ADR-127.
 
 - **OPEN migration limit — Polish is a bounded Beta, not a claim of complete
   localization.** Framework controls plus migrated navigation,
@@ -2196,11 +2196,10 @@ permission flags).
   an already-installed older client is not broken without a minimum-version
   migration; current source neither creates nor watches those documents. See
   ADR-120.
-- **Most screens don't use the shared theme system** (`lib/core/theme/`,
-  `lib/shared/widgets/`) yet — they use a consistent-but-inline hex-color
-  convention instead. Not a bug, but tracked as a migration in progress —
-  see [UI.md](UI.md) and
-  [Roadmap.md](Roadmap.md#app-wide-theme-migration).
+- **RESOLVED IN CURRENT SOURCE 2026-08-29 — normal product journeys now use
+  the semantic theme system.** Remaining inline dark colour systems belong to
+  documented immersive voice/media surfaces or specialized workbenches; new
+  brightness-dependent UI must use `AppPalette`/`ColorScheme` (ADR-127).
 - **CORRECTED 2026-08-16 — this entry said "Cloud Functions still have
   zero automated test coverage."** That was false, and had been for some
   time: `functions/test/` holds **510 tests across 82 suites** in 45

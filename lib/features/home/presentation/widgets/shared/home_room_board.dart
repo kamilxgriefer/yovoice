@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/clubs/data/models/club.dart';
 import 'package:yovoice/features/clubs/data/services/club_service.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/desktop_home.dart'
@@ -140,6 +141,7 @@ class HomeRoomBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     final ownsRoom =
         currentUserId != null &&
         currentUserId!.isNotEmpty &&
@@ -159,12 +161,12 @@ class HomeRoomBanner extends StatelessWidget {
           '${room.name}. ${room.isLive ? 'Live' : 'Not live'}. '
           '${room.participantCount} listening.',
       child: Container(
-        margin: const EdgeInsets.only(bottom: 14),
-        constraints: BoxConstraints(minHeight: compact ? 168 : 156),
+        margin: EdgeInsets.only(bottom: compact ? 14 : 12),
+        constraints: BoxConstraints(minHeight: compact ? 168 : 140),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(20),
-          color: const Color(0xFF12101D),
-          border: Border.all(color: const Color(0xFF2C253B)),
+          color: palette.surface,
+          border: Border.all(color: palette.border),
         ),
         clipBehavior: Clip.antiAlias,
         child: Stack(
@@ -177,7 +179,7 @@ class HomeRoomBanner extends StatelessWidget {
             ),
             Positioned.fill(child: _CoverScrim(compact: compact)),
             Padding(
-              padding: EdgeInsets.all(compact ? 14 : 16),
+              padding: EdgeInsets.all(compact ? 14 : 13),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
@@ -211,14 +213,14 @@ class HomeRoomBanner extends StatelessWidget {
                         ),
                     ],
                   ),
-                  SizedBox(height: compact ? 10 : 12),
+                  SizedBox(height: compact ? 10 : 8),
                   Text(
                     room.name,
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
                       color: Colors.white,
-                      fontSize: compact ? 19 : 22,
+                      fontSize: compact ? 19 : 20,
                       height: 1.15,
                       letterSpacing: -.3,
                       fontWeight: FontWeight.w800,
@@ -228,16 +230,16 @@ class HomeRoomBanner extends StatelessWidget {
                     const SizedBox(height: 5),
                     Text(
                       room.description,
-                      maxLines: 2,
+                      maxLines: compact ? 2 : 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                         color: const Color(0xFFC4BAD3),
-                        fontSize: compact ? 12.5 : 13.5,
+                        fontSize: 12.5,
                         height: 1.35,
                       ),
                     ),
                   ],
-                  SizedBox(height: compact ? 12 : 14),
+                  SizedBox(height: compact ? 12 : 10),
                   Row(
                     crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
@@ -385,6 +387,7 @@ class _OwnedRoomMenuState extends State<_OwnedRoomMenu> {
     required Future<void> Function()? deleteRoom,
     required Club? deleteClub,
   }) {
+    final palette = context.appPalette;
     final onManage = widget.onManage;
     if (onManage == null && deleteRoom == null && deleteClub == null) {
       // Nothing to offer; an empty popup would render as a blank sheet.
@@ -393,10 +396,10 @@ class _OwnedRoomMenuState extends State<_OwnedRoomMenu> {
     return PopupMenuButton<_OwnedRoomAction>(
       tooltip: 'Manage your room',
       icon: const Icon(Icons.more_horiz_rounded, color: Colors.white, size: 22),
-      color: const Color(0xFF171121),
+      color: palette.surfaceRaised,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(14),
-        side: const BorderSide(color: Color(0xFF49365D)),
+        side: BorderSide(color: palette.borderStrong),
       ),
       itemBuilder: (context) => [
         if (onManage != null)
@@ -477,7 +480,9 @@ class _OwnedMenuRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = danger ? const Color(0xFFFF7B99) : const Color(0xFFE4DEED);
+    final color = danger
+        ? Theme.of(context).colorScheme.error
+        : context.appPalette.textPrimary;
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -536,22 +541,24 @@ class _ConfirmDeleteDialogState extends State<_ConfirmDeleteDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     return AlertDialog(
-      backgroundColor: const Color(0xFF171121),
-      title: Text(widget.title, style: const TextStyle(color: Colors.white)),
+      backgroundColor: palette.surfaceRaised,
+      title: Text(widget.title, style: TextStyle(color: palette.textPrimary)),
       content: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
             widget.body,
-            style: const TextStyle(color: Color(0xFFB8AFC2), height: 1.4),
+            style: TextStyle(color: palette.textSecondary, height: 1.4),
           ),
           if (_error != null) ...[
             const SizedBox(height: 10),
             Text(
               _error!,
-              style: const TextStyle(color: Color(0xFFFF9BB0), fontSize: 12.5),
+              style: TextStyle(color: colors.error, fontSize: 12.5),
             ),
           ],
         ],
@@ -564,7 +571,8 @@ class _ConfirmDeleteDialogState extends State<_ConfirmDeleteDialog> {
         FilledButton(
           onPressed: _busy ? null : _submit,
           style: FilledButton.styleFrom(
-            backgroundColor: const Color(0xFFFF416C),
+            backgroundColor: colors.error,
+            foregroundColor: colors.onError,
           ),
           child: _busy
               ? const SizedBox(
@@ -754,7 +762,7 @@ class _JoinButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      height: compact ? 42 : 44,
+      height: compact ? 42 : 40,
       child: DecoratedBox(
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(999),
@@ -775,7 +783,7 @@ class _JoinButton extends StatelessWidget {
             borderRadius: BorderRadius.circular(999),
             onTap: onTap,
             child: Padding(
-              padding: EdgeInsets.symmetric(horizontal: compact ? 18 : 22),
+              padding: EdgeInsets.symmetric(horizontal: compact ? 18 : 20),
               child: Center(
                 child: Text(
                   compact ? 'Join' : 'Join room',
@@ -843,21 +851,23 @@ class HomeActiveRooms extends StatelessWidget {
         .toList(growable: false);
 
     if (mine.isEmpty) {
+      final palette = context.appPalette;
+      final colors = Theme.of(context).colorScheme;
       return Container(
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(18),
-          color: const Color(0xFF12101D),
-          border: Border.all(color: const Color(0xFF2C253B)),
+          color: palette.surface,
+          border: Border.all(color: palette.border),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text(
+            Text(
               'You have no rooms yet.',
               style: TextStyle(
-                color: Color(0xFF9D95AD),
+                color: palette.textSecondary,
                 fontSize: 13.5,
                 height: 1.35,
               ),
@@ -870,9 +880,9 @@ class HomeActiveRooms extends StatelessWidget {
                 icon: const Icon(Icons.add_rounded, size: 18),
                 label: const Text('Create Room'),
                 style: OutlinedButton.styleFrom(
-                  foregroundColor: const Color(0xFFD3A5FF),
+                  foregroundColor: colors.primary,
                   side: BorderSide(
-                    color: AppColors.primary.withValues(alpha: .45),
+                    color: colors.primary.withValues(alpha: .55),
                   ),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(999),
@@ -933,6 +943,7 @@ class _CreateRoomTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
     return SizedBox(
       width: side,
       child: Material(
@@ -942,20 +953,20 @@ class _CreateRoomTile extends StatelessWidget {
           borderRadius: BorderRadius.circular(16),
           child: CustomPaint(
             painter: _DashedBorderPainter(
-              color: AppColors.primary.withValues(alpha: .55),
+              color: colors.primary.withValues(alpha: .62),
               radius: 16,
             ),
             child: SizedBox(
               height: side,
-              child: const Column(
+              child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Icon(Icons.add_rounded, color: Color(0xFFD3A5FF), size: 28),
-                  SizedBox(height: 8),
+                  Icon(Icons.add_rounded, color: colors.primary, size: 28),
+                  const SizedBox(height: 8),
                   Text(
                     'Create room',
                     style: TextStyle(
-                      color: Color(0xFFD3A5FF),
+                      color: colors.primary,
                       fontSize: 13,
                       fontWeight: FontWeight.w700,
                     ),
@@ -1027,6 +1038,7 @@ class _OwnedRoomCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return SizedBox(
       width: side,
       child: Column(
@@ -1063,8 +1075,8 @@ class _OwnedRoomCard extends StatelessWidget {
             room.name,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              color: Colors.white,
+            style: TextStyle(
+              color: palette.textPrimary,
               fontSize: 13.5,
               fontWeight: FontWeight.w700,
             ),
@@ -1077,7 +1089,7 @@ class _OwnedRoomCard extends StatelessWidget {
                 : 'Not live',
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(color: Color(0xFF9D95AD), fontSize: 11.5),
+            style: TextStyle(color: palette.textSecondary, fontSize: 11.5),
           ),
           const SizedBox(height: 8),
           SizedBox(
@@ -1212,10 +1224,11 @@ void _openRoster(
   RoomService service,
   bool compact,
 ) {
+  final palette = context.appPalette;
   if (compact) {
     showModalBottomSheet<void>(
       context: context,
-      backgroundColor: const Color(0xFF120C1D),
+      backgroundColor: palette.surface,
       showDragHandle: false,
       useSafeArea: true,
       shape: const RoundedRectangleBorder(
@@ -1224,9 +1237,9 @@ void _openRoster(
       builder: (sheetContext) => Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const YoModalSheetChrome(
+          YoModalSheetChrome(
             sheetLabel: 'room roster',
-            surfaceColor: Color(0xFF120C1D),
+            surfaceColor: palette.surface,
           ),
           Flexible(
             child: Padding(
@@ -1248,10 +1261,10 @@ void _openRoster(
     context: context,
     barrierColor: Colors.black54,
     builder: (dialogContext) => Dialog(
-      backgroundColor: const Color(0xFF120C1D),
+      backgroundColor: palette.surface,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(18),
-        side: const BorderSide(color: Color(0xFF2E2140)),
+        side: BorderSide(color: palette.border),
       ),
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 300, maxHeight: 380),
@@ -1283,6 +1296,7 @@ class _RosterLoader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return StreamBuilder<List<RoomParticipant>>(
       stream: service.watchParticipants(room.id),
       builder: (context, snapshot) {
@@ -1300,11 +1314,11 @@ class _RosterLoader extends StatelessWidget {
           );
         }
         if (snapshot.hasError) {
-          return const Padding(
-            padding: EdgeInsets.symmetric(vertical: 18, horizontal: 6),
+          return Padding(
+            padding: const EdgeInsets.symmetric(vertical: 18, horizontal: 6),
             child: Text(
               'That room is no longer available.',
-              style: TextStyle(color: Color(0xFF9A90AC), fontSize: 12.5),
+              style: TextStyle(color: palette.textSecondary, fontSize: 12.5),
             ),
           );
         }

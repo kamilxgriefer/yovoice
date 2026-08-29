@@ -9,6 +9,7 @@ import 'package:yovoice/features/calls/data/models/direct_call.dart';
 import 'package:yovoice/features/calls/data/services/direct_call_service.dart';
 import 'package:yovoice/features/calls/data/services/voice_call_service.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
+import 'package:yovoice/shared/widgets/theme/yo_immersive_dark_surface.dart';
 
 class DirectCallScreen extends StatefulWidget {
   const DirectCallScreen({
@@ -219,7 +220,7 @@ class _DirectCallScreenState extends State<DirectCallScreen>
 
   @override
   Widget build(BuildContext context) {
-    return StreamBuilder<DirectCall>(
+    final content = StreamBuilder<DirectCall>(
       stream: _call,
       builder: (context, snapshot) {
         final call = snapshot.data;
@@ -257,6 +258,7 @@ class _DirectCallScreenState extends State<DirectCallScreen>
         );
       },
     );
+    return YoImmersiveDarkSurface(child: content);
   }
 
   Widget _buildCall(BuildContext context, DirectCall call) {

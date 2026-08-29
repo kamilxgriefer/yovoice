@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/helpers/error_messages.dart';
+import 'package:yovoice/core/theme/app_palette.dart';
 
 import 'package:yovoice/features/premium/premium_gates.dart';
 
@@ -26,12 +27,6 @@ class ClubsScreen extends StatefulWidget {
 }
 
 class _ClubsScreenState extends State<ClubsScreen> {
-  static const Color _background = Color(0xFF080711);
-  static const Color _surface = Color(0xFF171120);
-  static const Color _surfaceLight = Color(0xFF21182C);
-  static const Color _purple = Color(0xFF9D20FF);
-  static const Color _muted = Color(0xFFA59BAF);
-
   final ClubService _clubService = ClubService();
   final Set<String> _processingInvites = <String>{};
 
@@ -88,8 +83,11 @@ class _ClubsScreenState extends State<ClubsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     return Scaffold(
-      backgroundColor: _background,
+      key: const ValueKey('clubs-screen'),
+      backgroundColor: palette.background,
       body: SafeArea(
         bottom: false,
         child: ResponsiveContentFrame(
@@ -112,8 +110,10 @@ class _ClubsScreenState extends State<ClubsScreen> {
                         if (clubSnapshot.connectionState ==
                                 ConnectionState.waiting &&
                             !clubSnapshot.hasData) {
-                          return const Center(
-                            child: CircularProgressIndicator(color: _purple),
+                          return Center(
+                            child: CircularProgressIndicator(
+                              color: colors.primary,
+                            ),
                           );
                         }
                         if (clubSnapshot.hasError) {
@@ -132,18 +132,18 @@ class _ClubsScreenState extends State<ClubsScreen> {
                         }
 
                         return RefreshIndicator(
-                          color: _purple,
-                          backgroundColor: _surfaceLight,
+                          color: colors.primary,
+                          backgroundColor: palette.surfaceRaised,
                           onRefresh: () async => setState(() {}),
                           child: ListView(
                             physics: const AlwaysScrollableScrollPhysics(),
                             padding: const EdgeInsets.fromLTRB(18, 10, 18, 130),
                             children: [
                               if (invites.isNotEmpty) ...[
-                                const Text(
+                                Text(
                                   'Club invitations',
                                   style: TextStyle(
-                                    color: Colors.white,
+                                    color: palette.textPrimary,
                                     fontSize: 19,
                                     fontWeight: FontWeight.w900,
                                   ),
@@ -167,10 +167,10 @@ class _ClubsScreenState extends State<ClubsScreen> {
                               if (clubs.isNotEmpty) ...[
                                 _SummaryCard(clubCount: clubs.length),
                                 const SizedBox(height: 18),
-                                const Text(
+                                Text(
                                   'Your clubs',
                                   style: TextStyle(
-                                    color: Colors.white,
+                                    color: palette.textPrimary,
                                     fontSize: 19,
                                     fontWeight: FontWeight.w900,
                                   ),
@@ -216,19 +216,21 @@ class ClubInviteCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     final hasAvatar = invite.clubAvatarUrl?.isNotEmpty == true;
     return Container(
       padding: const EdgeInsets.all(15),
       decoration: BoxDecoration(
-        color: _ClubsScreenState._surface,
+        color: palette.surface,
         borderRadius: BorderRadius.circular(22),
-        border: Border.all(color: const Color(0xFF5C3477)),
+        border: Border.all(color: palette.borderStrong),
       ),
       child: Row(
         children: [
           CircleAvatar(
             radius: 28,
-            backgroundColor: const Color(0xFF54247C),
+            backgroundColor: colors.primary,
             backgroundImage: hasAvatar
                 ? NetworkImage(invite.clubAvatarUrl!)
                 : null,
@@ -238,8 +240,8 @@ class ClubInviteCard extends StatelessWidget {
                     invite.clubName.isEmpty
                         ? 'C'
                         : invite.clubName[0].toUpperCase(),
-                    style: const TextStyle(
-                      color: Colors.white,
+                    style: TextStyle(
+                      color: colors.onPrimary,
                       fontWeight: FontWeight.w900,
                     ),
                   ),
@@ -253,8 +255,8 @@ class ClubInviteCard extends StatelessWidget {
                   invite.clubName,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Colors.white,
+                  style: TextStyle(
+                    color: palette.textPrimary,
                     fontWeight: FontWeight.w900,
                   ),
                 ),
@@ -263,7 +265,7 @@ class ClubInviteCard extends StatelessWidget {
                   'Invited by ${invite.inviterName}',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(color: _ClubsScreenState._muted),
+                  style: TextStyle(color: palette.textSecondary),
                 ),
                 const SizedBox(height: 11),
                 LayoutBuilder(
@@ -276,7 +278,8 @@ class ClubInviteCard extends StatelessWidget {
                       onPressed: busy ? null : onAccept,
                       style: FilledButton.styleFrom(
                         minimumSize: const Size.fromHeight(48),
-                        backgroundColor: _ClubsScreenState._purple,
+                        backgroundColor: colors.primary,
+                        foregroundColor: colors.onPrimary,
                       ),
                       child: busy
                           ? const SizedBox(
@@ -328,6 +331,8 @@ class _Header extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     return Padding(
       padding: const EdgeInsets.fromLTRB(14, 18, 16, 8),
       child: Row(
@@ -337,20 +342,20 @@ class _Header extends StatelessWidget {
               icon: Icons.arrow_back_ios_new_rounded,
               iconSize: 18,
               size: 40,
-              backgroundColor: _ClubsScreenState._surface,
-              borderColor: _ClubsScreenState._surfaceLight,
+              backgroundColor: palette.surface,
+              borderColor: palette.border,
               onPressed: () => Navigator.of(context).pop(),
             ),
             const SizedBox(width: 10),
           ],
-          const Expanded(
+          Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
                   'Clubs',
                   style: TextStyle(
-                    color: Colors.white,
+                    color: palette.textPrimary,
                     fontSize: 30,
                     fontWeight: FontWeight.w900,
                     letterSpacing: -0.7,
@@ -360,7 +365,7 @@ class _Header extends StatelessWidget {
                 Text(
                   'Your permanent communities',
                   style: TextStyle(
-                    color: _ClubsScreenState._muted,
+                    color: palette.textSecondary,
                     fontSize: 13,
                     fontWeight: FontWeight.w600,
                   ),
@@ -372,8 +377,8 @@ class _Header extends StatelessWidget {
             onPressed: onCreatePressed,
             tooltip: 'Create club',
             style: IconButton.styleFrom(
-              backgroundColor: _ClubsScreenState._purple,
-              foregroundColor: Colors.white,
+              backgroundColor: colors.primary,
+              foregroundColor: colors.onPrimary,
               minimumSize: const Size(48, 48),
             ),
             icon: const Icon(Icons.add_rounded, size: 28),
@@ -459,6 +464,8 @@ class _ClubCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     final hasBanner = club.bannerUrl?.isNotEmpty ?? false;
     final hasAvatar = club.avatarUrl?.isNotEmpty ?? false;
 
@@ -469,9 +476,9 @@ class _ClubCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(24),
         child: Container(
           decoration: BoxDecoration(
-            color: _ClubsScreenState._surface,
+            color: palette.surface,
             borderRadius: BorderRadius.circular(24),
-            border: Border.all(color: const Color(0xFF33263F)),
+            border: Border.all(color: palette.border),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -512,9 +519,9 @@ class _ClubCard extends StatelessWidget {
                             height: 66,
                             decoration: BoxDecoration(
                               shape: BoxShape.circle,
-                              color: const Color(0xFF7B2CBF),
+                              color: colors.primary,
                               border: Border.all(
-                                color: _ClubsScreenState._surface,
+                                color: palette.surface,
                                 width: 4,
                               ),
                               image: hasAvatar
@@ -529,8 +536,8 @@ class _ClubCard extends StatelessWidget {
                                 ? null
                                 : Text(
                                     club.initial,
-                                    style: const TextStyle(
-                                      color: Colors.white,
+                                    style: TextStyle(
+                                      color: colors.onPrimary,
                                       fontSize: 26,
                                       fontWeight: FontWeight.w900,
                                     ),
@@ -545,8 +552,8 @@ class _ClubCard extends StatelessWidget {
                             ),
                             decoration: BoxDecoration(
                               color: club.onlineCount > 0
-                                  ? const Color(0xFF173B2A)
-                                  : const Color(0xFF28222E),
+                                  ? palette.successSurface
+                                  : palette.surfaceMuted,
                               borderRadius: BorderRadius.circular(20),
                             ),
                             child: Text(
@@ -555,8 +562,11 @@ class _ClubCard extends StatelessWidget {
                                   : 'Quiet now',
                               style: TextStyle(
                                 color: club.onlineCount > 0
-                                    ? const Color(0xFF68E6A1)
-                                    : const Color(0xFFA49AAA),
+                                    ? (Theme.of(context).brightness ==
+                                              Brightness.dark
+                                          ? const Color(0xFF68E6A1)
+                                          : const Color(0xFF08784E))
+                                    : palette.textSecondary,
                                 fontSize: 11,
                                 fontWeight: FontWeight.w800,
                               ),
@@ -577,16 +587,16 @@ class _ClubCard extends StatelessWidget {
                                   club.name,
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                    color: Colors.white,
+                                  style: TextStyle(
+                                    color: palette.textPrimary,
                                     fontSize: 18,
                                     fontWeight: FontWeight.w900,
                                   ),
                                 ),
                               ),
-                              const Icon(
+                              Icon(
                                 Icons.chevron_right_rounded,
-                                color: Color(0xFF9F94A8),
+                                color: palette.textTertiary,
                               ),
                             ],
                           ),
@@ -597,8 +607,8 @@ class _ClubCard extends StatelessWidget {
                                 : club.description,
                             maxLines: 2,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: Color(0xFFB5AABB),
+                            style: TextStyle(
+                              color: palette.textSecondary,
                               fontSize: 12,
                               height: 1.35,
                             ),
@@ -639,25 +649,26 @@ class _MetaChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return Flexible(
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
         decoration: BoxDecoration(
-          color: _ClubsScreenState._surfaceLight,
+          color: palette.surfaceMuted,
           borderRadius: BorderRadius.circular(20),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, size: 14, color: const Color(0xFFBFA5D3)),
+            Icon(icon, size: 14, color: palette.textSecondary),
             const SizedBox(width: 5),
             Flexible(
               child: Text(
                 text,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: Color(0xFFD4CBD9),
+                style: TextStyle(
+                  color: palette.textPrimary,
                   fontSize: 10,
                   fontWeight: FontWeight.w700,
                 ),
@@ -677,6 +688,8 @@ class _EmptyState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     return ListView(
       physics: const AlwaysScrollableScrollPhysics(),
       padding: const EdgeInsets.fromLTRB(24, 60, 24, 130),
@@ -701,21 +714,21 @@ class _EmptyState extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 28),
-        const Text(
+        Text(
           'Find your people',
           textAlign: TextAlign.center,
           style: TextStyle(
-            color: Colors.white,
+            color: palette.textPrimary,
             fontSize: 27,
             fontWeight: FontWeight.w900,
           ),
         ),
         const SizedBox(height: 10),
-        const Text(
+        Text(
           'Create a permanent club with members, roles, chat and a private voice lounge.',
           textAlign: TextAlign.center,
           style: TextStyle(
-            color: Color(0xFFAEA3B5),
+            color: palette.textSecondary,
             fontSize: 14,
             height: 1.45,
           ),
@@ -724,8 +737,8 @@ class _EmptyState extends StatelessWidget {
         FilledButton.icon(
           onPressed: onCreatePressed,
           style: FilledButton.styleFrom(
-            backgroundColor: _ClubsScreenState._purple,
-            foregroundColor: Colors.white,
+            backgroundColor: colors.primary,
+            foregroundColor: colors.onPrimary,
             minimumSize: const Size.fromHeight(56),
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(18),
@@ -750,22 +763,20 @@ class _ErrorState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(24),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(
-              Icons.cloud_off_rounded,
-              color: Color(0xFFFF6B8E),
-              size: 46,
-            ),
+            Icon(Icons.cloud_off_rounded, color: colors.error, size: 46),
             const SizedBox(height: 14),
-            const Text(
+            Text(
               'Could not load your clubs',
               style: TextStyle(
-                color: Colors.white,
+                color: palette.textPrimary,
                 fontSize: 18,
                 fontWeight: FontWeight.w900,
               ),
@@ -776,7 +787,7 @@ class _ErrorState extends StatelessWidget {
               textAlign: TextAlign.center,
               maxLines: 4,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(color: Color(0xFFA99FAC), fontSize: 12),
+              style: TextStyle(color: palette.textSecondary, fontSize: 12),
             ),
             const SizedBox(height: 18),
             OutlinedButton.icon(

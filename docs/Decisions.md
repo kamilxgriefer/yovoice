@@ -4707,10 +4707,10 @@ not account authority or social data.
    supported locales and the YO Voice plus Material/Widgets/Cupertino
    delegates. A persisted selection therefore changes framework controls and
    every migrated surface from one source rather than screen-local flags.
-4. Light and Polish are explicitly labelled **Beta**. Current Polish coverage
-   is bounded to migrated navigation, authentication, Settings and framework
-   controls. Current Light coverage is bounded by the shared theme migration;
-   a legacy inline-dark screen is not implied to support it.
+4. Polish is explicitly labelled **Beta** and remains bounded to migrated
+   navigation, authentication, Settings and framework controls. Light
+   graduated to the Pearl semantic theme on 2026-08-29 under ADR-127; this
+   preference contract remains unchanged.
 5. Missing, malformed or unreadable state falls back to Dark and English so an
    existing installation never opts itself into an incomplete Beta because of
    the device's system settings. Startup logs a preferences-store failure and
@@ -4731,9 +4731,9 @@ complete.
 - A user selects Appearance and language separately on each browser/device.
 - The preference read adds a small local startup operation but cannot block
   sign-in when it fails.
-- Full Light and Polish coverage remain migration work; the Beta labels stay
-  until rendered, linguistic and accessibility verification covers the full
-  app at narrow, medium and wide breakpoints.
+- Polish remains migration work and keeps its Beta label until linguistic and
+  accessibility verification covers the full product. Pearl's rendered and
+  accessibility contract is recorded separately in ADR-127.
 - `flutter_localizations` and `shared_preferences` are maintained dependencies;
   the latter must remain limited to non-secret presentation state.
 
@@ -7873,3 +7873,52 @@ non-interactive because the whole card already opens a profile.
   malicious hosts, exact launch URI, keyboard/screen-reader semantics,
   double-fire, failure/disposal and 320 px at 200% text. Real-font frames cover
   390 px, 768 px and the 320 px enlarged-text state.
+
+## ADR-127: Pearl uses semantic colour roles and keeps voice/media surfaces explicitly immersive
+
+**Status**: Implemented in source; web Hosting and native store build pending
+**Date**: 2026-08-29
+
+### Context
+
+The device-local Light preference changed Material's brightness but most
+visible screens still painted dark literals or white copy. On a light canvas
+this produced white-on-white headings, disconnected black cards and white
+status-bar icons. Replacing every purple/white/black literal globally would
+break text over uploaded images, room scrims, calls and recording workspaces,
+where darkness is functional rather than a theme leak.
+
+### Decision
+
+`AppColors` remains the stable brand/status palette. `AppPalette`, a
+`ThemeExtension`, owns brightness-dependent semantic roles for canvas,
+surfaces, borders, primary/secondary/tertiary copy, navigation, focus, scrim,
+shadow and status containers. `AppTheme` installs Dark and Pearl palettes,
+removes colour ownership from typography and updates Android/iOS status and
+navigation chrome every frame. Pearl uses warm white/plum neutrals and ink
+copy; purple is an accent rather than a page tint.
+
+Shared controls and normal journeys migrate complete surface/foreground atoms:
+shell, Home/dock, Chats, Friends, Moments, Profile, Settings, Notifications,
+Premium and shared modal/state components. Inputs use the strong boundary role;
+decorative cards may use the quiet border. Voice rooms, calls, recording and
+review, story viewing, cropping and image-led surfaces remain complete local
+dark treatments with their own readable copy and scrims. Those are intentional
+immersive islands, not permission to reuse dark literals on a Pearl page.
+
+Light graduates from Beta; Polish remains Beta because colour completeness is
+independent of translation completeness. The branded launch splash stays dark
+to avoid a plain system-window flash while persisted preference state loads;
+Flutter owns correct chrome from the first rendered app frame.
+
+### Consequences
+
+- Essential semantic text pairs meet at least 4.5:1; control/focus boundaries
+  meet at least 3:1. Theme-contract tests fail if a token regresses.
+- Primary journeys are exercised in Dark and Pearl at 320/768/1440 and 200%
+  text, with focused feature matrices for loading, empty, error and populated
+  states. Real-font Home renders are inspected in both themes.
+- A new normal screen must use `AppPalette`/`ColorScheme`; a new immersive
+  screen must own the full dark atom and document why it is immersive.
+- The preference remains device-local and keeps the persisted enum introduced
+  by ADR-072, so no migration or Firestore write is needed.

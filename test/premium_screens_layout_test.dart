@@ -7,6 +7,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:yovoice/core/theme/app_palette.dart';
+import 'package:yovoice/core/theme/app_theme.dart';
 import 'package:yovoice/features/premium/data/services/entitlement_service.dart';
 import 'package:yovoice/features/premium/data/models/premium_billing_context.dart';
 import 'package:yovoice/features/premium/data/models/subscription_entitlements.dart';
@@ -116,6 +118,7 @@ class _RecordingPortalBilling implements PremiumBillingGateway {
 }
 
 Widget _scaledApp(Widget home) => MaterialApp(
+  theme: AppTheme.lightTheme,
   builder: (context, child) => MediaQuery(
     data: MediaQuery.of(
       context,
@@ -125,7 +128,10 @@ Widget _scaledApp(Widget home) => MaterialApp(
   home: home,
 );
 
-Widget _app(Widget home) => MaterialApp(home: home);
+Widget _app(Widget home) => MaterialApp(theme: AppTheme.lightTheme, home: home);
+
+Widget _darkApp(Widget home) =>
+    MaterialApp(theme: AppTheme.darkTheme, home: home);
 
 void main() {
   setUp(() {
@@ -146,14 +152,13 @@ void main() {
 
       final db = FakeFirebaseFirestore();
       final auth = _auth();
+      final screen = PremiumScreen(
+        entitlementService: EntitlementService(firestore: db, auth: auth),
+        profileService: ProfileService(firestore: db, auth: auth),
+        billingService: const _FakeBilling(),
+      );
       await tester.pumpWidget(
-        _app(
-          PremiumScreen(
-            entitlementService: EntitlementService(firestore: db, auth: auth),
-            profileService: ProfileService(firestore: db, auth: auth),
-            billingService: const _FakeBilling(),
-          ),
-        ),
+        size.width == 320 ? _scaledApp(screen) : _app(screen),
       );
       // Fixed pumps only — the premium hero ring animates forever.
       await tester.pump(const Duration(milliseconds: 80));
@@ -166,6 +171,10 @@ void main() {
       );
       await tester.pump();
       expect(find.text('Check plans'), findsOneWidget);
+      expect(
+        tester.widget<Scaffold>(find.byType(Scaffold)).backgroundColor,
+        AppPalette.light.background,
+      );
       expect(tester.takeException(), isNull);
     });
 
@@ -212,9 +221,75 @@ void main() {
       );
       await tester.pump();
       expect(find.text('Everything Premium includes:'), findsOneWidget);
+      expect(
+        tester.widget<Scaffold>(find.byType(Scaffold)).backgroundColor,
+        AppPalette.light.background,
+      );
       expect(tester.takeException(), isNull);
     });
   }
+
+  testWidgets('Premium presentation keeps the semantic dark palette', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final db = FakeFirebaseFirestore();
+    final auth = _auth();
+
+    await tester.pumpWidget(
+      _darkApp(
+        PremiumScreen(
+          entitlementService: EntitlementService(firestore: db, auth: auth),
+          profileService: ProfileService(firestore: db, auth: auth),
+          billingService: const _FakeBilling(),
+        ),
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 80));
+
+    expect(
+      tester.widget<Scaffold>(find.byType(Scaffold)).backgroundColor,
+      AppPalette.dark.background,
+    );
+    expect(find.text('More room\nfor your voice.'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('active Premium state scrolls at 320px and 200 percent text', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(320, 568);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final db = FakeFirebaseFirestore();
+    await db.collection('entitlements').doc(_uid).set({
+      'plan': 'monthly',
+      'status': 'active',
+      'currentPeriodEnd': Timestamp.fromDate(
+        DateTime.now().add(const Duration(days: 20)),
+      ),
+      'isPremium': true,
+    });
+    final auth = _auth();
+
+    await tester.pumpWidget(
+      _scaledApp(
+        PremiumScreen(
+          entitlementService: EntitlementService(firestore: db, auth: auth),
+          profileService: ProfileService(firestore: db, auth: auth),
+          billingService: const _FakeBilling(),
+        ),
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(find.text('You have YO Voice Premium'), findsOneWidget);
+    await tester.ensureVisible(find.text('Manage subscription'));
+    await tester.pump();
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets(
     'billing toggle and plan cards are keyboard-selectable controls',
@@ -424,8 +499,11 @@ void main() {
   );
 
   testWidgets('billing load failure is friendly and retryable', (tester) async {
+    tester.view.physicalSize = const Size(320, 568);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
     await tester.pumpWidget(
-      _app(
+      _scaledApp(
         PremiumPlansScreen(
           entitlementService: EntitlementService(
             firestore: FakeFirebaseFirestore(),

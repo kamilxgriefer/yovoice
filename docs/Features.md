@@ -303,16 +303,16 @@ configuration, Functions/Rules and client rollout before being called live.
 The following Settings additions were deployed to the web/PWA client on
 2026-08-18 from commit `8fa0192`; native stores require their own signed
 release. Appearance and app language have real device-local contracts.
-Appearance offers System, Dark and Light Beta; Language offers System, English
+Appearance offers System, Dark and Light (Pearl); Language offers System, English
 and Polish Beta. Both persist through `shared_preferences`, update the root
 `MaterialApp`, and fall back to Dark/English when stored state is missing,
 malformed or unavailable so legacy installs do not enter a Beta implicitly.
-The Beta labels are material: the shared
-theme, navigation, authentication, Settings and framework controls participate,
-while legacy screens with inline dark colors or English literals are still
-being migrated. These preferences do not create Firestore data and do not sync
-between devices. See
-[ADR-072](Decisions.md#adr-072-appearance-and-ui-language-are-device-local-preferences-with-explicit-beta-boundaries).
+Pearl uses the semantic `AppPalette` across the shell, Home, Chats, Friends,
+Moments, Profile, Settings, Notifications and Premium; voice rooms, calls,
+recording/review and image-led viewers remain deliberately immersive dark
+surfaces instead of accidental theme leaks. Polish remains explicitly Beta
+because product copy is not yet fully localized. These preferences do not
+create Firestore data and do not sync between devices. See ADR-072 and ADR-127.
 
 Devices & sessions shows the current Firebase token session and offers one
 real remote-security action: account-wide refresh-token revocation followed by

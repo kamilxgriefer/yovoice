@@ -8,6 +8,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import 'package:yovoice/core/helpers/error_messages.dart';
 import 'package:yovoice/core/preferences/app_preferences.dart';
+import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/shared/widgets/buttons/yo_icon_button.dart';
 import 'package:yovoice/features/auth/data/auth_service.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
@@ -30,14 +31,15 @@ import 'package:yovoice/features/settings/presentation/widgets/message_privacy_s
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
 
-const _background = Color(0xFF080711);
-const _surface = Color(0xFF14101E);
-const _surfaceSoft = Color(0xFF17101F);
-const _border = Color(0xFF33263F);
-const _muted = Color(0xFF9D95AD);
-const _primary = Color(0xFFB348FF);
-const _danger = Color(0xFFFF6F9C);
-const _success = Color(0xFF3FDA8E);
+Color _successForeground(BuildContext context) =>
+    Theme.of(context).brightness == Brightness.dark
+    ? const Color(0xFF3FDA8E)
+    : const Color(0xFF087A44);
+
+Color _warningForeground(BuildContext context) =>
+    Theme.of(context).brightness == Brightness.dark
+    ? const Color(0xFFFFB547)
+    : const Color(0xFF8A4B00);
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({this.isRootTab = false, super.key});
@@ -122,15 +124,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   void _notify(String message, {bool isError = false}) {
     if (!mounted) return;
+    final colors = Theme.of(context).colorScheme;
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(
         SnackBar(
-          content: Text(message),
+          content: Text(
+            message,
+            style: isError ? TextStyle(color: colors.onErrorContainer) : null,
+          ),
           behavior: SnackBarBehavior.floating,
-          backgroundColor: isError
-              ? const Color(0xFF5C1B33)
-              : const Color(0xFF3A1958),
+          backgroundColor: isError ? colors.errorContainer : null,
         ),
       );
   }
@@ -234,25 +238,32 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _confirmSignOut() async {
     final shouldSignOut = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: _surface,
-        title: const Text('Log out?', style: TextStyle(color: Colors.white)),
-        content: const Text(
-          'You will need to sign in again to use YO Voice.',
-          style: TextStyle(color: _muted),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
+      builder: (dialogContext) {
+        final palette = dialogContext.appPalette;
+        final colors = Theme.of(dialogContext).colorScheme;
+        return AlertDialog(
+          backgroundColor: palette.surfaceRaised,
+          title: Text('Log out?', style: TextStyle(color: palette.textPrimary)),
+          content: Text(
+            'You will need to sign in again to use YO Voice.',
+            style: TextStyle(color: palette.textSecondary),
           ),
-          FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: _danger),
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Log out'),
-          ),
-        ],
-      ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: colors.errorContainer,
+                foregroundColor: colors.onErrorContainer,
+              ),
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('Log out'),
+            ),
+          ],
+        );
+      },
     );
     if (shouldSignOut == true) {
       await _authService.signOut();
@@ -260,9 +271,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _openDeleteAccountRequest() async {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     await showModalBottomSheet<void>(
       context: context,
-      backgroundColor: _surface,
+      backgroundColor: palette.surfaceRaised,
       showDragHandle: false,
       constraints: ResponsiveContentFrame.adaptiveModalConstraints(
         context,
@@ -277,41 +290,49 @@ class _SettingsScreenState extends State<SettingsScreen> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const YoModalSheetChrome(
+            YoModalSheetChrome(
               sheetLabel: 'delete account request',
-              surfaceColor: _surface,
+              surfaceColor: palette.surfaceRaised,
             ),
             Container(
               width: 46,
               height: 46,
               alignment: Alignment.center,
               decoration: BoxDecoration(
-                color: _danger.withValues(alpha: .16),
+                color: colors.errorContainer,
                 borderRadius: BorderRadius.circular(16),
               ),
-              child: const Icon(Icons.warning_rounded, color: _danger),
+              child: Icon(
+                Icons.warning_rounded,
+                color: colors.onErrorContainer,
+              ),
             ),
             const SizedBox(height: 16),
-            const Text(
+            Text(
               'Delete your account',
               style: TextStyle(
-                color: Colors.white,
+                color: palette.textPrimary,
                 fontSize: 20,
                 fontWeight: FontWeight.w900,
               ),
             ),
             const SizedBox(height: 8),
-            const Text(
+            Text(
               'Self-service account deletion isn\'t available yet. Email support and '
               'we\'ll permanently delete your account, profile and content by hand.',
-              style: TextStyle(color: _muted, height: 1.45, fontSize: 13.5),
+              style: TextStyle(
+                color: palette.textSecondary,
+                height: 1.45,
+                fontSize: 13.5,
+              ),
             ),
             const SizedBox(height: 20),
             SizedBox(
               width: double.infinity,
               child: FilledButton.icon(
                 style: FilledButton.styleFrom(
-                  backgroundColor: _danger,
+                  backgroundColor: colors.errorContainer,
+                  foregroundColor: colors.onErrorContainer,
                   padding: const EdgeInsets.symmetric(vertical: 14),
                 ),
                 onPressed: () {
@@ -321,7 +342,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   );
                 },
                 icon: const Icon(Icons.mail_outline_rounded),
-                label: const Text('Email support to delete my account'),
+                label: const Text(
+                  'Email support to delete my account',
+                  maxLines: 2,
+                  textAlign: TextAlign.center,
+                ),
               ),
             ),
           ],
@@ -332,8 +357,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     return Scaffold(
-      backgroundColor: _background,
+      backgroundColor: palette.background,
       body: SafeArea(
         child: ResponsiveContentFrame(
           width: ResponsiveContentWidth.list,
@@ -349,16 +376,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         icon: Icons.arrow_back_ios_new_rounded,
                         iconSize: 18,
                         size: 40,
-                        backgroundColor: _surface,
-                        borderColor: _border,
+                        backgroundColor: palette.surface,
+                        borderColor: palette.border,
                         onPressed: () => Navigator.of(context).pop(),
                       ),
                       const SizedBox(width: 6),
                     ],
-                    const Text(
+                    Text(
                       'Settings',
                       style: TextStyle(
-                        color: Colors.white,
+                        color: palette.textPrimary,
                         fontSize: 26,
                         fontWeight: FontWeight.w900,
                         letterSpacing: -0.5,
@@ -378,8 +405,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     }
                     final profile = snapshot.data;
                     if (profile == null) {
-                      return const Center(
-                        child: CircularProgressIndicator(color: _primary),
+                      return Center(
+                        child: CircularProgressIndicator(color: colors.primary),
                       );
                     }
                     return _buildContent(context, profile);
@@ -394,6 +421,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Widget _buildContent(BuildContext context, UserProfile profile) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
+    final success = _successForeground(context);
     final emailVerified = _authService.currentUser?.emailVerified ?? false;
 
     return ListView(
@@ -602,7 +632,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
               subtitle: 'Send a reset link to ${profile.email}',
               trailing: _sendingReset
                   ? const _MiniSpinner()
-                  : const Icon(Icons.chevron_right_rounded, color: _muted),
+                  : Icon(
+                      Icons.chevron_right_rounded,
+                      color: palette.textTertiary,
+                    ),
               onTap: _sendingReset
                   ? null
                   : () => _sendPasswordReset(profile.email),
@@ -616,10 +649,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ? 'Your email is verified'
                   : 'Verify your email to unlock posting and rooms',
               trailing: emailVerified
-                  ? const Icon(Icons.check_circle_rounded, color: _success)
+                  ? Icon(Icons.check_circle_rounded, color: success)
                   : (_resendingVerification || _refreshingVerification)
                   ? const _MiniSpinner()
-                  : const Icon(Icons.chevron_right_rounded, color: _muted),
+                  : Icon(
+                      Icons.chevron_right_rounded,
+                      color: palette.textTertiary,
+                    ),
               onTap: emailVerified
                   ? null
                   : () => _showVerificationSheet(context),
@@ -665,7 +701,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 value: AppPreferencesScope.of(
                   context,
                 ).value.soundEffectsEnabled,
-                activeTrackColor: _primary,
+                activeTrackColor: colors.primary,
                 onChanged: _setSoundEffectsEnabled,
               ),
             ),
@@ -682,7 +718,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               icon: Icons.devices_rounded,
               title: 'This device',
               subtitle: _deviceLabel(),
-              trailing: const Icon(Icons.check_circle_rounded, color: _success),
+              trailing: Icon(Icons.check_circle_rounded, color: success),
             ),
             _SettingsTile(
               icon: Icons.important_devices_outlined,
@@ -709,7 +745,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
               trailing: _clearingCache
                   ? const _MiniSpinner()
-                  : const Icon(Icons.chevron_right_rounded, color: _muted),
+                  : Icon(
+                      Icons.chevron_right_rounded,
+                      color: palette.textTertiary,
+                    ),
               onTap: _clearingCache ? null : _clearImageCache,
             ),
             _SettingsTile(
@@ -825,9 +864,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   void _showVerificationSheet(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     showModalBottomSheet<void>(
       context: context,
-      backgroundColor: _surface,
+      backgroundColor: palette.surfaceRaised,
       showDragHandle: false,
       constraints: ResponsiveContentFrame.adaptiveModalConstraints(
         context,
@@ -843,76 +884,92 @@ class _SettingsScreenState extends State<SettingsScreen> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const YoModalSheetChrome(
+              YoModalSheetChrome(
                 sheetLabel: 'email verification',
-                surfaceColor: _surface,
+                surfaceColor: palette.surfaceRaised,
               ),
               Container(
                 width: 46,
                 height: 46,
                 alignment: Alignment.center,
                 decoration: BoxDecoration(
-                  color: _primary.withValues(alpha: .16),
+                  color: colors.primaryContainer,
                   borderRadius: BorderRadius.circular(16),
                 ),
-                child: const Icon(
+                child: Icon(
                   Icons.mark_email_unread_rounded,
-                  color: _primary,
+                  color: colors.onPrimaryContainer,
                 ),
               ),
               const SizedBox(height: 16),
-              const Text(
+              Text(
                 'Verify your email',
                 style: TextStyle(
-                  color: Colors.white,
+                  color: palette.textPrimary,
                   fontSize: 20,
                   fontWeight: FontWeight.w900,
                 ),
               ),
               const SizedBox(height: 8),
-              const Text(
+              Text(
                 'Check your inbox for the verification link, then come back and refresh.',
-                style: TextStyle(color: _muted, height: 1.45, fontSize: 13.5),
+                style: TextStyle(
+                  color: palette.textSecondary,
+                  height: 1.45,
+                  fontSize: 13.5,
+                ),
               ),
               const SizedBox(height: 20),
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton(
-                      onPressed: _resendingVerification
-                          ? null
-                          : () async {
-                              await _resendVerification();
-                            },
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: Colors.white,
-                        side: const BorderSide(color: _border),
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                      ),
-                      child: _resendingVerification
-                          ? const _MiniSpinner()
-                          : const Text('Resend email'),
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  final vertical =
+                      constraints.maxWidth < 420 ||
+                      MediaQuery.textScalerOf(context).scale(1) > 1.3;
+                  final resend = OutlinedButton(
+                    onPressed: _resendingVerification
+                        ? null
+                        : () async {
+                            await _resendVerification();
+                          },
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: palette.textPrimary,
+                      side: BorderSide(color: palette.border),
+                      padding: const EdgeInsets.symmetric(vertical: 14),
                     ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: FilledButton(
-                      onPressed: _refreshingVerification
-                          ? null
-                          : () async {
-                              await _refreshVerification();
-                              if (context.mounted) Navigator.pop(sheetContext);
-                            },
-                      style: FilledButton.styleFrom(
-                        backgroundColor: _primary,
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                      ),
-                      child: _refreshingVerification
-                          ? const _MiniSpinner()
-                          : const Text('I\'ve verified'),
+                    child: _resendingVerification
+                        ? const _MiniSpinner()
+                        : const Text('Resend email'),
+                  );
+                  final verified = FilledButton(
+                    onPressed: _refreshingVerification
+                        ? null
+                        : () async {
+                            await _refreshVerification();
+                            if (context.mounted) Navigator.pop(sheetContext);
+                          },
+                    style: FilledButton.styleFrom(
+                      backgroundColor: colors.primary,
+                      foregroundColor: colors.onPrimary,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
                     ),
-                  ),
-                ],
+                    child: _refreshingVerification
+                        ? _MiniSpinner(color: colors.onPrimary)
+                        : const Text('I\'ve verified'),
+                  );
+                  if (vertical) {
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [resend, const SizedBox(height: 10), verified],
+                    );
+                  }
+                  return Row(
+                    children: [
+                      Expanded(child: resend),
+                      const SizedBox(width: 10),
+                      Expanded(child: verified),
+                    ],
+                  );
+                },
               ),
             ],
           ),
@@ -967,9 +1024,10 @@ class _ProfileHeroCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     final avatar = profile.photoUrl?.trim();
     return Material(
-      color: _surface,
+      color: palette.surface,
       borderRadius: BorderRadius.circular(24),
       child: InkWell(
         onTap: onTap,
@@ -978,7 +1036,7 @@ class _ProfileHeroCard extends StatelessWidget {
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(24),
-            border: Border.all(color: _border),
+            border: Border.all(color: palette.border),
           ),
           child: Row(
             children: [
@@ -1019,8 +1077,8 @@ class _ProfileHeroCard extends StatelessWidget {
                       profile.displayName,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: Colors.white,
+                      style: TextStyle(
+                        color: palette.textPrimary,
                         fontSize: 18,
                         fontWeight: FontWeight.w900,
                       ),
@@ -1028,12 +1086,15 @@ class _ProfileHeroCard extends StatelessWidget {
                     const SizedBox(height: 3),
                     Text(
                       'Edit profile details and photos',
-                      style: TextStyle(color: _muted, fontSize: 12.5),
+                      style: TextStyle(
+                        color: palette.textSecondary,
+                        fontSize: 12.5,
+                      ),
                     ),
                   ],
                 ),
               ),
-              const Icon(Icons.chevron_right_rounded, color: _muted),
+              Icon(Icons.chevron_right_rounded, color: palette.textTertiary),
             ],
           ),
         ),
@@ -1049,12 +1110,15 @@ class _GroupLabel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return Padding(
       padding: const EdgeInsets.fromLTRB(4, 0, 4, 8),
       child: Text(
         text.toUpperCase(),
         style: TextStyle(
-          color: danger ? _danger.withValues(alpha: .8) : _muted,
+          color: danger
+              ? Theme.of(context).colorScheme.error
+              : palette.textSecondary,
           fontSize: 11.5,
           fontWeight: FontWeight.w800,
           letterSpacing: 1,
@@ -1071,23 +1135,25 @@ class _SettingsGroup extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     return Container(
       decoration: BoxDecoration(
-        color: _surfaceSoft,
+        color: palette.surfaceMuted,
         borderRadius: BorderRadius.circular(20),
         border: Border.all(
-          color: danger ? _danger.withValues(alpha: .25) : _border,
+          color: danger ? colors.error.withValues(alpha: .45) : palette.border,
         ),
       ),
       child: Column(
         children: [
           for (var index = 0; index < children.length; index++) ...[
             if (index > 0)
-              const Divider(
+              Divider(
                 height: 1,
                 indent: 56,
                 endIndent: 16,
-                color: _border,
+                color: palette.border,
               ),
             children[index],
           ],
@@ -1116,8 +1182,10 @@ class _SettingsTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final iconColor = danger ? _danger : _primary;
-    final titleColor = danger ? _danger : Colors.white;
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
+    final iconColor = danger ? colors.error : colors.primary;
+    final titleColor = danger ? colors.error : palette.textPrimary;
 
     return ListTile(
       onTap: onTap,
@@ -1133,6 +1201,8 @@ class _SettingsTile extends StatelessWidget {
       ),
       title: Text(
         title,
+        maxLines: 2,
+        overflow: TextOverflow.ellipsis,
         style: TextStyle(
           color: titleColor,
           fontWeight: FontWeight.w700,
@@ -1143,14 +1213,14 @@ class _SettingsTile extends StatelessWidget {
           ? null
           : Text(
               subtitle!,
-              maxLines: 2,
+              maxLines: 3,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(color: _muted, fontSize: 12),
+              style: TextStyle(color: palette.textSecondary, fontSize: 12),
             ),
       trailing:
           trailing ??
           (onTap != null
-              ? const Icon(Icons.chevron_right_rounded, color: _muted)
+              ? Icon(Icons.chevron_right_rounded, color: palette.textTertiary)
               : null),
     );
   }
@@ -1162,7 +1232,9 @@ class _VerifiedChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = verified ? _success : const Color(0xFFFFB547);
+    final color = verified
+        ? _successForeground(context)
+        : _warningForeground(context);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
       decoration: BoxDecoration(
@@ -1198,6 +1270,7 @@ class _PermissionTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     final label = switch (status) {
       null => 'Checking…',
       PermissionStatus.granted || PermissionStatus.limited => 'Allowed',
@@ -1215,22 +1288,27 @@ class _PermissionTile extends StatelessWidget {
       title: title,
       subtitle: label,
       trailing: granted
-          ? const Icon(Icons.check_circle_rounded, color: _success)
-          : const Icon(Icons.chevron_right_rounded, color: _muted),
+          ? Icon(Icons.check_circle_rounded, color: _successForeground(context))
+          : Icon(Icons.chevron_right_rounded, color: palette.textTertiary),
       onTap: onTap,
     );
   }
 }
 
 class _MiniSpinner extends StatelessWidget {
-  const _MiniSpinner();
+  const _MiniSpinner({this.color});
+
+  final Color? color;
 
   @override
   Widget build(BuildContext context) {
-    return const SizedBox(
+    return SizedBox(
       width: 18,
       height: 18,
-      child: CircularProgressIndicator(strokeWidth: 2, color: _primary),
+      child: CircularProgressIndicator(
+        strokeWidth: 2,
+        color: color ?? Theme.of(context).colorScheme.primary,
+      ),
     );
   }
 }
@@ -1241,13 +1319,14 @@ class _ErrorBody extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(24),
         child: Text(
           message,
           textAlign: TextAlign.center,
-          style: const TextStyle(color: Colors.white),
+          style: TextStyle(color: palette.textPrimary),
         ),
       ),
     );

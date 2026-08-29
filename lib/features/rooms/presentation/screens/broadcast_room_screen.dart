@@ -29,6 +29,7 @@ import 'package:yovoice/features/rooms/presentation/widgets/room_stage.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
 import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
+import 'package:yovoice/shared/widgets/theme/yo_immersive_dark_surface.dart';
 
 class BroadcastRoomScreen extends StatefulWidget {
   const BroadcastRoomScreen({
@@ -984,7 +985,7 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
     final fillPodcastStage =
         MediaQuery.sizeOf(context).width >= 700 &&
         MediaQuery.sizeOf(context).height >= (_isHost ? 1020 : 940);
-    return Scaffold(
+    final content = Scaffold(
       backgroundColor: BroadcastRoomColors.background,
       body: SafeArea(
         child: StreamBuilder<List<RoomParticipant>>(
@@ -1249,6 +1250,7 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
         ),
       ),
     );
+    return YoImmersiveDarkSurface(child: content);
   }
 }
 

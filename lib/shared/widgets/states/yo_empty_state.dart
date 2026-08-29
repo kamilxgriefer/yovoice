@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_spacing.dart';
 import 'package:yovoice/core/theme/app_typography.dart';
 import 'package:yovoice/shared/widgets/buttons/yo_button.dart';
@@ -30,6 +30,8 @@ class YoEmptyState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     return TweenAnimationBuilder<double>(
       tween: Tween<double>(begin: 0, end: 1),
       duration: const Duration(milliseconds: 320),
@@ -59,26 +61,30 @@ class YoEmptyState extends StatelessWidget {
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight,
                   colors: <Color>[
-                    AppColors.primary.withValues(alpha: 0.22),
-                    AppColors.secondary.withValues(alpha: 0.12),
+                    colors.primary.withValues(alpha: 0.18),
+                    colors.secondary.withValues(alpha: 0.1),
                   ],
                 ),
                 shape: BoxShape.circle,
               ),
-              child: Icon(icon, size: 34, color: AppColors.primary),
+              child: Icon(icon, size: 34, color: colors.primary),
             ),
             const SizedBox(height: AppSpacing.lg),
             Text(
               title,
               textAlign: TextAlign.center,
-              style: AppTypography.titleLarge,
+              style: AppTypography.titleLarge.copyWith(
+                color: palette.textPrimary,
+              ),
             ),
             if (subtitle != null) ...<Widget>[
               const SizedBox(height: AppSpacing.sm),
               Text(
                 subtitle!,
                 textAlign: TextAlign.center,
-                style: AppTypography.bodyMedium,
+                style: AppTypography.bodyMedium.copyWith(
+                  color: palette.textSecondary,
+                ),
               ),
             ],
             if (actionLabel != null && onAction != null) ...<Widget>[

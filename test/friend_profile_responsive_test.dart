@@ -5,6 +5,8 @@ import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:yovoice/core/theme/app_palette.dart';
+import 'package:yovoice/core/theme/app_theme.dart';
 import 'package:yovoice/features/friends/data/models/friend_user.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/friends/data/services/social_graph_service.dart';
@@ -117,7 +119,10 @@ void main() {
     ]) {
       tester.view.physicalSize = size;
       await tester.pumpWidget(
-        MaterialApp(home: buildScreen(key: ValueKey(size.width))),
+        MaterialApp(
+          theme: AppTheme.darkTheme,
+          home: buildScreen(key: ValueKey(size.width)),
+        ),
       );
       for (var pump = 0; pump < 8; pump++) {
         await tester.pump(const Duration(milliseconds: 80));
@@ -185,6 +190,7 @@ void main() {
       tester.view.physicalSize = size;
       await tester.pumpWidget(
         MaterialApp(
+          theme: AppTheme.lightTheme,
           home: MediaQuery(
             data: const MediaQueryData(textScaler: TextScaler.linear(2)),
             child: buildScreen(key: ValueKey(size.height)),
@@ -287,5 +293,98 @@ void main() {
       expect(tester.takeException(), isNull, reason: '$size at 200% text');
     }
     semantics.dispose();
+  });
+
+  testWidgets('profile canvas, copy and cards follow Pearl and dark palettes', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(768, 1024);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    for (final themeCase in <({ThemeData theme, AppPalette palette})>[
+      (theme: AppTheme.lightTheme, palette: AppPalette.light),
+      (theme: AppTheme.darkTheme, palette: AppPalette.dark),
+    ]) {
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: themeCase.theme,
+          home: buildScreen(key: ValueKey(themeCase.theme.brightness)),
+        ),
+      );
+      for (var pump = 0; pump < 8; pump++) {
+        await tester.pump(const Duration(milliseconds: 80));
+      }
+
+      final background = tester.widget<Container>(
+        find.byKey(const ValueKey('friend-profile-background')),
+      );
+      final gradient =
+          (background.decoration! as BoxDecoration).gradient! as RadialGradient;
+      expect(gradient.colors.last, themeCase.palette.background);
+
+      final stats = tester.widget<Container>(
+        find.byKey(const ValueKey('friend-profile-stats')),
+      );
+      final statsDecoration = stats.decoration! as BoxDecoration;
+      expect(statsDecoration.color, themeCase.palette.surface);
+      expect(
+        (statsDecoration.border! as Border).top.color,
+        themeCase.palette.border,
+      );
+
+      final displayName = tester.widget<Text>(find.text(longDisplayName));
+      expect(displayName.style!.color, themeCase.palette.textPrimary);
+      final username = tester.widget<Text>(
+        find.text('@alexandra_responsive_profile_name'),
+      );
+      expect(username.style!.color, themeCase.palette.textSecondary);
+      expect(tester.takeException(), isNull);
+    }
+  });
+
+  testWidgets('Pearl destructive confirmation keeps readable semantic pairs', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(768, 1024);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(
+      MaterialApp(theme: AppTheme.lightTheme, home: buildScreen()),
+    );
+    for (var pump = 0; pump < 8; pump++) {
+      await tester.pump(const Duration(milliseconds: 80));
+    }
+    final scrollable = find
+        .descendant(
+          of: find.byKey(const ValueKey('friend-profile-content-frame')),
+          matching: find.byType(Scrollable),
+        )
+        .first;
+    final removeFriend = find.text('Remove friend');
+    await tester.scrollUntilVisible(removeFriend, 180, scrollable: scrollable);
+    await tester.tap(removeFriend);
+    await tester.pumpAndSettle();
+
+    final dialog = tester.widget<AlertDialog>(find.byType(AlertDialog));
+    expect(dialog.backgroundColor, AppPalette.light.surfaceRaised);
+    final title = tester.widget<Text>(find.text('Remove friend?'));
+    expect(title.style!.color, AppPalette.light.textPrimary);
+    final remove = tester.widget<FilledButton>(
+      find.widgetWithText(FilledButton, 'Remove'),
+    );
+    expect(
+      remove.style!.backgroundColor!.resolve(<WidgetState>{}),
+      AppTheme.lightTheme.colorScheme.error,
+    );
+    expect(
+      remove.style!.foregroundColor!.resolve(<WidgetState>{}),
+      AppTheme.lightTheme.colorScheme.onError,
+    );
+    expect(tester.takeException(), isNull);
+
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
   });
 }

@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:yovoice/core/theme/app_palette.dart';
+import 'package:yovoice/core/theme/app_theme.dart';
 import 'package:yovoice/features/messages/data/models/message.dart';
 import 'package:yovoice/features/messages/presentation/widgets/message_bubble.dart';
 
@@ -21,16 +23,19 @@ Future<void> _pump(
   WidgetTester tester,
   Message message, {
   double width = 360,
+  ThemeData? theme,
+  String currentUserId = 'other',
 }) async {
   await tester.binding.setSurfaceSize(Size(width, 800));
   addTearDown(() => tester.binding.setSurfaceSize(null));
 
   await tester.pumpWidget(
     MaterialApp(
+      theme: theme ?? AppTheme.darkTheme,
       home: Scaffold(
         body: MessageBubble(
           message: message,
-          currentUserId: 'other',
+          currentUserId: currentUserId,
           onLongPress: () {},
         ),
       ),
@@ -39,6 +44,51 @@ Future<void> _pump(
 }
 
 void main() {
+  for (final entry in <String, ThemeData>{
+    'dark': AppTheme.darkTheme,
+    'light': AppTheme.lightTheme,
+  }.entries) {
+    testWidgets('${entry.key} incoming bubble uses paired semantic colours', (
+      tester,
+    ) async {
+      await _pump(
+        tester,
+        _textMessage('Readable incoming message'),
+        theme: entry.value,
+      );
+
+      final palette = entry.value.extension<AppPalette>()!;
+      final bubble = tester.widget<Container>(
+        find.byKey(const ValueKey('incoming-message-bubble')),
+      );
+      final decoration = bubble.decoration! as BoxDecoration;
+      final text = tester.widget<Text>(find.text('Readable incoming message'));
+      expect(decoration.color, palette.surfaceRaised);
+      expect(text.style?.color, palette.textPrimary);
+    });
+  }
+
+  testWidgets(
+    'light outgoing bubble preserves the brand gradient and white copy',
+    (tester) async {
+      await _pump(
+        tester,
+        _textMessage('Outgoing message'),
+        theme: AppTheme.lightTheme,
+        currentUserId: 'sender',
+      );
+
+      final bubble = tester.widget<Container>(
+        find.byKey(const ValueKey('outgoing-message-bubble')),
+      );
+      final decoration = bubble.decoration! as BoxDecoration;
+      final text = tester.widget<Text>(find.text('Outgoing message'));
+      expect(decoration.gradient, isA<LinearGradient>());
+      expect(decoration.color, isNull);
+      expect(text.style?.color, Colors.white);
+    },
+  );
+
   testWidgets('long URL with no whitespace does not overflow the bubble', (
     tester,
   ) async {

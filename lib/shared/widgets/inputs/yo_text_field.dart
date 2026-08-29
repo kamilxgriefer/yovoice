@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_radius.dart';
 import 'package:yovoice/core/theme/app_typography.dart';
 
@@ -39,7 +40,7 @@ class YoTextField extends StatefulWidget {
     this.expands = false,
     this.textAlign = TextAlign.start,
     this.textAlignVertical = TextAlignVertical.center,
-    this.cursorColor = AppColors.primary,
+    this.cursorColor,
     this.fillColor,
     this.contentPadding,
     this.autovalidateMode = AutovalidateMode.onUserInteraction,
@@ -71,7 +72,7 @@ class YoTextField extends StatefulWidget {
     this.autofocus = false,
     this.maxLength,
     this.textAlign = TextAlign.start,
-    this.cursorColor = AppColors.primary,
+    this.cursorColor,
     this.fillColor,
     this.contentPadding,
     this.autovalidateMode = AutovalidateMode.onUserInteraction,
@@ -109,7 +110,7 @@ class YoTextField extends StatefulWidget {
     this.autofocus = false,
     this.maxLength,
     this.textAlign = TextAlign.start,
-    this.cursorColor = AppColors.primary,
+    this.cursorColor,
     this.fillColor,
     this.contentPadding,
     this.autovalidateMode = AutovalidateMode.onUserInteraction,
@@ -155,7 +156,7 @@ class YoTextField extends StatefulWidget {
   final bool expands;
   final TextAlign textAlign;
   final TextAlignVertical textAlignVertical;
-  final Color cursorColor;
+  final Color? cursorColor;
   final Color? fillColor;
   final EdgeInsetsGeometry? contentPadding;
   final AutovalidateMode autovalidateMode;
@@ -224,6 +225,8 @@ class _YoTextFieldState extends State<YoTextField> {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     final bool hasExternalError =
         widget.errorText != null && widget.errorText!.trim().isNotEmpty;
 
@@ -247,8 +250,8 @@ class _YoTextFieldState extends State<YoTextField> {
                 widget.label!,
                 style: AppTypography.labelMedium.copyWith(
                   color: widget.enabled
-                      ? AppColors.textSecondary
-                      : AppColors.textHint,
+                      ? palette.textSecondary
+                      : palette.textTertiary,
                 ),
               ),
               const SizedBox(height: 8),
@@ -258,17 +261,17 @@ class _YoTextFieldState extends State<YoTextField> {
               curve: Curves.easeOut,
               decoration: BoxDecoration(
                 color: widget.enabled
-                    ? widget.fillColor ?? AppColors.surface
-                    : AppColors.surface.withValues(alpha: 0.55),
+                    ? widget.fillColor ?? palette.surfaceRaised
+                    : palette.surfaceMuted.withValues(alpha: 0.72),
                 borderRadius: AppRadius.lg,
                 border: Border.all(
-                  color: _borderColor(hasError),
+                  color: _borderColor(hasError, palette, colors),
                   width: _focusNode.hasFocus ? 1.5 : 1,
                 ),
                 boxShadow: _focusNode.hasFocus && !hasError && widget.enabled
                     ? <BoxShadow>[
                         BoxShadow(
-                          color: AppColors.primary.withValues(alpha: 0.14),
+                          color: colors.primary.withValues(alpha: 0.14),
                           blurRadius: 18,
                           spreadRadius: 1,
                         ),
@@ -297,11 +300,11 @@ class _YoTextFieldState extends State<YoTextField> {
                 expands: widget.expands,
                 textAlign: widget.textAlign,
                 textAlignVertical: widget.textAlignVertical,
-                cursorColor: widget.cursorColor,
+                cursorColor: widget.cursorColor ?? colors.primary,
                 style: AppTypography.bodyLarge.copyWith(
                   color: widget.enabled
-                      ? AppColors.textPrimary
-                      : AppColors.textHint,
+                      ? palette.textPrimary
+                      : palette.textTertiary,
                 ),
                 onTap: widget.onTap,
                 onEditingComplete: widget.onEditingComplete,
@@ -316,7 +319,7 @@ class _YoTextFieldState extends State<YoTextField> {
                   counterText: '',
                   hintText: widget.hint,
                   hintStyle: AppTypography.bodyMedium.copyWith(
-                    color: AppColors.textHint,
+                    color: palette.textTertiary,
                   ),
                   prefixIcon: _buildPrefixIcon(),
                   suffixIcon: _buildSuffixIcon(),
@@ -342,14 +345,14 @@ class _YoTextFieldState extends State<YoTextField> {
               _YoSupportingText(
                 text: visibleError,
                 icon: Icons.error_outline_rounded,
-                color: AppColors.error,
+                color: colors.error,
               ),
             ] else if (widget.helperText != null &&
                 widget.helperText!.trim().isNotEmpty) ...[
               const SizedBox(height: 7),
               _YoSupportingText(
                 text: widget.helperText!,
-                color: AppColors.textHint,
+                color: palette.textTertiary,
               ),
             ],
           ],
@@ -358,20 +361,20 @@ class _YoTextFieldState extends State<YoTextField> {
     );
   }
 
-  Color _borderColor(bool hasError) {
+  Color _borderColor(bool hasError, AppPalette palette, ColorScheme colors) {
     if (!widget.enabled) {
-      return AppColors.divider;
+      return palette.border;
     }
 
     if (hasError) {
-      return AppColors.error;
+      return colors.error;
     }
 
     if (_focusNode.hasFocus) {
-      return AppColors.primary;
+      return palette.focus;
     }
 
-    return AppColors.border;
+    return palette.borderStrong;
   }
 
   Widget? _buildPrefixIcon() {
@@ -379,11 +382,11 @@ class _YoTextFieldState extends State<YoTextField> {
       return null;
     }
 
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     return IconTheme(
       data: IconThemeData(
-        color: _focusNode.hasFocus
-            ? AppColors.primary
-            : AppColors.textSecondary,
+        color: _focusNode.hasFocus ? colors.primary : palette.textSecondary,
         size: 21,
       ),
       child: Padding(
@@ -394,6 +397,7 @@ class _YoTextFieldState extends State<YoTextField> {
   }
 
   Widget? _buildSuffixIcon() {
+    final palette = context.appPalette;
     if (widget.showPasswordToggle) {
       return IconButton(
         onPressed: widget.enabled ? _togglePasswordVisibility : null,
@@ -402,7 +406,7 @@ class _YoTextFieldState extends State<YoTextField> {
           _isObscured
               ? Icons.visibility_off_outlined
               : Icons.visibility_outlined,
-          color: widget.enabled ? AppColors.textSecondary : AppColors.textHint,
+          color: widget.enabled ? palette.textSecondary : palette.textTertiary,
           size: 21,
         ),
       );
@@ -414,7 +418,7 @@ class _YoTextFieldState extends State<YoTextField> {
 
     return IconTheme(
       data: IconThemeData(
-        color: widget.enabled ? AppColors.textSecondary : AppColors.textHint,
+        color: widget.enabled ? palette.textSecondary : palette.textTertiary,
         size: 21,
       ),
       child: Padding(

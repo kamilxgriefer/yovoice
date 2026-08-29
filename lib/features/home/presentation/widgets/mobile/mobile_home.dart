@@ -10,6 +10,7 @@ import 'package:yovoice/features/messages/data/models/conversation.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/home/presentation/widgets/mobile/mobile_home_sections.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/home/data/services/home_feed_service.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
@@ -347,6 +348,7 @@ class _MobileHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return StreamBuilder<UserProfile>(
       stream: profile,
       builder: (context, snapshot) {
@@ -361,8 +363,8 @@ class _MobileHeader extends StatelessWidget {
                 children: [
                   Text(
                     _partOfDay(),
-                    style: const TextStyle(
-                      color: Color(0xFF9A90AC),
+                    style: TextStyle(
+                      color: palette.textSecondary,
                       fontSize: 14,
                     ),
                   ),
@@ -373,8 +375,8 @@ class _MobileHeader extends StatelessWidget {
                         : 'Welcome',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: Colors.white,
+                    style: TextStyle(
+                      color: palette.textPrimary,
                       fontSize: 26,
                       fontWeight: FontWeight.w900,
                       letterSpacing: -.5,
@@ -436,6 +438,7 @@ class _CircleIconButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return AccessibleTapRegion(
       onTap: onTap,
       semanticLabel: tooltip,
@@ -447,13 +450,14 @@ class _CircleIconButton extends StatelessWidget {
           height: 46,
           decoration: BoxDecoration(
             shape: BoxShape.circle,
-            border: Border.all(color: const Color(0xFF2E2140)),
+            color: palette.surfaceRaised,
+            border: Border.all(color: palette.border),
           ),
           child: Stack(
             clipBehavior: Clip.none,
             alignment: Alignment.center,
             children: [
-              Icon(icon, color: Colors.white, size: 21),
+              Icon(icon, color: palette.textPrimary, size: 21),
               if (badgeCount > 0)
                 Positioned(
                   top: -4,
@@ -468,10 +472,7 @@ class _CircleIconButton extends StatelessWidget {
                     decoration: BoxDecoration(
                       color: const Color(0xFFE51852),
                       borderRadius: BorderRadius.circular(12),
-                      border: Border.all(
-                        color: const Color(0xFF080711),
-                        width: 2,
-                      ),
+                      border: Border.all(color: palette.background, width: 2),
                     ),
                     child: Text(
                       badgeCount > 99 ? '99+' : '$badgeCount',
@@ -499,20 +500,23 @@ class _MobileNote extends StatelessWidget {
   final String text;
 
   @override
-  Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.all(14),
-    decoration: BoxDecoration(
-      borderRadius: BorderRadius.circular(16),
-      color: const Color(0xFF12101D),
-      border: Border.all(color: const Color(0xFF2C253B)),
-    ),
-    child: Text(
-      text,
-      style: const TextStyle(
-        color: Color(0xFF9D95AD),
-        fontSize: 13,
-        height: 1.35,
+  Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(16),
+        color: palette.surface,
+        border: Border.all(color: palette.border),
       ),
-    ),
-  );
+      child: Text(
+        text,
+        style: TextStyle(
+          color: palette.textSecondary,
+          fontSize: 13,
+          height: 1.35,
+        ),
+      ),
+    );
+  }
 }

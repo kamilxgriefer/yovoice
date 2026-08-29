@@ -3,6 +3,8 @@ import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:yovoice/core/theme/app_palette.dart';
+import 'package:yovoice/core/theme/app_theme.dart';
 import 'package:yovoice/features/settings/data/models/message_privacy.dart';
 import 'package:yovoice/features/settings/data/services/message_privacy_service.dart';
 import 'package:yovoice/features/settings/presentation/screens/message_privacy_screen.dart';
@@ -72,28 +74,50 @@ void main() {
 
       await tester.pumpWidget(
         MaterialApp(
-          theme: ThemeData.dark(useMaterial3: true),
-          home: MessagePrivacyScreen(service: fixture.service),
+          theme: AppTheme.lightTheme,
+          home: MediaQuery(
+            data: MediaQueryData(
+              size: size,
+              textScaler: const TextScaler.linear(2),
+            ),
+            child: MessagePrivacyScreen(service: fixture.service),
+          ),
         ),
       );
       await tester.pumpAndSettle();
 
       expect(find.text('Choose your inbox boundary'), findsOneWidget);
-      expect(find.text('Everyone'), findsOneWidget);
-      expect(find.text('People you follow'), findsOneWidget);
-      expect(find.text('Friends only'), findsOneWidget);
-      expect(find.text('Nobody'), findsOneWidget);
-      expect(tester.takeException(), isNull);
-
-      await tester.tap(
-        find.byKey(const ValueKey('message-privacy-peopleYouFollow')),
-      );
-      await tester.pumpAndSettle();
       expect(
-        (await fixture.firestore.collection('users').doc(_uid).get())
-            .data()?['messagePrivacy'],
-        'peopleYouFollow',
+        tester.widget<Scaffold>(find.byType(Scaffold)).backgroundColor,
+        AppPalette.light.background,
       );
+      for (final label in const [
+        'Everyone',
+        'People you follow',
+        'Friends only',
+        'Nobody',
+      ]) {
+        await tester.scrollUntilVisible(
+          find.text(label),
+          180,
+          scrollable: find.byType(Scrollable).first,
+        );
+        await tester.ensureVisible(find.text(label));
+        await tester.pumpAndSettle();
+        expect(find.text(label), findsOneWidget);
+        expect(tester.takeException(), isNull);
+        if (label == 'People you follow') {
+          await tester.tap(
+            find.byKey(const ValueKey('message-privacy-peopleYouFollow')),
+          );
+          await tester.pumpAndSettle();
+          expect(
+            (await fixture.firestore.collection('users').doc(_uid).get())
+                .data()?['messagePrivacy'],
+            'peopleYouFollow',
+          );
+        }
+      }
       expect(tester.takeException(), isNull);
     });
   }

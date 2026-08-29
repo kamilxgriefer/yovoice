@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 
 import 'package:yovoice/features/auth/data/totp_mfa_service.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
+import 'package:yovoice/shared/widgets/theme/yo_immersive_dark_surface.dart';
 
 class TotpChallengeScreen extends StatefulWidget {
   const TotpChallengeScreen({required this.challenge, super.key});
@@ -74,7 +75,7 @@ class _TotpChallengeScreenState extends State<TotpChallengeScreen> {
   @override
   Widget build(BuildContext context) {
     final factors = widget.challenge.factors;
-    return Scaffold(
+    final content = Scaffold(
       backgroundColor: const Color(0xFF080711),
       appBar: AppBar(
         backgroundColor: Colors.transparent,
@@ -170,6 +171,7 @@ class _TotpChallengeScreenState extends State<TotpChallengeScreen> {
         ),
       ),
     );
+    return YoImmersiveDarkSurface(child: content);
   }
 }
 

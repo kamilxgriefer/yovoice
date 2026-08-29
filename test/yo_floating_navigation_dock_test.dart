@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:yovoice/core/theme/app_theme.dart';
+import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/home/presentation/screens/main_shell.dart';
 import 'package:yovoice/features/home/presentation/widgets/navigation/yo_floating_navigation_dock.dart';
 import 'package:yovoice/features/home/presentation/widgets/navigation/yo_preserving_tab_transition.dart';
@@ -29,6 +30,7 @@ Future<SemanticsHandle> _pumpDock(
   double textScale = 1,
   double keyboardInset = 0,
   bool reduceMotion = false,
+  ThemeData? theme,
 }) async {
   tester.view.physicalSize = Size(width, height);
   tester.view.devicePixelRatio = 1;
@@ -37,7 +39,7 @@ Future<SemanticsHandle> _pumpDock(
 
   await tester.pumpWidget(
     MaterialApp(
-      theme: AppTheme.darkTheme,
+      theme: theme ?? AppTheme.darkTheme,
       home: MediaQuery(
         data: MediaQueryData(
           size: Size(width, height),
@@ -102,6 +104,43 @@ class _DockHarnessState extends State<_DockHarness> {
 }
 
 void main() {
+  testWidgets('dock chrome and active capsule follow both semantic themes', (
+    tester,
+  ) async {
+    for (final (theme, palette) in [
+      (AppTheme.lightTheme, AppPalette.light),
+      (AppTheme.darkTheme, AppPalette.dark),
+    ]) {
+      final semantics = await _pumpDock(
+        tester,
+        reduceMotion: true,
+        theme: theme,
+      );
+      await tester.pumpAndSettle();
+
+      final dock = tester.widget<Container>(
+        find.byKey(const ValueKey('yo-floating-navigation-dock')),
+      );
+      final dockDecoration = dock.decoration! as BoxDecoration;
+      expect(
+        dockDecoration.color,
+        palette.navigationSurface.withValues(alpha: .97),
+      );
+      expect((dockDecoration.border! as Border).top.color, palette.border);
+
+      final active = tester.widget<AnimatedContainer>(
+        find.byKey(const ValueKey('yo-active-capsule-reduced-motion')),
+      );
+      final activeDecoration = active.decoration! as BoxDecoration;
+      expect(
+        (activeDecoration.gradient! as LinearGradient).colors.last,
+        palette.surfaceRaised,
+      );
+      expect(tester.takeException(), isNull);
+      semantics.dispose();
+    }
+  });
+
   testWidgets(
     'Home starts selected; Chats, Moments and More move one shared capsule',
     (tester) async {

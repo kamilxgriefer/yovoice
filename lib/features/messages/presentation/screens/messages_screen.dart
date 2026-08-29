@@ -4,6 +4,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/helpers/error_messages.dart';
+import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:share_plus/share_plus.dart';
 
 import 'package:yovoice/features/friends/data/models/friend_user.dart';
@@ -71,13 +72,6 @@ class MessagesScreen extends StatefulWidget {
 }
 
 class _MessagesScreenState extends State<MessagesScreen> {
-  static const Color _background = Color(0xFF080711);
-  static const Color _surface = Color(0xFF12101D);
-  static const Color _surface2 = Color(0xFF1A1424);
-  static const Color _border = Color(0xFF30263F);
-  static const Color _muted = Color(0xFF9D95AD);
-  static const Color _primary = Color(0xFF9D20FF);
-
   late final MessageService _messageService =
       widget.messageService ?? MessageService.live;
   late final FriendService _friendService =
@@ -258,7 +252,6 @@ class _MessagesScreenState extends State<MessagesScreen> {
         SnackBar(
           content: Text(message),
           behavior: SnackBarBehavior.floating,
-          backgroundColor: const Color(0xFF2A1939),
           margin: const EdgeInsets.all(16),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(14),
@@ -270,16 +263,29 @@ class _MessagesScreenState extends State<MessagesScreen> {
   @override
   Widget build(BuildContext context) {
     final currentUserId = _auth.currentUser?.uid;
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
 
     return Scaffold(
-      backgroundColor: _background,
+      key: const ValueKey('messages-screen'),
+      backgroundColor: palette.background,
       body: Container(
-        decoration: const BoxDecoration(
+        key: const ValueKey('messages-screen-background'),
+        decoration: BoxDecoration(
           gradient: RadialGradient(
             center: Alignment(-.86, -.96),
             radius: 1.25,
-            colors: [Color(0xFF28103F), Color(0xFF100B1B), _background],
-            stops: [0, .38, 1],
+            colors: [
+              Color.lerp(
+                palette.backgroundTop,
+                colors.primary,
+                isDark ? .18 : .055,
+              )!,
+              palette.backgroundTop,
+              palette.background,
+            ],
+            stops: const [0, .38, 1],
           ),
         ),
         child: SafeArea(
@@ -312,9 +318,9 @@ class _MessagesScreenState extends State<MessagesScreen> {
                     builder: (context, snapshot) {
                       if (snapshot.connectionState == ConnectionState.waiting &&
                           !snapshot.hasData) {
-                        return const Center(
+                        return Center(
                           child: CircularProgressIndicator(
-                            color: _primary,
+                            color: colors.primary,
                             strokeWidth: 2.5,
                           ),
                         );
@@ -427,6 +433,8 @@ class _MessagesHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+
     return Padding(
       padding: const EdgeInsets.fromLTRB(18, 18, 18, 14),
       child: Row(
@@ -437,8 +445,8 @@ class _MessagesHeader extends StatelessWidget {
               children: [
                 Text(
                   showArchived ? 'Archived' : 'Chats',
-                  style: const TextStyle(
-                    color: Colors.white,
+                  style: TextStyle(
+                    color: palette.textPrimary,
                     fontSize: 30,
                     fontWeight: FontWeight.w900,
                     letterSpacing: -.9,
@@ -449,10 +457,7 @@ class _MessagesHeader extends StatelessWidget {
                   showArchived
                       ? 'Conversations kept out of your inbox.'
                       : 'Private conversations with your friends.',
-                  style: const TextStyle(
-                    color: _MessagesScreenState._muted,
-                    fontSize: 13,
-                  ),
+                  style: TextStyle(color: palette.textSecondary, fontSize: 13),
                 ),
               ],
             ),
@@ -492,15 +497,16 @@ class _HeaderButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
+
     return Tooltip(
       message: tooltip,
       child: Semantics(
         button: true,
         label: tooltip,
         child: Material(
-          color: highlighted
-              ? _MessagesScreenState._primary
-              : _MessagesScreenState._surface,
+          color: highlighted ? colors.primary : palette.surfaceRaised,
           borderRadius: BorderRadius.circular(15),
           child: InkWell(
             onTap: onTap,
@@ -512,10 +518,14 @@ class _HeaderButton extends StatelessWidget {
                 borderRadius: BorderRadius.circular(15),
                 border: highlighted
                     ? null
-                    : Border.all(color: _MessagesScreenState._border),
+                    : Border.all(color: palette.borderStrong),
               ),
               child: ExcludeSemantics(
-                child: Icon(icon, color: Colors.white, size: 21),
+                child: Icon(
+                  icon,
+                  color: highlighted ? colors.onPrimary : palette.textPrimary,
+                  size: 21,
+                ),
               ),
             ),
           ),
@@ -532,16 +542,16 @@ class _SearchField extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
+
     return TextField(
       controller: controller,
-      style: const TextStyle(color: Colors.white),
+      style: TextStyle(color: palette.textPrimary),
       decoration: InputDecoration(
         hintText: 'Search',
-        hintStyle: const TextStyle(color: _MessagesScreenState._muted),
-        prefixIcon: const Icon(
-          Icons.search_rounded,
-          color: _MessagesScreenState._muted,
-        ),
+        hintStyle: TextStyle(color: palette.textTertiary),
+        prefixIcon: Icon(Icons.search_rounded, color: palette.textSecondary),
         suffixIcon: ValueListenableBuilder<TextEditingValue>(
           valueListenable: controller,
           builder: (context, value, _) {
@@ -552,27 +562,24 @@ class _SearchField extends StatelessWidget {
             return IconButton(
               onPressed: controller.clear,
               tooltip: 'Clear search',
-              icon: const Icon(
-                Icons.close_rounded,
-                color: _MessagesScreenState._muted,
-              ),
+              icon: Icon(Icons.close_rounded, color: palette.textSecondary),
             );
           },
         ),
         filled: true,
-        fillColor: _MessagesScreenState._surface,
+        fillColor: palette.surfaceRaised,
         contentPadding: const EdgeInsets.symmetric(vertical: 13),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(17),
-          borderSide: const BorderSide(color: _MessagesScreenState._border),
+          borderSide: BorderSide(color: palette.border),
         ),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(17),
-          borderSide: const BorderSide(color: _MessagesScreenState._border),
+          borderSide: BorderSide(color: palette.border),
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(17),
-          borderSide: const BorderSide(color: _MessagesScreenState._primary),
+          borderSide: BorderSide(color: colors.primary, width: 2),
         ),
       ),
     );
@@ -592,8 +599,11 @@ class _FriendsRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final labelScale = MediaQuery.textScalerOf(context).scale(11) / 11;
+    final height = 92.0 + (labelScale - 1).clamp(0.0, 2.0) * 14.0;
+
     return SizedBox(
-      height: 92,
+      height: height,
       child: StreamBuilder<List<FriendUser>>(
         stream: friendsStream,
         builder: (context, snapshot) {
@@ -638,6 +648,8 @@ class _FriendStory extends StatelessWidget {
   Widget build(BuildContext context) {
     final user = friend;
     final hasPhoto = user?.photoUrl?.trim().isNotEmpty == true;
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
 
     return SizedBox(
       width: 76,
@@ -663,12 +675,12 @@ class _FriendStory extends StatelessWidget {
                   ),
                   child: CircleAvatar(
                     radius: 27,
-                    backgroundColor: _MessagesScreenState._surface2,
+                    backgroundColor: palette.surfaceMuted,
                     backgroundImage: hasPhoto
                         ? NetworkImage(user!.photoUrl!)
                         : null,
                     child: icon != null
-                        ? Icon(icon, color: Colors.white, size: 26)
+                        ? Icon(icon, color: colors.onPrimary, size: 26)
                         : hasPhoto
                         ? null
                         : Text(
@@ -690,10 +702,7 @@ class _FriendStory extends StatelessWidget {
                       decoration: BoxDecoration(
                         color: const Color(0xFF20D66B),
                         shape: BoxShape.circle,
-                        border: Border.all(
-                          color: _MessagesScreenState._background,
-                          width: 3,
-                        ),
+                        border: Border.all(color: palette.background, width: 3),
                       ),
                     ),
                   ),
@@ -705,7 +714,7 @@ class _FriendStory extends StatelessWidget {
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               textAlign: TextAlign.center,
-              style: const TextStyle(color: Colors.white70, fontSize: 11),
+              style: TextStyle(color: palette.textSecondary, fontSize: 11),
             ),
           ],
         ),
@@ -743,6 +752,8 @@ class _ConversationTile extends StatelessWidget {
     final photoUrl = conversation.photoUrlFor(otherUserId);
     final unread = conversation.unreadCountFor(currentUserId);
     final preview = conversation.previewFor(currentUserId);
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
 
     return Material(
       color: Colors.transparent,
@@ -753,7 +764,9 @@ class _ConversationTile extends StatelessWidget {
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
           decoration: BoxDecoration(
-            color: unread > 0 ? const Color(0x141E8BFF) : Colors.transparent,
+            color: unread > 0
+                ? colors.primary.withValues(alpha: .09)
+                : Colors.transparent,
             borderRadius: BorderRadius.circular(18),
           ),
           child: Row(
@@ -777,7 +790,7 @@ class _ConversationTile extends StatelessWidget {
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
-                              color: Colors.white,
+                              color: palette.textPrimary,
                               fontSize: 15,
                               fontWeight: unread > 0
                                   ? FontWeight.w900
@@ -790,8 +803,8 @@ class _ConversationTile extends StatelessWidget {
                           _relativeTime(conversation.updatedAt),
                           style: TextStyle(
                             color: unread > 0
-                                ? const Color(0xFFD174FF)
-                                : _MessagesScreenState._muted,
+                                ? palette.focus
+                                : palette.textTertiary,
                             fontSize: 11,
                             fontWeight: unread > 0
                                 ? FontWeight.w800
@@ -810,8 +823,8 @@ class _ConversationTile extends StatelessWidget {
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
                               color: unread > 0
-                                  ? Colors.white
-                                  : _MessagesScreenState._muted,
+                                  ? palette.textPrimary
+                                  : palette.textSecondary,
                               fontSize: 13,
                               fontWeight: unread > 0
                                   ? FontWeight.w700
@@ -821,9 +834,9 @@ class _ConversationTile extends StatelessWidget {
                         ),
                         if (muted) ...[
                           const SizedBox(width: 8),
-                          const Icon(
+                          Icon(
                             Icons.notifications_off_outlined,
-                            color: _MessagesScreenState._muted,
+                            color: palette.textSecondary,
                             size: 16,
                           ),
                         ],
@@ -836,14 +849,14 @@ class _ConversationTile extends StatelessWidget {
                             ),
                             alignment: Alignment.center,
                             padding: const EdgeInsets.symmetric(horizontal: 6),
-                            decoration: const BoxDecoration(
-                              color: _MessagesScreenState._primary,
+                            decoration: BoxDecoration(
+                              color: colors.primary,
                               shape: BoxShape.circle,
                             ),
                             child: Text(
                               unread > 99 ? '99+' : '$unread',
-                              style: const TextStyle(
-                                color: Colors.white,
+                              style: TextStyle(
+                                color: colors.onPrimary,
                                 fontSize: 10,
                                 fontWeight: FontWeight.w900,
                               ),
@@ -858,9 +871,9 @@ class _ConversationTile extends StatelessWidget {
               IconButton(
                 onPressed: () => _showActions(context),
                 tooltip: 'Conversation actions for $name',
-                icon: const Icon(
+                icon: Icon(
                   Icons.more_horiz_rounded,
-                  color: _MessagesScreenState._muted,
+                  color: palette.textSecondary,
                 ),
               ),
             ],
@@ -969,6 +982,7 @@ class _ConversationAvatarState extends State<_ConversationAvatar> {
       stream: _presence,
       builder: (context, snapshot) {
         final online = snapshot.data?.isOnline ?? false;
+        final palette = context.appPalette;
 
         return Stack(
           clipBehavior: Clip.none,
@@ -999,10 +1013,7 @@ class _ConversationAvatarState extends State<_ConversationAvatar> {
                   decoration: BoxDecoration(
                     color: const Color(0xFF20D66B),
                     shape: BoxShape.circle,
-                    border: Border.all(
-                      color: _MessagesScreenState._background,
-                      width: 3,
-                    ),
+                    border: Border.all(color: palette.background, width: 3),
                   ),
                 ),
               ),
@@ -1026,6 +1037,8 @@ class _ConversationActionsSheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+
     return Container(
       padding: EdgeInsets.fromLTRB(
         16,
@@ -1033,16 +1046,16 @@ class _ConversationActionsSheet extends StatelessWidget {
         16,
         18 + MediaQuery.paddingOf(context).bottom,
       ),
-      decoration: const BoxDecoration(
-        color: Color(0xFF15101E),
-        borderRadius: BorderRadius.vertical(top: Radius.circular(26)),
+      decoration: BoxDecoration(
+        color: palette.surfaceRaised,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(26)),
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const YoModalSheetChrome(
+          YoModalSheetChrome(
             sheetLabel: 'conversation actions',
-            surfaceColor: Color(0xFF15101E),
+            surfaceColor: palette.surfaceRaised,
           ),
           const SizedBox(height: 2),
           ListTile(
@@ -1051,19 +1064,19 @@ class _ConversationActionsSheet extends StatelessWidget {
               muted
                   ? Icons.notifications_active_outlined
                   : Icons.notifications_off_outlined,
-              color: Colors.white,
+              color: palette.textPrimary,
             ),
             title: Text(
               muted ? 'Unmute messages' : 'Mute messages',
-              style: const TextStyle(color: Colors.white),
+              style: TextStyle(color: palette.textPrimary),
             ),
           ),
           ListTile(
             onTap: onArchive,
-            leading: const Icon(Icons.archive_outlined, color: Colors.white),
-            title: const Text(
+            leading: Icon(Icons.archive_outlined, color: palette.textPrimary),
+            title: Text(
               'Archive conversation',
-              style: TextStyle(color: Colors.white),
+              style: TextStyle(color: palette.textPrimary),
             ),
           ),
         ],
@@ -1071,11 +1084,6 @@ class _ConversationActionsSheet extends StatelessWidget {
     );
   }
 }
-
-/// Surface colour of the New message sheet. Shared by the sheet's own
-/// Material and by the online badge that punches a hole through it, so the
-/// two can never drift apart.
-const Color _sheetSurface = Color(0xFF120D1A);
 
 /// The "New message" bottom sheet.
 ///
@@ -1128,6 +1136,9 @@ class NewMessageSheetState extends State<NewMessageSheet> {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
+
     return DraggableScrollableSheet(
       expand: false,
       initialChildSize: .76,
@@ -1141,23 +1152,24 @@ class NewMessageSheetState extends State<NewMessageSheet> {
         // ancestor. Painting it with a plain Container instead put an
         // opaque box between those tiles and the Material, hiding taps.
         return Material(
-          color: _sheetSurface,
+          key: const ValueKey('new-message-sheet-surface'),
+          color: palette.surfaceRaised,
           clipBehavior: Clip.antiAlias,
           borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
           child: Column(
             children: [
-              const YoModalSheetChrome(
+              YoModalSheetChrome(
                 sheetLabel: 'New message',
-                surfaceColor: _sheetSurface,
+                surfaceColor: palette.surfaceRaised,
               ),
-              const Padding(
-                padding: EdgeInsets.fromLTRB(20, 2, 20, 14),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 2, 20, 14),
                 child: Align(
                   alignment: Alignment.centerLeft,
                   child: Text(
                     'New message',
                     style: TextStyle(
-                      color: Colors.white,
+                      color: palette.textPrimary,
                       fontSize: 22,
                       fontWeight: FontWeight.w900,
                     ),
@@ -1190,9 +1202,9 @@ class NewMessageSheetState extends State<NewMessageSheet> {
                             friends.isEmpty;
 
                         if (loading) {
-                          return const Center(
+                          return Center(
                             child: CircularProgressIndicator(
-                              color: _MessagesScreenState._primary,
+                              color: colors.primary,
                             ),
                           );
                         }
@@ -1314,12 +1326,14 @@ class _NewMessageSectionLabel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+
     return Padding(
       padding: const EdgeInsets.fromLTRB(10, 14, 10, 6),
       child: Text(
         text,
-        style: const TextStyle(
-          color: _MessagesScreenState._muted,
+        style: TextStyle(
+          color: palette.textSecondary,
           fontSize: 12,
           fontWeight: FontWeight.w800,
           letterSpacing: .3,
@@ -1345,6 +1359,7 @@ class _RecentChatTile extends StatelessWidget {
     final otherId = conversation.otherUserId(currentUserId);
     final name = conversation.displayNameFor(otherId);
     final photoUrl = conversation.photoUrlFor(otherId);
+    final palette = context.appPalette;
 
     return ListTile(
       onTap: onTap,
@@ -1368,8 +1383,8 @@ class _RecentChatTile extends StatelessWidget {
         name,
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
-        style: const TextStyle(
-          color: Colors.white,
+        style: TextStyle(
+          color: palette.textPrimary,
           fontWeight: FontWeight.w800,
         ),
       ),
@@ -1377,12 +1392,9 @@ class _RecentChatTile extends StatelessWidget {
         conversation.previewFor(currentUserId),
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
-        style: const TextStyle(color: _MessagesScreenState._muted),
+        style: TextStyle(color: palette.textSecondary),
       ),
-      trailing: const Icon(
-        Icons.chevron_right_rounded,
-        color: _MessagesScreenState._muted,
-      ),
+      trailing: Icon(Icons.chevron_right_rounded, color: palette.textSecondary),
     );
   }
 }
@@ -1395,6 +1407,8 @@ class _FriendTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+
     return ListTile(
       onTap: onTap,
       leading: Stack(
@@ -1426,7 +1440,7 @@ class _FriendTile extends StatelessWidget {
                 decoration: BoxDecoration(
                   color: const Color(0xFF20D66B),
                   shape: BoxShape.circle,
-                  border: Border.all(color: _sheetSurface, width: 3),
+                  border: Border.all(color: palette.surfaceRaised, width: 3),
                 ),
               ),
             ),
@@ -1434,8 +1448,8 @@ class _FriendTile extends StatelessWidget {
       ),
       title: Text(
         friend.displayName,
-        style: const TextStyle(
-          color: Colors.white,
+        style: TextStyle(
+          color: palette.textPrimary,
           fontWeight: FontWeight.w800,
         ),
       ),
@@ -1445,12 +1459,9 @@ class _FriendTile extends StatelessWidget {
             : friend.username.trim().isNotEmpty
             ? '@${friend.username.trim()}'
             : 'Offline',
-        style: const TextStyle(color: _MessagesScreenState._muted),
+        style: TextStyle(color: palette.textSecondary),
       ),
-      trailing: const Icon(
-        Icons.chevron_right_rounded,
-        color: _MessagesScreenState._muted,
-      ),
+      trailing: Icon(Icons.chevron_right_rounded, color: palette.textSecondary),
     );
   }
 }
@@ -1461,6 +1472,9 @@ class _InviteFriendsTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
+
     return Material(
       color: Colors.transparent,
       child: InkWell(
@@ -1470,9 +1484,7 @@ class _InviteFriendsTile extends StatelessWidget {
           padding: const EdgeInsets.all(14),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(16),
-            border: Border.all(
-              color: _MessagesScreenState._primary.withValues(alpha: .35),
-            ),
+            border: Border.all(color: colors.primary.withValues(alpha: .55)),
           ),
           child: Row(
             children: [
@@ -1481,24 +1493,24 @@ class _InviteFriendsTile extends StatelessWidget {
                 height: 40,
                 alignment: Alignment.center,
                 decoration: BoxDecoration(
-                  color: _MessagesScreenState._primary.withValues(alpha: .16),
+                  color: colors.primaryContainer,
                   borderRadius: BorderRadius.circular(12),
                 ),
-                child: const Icon(
+                child: Icon(
                   Icons.person_add_alt_1_rounded,
-                  color: _MessagesScreenState._primary,
+                  color: colors.onPrimaryContainer,
                   size: 20,
                 ),
               ),
               const SizedBox(width: 12),
-              const Expanded(
+              Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
                       'Invite friends',
                       style: TextStyle(
-                        color: Colors.white,
+                        color: palette.textPrimary,
                         fontWeight: FontWeight.w800,
                         fontSize: 13.5,
                       ),
@@ -1506,7 +1518,7 @@ class _InviteFriendsTile extends StatelessWidget {
                     Text(
                       'Not on YO Voice yet? Send them an invite.',
                       style: TextStyle(
-                        color: _MessagesScreenState._muted,
+                        color: palette.textSecondary,
                         fontSize: 11.5,
                       ),
                     ),
@@ -1538,6 +1550,7 @@ class _NewMessageEmptyState extends StatelessWidget {
         : hasNoFriendsAtAll
         ? 'Add friends to start messaging them here.'
         : "You've already started every conversation you can.";
+    final palette = context.appPalette;
 
     return Center(
       child: Padding(
@@ -1550,23 +1563,23 @@ class _NewMessageEmptyState extends StatelessWidget {
               height: 64,
               alignment: Alignment.center,
               decoration: BoxDecoration(
-                color: _MessagesScreenState._surface,
+                color: palette.surfaceMuted,
                 shape: BoxShape.circle,
-                border: Border.all(color: _MessagesScreenState._border),
+                border: Border.all(color: palette.borderStrong),
               ),
               child: Icon(
                 hasSearch
                     ? Icons.search_off_rounded
                     : Icons.chat_bubble_outline_rounded,
-                color: _MessagesScreenState._muted,
+                color: palette.textSecondary,
                 size: 28,
               ),
             ),
             const SizedBox(height: 16),
             Text(
               title,
-              style: const TextStyle(
-                color: Colors.white,
+              style: TextStyle(
+                color: palette.textPrimary,
                 fontWeight: FontWeight.w800,
                 fontSize: 16,
               ),
@@ -1575,8 +1588,8 @@ class _NewMessageEmptyState extends StatelessWidget {
             Text(
               subtitle,
               textAlign: TextAlign.center,
-              style: const TextStyle(
-                color: _MessagesScreenState._muted,
+              style: TextStyle(
+                color: palette.textSecondary,
                 fontSize: 13,
                 height: 1.4,
               ),
@@ -1589,13 +1602,16 @@ class _NewMessageEmptyState extends StatelessWidget {
 }
 
 /// Shown when the friends/conversations queries fail. Deliberately mirrors
-/// [_NewMessageEmptyState]'s dark treatment so a failure never exposes a
-/// lighter surface than the rest of the sheet.
+/// [_NewMessageEmptyState]'s treatment so a failure stays visually integrated
+/// with the sheet instead of falling back to Flutter's generic ErrorWidget.
 class _NewMessageErrorState extends StatelessWidget {
   const _NewMessageErrorState();
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
+
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(32),
@@ -1607,31 +1623,31 @@ class _NewMessageErrorState extends StatelessWidget {
               height: 64,
               alignment: Alignment.center,
               decoration: BoxDecoration(
-                color: _MessagesScreenState._surface,
+                color: colors.errorContainer,
                 shape: BoxShape.circle,
-                border: Border.all(color: _MessagesScreenState._border),
+                border: Border.all(color: colors.onErrorContainer),
               ),
-              child: const Icon(
+              child: Icon(
                 Icons.cloud_off_rounded,
-                color: _MessagesScreenState._muted,
+                color: colors.onErrorContainer,
                 size: 28,
               ),
             ),
             const SizedBox(height: 16),
-            const Text(
+            Text(
               "We couldn't load your people",
               style: TextStyle(
-                color: Colors.white,
+                color: palette.textPrimary,
                 fontWeight: FontWeight.w800,
                 fontSize: 16,
               ),
             ),
             const SizedBox(height: 6),
-            const Text(
+            Text(
               'Check your connection and try again.',
               textAlign: TextAlign.center,
               style: TextStyle(
-                color: _MessagesScreenState._muted,
+                color: palette.textSecondary,
                 fontSize: 13,
                 height: 1.4,
               ),
@@ -1666,70 +1682,79 @@ class _EmptyMessages extends StatelessWidget {
         : archived
         ? 'Archived conversations will appear here.'
         : 'Start a private conversation with one of your friends.';
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
 
-    return Center(
-      child: Padding(
+    return LayoutBuilder(
+      builder: (context, constraints) => SingleChildScrollView(
         padding: const EdgeInsets.all(28),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 78,
-              height: 78,
-              decoration: BoxDecoration(
-                gradient: const LinearGradient(
-                  colors: [Color(0xFFB82FFF), Color(0xFF6D19E7)],
-                ),
-                borderRadius: BorderRadius.circular(26),
-              ),
-              child: Icon(
-                archived
-                    ? Icons.archive_outlined
-                    : Icons.chat_bubble_outline_rounded,
-                color: Colors.white,
-                size: 36,
-              ),
-            ),
-            const SizedBox(height: 20),
-            Text(
-              title,
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 21,
-                fontWeight: FontWeight.w900,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              subtitle,
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                color: _MessagesScreenState._muted,
-                fontSize: 13,
-                height: 1.45,
-              ),
-            ),
-            if (!archived && !hasSearch) ...[
-              const SizedBox(height: 20),
-              FilledButton.icon(
-                onPressed: onNewMessage,
-                style: FilledButton.styleFrom(
-                  backgroundColor: _MessagesScreenState._primary,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 20,
-                    vertical: 13,
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            minHeight: (constraints.maxHeight - 56).clamp(0, double.infinity),
+          ),
+          child: Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 78,
+                  height: 78,
+                  decoration: BoxDecoration(
+                    gradient: const LinearGradient(
+                      colors: [Color(0xFFB82FFF), Color(0xFF6D19E7)],
+                    ),
+                    borderRadius: BorderRadius.circular(26),
+                  ),
+                  child: Icon(
+                    archived
+                        ? Icons.archive_outlined
+                        : Icons.chat_bubble_outline_rounded,
+                    color: Colors.white,
+                    size: 36,
                   ),
                 ),
-                icon: const Icon(Icons.edit_square),
-                label: const Text(
-                  'New message',
-                  style: TextStyle(fontWeight: FontWeight.w900),
+                const SizedBox(height: 20),
+                Text(
+                  title,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: palette.textPrimary,
+                    fontSize: 21,
+                    fontWeight: FontWeight.w900,
+                  ),
                 ),
-              ),
-            ],
-          ],
+                const SizedBox(height: 8),
+                Text(
+                  subtitle,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: palette.textSecondary,
+                    fontSize: 13,
+                    height: 1.45,
+                  ),
+                ),
+                if (!archived && !hasSearch) ...[
+                  const SizedBox(height: 20),
+                  FilledButton.icon(
+                    onPressed: onNewMessage,
+                    style: FilledButton.styleFrom(
+                      backgroundColor: colors.primary,
+                      foregroundColor: colors.onPrimary,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 20,
+                        vertical: 13,
+                      ),
+                    ),
+                    icon: const Icon(Icons.edit_square),
+                    label: const Text(
+                      'New message',
+                      style: TextStyle(fontWeight: FontWeight.w900),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
         ),
       ),
     );
@@ -1743,16 +1768,15 @@ class _MessagesError extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(28),
         child: Text(
           message,
           textAlign: TextAlign.center,
-          style: const TextStyle(
-            color: _MessagesScreenState._muted,
-            fontSize: 14,
-          ),
+          style: TextStyle(color: palette.textSecondary, fontSize: 14),
         ),
       ),
     );

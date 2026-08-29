@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/helpers/error_messages.dart';
+import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/friends/data/models/friend_user.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
@@ -15,11 +16,6 @@ class BlockedUsersScreen extends StatefulWidget {
 }
 
 class _BlockedUsersScreenState extends State<BlockedUsersScreen> {
-  static const Color _background = Color(0xFF080711);
-  static const Color _surface = Color(0xFF12101D);
-  static const Color _border = Color(0xFF30263F);
-  static const Color _muted = Color(0xFF9D95AD);
-
   late final FriendService _friendService =
       widget.friendService ?? FriendService();
   late final Stream<List<FriendUser>> _blockedStream;
@@ -64,8 +60,11 @@ class _BlockedUsersScreenState extends State<BlockedUsersScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     return Scaffold(
-      backgroundColor: _background,
+      key: const ValueKey('blocked-users-screen'),
+      backgroundColor: palette.background,
       body: SafeArea(
         child: ResponsiveContentFrame(
           width: ResponsiveContentWidth.list,
@@ -78,20 +77,20 @@ class _BlockedUsersScreenState extends State<BlockedUsersScreen> {
                   children: [
                     IconButton(
                       onPressed: () => Navigator.of(context).pop(),
-                      icon: const Icon(
+                      icon: Icon(
                         Icons.arrow_back_ios_new_rounded,
-                        color: Colors.white,
+                        color: palette.textPrimary,
                         size: 21,
                       ),
                     ),
                     const SizedBox(width: 4),
-                    const Expanded(
+                    Expanded(
                       child: Text(
                         'Blocked users',
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
-                          color: Colors.white,
+                          color: palette.textPrimary,
                           fontSize: 23,
                           fontWeight: FontWeight.w800,
                           letterSpacing: -0.5,
@@ -107,10 +106,8 @@ class _BlockedUsersScreenState extends State<BlockedUsersScreen> {
                   builder: (context, snapshot) {
                     if (snapshot.connectionState == ConnectionState.waiting &&
                         !snapshot.hasData) {
-                      return const Center(
-                        child: CircularProgressIndicator(
-                          color: Color(0xFFB348FF),
-                        ),
+                      return Center(
+                        child: CircularProgressIndicator(color: colors.primary),
                       );
                     }
 
@@ -121,17 +118,17 @@ class _BlockedUsersScreenState extends State<BlockedUsersScreen> {
                           child: Column(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              const Icon(
+                              Icon(
                                 Icons.cloud_off_rounded,
-                                color: Color(0xFFB348FF),
+                                color: colors.primary,
                                 size: 40,
                               ),
                               const SizedBox(height: 16),
-                              const Text(
+                              Text(
                                 'Could not load blocked users',
                                 textAlign: TextAlign.center,
                                 style: TextStyle(
-                                  color: Colors.white,
+                                  color: palette.textPrimary,
                                   fontSize: 18,
                                   fontWeight: FontWeight.w800,
                                 ),
@@ -140,8 +137,8 @@ class _BlockedUsersScreenState extends State<BlockedUsersScreen> {
                               Text(
                                 friendlyErrorMessage(snapshot.error!),
                                 textAlign: TextAlign.center,
-                                style: const TextStyle(
-                                  color: _muted,
+                                style: TextStyle(
+                                  color: palette.textSecondary,
                                   fontSize: 13,
                                 ),
                               ),
@@ -153,31 +150,34 @@ class _BlockedUsersScreenState extends State<BlockedUsersScreen> {
 
                     final blocked = snapshot.data ?? const <FriendUser>[];
                     if (blocked.isEmpty) {
-                      return const Center(
+                      return Center(
                         child: Padding(
-                          padding: EdgeInsets.symmetric(horizontal: 32),
+                          padding: const EdgeInsets.symmetric(horizontal: 32),
                           child: Column(
                             mainAxisSize: MainAxisSize.min,
                             children: [
                               Icon(
                                 Icons.block_rounded,
-                                color: Color(0xFFB348FF),
+                                color: colors.primary,
                                 size: 40,
                               ),
-                              SizedBox(height: 16),
+                              const SizedBox(height: 16),
                               Text(
                                 'No blocked users',
                                 style: TextStyle(
-                                  color: Colors.white,
+                                  color: palette.textPrimary,
                                   fontSize: 18,
                                   fontWeight: FontWeight.w800,
                                 ),
                               ),
-                              SizedBox(height: 8),
+                              const SizedBox(height: 8),
                               Text(
                                 'People you block will appear here.',
                                 textAlign: TextAlign.center,
-                                style: TextStyle(color: _muted, fontSize: 13),
+                                style: TextStyle(
+                                  color: palette.textSecondary,
+                                  fontSize: 13,
+                                ),
                               ),
                             ],
                           ),
@@ -196,11 +196,12 @@ class _BlockedUsersScreenState extends State<BlockedUsersScreen> {
                             user.photoUrl?.trim().isNotEmpty == true;
 
                         return Container(
+                          key: ValueKey('blocked-user-${user.id}'),
                           padding: const EdgeInsets.all(12),
                           decoration: BoxDecoration(
-                            color: _surface,
+                            color: palette.surface,
                             borderRadius: BorderRadius.circular(18),
-                            border: Border.all(color: _border),
+                            border: Border.all(color: palette.border),
                           ),
                           child: LayoutBuilder(
                             builder: (context, constraints) {
@@ -228,8 +229,8 @@ class _BlockedUsersScreenState extends State<BlockedUsersScreen> {
                                       user.displayName,
                                       maxLines: 2,
                                       overflow: TextOverflow.ellipsis,
-                                      style: const TextStyle(
-                                        color: Colors.white,
+                                      style: TextStyle(
+                                        color: palette.textPrimary,
                                         fontSize: 14,
                                         fontWeight: FontWeight.w800,
                                       ),
@@ -242,9 +243,9 @@ class _BlockedUsersScreenState extends State<BlockedUsersScreen> {
                                     ? null
                                     : () => _unblock(user),
                                 style: OutlinedButton.styleFrom(
-                                  foregroundColor: Colors.white,
-                                  side: const BorderSide(color: _border),
-                                  minimumSize: const Size.fromHeight(44),
+                                  foregroundColor: colors.primary,
+                                  side: BorderSide(color: palette.borderStrong),
+                                  minimumSize: const Size(0, 44),
                                   shape: RoundedRectangleBorder(
                                     borderRadius: BorderRadius.circular(11),
                                   ),

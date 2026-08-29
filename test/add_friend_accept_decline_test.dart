@@ -5,6 +5,8 @@ import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:yovoice/core/theme/app_palette.dart';
+import 'package:yovoice/core/theme/app_theme.dart';
 import 'package:yovoice/features/friends/data/models/friend_user.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/friends/data/services/social_graph_service.dart';
@@ -82,10 +84,11 @@ void main() {
     FriendService service, {
     TextScaler textScaler = TextScaler.noScaling,
     SocialGraphService? socialGraphService,
+    ThemeData? theme,
   }) async {
     await tester.pumpWidget(
       MaterialApp(
-        theme: ThemeData.dark(useMaterial3: true),
+        theme: theme ?? AppTheme.darkTheme,
         builder: (context, child) => MediaQuery(
           data: MediaQuery.of(context).copyWith(textScaler: textScaler),
           child: child!,
@@ -183,6 +186,7 @@ void main() {
       tester,
       buildService(),
       textScaler: const TextScaler.linear(2),
+      theme: AppTheme.lightTheme,
     );
     await searchForRiley(tester);
 
@@ -200,7 +204,7 @@ void main() {
     final graph = _RetrySocialGraphService();
     await tester.pumpWidget(
       MaterialApp(
-        theme: ThemeData.dark(useMaterial3: true),
+        theme: AppTheme.lightTheme,
         builder: (context, child) => MediaQuery(
           data: MediaQuery.of(
             context,
@@ -249,6 +253,42 @@ void main() {
     expect(find.text('Friends'), findsOneWidget);
     expect(find.text('Sent'), findsNothing);
     expect(find.text('You and Riley are now friends.'), findsOneWidget);
+  });
+
+  testWidgets('search result chrome follows Pearl and dark semantic palettes', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(768, 1024);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    for (final themeCase in <({ThemeData theme, AppPalette palette})>[
+      (theme: AppTheme.lightTheme, palette: AppPalette.light),
+      (theme: AppTheme.darkTheme, palette: AppPalette.dark),
+    ]) {
+      await pumpScreen(tester, buildService(), theme: themeCase.theme);
+      await searchForRiley(tester);
+
+      final scaffold = tester.widget<Scaffold>(
+        find.byKey(const ValueKey('add-friend-screen')),
+      );
+      expect(scaffold.backgroundColor, themeCase.palette.background);
+
+      final card = tester.widget<Container>(
+        find.byKey(const ValueKey('friend-search-result-riley-uid')),
+      );
+      final decoration = card.decoration! as BoxDecoration;
+      expect(decoration.color, themeCase.palette.surface);
+      expect(
+        (decoration.border! as Border).top.color,
+        themeCase.palette.border,
+      );
+
+      final name = tester.widget<Text>(find.text('Riley'));
+      expect(name.style!.color, themeCase.palette.textPrimary);
+      final field = tester.widget<TextField>(find.byType(TextField));
+      expect(field.decoration!.fillColor, themeCase.palette.surface);
+      expect(tester.takeException(), isNull);
+    }
   });
 
   test('unknown friend-request outcomes fail closed', () async {

@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/profile/data/models/profile_visibility.dart';
 import 'package:yovoice/features/profile/data/services/profile_visibility_service.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
@@ -49,9 +49,14 @@ class _ProfileVisibilityScreenState extends State<ProfileVisibilityScreen> {
         ..hideCurrentSnackBar()
         ..showSnackBar(
           SnackBar(
-            content: Text(error.message),
+            content: Text(
+              error.message,
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.onErrorContainer,
+              ),
+            ),
             behavior: SnackBarBehavior.floating,
-            backgroundColor: AppColors.error,
+            backgroundColor: Theme.of(context).colorScheme.errorContainer,
           ),
         );
     } finally {
@@ -61,13 +66,14 @@ class _ProfileVisibilityScreenState extends State<ProfileVisibilityScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return Scaffold(
-      backgroundColor: AppColors.background,
+      backgroundColor: palette.background,
       appBar: widget.isRootTab
           ? null
           : AppBar(
-              backgroundColor: AppColors.background,
-              foregroundColor: AppColors.textPrimary,
+              backgroundColor: palette.background,
+              foregroundColor: palette.textPrimary,
               title: const Text('Profile visibility'),
             ),
       body: SafeArea(
@@ -85,10 +91,10 @@ class _ProfileVisibilityScreenState extends State<ProfileVisibilityScreen> {
             ),
             children: [
               if (widget.isRootTab) ...[
-                const Text(
+                Text(
                   'Profile visibility',
                   style: TextStyle(
-                    color: AppColors.textPrimary,
+                    color: palette.textPrimary,
                     fontSize: 28,
                     fontWeight: FontWeight.w900,
                     letterSpacing: -.5,
@@ -99,15 +105,15 @@ class _ProfileVisibilityScreenState extends State<ProfileVisibilityScreen> {
               Container(
                 padding: const EdgeInsets.all(18),
                 decoration: BoxDecoration(
-                  color: AppColors.surface,
+                  color: palette.surface,
                   borderRadius: BorderRadius.circular(22),
-                  border: Border.all(color: AppColors.border),
+                  border: Border.all(color: palette.border),
                 ),
-                child: const Row(
+                child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    _PrivacyIcon(),
-                    SizedBox(width: 14),
+                    const _PrivacyIcon(),
+                    const SizedBox(width: 14),
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -115,7 +121,7 @@ class _ProfileVisibilityScreenState extends State<ProfileVisibilityScreen> {
                           Text(
                             'Choose who sees your full profile',
                             style: TextStyle(
-                              color: AppColors.textPrimary,
+                              color: palette.textPrimary,
                               fontWeight: FontWeight.w800,
                               fontSize: 17,
                             ),
@@ -124,7 +130,7 @@ class _ProfileVisibilityScreenState extends State<ProfileVisibilityScreen> {
                           Text(
                             'Your name can still appear where you participate, such as rooms, clubs and existing conversations. This setting controls your profile page and discovery.',
                             style: TextStyle(
-                              color: AppColors.textSecondary,
+                              color: palette.textSecondary,
                               height: 1.45,
                               fontSize: 13.5,
                             ),
@@ -148,10 +154,10 @@ class _ProfileVisibilityScreenState extends State<ProfileVisibilityScreen> {
                   const SizedBox(height: 10),
               ],
               const SizedBox(height: 18),
-              const Text(
+              Text(
                 'Changes take effect immediately in YO Voice. Choosing Friends only or Only me also removes your profile from public website showcases.',
                 style: TextStyle(
-                  color: AppColors.textHint,
+                  color: palette.textTertiary,
                   height: 1.45,
                   fontSize: 12.5,
                 ),
@@ -169,15 +175,16 @@ class _PrivacyIcon extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
     return Container(
       width: 46,
       height: 46,
       alignment: Alignment.center,
       decoration: BoxDecoration(
-        color: AppColors.primary.withValues(alpha: .18),
+        color: colors.primaryContainer,
         borderRadius: BorderRadius.circular(15),
       ),
-      child: const Icon(Icons.visibility_outlined, color: AppColors.secondary),
+      child: Icon(Icons.visibility_outlined, color: colors.primary),
     );
   }
 }
@@ -205,12 +212,14 @@ class _VisibilityOption extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     return Semantics(
       button: true,
       selected: selected,
       label: '${visibility.label}. ${visibility.description}',
       child: Material(
-        color: selected ? AppColors.surfaceLight : AppColors.surface,
+        color: selected ? palette.surfaceMuted : palette.surface,
         borderRadius: BorderRadius.circular(20),
         child: InkWell(
           key: ValueKey('profile-visibility-${visibility.name}'),
@@ -223,7 +232,7 @@ class _VisibilityOption extends StatelessWidget {
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(20),
               border: Border.all(
-                color: selected ? AppColors.secondary : AppColors.border,
+                color: selected ? colors.primary : palette.border,
                 width: selected ? 1.5 : 1,
               ),
             ),
@@ -232,9 +241,7 @@ class _VisibilityOption extends StatelessWidget {
               children: [
                 Icon(
                   _icon,
-                  color: selected
-                      ? AppColors.secondary
-                      : AppColors.textSecondary,
+                  color: selected ? colors.primary : palette.textSecondary,
                   size: 24,
                 ),
                 const SizedBox(width: 14),
@@ -244,8 +251,8 @@ class _VisibilityOption extends StatelessWidget {
                     children: [
                       Text(
                         visibility.label,
-                        style: const TextStyle(
-                          color: AppColors.textPrimary,
+                        style: TextStyle(
+                          color: palette.textPrimary,
                           fontWeight: FontWeight.w800,
                           fontSize: 16,
                         ),
@@ -253,8 +260,8 @@ class _VisibilityOption extends StatelessWidget {
                       const SizedBox(height: 4),
                       Text(
                         visibility.description,
-                        style: const TextStyle(
-                          color: AppColors.textSecondary,
+                        style: TextStyle(
+                          color: palette.textSecondary,
                           height: 1.35,
                           fontSize: 13,
                         ),
@@ -264,11 +271,11 @@ class _VisibilityOption extends StatelessWidget {
                 ),
                 const SizedBox(width: 10),
                 if (busy)
-                  const SizedBox.square(
+                  SizedBox.square(
                     dimension: 22,
                     child: CircularProgressIndicator(
                       strokeWidth: 2,
-                      color: AppColors.secondary,
+                      color: colors.primary,
                     ),
                   )
                 else
@@ -276,7 +283,7 @@ class _VisibilityOption extends StatelessWidget {
                     selected
                         ? Icons.check_circle_rounded
                         : Icons.radio_button_unchecked_rounded,
-                    color: selected ? AppColors.success : AppColors.textHint,
+                    color: selected ? colors.primary : palette.textTertiary,
                   ),
               ],
             ),

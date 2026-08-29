@@ -5,6 +5,7 @@ import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/features/auth/data/auth_service.dart';
 import 'package:yovoice/features/auth/presentation/widgets/check_inbox_sheet.dart';
 import 'package:yovoice/shared/widgets/backgrounds/animated_waves_background.dart';
+import 'package:yovoice/shared/widgets/theme/yo_immersive_dark_surface.dart';
 
 class ForgotPasswordScreen extends StatefulWidget {
   const ForgotPasswordScreen({
@@ -98,7 +99,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
   @override
   Widget build(BuildContext context) {
     final copy = AppLocalizations.of(context);
-    return Scaffold(
+    final content = Scaffold(
       body: Stack(
         children: [
           const Positioned.fill(
@@ -288,5 +289,6 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
         ],
       ),
     );
+    return YoImmersiveDarkSurface(child: content);
   }
 }

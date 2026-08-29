@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
 
 class YoAvatar extends StatelessWidget {
@@ -21,6 +22,7 @@ class YoAvatar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     final String initial = name == null || name!.trim().isEmpty
         ? '?'
         : name!.trim().characters.first.toUpperCase();
@@ -33,8 +35,8 @@ class YoAvatar extends StatelessWidget {
           height: size,
           decoration: BoxDecoration(
             shape: BoxShape.circle,
-            color: AppColors.surfaceLight,
-            border: Border.all(color: AppColors.border, width: 1),
+            color: palette.surfaceMuted,
+            border: Border.all(color: palette.border, width: 1),
             image: imageUrl != null && imageUrl!.trim().isNotEmpty
                 ? DecorationImage(
                     image: NetworkImage(imageUrl!),
@@ -47,7 +49,7 @@ class YoAvatar extends StatelessWidget {
               ? Text(
                   initial,
                   style: TextStyle(
-                    color: AppColors.textPrimary,
+                    color: palette.textPrimary,
                     fontSize: size * 0.38,
                     fontWeight: FontWeight.w700,
                   ),
@@ -64,7 +66,7 @@ class YoAvatar extends StatelessWidget {
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 color: AppColors.success,
-                border: Border.all(color: AppColors.background, width: 2),
+                border: Border.all(color: palette.background, width: 2),
               ),
             ),
           ),

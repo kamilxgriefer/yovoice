@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/achievements/data/models/achievement_definition.dart';
 import 'package:yovoice/features/achievements/presentation/widgets/title_badge.dart';
 import 'package:yovoice/features/profile/data/models/user_profile.dart';
@@ -66,6 +67,7 @@ class ProfileHeader extends StatelessWidget {
                 _toolbar(context),
                 const SizedBox(height: 6),
                 _bannerAndIdentity(
+                  context: context,
                   bannerHeight: bannerHeight,
                   avatarOverlap: avatarOverlap,
                 ),
@@ -79,6 +81,8 @@ class ProfileHeader extends StatelessWidget {
   }
 
   Widget _toolbar(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     final canPop = Navigator.of(context).canPop();
     return SafeArea(
       bottom: false,
@@ -96,14 +100,16 @@ class ProfileHeader extends StatelessWidget {
                 child: IconButton(
                   onPressed: () => Navigator.of(context).maybePop(),
                   icon: const Icon(Icons.arrow_back_rounded),
-                  color: Colors.white,
+                  color: palette.textPrimary,
                   tooltip: 'Back',
                   constraints: const BoxConstraints(
                     minWidth: 44,
                     minHeight: 44,
                   ),
                   style: IconButton.styleFrom(
-                    backgroundColor: Colors.black.withValues(alpha: .28),
+                    backgroundColor: palette.surfaceRaised.withValues(
+                      alpha: .92,
+                    ),
                   ),
                 ),
               )
@@ -111,13 +117,13 @@ class ProfileHeader extends StatelessWidget {
               // Keeps the title on the 18px content gutter when there is
               // no Back button (6 + 12 = 18).
               const SizedBox(width: 12),
-            const Expanded(
+            Expanded(
               child: Text(
                 'Profile',
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
-                  color: Colors.white,
+                  color: palette.textPrimary,
                   fontSize: 22,
                   fontWeight: FontWeight.w900,
                 ),
@@ -127,9 +133,7 @@ class ProfileHeader extends StatelessWidget {
               onPressed: onEdit,
               tooltip: 'Edit profile',
               constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
-              style: IconButton.styleFrom(
-                backgroundColor: const Color(0xFFAE22FF),
-              ),
+              style: IconButton.styleFrom(backgroundColor: colors.primary),
               icon: const Icon(Icons.edit_rounded, color: Colors.white),
             ),
           ],
@@ -143,6 +147,7 @@ class ProfileHeader extends StatelessWidget {
   /// Positioned backdrop with an explicit height, so this layout cannot
   /// reproduce the collapsed-Stack avatar-clipping bug.
   Widget _bannerAndIdentity({
+    required BuildContext context,
     required double bannerHeight,
     required double avatarOverlap,
   }) {
@@ -178,7 +183,7 @@ class ProfileHeader extends StatelessWidget {
             SizedBox(height: bannerHeight - avatarOverlap),
             Padding(
               padding: const EdgeInsets.fromLTRB(_gutter + 12, 0, _gutter, 0),
-              child: _identityBlock(),
+              child: _identityBlock(context),
             ),
           ],
         ),
@@ -186,7 +191,8 @@ class ProfileHeader extends StatelessWidget {
     );
   }
 
-  Widget _identityBlock() {
+  Widget _identityBlock(BuildContext context) {
+    final palette = context.appPalette;
     return Row(
       crossAxisAlignment: CrossAxisAlignment.end,
       children: [
@@ -203,7 +209,7 @@ class ProfileHeader extends StatelessWidget {
             radius: 44,
             photoUrl: profile.photoUrl,
             displayName: profile.displayName,
-            backgroundColor: const Color(0xFF281133),
+            backgroundColor: palette.surfaceSunken,
             premium: profile.premiumIdentity,
           ),
         ),
@@ -219,8 +225,8 @@ class ProfileHeader extends StatelessWidget {
                   profile.displayName,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Colors.white,
+                  style: TextStyle(
+                    color: palette.textPrimary,
                     fontSize: 24,
                     fontWeight: FontWeight.w900,
                   ),
@@ -230,8 +236,8 @@ class ProfileHeader extends StatelessWidget {
                     '@${profile.username.replaceAll(' ', '').toLowerCase()}',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: Color(0xFFB8ADC1),
+                    style: TextStyle(
+                      color: palette.textSecondary,
                       fontSize: 14,
                     ),
                   ),
@@ -281,23 +287,22 @@ class PremiumIdentityChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const color = Color(0xFFE9B8FF);
+    final colors = Theme.of(context).colorScheme;
+    final color = colors.primary;
     return Tooltip(
       message: 'YO Voice Premium member',
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
         decoration: BoxDecoration(
-          color: const Color(0xFFC026FF).withValues(alpha: .16),
+          color: colors.primaryContainer,
           borderRadius: BorderRadius.circular(99),
-          border: Border.all(
-            color: const Color(0xFFC026FF).withValues(alpha: .5),
-          ),
+          border: Border.all(color: colors.primary.withValues(alpha: .5)),
         ),
-        child: const Row(
+        child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(Icons.workspace_premium_rounded, size: 13, color: color),
-            SizedBox(width: 4),
+            const SizedBox(width: 4),
             // Flexible + ellipsis: at 2.0 text scale on a 320px viewport
             // the badges column is narrower than the scaled label, and a
             // rigid Text overflows the chip.
@@ -332,6 +337,7 @@ class AccountTypeBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isLight = Theme.of(context).brightness == Brightness.light;
     final (icon, label, color) = switch (accountType) {
       AccountType.official => (
         Icons.verified_rounded,
@@ -341,12 +347,12 @@ class AccountTypeBadge extends StatelessWidget {
       AccountType.creator => (
         Icons.auto_awesome_rounded,
         'Creator',
-        const Color(0xFFD3A5FF),
+        isLight ? const Color(0xFF7130A8) : const Color(0xFFD3A5FF),
       ),
       AccountType.personal => (
         Icons.person_rounded,
         'Personal',
-        const Color(0xFFB8ADC1),
+        isLight ? const Color(0xFF594B63) : const Color(0xFFB8ADC1),
       ),
     };
 

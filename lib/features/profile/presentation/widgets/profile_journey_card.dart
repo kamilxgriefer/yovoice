@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/core/theme/app_palette.dart';
 
 /// A width-independent summary of the member's activity on YO Voice.
 ///
@@ -23,6 +23,8 @@ class ProfileJourneyCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     final items = <_JourneyItem>[
       _JourneyItem(
         icon: Icons.hub_rounded,
@@ -56,22 +58,22 @@ class ProfileJourneyCard extends StatelessWidget {
         key: const ValueKey('profile-journey-card'),
         padding: const EdgeInsets.all(18),
         decoration: BoxDecoration(
-          color: AppColors.surface,
+          color: palette.surface,
           borderRadius: BorderRadius.circular(22),
-          border: Border.all(color: AppColors.border),
+          border: Border.all(color: palette.border),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Row(
+            Row(
               children: [
-                Icon(Icons.auto_awesome_rounded, color: AppColors.secondary),
-                SizedBox(width: 10),
+                Icon(Icons.auto_awesome_rounded, color: colors.primary),
+                const SizedBox(width: 10),
                 Expanded(
                   child: Text(
                     'Your YO Voice journey',
                     style: TextStyle(
-                      color: AppColors.textPrimary,
+                      color: palette.textPrimary,
                       fontSize: 16,
                       fontWeight: FontWeight.w900,
                     ),
@@ -82,7 +84,7 @@ class ProfileJourneyCard extends StatelessWidget {
             const SizedBox(height: 8),
             for (var index = 0; index < items.length; index++) ...[
               if (index > 0)
-                const Divider(height: 1, indent: 34, color: AppColors.divider),
+                Divider(height: 1, indent: 34, color: palette.border),
               _JourneyRow(item: items[index]),
             ],
           ],
@@ -106,6 +108,8 @@ class _JourneyRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     return Semantics(
       container: true,
       excludeSemantics: true,
@@ -120,7 +124,7 @@ class _JourneyRow extends StatelessWidget {
             children: [
               SizedBox(
                 width: 24,
-                child: Icon(item.icon, color: AppColors.secondary, size: 20),
+                child: Icon(item.icon, color: colors.primary, size: 20),
               ),
               const SizedBox(width: 10),
               Expanded(
@@ -128,8 +132,8 @@ class _JourneyRow extends StatelessWidget {
                   item.label,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: AppColors.textSecondary,
+                  style: TextStyle(
+                    color: palette.textSecondary,
                     fontSize: 14,
                     fontWeight: FontWeight.w600,
                   ),
@@ -140,8 +144,8 @@ class _JourneyRow extends StatelessWidget {
                 item.value,
                 maxLines: 1,
                 textAlign: TextAlign.end,
-                style: const TextStyle(
-                  color: AppColors.textPrimary,
+                style: TextStyle(
+                  color: palette.textPrimary,
                   fontSize: 16,
                   fontWeight: FontWeight.w900,
                 ),

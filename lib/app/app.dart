@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
@@ -10,6 +11,7 @@ import 'package:yovoice/core/audio/ui_sound_service.dart';
 import 'package:yovoice/core/preferences/app_preferences.dart';
 import 'package:yovoice/core/presence/presence_service.dart';
 import 'package:yovoice/core/theme/app_theme.dart';
+import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/auth/presentation/navigation/auth_epoch_route_resetter.dart';
 import 'package:yovoice/features/auth/presentation/screens/auth_gate.dart';
 import 'package:yovoice/features/calls/data/services/voice_call_service.dart';
@@ -604,6 +606,14 @@ class _YoVoiceAppState extends State<YoVoiceApp> {
             GlobalWidgetsLocalizations.delegate,
             GlobalCupertinoLocalizations.delegate,
           ],
+          builder: (context, child) {
+            final theme = Theme.of(context);
+            final palette = context.appPalette;
+            return AnnotatedRegion<SystemUiOverlayStyle>(
+              value: AppTheme.systemOverlayStyle(theme.brightness, palette),
+              child: child ?? const SizedBox.shrink(),
+            );
+          },
           home: _authBoundary(),
         ),
       ),

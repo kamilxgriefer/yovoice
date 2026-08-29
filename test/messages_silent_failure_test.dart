@@ -8,6 +8,8 @@ import 'package:flutter/semantics.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:yovoice/core/theme/app_palette.dart';
+import 'package:yovoice/core/theme/app_theme.dart';
 import 'package:yovoice/features/friends/data/models/friend_user.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/messages/data/models/conversation.dart';
@@ -41,8 +43,8 @@ void main() {
 
   late PublicIdentityRepository originalIdentityRepository;
 
-  Widget host(Widget child) =>
-      MaterialApp(theme: ThemeData.dark(useMaterial3: true), home: child);
+  Widget host(Widget child, {ThemeData? theme}) =>
+      MaterialApp(theme: theme ?? AppTheme.darkTheme, home: child);
 
   void useSurface(WidgetTester tester, Size size) {
     tester.view.physicalSize = size;
@@ -94,25 +96,29 @@ void main() {
     _StubMessageService service, {
     required Size size,
     TextScaler textScaler = TextScaler.noScaling,
+    ThemeData? theme,
   }) async {
     useSurface(tester, size);
     await tester.pumpWidget(
       host(
-        MediaQuery(
-          data: MediaQueryData(textScaler: textScaler),
-          child: ChatScreen(
-            conversationId: conversationId,
-            otherUserId: otherUserId,
-            otherDisplayName: 'Them',
-            otherEmail: '',
-            otherPhotoUrl: '',
-            messageService: service,
-            auth: MockFirebaseAuth(
-              signedIn: true,
-              mockUser: MockUser(uid: currentUserId),
+        Builder(
+          builder: (context) => MediaQuery(
+            data: MediaQuery.of(context).copyWith(textScaler: textScaler),
+            child: ChatScreen(
+              conversationId: conversationId,
+              otherUserId: otherUserId,
+              otherDisplayName: 'Them',
+              otherEmail: '',
+              otherPhotoUrl: '',
+              messageService: service,
+              auth: MockFirebaseAuth(
+                signedIn: true,
+                mockUser: MockUser(uid: currentUserId),
+              ),
             ),
           ),
         ),
+        theme: theme,
       ),
     );
     await tester.pumpAndSettle();
@@ -139,6 +145,154 @@ void main() {
     await tester.tap(find.text('🔥'));
     await tester.pumpAndSettle();
   }
+
+  group('direct messaging semantic themes', () {
+    for (final entry in <String, ThemeData>{
+      'dark': AppTheme.darkTheme,
+      'light': AppTheme.lightTheme,
+    }.entries) {
+      testWidgets(
+        '${entry.key} chat pairs shell, header, composer and bubble',
+        (tester) async {
+          final service = _StubMessageService(
+            messages: [
+              messageFrom(
+                id: 'theme-${entry.key}',
+                senderId: otherUserId,
+                content: 'Readable incoming message',
+              ),
+            ],
+          );
+          await pumpChat(tester, service, size: narrow, theme: entry.value);
+
+          final palette = entry.value.extension<AppPalette>()!;
+          final scaffold = tester.widget<Scaffold>(
+            find.byKey(const ValueKey('chat-screen')),
+          );
+          expect(scaffold.backgroundColor, palette.background);
+
+          final header = tester.widget<Container>(
+            find.byKey(const ValueKey('chat-header')),
+          );
+          final headerDecoration = header.decoration! as BoxDecoration;
+          expect(
+            headerDecoration.color,
+            palette.navigationSurface.withValues(alpha: .96),
+          );
+
+          final composer = tester.widget<Container>(
+            find.byKey(const ValueKey('chat-composer')),
+          );
+          final composerDecoration = composer.decoration! as BoxDecoration;
+          expect(composerDecoration.color, palette.navigationSurface);
+
+          final bubble = tester.widget<Container>(
+            find.byKey(const ValueKey('incoming-message-bubble')),
+          );
+          final bubbleDecoration = bubble.decoration! as BoxDecoration;
+          expect(bubbleDecoration.color, palette.surfaceRaised);
+          final copy = tester.widget<Text>(
+            find.text('Readable incoming message'),
+          );
+          expect(copy.style?.color, palette.textPrimary);
+          expect(tester.takeException(), isNull);
+        },
+      );
+    }
+
+    for (final size in const <Size>[Size(320, 780), Size(768, 900)]) {
+      testWidgets('light chat supports 200% text at ${size.width.toInt()}px', (
+        tester,
+      ) async {
+        final service = _StubMessageService(
+          messages: [
+            messageFrom(
+              id: 'scaled-${size.width}',
+              senderId: otherUserId,
+              content: 'A readable message at increased text size',
+            ),
+          ],
+        );
+        await pumpChat(
+          tester,
+          service,
+          size: size,
+          textScaler: const TextScaler.linear(2),
+          theme: AppTheme.lightTheme,
+        );
+
+        expect(
+          find.text('A readable message at increased text size'),
+          findsOne,
+        );
+        expect(find.byTooltip('Start voice call'), findsOneWidget);
+        expect(find.byTooltip('Add photo'), findsOneWidget);
+        expect(tester.takeException(), isNull);
+      });
+    }
+
+    testWidgets('light chat empty and history-error states remain readable', (
+      tester,
+    ) async {
+      await pumpChat(
+        tester,
+        _StubMessageService(messages: const <Message>[]),
+        size: narrow,
+        theme: AppTheme.lightTheme,
+      );
+      expect(find.text('You are friends on YO Voice'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+
+      await tester.pumpWidget(host(const SizedBox.shrink()));
+      await tester.pumpAndSettle();
+      await pumpChat(
+        tester,
+        _StubMessageService(
+          messages: const <Message>[],
+          messageStreamError: StateError('offline'),
+        ),
+        size: narrow,
+        theme: AppTheme.lightTheme,
+      );
+      expect(find.text('Could not load this conversation.'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('light chat loading state uses the themed primary', (
+      tester,
+    ) async {
+      useSurface(tester, narrow);
+      final service = _CancellableMessageService();
+      addTearDown(service.close);
+      await tester.pumpWidget(
+        host(
+          ChatScreen(
+            conversationId: conversationId,
+            otherUserId: otherUserId,
+            otherDisplayName: 'Them',
+            otherEmail: '',
+            otherPhotoUrl: '',
+            messageService: service,
+            auth: MockFirebaseAuth(
+              signedIn: true,
+              mockUser: MockUser(uid: currentUserId),
+            ),
+          ),
+          theme: AppTheme.lightTheme,
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 2));
+
+      final spinner = tester.widget<CircularProgressIndicator>(
+        find.byType(CircularProgressIndicator).first,
+      );
+      expect(spinner.color, AppTheme.lightTheme.colorScheme.primary);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(host(const SizedBox.shrink()));
+      await tester.pumpAndSettle();
+    });
+  });
 
   group('a rejected reaction is reported, not swallowed', () {
     for (final entry in <String, Size>{
@@ -540,21 +694,59 @@ void main() {
       WidgetTester tester,
       _StubMessageService service, {
       required Size size,
+      ThemeData? theme,
+      TextScaler textScaler = TextScaler.noScaling,
     }) async {
       useSurface(tester, size);
       await tester.pumpWidget(
         host(
-          MessagesScreen(
-            messageService: service,
-            friendService: _StubFriendService(),
-            auth: MockFirebaseAuth(
-              signedIn: true,
-              mockUser: MockUser(uid: currentUserId),
+          Builder(
+            builder: (context) => MediaQuery(
+              data: MediaQuery.of(context).copyWith(textScaler: textScaler),
+              child: MessagesScreen(
+                messageService: service,
+                friendService: _StubFriendService(),
+                auth: MockFirebaseAuth(
+                  signedIn: true,
+                  mockUser: MockUser(uid: currentUserId),
+                ),
+              ),
             ),
           ),
+          theme: theme,
         ),
       );
       await tester.pumpAndSettle();
+    }
+
+    for (final size in const <Size>[Size(320, 780), Size(768, 900)]) {
+      testWidgets(
+        'light chats list is themed at ${size.width.toInt()}px / 200%',
+        (tester) async {
+          final service = _StubMessageService(
+            messages: const <Message>[],
+            conversations: [_archivedConversation()],
+          );
+          await pumpMessages(
+            tester,
+            service,
+            size: size,
+            theme: AppTheme.lightTheme,
+            textScaler: const TextScaler.linear(2),
+          );
+          await tester.tap(find.byTooltip('Show archived conversations'));
+          await tester.pumpAndSettle();
+
+          final palette = AppTheme.lightTheme.extension<AppPalette>()!;
+          final scaffold = tester.widget<Scaffold>(
+            find.byKey(const ValueKey('messages-screen')),
+          );
+          expect(scaffold.backgroundColor, palette.background);
+          final name = tester.widget<Text>(find.text('Them'));
+          expect(name.style?.color, palette.textPrimary);
+          expect(tester.takeException(), isNull);
+        },
+      );
     }
 
     for (final entry in <String, Size>{

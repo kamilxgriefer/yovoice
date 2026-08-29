@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 
 import 'package:yovoice/core/theme/space_identity.dart';
+import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:image_picker/image_picker.dart';
 
 import 'package:yovoice/features/clubs/data/models/club.dart';
@@ -42,12 +43,6 @@ class _CreateClubScreenState extends State<CreateClubScreen> {
 
   /// Focus rings, selected chips, benefit ticks and the CTA all read this.
   Color get _primary => _identity.primary;
-
-  static const _background = Color(0xFF080711);
-  static const _surface = Color(0xFF171121);
-  static const _surfaceStrong = Color(0xFF21162D);
-  static const _border = Color(0xFF3A2C49);
-  static const _muted = Color(0xFFA69CAF);
 
   static const _languages = <String>[
     'English',
@@ -185,9 +180,14 @@ class _CreateClubScreenState extends State<CreateClubScreen> {
       ..hideCurrentSnackBar()
       ..showSnackBar(
         SnackBar(
-          content: Text(message),
+          content: Text(
+            message,
+            style: TextStyle(
+              color: Theme.of(context).colorScheme.onErrorContainer,
+            ),
+          ),
           behavior: SnackBarBehavior.floating,
-          backgroundColor: const Color(0xFF48203A),
+          backgroundColor: Theme.of(context).colorScheme.errorContainer,
           margin: const EdgeInsets.all(16),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(14),
@@ -198,11 +198,14 @@ class _CreateClubScreenState extends State<CreateClubScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     return Scaffold(
-      backgroundColor: _background,
+      key: const ValueKey('create-club-screen'),
+      backgroundColor: palette.background,
       appBar: AppBar(
-        backgroundColor: _background,
-        foregroundColor: Colors.white,
+        backgroundColor: palette.background,
+        foregroundColor: palette.textPrimary,
         centerTitle: true,
         title: Text(
           widget.isFamily ? 'Create Family Room' : 'Create Club',
@@ -337,23 +340,23 @@ class _CreateClubScreenState extends State<CreateClubScreen> {
               const SizedBox(height: 14),
               DropdownButtonFormField<String>(
                 initialValue: _language,
-                dropdownColor: _surfaceStrong,
+                dropdownColor: palette.surfaceRaised,
                 iconEnabledColor: _primary,
-                style: const TextStyle(
-                  color: Colors.white,
+                style: TextStyle(
+                  color: palette.textPrimary,
                   fontWeight: FontWeight.w700,
                 ),
                 decoration: InputDecoration(
                   filled: true,
-                  fillColor: _surface,
+                  fillColor: palette.surface,
                   prefixIcon: Icon(Icons.language_rounded, color: _primary),
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(18),
-                    borderSide: const BorderSide(color: _border),
+                    borderSide: BorderSide(color: palette.border),
                   ),
                   enabledBorder: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(18),
-                    borderSide: const BorderSide(color: _border),
+                    borderSide: BorderSide(color: palette.border),
                   ),
                 ),
                 items: _languages
@@ -377,9 +380,9 @@ class _CreateClubScreenState extends State<CreateClubScreen> {
       bottomNavigationBar: SafeArea(
         top: false,
         child: Container(
-          decoration: const BoxDecoration(
-            color: Color(0xFF100B18),
-            border: Border(top: BorderSide(color: Color(0xFF30243D))),
+          decoration: BoxDecoration(
+            color: palette.surfaceRaised,
+            border: Border(top: BorderSide(color: palette.border)),
           ),
           child: ResponsiveContentFrame(
             width: ResponsiveContentWidth.form,
@@ -392,18 +395,19 @@ class _CreateClubScreenState extends State<CreateClubScreen> {
                   onPressed: _busy || _pickingImage ? null : _createClub,
                   style: FilledButton.styleFrom(
                     backgroundColor: _primary,
+                    foregroundColor: colors.onPrimary,
                     disabledBackgroundColor: _primary.withValues(alpha: .45),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(19),
                     ),
                   ),
                   icon: _busy
-                      ? const SizedBox(
+                      ? SizedBox(
                           width: 20,
                           height: 20,
                           child: CircularProgressIndicator(
                             strokeWidth: 2.5,
-                            color: Colors.white,
+                            color: colors.onPrimary,
                           ),
                         )
                       : const Icon(Icons.add_business_rounded),
@@ -487,22 +491,25 @@ class _PrivateFamilyMediaNotice extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final accent = isDark ? const Color(0xFF35D58A) : const Color(0xFF08784E);
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: const Color(0xFF12271F),
+        color: palette.successSurface,
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: const Color(0xFF2E7D5A)),
+        border: Border.all(color: accent.withValues(alpha: .55)),
       ),
-      child: const Row(
+      child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(Icons.lock_rounded, color: Color(0xFF35D58A)),
-          SizedBox(width: 12),
+          Icon(Icons.lock_rounded, color: accent),
+          const SizedBox(width: 12),
           Expanded(
             child: Text(
               'Family Rooms use private initials for now. Photos stay unavailable until they can be loaded through authenticated private media.',
-              style: TextStyle(color: Colors.white70, height: 1.4),
+              style: TextStyle(color: palette.textSecondary, height: 1.4),
             ),
           ),
         ],
@@ -534,27 +541,27 @@ class _SectionTitle extends StatelessWidget {
   final String title;
   final String subtitle;
   @override
-  Widget build(BuildContext context) => Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      Text(
-        title,
-        style: const TextStyle(
-          color: Colors.white,
-          fontSize: 19,
-          fontWeight: FontWeight.w900,
+  Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          title,
+          style: TextStyle(
+            color: palette.textPrimary,
+            fontSize: 19,
+            fontWeight: FontWeight.w900,
+          ),
         ),
-      ),
-      const SizedBox(height: 4),
-      Text(
-        subtitle,
-        style: const TextStyle(
-          color: _CreateClubScreenState._muted,
-          height: 1.35,
+        const SizedBox(height: 4),
+        Text(
+          subtitle,
+          style: TextStyle(color: palette.textSecondary, height: 1.35),
         ),
-      ),
-    ],
-  );
+      ],
+    );
+  }
 }
 
 class _MediaPickerCard extends StatelessWidget {
@@ -577,8 +584,10 @@ class _MediaPickerCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     return Material(
-      color: const Color(0xFF171121),
+      color: palette.surface,
       borderRadius: BorderRadius.circular(20),
       child: InkWell(
         onTap: onTap,
@@ -588,7 +597,7 @@ class _MediaPickerCard extends StatelessWidget {
           padding: const EdgeInsets.all(12),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: const Color(0xFF3A2C49)),
+            border: Border.all(color: palette.border),
           ),
           child: Stack(
             children: [
@@ -597,7 +606,7 @@ class _MediaPickerCard extends StatelessWidget {
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     if (bytes == null)
-                      Icon(icon, color: const Color(0xFFA226FF), size: 32)
+                      Icon(icon, color: colors.primary, size: 32)
                     else
                       ClipRRect(
                         borderRadius: BorderRadius.circular(
@@ -614,8 +623,8 @@ class _MediaPickerCard extends StatelessWidget {
                     Text(
                       label,
                       textAlign: TextAlign.center,
-                      style: const TextStyle(
-                        color: Colors.white,
+                      style: TextStyle(
+                        color: palette.textPrimary,
                         fontWeight: FontWeight.w800,
                       ),
                     ),
@@ -623,8 +632,8 @@ class _MediaPickerCard extends StatelessWidget {
                     Text(
                       helper,
                       textAlign: TextAlign.center,
-                      style: const TextStyle(
-                        color: Color(0xFFA69CAF),
+                      style: TextStyle(
+                        color: palette.textSecondary,
                         fontSize: 12,
                       ),
                     ),
@@ -666,31 +675,35 @@ class _Field extends StatelessWidget {
   final int maxLines;
   final String? Function(String?)? validator;
   @override
-  Widget build(BuildContext context) => TextFormField(
-    controller: controller,
-    maxLength: maxLength,
-    maxLines: maxLines,
-    validator: validator,
-    style: const TextStyle(color: Colors.white),
-    decoration: InputDecoration(
-      labelText: label,
-      hintText: hint,
-      counterStyle: const TextStyle(color: Color(0xFF8F8598)),
-      labelStyle: const TextStyle(color: Color(0xFFA69CAF)),
-      hintStyle: const TextStyle(color: Color(0xFF756D82)),
-      filled: true,
-      fillColor: const Color(0xFF171121),
-      border: OutlineInputBorder(borderRadius: BorderRadius.circular(18)),
-      enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(18),
-        borderSide: const BorderSide(color: Color(0xFF3A2C49)),
+  Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
+    return TextFormField(
+      controller: controller,
+      maxLength: maxLength,
+      maxLines: maxLines,
+      validator: validator,
+      style: TextStyle(color: palette.textPrimary),
+      decoration: InputDecoration(
+        labelText: label,
+        hintText: hint,
+        counterStyle: TextStyle(color: palette.textTertiary),
+        labelStyle: TextStyle(color: palette.textSecondary),
+        hintStyle: TextStyle(color: palette.textTertiary),
+        filled: true,
+        fillColor: palette.surfaceRaised,
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(18)),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(18),
+          borderSide: BorderSide(color: palette.borderStrong),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(18),
+          borderSide: BorderSide(color: colors.primary, width: 1.5),
+        ),
       ),
-      focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(18),
-        borderSide: const BorderSide(color: Color(0xFFA226FF), width: 1.5),
-      ),
-    ),
-  );
+    );
+  }
 }
 
 class _PrivacyChoice extends StatelessWidget {
@@ -710,9 +723,11 @@ class _PrivacyChoice extends StatelessWidget {
   final ValueChanged<ClubPrivacy> onChanged;
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     final selected = value == selectedValue;
     return Material(
-      color: selected ? const Color(0xFF261438) : const Color(0xFF171121),
+      color: selected ? colors.primaryContainer : palette.surface,
       borderRadius: BorderRadius.circular(18),
       child: InkWell(
         onTap: () => onChanged(value),
@@ -722,18 +737,14 @@ class _PrivacyChoice extends StatelessWidget {
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(18),
             border: Border.all(
-              color: selected
-                  ? const Color(0xFFA226FF)
-                  : const Color(0xFF3A2C49),
+              color: selected ? colors.primary : palette.border,
             ),
           ),
           child: Row(
             children: [
               Icon(
                 icon,
-                color: selected
-                    ? const Color(0xFFBE63FF)
-                    : const Color(0xFFA69CAF),
+                color: selected ? colors.primary : palette.textSecondary,
               ),
               const SizedBox(width: 13),
               Expanded(
@@ -742,16 +753,16 @@ class _PrivacyChoice extends StatelessWidget {
                   children: [
                     Text(
                       title,
-                      style: const TextStyle(
-                        color: Colors.white,
+                      style: TextStyle(
+                        color: palette.textPrimary,
                         fontWeight: FontWeight.w800,
                       ),
                     ),
                     const SizedBox(height: 3),
                     Text(
                       subtitle,
-                      style: const TextStyle(
-                        color: Color(0xFFA69CAF),
+                      style: TextStyle(
+                        color: palette.textSecondary,
                         fontSize: 12,
                         height: 1.3,
                       ),
@@ -765,21 +776,17 @@ class _PrivacyChoice extends StatelessWidget {
                 height: 24,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: selected
-                      ? const Color(0xFFA226FF)
-                      : Colors.transparent,
+                  color: selected ? colors.primary : Colors.transparent,
                   border: Border.all(
-                    color: selected
-                        ? const Color(0xFFA226FF)
-                        : const Color(0xFF70657A),
+                    color: selected ? colors.primary : palette.borderStrong,
                     width: 2,
                   ),
                 ),
                 child: selected
-                    ? const Icon(
+                    ? Icon(
                         Icons.check_rounded,
                         size: 16,
-                        color: Colors.white,
+                        color: colors.onPrimary,
                       )
                     : null,
               ),
@@ -796,47 +803,53 @@ class _WhatGetsCreatedCard extends StatelessWidget {
 
   final bool isFamily;
   @override
-  Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.all(17),
-    decoration: BoxDecoration(
-      color: const Color(0xFF14101C),
-      borderRadius: BorderRadius.circular(20),
-      border: Border.all(color: const Color(0xFF33283E)),
-    ),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text(
-          'Created automatically',
-          style: TextStyle(color: Colors.white, fontWeight: FontWeight.w900),
-        ),
-        const SizedBox(height: 12),
-        _CreatedItem(
-          icon: Icons.tag_rounded,
-          text: isFamily ? 'Family chat' : 'General chat',
-        ),
-        _CreatedItem(
-          icon: Icons.campaign_rounded,
-          text: isFamily ? 'Announcements' : 'Announcements channel',
-        ),
-        _CreatedItem(
-          icon: Icons.graphic_eq_rounded,
-          text: isFamily ? 'Family Lounge' : 'Private Club Lounge',
-        ),
-        if (isFamily)
-          _CreatedItem(
-            icon: Icons.waving_hand_rounded,
-            text: 'Quick check-ins',
+  Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    return Container(
+      padding: const EdgeInsets.all(17),
+      decoration: BoxDecoration(
+        color: palette.surface,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: palette.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Created automatically',
+            style: TextStyle(
+              color: palette.textPrimary,
+              fontWeight: FontWeight.w900,
+            ),
           ),
-        _CreatedItem(
-          icon: Icons.admin_panel_settings_rounded,
-          text: isFamily
-              ? 'Organizer role and membership'
-              : 'Owner role and membership',
-        ),
-      ],
-    ),
-  );
+          const SizedBox(height: 12),
+          _CreatedItem(
+            icon: Icons.tag_rounded,
+            text: isFamily ? 'Family chat' : 'General chat',
+          ),
+          _CreatedItem(
+            icon: Icons.campaign_rounded,
+            text: isFamily ? 'Announcements' : 'Announcements channel',
+          ),
+          _CreatedItem(
+            icon: Icons.graphic_eq_rounded,
+            text: isFamily ? 'Family Lounge' : 'Private Club Lounge',
+          ),
+          if (isFamily)
+            _CreatedItem(
+              icon: Icons.waving_hand_rounded,
+              text: 'Quick check-ins',
+            ),
+          _CreatedItem(
+            icon: Icons.admin_panel_settings_rounded,
+            text: isFamily
+                ? 'Organizer role and membership'
+                : 'Owner role and membership',
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class _CreatedItem extends StatelessWidget {
@@ -844,18 +857,22 @@ class _CreatedItem extends StatelessWidget {
   final IconData icon;
   final String text;
   @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.only(bottom: 9),
-    child: Row(
-      children: [
-        Icon(icon, color: const Color(0xFFBE63FF), size: 19),
-        const SizedBox(width: 10),
-        // Unconstrained, this Text overflowed the row on a 390pt phone —
-        // the longest of these lines does not fit beside the icon.
-        Expanded(
-          child: Text(text, style: const TextStyle(color: Color(0xFFD0C7D6))),
-        ),
-      ],
-    ),
-  );
+  Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 9),
+      child: Row(
+        children: [
+          Icon(icon, color: colors.primary, size: 19),
+          const SizedBox(width: 10),
+          // Unconstrained, this Text overflowed the row on a 390pt phone —
+          // the longest of these lines does not fit beside the icon.
+          Expanded(
+            child: Text(text, style: TextStyle(color: palette.textSecondary)),
+          ),
+        ],
+      ),
+    );
+  }
 }

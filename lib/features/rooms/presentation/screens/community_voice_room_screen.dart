@@ -27,6 +27,7 @@ import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
+import 'package:yovoice/shared/widgets/theme/yo_immersive_dark_surface.dart';
 
 class CommunityVoiceRoomScreen extends StatefulWidget {
   const CommunityVoiceRoomScreen({
@@ -724,10 +725,13 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
   @override
   Widget build(BuildContext context) {
     final clubStream = _club;
-    if (clubStream == null) return _buildRoom(null);
-    return StreamBuilder<Club>(
-      stream: clubStream,
-      builder: (context, snapshot) => _buildRoom(snapshot.data),
+    return YoImmersiveDarkSurface(
+      child: clubStream == null
+          ? _buildRoom(null)
+          : StreamBuilder<Club>(
+              stream: clubStream,
+              builder: (context, snapshot) => _buildRoom(snapshot.data),
+            ),
     );
   }
 

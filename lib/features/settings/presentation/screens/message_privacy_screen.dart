@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/helpers/error_messages.dart';
-import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/settings/data/models/message_privacy.dart';
 import 'package:yovoice/features/settings/data/services/message_privacy_service.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
@@ -35,7 +35,6 @@ class _MessagePrivacyScreenState extends State<MessagePrivacyScreen> {
           SnackBar(
             content: Text('Direct messages: ${next.label}.'),
             behavior: SnackBarBehavior.floating,
-            backgroundColor: AppColors.surfaceLight,
           ),
         );
     } catch (error) {
@@ -44,9 +43,14 @@ class _MessagePrivacyScreenState extends State<MessagePrivacyScreen> {
         ..hideCurrentSnackBar()
         ..showSnackBar(
           SnackBar(
-            content: Text(friendlyErrorMessage(error)),
+            content: Text(
+              friendlyErrorMessage(error),
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.onErrorContainer,
+              ),
+            ),
             behavior: SnackBarBehavior.floating,
-            backgroundColor: AppColors.error,
+            backgroundColor: Theme.of(context).colorScheme.errorContainer,
           ),
         );
     } finally {
@@ -56,11 +60,13 @@ class _MessagePrivacyScreenState extends State<MessagePrivacyScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     return Scaffold(
-      backgroundColor: AppColors.background,
+      backgroundColor: palette.background,
       appBar: AppBar(
-        backgroundColor: AppColors.background,
-        foregroundColor: AppColors.textPrimary,
+        backgroundColor: palette.background,
+        foregroundColor: palette.textPrimary,
         title: const Text('Who can message you'),
       ),
       body: SafeArea(
@@ -80,8 +86,8 @@ class _MessagePrivacyScreenState extends State<MessagePrivacyScreen> {
               }
               final selected = snapshot.data;
               if (selected == null) {
-                return const Center(
-                  child: CircularProgressIndicator(color: AppColors.primary),
+                return Center(
+                  child: CircularProgressIndicator(color: colors.primary),
                 );
               }
               return LayoutBuilder(
@@ -90,20 +96,20 @@ class _MessagePrivacyScreenState extends State<MessagePrivacyScreen> {
                   return ListView(
                     padding: const EdgeInsets.fromLTRB(0, 18, 0, 36),
                     children: [
-                      const Text(
+                      Text(
                         'Choose your inbox boundary',
                         style: TextStyle(
-                          color: AppColors.textPrimary,
+                          color: palette.textPrimary,
                           fontSize: 26,
                           fontWeight: FontWeight.w900,
                           letterSpacing: -.5,
                         ),
                       ),
                       const SizedBox(height: 8),
-                      const Text(
+                      Text(
                         'This applies immediately to conversation starts and every new text, photo and voice message. It never deletes your history.',
                         style: TextStyle(
-                          color: AppColors.textSecondary,
+                          color: palette.textSecondary,
                           height: 1.45,
                           fontSize: 14,
                         ),
@@ -157,24 +163,24 @@ class _MessagePrivacyScreenState extends State<MessagePrivacyScreen> {
                       Container(
                         padding: const EdgeInsets.all(16),
                         decoration: BoxDecoration(
-                          color: AppColors.surface,
+                          color: palette.surface,
                           borderRadius: BorderRadius.circular(18),
-                          border: Border.all(color: AppColors.border),
+                          border: Border.all(color: palette.border),
                         ),
-                        child: const Row(
+                        child: Row(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Icon(
                               Icons.shield_outlined,
-                              color: AppColors.accent,
+                              color: colors.primary,
                               size: 21,
                             ),
-                            SizedBox(width: 12),
+                            const SizedBox(width: 12),
                             Expanded(
                               child: Text(
                                 'Blocking someone always overrides this setting. Relationship checks happen on YO Voice servers, so altered apps cannot bypass your choice.',
                                 style: TextStyle(
-                                  color: AppColors.textSecondary,
+                                  color: palette.textSecondary,
                                   height: 1.4,
                                   fontSize: 12.5,
                                 ),
@@ -219,14 +225,14 @@ class _PrivacyOptionCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     return Semantics(
       button: true,
       selected: selected,
       label: '${option.label}. ${option.description}',
       child: Material(
-        color: selected
-            ? AppColors.primary.withValues(alpha: .18)
-            : AppColors.surface,
+        color: selected ? colors.primaryContainer : palette.surface,
         borderRadius: BorderRadius.circular(20),
         child: InkWell(
           key: ValueKey('message-privacy-${option.storageValue}'),
@@ -239,7 +245,7 @@ class _PrivacyOptionCard extends StatelessWidget {
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(20),
               border: Border.all(
-                color: selected ? AppColors.secondary : AppColors.border,
+                color: selected ? colors.primary : palette.border,
                 width: selected ? 1.5 : 1,
               ),
             ),
@@ -253,18 +259,18 @@ class _PrivacyOptionCard extends StatelessWidget {
                       height: 40,
                       alignment: Alignment.center,
                       decoration: BoxDecoration(
-                        color: AppColors.primary.withValues(alpha: .18),
+                        color: colors.primaryContainer,
                         borderRadius: BorderRadius.circular(13),
                       ),
-                      child: Icon(_icon, color: AppColors.secondary, size: 21),
+                      child: Icon(_icon, color: colors.primary, size: 21),
                     ),
                     const Spacer(),
                     if (saving)
-                      const SizedBox.square(
+                      SizedBox.square(
                         dimension: 22,
                         child: CircularProgressIndicator(
                           strokeWidth: 2,
-                          color: AppColors.secondary,
+                          color: colors.primary,
                         ),
                       )
                     else
@@ -272,17 +278,15 @@ class _PrivacyOptionCard extends StatelessWidget {
                         selected
                             ? Icons.check_circle_rounded
                             : Icons.radio_button_unchecked_rounded,
-                        color: selected
-                            ? AppColors.secondary
-                            : AppColors.textHint,
+                        color: selected ? colors.primary : palette.textTertiary,
                       ),
                   ],
                 ),
                 const SizedBox(height: 13),
                 Text(
                   option.label,
-                  style: const TextStyle(
-                    color: AppColors.textPrimary,
+                  style: TextStyle(
+                    color: palette.textPrimary,
                     fontSize: 16,
                     fontWeight: FontWeight.w800,
                   ),
@@ -290,8 +294,8 @@ class _PrivacyOptionCard extends StatelessWidget {
                 const SizedBox(height: 5),
                 Text(
                   option.description,
-                  style: const TextStyle(
-                    color: AppColors.textSecondary,
+                  style: TextStyle(
+                    color: palette.textSecondary,
                     height: 1.35,
                     fontSize: 12.5,
                   ),
@@ -312,18 +316,20 @@ class _MessagePrivacyError extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(24),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(Icons.error_outline_rounded, color: AppColors.error),
+            Icon(Icons.error_outline_rounded, color: colors.error),
             const SizedBox(height: 10),
             Text(
               message,
               textAlign: TextAlign.center,
-              style: const TextStyle(color: AppColors.textSecondary),
+              style: TextStyle(color: palette.textSecondary),
             ),
           ],
         ),

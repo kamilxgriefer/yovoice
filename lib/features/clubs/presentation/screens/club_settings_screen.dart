@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
+import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/clubs/data/models/club.dart';
 import 'package:yovoice/features/clubs/data/services/club_service.dart';
 import 'package:yovoice/features/marketing/data/services/public_showcase_consent_service.dart';
@@ -109,11 +110,14 @@ class _ClubSettingsScreenState extends State<ClubSettingsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     return Scaffold(
-      backgroundColor: const Color(0xFF080711),
+      key: const ValueKey('club-settings-screen'),
+      backgroundColor: palette.background,
       appBar: AppBar(
-        backgroundColor: const Color(0xFF080711),
-        foregroundColor: Colors.white,
+        backgroundColor: palette.background,
+        foregroundColor: palette.textPrimary,
         title: const Text('Club settings'),
       ),
       body: ResponsiveContentFrame(
@@ -127,10 +131,10 @@ class _ClubSettingsScreenState extends State<ClubSettingsScreen> {
             const SizedBox(height: 14),
             _field(_language, 'Default language'),
             const SizedBox(height: 20),
-            const Text(
+            Text(
               'Privacy',
               style: TextStyle(
-                color: Colors.white,
+                color: palette.textPrimary,
                 fontSize: 18,
                 fontWeight: FontWeight.w800,
               ),
@@ -142,7 +146,7 @@ class _ClubSettingsScreenState extends State<ClubSettingsScreen> {
               return Padding(
                 padding: const EdgeInsets.only(bottom: 10),
                 child: Material(
-                  color: const Color(0xFF171120),
+                  color: palette.surface,
                   borderRadius: BorderRadius.circular(16),
                   child: InkWell(
                     onTap: () => setState(() => _privacy = privacy),
@@ -156,9 +160,7 @@ class _ClubSettingsScreenState extends State<ClubSettingsScreen> {
                       decoration: BoxDecoration(
                         borderRadius: BorderRadius.circular(16),
                         border: Border.all(
-                          color: isSelected
-                              ? const Color(0xFF9D20FF)
-                              : const Color(0xFF30263F),
+                          color: isSelected ? colors.primary : palette.border,
                           width: isSelected ? 1.5 : 1,
                         ),
                       ),
@@ -171,19 +173,19 @@ class _ClubSettingsScreenState extends State<ClubSettingsScreen> {
                             decoration: BoxDecoration(
                               shape: BoxShape.circle,
                               color: isSelected
-                                  ? const Color(0xFF9D20FF)
+                                  ? colors.primary
                                   : Colors.transparent,
                               border: Border.all(
                                 color: isSelected
-                                    ? const Color(0xFF9D20FF)
-                                    : const Color(0xFF756D82),
+                                    ? colors.primary
+                                    : palette.borderStrong,
                                 width: 2,
                               ),
                             ),
                             child: isSelected
-                                ? const Icon(
+                                ? Icon(
                                     Icons.check_rounded,
-                                    color: Colors.white,
+                                    color: colors.onPrimary,
                                     size: 15,
                                   )
                                 : null,
@@ -193,7 +195,7 @@ class _ClubSettingsScreenState extends State<ClubSettingsScreen> {
                             child: Text(
                               _privacyLabel(privacy),
                               style: TextStyle(
-                                color: Colors.white,
+                                color: palette.textPrimary,
                                 fontWeight: isSelected
                                     ? FontWeight.w800
                                     : FontWeight.w600,
@@ -215,9 +217,9 @@ class _ClubSettingsScreenState extends State<ClubSettingsScreen> {
                   vertical: 10,
                 ),
                 decoration: BoxDecoration(
-                  color: const Color(0xFF171120),
+                  color: palette.surface,
                   borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: const Color(0xFF30263F)),
+                  border: Border.all(color: palette.border),
                 ),
                 child: SwitchListTile.adaptive(
                   contentPadding: EdgeInsets.zero,
@@ -229,10 +231,10 @@ class _ClubSettingsScreenState extends State<ClubSettingsScreen> {
                       !_loadedShowcaseConsent || _privacy != ClubPrivacy.public
                       ? null
                       : (value) => setState(() => _showOnWebsite = value),
-                  title: const Text(
+                  title: Text(
                     'Feature this Club on the YO Voice website',
                     style: TextStyle(
-                      color: Colors.white,
+                      color: palette.textPrimary,
                       fontWeight: FontWeight.w800,
                     ),
                   ),
@@ -240,8 +242,8 @@ class _ClubSettingsScreenState extends State<ClubSettingsScreen> {
                     _privacy == ClubPrivacy.public
                         ? 'Publishes only the Club name and current member count. Family and private Clubs are never included.'
                         : 'Make the Club public before featuring it on the website.',
-                    style: const TextStyle(
-                      color: Color(0xFFB6ACBB),
+                    style: TextStyle(
+                      color: palette.textSecondary,
                       fontSize: 12,
                     ),
                   ),
@@ -252,19 +254,20 @@ class _ClubSettingsScreenState extends State<ClubSettingsScreen> {
             FilledButton.icon(
               onPressed: _saving ? null : _save,
               style: FilledButton.styleFrom(
-                backgroundColor: const Color(0xFF9D20FF),
+                backgroundColor: colors.primary,
+                foregroundColor: colors.onPrimary,
                 minimumSize: const Size.fromHeight(54),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(17),
                 ),
               ),
               icon: _saving
-                  ? const SizedBox(
+                  ? SizedBox(
                       width: 18,
                       height: 18,
                       child: CircularProgressIndicator(
                         strokeWidth: 2,
-                        color: Colors.white,
+                        color: colors.onPrimary,
                       ),
                     )
                   : const Icon(Icons.save_rounded),
@@ -284,23 +287,25 @@ class _ClubSettingsScreenState extends State<ClubSettingsScreen> {
     String label, {
     int maxLines = 1,
   }) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     return TextField(
       controller: controller,
       maxLines: maxLines,
-      style: const TextStyle(color: Colors.white),
+      style: TextStyle(color: palette.textPrimary),
       decoration: InputDecoration(
         labelText: label,
-        labelStyle: const TextStyle(color: Color(0xFFB6ACBB)),
+        labelStyle: TextStyle(color: palette.textSecondary),
         filled: true,
-        fillColor: const Color(0xFF171120),
+        fillColor: palette.surfaceRaised,
         border: OutlineInputBorder(borderRadius: BorderRadius.circular(17)),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(17),
-          borderSide: const BorderSide(color: Color(0xFF3A2D46)),
+          borderSide: BorderSide(color: palette.borderStrong),
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(17),
-          borderSide: const BorderSide(color: Color(0xFF9D20FF)),
+          borderSide: BorderSide(color: colors.primary),
         ),
       ),
     );

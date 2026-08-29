@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/calls/data/services/voice_call_service.dart';
 
 @immutable
@@ -151,6 +152,7 @@ class _YoFloatingNavigationDockState extends State<YoFloatingNavigationDock> {
   @override
   Widget build(BuildContext context) {
     final copy = AppLocalizations.of(context);
+    final palette = context.appPalette;
     final reduceMotion = _reduceMotion ?? false;
     final selectedTabIndex = widget.selectedTabIndex;
     final destinations = <YoNavigationDestinationConfig>[
@@ -245,14 +247,16 @@ class _YoFloatingNavigationDockState extends State<YoFloatingNavigationDock> {
                           child: Container(
                             key: const ValueKey('yo-floating-navigation-dock'),
                             decoration: BoxDecoration(
-                              color: AppColors.surface.withValues(alpha: .97),
+                              color: palette.navigationSurface.withValues(
+                                alpha: .97,
+                              ),
                               borderRadius: BorderRadius.circular(
                                 YoFloatingNavigationDock.cornerRadius,
                               ),
-                              border: Border.all(color: AppColors.border),
+                              border: Border.all(color: palette.border),
                               boxShadow: [
                                 BoxShadow(
-                                  color: Colors.black.withValues(alpha: .38),
+                                  color: palette.shadow.withValues(alpha: .30),
                                   blurRadius: 24,
                                   offset: const Offset(0, 10),
                                 ),
@@ -347,6 +351,8 @@ class _ActiveCapsule extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     return AnimatedContainer(
       key: ValueKey(
         reduceMotion
@@ -362,12 +368,9 @@ class _ActiveCapsule extends StatelessWidget {
         gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [
-            AppColors.navigationPrimary.withValues(alpha: .72),
-            AppColors.surfaceLight.withValues(alpha: .94),
-          ],
+          colors: [colors.primaryContainer, palette.surfaceRaised],
         ),
-        border: Border.all(color: AppColors.secondary.withValues(alpha: .42)),
+        border: Border.all(color: colors.primary.withValues(alpha: .42)),
         boxShadow: [
           BoxShadow(
             color: AppColors.navigationPrimary.withValues(alpha: .12),
@@ -413,9 +416,11 @@ class _YoDockDestinationState extends State<_YoDockDestination> {
   Widget build(BuildContext context) {
     final config = widget.config;
     final selected = config.isSelected;
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     final iconColor = selected
-        ? AppColors.textPrimary
-        : AppColors.navigationInactive.withValues(alpha: .74);
+        ? colors.onPrimaryContainer
+        : palette.navigationInactive;
     final semanticsLabel = config.badgeCount > 0
         ? '${config.semanticLabel}, ${config.badgeCount} unread conversations'
         : config.semanticLabel;
@@ -444,7 +449,7 @@ class _YoDockDestinationState extends State<_YoDockDestination> {
             borderRadius: BorderRadius.circular(22),
             overlayColor: WidgetStateProperty.resolveWith((states) {
               if (states.contains(WidgetState.focused)) {
-                return AppColors.secondary.withValues(alpha: .20);
+                return palette.focus.withValues(alpha: .20);
               }
               if (states.contains(WidgetState.pressed) ||
                   states.contains(WidgetState.hovered)) {
@@ -533,8 +538,11 @@ class _YoDockDestinationState extends State<_YoDockDestination> {
                         curve: _premiumCurve,
                         style: TextStyle(
                           color: selected
-                              ? AppColors.textPrimary
-                              : AppColors.navigationInactive,
+                              ? colors.onPrimaryContainer
+                              : palette.navigationInactive,
+                          fontFamily: Theme.of(
+                            context,
+                          ).textTheme.labelMedium?.fontFamily,
                           fontSize: selected ? 11.8 : 11.3,
                           fontWeight: selected
                               ? FontWeight.w700
@@ -557,7 +565,7 @@ class _YoDockDestinationState extends State<_YoDockDestination> {
                         width: 18,
                         height: 2,
                         decoration: BoxDecoration(
-                          color: AppColors.textPrimary,
+                          color: colors.onPrimaryContainer,
                           borderRadius: BorderRadius.circular(2),
                           boxShadow: [
                             BoxShadow(
@@ -586,6 +594,7 @@ class _UnreadBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return Container(
       constraints: const BoxConstraints(minWidth: 19, minHeight: 19),
       alignment: Alignment.center,
@@ -593,7 +602,7 @@ class _UnreadBadge extends StatelessWidget {
       decoration: BoxDecoration(
         color: AppColors.live,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.surface, width: 2),
+        border: Border.all(color: palette.navigationSurface, width: 2),
         boxShadow: [
           BoxShadow(
             color: AppColors.live.withValues(alpha: .38),
@@ -654,6 +663,7 @@ class _YoCenterActionButtonState extends State<_YoCenterActionButton>
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return ListenableBuilder(
       listenable: VoiceCallService.instance,
       builder: (context, _) {
@@ -742,7 +752,7 @@ class _YoCenterActionButtonState extends State<_YoCenterActionButton>
                           spreadRadius: 2,
                         ),
                         BoxShadow(
-                          color: Colors.black.withValues(alpha: .48),
+                          color: palette.shadow.withValues(alpha: .38),
                           blurRadius: 14,
                           offset: const Offset(0, 7),
                         ),
@@ -751,7 +761,7 @@ class _YoCenterActionButtonState extends State<_YoCenterActionButton>
                     child: Padding(
                       padding: const EdgeInsets.all(2),
                       child: Material(
-                        color: AppColors.surface,
+                        color: palette.navigationSurface,
                         shape: const CircleBorder(),
                         clipBehavior: Clip.antiAlias,
                         child: InkWell(
@@ -776,9 +786,9 @@ class _YoCenterActionButtonState extends State<_YoCenterActionButton>
                                 key: const ValueKey('dock-logo'),
                                 fit: BoxFit.contain,
                                 filterQuality: FilterQuality.high,
-                                errorBuilder: (_, __, ___) => const Icon(
+                                errorBuilder: (_, __, ___) => Icon(
                                   Icons.graphic_eq_rounded,
-                                  color: AppColors.textPrimary,
+                                  color: palette.textPrimary,
                                   size: 34,
                                 ),
                               ),

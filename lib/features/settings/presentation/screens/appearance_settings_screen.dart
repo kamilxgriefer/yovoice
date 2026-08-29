@@ -84,10 +84,10 @@ class _AppearanceSettingsScreenState extends State<AppearanceSettingsScreen> {
               const SizedBox(height: 12),
               _PreferenceChoice(
                 icon: Icons.light_mode_rounded,
-                title: '${copy.lightTheme} · Beta',
+                title: copy.lightTheme,
                 subtitle: copy.text(
-                  'A high-contrast daytime palette. Core journeys are supported while remaining legacy surfaces are being migrated.',
-                  'Kontrastowa paleta na dzień. Główne ścieżki są obsługiwane, a pozostałe starsze ekrany są nadal dostosowywane.',
+                  'Pearl surfaces, ink contrast and the signature YO glow for daytime.',
+                  'Perłowe powierzchnie, czytelny atrament i charakterystyczny blask YO na dzień.',
                 ),
                 selected: selected == AppThemePreference.light,
                 saving: _saving == AppThemePreference.light,
@@ -127,7 +127,9 @@ class _PreferenceChoice extends StatelessWidget {
       selected: selected,
       button: true,
       child: Material(
-        color: selected ? colors.primary.withValues(alpha: .1) : colors.surface,
+        color: selected
+            ? colors.primaryContainer.withValues(alpha: .72)
+            : colors.surfaceContainerLow,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(20),
           side: BorderSide(
@@ -210,7 +212,7 @@ class _InfoCard extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: colors.surfaceContainerHigh,
+        color: colors.surfaceContainerLow,
         borderRadius: BorderRadius.circular(18),
         border: Border.all(color: colors.outlineVariant),
       ),

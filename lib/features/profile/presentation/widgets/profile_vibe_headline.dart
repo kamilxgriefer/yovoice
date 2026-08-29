@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/profile/presentation/widgets/profile_vibe_link.dart';
 
 typedef ProfileVibeLinkLauncher = Future<bool> Function(Uri uri);
@@ -75,16 +76,18 @@ class _ProfileVibeHeadlineState extends State<ProfileVibeHeadline> {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final scheme = Theme.of(context).colorScheme;
     final value = widget.vibe.trim();
     final links = ProfileVibeLink.fromText(value);
     final description = profileVibeDescription(value, links);
     final radius = BorderRadius.circular(widget.compact ? 14 : 16);
 
     return Material(
-      color: const Color(0xFF9F20F4).withValues(alpha: .12),
+      color: scheme.primaryContainer.withValues(alpha: .72),
       shape: RoundedRectangleBorder(
         borderRadius: radius,
-        side: BorderSide(color: const Color(0xFFB348FF).withValues(alpha: .38)),
+        side: BorderSide(color: scheme.primary.withValues(alpha: .46)),
       ),
       clipBehavior: Clip.antiAlias,
       child: Padding(
@@ -100,7 +103,7 @@ class _ProfileVibeHeadlineState extends State<ProfileVibeHeadline> {
                   child: Icon(
                     Icons.auto_awesome_rounded,
                     size: widget.compact ? 17 : 19,
-                    color: const Color(0xFFD986FF),
+                    color: scheme.primary,
                   ),
                 ),
                 SizedBox(width: widget.compact ? 8 : 10),
@@ -108,10 +111,10 @@ class _ProfileVibeHeadlineState extends State<ProfileVibeHeadline> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text(
+                      Text(
                         'VIBE',
                         style: TextStyle(
-                          color: Color(0xFFD986FF),
+                          color: scheme.primary,
                           fontSize: 11,
                           fontWeight: FontWeight.w900,
                           letterSpacing: 1.25,
@@ -125,7 +128,7 @@ class _ProfileVibeHeadlineState extends State<ProfileVibeHeadline> {
                             child: Text(
                               description,
                               style: TextStyle(
-                                color: const Color(0xFFF4EAF8),
+                                color: palette.textPrimary,
                                 fontSize: widget.compact ? 14 : 15,
                                 fontWeight: FontWeight.w700,
                                 height: 1.35,
@@ -154,8 +157,8 @@ class _ProfileVibeHeadlineState extends State<ProfileVibeHeadline> {
                 liveRegion: true,
                 child: Text(
                   _openError!,
-                  style: const TextStyle(
-                    color: Color(0xFFFFB4AB),
+                  style: TextStyle(
+                    color: scheme.error,
                     fontSize: 12,
                     fontWeight: FontWeight.w700,
                   ),
@@ -191,6 +194,8 @@ class _VibeLinkRowState extends State<_VibeLinkRow> {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final scheme = Theme.of(context).colorScheme;
     const radius = BorderRadius.all(Radius.circular(14));
     return Semantics(
       container: true,
@@ -202,11 +207,11 @@ class _VibeLinkRowState extends State<_VibeLinkRow> {
       child: ExcludeSemantics(
         child: Material(
           key: ValueKey('profile-vibe-link-surface-${widget.link.uri}'),
-          color: const Color(0xFF08040D).withValues(alpha: .38),
+          color: palette.surfaceRaised.withValues(alpha: .9),
           shape: RoundedRectangleBorder(
             borderRadius: radius,
             side: BorderSide(
-              color: _focused ? const Color(0xFFD986FF) : Colors.transparent,
+              color: _focused ? palette.focus : Colors.transparent,
               width: 2,
             ),
           ),
@@ -218,7 +223,7 @@ class _VibeLinkRowState extends State<_VibeLinkRow> {
               if (mounted) setState(() => _focused = focused);
             },
             borderRadius: radius,
-            focusColor: const Color(0xFFB348FF).withValues(alpha: .22),
+            focusColor: scheme.primary.withValues(alpha: .16),
             child: ConstrainedBox(
               constraints: const BoxConstraints(minHeight: 48),
               child: Padding(
@@ -229,18 +234,18 @@ class _VibeLinkRowState extends State<_VibeLinkRow> {
                 child: Row(
                   children: [
                     if (widget.busy)
-                      const SizedBox.square(
+                      SizedBox.square(
                         dimension: 18,
                         child: CircularProgressIndicator(
                           strokeWidth: 2,
-                          color: Color(0xFFD986FF),
+                          color: scheme.primary,
                         ),
                       )
                     else
-                      const Icon(
+                      Icon(
                         Icons.music_note_rounded,
                         size: 20,
-                        color: Color(0xFFD986FF),
+                        color: scheme.primary,
                       ),
                     const SizedBox(width: 10),
                     Expanded(
@@ -252,8 +257,8 @@ class _VibeLinkRowState extends State<_VibeLinkRow> {
                             widget.busy ? 'Opening…' : widget.link.actionLabel,
                             maxLines: 2,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: Color(0xFFF4EAF8),
+                            style: TextStyle(
+                              color: palette.textPrimary,
                               fontSize: 13,
                               fontWeight: FontWeight.w800,
                             ),
@@ -263,8 +268,8 @@ class _VibeLinkRowState extends State<_VibeLinkRow> {
                             widget.link.hostLabel,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: Color(0xFFC4B5CB),
+                            style: TextStyle(
+                              color: palette.textSecondary,
                               fontSize: 11,
                               fontWeight: FontWeight.w600,
                             ),
@@ -273,10 +278,10 @@ class _VibeLinkRowState extends State<_VibeLinkRow> {
                       ),
                     ),
                     const SizedBox(width: 8),
-                    const Icon(
+                    Icon(
                       Icons.open_in_new_rounded,
                       size: 18,
-                      color: Color(0xFFD986FF),
+                      color: scheme.primary,
                     ),
                   ],
                 ),

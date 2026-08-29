@@ -46,29 +46,28 @@ and 2560 px where relevant, plus a 2.0 text scale. The acceptance bar is no
 overflow, no clipped primary text, 44x44 minimum interactive targets,
 keyboard/focus access on desktop, and preserved safe-area/keyboard insets.
 
-## Two parallel color systems (know which one a screen actually uses)
+## Semantic colour ownership
 
-1. **The shared theme system** — `lib/core/theme/` (`AppColors`,
-   `AppTypography`, `AppSpacing`, `AppRadius`, `AppGradients`, `AppTheme`)
-   and `lib/shared/widgets/` (`YoButton`, `YoCard`, `YoTextField`,
-   `YoAvatar`, `YoBadge`, plus `lib/shared/widgets/states/` —
-   `YoLoadingIndicator`, `YoEmptyState`, `YoErrorState`,
-   `friendlyErrorMessage()` in `lib/core/helpers/error_messages.dart`).
-   This is the intended long-term system.
-2. **The inline-hex convention** — most existing screens don't import the
-   above yet. Instead they define `static const Color` fields per-screen
-   using a consistent palette by convention, not by shared code:
-   - Background: `0xFF080711` / `0xFF09050F`
-   - Surface: `0xFF12101D` / `0xFF150C1D` / `0xFF17101F`
-   - Border: `0xFF3C2C45` / `0xFF382741` / `0xFF30263F`
-   - Accent purple: `0xFFB348FF` / `0xFF9D20FF` / `0xFFB932FF` family
-   - Muted text: `0xFFA99DB3` / `0xFF9D95AD`
+`AppColors` owns stable brand and status colours. `AppPalette`, installed as a
+`ThemeExtension` by `AppTheme`, owns every brightness-dependent role:
+backgrounds, raised/muted surfaces, borders, readable copy, navigation chrome,
+focus, scrims and status containers. Shared components and normal product
+screens must request those roles through `context.appPalette` or
+`Theme.of(context).colorScheme`; a raw dark hex is not a theme.
 
-**When touching an existing screen, match what that screen already does**
-rather than mixing both systems in one file. When migrating a screen onto
-the shared system, migrate the whole screen, not a widget at a time — see
-[Roadmap.md](Roadmap.md) for the migration's current status (foundation
-done, per-feature-area passes still in progress).
+Pearl is a warm daylight theme (`#F6F2F8` canvas, white cards, ink copy and a
+restrained plum shadow), not an inverted Dark theme. Status/navigation bars
+follow the selected brightness through `AppTheme.systemOverlayStyle`. Inputs
+and controls use the stronger semantic boundary; decorative card borders may
+use the quieter one. Essential text pairs meet 4.5:1 and focus/control
+boundaries meet 3:1.
+
+Voice rooms, calls, recording/review, story viewing and image croppers are
+intentional immersive-dark islands. They own a complete dark surface +
+foreground + scrim treatment; never let an inherited light foreground leak
+onto their media, and never use their dark literals for a normal Pearl page.
+When migrating legacy UI, migrate the complete surface atomically rather than
+mixing semantic and screen-local roles.
 
 ## The "Coming soon" pattern
 

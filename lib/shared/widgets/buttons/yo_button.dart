@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/theme/app_colors.dart';
-import 'package:yovoice/core/theme/app_gradients.dart';
+import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_radius.dart';
 import 'package:yovoice/core/theme/app_typography.dart';
 
@@ -31,20 +31,24 @@ class YoButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
+    final background = _backgroundColor(palette, colors);
+    final foreground = _foregroundColor(palette, colors);
     final Widget button = SizedBox(
       height: height,
       child: DecoratedBox(
         decoration: BoxDecoration(
           gradient: variant == YoButtonVariant.primary
-              ? AppGradients.primary
+              ? LinearGradient(colors: [colors.primary, colors.secondary])
               : null,
-          color: _backgroundColor,
+          color: background,
           borderRadius: AppRadius.lg,
-          border: _border,
+          border: _border(palette, colors),
           boxShadow: variant == YoButtonVariant.primary && _isEnabled
               ? <BoxShadow>[
                   BoxShadow(
-                    color: AppColors.primary.withValues(alpha: 0.35),
+                    color: colors.primary.withValues(alpha: 0.24),
                     blurRadius: 18,
                     offset: const Offset(0, 8),
                   ),
@@ -58,21 +62,21 @@ class YoButton extends StatelessWidget {
             shadowColor: AppColors.transparent,
             backgroundColor: AppColors.transparent,
             disabledBackgroundColor: AppColors.transparent,
-            foregroundColor: _foregroundColor,
-            disabledForegroundColor: AppColors.textHint,
+            foregroundColor: foreground,
+            disabledForegroundColor: palette.textTertiary,
             padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
             shape: const RoundedRectangleBorder(borderRadius: AppRadius.lg),
           ),
           child: AnimatedSwitcher(
             duration: const Duration(milliseconds: 180),
             child: isLoading
-                ? const SizedBox(
+                ? SizedBox(
                     key: ValueKey<String>('loading'),
                     width: 24,
                     height: 24,
                     child: CircularProgressIndicator(
                       strokeWidth: 2.5,
-                      color: AppColors.white,
+                      color: foreground,
                     ),
                   )
                 : Row(
@@ -82,10 +86,7 @@ class YoButton extends StatelessWidget {
                     children: <Widget>[
                       if (icon != null) ...<Widget>[
                         IconTheme(
-                          data: IconThemeData(
-                            color: _foregroundColor,
-                            size: 22,
-                          ),
+                          data: IconThemeData(color: foreground, size: 22),
                           child: icon!,
                         ),
                         const SizedBox(width: 10),
@@ -97,7 +98,7 @@ class YoButton extends StatelessWidget {
                           overflow: TextOverflow.ellipsis,
                           textAlign: TextAlign.center,
                           style: AppTypography.titleMedium.copyWith(
-                            color: _foregroundColor,
+                            color: foreground,
                             fontWeight: FontWeight.w700,
                             letterSpacing: 0.8,
                           ),
@@ -117,41 +118,42 @@ class YoButton extends StatelessWidget {
     return SizedBox(width: double.infinity, child: button);
   }
 
-  Color? get _backgroundColor {
+  Color? _backgroundColor(AppPalette palette, ColorScheme colors) {
     switch (variant) {
       case YoButtonVariant.primary:
         return null;
       case YoButtonVariant.secondary:
-        return AppColors.surfaceLight;
+        return palette.surfaceMuted;
       case YoButtonVariant.ghost:
         return AppColors.transparent;
       case YoButtonVariant.danger:
-        return AppColors.error;
+        return colors.error;
     }
   }
 
-  Color get _foregroundColor {
+  Color _foregroundColor(AppPalette palette, ColorScheme colors) {
     switch (variant) {
       case YoButtonVariant.primary:
-      case YoButtonVariant.danger:
         return AppColors.white;
+      case YoButtonVariant.danger:
+        return colors.onError;
       case YoButtonVariant.secondary:
-        return AppColors.textPrimary;
+        return palette.textPrimary;
       case YoButtonVariant.ghost:
-        return AppColors.primary;
+        return colors.primary;
     }
   }
 
-  Border? get _border {
+  Border? _border(AppPalette palette, ColorScheme colors) {
     switch (variant) {
       case YoButtonVariant.primary:
       case YoButtonVariant.danger:
         return null;
       case YoButtonVariant.secondary:
-        return Border.all(color: AppColors.border, width: 1);
+        return Border.all(color: palette.borderStrong, width: 1);
       case YoButtonVariant.ghost:
         return Border.all(
-          color: AppColors.primary.withValues(alpha: 0.55),
+          color: colors.primary.withValues(alpha: 0.72),
           width: 1,
         );
     }

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/premium/data/models/premium_billing_context.dart';
 import 'package:yovoice/features/premium/data/models/subscription_entitlements.dart';
 import 'package:yovoice/features/premium/data/premium_plans.dart';
@@ -11,6 +12,8 @@ import 'package:yovoice/features/premium/data/services/entitlement_service.dart'
 import 'package:yovoice/features/premium/data/services/premium_billing_service.dart';
 import 'package:yovoice/features/premium/presentation/widgets/premium_badge_pill.dart';
 import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
+
+const _premiumPlanGradientColors = [AppColors.primary, Color(0xFFB020E8)];
 
 /// The plans & purchase screen — where the "Check plans" CTA lands.
 ///
@@ -135,11 +138,13 @@ class _PremiumPlansScreenState extends State<PremiumPlansScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     return Scaffold(
-      backgroundColor: AppColors.background,
+      backgroundColor: palette.background,
       appBar: AppBar(
         backgroundColor: Colors.transparent,
-        foregroundColor: Colors.white,
+        foregroundColor: palette.textPrimary,
         elevation: 0,
       ),
       body: StreamBuilder<SubscriptionEntitlements>(
@@ -170,7 +175,9 @@ class _PremiumPlansScreenState extends State<PremiumPlansScreen> {
             future: _billingContext,
             builder: (context, billingSnapshot) {
               if (billingSnapshot.connectionState != ConnectionState.done) {
-                return const Center(child: CircularProgressIndicator());
+                return Center(
+                  child: CircularProgressIndicator(color: colors.primary),
+                );
               }
               if (billingSnapshot.hasError || !billingSnapshot.hasData) {
                 return _BillingLoadError(onRetry: _retryBilling);
@@ -194,7 +201,7 @@ class _PremiumPlansScreenState extends State<PremiumPlansScreen> {
                             : 'Choose your plan',
                         textAlign: TextAlign.center,
                         style: TextStyle(
-                          color: Colors.white,
+                          color: palette.textPrimary,
                           fontSize: 28,
                           fontWeight: FontWeight.w900,
                           letterSpacing: -.6,
@@ -209,7 +216,7 @@ class _PremiumPlansScreenState extends State<PremiumPlansScreen> {
                             : 'Unlock the full YO Voice experience',
                         textAlign: TextAlign.center,
                         style: TextStyle(
-                          color: AppColors.textSecondary,
+                          color: palette.textSecondary,
                           fontSize: 14.5,
                         ),
                       ),
@@ -251,27 +258,27 @@ class _PremiumPlansScreenState extends State<PremiumPlansScreen> {
                           billing.billingManagedBy !=
                               PremiumBillingManager.admin) ...[
                         const SizedBox(height: 12),
-                        const Text(
+                        Text(
                           'To start or change a web subscription, continue on yovoice.app. App Store and Google Play purchases stay managed by their store.',
                           textAlign: TextAlign.center,
-                          style: TextStyle(color: AppColors.textSecondary),
+                          style: TextStyle(color: palette.textSecondary),
                         ),
                       ],
                       const SizedBox(height: 14),
                       Text(
                         billing.taxNotice,
                         textAlign: TextAlign.center,
-                        style: const TextStyle(
-                          color: AppColors.textSecondary,
+                        style: TextStyle(
+                          color: palette.textSecondary,
                           fontSize: 12.5,
                           height: 1.4,
                         ),
                       ),
                       const SizedBox(height: 28),
-                      const Text(
+                      Text(
                         'Everything Premium includes:',
                         style: TextStyle(
-                          color: Colors.white,
+                          color: palette.textPrimary,
                           fontSize: 15,
                           fontWeight: FontWeight.w800,
                         ),
@@ -287,25 +294,25 @@ class _PremiumPlansScreenState extends State<PremiumPlansScreen> {
                           TextButton(
                             onPressed: () =>
                                 _openUrl('https://yovoice.app/terms'),
-                            child: const Text(
+                            child: Text(
                               'Terms',
                               style: TextStyle(
-                                color: AppColors.textSecondary,
+                                color: palette.textSecondary,
                                 fontSize: 12,
                               ),
                             ),
                           ),
-                          const Text(
+                          Text(
                             '·',
-                            style: TextStyle(color: AppColors.textSecondary),
+                            style: TextStyle(color: palette.textSecondary),
                           ),
                           TextButton(
                             onPressed: () =>
                                 _openUrl('https://yovoice.app/privacy'),
-                            child: const Text(
+                            child: Text(
                               'Privacy',
                               style: TextStyle(
-                                color: AppColors.textSecondary,
+                                color: palette.textSecondary,
                                 fontSize: 12,
                               ),
                             ),
@@ -331,34 +338,32 @@ class _BillingLoadError extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Center(
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 440),
-        child: Padding(
-          padding: const EdgeInsets.all(24),
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(24),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 440),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Icon(
-                Icons.cloud_off_rounded,
-                color: Color(0xFFD3A5FF),
-                size: 38,
-              ),
+              Icon(Icons.cloud_off_rounded, color: colors.primary, size: 38),
               const SizedBox(height: 14),
-              const Text(
+              Text(
                 'Plans are temporarily unavailable',
                 textAlign: TextAlign.center,
                 style: TextStyle(
-                  color: Colors.white,
+                  color: palette.textPrimary,
                   fontSize: 20,
                   fontWeight: FontWeight.w800,
                 ),
               ),
               const SizedBox(height: 8),
-              const Text(
+              Text(
                 'We couldn\'t load plan pricing. Check your connection and try again.',
                 textAlign: TextAlign.center,
-                style: TextStyle(color: AppColors.textSecondary, height: 1.45),
+                style: TextStyle(color: palette.textSecondary, height: 1.45),
               ),
               const SizedBox(height: 18),
               FilledButton.icon(
@@ -388,6 +393,8 @@ class _BillingRecoveryCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     return Semantics(
       container: true,
       label: 'Stripe billing management',
@@ -395,9 +402,9 @@ class _BillingRecoveryCard extends StatelessWidget {
         width: double.infinity,
         padding: const EdgeInsets.all(18),
         decoration: BoxDecoration(
-          color: const Color(0xFF1E1233),
+          color: palette.surfaceRaised,
           borderRadius: BorderRadius.circular(22),
-          border: Border.all(color: AppColors.secondary.withValues(alpha: .5)),
+          border: Border.all(color: colors.primary.withValues(alpha: .65)),
         ),
         child: Wrap(
           spacing: 18,
@@ -407,34 +414,31 @@ class _BillingRecoveryCard extends StatelessWidget {
           children: [
             ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 410),
-              child: const Column(
+              child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Text(
                     'Billing management',
                     style: TextStyle(
-                      color: Color(0xFFD3A5FF),
+                      color: colors.primary,
                       fontSize: 12,
                       fontWeight: FontWeight.w800,
                     ),
                   ),
-                  SizedBox(height: 4),
+                  const SizedBox(height: 4),
                   Text(
                     'Stripe billing portal',
                     style: TextStyle(
-                      color: Colors.white,
+                      color: palette.textPrimary,
                       fontSize: 18,
                       fontWeight: FontWeight.w800,
                     ),
                   ),
-                  SizedBox(height: 5),
+                  const SizedBox(height: 5),
                   Text(
                     'Review billing status, invoices and cancellation options. Premium access may still be syncing.',
-                    style: TextStyle(
-                      color: AppColors.textSecondary,
-                      height: 1.4,
-                    ),
+                    style: TextStyle(color: palette.textSecondary, height: 1.4),
                   ),
                 ],
               ),
@@ -466,6 +470,8 @@ class _CurrentPlanCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     final end = billing.currentPeriodEnd;
     final periodText = billing.billingManagedBy == PremiumBillingManager.admin
         ? 'Complimentary Premium access'
@@ -490,9 +496,9 @@ class _CurrentPlanCard extends StatelessWidget {
         width: double.infinity,
         padding: const EdgeInsets.all(18),
         decoration: BoxDecoration(
-          color: const Color(0xFF1E1233),
+          color: palette.surfaceRaised,
           borderRadius: BorderRadius.circular(22),
-          border: Border.all(color: AppColors.secondary.withValues(alpha: .5)),
+          border: Border.all(color: colors.primary.withValues(alpha: .65)),
         ),
         child: Wrap(
           spacing: 18,
@@ -506,10 +512,10 @@ class _CurrentPlanCard extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Text(
+                  Text(
                     'Current plan',
                     style: TextStyle(
-                      color: Color(0xFFD3A5FF),
+                      color: colors.primary,
                       fontSize: 12,
                       fontWeight: FontWeight.w800,
                     ),
@@ -517,8 +523,8 @@ class _CurrentPlanCard extends StatelessWidget {
                   const SizedBox(height: 4),
                   Text(
                     'YO Voice Premium · ${entitlements.plan.label}',
-                    style: const TextStyle(
-                      color: Colors.white,
+                    style: TextStyle(
+                      color: palette.textPrimary,
                       fontSize: 18,
                       fontWeight: FontWeight.w800,
                     ),
@@ -526,10 +532,7 @@ class _CurrentPlanCard extends StatelessWidget {
                   const SizedBox(height: 5),
                   Text(
                     '$periodText · $manager',
-                    style: const TextStyle(
-                      color: AppColors.textSecondary,
-                      height: 1.4,
-                    ),
+                    style: TextStyle(color: palette.textSecondary, height: 1.4),
                   ),
                 ],
               ),
@@ -563,34 +566,45 @@ class _PlanToggle extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return Container(
       // Four pixels of inset on each side still leaves a 48px target for
       // both keyboard- and touch-selectable segments.
-      height: 56,
+      constraints: const BoxConstraints(minHeight: 56),
       padding: const EdgeInsets.all(4),
       decoration: BoxDecoration(
-        color: AppColors.surface.withValues(alpha: .55),
+        color: palette.surfaceMuted,
         borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: Colors.white.withValues(alpha: .07)),
+        border: Border.all(color: palette.border),
       ),
-      child: Row(
-        children: [
-          _segment(label: 'Monthly', plan: PremiumPlan.monthly),
-          _segment(
-            label: 'Yearly',
-            plan: PremiumPlan.yearly,
-            chip: yearlySavingsPercent > 0 ? '-$yearlySavingsPercent%' : null,
-          ),
-        ],
+      child: IntrinsicHeight(
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _segment(
+              context: context,
+              label: 'Monthly',
+              plan: PremiumPlan.monthly,
+            ),
+            _segment(
+              context: context,
+              label: 'Yearly',
+              plan: PremiumPlan.yearly,
+              chip: yearlySavingsPercent > 0 ? '-$yearlySavingsPercent%' : null,
+            ),
+          ],
+        ),
       ),
     );
   }
 
   Widget _segment({
+    required BuildContext context,
     required String label,
     required PremiumPlan plan,
     String? chip,
   }) {
+    final palette = context.appPalette;
     final active = selected == plan;
     return Expanded(
       child: AccessibleTapRegion(
@@ -603,33 +617,32 @@ class _PlanToggle extends StatelessWidget {
           duration: const Duration(milliseconds: 180),
           curve: Curves.easeOut,
           decoration: BoxDecoration(
-            color: active ? AppColors.surfaceLight : Colors.transparent,
+            color: active ? palette.surfaceRaised : Colors.transparent,
             borderRadius: BorderRadius.circular(999),
             border: Border.all(
-              color: active
-                  ? Colors.white.withValues(alpha: .12)
-                  : Colors.transparent,
+              color: active ? palette.borderStrong : Colors.transparent,
             ),
           ),
-          // scaleDown only engages on very narrow phones (<=390pt), where
-          // "Yearly" + the savings chip can outgrow half the toggle — caught by
-          // the 320-1440 layout matrix.
-          child: Center(
-            child: FittedBox(
-              fit: BoxFit.scaleDown,
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+            child: Center(
+              child: Wrap(
+                alignment: WrapAlignment.center,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                spacing: 7,
+                runSpacing: 4,
                 children: [
                   Text(
                     label,
                     style: TextStyle(
-                      color: active ? Colors.white : AppColors.textSecondary,
+                      color: active
+                          ? palette.textPrimary
+                          : palette.textSecondary,
                       fontSize: 13.5,
                       fontWeight: active ? FontWeight.w800 : FontWeight.w600,
                     ),
                   ),
-                  if (chip != null) ...[
-                    const SizedBox(width: 7),
+                  if (chip != null)
                     Container(
                       padding: const EdgeInsets.symmetric(
                         horizontal: 8,
@@ -638,7 +651,7 @@ class _PlanToggle extends StatelessWidget {
                       decoration: BoxDecoration(
                         borderRadius: BorderRadius.circular(999),
                         gradient: const LinearGradient(
-                          colors: [AppColors.primary, AppColors.secondary],
+                          colors: _premiumPlanGradientColors,
                         ),
                       ),
                       child: Text(
@@ -650,7 +663,6 @@ class _PlanToggle extends StatelessWidget {
                         ),
                       ),
                     ),
-                  ],
                 ],
               ),
             ),
@@ -683,6 +695,7 @@ class _PlanCards extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final checkColor = context.appPalette.focus;
     final monthly = plans.firstWhere(
       (plan) => plan.plan == PremiumPlan.monthly,
     );
@@ -690,7 +703,7 @@ class _PlanCards extends StatelessWidget {
     final monthlyCard = _PlanCard(
       product: monthly,
       selected: selected == PremiumPlan.monthly,
-      checkColor: AppColors.accent,
+      checkColor: checkColor,
       busy: busy || !checkoutAvailable,
       onSelect: onSelect,
       onChoose: onChoose,
@@ -698,7 +711,7 @@ class _PlanCards extends StatelessWidget {
     final yearlyCard = _PlanCard(
       product: yearly,
       selected: selected == PremiumPlan.yearly,
-      checkColor: const Color(0xFFE879F9),
+      checkColor: checkColor,
       busy: busy || !checkoutAvailable,
       onSelect: onSelect,
       onChoose: onChoose,
@@ -747,6 +760,8 @@ class _PlanCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     final card = AccessibleTapRegion(
       onTap: () => onSelect(product.plan),
       semanticLabel:
@@ -760,19 +775,17 @@ class _PlanCard extends StatelessWidget {
         padding: const EdgeInsets.fromLTRB(16, 20, 16, 16),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(22),
-          color: selected
-              ? const Color(0xFF1E1233)
-              : AppColors.surface.withValues(alpha: .55),
+          color: selected ? palette.surfaceRaised : palette.surface,
           border: Border.all(
             color: selected
-                ? AppColors.secondary.withValues(alpha: .75)
-                : AppColors.border,
+                ? colors.primary.withValues(alpha: .8)
+                : palette.border,
             width: selected ? 1.4 : 1,
           ),
           boxShadow: selected
               ? [
                   BoxShadow(
-                    color: AppColors.secondary.withValues(alpha: .26),
+                    color: colors.primary.withValues(alpha: .16),
                     blurRadius: 30,
                     offset: const Offset(0, 4),
                   ),
@@ -784,8 +797,8 @@ class _PlanCard extends StatelessWidget {
           children: [
             Text(
               product.plan.label,
-              style: const TextStyle(
-                color: Colors.white,
+              style: TextStyle(
+                color: palette.textPrimary,
                 fontSize: 15,
                 fontWeight: FontWeight.w800,
               ),
@@ -793,8 +806,8 @@ class _PlanCard extends StatelessWidget {
             const SizedBox(height: 10),
             Text(
               product.formattedPrice,
-              style: const TextStyle(
-                color: Colors.white,
+              style: TextStyle(
+                color: palette.textPrimary,
                 fontSize: 26,
                 fontWeight: FontWeight.w900,
                 letterSpacing: -.5,
@@ -803,16 +816,13 @@ class _PlanCard extends StatelessWidget {
             const SizedBox(height: 2),
             Text(
               product.interval == 'month' ? '/ month' : '/ year',
-              style: const TextStyle(
-                color: AppColors.textSecondary,
-                fontSize: 12,
-              ),
+              style: TextStyle(color: palette.textSecondary, fontSize: 12),
             ),
             const SizedBox(height: 3),
-            const Text(
+            Text(
               'Base price · final local price at checkout',
               style: TextStyle(
-                color: AppColors.textSecondary,
+                color: palette.textSecondary,
                 fontSize: 11,
                 height: 1.3,
               ),
@@ -821,10 +831,7 @@ class _PlanCard extends StatelessWidget {
               const SizedBox(height: 4),
               Text(
                 '${product.formattedEquivalent!} / month',
-                style: const TextStyle(
-                  color: AppColors.textSecondary,
-                  fontSize: 12,
-                ),
+                style: TextStyle(color: palette.textSecondary, fontSize: 12),
               ),
             ],
             if (product.savingsPercent > 0) ...[
@@ -837,7 +844,7 @@ class _PlanCard extends StatelessWidget {
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(999),
                   gradient: const LinearGradient(
-                    colors: [AppColors.primary, AppColors.secondary],
+                    colors: _premiumPlanGradientColors,
                   ),
                 ),
                 child: Text(
@@ -861,8 +868,8 @@ class _PlanCard extends StatelessWidget {
                     Expanded(
                       child: Text(
                         item,
-                        style: const TextStyle(
-                          color: Color(0xFFDDD8E8),
+                        style: TextStyle(
+                          color: palette.textSecondary,
                           fontSize: 12.3,
                         ),
                       ),
@@ -871,7 +878,7 @@ class _PlanCard extends StatelessWidget {
                 ),
               ),
             const SizedBox(height: 8),
-            _chooseButton(),
+            _chooseButton(context),
           ],
         ),
       ),
@@ -901,7 +908,7 @@ class _PlanCard extends StatelessWidget {
                   decoration: BoxDecoration(
                     borderRadius: BorderRadius.circular(999),
                     gradient: const LinearGradient(
-                      colors: [AppColors.primary, AppColors.secondary],
+                      colors: _premiumPlanGradientColors,
                     ),
                     boxShadow: [
                       BoxShadow(
@@ -937,41 +944,50 @@ class _PlanCard extends StatelessWidget {
     );
   }
 
-  Widget _chooseButton() {
+  Widget _chooseButton(BuildContext context) {
+    final palette = context.appPalette;
     final label = 'Choose\n${product.plan.label.toLowerCase()}';
 
     if (selected) {
       return SizedBox(
         width: double.infinity,
-        height: 58,
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(16),
-            gradient: const LinearGradient(
-              colors: [AppColors.primary, AppColors.secondary],
-            ),
-            boxShadow: [
-              BoxShadow(
-                color: AppColors.secondary.withValues(alpha: .35),
-                blurRadius: 18,
-                offset: const Offset(0, 4),
-              ),
-            ],
-          ),
-          child: Material(
-            color: Colors.transparent,
-            child: InkWell(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: 58),
+          child: DecoratedBox(
+            decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(16),
-              onTap: busy ? null : () => onChoose(product),
-              child: Center(
-                child: Text(
-                  label,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 14,
-                    height: 1.25,
-                    fontWeight: FontWeight.w800,
+              gradient: const LinearGradient(
+                colors: _premiumPlanGradientColors,
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: AppColors.secondary.withValues(alpha: .35),
+                  blurRadius: 18,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
+            child: Material(
+              color: Colors.transparent,
+              child: InkWell(
+                borderRadius: BorderRadius.circular(16),
+                onTap: busy ? null : () => onChoose(product),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 11,
+                  ),
+                  child: Center(
+                    child: Text(
+                      label,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 14,
+                        height: 1.25,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
                   ),
                 ),
               ),
@@ -983,27 +999,30 @@ class _PlanCard extends StatelessWidget {
 
     return SizedBox(
       width: double.infinity,
-      height: 58,
-      child: Material(
-        color: AppColors.surfaceLight.withValues(alpha: .65),
-        borderRadius: BorderRadius.circular(16),
-        child: InkWell(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minHeight: 58),
+        child: Material(
+          color: palette.surfaceMuted,
           borderRadius: BorderRadius.circular(16),
-          onTap: busy ? null : () => onChoose(product),
-          child: Container(
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: Colors.white.withValues(alpha: .10)),
-            ),
-            child: Center(
-              child: Text(
-                label,
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 14,
-                  height: 1.25,
-                  fontWeight: FontWeight.w800,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(16),
+            onTap: busy ? null : () => onChoose(product),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: palette.border),
+              ),
+              child: Center(
+                child: Text(
+                  label,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: palette.textPrimary,
+                    fontSize: 14,
+                    height: 1.25,
+                    fontWeight: FontWeight.w800,
+                  ),
                 ),
               ),
             ),
@@ -1026,12 +1045,14 @@ class _EverythingIncluded extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 6),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(20),
-        color: AppColors.surface.withValues(alpha: .45),
-        border: Border.all(color: Colors.white.withValues(alpha: .07)),
+        color: palette.surface,
+        border: Border.all(color: palette.border),
       ),
       child: Column(
         children: [
@@ -1040,13 +1061,13 @@ class _EverythingIncluded extends StatelessWidget {
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
               child: Row(
                 children: [
-                  Icon(_icons[i], size: 19, color: const Color(0xFFD3A5FF)),
+                  Icon(_icons[i], size: 19, color: colors.primary),
                   const SizedBox(width: 13),
                   Expanded(
                     child: Text(
                       PremiumPlans.everythingIncluded[i],
-                      style: const TextStyle(
-                        color: Color(0xFFEFEAF7),
+                      style: TextStyle(
+                        color: palette.textPrimary,
                         fontSize: 13.3,
                         fontWeight: FontWeight.w600,
                       ),
@@ -1066,35 +1087,45 @@ class _TrustFooter extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Center(
-      child: FittedBox(
-        fit: BoxFit.scaleDown,
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              Icons.verified_user_outlined,
-              size: 13,
-              color: AppColors.textSecondary,
-            ),
-            SizedBox(width: 5),
-            Text(
-              'Secure checkout',
-              style: TextStyle(color: AppColors.textSecondary, fontSize: 12),
-            ),
-            SizedBox(width: 16),
-            Icon(
-              Icons.schedule_rounded,
-              size: 13,
-              color: AppColors.textSecondary,
-            ),
-            SizedBox(width: 5),
-            Text(
-              'Cancel anytime',
-              style: TextStyle(color: AppColors.textSecondary, fontSize: 12),
-            ),
-          ],
-        ),
+    final palette = context.appPalette;
+    return Center(
+      child: Wrap(
+        alignment: WrapAlignment.center,
+        runAlignment: WrapAlignment.center,
+        spacing: 16,
+        runSpacing: 8,
+        children: [
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.verified_user_outlined,
+                size: 13,
+                color: palette.textSecondary,
+              ),
+              const SizedBox(width: 5),
+              Text(
+                'Secure checkout',
+                style: TextStyle(color: palette.textSecondary, fontSize: 12),
+              ),
+            ],
+          ),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.schedule_rounded,
+                size: 13,
+                color: palette.textSecondary,
+              ),
+              const SizedBox(width: 5),
+              Text(
+                'Cancel anytime',
+                style: TextStyle(color: palette.textSecondary, fontSize: 12),
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }

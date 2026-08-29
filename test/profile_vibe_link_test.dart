@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:yovoice/core/theme/app_theme.dart';
 import 'package:yovoice/features/profile/presentation/widgets/profile_vibe_headline.dart';
 import 'package:yovoice/features/profile/presentation/widgets/profile_vibe_link.dart';
 
@@ -283,6 +284,7 @@ Future<void> _pumpVibe(
 
   await tester.pumpWidget(
     MaterialApp(
+      theme: AppTheme.darkTheme,
       builder: (context, child) => MediaQuery(
         data: MediaQuery.of(
           context,

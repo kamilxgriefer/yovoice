@@ -2,6 +2,8 @@ import 'package:barcode_widget/barcode_widget.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:yovoice/core/theme/app_palette.dart';
+import 'package:yovoice/core/theme/app_theme.dart';
 import 'package:yovoice/features/auth/data/totp_mfa_service.dart';
 import 'package:yovoice/features/auth/presentation/screens/totp_challenge_screen.dart';
 import 'package:yovoice/features/settings/presentation/screens/two_factor_authentication_screen.dart';
@@ -289,7 +291,7 @@ void main() {
     final client = _FakeTotpClient(canOpenAuthenticatorApp: false);
     await tester.pumpWidget(
       MaterialApp(
-        theme: ThemeData.dark(useMaterial3: true),
+        theme: AppTheme.lightTheme,
         home: MediaQuery(
           data: const MediaQueryData(textScaler: TextScaler.linear(2)),
           child: TwoFactorAuthenticationScreen(client: client),
@@ -308,6 +310,10 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(tester.takeException(), isNull);
+    expect(
+      tester.widget<Scaffold>(find.byType(Scaffold).first).backgroundColor,
+      AppPalette.light.background,
+    );
     expect(find.byType(BarcodeWidget), findsOneWidget);
     expect(find.text('Enable two-factor authentication'), findsOneWidget);
   });

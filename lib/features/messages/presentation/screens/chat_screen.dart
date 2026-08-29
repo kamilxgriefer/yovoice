@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
 import 'package:yovoice/core/helpers/error_messages.dart';
+import 'package:yovoice/core/theme/app_palette.dart';
 
 import 'package:yovoice/features/calls/data/services/direct_call_service.dart';
 import 'package:yovoice/features/calls/data/services/voice_call_service.dart';
@@ -59,13 +60,6 @@ class ChatScreen extends StatefulWidget {
 }
 
 class _ChatScreenState extends State<ChatScreen> {
-  static const Color _background = Color(0xFF080711);
-  static const Color _surface = Color(0xFF15101E);
-  static const Color _surface2 = Color(0xFF1D1628);
-  static const Color _border = Color(0xFF30263F);
-  static const Color _muted = Color(0xFF9D95AD);
-  static const Color _primary = Color(0xFF9D20FF);
-
   late final MessageService _service =
       widget.messageService ?? MessageService.live;
   late final DirectCallGateway _calls =
@@ -649,30 +643,31 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _editMessage(Message message) async {
     final editController = TextEditingController(text: message.content);
+    final palette = context.appPalette;
 
     final result = await showDialog<String>(
       context: context,
       builder: (dialogContext) {
         return AlertDialog(
-          backgroundColor: _surface,
-          title: const Text(
+          backgroundColor: palette.surfaceRaised,
+          title: Text(
             'Edit message',
-            style: TextStyle(color: Colors.white),
+            style: TextStyle(color: palette.textPrimary),
           ),
           content: TextField(
             controller: editController,
             autofocus: true,
             maxLines: 5,
             minLines: 1,
-            style: const TextStyle(color: Colors.white),
+            style: TextStyle(color: palette.textPrimary),
             decoration: InputDecoration(
               hintText: 'Message',
-              hintStyle: const TextStyle(color: _muted),
+              hintStyle: TextStyle(color: palette.textTertiary),
               filled: true,
-              fillColor: _surface2,
+              fillColor: palette.surfaceMuted,
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(15),
-                borderSide: const BorderSide(color: _border),
+                borderSide: BorderSide(color: palette.border),
               ),
             ),
           ),
@@ -684,7 +679,6 @@ class _ChatScreenState extends State<ChatScreen> {
             FilledButton(
               onPressed: () =>
                   Navigator.pop(dialogContext, editController.text),
-              style: FilledButton.styleFrom(backgroundColor: _primary),
               child: const Text('Save'),
             ),
           ],
@@ -712,18 +706,20 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _deleteMessage(Message message) async {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) {
         return AlertDialog(
-          backgroundColor: _surface,
-          title: const Text(
+          backgroundColor: palette.surfaceRaised,
+          title: Text(
             'Delete message?',
-            style: TextStyle(color: Colors.white),
+            style: TextStyle(color: palette.textPrimary),
           ),
-          content: const Text(
+          content: Text(
             'The message will be replaced with “Message deleted”.',
-            style: TextStyle(color: _muted),
+            style: TextStyle(color: palette.textSecondary),
           ),
           actions: [
             TextButton(
@@ -732,9 +728,9 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
             TextButton(
               onPressed: () => Navigator.pop(dialogContext, true),
-              child: const Text(
+              child: Text(
                 'Delete',
-                style: TextStyle(color: Color(0xFFFF668B)),
+                style: TextStyle(color: colors.onErrorContainer),
               ),
             ),
           ],
@@ -857,7 +853,6 @@ class _ChatScreenState extends State<ChatScreen> {
                 .replaceFirst('Invalid argument(s): ', ''),
           ),
           behavior: SnackBarBehavior.floating,
-          backgroundColor: const Color(0xFF2A1939),
           margin: const EdgeInsets.all(16),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(14),
@@ -868,15 +863,29 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
     return Scaffold(
-      backgroundColor: _background,
+      key: const ValueKey('chat-screen'),
+      backgroundColor: palette.background,
       body: Container(
-        decoration: const BoxDecoration(
+        key: const ValueKey('chat-screen-background'),
+        decoration: BoxDecoration(
           gradient: RadialGradient(
             center: Alignment(-.75, -1),
             radius: 1.2,
-            colors: [Color(0xFF26103E), Color(0xFF100B1B), _background],
-            stops: [0, .35, 1],
+            colors: [
+              Color.lerp(
+                palette.backgroundTop,
+                colors.primary,
+                isDark ? .18 : .055,
+              )!,
+              palette.backgroundTop,
+              palette.background,
+            ],
+            stops: const [0, .35, 1],
           ),
         ),
         child: SafeArea(
@@ -914,9 +923,9 @@ class _ChatScreenState extends State<ChatScreen> {
                           !snapshot.hasData &&
                           queuedMessages.isEmpty &&
                           queuedMedia.isEmpty) {
-                        return const Center(
+                        return Center(
                           child: CircularProgressIndicator(
-                            color: _primary,
+                            color: colors.primary,
                             strokeWidth: 2.5,
                           ),
                         );
@@ -925,10 +934,10 @@ class _ChatScreenState extends State<ChatScreen> {
                       if (hasHistoryError &&
                           queuedMessages.isEmpty &&
                           queuedMedia.isEmpty) {
-                        return const Center(
+                        return Center(
                           child: Text(
                             'Could not load this conversation.',
-                            style: TextStyle(color: _muted),
+                            style: TextStyle(color: palette.textSecondary),
                           ),
                         );
                       }
@@ -1092,20 +1101,24 @@ class _ChatHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
+
     return Container(
+      key: const ValueKey('chat-header'),
       padding: const EdgeInsets.fromLTRB(7, 8, 8, 8),
-      decoration: const BoxDecoration(
-        color: Color(0xCC0E0A15),
-        border: Border(bottom: BorderSide(color: _ChatScreenState._border)),
+      decoration: BoxDecoration(
+        color: palette.navigationSurface.withValues(alpha: .96),
+        border: Border(bottom: BorderSide(color: palette.border)),
       ),
       child: Row(
         children: [
           IconButton(
             onPressed: onBack,
             tooltip: 'Back to chats',
-            icon: const Icon(
+            icon: Icon(
               Icons.arrow_back_ios_new_rounded,
-              color: Colors.white,
+              color: palette.textPrimary,
               size: 20,
             ),
           ),
@@ -1139,8 +1152,8 @@ class _ChatHeader extends StatelessWidget {
                                       displayName,
                                       maxLines: 1,
                                       overflow: TextOverflow.ellipsis,
-                                      style: const TextStyle(
-                                        color: Colors.white,
+                                      style: TextStyle(
+                                        color: palette.textPrimary,
                                         fontSize: 15,
                                         fontWeight: FontWeight.w900,
                                       ),
@@ -1154,7 +1167,7 @@ class _ChatHeader extends StatelessWidget {
                                   style: TextStyle(
                                     color: presence?.isOnline == true
                                         ? const Color(0xFF50DF86)
-                                        : _ChatScreenState._muted,
+                                        : palette.textSecondary,
                                     fontSize: 11,
                                   ),
                                 ),
@@ -1173,19 +1186,19 @@ class _ChatHeader extends StatelessWidget {
             onPressed: callBusy ? null : onCall,
             tooltip: callBusy ? 'Starting voice call' : 'Start voice call',
             icon: callBusy
-                ? const SizedBox.square(
+                ? SizedBox.square(
                     dimension: 20,
                     child: CircularProgressIndicator(
                       strokeWidth: 2,
-                      color: _ChatScreenState._primary,
+                      color: colors.primary,
                     ),
                   )
-                : const Icon(Icons.call_rounded, color: Colors.white),
+                : Icon(Icons.call_rounded, color: palette.textPrimary),
           ),
           PopupMenuButton<String>(
             tooltip: 'Conversation options',
-            color: _ChatScreenState._surface,
-            icon: const Icon(Icons.more_horiz_rounded, color: Colors.white),
+            color: palette.surfaceRaised,
+            icon: Icon(Icons.more_horiz_rounded, color: palette.textPrimary),
             onSelected: (value) {
               if (value == 'mute') {
                 onMute();
@@ -1202,23 +1215,26 @@ class _ChatHeader extends StatelessWidget {
                       muted
                           ? Icons.notifications_active_outlined
                           : Icons.notifications_off_outlined,
-                      color: Colors.white,
+                      color: palette.textPrimary,
                     ),
                     const SizedBox(width: 12),
                     Text(
                       muted ? 'Unmute' : 'Mute',
-                      style: const TextStyle(color: Colors.white),
+                      style: TextStyle(color: palette.textPrimary),
                     ),
                   ],
                 ),
               ),
-              const PopupMenuItem<String>(
+              PopupMenuItem<String>(
                 value: 'archive',
                 child: Row(
                   children: [
-                    Icon(Icons.archive_outlined, color: Colors.white),
-                    SizedBox(width: 12),
-                    Text('Archive', style: TextStyle(color: Colors.white)),
+                    Icon(Icons.archive_outlined, color: palette.textPrimary),
+                    const SizedBox(width: 12),
+                    Text(
+                      'Archive',
+                      style: TextStyle(color: palette.textPrimary),
+                    ),
                   ],
                 ),
               ),
@@ -1266,6 +1282,8 @@ class _EmptyConversation extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+
     return LayoutBuilder(
       builder: (context, constraints) {
         final minHeight = constraints.maxHeight > 56
@@ -1286,27 +1304,27 @@ class _EmptyConversation extends StatelessWidget {
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                     textAlign: TextAlign.center,
-                    style: const TextStyle(
-                      color: Colors.white,
+                    style: TextStyle(
+                      color: palette.textPrimary,
                       fontSize: 21,
                       fontWeight: FontWeight.w900,
                     ),
                   ),
                   const SizedBox(height: 6),
-                  const Text(
+                  Text(
                     'You are friends on YO Voice',
                     textAlign: TextAlign.center,
                     style: TextStyle(
-                      color: _ChatScreenState._muted,
+                      color: palette.textSecondary,
                       fontSize: 13,
                     ),
                   ),
                   const SizedBox(height: 18),
-                  const Text(
+                  Text(
                     'Say hello 👋',
                     textAlign: TextAlign.center,
                     style: TextStyle(
-                      color: Color(0xFFD27AFF),
+                      color: palette.focus,
                       fontWeight: FontWeight.w800,
                     ),
                   ),
@@ -1327,6 +1345,7 @@ class _DateDivider extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     final now = DateTime.now();
     final yesterday = now.subtract(const Duration(days: 1));
     final label = _sameDate(date, now)
@@ -1339,8 +1358,8 @@ class _DateDivider extends StatelessWidget {
       padding: const EdgeInsets.symmetric(vertical: 16),
       child: Text(
         label,
-        style: const TextStyle(
-          color: _ChatScreenState._muted,
+        style: TextStyle(
+          color: palette.textSecondary,
           fontSize: 11,
           fontWeight: FontWeight.w700,
         ),
@@ -1360,6 +1379,8 @@ class _TypingIndicator extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+
     return Padding(
       padding: const EdgeInsets.fromLTRB(18, 4, 18, 8),
       child: Row(
@@ -1367,9 +1388,9 @@ class _TypingIndicator extends StatelessWidget {
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 10),
             decoration: BoxDecoration(
-              color: _ChatScreenState._surface,
+              color: palette.surfaceRaised,
               borderRadius: BorderRadius.circular(18),
-              border: Border.all(color: _ChatScreenState._border),
+              border: Border.all(color: palette.border),
             ),
             child: const Row(
               children: [
@@ -1382,9 +1403,9 @@ class _TypingIndicator extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 9),
-          const Text(
+          Text(
             'typing…',
-            style: TextStyle(color: _ChatScreenState._muted, fontSize: 11),
+            style: TextStyle(color: palette.textSecondary, fontSize: 11),
           ),
         ],
       ),
@@ -1457,12 +1478,14 @@ class _ReplyPreview extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.fromLTRB(16, 10, 8, 10),
-      decoration: const BoxDecoration(
-        color: Color(0xFF171121),
-        border: Border(top: BorderSide(color: _ChatScreenState._border)),
+      decoration: BoxDecoration(
+        color: palette.surfaceRaised,
+        border: Border(top: BorderSide(color: palette.border)),
       ),
       child: Row(
         children: [
@@ -1481,10 +1504,10 @@ class _ReplyPreview extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(
+                Text(
                   'Replying to message',
                   style: TextStyle(
-                    color: Color(0xFFD690FF),
+                    color: palette.focus,
                     fontSize: 11,
                     fontWeight: FontWeight.w800,
                   ),
@@ -1494,7 +1517,7 @@ class _ReplyPreview extends StatelessWidget {
                   message.previewText(),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(color: Colors.white70, fontSize: 12),
+                  style: TextStyle(color: palette.textSecondary, fontSize: 12),
                 ),
               ],
             ),
@@ -1502,10 +1525,7 @@ class _ReplyPreview extends StatelessWidget {
           IconButton(
             onPressed: onClose,
             tooltip: 'Close reply',
-            icon: const Icon(
-              Icons.close_rounded,
-              color: _ChatScreenState._muted,
-            ),
+            icon: Icon(Icons.close_rounded, color: palette.textSecondary),
           ),
         ],
       ),
@@ -1548,9 +1568,9 @@ class _QueuedTextMessageBubble extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final failed = !accepted && entry.state == OutboxState.failed;
-    final statusColor = failed
-        ? const Color(0xFFFF9BB3)
-        : const Color(0xFFD9B7F2);
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
+    final statusColor = failed ? colors.onErrorContainer : palette.focus;
 
     return Semantics(
       container: true,
@@ -1612,8 +1632,8 @@ class _QueuedTextMessageBubble extends StatelessWidget {
                           alwaysUse24HourFormat:
                               MediaQuery.alwaysUse24HourFormatOf(context),
                         ),
-                        style: const TextStyle(
-                          color: _ChatScreenState._muted,
+                        style: TextStyle(
+                          color: palette.textTertiary,
                           fontSize: 10,
                         ),
                       ),
@@ -1646,7 +1666,7 @@ class _QueuedTextMessageBubble extends StatelessWidget {
                     TextButton(
                       onPressed: onDiscard,
                       style: TextButton.styleFrom(
-                        foregroundColor: const Color(0xFFD9B7F2),
+                        foregroundColor: palette.textSecondary,
                         minimumSize: const Size(64, 44),
                       ),
                       child: const Text('Remove'),
@@ -1654,7 +1674,7 @@ class _QueuedTextMessageBubble extends StatelessWidget {
                     TextButton(
                       onPressed: onRetry,
                       style: TextButton.styleFrom(
-                        foregroundColor: Colors.white,
+                        foregroundColor: palette.focus,
                         minimumSize: const Size(64, 44),
                       ),
                       child: const Text('Retry'),
@@ -1698,9 +1718,9 @@ class _QueuedMediaMessageCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final failed = entry.status == DirectAttachmentOutboxStatus.failed;
-    final statusColor = failed
-        ? const Color(0xFFFF9BB3)
-        : const Color(0xFFD9B7F2);
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
+    final statusColor = failed ? colors.onErrorContainer : palette.focus;
     final maxWidth = (MediaQuery.sizeOf(context).width * 0.82).clamp(
       220.0,
       380.0,
@@ -1716,7 +1736,7 @@ class _QueuedMediaMessageCard extends StatelessWidget {
           margin: const EdgeInsets.only(left: 24, bottom: 10),
           padding: const EdgeInsets.fromLTRB(14, 12, 10, 8),
           decoration: BoxDecoration(
-            color: _ChatScreenState._surface2,
+            color: palette.surfaceMuted,
             borderRadius: const BorderRadius.only(
               topLeft: Radius.circular(20),
               topRight: Radius.circular(20),
@@ -1724,7 +1744,7 @@ class _QueuedMediaMessageCard extends StatelessWidget {
               bottomRight: Radius.circular(5),
             ),
             border: Border.all(
-              color: failed ? const Color(0xFFFF668B) : const Color(0xFF63328B),
+              color: failed ? colors.onErrorContainer : palette.borderStrong,
             ),
           ),
           child: Column(
@@ -1737,10 +1757,10 @@ class _QueuedMediaMessageCard extends StatelessWidget {
                     width: 40,
                     height: 40,
                     decoration: BoxDecoration(
-                      color: const Color(0xFF3A1855),
+                      color: colors.primaryContainer,
                       borderRadius: BorderRadius.circular(13),
                     ),
-                    child: Icon(_kindIcon, color: const Color(0xFFD690FF)),
+                    child: Icon(_kindIcon, color: colors.onPrimaryContainer),
                   ),
                   const SizedBox(width: 10),
                   Expanded(
@@ -1749,8 +1769,8 @@ class _QueuedMediaMessageCard extends StatelessWidget {
                       children: [
                         Text(
                           _kind,
-                          style: const TextStyle(
-                            color: Colors.white,
+                          style: TextStyle(
+                            color: palette.textPrimary,
                             fontWeight: FontWeight.w700,
                           ),
                         ),
@@ -1779,7 +1799,7 @@ class _QueuedMediaMessageCard extends StatelessWidget {
                       key: ValueKey('discard-media-${entry.id}'),
                       onPressed: onDiscard,
                       style: TextButton.styleFrom(
-                        foregroundColor: const Color(0xFFD9B7F2),
+                        foregroundColor: palette.textSecondary,
                         minimumSize: const Size(84, 44),
                       ),
                       child: const Text('Discard'),
@@ -1788,8 +1808,8 @@ class _QueuedMediaMessageCard extends StatelessWidget {
                       key: ValueKey('retry-media-${entry.id}'),
                       onPressed: onRetry,
                       style: FilledButton.styleFrom(
-                        backgroundColor: _ChatScreenState._primary,
-                        foregroundColor: Colors.white,
+                        backgroundColor: colors.primary,
+                        foregroundColor: colors.onPrimary,
                         minimumSize: const Size(84, 44),
                       ),
                       child: const Text('Retry'),
@@ -1826,16 +1846,20 @@ class _Composer extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
+
     return Container(
+      key: const ValueKey('chat-composer'),
       padding: EdgeInsets.fromLTRB(
         10,
         9,
         10,
         10 + MediaQuery.paddingOf(context).bottom,
       ),
-      decoration: const BoxDecoration(
-        color: Color(0xFF0F0B16),
-        border: Border(top: BorderSide(color: _ChatScreenState._border)),
+      decoration: BoxDecoration(
+        color: palette.navigationSurface,
+        border: Border(top: BorderSide(color: palette.border)),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.end,
@@ -1844,16 +1868,16 @@ class _Composer extends StatelessWidget {
             onPressed: sendingMedia ? null : onPhoto,
             tooltip: sendingMedia ? 'Sending attachment' : 'Add photo',
             style: IconButton.styleFrom(
-              backgroundColor: _ChatScreenState._surface2,
-              foregroundColor: Colors.white,
+              backgroundColor: palette.surfaceMuted,
+              foregroundColor: palette.textPrimary,
             ),
             icon: sendingMedia
-                ? const SizedBox(
+                ? SizedBox(
                     width: 20,
                     height: 20,
                     child: CircularProgressIndicator(
                       strokeWidth: 2,
-                      color: Colors.white,
+                      color: colors.primary,
                     ),
                   )
                 : const Icon(Icons.camera_alt_outlined),
@@ -1862,9 +1886,9 @@ class _Composer extends StatelessWidget {
           Expanded(
             child: Container(
               decoration: BoxDecoration(
-                color: _ChatScreenState._surface,
+                color: palette.surfaceRaised,
                 borderRadius: BorderRadius.circular(24),
-                border: Border.all(color: _ChatScreenState._border),
+                border: Border.all(color: palette.borderStrong),
               ),
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.end,
@@ -1877,12 +1901,17 @@ class _Composer extends StatelessWidget {
                       minLines: 1,
                       maxLines: 5,
                       textCapitalization: TextCapitalization.sentences,
-                      style: const TextStyle(color: Colors.white),
-                      decoration: const InputDecoration(
+                      style: TextStyle(color: palette.textPrimary),
+                      decoration: InputDecoration(
                         hintText: 'Message…',
-                        hintStyle: TextStyle(color: _ChatScreenState._muted),
+                        hintStyle: TextStyle(color: palette.textTertiary),
                         border: InputBorder.none,
-                        contentPadding: EdgeInsets.fromLTRB(15, 12, 8, 12),
+                        contentPadding: const EdgeInsets.fromLTRB(
+                          15,
+                          12,
+                          8,
+                          12,
+                        ),
                       ),
                       onSubmitted: (_) => onSend(),
                     ),
@@ -1907,12 +1936,12 @@ class _Composer extends StatelessWidget {
                                 key: const ValueKey('saving'),
                                 onPressed: null,
                                 tooltip: 'Saving message',
-                                icon: const SizedBox(
+                                icon: SizedBox(
                                   width: 20,
                                   height: 20,
                                   child: CircularProgressIndicator(
                                     strokeWidth: 2,
-                                    color: Colors.white,
+                                    color: colors.primary,
                                   ),
                                 ),
                               )
@@ -1921,18 +1950,18 @@ class _Composer extends StatelessWidget {
                                 key: const ValueKey('send'),
                                 onPressed: onSend,
                                 tooltip: 'Send',
-                                icon: const Icon(
+                                icon: Icon(
                                   Icons.send_rounded,
-                                  color: _ChatScreenState._primary,
+                                  color: colors.primary,
                                 ),
                               )
                             : IconButton(
                                 key: const ValueKey('voice'),
                                 onPressed: sendingMedia ? null : onVoice,
                                 tooltip: 'Record voice message',
-                                icon: const Icon(
+                                icon: Icon(
                                   Icons.mic_none_rounded,
-                                  color: Colors.white,
+                                  color: palette.textPrimary,
                                 ),
                               ),
                       );
@@ -1955,6 +1984,7 @@ class _ConversationHistoryErrorBanner extends StatelessWidget {
   Widget build(BuildContext context) {
     const label =
         'Could not load this conversation. Your unsent messages are still shown.';
+    final colors = Theme.of(context).colorScheme;
 
     return Semantics(
       container: true,
@@ -1965,19 +1995,19 @@ class _ConversationHistoryErrorBanner extends StatelessWidget {
           margin: const EdgeInsets.only(bottom: 12),
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
           decoration: BoxDecoration(
-            color: const Color(0xFF28182F),
+            color: colors.errorContainer,
             borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: const Color(0xFFB8516A)),
+            border: Border.all(color: colors.onErrorContainer),
           ),
-          child: const Row(
+          child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Icon(
                 Icons.cloud_off_outlined,
                 size: 20,
-                color: Color(0xFFFFA5B9),
+                color: colors.onErrorContainer,
               ),
-              SizedBox(width: 10),
+              const SizedBox(width: 10),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -1985,14 +2015,14 @@ class _ConversationHistoryErrorBanner extends StatelessWidget {
                     Text(
                       'Could not load this conversation.',
                       style: TextStyle(
-                        color: Colors.white,
+                        color: colors.onErrorContainer,
                         fontWeight: FontWeight.w700,
                       ),
                     ),
-                    SizedBox(height: 2),
+                    const SizedBox(height: 2),
                     Text(
                       'Your unsent messages are still shown.',
-                      style: TextStyle(color: Color(0xFFD8CADC)),
+                      style: TextStyle(color: colors.onErrorContainer),
                     ),
                   ],
                 ),
@@ -2184,6 +2214,8 @@ class _VoiceMessageRecorderSheetState
   @override
   Widget build(BuildContext context) {
     final hasTake = _audio != null;
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     return Semantics(
       namesRoute: true,
       label: 'Voice message recorder',
@@ -2194,19 +2226,19 @@ class _VoiceMessageRecorderSheetState
           22,
           22 + MediaQuery.paddingOf(context).bottom,
         ),
-        decoration: const BoxDecoration(
-          color: _ChatScreenState._surface,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
-          border: Border(top: BorderSide(color: _ChatScreenState._border)),
+        decoration: BoxDecoration(
+          color: palette.surfaceRaised,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+          border: Border(top: BorderSide(color: palette.border)),
         ),
         child: Material(
           type: MaterialType.transparency,
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const YoModalSheetChrome(
+              YoModalSheetChrome(
                 sheetLabel: 'voice message recorder',
-                surfaceColor: _ChatScreenState._surface,
+                surfaceColor: palette.surfaceRaised,
               ),
               const SizedBox(height: 4),
               Text(
@@ -2215,8 +2247,8 @@ class _VoiceMessageRecorderSheetState
                     : hasTake
                     ? 'Voice message ready'
                     : 'Record a voice message',
-                style: const TextStyle(
-                  color: Colors.white,
+                style: TextStyle(
+                  color: palette.textPrimary,
                   fontSize: 21,
                   fontWeight: FontWeight.w900,
                 ),
@@ -2224,8 +2256,8 @@ class _VoiceMessageRecorderSheetState
               const SizedBox(height: 8),
               Text(
                 '${_durationSeconds ~/ 60}:${(_durationSeconds % 60).toString().padLeft(2, '0')} / 1:00',
-                style: const TextStyle(
-                  color: _ChatScreenState._muted,
+                style: TextStyle(
+                  color: palette.textSecondary,
                   fontFeatures: [FontFeature.tabularFigures()],
                 ),
               ),
@@ -2236,7 +2268,7 @@ class _VoiceMessageRecorderSheetState
                   child: Text(
                     _error!,
                     textAlign: TextAlign.center,
-                    style: const TextStyle(color: Color(0xFFFF809D)),
+                    style: TextStyle(color: colors.onErrorContainer),
                   ),
                 ),
               ],
@@ -2254,7 +2286,10 @@ class _VoiceMessageRecorderSheetState
                     minimumSize: const Size.square(72),
                     backgroundColor: _recording
                         ? const Color(0xFFFF4F78)
-                        : _ChatScreenState._primary,
+                        : colors.primary,
+                    foregroundColor: _recording
+                        ? const Color(0xFF211629)
+                        : colors.onPrimary,
                   ),
                   icon: Icon(
                     _recording ? Icons.stop_rounded : Icons.mic_rounded,
@@ -2288,11 +2323,11 @@ class _VoiceMessageRecorderSheetState
                   child: FilledButton.icon(
                     onPressed: _publishing ? null : _send,
                     icon: _publishing
-                        ? const SizedBox.square(
+                        ? SizedBox.square(
                             dimension: 18,
                             child: CircularProgressIndicator(
                               strokeWidth: 2,
-                              color: Colors.white,
+                              color: colors.onPrimary,
                             ),
                           )
                         : const Icon(Icons.send_rounded),
@@ -2332,6 +2367,11 @@ class _MessageActionsSheet extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     const reactions = ['❤️', '😂', '🔥', '😮', '😢', '👍'];
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
+    final warning = Theme.of(context).brightness == Brightness.dark
+        ? const Color(0xFFFFB547)
+        : const Color(0xFF754A00);
 
     return Container(
       padding: EdgeInsets.fromLTRB(
@@ -2340,9 +2380,9 @@ class _MessageActionsSheet extends StatelessWidget {
         16,
         18 + MediaQuery.paddingOf(context).bottom,
       ),
-      decoration: const BoxDecoration(
-        color: Color(0xFF15101E),
-        borderRadius: BorderRadius.vertical(top: Radius.circular(26)),
+      decoration: BoxDecoration(
+        color: palette.surfaceRaised,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(26)),
       ),
       // Transparent Material, so the sheet keeps exactly this background
       // while the ListTiles below get a Material to paint their ink on.
@@ -2353,9 +2393,9 @@ class _MessageActionsSheet extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const YoModalSheetChrome(
+            YoModalSheetChrome(
               sheetLabel: 'message actions',
-              surfaceColor: Color(0xFF15101E),
+              surfaceColor: palette.surfaceRaised,
             ),
             const SizedBox(height: 1),
             Row(
@@ -2376,31 +2416,34 @@ class _MessageActionsSheet extends StatelessWidget {
                   )
                   .toList(growable: false),
             ),
-            const Divider(color: _ChatScreenState._border),
+            Divider(color: palette.border),
             ListTile(
               onTap: onReply,
-              leading: const Icon(Icons.reply_rounded, color: Colors.white),
-              title: const Text('Reply', style: TextStyle(color: Colors.white)),
+              leading: Icon(Icons.reply_rounded, color: palette.textPrimary),
+              title: Text(
+                'Reply',
+                style: TextStyle(color: palette.textPrimary),
+              ),
             ),
             if (isMine)
               ListTile(
                 onTap: onEdit,
-                leading: const Icon(Icons.edit_outlined, color: Colors.white),
-                title: const Text(
+                leading: Icon(Icons.edit_outlined, color: palette.textPrimary),
+                title: Text(
                   'Edit',
-                  style: TextStyle(color: Colors.white),
+                  style: TextStyle(color: palette.textPrimary),
                 ),
               ),
             if (isMine)
               ListTile(
                 onTap: onDelete,
-                leading: const Icon(
+                leading: Icon(
                   Icons.delete_outline_rounded,
-                  color: Color(0xFFFF668B),
+                  color: colors.onErrorContainer,
                 ),
-                title: const Text(
+                title: Text(
                   'Delete',
-                  style: TextStyle(color: Color(0xFFFF668B)),
+                  style: TextStyle(color: colors.onErrorContainer),
                 ),
               ),
             // Not offered on your own message. Reporting yourself is not
@@ -2410,14 +2453,8 @@ class _MessageActionsSheet extends StatelessWidget {
               ListTile(
                 key: const ValueKey('report-message'),
                 onTap: onReport,
-                leading: const Icon(
-                  Icons.flag_outlined,
-                  color: Color(0xFFFFB547),
-                ),
-                title: const Text(
-                  'Report message',
-                  style: TextStyle(color: Color(0xFFFFB547)),
-                ),
+                leading: Icon(Icons.flag_outlined, color: warning),
+                title: Text('Report message', style: TextStyle(color: warning)),
               ),
           ],
         ),

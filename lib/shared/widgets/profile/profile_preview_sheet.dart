@@ -4,6 +4,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/helpers/error_messages.dart';
+import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/friends/data/models/friend_request.dart';
 import 'package:yovoice/features/friends/data/models/friend_user.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
@@ -69,7 +70,7 @@ Future<void> showProfilePreview(
       useSafeArea: true,
       backgroundColor: Colors.transparent,
       showDragHandle: false,
-      barrierColor: Colors.black.withValues(alpha: .72),
+      barrierColor: context.appPalette.scrim.withValues(alpha: .72),
       constraints: ResponsiveContentFrame.adaptiveModalConstraints(context),
       builder: (_) => ProfilePreviewSheet(
         userId: userId,
@@ -166,11 +167,6 @@ class ProfilePreviewSheet extends StatefulWidget {
 }
 
 class _ProfilePreviewSheetState extends State<ProfilePreviewSheet> {
-  static const _surface = Color(0xFF171021);
-  static const _surface2 = Color(0xFF221630);
-  static const _border = Color(0xFF3A2C49);
-  static const _primary = Color(0xFF9D20FF);
-  static const _muted = Color(0xFFA69CAF);
   static const _online = Color(0xFF35D07F);
 
   late final FirebaseFirestore _firestore =
@@ -354,14 +350,22 @@ class _ProfilePreviewSheetState extends State<ProfilePreviewSheet> {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return Container(
       constraints: BoxConstraints(
         maxHeight: MediaQuery.sizeOf(context).height * .9,
       ),
-      decoration: const BoxDecoration(
-        color: _surface,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
-        border: Border(top: BorderSide(color: _border)),
+      decoration: BoxDecoration(
+        color: palette.surface,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+        border: Border(top: BorderSide(color: palette.border)),
+        boxShadow: [
+          BoxShadow(
+            color: palette.shadow.withValues(alpha: .18),
+            blurRadius: 32,
+            offset: const Offset(0, -8),
+          ),
+        ],
       ),
       padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
       child: StreamBuilder<UserProfile>(
@@ -380,9 +384,9 @@ class _ProfilePreviewSheetState extends State<ProfilePreviewSheet> {
                 child: Stack(
                   alignment: Alignment.topCenter,
                   children: [
-                    const YoModalSheetChrome(
+                    YoModalSheetChrome(
                       sheetLabel: 'profile preview',
-                      surfaceColor: _surface,
+                      surfaceColor: palette.surface,
                     ),
                     if (!_isSelf)
                       Positioned(
@@ -502,10 +506,9 @@ class _Body extends StatelessWidget {
   final ValueChanged<UserProfile> onFriend;
   final void Function(bool isFollowing, UserProfile profile) onFollow;
 
-  static const _muted = _ProfilePreviewSheetState._muted;
-
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     final name = profile?.displayName ?? seedDisplayName ?? '…';
     final photo = profile?.photoUrl ?? seedPhotoUrl;
     final vibe = profile?.statusMessage.trim() ?? '';
@@ -542,8 +545,8 @@ class _Body extends StatelessWidget {
                     name,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: Colors.white,
+                    style: TextStyle(
+                      color: palette.textPrimary,
                       fontSize: 20,
                       fontWeight: FontWeight.w900,
                       letterSpacing: -0.3,
@@ -558,8 +561,8 @@ class _Body extends StatelessWidget {
                             '@${profile!.username}',
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: _muted,
+                            style: TextStyle(
+                              color: palette.textSecondary,
                               fontSize: 13,
                               fontWeight: FontWeight.w600,
                             ),
@@ -613,8 +616,8 @@ class _Body extends StatelessWidget {
             bio,
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              color: Color(0xFFD9CFE3),
+            style: TextStyle(
+              color: palette.textSecondary,
               fontSize: 14,
               height: 1.4,
             ),
@@ -626,8 +629,8 @@ class _Body extends StatelessWidget {
             mutuals!.count == 1
                 ? '1 mutual friend'
                 : '${mutuals!.count} mutual friends',
-            style: const TextStyle(
-              color: _muted,
+            style: TextStyle(
+              color: palette.textSecondary,
               fontSize: 12.5,
               fontWeight: FontWeight.w600,
             ),
@@ -651,9 +654,9 @@ class _Body extends StatelessWidget {
             onPressed: null,
           )
         else if (relationship == FriendRelationshipStatus.blocked)
-          const Text(
+          Text(
             'You have blocked this user.',
-            style: TextStyle(color: _muted, fontSize: 13),
+            style: TextStyle(color: palette.textSecondary, fontSize: 13),
           )
         else ...[
           LayoutBuilder(
@@ -701,10 +704,10 @@ class _Body extends StatelessWidget {
         Center(
           child: TextButton(
             onPressed: profile == null ? null : () => onOpenFull(profile!),
-            child: const Text(
+            child: Text(
               'View full profile',
               style: TextStyle(
-                color: Color(0xFFC98BFF),
+                color: Theme.of(context).colorScheme.primary,
                 fontWeight: FontWeight.w700,
               ),
             ),
@@ -778,6 +781,8 @@ class _MessageError extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final scheme = Theme.of(context).colorScheme;
     return Semantics(
       container: true,
       liveRegion: true,
@@ -787,26 +792,20 @@ class _MessageError extends StatelessWidget {
         width: double.infinity,
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         decoration: BoxDecoration(
-          color: const Color(0xFFFF6F91).withValues(alpha: .1),
+          color: palette.dangerSurface,
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color: const Color(0xFFFF8AA6).withValues(alpha: .55),
-          ),
+          border: Border.all(color: scheme.error.withValues(alpha: .55)),
         ),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Icon(
-              Icons.error_outline_rounded,
-              size: 18,
-              color: Color(0xFFFFA6B9),
-            ),
+            Icon(Icons.error_outline_rounded, size: 18, color: scheme.error),
             const SizedBox(width: 8),
             Expanded(
               child: Text(
                 message,
-                style: const TextStyle(
-                  color: Color(0xFFFFD8E1),
+                style: TextStyle(
+                  color: palette.textPrimary,
                   fontSize: 13,
                   height: 1.35,
                   fontWeight: FontWeight.w600,
@@ -827,6 +826,7 @@ class _PresenceDot extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -837,14 +837,14 @@ class _PresenceDot extends StatelessWidget {
             shape: BoxShape.circle,
             color: online
                 ? _ProfilePreviewSheetState._online
-                : const Color(0xFF5C5368),
+                : palette.textTertiary,
           ),
         ),
         const SizedBox(width: 5),
         Text(
           online ? 'Online' : 'Offline',
-          style: const TextStyle(
-            color: _ProfilePreviewSheetState._muted,
+          style: TextStyle(
+            color: palette.textSecondary,
             fontSize: 11.5,
             fontWeight: FontWeight.w600,
           ),
@@ -907,20 +907,22 @@ class _PrimaryButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     return FilledButton.icon(
       onPressed: busy ? null : onPressed,
       style: FilledButton.styleFrom(
-        backgroundColor: _ProfilePreviewSheetState._primary,
+        backgroundColor: scheme.primary,
+        foregroundColor: scheme.onPrimary,
         padding: const EdgeInsets.symmetric(vertical: 13),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
       ),
       icon: busy
-          ? const SizedBox(
+          ? SizedBox(
               width: 15,
               height: 15,
               child: CircularProgressIndicator(
                 strokeWidth: 2,
-                color: Colors.white,
+                color: scheme.onPrimary,
               ),
             )
           : Icon(icon, size: 17),
@@ -949,13 +951,14 @@ class _SecondaryButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return OutlinedButton.icon(
       onPressed: busy ? null : onPressed,
       style: OutlinedButton.styleFrom(
-        foregroundColor: Colors.white,
-        disabledForegroundColor: const Color(0xFF9C90A8),
-        side: const BorderSide(color: _ProfilePreviewSheetState._border),
-        backgroundColor: _ProfilePreviewSheetState._surface2,
+        foregroundColor: palette.textPrimary,
+        disabledForegroundColor: palette.textTertiary,
+        side: BorderSide(color: palette.borderStrong),
+        backgroundColor: palette.surfaceMuted,
         padding: const EdgeInsets.symmetric(vertical: 13),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
       ),
@@ -983,6 +986,7 @@ class _ErrorBody extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 24),
       child: Center(
@@ -992,7 +996,7 @@ class _ErrorBody extends StatelessWidget {
             fallback: "Couldn't load this profile. Please try again.",
           ),
           textAlign: TextAlign.center,
-          style: const TextStyle(color: Color(0xFFA69CAF), fontSize: 14),
+          style: TextStyle(color: palette.textSecondary, fontSize: 14),
         ),
       ),
     );
