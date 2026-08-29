@@ -7924,3 +7924,43 @@ Flutter owns correct chrome from the first rendered app frame.
   screen must own the full dark atom and document why it is immersive.
 - The preference remains device-local and keeps the persisted enum introduced
   by ADR-072, so no migration or Firestore write is needed.
+
+## ADR-128: The central YO action is cradled by the dock's actual outline
+
+**Status**: Implemented in source; web and native release pending
+**Date**: 2026-08-29
+
+### Context
+
+The redesigned mobile navigation raised the branded YO action above a rounded
+floating bar, but the bar itself remained an uninterrupted rectangle. The
+button therefore read as a circle laid on top of navigation rather than the
+intentional recessed cradle in the approved interaction reference. Adding a
+background-coloured mask would only work in one theme and would separate the
+visible edge from hit testing, clipping and shadows.
+
+### Decision
+
+The shared `YoFloatingNavigationDock` owns one custom rounded `ShapeBorder`.
+Its top edge uses the Material circular-notch tangent construction around the
+64/68 px YO control with a five-pixel gap, then continues into the existing
+30 px outer corners. The same path paints the semantic Dark/Pearl surface,
+border and shadow and clips active decoration. A non-interactive semantic
+`surfaceSunken` socket with a strong boundary fills the cut-out behind the
+button, so the recess remains visible regardless of page content. The centre
+control stays a separate semantic action above that surface; product tab
+indexes and routing remain unchanged.
+
+### Consequences
+
+- The cut-out is self-contained and cannot expose a theme-mismatched page or
+  masking colour through its five-pixel socket.
+- Fill, border, shadow and clipping cannot drift into four approximations of
+  the same silhouette.
+- Widget coverage asserts the top-centre opening, filled lower centre,
+  centring, full tappable edge, 320/768 px layouts and unchanged destination
+  semantics. Ordered focus, Enter/Space activation, visible focus chrome and
+  the 160%+ two-by-two full-label layout are pinned independently. Real-font
+  Dark and Pearl frames cover Home and Chats selection at 320/390/430 px.
+- A physical native visual/haptic pass remains release evidence for the next
+  coordinated tester build; no native build is created by this source change.

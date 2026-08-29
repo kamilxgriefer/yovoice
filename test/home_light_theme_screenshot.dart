@@ -298,6 +298,7 @@ Future<void> _render(
   required Brightness brightness,
   required _FeedState state,
   required double textScale,
+  int selectedTabIndex = 0,
 }) async {
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1;
@@ -334,7 +335,7 @@ Future<void> _render(
             bottomNavigationBar: desktop
                 ? null
                 : YoFloatingNavigationDock(
-                    selectedTabIndex: 0,
+                    selectedTabIndex: selectedTabIndex,
                     momentsTabIndex: 5,
                     unreadConversationCount: 7,
                     onDestinationSelected: (_) {},
@@ -519,6 +520,29 @@ void main() {
           brightness: Brightness.light,
           state: state,
           textScale: 1,
+        );
+        await _shoot(tester, label);
+      });
+    }
+  }
+
+  for (final brightness in Brightness.values) {
+    for (final size in [
+      const Size(320, 640),
+      const Size(390, 844),
+      const Size(430, 932),
+    ]) {
+      final label =
+          'dock-${brightness.name}-chats-selected-'
+          '${size.width.toInt()}x${size.height.toInt()}';
+      testWidgets(label, (tester) async {
+        await _render(
+          tester,
+          size: size,
+          brightness: brightness,
+          state: _FeedState.populated,
+          textScale: size.width == 320 ? 2 : 1,
+          selectedTabIndex: 1,
         );
         await _shoot(tester, label);
       });

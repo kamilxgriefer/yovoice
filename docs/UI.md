@@ -46,6 +46,29 @@ and 2560 px where relevant, plus a 2.0 text scale. The acceptance bar is no
 overflow, no clipped primary text, 44x44 minimum interactive targets,
 keyboard/focus access on desktop, and preserved safe-area/keyboard insets.
 
+## Floating mobile navigation
+
+`YoFloatingNavigationDock` is the only mobile shell navigation surface. Its
+central YO action is a real action, not a destination tab, and sits in a
+sculpted circular cradle cut into the dock. One tangent notched path must own
+the translucent fill, outline, shadow and clipping together; do not recreate
+the effect by painting a circle over a rectangular bar or with theme-coloured
+mask widgets. A non-interactive `surfaceSunken` socket fills the opening behind
+the action so the cradle stays legible over every page. The action remains
+centred independently of translated labels, uses 64 px below 332 logical
+pixels and 68 px otherwise, and retains a five pixel ring inside the cradle.
+
+The control's visible top edge remains tappable, all five actions keep at least
+44x44 logical pixels, and safe-area reservation belongs to the dock rather
+than each hosting screen. Dark and Pearl use the same geometry with semantic
+navigation surfaces. Ordered keyboard traversal is Home, Chats, YO, Moments,
+More; the focused YO action owns a two-pixel semantic focus ring above its
+opaque centre. At 160% text and above, the dock grows vertically and places
+the four destinations in two columns by two rows around the centre action, so
+full labels remain visible without shrinking the requested text scale. Reduced
+motion disables the YO ripple, capsule travel and breathing without changing
+layout.
+
 ## Semantic colour ownership
 
 `AppColors` owns stable brand and status colours. `AppPalette`, installed as a

@@ -2613,4 +2613,14 @@ permission flags).
   keyboard inset, rapid retargeting, actionable semantics, active-animation
   disposal, Android system Back, final-row
   visibility and retained page state. A physical iOS/Android visual and haptic
-  pass remains release evidence for the next native tester build.
+  pass remains release evidence for the next native tester build. The first
+  visual pass still painted YO over a complete rounded rectangle, so the
+  approved central cradle read as an overlap instead of a deliberate cut-out.
+  The shipping surface now uses one tangent notched path for fill, border,
+  shadow and child clipping, with the 64/68 px YO control centred inside a
+  five-pixel `surfaceSunken` socket. Dark/Pearl real-font renders and
+  path-level widget assertions guard the corrected silhouette. The follow-up
+  accessibility pass also gives the whole painted ring one circular hitbox,
+  orders keyboard focus Home → Chats → YO → Moments → More, paints a visible
+  YO focus boundary and switches 160%+ text to a taller two-by-two destination
+  layout instead of truncating labels.

@@ -16,6 +16,19 @@ someone decide what to pick up next.
 
 ## Done
 
+- **The central YO action now sits in a real sculpted dock cradle**
+  (2026-08-29, ADR-128, **WEB DEPLOYMENT PENDING; NATIVE STORE BUILD PENDING**):
+  the shared mobile navigation surface no longer paints a circular logo over a
+  complete rounded rectangle. Its border, translucent fill, clipping and
+  shadows now follow one smooth tangent notch around the raised YO action in
+  both Dark and Pearl. The five actions, active capsule, unread badge, haptics,
+  safe-area reservation and reduced-motion behavior remain unchanged. Geometry
+  tests pin the sculpted opening, centred 64/68 px action, 44 px targets and
+  320/768 px resilience. Keyboard focus follows Home → Chats → YO → Moments →
+  More with an explicit YO focus ring; at 160%+ text the dock expands into a
+  two-by-two destination layout so every label stays complete. Real-font
+  Dark/Pearl renders include Home- and Chats-selected states at 320/390/430 px.
+
 - **Pearl light theme is a complete, premium normal-product experience**
   (2026-08-29, ADR-127, **WEB HOSTING DEPLOYED; NATIVE STORE BUILD PENDING**):
   a semantic `AppPalette` now owns paired canvas,

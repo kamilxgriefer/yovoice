@@ -1,6 +1,7 @@
 import 'dart:ui' show SemanticsAction;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show SemanticsNode;
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -20,6 +21,23 @@ bool _selected(WidgetTester tester, String label) {
         ),
       )
       .any((widget) => widget.properties.selected == true);
+}
+
+int _actionableButtonCount(SemanticsNode root) {
+  var count = 0;
+  void visit(SemanticsNode node) {
+    final data = node.getSemanticsData();
+    if (data.hasAction(SemanticsAction.tap) && data.flagsCollection.isButton) {
+      count += 1;
+    }
+    node.visitChildren((child) {
+      visit(child);
+      return true;
+    });
+  }
+
+  visit(root);
+  return count;
 }
 
 Future<SemanticsHandle> _pumpDock(
@@ -121,12 +139,31 @@ void main() {
       final dock = tester.widget<Container>(
         find.byKey(const ValueKey('yo-floating-navigation-dock')),
       );
-      final dockDecoration = dock.decoration! as BoxDecoration;
+      final dockDecoration = dock.decoration! as ShapeDecoration;
       expect(
         dockDecoration.color,
         palette.navigationSurface.withValues(alpha: .97),
       );
-      expect((dockDecoration.border! as Border).top.color, palette.border);
+      expect(dockDecoration.shape.dimensions, const EdgeInsets.all(1));
+
+      final clip = tester.widget<ClipPath>(
+        find.byKey(const ValueKey('yo-dock-notch-clip')),
+      );
+      final dockSize = tester.getSize(
+        find.byKey(const ValueKey('yo-floating-navigation-dock')),
+      );
+      final path = clip.clipper!.getClip(dockSize);
+      expect(path.contains(Offset(dockSize.width / 2, 2)), isFalse);
+      expect(path.contains(const Offset(20, 20)), isTrue);
+      expect(
+        path.contains(
+          Offset(
+            dockSize.width / 2,
+            YoFloatingNavigationDock.notchCenterFromTop + 46,
+          ),
+        ),
+        isTrue,
+      );
 
       final active = tester.widget<AnimatedContainer>(
         find.byKey(const ValueKey('yo-active-capsule-reduced-motion')),
@@ -237,21 +274,90 @@ void main() {
         reason: '$label must remain activatable by a screen reader',
       );
     }
+    final dockSemantics = tester.getSemantics(
+      find.byKey(const ValueKey('yo-floating-navigation-semantics')),
+    );
+    expect(_actionableButtonCount(dockSemantics), 5);
     semantics.dispose();
   });
 
-  testWidgets('the complete visible top edge of the YO circle is tappable', (
+  testWidgets(
+    'keyboard focus follows Home, Chats, YO, Moments, More with a visible YO ring',
+    (tester) async {
+      final semantics = await _pumpDock(tester, reduceMotion: true);
+      final home = tester.widget<InkWell>(
+        find.byKey(const ValueKey('yo-destination-0')),
+      );
+      home.focusNode!.requestFocus();
+      await tester.pump();
+      expect(FocusManager.instance.primaryFocus?.debugLabel, 'YO dock 0');
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+      await tester.pump();
+      expect(FocusManager.instance.primaryFocus?.debugLabel, 'YO dock 1');
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+      await tester.pump();
+      expect(FocusManager.instance.primaryFocus?.debugLabel, 'YO dock 2');
+      final outline = tester.widget<AnimatedContainer>(
+        find.byKey(const ValueKey('yo-center-focus-outline')),
+      );
+      final outlineDecoration = outline.decoration! as BoxDecoration;
+      expect(outlineDecoration.border!.top.color, AppPalette.dark.focus);
+      expect(outlineDecoration.border!.top.width, 2);
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pump();
+      expect(find.text('Voice 1'), findsOneWidget);
+      await tester.sendKeyEvent(LogicalKeyboardKey.space);
+      await tester.pump();
+      expect(find.text('Voice 2'), findsOneWidget);
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+      await tester.pump();
+      expect(FocusManager.instance.primaryFocus?.debugLabel, 'YO dock 3');
+      await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+      await tester.pump();
+      expect(FocusManager.instance.primaryFocus?.debugLabel, 'YO dock 4');
+      semantics.dispose();
+    },
+  );
+
+  testWidgets('the exposed top and side edges of the YO circle are tappable', (
     tester,
   ) async {
     final semantics = await _pumpDock(tester, reduceMotion: true);
     final button = tester.getRect(
       find.byKey(const ValueKey('yo-center-action-boundary')),
     );
+    final dock = tester.getRect(
+      find.byKey(const ValueKey('yo-floating-navigation-dock')),
+    );
+    expect(button.top, lessThan(dock.top));
+    expect(button.center.dx, closeTo(dock.center.dx, .01));
+
+    final cradle = tester.getRect(
+      find.byKey(const ValueKey('yo-center-cradle')),
+    );
+    expect(cradle.center, button.center);
+    expect(cradle.width, button.width + YoFloatingNavigationDock.notchGap * 2);
+    expect(
+      tester
+          .widget<IgnorePointer>(find.byKey(const ValueKey('yo-center-cradle')))
+          .ignoring,
+      isTrue,
+    );
 
     await tester.tapAt(Offset(button.center.dx, button.top + 2));
     await tester.pump();
-
     expect(find.text('Voice 1'), findsOneWidget);
+    await tester.tapAt(Offset(button.left + 2, button.center.dy));
+    await tester.pump();
+    expect(find.text('Voice 2'), findsOneWidget);
+    await tester.tapAt(Offset(button.right - 2, button.center.dy));
+    await tester.pump();
+
+    expect(find.text('Voice 3'), findsOneWidget);
     expect(tester.takeException(), isNull);
     semantics.dispose();
   });
@@ -272,38 +378,54 @@ void main() {
     semantics.dispose();
   });
 
-  testWidgets('320px, 1.3 text and a home indicator remain overflow-free', (
+  testWidgets('320px, 200% text and a home indicator work in both themes', (
     tester,
   ) async {
-    final semantics = await _pumpDock(
-      tester,
-      width: 320,
-      height: 700,
-      safeBottom: 34,
-      textScale: 1.3,
-      reduceMotion: true,
-    );
-
-    final dock = tester.getRect(
-      find.byKey(const ValueKey('yo-floating-navigation-dock')),
-    );
-    final capsule = tester.getRect(
-      find.byKey(const ValueKey('yo-active-capsule-position')),
-    );
-    expect(dock.left, greaterThanOrEqualTo(14));
-    expect(dock.right, lessThanOrEqualTo(306));
-    expect(dock.height, YoFloatingNavigationDock.visualHeight);
-    expect(capsule.width, inInclusiveRange(64, 72));
-    for (final slot in [0, 1, 3, 4]) {
-      final target = tester.getSize(
-        find.byKey(ValueKey('yo-destination-$slot')),
+    for (final theme in [AppTheme.darkTheme, AppTheme.lightTheme]) {
+      final semantics = await _pumpDock(
+        tester,
+        width: 320,
+        height: 700,
+        safeBottom: 34,
+        textScale: 2,
+        reduceMotion: true,
+        theme: theme,
       );
-      expect(target.width, greaterThanOrEqualTo(44));
-      expect(target.height, greaterThanOrEqualTo(44));
+
+      final dock = tester.getRect(
+        find.byKey(const ValueKey('yo-floating-navigation-dock')),
+      );
+      final capsule = tester.getRect(
+        find.byKey(const ValueKey('yo-active-capsule-position')),
+      );
+      final button = tester.getRect(
+        find.byKey(const ValueKey('yo-center-action-boundary')),
+      );
+      expect(dock.left, greaterThanOrEqualTo(14));
+      expect(dock.right, lessThanOrEqualTo(306));
+      expect(dock.height, YoFloatingNavigationDock.accessibleVisualHeight);
+      expect(capsule.width, 132);
+      expect(button.width, 64);
+      for (final slot in [0, 1, 3, 4]) {
+        final target = tester.getSize(
+          find.byKey(ValueKey('yo-destination-$slot')),
+        );
+        expect(target.width, greaterThanOrEqualTo(44));
+        expect(target.height, greaterThanOrEqualTo(44));
+      }
+      for (final label in ['Home', 'Chats', 'Moments', 'More']) {
+        final text = tester.widget<Text>(find.text(label));
+        expect(text.maxLines, 1);
+        expect(text.overflow, TextOverflow.visible);
+      }
+      expect(tester.takeException(), isNull);
+      semantics.dispose();
     }
     expect(YoFloatingNavigationDock.reservedHeightFor(safeBottom: 34), 132);
-    expect(tester.takeException(), isNull);
-    semantics.dispose();
+    expect(
+      YoFloatingNavigationDock.reservedHeightFor(safeBottom: 34, textScale: 2),
+      158,
+    );
   });
 
   testWidgets(
