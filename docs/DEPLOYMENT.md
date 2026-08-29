@@ -15,6 +15,32 @@ deployables described in
 | Storage rules | `firebase deploy --only storage` | Manual |
 | `yovoice-website` | Vercel | Automatic, on push to `main` (separate repo) |
 
+### Released 2026-08-29: compact active-room YO Live Capsule
+
+**WEB HOSTING RELEASED from
+`838bddb293508c5d8038cf9f5f4e3d7f8cb06297`; NATIVE TESTER BUILD HELD.**
+The collapsed phone/tablet live-room surface is now one 82 px capsule with an
+isolated room-return area and circular 48 px Chat, Mic and More controls.
+Latest chat, session-local unread, audience and reconnecting state remain
+visible without the previous multi-row panel covering Home. Return and
+truthful Leave/End actions live in a compact modal; exact-route ownership and
+room-id guards prevent remote-session cleanup from dismissing an underlying
+screen or disconnecting a replacement room.
+
+Hosting workflow
+[33257269683](https://github.com/kamilxgriefer/yovoice/actions/runs/33257269683)
+passed the complete pinned gate and deployed its packaged artifact. The
+artifact, `https://yovoice-ec54a.web.app/main.dart.js` and
+`https://app.yovoice.app/main.dart.js` are byte-identical: SHA-256
+`1835920f7c1c55058c073c3c19231ad1bc68d6656865a63eecc5ca5b723a2715`,
+6,476,304 bytes. Push verification, CodeQL and the Chrome browser smoke also
+passed. Local release evidence is Flutter VM **1644/1644**, focused capsule
+**26/26**, render harness **18/18**, clean analysis and a successful release
+web build. Dark/Pearl captures cover 320/360/390/430 px, 200% text, long copy,
+reconnecting, muted, unread, More and expanded states. No iOS or Android
+package was created because native distribution remains queued for the next
+coordinated tester build.
+
 ### Released 2026-08-29: sculpted central YO dock cradle
 
 **WEB HOSTING RELEASED from

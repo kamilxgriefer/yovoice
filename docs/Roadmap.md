@@ -17,8 +17,8 @@ someone decide what to pick up next.
 ## Done
 
 - **The collapsed live-room panel is now a single compact YO Live Capsule**
-  (2026-08-29, ADR-102 amendment, **SOURCE VERIFIED; WEB HOSTING RELEASE
-  QUEUED; NATIVE TESTER BUILD HELD**): the old multi-row mobile card is
+  (2026-08-29, ADR-102 amendment, `838bddb`, **WEB HOSTING DEPLOYED +
+  BYTE-EXACT; NATIVE TESTER BUILD HELD**): the old multi-row mobile card is
   replaced below 880 px by an 82 px capsule with a dedicated room-return zone
   and three 48 px circular Chat, Mic and More controls. Latest chat, unread,
   audience and reconnecting state stay glanceable without occupying the Home

@@ -1229,7 +1229,7 @@ permission flags).
 
 ## UI
 
-- **FIXED IN SOURCE 2026-08-29 — collapsing a live-room chat exposed a large
+- **FIXED AND RELEASED TO WEB 2026-08-29 — collapsing a live-room chat exposed a large
   multi-row control panel that obscured the Home feed.** Phone and compact-
   tablet layouts now use one 82 px YO Live Capsule with a separate room-return
   zone and circular 48 px Chat, Mic and More controls; low-frequency Return and
@@ -1240,6 +1240,9 @@ permission flags).
   the next room. Busy Mute consumes input without advertising an accessibility
   action; mobile honors the full system text scale. Twenty-six focused widget
   regressions and Dark/Pearl production-dock renders cover these boundaries.
+  Workflow 33257269683 deployed commit `838bddb`; the verified artifact and
+  both Hosting domains are byte-identical at SHA-256 `1835920f7c1c5505`
+  (6,476,304 bytes). The coordinated native tester build remains held.
 
 - **Fixed in source 2026-08-29 — Home Moments rendered a large filler card,
   friend-only identities and profile suggestions without audio.** Mobile and

@@ -85,7 +85,9 @@ are kept in the movement log below as history.
 > interaction matrix passed **26/26**; the Dark/Pearl production-dock render
 > matrix passed **18/18** across 320/360/390/430 px, 200% text, long copy,
 > reconnecting, muted, unread, More and expanded states. The complete VM suite
-> passed 1644/1644 and `flutter analyze` remained clean.
+> passed 1644/1644 and `flutter analyze` remained clean. The workflow artifact
+> and both production Hosting domains are byte-exact at SHA-256
+> `1835920f7c1c5505` (6,476,304 bytes).
 
 **A trap worth naming, because it cost a full diagnosis pass.**
 `firestore-tests/storage.test.js` used to hardcode Firestore 8080 and Storage
