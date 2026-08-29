@@ -8042,7 +8042,7 @@ appearance override preserves that protection without contradicting Pearl.
 
 ## ADR-130: Canonical profile identity converges snapshots and live chat UI
 
-**Status**: Implemented in source; coordinated tester build 13 pending
+**Status**: Implemented in source; coordinated tester build 14 pending
 **Date**: 2026-08-29
 
 ### Context
@@ -8086,7 +8086,7 @@ only after explicit `--apply`.
 - Each conversation transaction revalidates exact two-party membership, so a
   stale discovery result cannot inject identity after a delete/recreate race.
 - Repair failures emit no document paths or account identifiers to the CLI.
-- Build 13 and a two-account Chats/Home smoke test remain native release
+- Build 14 and a two-account Chats/Home smoke test remain native release
   evidence; automated coverage is not represented as physical-device proof.
 
 ## ADR-131: Profile identity uses a two-level passport rail, not a badge staircase

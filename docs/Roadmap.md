@@ -109,7 +109,7 @@ someone decide what to pick up next.
   restore an obsolete or deliberately removed photo. A dry-run-first,
   resumable and aggregate-only repair is ready for existing stale snapshots.
   The release gate remains production deploy/repair plus a two-account
-  Chats/Home smoke on coordinated tester build 13.
+  Chats/Home smoke on coordinated tester build 14.
 
 - **Room covers can be composed by the host instead of being silently
   center-cropped** (2026-08-29, ADR-122, **DEPLOYED TO WEB; NATIVE STORE BUILD
