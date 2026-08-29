@@ -14,6 +14,7 @@ import 'package:yovoice/features/messages/presentation/screens/chat_screen.dart'
 import 'package:yovoice/features/profile/data/models/user_profile.dart';
 import 'package:yovoice/features/profile/data/services/follow_service.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
+import 'package:yovoice/features/profile/presentation/widgets/profile_vibe_headline.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 import 'package:yovoice/features/staff/data/staff_capabilities.dart';
@@ -509,7 +510,6 @@ class _Body extends StatelessWidget {
     final photo = profile?.photoUrl ?? seedPhotoUrl;
     final vibe = profile?.statusMessage.trim() ?? '';
     final bio = profile?.bio.trim() ?? '';
-    final headline = vibe.isNotEmpty ? vibe : bio;
 
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -604,10 +604,13 @@ class _Body extends StatelessWidget {
             ),
           ],
         ),
-        if (headline.isNotEmpty) ...[
+        if (vibe.isNotEmpty) ...[
+          const SizedBox(height: 14),
+          ProfileVibeHeadline(vibe: vibe, compact: true),
+        ] else if (bio.isNotEmpty) ...[
           const SizedBox(height: 14),
           Text(
-            headline,
+            bio,
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(

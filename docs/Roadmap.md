@@ -1275,6 +1275,14 @@ someone decide what to pick up next.
   App Store Connect shows build 10 as Testing in the permanent internal and
   external groups, while Google Play shows version code 10 available to the
   11-account internal cohort. Full Flutter VM: 1410/1410; analyze: clean.
+  A 2026-08-29 source follow-up makes every safe HTTPS URL in that shared Vibe
+  actionable on own profile, another member's profile and Profile Preview.
+  Provider-aware 48 px link rows open through platform universal links, while
+  strict public-host validation prevents untrusted Vibe text from receiving a
+  music-brand label or launching local/custom-scheme destinations. Keyboard,
+  link semantics, double-fire, failure, disposal and 320 px/200% behavior are
+  regression-tested. See ADR-126. The native change waits for the next
+  coordinated tester build rather than creating a one-off store upload.
 - Full documentation system — Vision/Architecture/Features/Roadmap/
   Firebase/Backend/Flutter/UI/Decisions/Bugs plus this evolution pass
   (`02275bd`, `26d11a2`, and this session's commit).

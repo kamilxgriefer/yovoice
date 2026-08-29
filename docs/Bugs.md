@@ -1238,6 +1238,20 @@ permission flags).
   at 1280 px with no visible overflow. The pinned Hosting artifact is live,
   TestFlight build 10 is Testing in both permanent tester groups, and Google
   Play Internal Testing exposes version code 10 to the selected cohort.
+  **FOLLOW-UP FIXED IN SOURCE 2026-08-29 — HTTPS links inside the now-visible
+  Vibe were still inert text.** Own profile, another member's profile and the
+  compact Profile Preview now share one actionable renderer. It removes each
+  URL from the prose and presents a separate 48 px link row with the real host,
+  a provider label for boundary-verified YouTube, Spotify, Apple Music and
+  other known music domains, keyboard focus/Enter, link semantics and an
+  external universal-link handoff so the installed music app can claim it and
+  the browser remains the fallback. Unknown public HTTPS destinations stay
+  honestly labeled External link. User-generated non-HTTPS, credentialed,
+  local/private-style, IP, custom-port and non-ASCII-authority URLs remain
+  plain text; false/throwing launch attempts stay visible inline without
+  exposing platform errors. Parser, double-fire/cooldown, disposal,
+  accessibility, preview-bio fallback and 320 px/200% regressions cover the
+  path. See ADR-126.
 
 - **FIXED AND RELEASED TO WEB/MOBILE BETA 2026-08-28 — Podcast Room behaved like a recolored
   Community Room and ignored parts of its own creation contract.** The screen

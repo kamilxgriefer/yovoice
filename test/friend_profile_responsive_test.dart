@@ -158,11 +158,11 @@ void main() {
             .first,
       );
       expect(
-        find.text(
-          'Linkin Park - In the End https://youtu.be/eVTXPUF4Oz4 playing on repeat tonight!',
-        ),
+        find.text('Linkin Park - In the End playing on repeat tonight!'),
         findsOneWidget,
       );
+      expect(find.text('YouTube'), findsOneWidget);
+      expect(find.text('youtu.be'), findsOneWidget);
       if (size.width > 880) {
         expect(
           tester
@@ -257,10 +257,18 @@ void main() {
         scrollable: scrollable,
       );
       expect(
-        find.bySemanticsLabel(
-          'Vibe: Linkin Park - In the End https://youtu.be/eVTXPUF4Oz4 playing on repeat tonight!',
-        ),
+        find.text('Linkin Park - In the End playing on repeat tonight!'),
         findsOneWidget,
+      );
+      final vibeLink = find.bySemanticsLabel('Open in YouTube, youtu.be');
+      expect(vibeLink, findsOneWidget);
+      expect(tester.getSize(vibeLink).height, greaterThanOrEqualTo(48));
+      expect(
+        tester
+            .getSemantics(vibeLink)
+            .getSemanticsData()
+            .hasAction(ui.SemanticsAction.tap),
+        isTrue,
       );
       expect(
         tester

@@ -7825,3 +7825,51 @@ ripple.
   behavior, semantics, haptics, rapid taps, reduced motion, back-stack
   forwarding and retained state. Physical platform rendering, haptic feel and
   screen-reader cadence remain release checks for the next native tester build.
+
+## ADR-126: Vibe links are explicit public-HTTPS actions, not trusted rich text
+
+**Status**: Implemented in source; native store build pending
+**Date**: 2026-08-29
+
+### Context
+
+Profiles stored Vibe as one bounded free-form `statusMessage`. Once the field
+became visible on full profiles, a pasted YouTube, Spotify or Apple Music URL
+still rendered as inert text. Passing the whole user-controlled string to a
+launcher would make custom schemes, local endpoints and provider-lookalike
+hosts actionable; making the complete Vibe card tappable would also turn
+ordinary prose into a surprising external navigation target.
+
+### Decision
+
+One pure parser extracts every explicit `https://` token in source order and
+hands only public DNS-style hosts to the launcher. Credentials, custom ports,
+IP literals, local/internal suffixes and non-ASCII authorities are refused.
+Provider labels use exact or domain-boundary checks; known music hosts receive
+their name, while every other accepted destination is labeled External link.
+Trailing sentence punctuation is preserved as prose rather than appended to
+the URI. No network prefetch, redirect resolution, artwork lookup or custom
+music SDK is involved.
+
+The shared Vibe renderer removes accepted URLs from the prose and gives each
+destination its own 48 px Material link row, real host, external-link cue,
+link/linkUrl semantics and a high-contrast keyboard focus outline. The row
+opens the HTTPS universal link through `LaunchMode.externalApplication`, so an
+installed service app may claim it and a browser remains the platform
+fallback. One single-flight state plus a short successful-handoff cooldown
+prevents double launches; a failed handoff is an inline live error that remains
+visible inside modal Profile Preview. Own profile, foreign profile and compact
+preview use the same component. Creator-directory cards keep supporting text
+non-interactive because the whole card already opens a profile.
+
+### Consequences
+
+- Adding a new trusted provider label requires an exact/boundary-safe host and
+  a lookalike-domain regression; generic HTTPS links work without one.
+- Scheme-less, HTTP and custom-scheme text deliberately stays non-actionable.
+- No Firestore field, projection, Security Rule or dependency changes are
+  required; this is presentation and local input validation only.
+- Automated coverage pins multiple links, Unicode paths, punctuation,
+  malicious hosts, exact launch URI, keyboard/screen-reader semantics,
+  double-fire, failure/disposal and 320 px at 200% text. Real-font frames cover
+  390 px, 768 px and the 320 px enlarged-text state.

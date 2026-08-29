@@ -6,7 +6,7 @@ exist; know which one you're relying on before trusting it.
 
 ## Current counts
 
-**As of 2026-08-28.** One table, so there is a single place to correct when
+**As of 2026-08-29.** One table, so there is a single place to correct when
 these move. Every figure is a suite run, not an estimate; file counts are
 `find`. *(The date used to live in the heading; it moved into the body on
 2026-08-20 because three other docs deep-link to this section and every
@@ -18,7 +18,7 @@ correction silently broke all three anchors.)*
 | Storage rules | `npm --prefix firestore-tests run test:storage` | **60** checks |
 | Family media (combined) | `npm --prefix firestore-tests run test:family-media` | **11** checks |
 | Cloud Functions | `npm --prefix functions test` | **907** tests (69 `*.test.js` files) |
-| Flutter VM | `flutter test` | **1461** tests (130 VM-compatible files) |
+| Flutter VM | `flutter test` | **1551** tests (137 VM-compatible files) |
 | Flutter browser | `flutter test --platform chrome test/web_audio_capture_browser_test.dart` | **1** test (1 browser-only file) |
 
 **Where these numbers came from.** Functions 907 and Rules 519 were re-measured
@@ -33,11 +33,11 @@ security matrices passed 47/47 Flutter, 9/9 pure Functions and 24/24 emulator
 checks. A final direct-call lock audit added four emulator regressions for late
 cancel/decline/end and expiry preserving a replacement call's locks; the exact
 concurrent Functions gate then passed 907/907 on a fresh emulator pair.
-Flutter VM 1461 passed in one invocation, the real Chrome Blob lifecycle passed
+Flutter VM 1551 passed in one invocation, the real Chrome Blob lifecycle passed
 1/1, and `flutter analyze` was clean on those bytes. Storage 60 and family
 media 11 also ran against fresh isolated emulators rather than an occupied
 local 8080 endpoint. Web and signed Android release compilation succeeded. The
-69 Functions files and 131 total Flutter test files (130 VM-compatible plus one
+69 Functions files and 138 total Flutter test files (137 VM-compatible plus one
 browser-only) are current `find` results rather than carried-forward estimates. The earlier
 figures this row used to carry (Rules 485, Functions 783/62, Flutter 1198/114)
 are kept in the movement log below as history.
@@ -182,6 +182,18 @@ suite, so isolated ports are real isolation rather than documentation only.
 > active-call lost-ACK recovery, atomic same-pair start acquisition and an
 > independently expiring token-safe alert claim. The final independent review
 > reproduced every prior P1/P2 failure and returned SHIP with no P0-P3 finding.
+
+> **Movement, 2026-08-29 (ADR-126 actionable Vibe music links).** The exact
+> final Flutter source passes **1551/137**, up from the preceding measured
+> **1538/136** baseline. A new 12-test parser/widget suite and one compact-
+> preview fallback regression cover ordered multi-link extraction, Unicode
+> URLs, balanced punctuation, exact provider-host boundaries, public-HTTPS
+> rejection rules, truthful link semantics and keyboard activation,
+> single-flight/cooldown behavior, inline retry feedback and disposal during a
+> pending launch. The focused gate passed **29/29**, `flutter analyze` is clean,
+> and the explicit visual harness passed and was inspected at 390 px, 768 px
+> and 320 px with 200% text. Rules, Functions, Storage, family media and the
+> browser-only lifecycle suite are unchanged.
 
 > **Movement, 2026-08-17.** Rules 301 → **318** (`c75720a`, the
 > account-status gating; the suite ran 310 passed / 8 failed against the

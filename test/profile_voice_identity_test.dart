@@ -97,7 +97,12 @@ void main() {
     expect(longVibe.length, 80, reason: 'exercise the editor field limit');
     await _pumpCard(tester, _profile(vibe: longVibe), width: 320, textScale: 2);
 
-    expect(find.text(longVibe), findsOneWidget);
+    expect(
+      find.text('Linkin Park - In the End playing on repeat tonight!'),
+      findsOneWidget,
+    );
+    expect(find.text('YouTube'), findsOneWidget);
+    expect(find.text('youtu.be'), findsOneWidget);
     expect(find.byKey(const ValueKey('profile-vibe')), findsOneWidget);
     expect(tester.takeException(), isNull);
   });

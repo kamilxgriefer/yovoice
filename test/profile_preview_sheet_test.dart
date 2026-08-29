@@ -75,6 +75,8 @@ Future<FocusNode> _openPreview(
   ThemeData? theme,
   FriendMutationInvoker? friendMutationInvoker,
   _OpenConversation? openConversation,
+  String statusMessage =
+      'Recording a new episode https://open.spotify.com/episode/123',
 }) async {
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1;
@@ -96,7 +98,7 @@ Future<FocusNode> _openPreview(
     'bio':
         'Independent interviews, culture, music, design and thoughtful '
         'conversations from communities around the world.',
-    'statusMessage': 'Recording a new long-form conversation this week.',
+    'statusMessage': statusMessage,
     'accountType': 'creator',
     'premiumIdentity': true,
     'isOnline': true,
@@ -176,6 +178,12 @@ void main() {
       );
 
       expect(find.byType(ProfilePreviewSheet), findsOneWidget);
+      expect(find.text('Recording a new episode'), findsOneWidget);
+      final vibeLink = find.bySemanticsLabel(
+        'Open in Spotify, open.spotify.com',
+      );
+      expect(vibeLink, findsOneWidget);
+      expect(tester.getSize(vibeLink).height, greaterThanOrEqualTo(48));
       final close = find.bySemanticsLabel('Close profile preview');
       expect(close, findsOneWidget);
       expect(
@@ -211,6 +219,22 @@ void main() {
 
     expect(find.byType(ProfilePreviewSheet), findsNothing);
     expect(launcherFocus.hasFocus, isTrue);
+  });
+
+  testWidgets('profile preview keeps bio as the fallback when Vibe is empty', (
+    tester,
+  ) async {
+    await _openPreview(tester, size: const Size(390, 844), statusMessage: '');
+
+    expect(
+      find.text(
+        'Independent interviews, culture, music, design and thoughtful '
+        'conversations from communities around the world.',
+      ),
+      findsOneWidget,
+    );
+    expect(find.text('VIBE'), findsNothing);
+    expect(find.bySemanticsLabel(RegExp(r'^Open in ')), findsNothing);
   });
 
   testWidgets('reciprocal request immediately renders Friends, not Requested', (
