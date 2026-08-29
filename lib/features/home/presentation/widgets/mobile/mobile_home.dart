@@ -116,6 +116,8 @@ class _MobileHomeState extends State<MobileHome> {
   Stream<List<VoiceRoom>>? _liveRooms;
   Stream<List<FollowUser>>? _following;
   Stream<UserProfile>? _profile;
+  ProfileService? _profiles;
+  final Map<String, Stream<String>> _recentChatPhotoStreams = {};
   Stream<List<VoiceMoment>>? _feed;
 
   Stream<List<Conversation>>? _conversations;
@@ -140,9 +142,10 @@ class _MobileHomeState extends State<MobileHome> {
       _following = null;
     }
     try {
-      _profile = (widget.profileService ?? ProfileService())
-          .watchCurrentProfile();
+      _profiles = widget.profileService ?? ProfileService();
+      _profile = _profiles!.watchCurrentProfile();
     } catch (_) {
+      _profiles = null;
       _profile = null;
     }
     try {
@@ -172,6 +175,18 @@ class _MobileHomeState extends State<MobileHome> {
     } catch (_) {
       return '';
     }
+  }
+
+  Stream<String> _recentChatPhotoStream(String userId) {
+    final profiles = _profiles;
+    if (profiles == null) return const Stream<String>.empty();
+    return _recentChatPhotoStreams.putIfAbsent(
+      userId,
+      () => profiles
+          .watchProfile(userId)
+          .map((profile) => profile.photoUrl?.trim() ?? '')
+          .distinct(),
+    );
   }
 
   void _openRoomSettings(VoiceRoom room) {
@@ -315,6 +330,9 @@ class _MobileHomeState extends State<MobileHome> {
                 currentUserId: _resolvedUserId,
                 onOpenConversation: widget.onOpenConversation,
                 onFindFriends: widget.onOpenFriends,
+                photoStreamForUser: _profiles == null
+                    ? null
+                    : _recentChatPhotoStream,
               ),
             ),
           ],

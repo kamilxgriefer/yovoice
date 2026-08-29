@@ -68,6 +68,34 @@ class Conversation {
 
   bool isMutedFor(String userId) => mutedBy.contains(userId);
 
+  /// Returns an offline-capable conversation snapshot with one participant's
+  /// live public identity overlaid. The source object remains immutable and
+  /// every unrelated participant/metadata field is preserved.
+  Conversation withParticipantIdentity({
+    required String userId,
+    required String displayName,
+    required String photoUrl,
+  }) {
+    return Conversation(
+      id: id,
+      participantIds: participantIds,
+      participantNames: {
+        ...participantNames,
+        userId: displayName.trim().isEmpty ? 'YO Voice user' : displayName,
+      },
+      participantEmails: participantEmails,
+      participantPhotoUrls: {...participantPhotoUrls, userId: photoUrl},
+      unreadCounts: unreadCounts,
+      lastMessage: lastMessage,
+      lastMessageType: lastMessageType,
+      lastMessageSenderId: lastMessageSenderId,
+      updatedAt: updatedAt,
+      createdAt: createdAt,
+      archivedBy: archivedBy,
+      mutedBy: mutedBy,
+    );
+  }
+
   String previewFor(String currentUserId) {
     if (lastMessage.isEmpty) {
       return 'Start a conversation';

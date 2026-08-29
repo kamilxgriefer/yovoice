@@ -14,6 +14,7 @@ import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/messages/presentation/screens/chat_screen.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
+import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
 /// Opens the production New message route.
 ///
@@ -114,7 +115,10 @@ class _MessagesScreenState extends State<MessagesScreen> {
     setState(() => _query = value);
   }
 
-  Future<void> _openConversation(Conversation conversation) async {
+  Future<void> _openConversation(
+    Conversation conversation, {
+    FriendUser? liveFriend,
+  }) async {
     final currentUserId = _auth.currentUser?.uid;
 
     if (currentUserId == null) {
@@ -151,9 +155,13 @@ class _MessagesScreenState extends State<MessagesScreen> {
         builder: (_) => ChatScreen(
           conversationId: conversation.id,
           otherUserId: otherUserId,
-          otherDisplayName: conversation.displayNameFor(otherUserId),
+          otherDisplayName:
+              liveFriend?.displayName ??
+              conversation.displayNameFor(otherUserId),
           otherEmail: '',
-          otherPhotoUrl: conversation.photoUrlFor(otherUserId),
+          otherPhotoUrl: liveFriend == null
+              ? conversation.photoUrlFor(otherUserId)
+              : liveFriend.photoUrl ?? '',
           messageService: widget.messageService,
           auth: widget.auth,
         ),
@@ -306,96 +314,131 @@ class _MessagesScreenState extends State<MessagesScreen> {
                   padding: const EdgeInsets.fromLTRB(18, 0, 18, 13),
                   child: _SearchField(controller: _searchController),
                 ),
-                _FriendsRow(
-                  friendsStream: _friendsStream,
-                  onFriendSelected: _startChat,
-                  onAdd: _showNewMessageSheet,
-                ),
-                const SizedBox(height: 9),
                 Expanded(
-                  child: StreamBuilder<List<Conversation>>(
-                    stream: _conversationsStream,
-                    builder: (context, snapshot) {
-                      if (snapshot.connectionState == ConnectionState.waiting &&
-                          !snapshot.hasData) {
-                        return Center(
-                          child: CircularProgressIndicator(
-                            color: colors.primary,
-                            strokeWidth: 2.5,
+                  child: StreamBuilder<List<FriendUser>>(
+                    stream: _friendsStream,
+                    builder: (context, friendsSnapshot) {
+                      final friends =
+                          friendsSnapshot.data ?? const <FriendUser>[];
+                      final friendsById = {
+                        for (final friend in friends) friend.id: friend,
+                      };
+                      return Column(
+                        children: [
+                          _FriendsRow(
+                            friends: friends,
+                            onFriendSelected: _startChat,
+                            onAdd: _showNewMessageSheet,
                           ),
-                        );
-                      }
+                          const SizedBox(height: 9),
+                          Expanded(
+                            child: StreamBuilder<List<Conversation>>(
+                              stream: _conversationsStream,
+                              builder: (context, snapshot) {
+                                if (snapshot.connectionState ==
+                                        ConnectionState.waiting &&
+                                    !snapshot.hasData) {
+                                  return Center(
+                                    child: CircularProgressIndicator(
+                                      color: colors.primary,
+                                      strokeWidth: 2.5,
+                                    ),
+                                  );
+                                }
 
-                      if (snapshot.hasError) {
-                        return _MessagesError(
-                          message: _readableError(snapshot.error),
-                        );
-                      }
+                                if (snapshot.hasError) {
+                                  return _MessagesError(
+                                    message: _readableError(snapshot.error),
+                                  );
+                                }
 
-                      if (currentUserId == null) {
-                        return const _MessagesError(
-                          message: 'Sign in to open your chats.',
-                        );
-                      }
+                                if (currentUserId == null) {
+                                  return const _MessagesError(
+                                    message: 'Sign in to open your chats.',
+                                  );
+                                }
 
-                      final allConversations =
-                          snapshot.data ?? const <Conversation>[];
-                      final conversations = allConversations
-                          .where((conversation) {
-                            final archived = conversation.isArchivedFor(
-                              currentUserId,
-                            );
+                                final allConversations =
+                                    snapshot.data ?? const <Conversation>[];
+                                final conversations = allConversations
+                                    .where((conversation) {
+                                      final archived = conversation
+                                          .isArchivedFor(currentUserId);
 
-                            if (_showArchived != archived) {
-                              return false;
-                            }
+                                      if (_showArchived != archived) {
+                                        return false;
+                                      }
 
-                            if (_query.isEmpty) {
-                              return true;
-                            }
+                                      if (_query.isEmpty) {
+                                        return true;
+                                      }
 
-                            final otherId = conversation.otherUserId(
-                              currentUserId,
-                            );
-                            final name = conversation
-                                .displayNameFor(otherId)
-                                .toLowerCase();
-                            final preview = conversation
-                                .previewFor(currentUserId)
-                                .toLowerCase();
+                                      final otherId = conversation.otherUserId(
+                                        currentUserId,
+                                      );
+                                      final name =
+                                          (friendsById[otherId]?.displayName ??
+                                                  conversation.displayNameFor(
+                                                    otherId,
+                                                  ))
+                                              .toLowerCase();
+                                      final preview = conversation
+                                          .previewFor(currentUserId)
+                                          .toLowerCase();
 
-                            return name.contains(_query) ||
-                                preview.contains(_query);
-                          })
-                          .toList(growable: false);
+                                      return name.contains(_query) ||
+                                          preview.contains(_query);
+                                    })
+                                    .toList(growable: false);
 
-                      if (conversations.isEmpty) {
-                        return _EmptyMessages(
-                          archived: _showArchived,
-                          hasSearch: _query.isNotEmpty,
-                          onNewMessage: _showNewMessageSheet,
-                        );
-                      }
+                                if (conversations.isEmpty) {
+                                  return _EmptyMessages(
+                                    archived: _showArchived,
+                                    hasSearch: _query.isNotEmpty,
+                                    onNewMessage: _showNewMessageSheet,
+                                  );
+                                }
 
-                      return ListView.separated(
-                        padding: const EdgeInsets.fromLTRB(14, 4, 14, 118),
-                        itemCount: conversations.length,
-                        separatorBuilder: (_, __) => const SizedBox(height: 4),
-                        itemBuilder: (context, index) {
-                          final conversation = conversations[index];
-                          final muted = conversation.isMutedFor(currentUserId);
+                                return ListView.separated(
+                                  padding: const EdgeInsets.fromLTRB(
+                                    14,
+                                    4,
+                                    14,
+                                    118,
+                                  ),
+                                  itemCount: conversations.length,
+                                  separatorBuilder: (_, __) =>
+                                      const SizedBox(height: 4),
+                                  itemBuilder: (context, index) {
+                                    final conversation = conversations[index];
+                                    final muted = conversation.isMutedFor(
+                                      currentUserId,
+                                    );
+                                    final otherUserId = conversation
+                                        .otherUserId(currentUserId);
+                                    final liveFriend = friendsById[otherUserId];
 
-                          return _ConversationTile(
-                            conversation: conversation,
-                            currentUserId: currentUserId,
-                            muted: muted,
-                            service: _messageService,
-                            onTap: () => _openConversation(conversation),
-                            onArchive: () => _archiveConversation(conversation),
-                            onToggleMute: () =>
-                                _toggleMute(conversation, muted),
-                          );
-                        },
+                                    return _ConversationTile(
+                                      conversation: conversation,
+                                      currentUserId: currentUserId,
+                                      liveFriend: liveFriend,
+                                      muted: muted,
+                                      service: _messageService,
+                                      onTap: () => _openConversation(
+                                        conversation,
+                                        liveFriend: liveFriend,
+                                      ),
+                                      onArchive: () =>
+                                          _archiveConversation(conversation),
+                                      onToggleMute: () =>
+                                          _toggleMute(conversation, muted),
+                                    );
+                                  },
+                                );
+                              },
+                            ),
+                          ),
+                        ],
                       );
                     },
                   ),
@@ -588,12 +631,12 @@ class _SearchField extends StatelessWidget {
 
 class _FriendsRow extends StatelessWidget {
   const _FriendsRow({
-    required this.friendsStream,
+    required this.friends,
     required this.onFriendSelected,
     required this.onAdd,
   });
 
-  final Stream<List<FriendUser>> friendsStream;
+  final List<FriendUser> friends;
   final ValueChanged<FriendUser> onFriendSelected;
   final VoidCallback onAdd;
 
@@ -604,28 +647,21 @@ class _FriendsRow extends StatelessWidget {
 
     return SizedBox(
       height: height,
-      child: StreamBuilder<List<FriendUser>>(
-        stream: friendsStream,
-        builder: (context, snapshot) {
-          final friends = snapshot.data ?? const <FriendUser>[];
-
-          return ListView(
-            scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.symmetric(horizontal: 18),
-            children: [
-              _FriendStory(label: 'New', icon: Icons.add_rounded, onTap: onAdd),
-              ...friends
-                  .take(12)
-                  .map(
-                    (friend) => _FriendStory(
-                      label: friend.displayName,
-                      friend: friend,
-                      onTap: () => onFriendSelected(friend),
-                    ),
-                  ),
-            ],
-          );
-        },
+      child: ListView(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 18),
+        children: [
+          _FriendStory(label: 'New', icon: Icons.add_rounded, onTap: onAdd),
+          ...friends
+              .take(12)
+              .map(
+                (friend) => _FriendStory(
+                  label: friend.displayName,
+                  friend: friend,
+                  onTap: () => onFriendSelected(friend),
+                ),
+              ),
+        ],
       ),
     );
   }
@@ -649,74 +685,76 @@ class _FriendStory extends StatelessWidget {
     final user = friend;
     final hasPhoto = user?.photoUrl?.trim().isNotEmpty == true;
     final palette = context.appPalette;
-    final colors = Theme.of(context).colorScheme;
 
-    return SizedBox(
-      width: 76,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(18),
-        child: Column(
-          children: [
-            Stack(
-              clipBehavior: Clip.none,
+    return Semantics(
+      button: true,
+      onTap: onTap,
+      label: user == null
+          ? 'New message'
+          : '${user.displayName}, ${user.isOnline ? 'online' : 'offline'}',
+      child: ExcludeSemantics(
+        child: SizedBox(
+          width: 76,
+          child: InkWell(
+            onTap: onTap,
+            borderRadius: BorderRadius.circular(18),
+            child: Column(
               children: [
-                Container(
-                  padding: const EdgeInsets.all(2),
-                  decoration: const BoxDecoration(
-                    shape: BoxShape.circle,
-                    gradient: LinearGradient(
-                      colors: [
-                        Color(0xFFFF416C),
-                        Color(0xFFB42DFF),
-                        Color(0xFF5D00D7),
-                      ],
-                    ),
-                  ),
-                  child: CircleAvatar(
-                    radius: 27,
-                    backgroundColor: palette.surfaceMuted,
-                    backgroundImage: hasPhoto
-                        ? NetworkImage(user!.photoUrl!)
-                        : null,
-                    child: icon != null
-                        ? Icon(icon, color: colors.onPrimary, size: 26)
-                        : hasPhoto
-                        ? null
-                        : Text(
-                            user?.initial ?? '?',
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.w900,
-                            ),
-                          ),
-                  ),
-                ),
-                if (user?.isOnline == true)
-                  Positioned(
-                    right: 2,
-                    bottom: 2,
-                    child: Container(
-                      width: 15,
-                      height: 15,
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF20D66B),
+                Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(2),
+                      decoration: const BoxDecoration(
                         shape: BoxShape.circle,
-                        border: Border.all(color: palette.background, width: 3),
+                        gradient: LinearGradient(
+                          colors: [
+                            Color(0xFFFF416C),
+                            Color(0xFFB42DFF),
+                            Color(0xFF5D00D7),
+                          ],
+                        ),
+                      ),
+                      child: UserAvatar(
+                        radius: 27,
+                        photoUrl: hasPhoto ? user!.photoUrl : null,
+                        displayName: user?.displayName,
+                        fallbackIcon: icon,
                       ),
                     ),
-                  ),
+                    if (user?.isOnline == true)
+                      Positioned(
+                        right: 2,
+                        bottom: 2,
+                        child: Container(
+                          width: 15,
+                          height: 15,
+                          decoration: BoxDecoration(
+                            color:
+                                Theme.of(context).brightness == Brightness.dark
+                                ? const Color(0xFF20D66B)
+                                : const Color(0xFF08783F),
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                              color: palette.background,
+                              width: 3,
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 7),
+                Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: palette.textSecondary, fontSize: 11),
+                ),
               ],
             ),
-            const SizedBox(height: 7),
-            Text(
-              label,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              textAlign: TextAlign.center,
-              style: TextStyle(color: palette.textSecondary, fontSize: 11),
-            ),
-          ],
+          ),
         ),
       ),
     );
@@ -727,6 +765,7 @@ class _ConversationTile extends StatelessWidget {
   const _ConversationTile({
     required this.conversation,
     required this.currentUserId,
+    required this.liveFriend,
     required this.muted,
     required this.service,
     required this.onTap,
@@ -736,6 +775,7 @@ class _ConversationTile extends StatelessWidget {
 
   final Conversation conversation;
   final String currentUserId;
+  final FriendUser? liveFriend;
   final bool muted;
 
   /// The screen's own service, rather than one built inside `build` —
@@ -748,8 +788,12 @@ class _ConversationTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final otherUserId = conversation.otherUserId(currentUserId);
-    final name = conversation.displayNameFor(otherUserId);
-    final photoUrl = conversation.photoUrlFor(otherUserId);
+    final friend = liveFriend;
+    final name =
+        friend?.displayName ?? conversation.displayNameFor(otherUserId);
+    final photoUrl = friend == null
+        ? conversation.photoUrlFor(otherUserId)
+        : friend.photoUrl ?? '';
     final unread = conversation.unreadCountFor(currentUserId);
     final preview = conversation.previewFor(currentUserId);
     final palette = context.appPalette;
@@ -984,40 +1028,37 @@ class _ConversationAvatarState extends State<_ConversationAvatar> {
         final online = snapshot.data?.isOnline ?? false;
         final palette = context.appPalette;
 
-        return Stack(
-          clipBehavior: Clip.none,
-          children: [
-            CircleAvatar(
-              radius: 29,
-              backgroundColor: const Color(0xFF67259A),
-              backgroundImage: photoUrl.trim().isNotEmpty
-                  ? NetworkImage(photoUrl)
-                  : null,
-              child: photoUrl.trim().isNotEmpty
-                  ? null
-                  : Text(
-                      name.trim().isEmpty ? '?' : name.trim()[0].toUpperCase(),
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.w900,
-                      ),
+        return Semantics(
+          label: '$name, ${online ? 'online' : 'offline'}',
+          image: true,
+          excludeSemantics: true,
+          child: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              UserAvatar(
+                radius: 29,
+                backgroundColor: const Color(0xFF67259A),
+                photoUrl: photoUrl,
+                displayName: name,
+              ),
+              if (online)
+                Positioned(
+                  right: 1,
+                  bottom: 1,
+                  child: Container(
+                    width: 16,
+                    height: 16,
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).brightness == Brightness.dark
+                          ? const Color(0xFF20D66B)
+                          : const Color(0xFF08783F),
+                      shape: BoxShape.circle,
+                      border: Border.all(color: palette.background, width: 3),
                     ),
-            ),
-            if (online)
-              Positioned(
-                right: 1,
-                bottom: 1,
-                child: Container(
-                  width: 16,
-                  height: 16,
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF20D66B),
-                    shape: BoxShape.circle,
-                    border: Border.all(color: palette.background, width: 3),
                   ),
                 ),
-              ),
-          ],
+            ],
+          ),
         );
       },
     );
@@ -1193,6 +1234,9 @@ class NewMessageSheetState extends State<NewMessageSheet> {
                       builder: (context, friendSnapshot) {
                         final friends =
                             friendSnapshot.data ?? const <FriendUser>[];
+                        final friendsById = {
+                          for (final friend in friends) friend.id: friend,
+                        };
                         final loading =
                             conversationSnapshot.connectionState ==
                                 ConnectionState.waiting &&
@@ -1230,6 +1274,18 @@ class NewMessageSheetState extends State<NewMessageSheet> {
                                       !c.isArchivedFor(widget.currentUserId) &&
                                       c.lastMessage.isNotEmpty,
                                 )
+                                .map((conversation) {
+                                  final otherId = conversation.otherUserId(
+                                    widget.currentUserId,
+                                  );
+                                  final friend = friendsById[otherId];
+                                  if (friend == null) return conversation;
+                                  return conversation.withParticipantIdentity(
+                                    userId: otherId,
+                                    displayName: friend.displayName,
+                                    photoUrl: friend.photoUrl ?? '',
+                                  );
+                                })
                                 .toList(growable: false)
                               ..sort(
                                 (a, b) => b.updatedAt.compareTo(a.updatedAt),
@@ -1363,21 +1419,11 @@ class _RecentChatTile extends StatelessWidget {
 
     return ListTile(
       onTap: onTap,
-      leading: CircleAvatar(
+      leading: UserAvatar(
         radius: 25,
         backgroundColor: const Color(0xFF67259A),
-        backgroundImage: photoUrl.trim().isNotEmpty
-            ? NetworkImage(photoUrl)
-            : null,
-        child: photoUrl.trim().isNotEmpty
-            ? null
-            : Text(
-                name.trim().isEmpty ? '?' : name.trim()[0].toUpperCase(),
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.w900,
-                ),
-              ),
+        photoUrl: photoUrl,
+        displayName: name,
       ),
       title: Text(
         name,
@@ -1411,40 +1457,38 @@ class _FriendTile extends StatelessWidget {
 
     return ListTile(
       onTap: onTap,
-      leading: Stack(
-        clipBehavior: Clip.none,
-        children: [
-          CircleAvatar(
-            radius: 25,
-            backgroundColor: const Color(0xFF67259A),
-            backgroundImage: friend.photoUrl?.trim().isNotEmpty == true
-                ? NetworkImage(friend.photoUrl!)
-                : null,
-            child: friend.photoUrl?.trim().isNotEmpty == true
-                ? null
-                : Text(
-                    friend.initial,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w900,
-                    ),
+      leading: Semantics(
+        label:
+            '${friend.displayName}, ${friend.isOnline ? 'online' : 'offline'}',
+        image: true,
+        excludeSemantics: true,
+        child: Stack(
+          clipBehavior: Clip.none,
+          children: [
+            UserAvatar(
+              radius: 25,
+              backgroundColor: const Color(0xFF67259A),
+              photoUrl: friend.photoUrl,
+              displayName: friend.displayName,
+            ),
+            if (friend.isOnline)
+              Positioned(
+                right: 0,
+                bottom: 0,
+                child: Container(
+                  width: 14,
+                  height: 14,
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).brightness == Brightness.dark
+                        ? const Color(0xFF20D66B)
+                        : const Color(0xFF08783F),
+                    shape: BoxShape.circle,
+                    border: Border.all(color: palette.surfaceRaised, width: 3),
                   ),
-          ),
-          if (friend.isOnline)
-            Positioned(
-              right: 0,
-              bottom: 0,
-              child: Container(
-                width: 14,
-                height: 14,
-                decoration: BoxDecoration(
-                  color: const Color(0xFF20D66B),
-                  shape: BoxShape.circle,
-                  border: Border.all(color: palette.surfaceRaised, width: 3),
                 ),
               ),
-            ),
-        ],
+          ],
+        ),
       ),
       title: Text(
         friend.displayName,

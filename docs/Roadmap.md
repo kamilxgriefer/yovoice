@@ -62,6 +62,17 @@ someone decide what to pick up next.
   Responsive regression coverage includes 320 px at 200% text and 44 px create
   targets.
 
+- **Profile avatars converge across Chats, open conversations and Home**
+  (2026-08-29, ADR-130, **SOURCE + EMULATOR VERIFIED; BACKEND/BUILD 13
+  PENDING**): live surfaces now read the privacy-safe current profile while
+  conversation snapshots remain an offline fallback. Retryable server fan-out
+  re-reads canonical identity per bounded transaction, validates Auth/profile
+  activity and exact conversation membership, and cannot let an old delivery
+  restore an obsolete or deliberately removed photo. A dry-run-first,
+  resumable and aggregate-only repair is ready for existing stale snapshots.
+  The release gate remains production deploy/repair plus a two-account
+  Chats/Home smoke on coordinated tester build 13.
+
 - **Room covers can be composed by the host instead of being silently
   center-cropped** (2026-08-29, ADR-122, **SOURCE ONLY; NATIVE STORE BUILD
   PENDING**): Create Community/Podcast Room and Room Settings now share a real

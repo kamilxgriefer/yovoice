@@ -2635,3 +2635,19 @@ permission flags).
   remain branded dark while device-local preferences load; Flutter then owns
   the live surface and status-bar brightness. A source regression asserts the
   global pin stays absent.
+- **Fixed in source 2026-08-29 — profile photos could update in the Chats
+  people strip but remain stale in conversation rows and Home.** Direct
+  conversations and Voice Moments keep denormalized identity for offline
+  rendering. Their profile trigger used the triggering event's `after` image,
+  so an older at-least-once Firestore event finishing last could permanently
+  restore an obsolete avatar. The fan-out now re-reads the canonical user in
+  the same retryable transaction as each bounded target chunk. Chats overlays
+  its reactive friend identity immediately, open chat routes watch the
+  privacy-safe `publicProfiles` projection through `ProfileService`, and mobile
+  Home resolves that same projection for recent-chat cards just like desktop.
+  A production-pinned, dry-run-first repair converges already-stale snapshots
+  but fails closed for missing/disabled Auth accounts and retired profiles.
+  Emulator regressions cover out-of-order delivery, avatar removal, retired
+  identities and a conversation-membership race; widget regressions cover the
+  Chats row, open route and standard Home card. Coordinated native tester build
+  13 remains the physical-device release evidence.

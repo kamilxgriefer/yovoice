@@ -52,6 +52,41 @@ MemoryImage _solidWhiteImage() {
 }
 
 void main() {
+  testWidgets('standard recent chat uses the live profile avatar', (
+    tester,
+  ) async {
+    final profilePhotos = StreamController<String>();
+    addTearDown(profilePhotos.close);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SizedBox(
+            width: 390,
+            child: RecentChats(
+              snapshot: AsyncSnapshot.withData(ConnectionState.active, [
+                _conversation(0, photoUrl: 'fixture://stale-photo'),
+              ]),
+              currentUserId: 'me',
+              onOpenConversation: (_) {},
+              onFindFriends: () {},
+              photoStreamForUser: (_) => profilePhotos.stream,
+            ),
+          ),
+        ),
+      ),
+    );
+
+    UserAvatar avatar() => tester.widget<UserAvatar>(
+      find.byKey(const ValueKey('recent-chat-avatar-friend-0')),
+    );
+    expect(avatar().photoUrl, 'fixture://stale-photo');
+
+    profilePhotos.add('fixture://fresh-photo');
+    await tester.pump();
+    expect(avatar().photoUrl, 'fixture://fresh-photo');
+  });
+
   for (final width in [320.0, 390.0, 768.0, 1440.0]) {
     testWidgets('recent chats reflows cleanly at ${width.toInt()} px', (
       tester,

@@ -17,12 +17,13 @@ correction silently broke all three anchors.)*
 | Firestore rules | `npm --prefix firestore-tests test` | **519** checks |
 | Storage rules | `npm --prefix firestore-tests run test:storage` | **60** checks |
 | Family media (combined) | `npm --prefix firestore-tests run test:family-media` | **11** checks |
-| Cloud Functions | `npm --prefix functions test` | **907** tests (69 `*.test.js` files) |
-| Flutter VM | `flutter test` | **1618** tests (148 VM-compatible files) |
+| Cloud Functions | `npm --prefix functions test` | **920** tests (70 `*.test.js` files) |
+| Flutter VM | `flutter test` | **1622** tests (148 VM-compatible files) |
 | Flutter browser | `flutter test --platform chrome test/web_audio_capture_browser_test.dart` | **1** test (1 browser-only file) |
 
-**Where these numbers came from.** Functions 907 and Rules 519 were re-measured
-on 2026-08-28 against the exact current source and Node 22. A deliberately
+**Where these numbers came from.** Functions 920 and Flutter VM 1622 were
+re-measured on 2026-08-29 against the exact current source; Rules 519 was last
+re-measured on 2026-08-28. A deliberately
 sequential full Functions run reached 901/903 because two unrelated suites
 shared one long-lived emulator: the global identity scrub counted another
 file's conversation and a social-graph query timed out under accumulated
@@ -32,12 +33,13 @@ instead of exclusive ownership of a shared collection. The final chat/push
 security matrices passed 47/47 Flutter, 9/9 pure Functions and 24/24 emulator
 checks. A final direct-call lock audit added four emulator regressions for late
 cancel/decline/end and expiry preserving a replacement call's locks; the exact
-concurrent Functions gate then passed 907/907 on a fresh emulator pair.
-Flutter VM 1618 passed in one invocation, the real Chrome Blob lifecycle passed
+concurrent Functions gate then passed 907/907 on a fresh emulator pair. The
+later ADR-130 identity wave passed 920/920 on a fresh Auth/Firestore emulator
+pair. Flutter VM 1622 passed in one invocation, the real Chrome Blob lifecycle passed
 1/1, and `flutter analyze` was clean on those bytes. Storage 60 and family
 media 11 also ran against fresh isolated emulators rather than an occupied
 local 8080 endpoint. Web and signed Android release compilation succeeded. The
-69 Functions files and 149 total Flutter test files (148 VM-compatible plus one
+70 Functions files and 149 total Flutter test files (148 VM-compatible plus one
 browser-only) are current `find` results rather than carried-forward estimates. The earlier
 figures this row used to carry (Rules 485, Functions 783/62, Flutter 1198/114)
 are kept in the movement log below as history.
@@ -215,6 +217,20 @@ suite, so isolated ports are real isolation rather than documentation only.
 > rendered and inspected in populated/empty/error states on mobile and desktop.
 > Rules, Functions, Storage, family media and browser-only coverage are
 > unchanged.
+
+> **Movement, 2026-08-29 (ADR-130 canonical profile identity).** Functions
+> **907/69 → 920/70** adds convergent current-source fan-out, authoritative
+> avatar removal, malformed identity sanitization, bounded multi-page
+> transactions, exact Club/Moment/conversation target revalidation,
+> missing/disabled Auth and retired-profile denial, plus a resumable
+> aggregate-only repair whose failure output cannot disclose account paths.
+> The focused gates passed **14/14** fan-out emulator and **4/4** repair tests;
+> the complete fresh Auth/Firestore run passed **920/920**. Flutter VM
+> **1618 → 1622** covers live Chats/Home/open-chat identity, authoritative null
+> photos and New Message overlay/search/routing; the complete VM suite passed
+> **1622/1622** and `flutter analyze` was clean. Rules, Storage, family media
+> and browser-only coverage are unchanged. A physical two-account build-13
+> Chats/Home check remains release evidence, not an automated claim.
 
 > **Movement, 2026-08-17.** Rules 301 → **318** (`c75720a`, the
 > account-status gating; the suite ran 310 passed / 8 failed against the

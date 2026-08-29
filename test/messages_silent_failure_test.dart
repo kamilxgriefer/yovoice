@@ -19,6 +19,7 @@ import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/messages/presentation/screens/chat_screen.dart';
 import 'package:yovoice/features/messages/presentation/screens/messages_screen.dart';
 import 'package:yovoice/shared/identity/public_identity_repository.dart';
+import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
 /// A user-visible action that fails must not fail invisibly.
 ///
@@ -696,6 +697,7 @@ void main() {
       required Size size,
       ThemeData? theme,
       TextScaler textScaler = TextScaler.noScaling,
+      FriendService? friendService,
     }) async {
       useSurface(tester, size);
       await tester.pumpWidget(
@@ -705,7 +707,7 @@ void main() {
               data: MediaQuery.of(context).copyWith(textScaler: textScaler),
               child: MessagesScreen(
                 messageService: service,
-                friendService: _StubFriendService(),
+                friendService: friendService ?? _StubFriendService(),
                 auth: MockFirebaseAuth(
                   signedIn: true,
                   mockUser: MockUser(uid: currentUserId),
@@ -718,6 +720,73 @@ void main() {
       );
       await tester.pumpAndSettle();
     }
+
+    testWidgets('chat list overlays the current friend avatar immediately', (
+      tester,
+    ) async {
+      final friends = StreamController<List<FriendUser>>();
+      addTearDown(friends.close);
+      final service = _StubMessageService(
+        messages: const <Message>[],
+        conversations: [
+          _archivedConversation().withParticipantIdentity(
+            userId: otherUserId,
+            displayName: 'Stale identity',
+            photoUrl: 'fixture://stale-avatar',
+          ),
+        ],
+      );
+      await pumpMessages(
+        tester,
+        service,
+        size: narrow,
+        friendService: _StubFriendService(stream: friends.stream),
+      );
+      await tester.tap(find.byTooltip('Show archived conversations'));
+      await tester.pump();
+
+      friends.add(const [
+        FriendUser(
+          id: otherUserId,
+          displayName: 'Fresh identity',
+          email: '',
+          photoUrl: null,
+          isOnline: false,
+          lastSeen: null,
+        ),
+      ]);
+      await tester.pump();
+
+      final listAvatar = tester
+          .widgetList<UserAvatar>(find.byType(UserAvatar))
+          .singleWhere((avatar) => avatar.radius == 29);
+      expect(listAvatar.photoUrl, '');
+      expect(find.text('Fresh identity'), findsWidgets);
+      expect(find.bySemanticsLabel('Fresh identity, offline'), findsOneWidget);
+      expect(find.bySemanticsLabel('New message'), findsOneWidget);
+      final storyAvatar = tester
+          .widgetList<UserAvatar>(find.byType(UserAvatar))
+          .singleWhere(
+            (avatar) =>
+                avatar.radius == 27 && avatar.displayName == 'Fresh identity',
+          );
+      expect(storyAvatar.photoUrl, isNull);
+      expect(storyAvatar.backgroundColor, const Color(0xFF64258E));
+
+      final semanticFriend = find.semantics.byLabel('Fresh identity, offline');
+      expect(
+        semanticFriend.evaluate().single.getSemanticsData().hasAction(
+          SemanticsAction.tap,
+        ),
+        isTrue,
+      );
+      tester.semantics.tap(semanticFriend);
+      await tester.pumpAndSettle();
+      final headerAvatar = tester
+          .widgetList<UserAvatar>(find.byType(UserAvatar))
+          .firstWhere((avatar) => avatar.radius == 20);
+      expect(headerAvatar.photoUrl, '');
+    });
 
     for (final size in const <Size>[Size(320, 780), Size(768, 900)]) {
       testWidgets(
@@ -829,8 +898,9 @@ Conversation _archivedConversation() {
 /// The friends list is not under test here; MessagesScreen only needs the
 /// stream so the "new message" sheet has something to show.
 class _StubFriendService extends FriendService {
-  _StubFriendService()
-    : super(
+  _StubFriendService({Stream<List<FriendUser>>? stream})
+    : _stream = stream,
+      super(
         firestore: FakeFirebaseFirestore(),
         auth: MockFirebaseAuth(
           signedIn: true,
@@ -838,9 +908,11 @@ class _StubFriendService extends FriendService {
         ),
       );
 
+  final Stream<List<FriendUser>>? _stream;
+
   @override
   Stream<List<FriendUser>> watchFriends() =>
-      Stream<List<FriendUser>>.value(const <FriendUser>[]);
+      _stream ?? Stream<List<FriendUser>>.value(const <FriendUser>[]);
 }
 
 /// A [MessageService] whose individual operations can be failed on demand.

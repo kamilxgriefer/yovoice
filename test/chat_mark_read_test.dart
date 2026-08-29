@@ -9,7 +9,9 @@ import 'package:yovoice/features/messages/data/models/message.dart';
 import 'package:yovoice/features/messages/data/services/active_conversation_registry.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/messages/presentation/screens/chat_screen.dart';
+import 'package:yovoice/features/profile/data/services/profile_service.dart';
 import 'package:yovoice/shared/identity/public_identity_repository.dart';
+import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
 /// Read receipts follow the conversation snapshot, not the build cycle:
 /// mark-read fires once per newest incoming-unread advance (never per rebuild
@@ -63,21 +65,23 @@ void main() {
     );
   }
 
-  Widget host(_StubMessageService service) => MaterialApp(
-    theme: ThemeData.dark(useMaterial3: true),
-    home: ChatScreen(
-      conversationId: conversationId,
-      otherUserId: otherUserId,
-      otherDisplayName: 'Them',
-      otherEmail: '',
-      otherPhotoUrl: '',
-      messageService: service,
-      auth: MockFirebaseAuth(
-        signedIn: true,
-        mockUser: MockUser(uid: currentUserId),
-      ),
-    ),
-  );
+  Widget host(_StubMessageService service, {ProfileService? profileService}) =>
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: ChatScreen(
+          conversationId: conversationId,
+          otherUserId: otherUserId,
+          otherDisplayName: 'Them',
+          otherEmail: '',
+          otherPhotoUrl: '',
+          messageService: service,
+          profileService: profileService,
+          auth: MockFirebaseAuth(
+            signedIn: true,
+            mockUser: MockUser(uid: currentUserId),
+          ),
+        ),
+      );
 
   testWidgets('mark-read fires once per newest message, not per rebuild', (
     tester,
@@ -129,6 +133,49 @@ void main() {
     expect(
       ActiveConversationRegistry.instance.contains(conversationId),
       isFalse,
+    );
+  });
+
+  testWidgets('an open chat applies refreshed conversation identity', (
+    tester,
+  ) async {
+    final service = _StubMessageService();
+    final firestore = FakeFirebaseFirestore();
+    final auth = MockFirebaseAuth(
+      signedIn: true,
+      mockUser: MockUser(uid: currentUserId),
+    );
+    await firestore.collection('publicProfiles').doc(otherUserId).set({
+      'displayName': 'Them',
+      'photoUrl': 'fixture://old-avatar',
+    });
+    await tester.pumpWidget(
+      host(
+        service,
+        profileService: ProfileService(firestore: firestore, auth: auth),
+      ),
+    );
+    service.emit(const <Message>[]);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Them'), findsWidgets);
+
+    await firestore.collection('publicProfiles').doc(otherUserId).set({
+      'displayName': 'Fresh name',
+      'photoUrl': null,
+    });
+    await tester.pumpAndSettle();
+
+    expect(find.text('Fresh name'), findsWidgets);
+    expect(find.text('Them'), findsNothing);
+    final avatars = tester
+        .widgetList<UserAvatar>(find.byType(UserAvatar))
+        .where((avatar) => avatar.radius == 20);
+    expect(avatars, isNotEmpty);
+    expect(
+      avatars.every((avatar) => avatar.photoUrl?.isEmpty ?? true),
+      isTrue,
+      reason: 'an authoritative null profile photo removes the stale image',
     );
   });
 
@@ -272,7 +319,6 @@ class _StubMessageService extends MessageService {
   int maxConcurrentMarks = 0;
 
   void emit(List<Message> messages) => _messages.add(messages);
-
   @override
   Stream<List<Message>> watchMessages(String conversationId) =>
       _messages.stream;

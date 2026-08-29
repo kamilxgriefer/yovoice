@@ -10,6 +10,7 @@ import 'package:yovoice/features/friends/data/models/friend_user.dart';
 import 'package:yovoice/features/messages/data/models/conversation.dart';
 import 'package:yovoice/features/messages/data/models/message.dart';
 import 'package:yovoice/features/messages/presentation/screens/messages_screen.dart';
+import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
 const String _me = 'me';
 
@@ -46,6 +47,7 @@ Future<void> _pumpSheet(
   required Stream<List<FriendUser>> friends,
   required Stream<List<Conversation>> conversations,
   ThemeData? theme,
+  ValueChanged<Conversation>? onConversationSelected,
 }) async {
   await tester.pumpWidget(
     MaterialApp(
@@ -65,7 +67,7 @@ Future<void> _pumpSheet(
                 conversationsStream: conversations,
                 currentUserId: _me,
                 onFriendSelected: (_) {},
-                onConversationSelected: (_) {},
+                onConversationSelected: onConversationSelected ?? (_) {},
               ),
             ),
           ],
@@ -189,6 +191,50 @@ void main() {
       expect(find.text('Ava Stone'), findsOneWidget);
       expect(find.text('Cleo Nakamura'), findsOneWidget);
       expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('recent overlays live identity including removed avatar', (
+      tester,
+    ) async {
+      Conversation? selected;
+      final liveFriend = const FriendUser(
+        id: 'ava',
+        displayName: 'Fresh Ava',
+        email: '',
+        photoUrl: null,
+        isOnline: false,
+        lastSeen: null,
+      );
+      final friendService = _FakeFriendsSource([liveFriend]);
+      addTearDown(friendService.dispose);
+      final stale = _conversation('ava', 'Old Ava').withParticipantIdentity(
+        userId: 'ava',
+        displayName: 'Old Ava',
+        photoUrl: 'fixture://stale-avatar',
+      );
+
+      await _pumpSheet(
+        tester,
+        friends: friendService.stream,
+        conversations: Stream<List<Conversation>>.value([
+          stale,
+        ]).asBroadcastStream(),
+        onConversationSelected: (conversation) => selected = conversation,
+      );
+      await tester.pump(const Duration(milliseconds: 10));
+
+      expect(find.text('Fresh Ava'), findsOneWidget);
+      expect(find.text('Old Ava'), findsNothing);
+      final avatar = tester
+          .widgetList<UserAvatar>(find.byType(UserAvatar))
+          .singleWhere((candidate) => candidate.radius == 25);
+      expect(avatar.photoUrl, '');
+
+      await tester.enterText(find.byType(TextField), 'fresh');
+      await tester.pump();
+      await tester.tap(find.text('Fresh Ava'));
+      expect(selected?.displayNameFor('ava'), 'Fresh Ava');
+      expect(selected?.photoUrlFor('ava'), '');
     });
 
     testWidgets('shows the themed empty state when there are no friends', (

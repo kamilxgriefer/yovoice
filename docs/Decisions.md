@@ -8001,3 +8001,52 @@ appearance override preserves that protection without contradicting Pearl.
 - Immersive rooms, calls, recording and crop routes continue to apply their
   complete local dark theme and system overlay explicitly.
 - A physical build-12 Dark/Pearl/System pass remains native release evidence.
+
+## ADR-130: Canonical profile identity converges snapshots and live chat UI
+
+**Status**: Implemented in source; coordinated tester build 13 pending
+**Date**: 2026-08-29
+
+### Context
+
+Conversation rows, Club membership records and Voice Moments copy display
+name/avatar fields so they can render without joining private account data.
+The profile fan-out wrote `event.data.after` into those copies. Firestore
+events are at-least-once and may finish out of order, so an old event could
+win after a newer photo was already canonical. Chats made the mismatch visible
+because its horizontal friend strip read the reactive profile while the row
+below read only the stale conversation copy.
+
+### Decision
+
+`users/{uid}` remains the authority for visible identity fields, while Firebase
+Auth remains the authority for account existence and enablement. Every fan-out
+chunk reads the private profile inside the same Firestore transaction as its
+conversation, Club-member and Moment updates. A concurrent edit invalidates
+and retries the transaction, making every invocation convergent regardless of
+delivery order. Dynamic map keys use `FieldPath`, Club mirrors remain
+discovery-only and each canonical member record must assert the same uid.
+
+Conversation snapshots remain an offline fallback, not a UI cache authority.
+Chats overlays its already-open friend stream, an open chat watches the
+privacy-safe public profile through `ProfileService`, and both mobile and
+desktop Home can overlay that projection on recent-chat imagery. Firebase Auth
+existence/enablement and the active private profile are both required before a
+fan-out or repair may republish identity. A project-pinned bounded script
+reports aggregate counts, defaults to dry-run and repairs existing snapshots
+only after explicit `--apply`.
+
+### Consequences
+
+- Old and duplicate events cannot restore an obsolete avatar or display name.
+- Removing a photo propagates an authoritative empty value instead of falling
+  back forever to the old conversation URL.
+- Live surfaces update without route recreation, while offline/error states
+  continue using the conversation snapshot.
+- Fan-out cost is bounded to 150 targets per transaction; large histories are
+  processed in retryable chunks and the repair run is capped and resumable.
+- Each conversation transaction revalidates exact two-party membership, so a
+  stale discovery result cannot inject identity after a delete/recreate race.
+- Repair failures emit no document paths or account identifiers to the CLI.
+- Build 13 and a two-account Chats/Home smoke test remain native release
+  evidence; automated coverage is not represented as physical-device proof.

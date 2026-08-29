@@ -21,10 +21,13 @@ import 'package:yovoice/features/moderation/data/services/content_report_service
 import 'package:yovoice/features/moderation/presentation/report_content_flow.dart';
 import 'package:yovoice/features/moments/data/services/recorded_audio.dart';
 import 'package:yovoice/features/moments/data/services/voice_moment_recorder.dart';
+import 'package:yovoice/features/profile/data/models/user_profile.dart';
+import 'package:yovoice/features/profile/data/services/profile_service.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
+import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
 class ChatScreen extends StatefulWidget {
   const ChatScreen({
@@ -37,6 +40,7 @@ class ChatScreen extends StatefulWidget {
     this.auth,
     this.contentReportService,
     this.directCallService,
+    this.profileService,
     super.key,
   });
 
@@ -54,6 +58,7 @@ class ChatScreen extends StatefulWidget {
   final FirebaseAuth? auth;
   final ContentReportService? contentReportService;
   final DirectCallGateway? directCallService;
+  final ProfileService? profileService;
 
   @override
   State<ChatScreen> createState() => _ChatScreenState();
@@ -70,6 +75,7 @@ class _ChatScreenState extends State<ChatScreen> {
   late final Stream<List<Message>> _messages;
   late final Stream<bool> _typing;
   late final Stream<ChatPresence> _presence;
+  StreamSubscription<UserProfile>? _profileSubscription;
   StreamSubscription<List<Message>>? _messagesSubscription;
   StreamSubscription<List<OutboxEntry>>? _outboxSubscription;
   StreamSubscription<OutboxEntry>? _deliveredSubscription;
@@ -108,6 +114,8 @@ class _ChatScreenState extends State<ChatScreen> {
   Timer? _markReadRetryTimer;
   int _markReadRetryAttempt = 0;
   late final String _registeredConversationId;
+  late String _otherDisplayName;
+  late String _otherPhotoUrl;
 
   String get _currentUserId =>
       (widget.auth ?? FirebaseAuth.instance).currentUser?.uid ?? '';
@@ -116,7 +124,19 @@ class _ChatScreenState extends State<ChatScreen> {
   void initState() {
     super.initState();
     _registeredConversationId = widget.conversationId;
+    _otherDisplayName = widget.otherDisplayName;
+    _otherPhotoUrl = widget.otherPhotoUrl;
     ActiveConversationRegistry.instance.enter(_registeredConversationId);
+    try {
+      final profiles = widget.profileService ?? ProfileService();
+      _profileSubscription = profiles
+          .watchProfile(widget.otherUserId)
+          .listen(_handleProfileIdentity, onError: (Object _) {});
+    } catch (_) {
+      // Preview/test routes may not have a Firebase app. The route snapshot
+      // remains a safe offline fallback in that deliberately degraded mode.
+      _profileSubscription = null;
+    }
     // Broadcast so the state's own mark-read listener below and the
     // message list's StreamBuilder can share one service stream.
     _messages = _service
@@ -169,6 +189,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _typingTimer?.cancel();
     _markReadRetryTimer?.cancel();
     unawaited(_messagesSubscription?.cancel());
+    unawaited(_profileSubscription?.cancel());
     unawaited(_outboxSubscription?.cancel());
     unawaited(_deliveredSubscription?.cancel());
     unawaited(_mediaOutboxSubscription?.cancel());
@@ -182,6 +203,21 @@ class _ChatScreenState extends State<ChatScreen> {
     _pendingTypingState = false;
     unawaited(_queueTypingUpdate(false));
     super.dispose();
+  }
+
+  void _handleProfileIdentity(UserProfile profile) {
+    if (!mounted) return;
+    final name = profile.displayName.trim().isEmpty
+        ? _otherDisplayName
+        : profile.displayName.trim();
+    // null is authoritative: it means the user deliberately removed their
+    // avatar, not that the profile failed to load.
+    final photoUrl = profile.photoUrl?.trim() ?? '';
+    if (name == _otherDisplayName && photoUrl == _otherPhotoUrl) return;
+    setState(() {
+      _otherDisplayName = name;
+      _otherPhotoUrl = photoUrl;
+    });
   }
 
   void _handleTyping() {
@@ -636,7 +672,7 @@ class _ChatScreenState extends State<ChatScreen> {
       title: 'Report this message',
       subtitle:
           'Your report goes to the YO Voice moderation team with this '
-          'message attached. ${widget.otherDisplayName} is not told who '
+          'message attached. $_otherDisplayName is not told who '
           'reported it.',
     );
   }
@@ -896,8 +932,8 @@ class _ChatScreenState extends State<ChatScreen> {
               children: [
                 _ChatHeader(
                   userId: widget.otherUserId,
-                  displayName: widget.otherDisplayName,
-                  photoUrl: widget.otherPhotoUrl,
+                  displayName: _otherDisplayName,
+                  photoUrl: _otherPhotoUrl,
                   presenceStream: _presence,
                   muted: _isMuted,
                   callBusy: _startingCall,
@@ -907,8 +943,8 @@ class _ChatScreenState extends State<ChatScreen> {
                   onProfileTap: () => showProfilePreview(
                     context,
                     userId: widget.otherUserId,
-                    displayName: widget.otherDisplayName,
-                    photoUrl: widget.otherPhotoUrl,
+                    displayName: _otherDisplayName,
+                    photoUrl: _otherPhotoUrl,
                   ),
                   onCall: _startDirectCall,
                 ),
@@ -948,8 +984,8 @@ class _ChatScreenState extends State<ChatScreen> {
                           queuedMessages.isEmpty &&
                           queuedMedia.isEmpty) {
                         return _EmptyConversation(
-                          name: widget.otherDisplayName,
-                          photoUrl: widget.otherPhotoUrl,
+                          name: _otherDisplayName,
+                          photoUrl: _otherPhotoUrl,
                         );
                       }
 
@@ -2472,24 +2508,11 @@ class _Avatar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final initial = name.trim().isEmpty
-        ? '?'
-        : name.trim().characters.first.toUpperCase();
-
-    return CircleAvatar(
+    return UserAvatar(
       radius: radius,
       backgroundColor: const Color(0xFF7B25E8),
-      backgroundImage: url.trim().isNotEmpty ? NetworkImage(url) : null,
-      child: url.trim().isEmpty
-          ? Text(
-              initial,
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: radius * .65,
-                fontWeight: FontWeight.w900,
-              ),
-            )
-          : null,
+      photoUrl: url,
+      displayName: name,
     );
   }
 }

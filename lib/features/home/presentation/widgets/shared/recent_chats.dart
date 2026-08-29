@@ -33,12 +33,12 @@ class RecentChats extends StatelessWidget {
   final RecentChatsStyle style;
   final RecentChatImageProvider? backdropImageProvider;
 
-  /// Optional live public-profile photo source for the desktop artwork.
+  /// Optional live public-profile photo source for every recent-chat style.
   ///
   /// Conversation snapshots intentionally keep enough denormalized identity
   /// to render offline, but older conversations can carry an empty or stale
-  /// avatar. Desktop Home supplies the current public profile projection and
-  /// the card falls back to the conversation copy while it loads or fails.
+  /// avatar. Home supplies the current public profile projection and the card
+  /// falls back to the conversation copy while it loads or fails.
   final RecentChatPhotoStream? photoStreamForUser;
 
   @override
@@ -91,6 +91,7 @@ class RecentChats extends StatelessWidget {
               conversation: conversation,
               currentUserId: currentUserId,
               onTap: () => onOpenConversation(conversation),
+              photoStreamForUser: photoStreamForUser,
             ),
             RecentChatsStyle.desktopBackdrop => _BackdropRecentChatCard(
               conversation: conversation,
@@ -154,11 +155,13 @@ class _RecentChatCard extends StatelessWidget {
     required this.conversation,
     required this.currentUserId,
     required this.onTap,
+    required this.photoStreamForUser,
   });
 
   final Conversation conversation;
   final String currentUserId;
   final VoidCallback onTap;
+  final RecentChatPhotoStream? photoStreamForUser;
 
   @override
   Widget build(BuildContext context) {
@@ -182,10 +185,11 @@ class _RecentChatCard extends StatelessWidget {
             children: [
               Row(
                 children: [
-                  UserAvatar(
+                  _LiveRecentChatAvatar(
                     displayName: conversation.displayNameFor(otherUserId),
-                    photoUrl: conversation.photoUrlFor(otherUserId),
-                    radius: 20,
+                    conversationPhotoUrl: conversation.photoUrlFor(otherUserId),
+                    userId: otherUserId,
+                    photoStreamForUser: photoStreamForUser,
                   ),
                   const Spacer(),
                   if (unread > 0) _UnreadBadge(count: unread, compact: true),
@@ -218,6 +222,53 @@ class _RecentChatCard extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+class _LiveRecentChatAvatar extends StatelessWidget {
+  const _LiveRecentChatAvatar({
+    required this.displayName,
+    required this.conversationPhotoUrl,
+    required this.userId,
+    required this.photoStreamForUser,
+  });
+
+  final String displayName;
+  final String conversationPhotoUrl;
+  final String userId;
+  final RecentChatPhotoStream? photoStreamForUser;
+
+  Widget _avatar(String photoUrl) => UserAvatar(
+    key: ValueKey('recent-chat-avatar-$userId'),
+    displayName: displayName,
+    photoUrl: photoUrl,
+    radius: 20,
+  );
+
+  @override
+  Widget build(BuildContext context) {
+    final resolver = photoStreamForUser;
+    if (resolver == null) return _avatar(conversationPhotoUrl);
+
+    Stream<String> stream;
+    try {
+      stream = resolver(userId);
+    } catch (_) {
+      return _avatar(conversationPhotoUrl);
+    }
+
+    return StreamBuilder<String>(
+      stream: stream,
+      builder: (context, snapshot) {
+        final photoUrl =
+            snapshot.connectionState == ConnectionState.waiting ||
+                snapshot.hasError ||
+                !snapshot.hasData
+            ? conversationPhotoUrl
+            : snapshot.data!;
+        return _avatar(photoUrl);
+      },
     );
   }
 }
