@@ -1613,8 +1613,9 @@ permission flags).
   full-width two-level identity rail separates authority from product and
   achievement labels. Dark/Pearl real-font frames, 320 px/200% text, heading
   semantics, exact two-row owner geometry, Pearl AA contrast and repository
-  listener replacement are regression-tested. Live verification on the
-  deployed follow-up is still pending; see ADR-131.
+  listener replacement are regression-tested. The follow-up is live on both
+  Hosting domains: served `main.dart.js` is byte-identical to the verified
+  production build (SHA-256 `a9024e2e02fe0cb3`, 6,444,765 bytes); see ADR-131.
 
 - **FIXED IN SOURCE 2026-08-29 — Light mode painted white-on-white headings,
   stale dark cards and the wrong system-bar icons.** The setting previously

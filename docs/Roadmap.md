@@ -17,8 +17,8 @@ someone decide what to pick up next.
 ## Done
 
 - **Profile identity is now a compact two-level passport, not a badge
-  staircase** (2026-08-29, ADR-131, **SOURCE + REAL-FONT DARK/PEARL RENDERS;
-  WEB HOSTING PENDING**): the avatar and pseudonym share one responsive hero
+  staircase** (2026-08-29, ADR-131, **WEB HOSTING DEPLOYED + BYTE-EXACT;
+  NATIVE TESTER BUILD HELD**): the avatar and pseudonym share one responsive hero
   row with a small semantic name plate, while official role/VIP and
   Creator/Premium/achievement identity use the full profile width beneath it.
   The owner case that previously stacked into four floors now remains two

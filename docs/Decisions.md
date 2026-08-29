@@ -8053,7 +8053,7 @@ only after explicit `--apply`.
 
 ## ADR-131: Profile identity uses a two-level passport rail, not a badge staircase
 
-**Status**: Implemented in source; web Hosting pending; native tester build held
+**Status**: Deployed to web Hosting and byte-verified; native tester build held
 **Date**: 2026-08-29
 
 ### Context
