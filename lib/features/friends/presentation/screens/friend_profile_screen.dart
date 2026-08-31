@@ -16,6 +16,7 @@ import 'package:yovoice/features/profile/presentation/screens/follow_list_screen
 import 'package:yovoice/features/profile/presentation/widgets/profile_vibe_headline.dart';
 import 'package:yovoice/shared/widgets/identity/official_role_badge.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
+import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 
 class FriendProfileScreen extends StatefulWidget {
@@ -222,6 +223,7 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
   }
 
   void _showError(String message) {
+    final palette = context.appPalette;
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(
@@ -230,8 +232,10 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
             message.contains('permission-denied')
                 ? 'Your account is not allowed to do that right now.'
                 : 'Something went wrong. Please try again.',
+            style: TextStyle(color: palette.dangerForeground),
           ),
           behavior: SnackBarBehavior.floating,
+          backgroundColor: palette.dangerSurface,
         ),
       );
   }
@@ -390,7 +394,8 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
                                       : 'Remove friend',
                                 ),
                                 style: TextButton.styleFrom(
-                                  foregroundColor: colors.error,
+                                  foregroundColor: palette.dangerForeground,
+                                  disabledForegroundColor: palette.textTertiary,
                                 ),
                               ),
                               TextButton.icon(
@@ -408,7 +413,8 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
                                   _blocking ? 'Blocking...' : 'Block user',
                                 ),
                                 style: TextButton.styleFrom(
-                                  foregroundColor: colors.error,
+                                  foregroundColor: palette.dangerForeground,
+                                  disabledForegroundColor: palette.textTertiary,
                                 ),
                               ),
                             ],
@@ -458,6 +464,7 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
   Widget _avatar(UserProfile? profile) {
     final photo = profile?.photoUrl ?? widget.friend.photoUrl;
     final name = profile?.displayName ?? widget.friend.displayName;
+    final palette = context.appPalette;
     return Semantics(
       image: true,
       label: 'Profile photo of $name',
@@ -473,7 +480,7 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
             ),
             child: CircleAvatar(
               radius: 58,
-              backgroundColor: const Color(0xFF281133),
+              backgroundColor: palette.surfaceSunken,
               backgroundImage: photo?.isNotEmpty == true
                   ? NetworkImage(photo!)
                   : null,
@@ -481,8 +488,8 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
                   ? null
                   : Text(
                       name.isEmpty ? '?' : name[0].toUpperCase(),
-                      style: const TextStyle(
-                        color: Colors.white,
+                      style: TextStyle(
+                        color: palette.textPrimary,
                         fontSize: 42,
                         fontWeight: FontWeight.w900,
                       ),
@@ -527,7 +534,7 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
     decoration: BoxDecoration(
       color: widget.friend.isOnline
-          ? const Color(0xFF173726)
+          ? context.appPalette.successSurface
           : context.appPalette.surfaceMuted,
       borderRadius: BorderRadius.circular(12),
     ),
@@ -535,7 +542,7 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
       widget.friend.isOnline ? 'Online now' : 'Offline',
       style: TextStyle(
         color: widget.friend.isOnline
-            ? const Color(0xFF73D99A)
+            ? context.appPalette.successForeground
             : context.appPalette.textSecondary,
         fontWeight: FontWeight.w700,
         fontSize: 12,
@@ -585,43 +592,46 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
     },
   );
 
-  Widget _stat(int value, String label, VoidCallback? onTap) => Semantics(
-    key: ValueKey('friend-profile-stat-${label.toLowerCase()}'),
-    label: '$label: $value',
-    button: onTap != null,
-    onTap: onTap,
-    child: ExcludeSemantics(
-      child: InkWell(
-        onTap: onTap,
-        excludeFromSemantics: true,
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(minHeight: 52),
-          child: Center(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  '$value',
-                  style: TextStyle(
-                    color: context.appPalette.textPrimary,
-                    fontSize: 21,
-                    fontWeight: FontWeight.w900,
-                  ),
+  Widget _stat(int value, String label, VoidCallback? onTap) {
+    final content = ExcludeSemantics(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minHeight: 52),
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                '$value',
+                style: TextStyle(
+                  color: context.appPalette.textPrimary,
+                  fontSize: 21,
+                  fontWeight: FontWeight.w900,
                 ),
-                Text(
-                  label,
-                  style: TextStyle(
-                    color: context.appPalette.textSecondary,
-                    fontSize: 12,
-                  ),
+              ),
+              Text(
+                label,
+                style: TextStyle(
+                  color: context.appPalette.textSecondary,
+                  fontSize: 12,
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
         ),
       ),
-    ),
-  );
+    );
+    final key = ValueKey('friend-profile-stat-${label.toLowerCase()}');
+    if (onTap == null) {
+      return Semantics(key: key, label: '$label: $value', child: content);
+    }
+    return AccessibleTapRegion(
+      key: key,
+      onTap: onTap,
+      semanticLabel: '$label: $value',
+      borderRadius: 12,
+      child: content,
+    );
+  }
 
   Widget _mutualFriends() {
     return FutureBuilder<MutualFriendsSummary>(
@@ -677,6 +687,7 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
 
   Widget _followButton(bool isFollowing) {
     final colors = Theme.of(context).colorScheme;
+    final palette = context.appPalette;
     return ConstrainedBox(
       constraints: const BoxConstraints(minHeight: 52),
       child: FilledButton.icon(
@@ -689,6 +700,8 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
           foregroundColor: isFollowing
               ? colors.onSecondaryContainer
               : colors.onPrimary,
+          disabledBackgroundColor: palette.surfaceMuted,
+          disabledForegroundColor: palette.textTertiary,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(16),
           ),
@@ -721,6 +734,7 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
         onPressed: _openingChat ? null : _openChat,
         style: OutlinedButton.styleFrom(
           foregroundColor: palette.textPrimary,
+          disabledForegroundColor: palette.textTertiary,
           side: BorderSide(color: palette.borderStrong),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(16),
@@ -743,7 +757,6 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
 
   Widget _voiceIdentity(UserProfile? profile) {
     final palette = context.appPalette;
-    final colors = Theme.of(context).colorScheme;
     final vibe = profile?.statusMessage.trim() ?? '';
     final languages = <String>{
       if ((profile?.nativeLanguage ?? '').isNotEmpty) profile!.nativeLanguage,
@@ -763,7 +776,10 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
         children: [
           Row(
             children: [
-              Icon(Icons.language_rounded, color: colors.primary),
+              Icon(
+                Icons.language_rounded,
+                color: palette.interactiveForeground,
+              ),
               const SizedBox(width: 12),
               Expanded(
                 child: Text(
@@ -817,7 +833,7 @@ class _ProfileLoading extends StatelessWidget {
       backgroundColor: context.appPalette.background,
       body: Center(
         child: CircularProgressIndicator(
-          color: Theme.of(context).colorScheme.primary,
+          color: context.appPalette.interactiveForeground,
         ),
       ),
     );
@@ -832,7 +848,6 @@ class _UnavailableProfile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
-    final colors = Theme.of(context).colorScheme;
     return Scaffold(
       backgroundColor: palette.background,
       body: SafeArea(
@@ -873,7 +888,7 @@ class _UnavailableProfile extends StatelessWidget {
                             ),
                             child: Icon(
                               Icons.lock_outline_rounded,
-                              color: colors.primary,
+                              color: palette.interactiveForeground,
                               size: 30,
                             ),
                           ),
@@ -924,7 +939,7 @@ class _MutualFriendAvatar extends StatelessWidget {
       height: 28,
       decoration: BoxDecoration(
         shape: BoxShape.circle,
-        color: const Color(0xFF2A173C),
+        color: palette.surfaceSunken,
         border: Border.all(color: palette.surface, width: 2),
         image: hasPhoto
             ? DecorationImage(
@@ -938,8 +953,8 @@ class _MutualFriendAvatar extends StatelessWidget {
           ? null
           : Text(
               friend.initial,
-              style: const TextStyle(
-                color: Colors.white,
+              style: TextStyle(
+                color: palette.textPrimary,
                 fontSize: 11,
                 fontWeight: FontWeight.w800,
               ),

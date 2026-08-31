@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/helpers/error_messages.dart';
-import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/clubs/data/models/club.dart';
 import 'package:yovoice/features/clubs/data/services/club_service.dart';
 import 'package:yovoice/features/clubs/presentation/screens/club_overview_screen.dart';
@@ -32,6 +32,7 @@ class _FromYourClubsState extends State<FromYourClubs> {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return StreamBuilder<List<Club>>(
       stream: _myClubs,
       builder: (context, snapshot) {
@@ -47,10 +48,10 @@ class _FromYourClubsState extends State<FromYourClubs> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(
+                Text(
                   'From your Clubs',
                   style: TextStyle(
-                    color: Colors.white,
+                    color: palette.textPrimary,
                     fontSize: 20,
                     fontWeight: FontWeight.w900,
                   ),
@@ -60,25 +61,25 @@ class _FromYourClubsState extends State<FromYourClubs> {
                   width: double.infinity,
                   padding: const EdgeInsets.all(14),
                   decoration: BoxDecoration(
-                    color: const Color(0xFF14101D),
+                    color: palette.surface,
                     borderRadius: BorderRadius.circular(20),
-                    border: Border.all(color: const Color(0xFF352642)),
+                    border: Border.all(color: palette.border),
                   ),
                   child: Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Icon(
+                      Icon(
                         Icons.cloud_off_rounded,
                         size: 18,
-                        color: AppColors.error,
+                        color: palette.dangerForeground,
                       ),
                       const SizedBox(width: 10),
                       Expanded(
                         child: Text(
                           'Your clubs could not be loaded. '
                           '${friendlyErrorMessage(snapshot.error!, fallback: 'Check your connection and try again.')}',
-                          style: const TextStyle(
-                            color: Color(0xFF9E92A8),
+                          style: TextStyle(
+                            color: palette.textSecondary,
                             fontSize: 12.5,
                             height: 1.35,
                           ),
@@ -100,10 +101,10 @@ class _FromYourClubsState extends State<FromYourClubs> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text(
+              Text(
                 'From your Clubs',
                 style: TextStyle(
-                  color: Colors.white,
+                  color: palette.textPrimary,
                   fontSize: 20,
                   fontWeight: FontWeight.w900,
                 ),
@@ -147,6 +148,8 @@ class _ClubActivityCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     return StreamBuilder<VoiceRoom?>(
       stream: loungeStream,
       builder: (context, snapshot) {
@@ -154,7 +157,8 @@ class _ClubActivityCard extends StatelessWidget {
         final live = lounge != null && lounge.isLive;
 
         return Material(
-          color: const Color(0xFF14101D),
+          key: ValueKey('home-club-activity-${club.id}'),
+          color: palette.surface,
           borderRadius: BorderRadius.circular(20),
           child: InkWell(
             onTap: () => _openClub(context),
@@ -165,8 +169,8 @@ class _ClubActivityCard extends StatelessWidget {
                 borderRadius: BorderRadius.circular(20),
                 border: Border.all(
                   color: live
-                      ? const Color(0xFF2FC6A8).withValues(alpha: .55)
-                      : const Color(0xFF352642),
+                      ? palette.successForeground.withValues(alpha: .55)
+                      : palette.border,
                 ),
               ),
               child: Row(
@@ -191,18 +195,18 @@ class _ClubActivityCard extends StatelessWidget {
                                 club.name,
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  color: Colors.white,
+                                style: TextStyle(
+                                  color: palette.textPrimary,
                                   fontWeight: FontWeight.w800,
                                   fontSize: 15,
                                 ),
                               ),
                             ),
                             const SizedBox(width: 6),
-                            const Icon(
+                            Icon(
                               Icons.groups_2_rounded,
                               size: 14,
-                              color: Color(0xFF2FC6A8),
+                              color: palette.successForeground,
                             ),
                           ],
                         ),
@@ -217,11 +221,12 @@ class _ClubActivityCard extends StatelessWidget {
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
                             color: live
-                                ? const Color(0xFF2FC6A8)
-                                : const Color(0xFF9E92A8),
+                                ? palette.successForeground
+                                : palette.textSecondary,
                             fontSize: 12,
-                            fontWeight:
-                                live ? FontWeight.w800 : FontWeight.w500,
+                            fontWeight: live
+                                ? FontWeight.w800
+                                : FontWeight.w500,
                           ),
                         ),
                       ],
@@ -232,7 +237,8 @@ class _ClubActivityCard extends StatelessWidget {
                     FilledButton(
                       onPressed: () => onJoinLounge(club, lounge),
                       style: FilledButton.styleFrom(
-                        backgroundColor: const Color(0xFF9D20FF),
+                        backgroundColor: colors.primary,
+                        foregroundColor: colors.onPrimary,
                         padding: const EdgeInsets.symmetric(
                           horizontal: 16,
                           vertical: 10,
@@ -250,9 +256,9 @@ class _ClubActivityCard extends StatelessWidget {
                       ),
                     )
                   else
-                    const Icon(
+                    Icon(
                       Icons.chevron_right_rounded,
-                      color: Color(0xFF81768E),
+                      color: palette.textTertiary,
                     ),
                 ],
               ),

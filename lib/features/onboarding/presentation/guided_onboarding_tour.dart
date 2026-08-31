@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
-import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/onboarding/data/guided_onboarding_progress.dart';
 
@@ -448,19 +447,23 @@ class _GuidedTourCard extends StatelessWidget {
                         height: 46,
                         decoration: BoxDecoration(
                           borderRadius: BorderRadius.circular(15),
-                          gradient: const LinearGradient(
+                          gradient: LinearGradient(
                             begin: Alignment.topLeft,
                             end: Alignment.bottomRight,
-                            colors: [AppColors.primary, AppColors.secondary],
+                            colors: [colors.primary, colors.secondary],
                           ),
                           boxShadow: [
                             BoxShadow(
-                              color: AppColors.primary.withValues(alpha: .22),
+                              color: colors.primary.withValues(alpha: .22),
                               blurRadius: 16,
                             ),
                           ],
                         ),
-                        child: Icon(step.icon, color: Colors.white, size: 24),
+                        child: Icon(
+                          step.icon,
+                          color: colors.onPrimary,
+                          size: 24,
+                        ),
                       ),
                     ),
                     const SizedBox(width: 12),
@@ -610,9 +613,7 @@ class _TourHighlight extends StatelessWidget {
     final highlight = rect.inflate(8);
     final circular = (rect.width - rect.height).abs() < 18;
     final palette = context.appPalette;
-    final contrastRing = Theme.of(context).brightness == Brightness.dark
-        ? const Color(0xFFF8F2FF)
-        : const Color(0xFF2D0B46);
+    final contrastRing = palette.textPrimary;
     final radius = BorderRadius.circular(circular ? highlight.height / 2 : 18);
     return Positioned(
       left: highlight.left,
@@ -626,7 +627,7 @@ class _TourHighlight extends StatelessWidget {
             border: Border.all(color: contrastRing, width: 3),
             boxShadow: [
               BoxShadow(
-                color: palette.focus.withValues(alpha: .38),
+                color: palette.interactiveForeground.withValues(alpha: .38),
                 blurRadius: 18,
                 spreadRadius: 2,
               ),
@@ -637,7 +638,10 @@ class _TourHighlight extends StatelessWidget {
             child: DecoratedBox(
               decoration: BoxDecoration(
                 borderRadius: radius,
-                border: Border.all(color: palette.focus, width: 2),
+                border: Border.all(
+                  color: palette.interactiveForeground,
+                  width: 2,
+                ),
               ),
             ),
           ),

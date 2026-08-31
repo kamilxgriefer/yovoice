@@ -5,6 +5,9 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/helpers/error_messages.dart';
+import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/core/theme/app_gradients.dart';
+import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:share_plus/share_plus.dart';
 
 import 'package:yovoice/features/clubs/data/models/club.dart';
@@ -46,12 +49,6 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  static const _background = Color(0xFF080711);
-  static const _surface = Color(0xFF14101D);
-  static const _border = Color(0xFF352642);
-  static const _muted = Color(0xFFA79DAF);
-  static const _primary = Color(0xFFA51FFF);
-
   final HomeFeedService _feedService = HomeFeedService();
   final FriendService _friendService = FriendService();
   final RoomService _roomService = RoomService();
@@ -197,17 +194,19 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _deleteMoment(VoiceMoment moment) async {
+    final palette = context.appPalette;
+    final colorScheme = Theme.of(context).colorScheme;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        backgroundColor: const Color(0xFF171020),
-        title: const Text(
+        backgroundColor: palette.surfaceRaised,
+        title: Text(
           'Delete Voice Moment?',
-          style: TextStyle(color: Colors.white),
+          style: TextStyle(color: palette.textPrimary),
         ),
-        content: const Text(
+        content: Text(
           'This removes the recording, likes, and all comments permanently.',
-          style: TextStyle(color: Color(0xFFB8AFC0)),
+          style: TextStyle(color: palette.textSecondary),
         ),
         actions: [
           TextButton(
@@ -217,7 +216,8 @@ class _HomeScreenState extends State<HomeScreen> {
           FilledButton(
             onPressed: () => Navigator.of(dialogContext).pop(true),
             style: FilledButton.styleFrom(
-              backgroundColor: const Color(0xFFFF416C),
+              backgroundColor: colorScheme.error,
+              foregroundColor: colorScheme.onError,
             ),
             child: const Text('Delete'),
           ),
@@ -259,6 +259,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colorScheme = Theme.of(context).colorScheme;
     final user = FirebaseAuth.instance.currentUser;
     final fallbackFullName = user?.displayName?.trim();
     final fallbackName = fallbackFullName?.isNotEmpty == true
@@ -266,14 +268,21 @@ class _HomeScreenState extends State<HomeScreen> {
         : user?.email?.split('@').first ?? 'there';
 
     return Scaffold(
-      backgroundColor: _background,
+      backgroundColor: palette.background,
       body: Container(
-        decoration: const BoxDecoration(
+        decoration: BoxDecoration(
           gradient: RadialGradient(
             center: Alignment(-.9, -1),
             radius: 1.35,
-            colors: [Color(0xFF291041), Color(0xFF100A18), _background],
-            stops: [0, .35, 1],
+            colors: [
+              Color.alphaBlend(
+                colorScheme.primary.withValues(alpha: .18),
+                palette.backgroundTop,
+              ),
+              palette.backgroundTop,
+              palette.background,
+            ],
+            stops: const [0, .35, 1],
           ),
         ),
         child: SafeArea(
@@ -359,6 +368,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _header(String name, String? photoUrl, {bool premium = false}) {
+    final palette = context.appPalette;
     return Padding(
       padding: const EdgeInsets.fromLTRB(18, 18, 18, 14),
       child: Row(
@@ -369,24 +379,24 @@ class _HomeScreenState extends State<HomeScreen> {
               children: [
                 Text(
                   _timeOfDayGreeting(),
-                  style: const TextStyle(color: _muted, fontSize: 14),
+                  style: TextStyle(color: palette.textSecondary, fontSize: 14),
                 ),
                 const SizedBox(height: 2),
                 Text(
                   '$name 👋',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Colors.white,
+                  style: TextStyle(
+                    color: palette.textPrimary,
                     fontSize: 28,
                     fontWeight: FontWeight.w900,
                     letterSpacing: -.8,
                   ),
                 ),
                 const SizedBox(height: 4),
-                const Text(
+                Text(
                   'Ready to hear something real?',
-                  style: TextStyle(color: _muted, fontSize: 13),
+                  style: TextStyle(color: palette.textSecondary, fontSize: 13),
                 ),
               ],
             ),
@@ -402,11 +412,11 @@ class _HomeScreenState extends State<HomeScreen> {
                     onPressed: _openNotifications,
                     style: IconButton.styleFrom(
                       minimumSize: const Size(48, 48),
-                      side: const BorderSide(color: _border),
+                      side: BorderSide(color: palette.borderStrong),
                     ),
-                    icon: const Icon(
+                    icon: Icon(
                       Icons.notifications_none_rounded,
-                      color: Colors.white,
+                      color: palette.textPrimary,
                     ),
                   ),
                   if (unreadCount > 0)
@@ -421,14 +431,17 @@ class _HomeScreenState extends State<HomeScreen> {
                         padding: const EdgeInsets.symmetric(horizontal: 4),
                         alignment: Alignment.center,
                         decoration: BoxDecoration(
-                          color: const Color(0xFFFF426F),
+                          color: AppColors.live,
                           shape: BoxShape.circle,
-                          border: Border.all(color: _background, width: 2),
+                          border: Border.all(
+                            color: palette.background,
+                            width: 2,
+                          ),
                         ),
                         child: Text(
                           unreadCount > 99 ? '99+' : '$unreadCount',
                           style: const TextStyle(
-                            color: Colors.white,
+                            color: AppColors.onLive,
                             fontSize: 9,
                             fontWeight: FontWeight.w800,
                           ),
@@ -476,6 +489,7 @@ class _HomeScreenState extends State<HomeScreen> {
   // Discover uses (RoomService.joinRoom -> RoomEntryScreen) — no new data
   // source, no fabricated activity.
   Widget _liveRooms() {
+    final palette = context.appPalette;
     return StreamBuilder<List<VoiceRoom>>(
       stream: _rooms,
       builder: (context, snapshot) {
@@ -491,10 +505,10 @@ class _HomeScreenState extends State<HomeScreen> {
               Row(
                 crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
-                  const Text(
+                  Text(
                     'Rooms for you',
                     style: TextStyle(
-                      color: Colors.white,
+                      color: palette.textPrimary,
                       fontSize: 20,
                       fontWeight: FontWeight.w900,
                     ),
@@ -504,7 +518,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     width: 7,
                     height: 7,
                     decoration: const BoxDecoration(
-                      color: Color(0xFFFF416C),
+                      color: AppColors.live,
                       shape: BoxShape.circle,
                     ),
                   ),
@@ -599,12 +613,13 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _sectionTitle(String title) {
+    final palette = context.appPalette;
     return Padding(
       padding: const EdgeInsets.fromLTRB(18, 15, 18, 10),
       child: Text(
         title,
-        style: const TextStyle(
-          color: Colors.white,
+        style: TextStyle(
+          color: palette.textPrimary,
           fontSize: 22,
           fontWeight: FontWeight.w900,
         ),
@@ -613,14 +628,19 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _feed() {
+    final palette = context.appPalette;
     return StreamBuilder<List<VoiceMoment>>(
       stream: _moments,
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting &&
             !snapshot.hasData) {
-          return const Padding(
-            padding: EdgeInsets.all(34),
-            child: Center(child: CircularProgressIndicator(color: _primary)),
+          return Padding(
+            padding: const EdgeInsets.all(34),
+            child: Center(
+              child: CircularProgressIndicator(
+                color: palette.interactiveForeground,
+              ),
+            ),
           );
         }
         if (snapshot.hasError) return _empty('Could not load your feed.');
@@ -660,6 +680,7 @@ class _HomeScreenState extends State<HomeScreen> {
   // In a room / In a club) light up once presence carries room context —
   // never faked before then.
   Widget _activeFriends() {
+    final palette = context.appPalette;
     return StreamBuilder<List<FriendUser>>(
       stream: _friends,
       builder: (context, snapshot) {
@@ -671,12 +692,12 @@ class _HomeScreenState extends State<HomeScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 18),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 18),
                 child: Text(
                   'Your people',
                   style: TextStyle(
-                    color: Colors.white,
+                    color: palette.textPrimary,
                     fontSize: 20,
                     fontWeight: FontWeight.w900,
                   ),
@@ -734,6 +755,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _trending() {
+    final palette = context.appPalette;
     return StreamBuilder<List<VoiceMoment>>(
       stream: _moments,
       builder: (context, snapshot) {
@@ -756,10 +778,10 @@ class _HomeScreenState extends State<HomeScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text(
+              Text(
                 'Trending Voice',
                 style: TextStyle(
-                  color: Colors.white,
+                  color: palette.textPrimary,
                   fontSize: 20,
                   fontWeight: FontWeight.w900,
                 ),
@@ -774,19 +796,19 @@ class _HomeScreenState extends State<HomeScreen> {
                         horizontal: 14,
                         vertical: 4,
                       ),
-                      tileColor: _surface,
+                      tileColor: palette.surface,
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(17),
-                        side: const BorderSide(color: _border),
+                        side: BorderSide(color: palette.border),
                       ),
-                      leading: const Icon(
+                      leading: Icon(
                         Icons.graphic_eq_rounded,
-                        color: _primary,
+                        color: palette.interactiveForeground,
                       ),
                       title: Text(
                         moment.authorName,
-                        style: const TextStyle(
-                          color: Colors.white,
+                        style: TextStyle(
+                          color: palette.textPrimary,
                           fontWeight: FontWeight.w800,
                         ),
                       ),
@@ -796,12 +818,12 @@ class _HomeScreenState extends State<HomeScreen> {
                             : moment.caption,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(color: _muted),
+                        style: TextStyle(color: palette.textSecondary),
                       ),
                       trailing: Text(
                         '❤ ${moment.likeCount}',
-                        style: const TextStyle(
-                          color: Color(0xFFFF6D91),
+                        style: TextStyle(
+                          color: palette.dangerForeground,
                           fontWeight: FontWeight.w800,
                         ),
                       ),
@@ -814,23 +836,26 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _empty(String message) => Padding(
-    padding: const EdgeInsets.fromLTRB(18, 0, 18, 16),
-    child: Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(24),
-      decoration: BoxDecoration(
-        color: _surface,
-        borderRadius: BorderRadius.circular(22),
-        border: Border.all(color: _border),
+  Widget _empty(String message) {
+    final palette = context.appPalette;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(18, 0, 18, 16),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(24),
+        decoration: BoxDecoration(
+          color: palette.surface,
+          borderRadius: BorderRadius.circular(22),
+          border: Border.all(color: palette.border),
+        ),
+        child: Text(
+          message,
+          textAlign: TextAlign.center,
+          style: TextStyle(color: palette.textSecondary),
+        ),
       ),
-      child: Text(
-        message,
-        textAlign: TextAlign.center,
-        style: const TextStyle(color: _muted),
-      ),
-    ),
-  );
+    );
+  }
 
   Future<void> _showMomentPlayer(VoiceMoment moment) async {
     await showModalBottomSheet<void>(
@@ -865,6 +890,7 @@ class _StoryBubble extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return SizedBox(
       width: 82,
       child: Column(
@@ -879,31 +905,25 @@ class _StoryBubble extends StatelessWidget {
                   padding: const EdgeInsets.all(3),
                   decoration: const BoxDecoration(
                     shape: BoxShape.circle,
-                    gradient: LinearGradient(
-                      colors: [
-                        Color(0xFFFF416C),
-                        Color(0xFFB42DFF),
-                        Color(0xFF5D00D7),
-                      ],
-                    ),
+                    gradient: AppGradients.primary,
                   ),
                   child: CircleAvatar(
                     radius: 30,
-                    backgroundColor: const Color(0xFF25152E),
+                    backgroundColor: palette.surfaceRaised,
                     backgroundImage: photoUrl?.isNotEmpty == true
                         ? NetworkImage(photoUrl!)
                         : null,
                     child: isAdd
-                        ? const Icon(
+                        ? Icon(
                             Icons.add_rounded,
-                            color: Colors.white,
+                            color: palette.interactiveForeground,
                             size: 30,
                           )
                         : photoUrl?.isNotEmpty == true
                         ? null
-                        : const Icon(
+                        : Icon(
                             Icons.graphic_eq_rounded,
-                            color: Colors.white,
+                            color: palette.interactiveForeground,
                           ),
                   ),
                 ),
@@ -919,12 +939,9 @@ class _StoryBubble extends StatelessWidget {
                       width: 25,
                       height: 25,
                       decoration: BoxDecoration(
-                        color: const Color(0xFF9D20FF),
+                        color: AppColors.secondary,
                         shape: BoxShape.circle,
-                        border: Border.all(
-                          color: const Color(0xFF080711),
-                          width: 3,
-                        ),
+                        border: Border.all(color: palette.background, width: 3),
                       ),
                       child: const Icon(
                         Icons.add_rounded,
@@ -941,7 +958,7 @@ class _StoryBubble extends StatelessWidget {
             label,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(color: Colors.white70, fontSize: 11),
+            style: TextStyle(color: palette.textSecondary, fontSize: 11),
           ),
         ],
       ),
@@ -1010,12 +1027,14 @@ class _VoiceMomentCardState extends State<_VoiceMomentCard> {
   Widget build(BuildContext context) {
     final moment = widget.moment;
     final time = _relative(moment.createdAt);
+    final palette = context.appPalette;
+    final colorScheme = Theme.of(context).colorScheme;
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: const Color(0xFF14101D),
+        color: palette.surface,
         borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: const Color(0xFF352642)),
+        border: Border.all(color: palette.border),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1042,15 +1061,15 @@ class _VoiceMomentCardState extends State<_VoiceMomentCard> {
                   children: [
                     Text(
                       moment.authorName,
-                      style: const TextStyle(
-                        color: Colors.white,
+                      style: TextStyle(
+                        color: palette.textPrimary,
                         fontWeight: FontWeight.w900,
                       ),
                     ),
                     Text(
                       time,
-                      style: const TextStyle(
-                        color: Color(0xFFA79DAF),
+                      style: TextStyle(
+                        color: palette.textSecondary,
                         fontSize: 11,
                       ),
                     ),
@@ -1059,10 +1078,10 @@ class _VoiceMomentCardState extends State<_VoiceMomentCard> {
               ),
               PopupMenuButton<String>(
                 tooltip: 'Moment options',
-                color: const Color(0xFF21172B),
-                icon: const Icon(
+                color: palette.surfaceRaised,
+                icon: Icon(
                   Icons.more_horiz_rounded,
-                  color: Color(0xFFA79DAF),
+                  color: palette.textTertiary,
                 ),
                 onSelected: (value) {
                   switch (value) {
@@ -1078,46 +1097,46 @@ class _VoiceMomentCardState extends State<_VoiceMomentCard> {
                   final isOwner =
                       FirebaseAuth.instance.currentUser?.uid == moment.authorId;
                   return [
-                    const PopupMenuItem<String>(
+                    PopupMenuItem<String>(
                       value: 'comments',
                       child: ListTile(
                         contentPadding: EdgeInsets.zero,
                         leading: Icon(
                           Icons.chat_bubble_outline_rounded,
-                          color: Colors.white,
+                          color: palette.textPrimary,
                         ),
                         title: Text(
                           'View comments',
-                          style: TextStyle(color: Colors.white),
+                          style: TextStyle(color: palette.textPrimary),
                         ),
                       ),
                     ),
-                    const PopupMenuItem<String>(
+                    PopupMenuItem<String>(
                       value: 'share',
                       child: ListTile(
                         contentPadding: EdgeInsets.zero,
                         leading: Icon(
                           Icons.share_outlined,
-                          color: Colors.white,
+                          color: palette.textPrimary,
                         ),
                         title: Text(
                           'Share',
-                          style: TextStyle(color: Colors.white),
+                          style: TextStyle(color: palette.textPrimary),
                         ),
                       ),
                     ),
                     if (isOwner)
-                      const PopupMenuItem<String>(
+                      PopupMenuItem<String>(
                         value: 'delete',
                         child: ListTile(
                           contentPadding: EdgeInsets.zero,
                           leading: Icon(
                             Icons.delete_outline_rounded,
-                            color: Color(0xFFFF6688),
+                            color: palette.dangerForeground,
                           ),
                           title: Text(
                             'Delete Voice Moment',
-                            style: TextStyle(color: Color(0xFFFF6688)),
+                            style: TextStyle(color: palette.dangerForeground),
                           ),
                         ),
                       ),
@@ -1130,8 +1149,8 @@ class _VoiceMomentCardState extends State<_VoiceMomentCard> {
             const SizedBox(height: 14),
             Text(
               moment.caption,
-              style: const TextStyle(
-                color: Colors.white,
+              style: TextStyle(
+                color: palette.textPrimary,
                 fontSize: 15,
                 height: 1.35,
               ),
@@ -1144,24 +1163,24 @@ class _VoiceMomentCardState extends State<_VoiceMomentCard> {
             child: Container(
               padding: const EdgeInsets.all(14),
               decoration: BoxDecoration(
-                gradient: const LinearGradient(
-                  colors: [Color(0xFF351447), Color(0xFF1D1228)],
+                gradient: LinearGradient(
+                  colors: [colorScheme.primaryContainer, palette.surfaceRaised],
                 ),
                 borderRadius: BorderRadius.circular(19),
-                border: Border.all(color: const Color(0xFF643180)),
+                border: Border.all(color: palette.borderStrong),
               ),
               child: Row(
                 children: [
                   Container(
                     width: 48,
                     height: 48,
-                    decoration: const BoxDecoration(
-                      color: Color(0xFFA51FFF),
+                    decoration: BoxDecoration(
+                      color: colorScheme.primary,
                       shape: BoxShape.circle,
                     ),
                     child: Icon(
                       _playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
-                      color: Colors.white,
+                      color: colorScheme.onPrimary,
                       size: 30,
                     ),
                   ),
@@ -1170,8 +1189,8 @@ class _VoiceMomentCardState extends State<_VoiceMomentCard> {
                   const SizedBox(width: 10),
                   Text(
                     moment.durationLabel,
-                    style: const TextStyle(
-                      color: Colors.white,
+                    style: TextStyle(
+                      color: palette.textPrimary,
                       fontWeight: FontWeight.w800,
                     ),
                   ),
@@ -1222,7 +1241,7 @@ class _VoiceMomentCardState extends State<_VoiceMomentCard> {
               icon: const Icon(Icons.mic_rounded, size: 19),
               label: const Text('Reply with voice'),
               style: TextButton.styleFrom(
-                foregroundColor: const Color(0xFFC76DFF),
+                foregroundColor: palette.interactiveForeground,
                 padding: const EdgeInsets.symmetric(vertical: 10),
                 textStyle: const TextStyle(fontWeight: FontWeight.w800),
               ),
@@ -1255,7 +1274,7 @@ class _MiniWaveform extends StatelessWidget {
             height: (10 + ((index * 13) % 24)).toDouble(),
             margin: const EdgeInsets.symmetric(horizontal: 1.5),
             decoration: BoxDecoration(
-              color: const Color(0xFFB94DFF),
+              color: context.appPalette.interactiveForeground,
               borderRadius: BorderRadius.circular(10),
             ),
           ),
@@ -1278,14 +1297,15 @@ class _Action extends StatelessWidget {
   final bool active;
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return TextButton.icon(
       onPressed: onTap,
       icon: Icon(icon, size: 19),
       label: Text(label),
       style: TextButton.styleFrom(
         foregroundColor: active
-            ? const Color(0xFFFF5F86)
-            : const Color(0xFFA79DAF),
+            ? palette.dangerForeground
+            : palette.textSecondary,
       ),
     );
   }
@@ -1334,18 +1354,20 @@ class _MomentPlayerSheetState extends State<_MomentPlayerSheet> {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colorScheme = Theme.of(context).colorScheme;
     return Container(
       padding: const EdgeInsets.fromLTRB(22, 12, 22, 34),
-      decoration: const BoxDecoration(
-        color: Color(0xFF151020),
-        borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
+      decoration: BoxDecoration(
+        color: palette.surfaceRaised,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(30)),
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const YoModalSheetChrome(
+          YoModalSheetChrome(
             sheetLabel: 'Moment player',
-            surfaceColor: Color(0xFF151020),
+            surfaceColor: palette.surfaceRaised,
           ),
           const SizedBox(height: 4),
           CircleAvatar(
@@ -1357,8 +1379,8 @@ class _MomentPlayerSheetState extends State<_MomentPlayerSheet> {
           const SizedBox(height: 14),
           Text(
             widget.moment.authorName,
-            style: const TextStyle(
-              color: Colors.white,
+            style: TextStyle(
+              color: palette.textPrimary,
               fontSize: 22,
               fontWeight: FontWeight.w900,
             ),
@@ -1367,7 +1389,7 @@ class _MomentPlayerSheetState extends State<_MomentPlayerSheet> {
           Text(
             widget.moment.caption,
             textAlign: TextAlign.center,
-            style: const TextStyle(color: Color(0xFFB8ADBF)),
+            style: TextStyle(color: palette.textSecondary),
           ),
           const SizedBox(height: 24),
           InkWell(
@@ -1376,13 +1398,13 @@ class _MomentPlayerSheetState extends State<_MomentPlayerSheet> {
             child: Container(
               width: 76,
               height: 76,
-              decoration: const BoxDecoration(
-                color: Color(0xFFA51FFF),
+              decoration: BoxDecoration(
+                color: colorScheme.primary,
                 shape: BoxShape.circle,
               ),
               child: Icon(
                 _playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
-                color: Colors.white,
+                color: colorScheme.onPrimary,
                 size: 42,
               ),
             ),

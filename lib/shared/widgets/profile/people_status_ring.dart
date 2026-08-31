@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
 /// Centralized status-ring language from the Home mockup — one place
@@ -17,12 +18,15 @@ enum PeopleStatus {
   online,
   away;
 
-  Color get ringColor => switch (this) {
-    PeopleStatus.speaking => const Color(0xFFB44BFF),
-    PeopleStatus.inRoom => const Color(0xFF35D07F),
-    PeopleStatus.inClub => const Color(0xFFFFA94D),
-    PeopleStatus.online => const Color(0xFF35D07F),
-    PeopleStatus.away => const Color(0xFF564C63),
+  /// Theme-aware status ink used for both the ring and its visible label.
+  ///
+  /// The adjacent text label remains the primary status cue; colour reinforces
+  /// that meaning without becoming the only way to distinguish the state.
+  Color foreground(AppPalette palette) => switch (this) {
+    PeopleStatus.speaking => palette.interactiveForeground,
+    PeopleStatus.inRoom || PeopleStatus.online => palette.successForeground,
+    PeopleStatus.inClub => palette.warningForeground,
+    PeopleStatus.away => palette.textTertiary,
   };
 
   String get label => switch (this) {
@@ -54,72 +58,88 @@ class PeopleStatusAvatar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     final active = status != PeopleStatus.away;
-    return InkWell(
+    final statusForeground = status.foreground(palette);
+    final borderRadius = BorderRadius.circular(18);
+
+    return Semantics(
+      excludeSemantics: true,
+      button: true,
+      label: displayName,
+      value: status.label,
       onTap: onTap,
-      borderRadius: BorderRadius.circular(18),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              padding: const EdgeInsets.all(2.6),
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                border: Border.all(
-                  color: status.ringColor,
-                  width: active ? 2.2 : 1.4,
+      child: InkWell(
+        onTap: onTap,
+        excludeFromSemantics: true,
+        borderRadius: borderRadius,
+        focusColor: palette.focus.withValues(alpha: .14),
+        hoverColor: palette.interactiveForeground.withValues(alpha: .08),
+        highlightColor: palette.interactiveForeground.withValues(alpha: .10),
+        splashColor: palette.interactiveForeground.withValues(alpha: .12),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(2.6),
+                decoration: BoxDecoration(
+                  color: palette.surfaceRaised,
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: statusForeground,
+                    width: active ? 2.2 : 1.4,
+                  ),
+                  boxShadow: active
+                      ? [
+                          BoxShadow(
+                            color: palette.shadow.withValues(alpha: .18),
+                            blurRadius: 10,
+                            offset: const Offset(0, 3),
+                          ),
+                        ]
+                      : null,
                 ),
-                boxShadow: active
-                    ? [
-                        BoxShadow(
-                          color: status.ringColor.withValues(alpha: .35),
-                          blurRadius: 14,
-                        ),
-                      ]
-                    : null,
+                child: UserAvatar(
+                  radius: radius,
+                  photoUrl: photoUrl,
+                  displayName: displayName,
+                ),
               ),
-              child: UserAvatar(
-                radius: radius,
-                photoUrl: photoUrl,
-                displayName: displayName,
-              ),
-            ),
-            const SizedBox(height: 7),
-            SizedBox(
-              width: radius * 2.4,
-              child: Column(
-                children: [
-                  Text(
-                    displayName,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 12.5,
-                      fontWeight: FontWeight.w700,
+              const SizedBox(height: 7),
+              SizedBox(
+                width: radius * 2.4,
+                child: Column(
+                  children: [
+                    Text(
+                      displayName,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: palette.textPrimary,
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    status.label,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      color: active
-                          ? status.ringColor
-                          : const Color(0xFF9C90A8),
-                      fontSize: 10.5,
-                      fontWeight: FontWeight.w600,
+                    const SizedBox(height: 2),
+                    Text(
+                      status.label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: statusForeground,
+                        fontSize: 10.5,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );

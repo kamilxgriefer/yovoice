@@ -11,19 +11,21 @@ import 'app_typography.dart';
 class AppTheme {
   AppTheme._();
 
-  static WidgetStateProperty<Color?> get _overlayColor =>
-      WidgetStateProperty.resolveWith<Color?>((Set<WidgetState> states) {
-        if (states.contains(WidgetState.pressed)) {
-          return AppColors.primary.withValues(alpha: 0.18);
-        }
-        if (states.contains(WidgetState.hovered)) {
-          return AppColors.primary.withValues(alpha: 0.08);
-        }
-        if (states.contains(WidgetState.focused)) {
-          return AppColors.primary.withValues(alpha: 0.1);
-        }
-        return null;
-      });
+  static WidgetStateProperty<Color?> _overlayColor(
+    Color primary,
+    AppPalette palette,
+  ) => WidgetStateProperty.resolveWith<Color?>((Set<WidgetState> states) {
+    if (states.contains(WidgetState.pressed)) {
+      return primary.withValues(alpha: 0.16);
+    }
+    if (states.contains(WidgetState.hovered)) {
+      return primary.withValues(alpha: 0.08);
+    }
+    if (states.contains(WidgetState.focused)) {
+      return palette.focus.withValues(alpha: 0.12);
+    }
+    return null;
+  });
 
   static ThemeData get darkTheme =>
       _buildTheme(brightness: Brightness.dark, palette: AppPalette.dark);
@@ -60,21 +62,20 @@ class AppTheme {
           tertiary: isDark ? AppColors.accent : const Color(0xFF007C83),
           onTertiary: isDark ? const Color(0xFF002022) : Colors.white,
           onError: isDark ? const Color(0xFF310009) : Colors.white,
-          errorContainer: isDark
-              ? const Color(0xFF4A1720)
-              : const Color(0xFFFDE7EC),
-          onErrorContainer: isDark
-              ? const Color(0xFFFFD9DE)
-              : const Color(0xFF6D1027),
+          errorContainer: palette.dangerSurface,
+          onErrorContainer: palette.dangerForeground,
           onSurface: palette.textPrimary,
           onSurfaceVariant: palette.textSecondary,
           outline: palette.borderStrong,
           outlineVariant: palette.border,
-          surfaceContainerLowest: palette.background,
-          surfaceContainerLow: palette.surfaceRaised,
+          surfaceBright: palette.surfaceRaised,
+          surfaceDim: palette.surfaceSunken,
+          surfaceTint: Colors.transparent,
+          surfaceContainerLowest: palette.surfaceSunken,
+          surfaceContainerLow: palette.surfaceMuted,
           surfaceContainer: palette.surface,
-          surfaceContainerHigh: palette.surfaceMuted,
-          surfaceContainerHighest: palette.surfaceSunken,
+          surfaceContainerHigh: palette.surfaceRaised,
+          surfaceContainerHighest: palette.surfaceRaised,
           primaryContainer: isDark
               ? primary.withValues(alpha: .24)
               : const Color(0xFFEEDFFF),
@@ -109,6 +110,9 @@ class AppTheme {
       canvasColor: palette.background,
       extensions: <ThemeExtension<dynamic>>[palette],
       iconTheme: IconThemeData(color: palette.textSecondary),
+      focusColor: palette.focus.withValues(alpha: .14),
+      hoverColor: primary.withValues(alpha: .08),
+      disabledColor: palette.textTertiary,
       splashColor: AppColors.primary.withValues(alpha: 0.12),
       highlightColor: AppColors.primary.withValues(alpha: 0.06),
       pageTransitionsTheme: const PageTransitionsTheme(
@@ -120,33 +124,91 @@ class AppTheme {
       ),
       elevatedButtonTheme: ElevatedButtonThemeData(
         style: ButtonStyle(
-          overlayColor: _overlayColor,
-          foregroundColor: const WidgetStatePropertyAll(Colors.white),
-          backgroundColor: WidgetStatePropertyAll(primary),
+          overlayColor: _overlayColor(primary, palette),
+          foregroundColor: WidgetStateProperty.resolveWith((states) {
+            return states.contains(WidgetState.disabled)
+                ? palette.textTertiary
+                : Colors.white;
+          }),
+          backgroundColor: WidgetStateProperty.resolveWith((states) {
+            return states.contains(WidgetState.disabled)
+                ? palette.surfaceSunken
+                : primary;
+          }),
+          side: WidgetStateProperty.resolveWith((states) {
+            if (states.contains(WidgetState.focused)) {
+              return BorderSide(color: colorScheme.onPrimary, width: 2);
+            }
+            if (states.contains(WidgetState.disabled)) {
+              return BorderSide(color: palette.border);
+            }
+            return BorderSide.none;
+          }),
         ),
       ),
       filledButtonTheme: FilledButtonThemeData(
         style: ButtonStyle(
-          overlayColor: _overlayColor,
-          foregroundColor: const WidgetStatePropertyAll(Colors.white),
-          backgroundColor: WidgetStatePropertyAll(primary),
+          overlayColor: _overlayColor(primary, palette),
+          foregroundColor: WidgetStateProperty.resolveWith((states) {
+            return states.contains(WidgetState.disabled)
+                ? palette.textTertiary
+                : Colors.white;
+          }),
+          backgroundColor: WidgetStateProperty.resolveWith((states) {
+            return states.contains(WidgetState.disabled)
+                ? palette.surfaceSunken
+                : primary;
+          }),
+          side: WidgetStateProperty.resolveWith((states) {
+            if (states.contains(WidgetState.focused)) {
+              return BorderSide(color: colorScheme.onPrimary, width: 2);
+            }
+            if (states.contains(WidgetState.disabled)) {
+              return BorderSide(color: palette.border);
+            }
+            return BorderSide.none;
+          }),
         ),
       ),
       outlinedButtonTheme: OutlinedButtonThemeData(
         style: ButtonStyle(
-          overlayColor: _overlayColor,
-          foregroundColor: WidgetStatePropertyAll(primary),
-          side: WidgetStatePropertyAll(BorderSide(color: palette.borderStrong)),
+          overlayColor: _overlayColor(primary, palette),
+          foregroundColor: WidgetStateProperty.resolveWith((states) {
+            return states.contains(WidgetState.disabled)
+                ? palette.textTertiary
+                : palette.interactiveForeground;
+          }),
+          side: WidgetStateProperty.resolveWith((states) {
+            if (states.contains(WidgetState.focused)) {
+              return BorderSide(color: palette.focus, width: 2);
+            }
+            return BorderSide(
+              color: states.contains(WidgetState.disabled)
+                  ? palette.border
+                  : palette.borderStrong,
+            );
+          }),
         ),
       ),
       textButtonTheme: TextButtonThemeData(
         style: ButtonStyle(
-          overlayColor: _overlayColor,
-          foregroundColor: WidgetStatePropertyAll(primary),
+          overlayColor: _overlayColor(primary, palette),
+          foregroundColor: WidgetStateProperty.resolveWith((states) {
+            return states.contains(WidgetState.disabled)
+                ? palette.textTertiary
+                : palette.interactiveForeground;
+          }),
         ),
       ),
       iconButtonTheme: IconButtonThemeData(
-        style: ButtonStyle(overlayColor: _overlayColor),
+        style: ButtonStyle(
+          overlayColor: _overlayColor(primary, palette),
+          foregroundColor: WidgetStateProperty.resolveWith((states) {
+            return states.contains(WidgetState.disabled)
+                ? palette.textTertiary
+                : palette.textPrimary;
+          }),
+        ),
       ),
       dialogTheme: DialogThemeData(
         backgroundColor: palette.surfaceRaised,
@@ -205,7 +267,7 @@ class AppTheme {
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: AppRadius.md,
-          borderSide: BorderSide(color: primary, width: 2),
+          borderSide: BorderSide(color: palette.focus, width: 2),
         ),
         errorBorder: OutlineInputBorder(
           borderRadius: AppRadius.md,
@@ -214,6 +276,16 @@ class AppTheme {
         focusedErrorBorder: OutlineInputBorder(
           borderRadius: AppRadius.md,
           borderSide: BorderSide(color: error, width: 2),
+        ),
+        disabledBorder: OutlineInputBorder(
+          borderRadius: AppRadius.md,
+          borderSide: BorderSide(color: palette.border),
+        ),
+        errorStyle: baseTextTheme.bodySmall?.copyWith(
+          color: palette.dangerForeground,
+        ),
+        helperStyle: baseTextTheme.bodySmall?.copyWith(
+          color: palette.textSecondary,
         ),
       ),
       textSelectionTheme: TextSelectionThemeData(
@@ -242,6 +314,80 @@ class AppTheme {
                 : palette.navigationInactive,
           );
         }),
+      ),
+      chipTheme: ChipThemeData(
+        backgroundColor: palette.surfaceMuted,
+        disabledColor: palette.surfaceSunken,
+        selectedColor: colorScheme.primaryContainer,
+        secondarySelectedColor: colorScheme.secondaryContainer,
+        checkmarkColor: colorScheme.onPrimaryContainer,
+        labelStyle: baseTextTheme.labelLarge?.copyWith(
+          color: palette.textPrimary,
+        ),
+        secondaryLabelStyle: baseTextTheme.labelLarge?.copyWith(
+          color: colorScheme.onSecondaryContainer,
+        ),
+        side: BorderSide(color: palette.borderStrong),
+        shape: const RoundedRectangleBorder(borderRadius: AppRadius.pill),
+      ),
+      switchTheme: SwitchThemeData(
+        thumbColor: WidgetStateProperty.resolveWith((states) {
+          if (states.contains(WidgetState.disabled)) {
+            return palette.textTertiary;
+          }
+          if (states.contains(WidgetState.selected)) {
+            return colorScheme.onPrimary;
+          }
+          return palette.textSecondary;
+        }),
+        trackColor: WidgetStateProperty.resolveWith((states) {
+          if (states.contains(WidgetState.disabled)) {
+            return palette.surfaceSunken;
+          }
+          if (states.contains(WidgetState.selected)) return primary;
+          return palette.surfaceMuted;
+        }),
+        trackOutlineColor: WidgetStateProperty.resolveWith((states) {
+          if (states.contains(WidgetState.focused)) return palette.focus;
+          if (states.contains(WidgetState.disabled)) return palette.border;
+          return palette.borderStrong;
+        }),
+      ),
+      checkboxTheme: CheckboxThemeData(
+        fillColor: WidgetStateProperty.resolveWith((states) {
+          if (states.contains(WidgetState.disabled)) {
+            return palette.surfaceSunken;
+          }
+          if (states.contains(WidgetState.selected)) return primary;
+          return Colors.transparent;
+        }),
+        checkColor: WidgetStatePropertyAll(colorScheme.onPrimary),
+        side: BorderSide(color: palette.borderStrong, width: 1.5),
+      ),
+      radioTheme: RadioThemeData(
+        fillColor: WidgetStateProperty.resolveWith((states) {
+          if (states.contains(WidgetState.disabled)) {
+            return palette.textTertiary;
+          }
+          if (states.contains(WidgetState.selected)) return primary;
+          return palette.textSecondary;
+        }),
+      ),
+      tabBarTheme: TabBarThemeData(
+        labelColor: palette.interactiveForeground,
+        unselectedLabelColor: palette.textSecondary,
+        indicatorColor: palette.interactiveForeground,
+        dividerColor: palette.border,
+        overlayColor: _overlayColor(primary, palette),
+      ),
+      tooltipTheme: TooltipThemeData(
+        decoration: BoxDecoration(
+          color: colorScheme.inverseSurface,
+          borderRadius: AppRadius.sm,
+        ),
+        textStyle: baseTextTheme.bodySmall?.copyWith(
+          color: colorScheme.onInverseSurface,
+        ),
       ),
       listTileTheme: ListTileThemeData(
         iconColor: palette.textSecondary,
@@ -291,7 +437,7 @@ class AppTheme {
       // view, so it is intentionally the inverse of Android icon brightness.
       statusBarBrightness: isDark ? Brightness.dark : Brightness.light,
       systemNavigationBarColor: palette.background,
-      systemNavigationBarDividerColor: palette.border,
+      systemNavigationBarDividerColor: palette.navigationOutline,
       systemNavigationBarIconBrightness: isDark
           ? Brightness.light
           : Brightness.dark,

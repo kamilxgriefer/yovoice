@@ -19,6 +19,7 @@ class ClubCreatedScreen extends StatelessWidget {
     final colors = Theme.of(context).colorScheme;
     final isFamily = club.isFamilyRoom;
     final identity = isFamily ? SpaceIdentity.family : SpaceIdentity.club;
+    final identityVisuals = identity.resolve(colors.brightness);
     return Scaffold(
       key: const ValueKey('club-created-screen'),
       backgroundColor: palette.background,
@@ -38,18 +39,15 @@ class ClubCreatedScreen extends StatelessWidget {
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
                       Container(
+                        key: const ValueKey('space-identity-created-hero'),
                         width: 112,
                         height: 112,
                         decoration: BoxDecoration(
-                          gradient: LinearGradient(
-                            colors: [identity.accent, identity.primary],
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                          ),
+                          gradient: identityVisuals.heroGradient,
                           shape: BoxShape.circle,
                           boxShadow: [
                             BoxShadow(
-                              color: identity.primary.withValues(alpha: .45),
+                              color: identityVisuals.heroGlow,
                               blurRadius: 34,
                               spreadRadius: 4,
                             ),
@@ -58,8 +56,11 @@ class ClubCreatedScreen extends StatelessWidget {
                         alignment: Alignment.center,
                         child: Text(
                           club.initial,
-                          style: const TextStyle(
-                            color: Colors.white,
+                          key: const ValueKey(
+                            'space-identity-created-hero-label',
+                          ),
+                          style: TextStyle(
+                            color: identityVisuals.heroForeground,
                             fontSize: 48,
                             fontWeight: FontWeight.w900,
                           ),
@@ -80,9 +81,10 @@ class ClubCreatedScreen extends StatelessWidget {
                       const SizedBox(height: 10),
                       Text(
                         club.name,
+                        key: const ValueKey('space-identity-created-name'),
                         textAlign: TextAlign.center,
                         style: TextStyle(
-                          color: identity.accent,
+                          color: identityVisuals.foreground,
                           fontSize: 21,
                           fontWeight: FontWeight.w800,
                         ),
@@ -113,21 +115,21 @@ class ClubCreatedScreen extends StatelessWidget {
                               icon: Icons.workspace_premium_rounded,
                               label: 'Your role',
                               value: isFamily ? 'Organizer' : 'Owner',
-                              accent: identity.accent,
+                              accent: identityVisuals.foreground,
                             ),
                             Divider(color: palette.border, height: 25),
                             _SummaryRow(
                               icon: Icons.language_rounded,
                               label: 'Language',
                               value: club.defaultLanguage,
-                              accent: identity.accent,
+                              accent: identityVisuals.foreground,
                             ),
                             Divider(color: palette.border, height: 25),
                             _SummaryRow(
                               icon: Icons.lock_outline_rounded,
                               label: 'Privacy',
                               value: _privacyLabel(club.privacy),
-                              accent: identity.accent,
+                              accent: identityVisuals.foreground,
                             ),
                           ],
                         ),
@@ -136,6 +138,7 @@ class ClubCreatedScreen extends StatelessWidget {
                       SizedBox(
                         width: double.infinity,
                         child: FilledButton.icon(
+                          key: const ValueKey('space-identity-created-cta'),
                           onPressed: () =>
                               Navigator.of(context).pushReplacement(
                                 MaterialPageRoute<void>(
@@ -144,8 +147,8 @@ class ClubCreatedScreen extends StatelessWidget {
                                 ),
                               ),
                           style: FilledButton.styleFrom(
-                            backgroundColor: identity.primary,
-                            foregroundColor: colors.onPrimary,
+                            backgroundColor: identityVisuals.cta,
+                            foregroundColor: identityVisuals.onCta,
                             minimumSize: const Size.fromHeight(58),
                             padding: const EdgeInsets.symmetric(vertical: 16),
                             shape: RoundedRectangleBorder(

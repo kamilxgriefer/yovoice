@@ -6,7 +6,7 @@ exist; know which one you're relying on before trusting it.
 
 ## Current counts
 
-**As of 2026-08-29.** One table, so there is a single place to correct when
+**As of 2026-08-31.** One table, so there is a single place to correct when
 these move. Every figure is a suite run, not an estimate; file counts are
 `find`. *(The date used to live in the heading; it moved into the body on
 2026-08-20 because three other docs deep-link to this section and every
@@ -14,35 +14,48 @@ correction silently broke all three anchors.)*
 
 | Suite | Command | Count |
 |---|---|---|
-| Firestore rules | `npm --prefix firestore-tests test` | **519** checks |
+| Firestore rules | `npm --prefix firestore-tests test` | **523** checks |
 | Storage rules | `npm --prefix firestore-tests run test:storage` | **60** checks |
 | Family media (combined) | `npm --prefix firestore-tests run test:family-media` | **11** checks |
-| Cloud Functions | `npm --prefix functions test` | **920** tests (70 `*.test.js` files) |
-| Flutter VM | `flutter test` | **1672** tests (153 VM-compatible files) |
+| Cloud Functions | `npm --prefix functions test` | **938** tests (71 `*.test.js` files) |
+| Flutter VM | `flutter test` | **1867** tests (162 VM-compatible files) |
 | Flutter browser | `flutter test --platform chrome test/web_audio_capture_browser_test.dart test/image_crop_test.dart test/room_cover_editor_test.dart` | **18** tests (3 files) |
 
-**Where these numbers came from.** Functions 920 and Flutter VM 1672 were
-re-measured on 2026-08-29 against the exact current source; Rules 519 was last
-re-measured on 2026-08-28. A deliberately
-sequential full Functions run reached 901/903 because two unrelated suites
-shared one long-lived emulator: the global identity scrub counted another
-file's conversation and a social-graph query timed out under accumulated
-emulator load. Fresh isolated reruns passed 2/2 and 22/22 respectively; the
-fragile global scrub aggregate was corrected to assert its exact fixture state
-instead of exclusive ownership of a shared collection. The final chat/push
-security matrices passed 47/47 Flutter, 9/9 pure Functions and 24/24 emulator
-checks. A final direct-call lock audit added four emulator regressions for late
-cancel/decline/end and expiry preserving a replacement call's locks; the exact
-concurrent Functions gate then passed 907/907 on a fresh emulator pair. The
-later ADR-130 identity wave passed 920/920 on a fresh Auth/Firestore emulator
-pair. Flutter VM 1672 passed in one invocation; the combined real-Chrome media
-gate passed 18/18, and `flutter analyze` was clean on those bytes. Storage 60 and family
-media 11 also ran against fresh isolated emulators rather than an occupied
-local 8080 endpoint. Web and signed Android release compilation succeeded. The
-70 Functions files and 154 total Flutter test files (153 VM-compatible plus one
-browser-only) are current `find` results rather than carried-forward estimates. The earlier
-figures this row used to carry (Rules 485, Functions 783/62, Flutter 1198/114)
-are kept in the movement log below as history.
+**Where these numbers came from.** Every current row was re-measured on
+2026-08-31 against the coordinated tester-release candidate, not inferred from
+an older release. Flutter VM passed **1867/1867** in one invocation and
+`flutter analyze --no-pub` reported no issues. Cloud Functions passed
+**938/938** under Node 22 on fresh Auth/Firestore emulators. Firestore Rules
+passed **523/523**; isolated Storage and combined Family-media gates passed
+**60/60** and **11/11**. The three real-Chrome media/crop files passed
+**18/18**. Functions smoke separately passed all three product flows (global
+chat, moderation/audit and social graph). There are 71 Functions test files
+and 163 Flutter test files in total (162 VM-compatible plus the browser-only
+audio lifecycle file). Historical count movement remains below.
+
+The Functions production-dependency audit reports no high or critical
+findings. Eight moderate advisories resolve to transitive `uuid@9.0.1` through
+`firebase-admin`; the affected v3/v5/v6 buffer API is not imported by YO Voice
+and the resolved dependency call sites use only `v4()`. This is an accepted,
+non-blocking exception for this candidate because the automated fix requires a
+breaking `firebase-admin` major upgrade. Re-review is required when the
+upstream dependency removes the advisory or before any direct UUID use is
+introduced.
+
+> **Movement, 2026-08-31 (coordinated tester release candidate).** Flutter VM
+> **1672 → 1867** covers the responsive auth Voice Relay/curtain, the Dark and
+> Pearl semantic colour contract, final sculpted dock geometry and hover,
+> compact live-room capsule, guided onboarding, profile identity/Vibe,
+> room-cover crop/export, TOTP motion/error recovery and the cross-tab
+> registration identity race, full 200% text inheritance in live-room surfaces,
+> and stale-session mute protection during a room A→B transition. The final
+> registration boundary refuses to seed
+> a canonical name from an email while the password-registration owner is
+> still publishing the chosen pseudonym; reload plus a second profile read
+> protects a separate browser tab. Backend totals moved to Functions
+> **938/938** and Firestore Rules **523/523**; Storage **60/60**, Family media
+> **11/11** and browser **18/18** remain green. This is source verification,
+> not evidence that a signed store build has been uploaded or assigned.
 
 > **Movement, 2026-08-29 (first-run guided product tour).** Flutter VM
 > **1644 → 1672** adds per-account/version completion and fail-closed storage,
@@ -839,6 +852,37 @@ Run with:
 ```bash
 flutter test
 ```
+
+### TOTP Voice Constellation evidence (source only, 2026-08-30)
+
+The redesigned sign-in challenge has a focused deterministic suite covering
+input, single-flight Firebase resolution, Back/lifecycle races, captured motion
+continuity, invalid/network/rate-limit recovery, reduced motion, exact live
+regions and responsive layouts. The final focused command passed **82/82**:
+
+```bash
+flutter test test/two_factor_authentication_test.dart \
+  test/totp_challenge_animation_test.dart
+```
+
+The repository-wide `flutter test` gate then passed **1799/1799** on the same
+source revision.
+
+The developer-only screenshot harness passed **16/16** and wrote its PNGs
+outside the repository for actual visual inspection:
+
+```bash
+flutter test \
+  --dart-define=TOTP_SCREENSHOT_DIR=/private/tmp/yovoice-totp-visual-qa \
+  test/totp_challenge_screenshot.dart
+```
+
+The preview target was also exercised on an iPhone simulator at normal speed
+and with Flutter's real 0.5× time dilation. Editing, fast and slow success,
+invalid/retry, network recovery, 200% text, multiple factors and reduced motion
+were inspected. This is local simulator and screenshot evidence only: it does
+not prove production configuration or deployment, and VoiceOver/TalkBack has
+not been verified on a physical device.
 
 ## Static analysis — the actual baseline gate
 

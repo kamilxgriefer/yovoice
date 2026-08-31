@@ -23,7 +23,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:yovoice/core/theme/app_theme.dart';
 import 'package:yovoice/features/messages/data/models/message.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/messages/presentation/screens/chat_screen.dart';
@@ -73,6 +75,42 @@ Future<void> _loadRealFonts() async {
   final icons = FontLoader('MaterialIcons')
     ..addFont(read('MaterialIcons-Regular.otf'));
   await icons.load();
+
+  final inter = FontLoader('Inter')
+    ..addFont(
+      Future<ByteData>.value(
+        ByteData.view(
+          Uint8List.fromList(
+            File('assets/fonts/InterVariable.ttf').readAsBytesSync(),
+          ).buffer,
+        ),
+      ),
+    );
+  await inter.load();
+
+  final emojiFile = File('/System/Library/Fonts/Apple Color Emoji.ttc');
+  if (emojiFile.existsSync()) {
+    final emoji = FontLoader('Apple Color Emoji')
+      ..addFont(
+        Future<ByteData>.value(
+          ByteData.view(Uint8List.fromList(emojiFile.readAsBytesSync()).buffer),
+        ),
+      );
+    await emoji.load();
+  }
+}
+
+ThemeData _qaTheme(Brightness brightness) {
+  final base = brightness == Brightness.dark
+      ? AppTheme.darkTheme
+      : AppTheme.lightTheme;
+  const fallbacks = <String>['Apple Color Emoji'];
+  return base.copyWith(
+    textTheme: base.textTheme.apply(fontFamilyFallback: fallbacks),
+    primaryTextTheme: base.primaryTextTheme.apply(
+      fontFamilyFallback: fallbacks,
+    ),
+  );
 }
 
 Future<void> _settle(WidgetTester tester) async {
@@ -100,9 +138,31 @@ Future<void> _shoot(WidgetTester tester, String name) async {
 }
 
 void main() {
-  setUpAll(_loadRealFonts);
+  const audioGlobal = MethodChannel('xyz.luan/audioplayers.global');
+  const audioPlayers = MethodChannel('xyz.luan/audioplayers');
+  const audioGlobalEvents = MethodChannel(
+    'xyz.luan/audioplayers.global/events',
+  );
+
+  setUpAll(() async {
+    await _loadRealFonts();
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(audioGlobal, (_) async => null);
+    messenger.setMockMethodCallHandler(audioPlayers, (_) async => null);
+    messenger.setMockMethodCallHandler(audioGlobalEvents, (_) async => null);
+  });
+
+  tearDownAll(() {
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(audioGlobal, null);
+    messenger.setMockMethodCallHandler(audioPlayers, null);
+    messenger.setMockMethodCallHandler(audioGlobalEvents, null);
+  });
 
   setUp(() {
+    SharedPreferences.setMockInitialValues(const <String, Object>{});
     PublicIdentityRepository.instance = PublicIdentityRepository(
       auth: MockFirebaseAuth(signedIn: true, mockUser: MockUser(uid: _me)),
       fetchOverride: (uids) async => <String, dynamic>{
@@ -139,11 +199,7 @@ void main() {
           key: _capture,
           child: MaterialApp(
             debugShowCheckedModeBanner: false,
-            theme: ThemeData(
-              brightness: Brightness.dark,
-              useMaterial3: true,
-              fontFamily: 'Roboto',
-            ),
+            theme: _qaTheme(Brightness.dark),
             home: ChatScreen(
               conversationId: _conversationId,
               otherUserId: _them,
@@ -180,6 +236,49 @@ void main() {
     });
   }
 
+  testWidgets('dm report sheet — Pearl mobile', (tester) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final service = _StubMessageService();
+    await tester.pumpWidget(
+      RepaintBoundary(
+        key: _capture,
+        child: MaterialApp(
+          debugShowCheckedModeBanner: false,
+          theme: _qaTheme(Brightness.light),
+          home: ChatScreen(
+            conversationId: _conversationId,
+            otherUserId: _them,
+            otherDisplayName: 'Marek',
+            otherEmail: '',
+            otherPhotoUrl: '',
+            messageService: service,
+            auth: MockFirebaseAuth(
+              signedIn: true,
+              mockUser: MockUser(uid: _me),
+            ),
+            contentReportService: ContentReportService(
+              functions: _NoopFunctions(),
+            ),
+          ),
+        ),
+      ),
+    );
+    await _settle(tester);
+    service.emit([theirMessage()]);
+    await _settle(tester);
+
+    await tester.longPress(find.textContaining('pathetic'));
+    await _settle(tester);
+    await _shoot(tester, 'dm-actions-pearl-mobile');
+
+    await tester.tap(find.byKey(const ValueKey('report-message')));
+    await _settle(tester);
+    await _shoot(tester, 'dm-reason-picker-pearl-mobile');
+  });
+
   testWidgets('dm report failure copy — mobile', (tester) async {
     tester.view.physicalSize = const Size(390, 844);
     tester.view.devicePixelRatio = 1.0;
@@ -191,11 +290,7 @@ void main() {
         key: _capture,
         child: MaterialApp(
           debugShowCheckedModeBanner: false,
-          theme: ThemeData(
-            brightness: Brightness.dark,
-            useMaterial3: true,
-            fontFamily: 'Roboto',
-          ),
+          theme: _qaTheme(Brightness.dark),
           home: ChatScreen(
             conversationId: _conversationId,
             otherUserId: _them,
@@ -266,11 +361,7 @@ void main() {
           key: _capture,
           child: MaterialApp(
             debugShowCheckedModeBanner: false,
-            theme: ThemeData(
-              brightness: Brightness.dark,
-              useMaterial3: true,
-              fontFamily: 'Roboto',
-            ),
+            theme: _qaTheme(Brightness.dark),
             home: MomentCommentsScreen(
               moment: VoiceMoment(
                 id: 'v1',

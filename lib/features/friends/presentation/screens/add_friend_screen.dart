@@ -295,7 +295,10 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
     messenger.hideCurrentSnackBar();
     messenger.showSnackBar(
       SnackBar(
-        content: Text(message, style: TextStyle(color: palette.textPrimary)),
+        content: Text(
+          message,
+          style: TextStyle(color: palette.successForeground),
+        ),
         behavior: SnackBarBehavior.floating,
         backgroundColor: palette.successSurface,
         margin: const EdgeInsets.all(16),
@@ -305,17 +308,17 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
   }
 
   void _showError(String message) {
-    final colors = Theme.of(context).colorScheme;
+    final palette = context.appPalette;
     final messenger = ScaffoldMessenger.of(context);
     messenger.hideCurrentSnackBar();
     messenger.showSnackBar(
       SnackBar(
         content: Text(
           message,
-          style: TextStyle(color: colors.onErrorContainer),
+          style: TextStyle(color: palette.dangerForeground),
         ),
         behavior: SnackBarBehavior.floating,
-        backgroundColor: colors.errorContainer,
+        backgroundColor: palette.dangerSurface,
         margin: const EdgeInsets.all(16),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
       ),
@@ -412,7 +415,6 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
 
   Widget _buildSearchField() {
     final palette = context.appPalette;
-    final colors = Theme.of(context).colorScheme;
     return Padding(
       padding: const EdgeInsets.fromLTRB(18, 10, 18, 14),
       child: TextField(
@@ -431,6 +433,7 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
           prefixIcon: Icon(Icons.search_rounded, color: palette.textSecondary),
           suffixIcon: _searchController.text.isNotEmpty
               ? IconButton(
+                  tooltip: 'Clear search',
                   onPressed: () {
                     _searchDebounce?.cancel();
                     _searchController.clear();
@@ -456,7 +459,7 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
           ),
           focusedBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(18),
-            borderSide: BorderSide(color: colors.primary, width: 1.4),
+            borderSide: BorderSide(color: palette.focus, width: 2),
           ),
         ),
       ),
@@ -470,7 +473,7 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
       return Center(
         child: CircularProgressIndicator(
           strokeWidth: 2.5,
-          color: Theme.of(context).colorScheme.primary,
+          color: context.appPalette.interactiveForeground,
         ),
       );
     }
@@ -521,7 +524,7 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
           return Center(
             child: CircularProgressIndicator(
               strokeWidth: 2.5,
-              color: Theme.of(context).colorScheme.primary,
+              color: context.appPalette.interactiveForeground,
             ),
           );
         }
@@ -592,6 +595,7 @@ class _SuggestionCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     final hasPhoto = suggestion.photoUrl?.trim().isNotEmpty == true;
     final isFriend = relationshipStatus == FriendRelationshipStatus.friends;
     final isSent = relationshipStatus == FriendRelationshipStatus.requestSent;
@@ -619,7 +623,7 @@ class _SuggestionCard extends StatelessWidget {
             ),
             child: ClipOval(
               child: Container(
-                color: const Color(0xFF2A173C),
+                color: palette.surfaceSunken,
                 alignment: Alignment.center,
                 child: hasPhoto
                     ? Image.network(
@@ -678,37 +682,37 @@ class _SuggestionCard extends StatelessWidget {
               onPressed: isProcessing || isComplete ? null : onPressed,
               style: FilledButton.styleFrom(
                 backgroundColor: isFriend
-                    ? const Color(0xFF26392E)
+                    ? palette.successSurface
                     : isSent
-                    ? const Color(0xFF3A2F1D)
-                    : const Color(0xFF8A2BE2),
+                    ? palette.warningSurface
+                    : colors.primary,
                 disabledBackgroundColor: isFriend
-                    ? const Color(0xFF26392E)
+                    ? palette.successSurface
                     : isSent
-                    ? const Color(0xFF3A2F1D)
-                    : const Color(0xFF2A2533),
+                    ? palette.warningSurface
+                    : palette.surfaceMuted,
                 foregroundColor: isFriend
-                    ? const Color(0xFF73D99A)
+                    ? palette.successForeground
                     : isSent
-                    ? const Color(0xFFFFC66D)
-                    : Colors.white,
+                    ? palette.warningForeground
+                    : colors.onPrimary,
                 disabledForegroundColor: isFriend
-                    ? const Color(0xFF73D99A)
+                    ? palette.successForeground
                     : isSent
-                    ? const Color(0xFFFFC66D)
-                    : const Color(0xFF8F8799),
+                    ? palette.warningForeground
+                    : palette.textTertiary,
                 padding: const EdgeInsets.symmetric(horizontal: 14),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(13),
                 ),
               ),
               icon: isProcessing
-                  ? const SizedBox(
+                  ? SizedBox(
                       width: 15,
                       height: 15,
                       child: CircularProgressIndicator(
                         strokeWidth: 2,
-                        color: Colors.white,
+                        color: colors.onPrimary,
                       ),
                     )
                   : Icon(
@@ -753,7 +757,8 @@ class _UserResultCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
-    final button = _buttonPresentation(relationshipStatus);
+    final colors = Theme.of(context).colorScheme;
+    final button = _buttonPresentation(relationshipStatus, palette, colors);
     final identity = Row(
       children: [
         _UserAvatar(user: user),
@@ -810,12 +815,12 @@ class _UserResultCard extends StatelessWidget {
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(13)),
       ),
       child: isProcessing
-          ? const SizedBox(
+          ? SizedBox(
               width: 17,
               height: 17,
               child: CircularProgressIndicator(
                 strokeWidth: 2,
-                color: Colors.white,
+                color: button.foregroundColor,
               ),
             )
           : Row(
@@ -847,10 +852,10 @@ class _UserResultCard extends StatelessWidget {
               onPressed: isProcessing ? null : onDecline,
               tooltip: 'Decline friend request',
               style: IconButton.styleFrom(
-                backgroundColor: const Color(0xFF3A2020),
-                disabledBackgroundColor: const Color(0xFF2A2533),
-                foregroundColor: const Color(0xFFE38B8B),
-                disabledForegroundColor: const Color(0xFF8F8799),
+                backgroundColor: palette.dangerSurface,
+                disabledBackgroundColor: palette.surfaceMuted,
+                foregroundColor: palette.dangerForeground,
+                disabledForegroundColor: palette.textTertiary,
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(13),
                 ),
@@ -900,52 +905,54 @@ class _UserResultCard extends StatelessWidget {
 
   static _FriendButtonPresentation _buttonPresentation(
     FriendRelationshipStatus status,
+    AppPalette palette,
+    ColorScheme colors,
   ) {
     switch (status) {
       case FriendRelationshipStatus.friends:
-        return const _FriendButtonPresentation(
+        return _FriendButtonPresentation(
           label: 'Friends',
           icon: Icons.people_alt_rounded,
-          backgroundColor: Color(0xFF26392E),
-          disabledBackgroundColor: Color(0xFF26392E),
-          foregroundColor: Color(0xFF73D99A),
-          disabledForegroundColor: Color(0xFF73D99A),
+          backgroundColor: palette.successSurface,
+          disabledBackgroundColor: palette.successSurface,
+          foregroundColor: palette.successForeground,
+          disabledForegroundColor: palette.successForeground,
         );
       case FriendRelationshipStatus.requestSent:
-        return const _FriendButtonPresentation(
+        return _FriendButtonPresentation(
           label: 'Cancel',
           icon: Icons.close_rounded,
-          backgroundColor: Color(0xFF3A2F1D),
-          disabledBackgroundColor: Color(0xFF2A2533),
-          foregroundColor: Color(0xFFFFC66D),
-          disabledForegroundColor: Color(0xFF8F8799),
+          backgroundColor: palette.warningSurface,
+          disabledBackgroundColor: palette.surfaceMuted,
+          foregroundColor: palette.warningForeground,
+          disabledForegroundColor: palette.textTertiary,
         );
       case FriendRelationshipStatus.requestReceived:
-        return const _FriendButtonPresentation(
+        return _FriendButtonPresentation(
           label: 'Accept',
           icon: Icons.check_rounded,
-          backgroundColor: Color(0xFF27613D),
-          disabledBackgroundColor: Color(0xFF2A2533),
-          foregroundColor: Colors.white,
-          disabledForegroundColor: Color(0xFF8F8799),
+          backgroundColor: colors.primary,
+          disabledBackgroundColor: palette.surfaceMuted,
+          foregroundColor: colors.onPrimary,
+          disabledForegroundColor: palette.textTertiary,
         );
       case FriendRelationshipStatus.none:
-        return const _FriendButtonPresentation(
+        return _FriendButtonPresentation(
           label: 'Add',
           icon: Icons.person_add_alt_1_rounded,
-          backgroundColor: Color(0xFF8A2BE2),
-          disabledBackgroundColor: Color(0xFF2A2533),
-          foregroundColor: Colors.white,
-          disabledForegroundColor: Color(0xFF8F8799),
+          backgroundColor: colors.primary,
+          disabledBackgroundColor: palette.surfaceMuted,
+          foregroundColor: colors.onPrimary,
+          disabledForegroundColor: palette.textTertiary,
         );
       case FriendRelationshipStatus.blocked:
-        return const _FriendButtonPresentation(
+        return _FriendButtonPresentation(
           label: 'Blocked',
           icon: Icons.block_rounded,
-          backgroundColor: Color(0xFF3A2020),
-          disabledBackgroundColor: Color(0xFF3A2020),
-          foregroundColor: Color(0xFFE38B8B),
-          disabledForegroundColor: Color(0xFFE38B8B),
+          backgroundColor: palette.dangerSurface,
+          disabledBackgroundColor: palette.dangerSurface,
+          foregroundColor: palette.dangerForeground,
+          disabledForegroundColor: palette.dangerForeground,
         );
     }
   }
@@ -977,6 +984,7 @@ class _UserAvatar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final photoUrl = user.photoUrl;
+    final palette = context.appPalette;
 
     return Container(
       width: 52,
@@ -990,7 +998,7 @@ class _UserAvatar extends StatelessWidget {
       ),
       child: ClipOval(
         child: Container(
-          color: const Color(0xFF2A173C),
+          color: palette.surfaceSunken,
           child: photoUrl != null && photoUrl.isNotEmpty
               ? Image.network(
                   photoUrl,
@@ -1013,11 +1021,12 @@ class _AvatarInitial extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return Center(
       child: Text(
         initial,
-        style: const TextStyle(
-          color: Colors.white,
+        style: TextStyle(
+          color: palette.textPrimary,
           fontSize: 19,
           fontWeight: FontWeight.w800,
         ),

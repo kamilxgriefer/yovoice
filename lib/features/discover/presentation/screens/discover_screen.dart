@@ -3,6 +3,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
+import 'package:yovoice/features/discover/presentation/discover_category_identity.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/features/discover/presentation/widgets/hero_live_room.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
@@ -841,6 +842,10 @@ class _SectionHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
+    final visuals = DiscoverCategoryVisuals.fromSeed(
+      accent,
+      Theme.of(context).brightness,
+    );
     return Row(
       crossAxisAlignment: CrossAxisAlignment.end,
       children: [
@@ -873,11 +878,11 @@ class _SectionHeader extends StatelessWidget {
           width: 36,
           height: 36,
           decoration: BoxDecoration(
-            color: accent.withValues(alpha: 0.12),
+            color: visuals.surface,
             borderRadius: BorderRadius.circular(13),
-            border: Border.all(color: accent.withValues(alpha: 0.3)),
+            border: Border.all(color: visuals.border),
           ),
-          child: Icon(icon, color: accent, size: 20),
+          child: Icon(icon, color: visuals.onSurface, size: 20),
         ),
       ],
     );
@@ -958,31 +963,15 @@ class _FeaturedRoomCard extends StatelessWidget {
   final VoidCallback onPressed;
   final bool expandedLayout;
 
-  Color get _accent {
-    if (room.isBroadcast) {
-      return const Color(0xFFFF3F8E);
-    }
-
-    final category = room.category.toLowerCase();
-
-    if (category.contains('music')) {
-      return const Color(0xFFFFA63D);
-    }
-
-    if (category.contains('gaming')) {
-      return const Color(0xFF4D8DFF);
-    }
-
-    if (category.contains('business')) {
-      return const Color(0xFF3FD19B);
-    }
-
-    return const Color(0xFFA226FF);
-  }
+  DiscoverCategoryIdentity get _identity =>
+      DiscoverCategoryIdentity.forCategory(
+        room.category,
+        isBroadcast: room.isBroadcast,
+      );
 
   @override
   Widget build(BuildContext context) {
-    final accent = _accent;
+    final accent = _identity.seed;
     final palette = context.appPalette;
     final dark = Theme.of(context).brightness == Brightness.dark;
 
@@ -1007,7 +996,7 @@ class _FeaturedRoomCard extends StatelessWidget {
                       palette.surface,
                     ],
             ),
-            border: Border.all(color: accent.withValues(alpha: 0.55)),
+            border: Border.all(color: palette.border),
             boxShadow: [
               BoxShadow(color: accent.withValues(alpha: 0.1), blurRadius: 22),
             ],
@@ -1144,6 +1133,10 @@ class _FeaturedRoomFooter extends StatelessWidget {
 
   Widget _audience(BuildContext context) {
     final palette = context.appPalette;
+    final visuals = DiscoverCategoryVisuals.fromSeed(
+      accent,
+      Theme.of(context).brightness,
+    );
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -1151,7 +1144,7 @@ class _FeaturedRoomFooter extends StatelessWidget {
           room.isBroadcast
               ? Icons.headphones_rounded
               : Icons.people_alt_rounded,
-          color: accent,
+          color: visuals.foreground,
           size: 15,
         ),
         const SizedBox(width: 5),
@@ -1216,7 +1209,7 @@ class _PremiumRoomCard extends StatelessWidget {
       case _RoomCardStyle.rising:
         return const Color(0xFF57D9A3);
       case _RoomCardStyle.standard:
-        return const Color(0xFFA226FF);
+        return DiscoverCategoryIdentity.chill.seed;
     }
   }
 
@@ -1240,11 +1233,42 @@ class _PremiumRoomCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final accent = _accent;
     final palette = context.appPalette;
-    final dark = Theme.of(context).brightness == Brightness.dark;
+    final brightness = Theme.of(context).brightness;
+    final dark = brightness == Brightness.dark;
+    final textScale = MediaQuery.textScalerOf(context).scale(1);
+    final useAccessibleLayout = textScale > 1.4;
     final maximum = room.maxParticipants;
     final occupancy = maximum == null || maximum <= 0
         ? null
         : (room.participantCount / maximum).clamp(0.0, 1.0);
+    final avatar = Stack(
+      clipBehavior: Clip.none,
+      children: [
+        _RoomAvatar(
+          imageUrl: room.imageUrl,
+          fallbackText: room.name,
+          accent: accent,
+          size: 66,
+          icon: _roomIcon,
+        ),
+        if (style == _RoomCardStyle.trending)
+          Positioned(left: -7, top: -7, child: _RankBadge(rank: rank)),
+      ],
+    );
+    final chevron = Icon(
+      Icons.chevron_right_rounded,
+      color: DiscoverCategoryVisuals.fromSeed(accent, brightness).foreground,
+      size: 27,
+    );
+    final details = _PremiumRoomDetails(
+      room: room,
+      accent: accent,
+      roomTypeLabel: _roomTypeLabel,
+      peopleLabel: _peopleLabel,
+      roomIcon: _roomIcon,
+      occupancy: occupancy,
+      useAccessibleLayout: useAccessibleLayout,
+    );
 
     return Material(
       key: ValueKey('discover-room-surface-${room.id}'),
@@ -1268,159 +1292,175 @@ class _PremiumRoomCard extends StatelessWidget {
                     ],
             ),
             borderRadius: BorderRadius.circular(24),
-            border: Border.all(color: accent.withValues(alpha: 0.46)),
+            border: Border.all(color: palette.border),
             boxShadow: [
               BoxShadow(color: accent.withValues(alpha: 0.075), blurRadius: 20),
             ],
           ),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Stack(
-                clipBehavior: Clip.none,
-                children: [
-                  _RoomAvatar(
-                    imageUrl: room.imageUrl,
-                    fallbackText: room.name,
-                    accent: accent,
-                    size: 66,
-                    icon: _roomIcon,
-                  ),
-                  if (style == _RoomCardStyle.trending)
-                    Positioned(
-                      left: -7,
-                      top: -7,
-                      child: _RankBadge(rank: rank),
-                    ),
-                ],
-              ),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Column(
+          child: useAccessibleLayout
+              ? Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Row(
                       children: [
-                        _TypeBadge(
-                          label: _roomTypeLabel,
-                          icon: _roomIcon,
-                          accent: accent,
-                        ),
+                        avatar,
                         const Spacer(),
-                        const _SmallLiveBadge(),
+                        Semantics(label: 'Open room', child: chevron),
                       ],
                     ),
-                    const SizedBox(height: 9),
-                    Text(
-                      room.name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: palette.textPrimary,
-                        fontSize: 17,
-                        fontWeight: FontWeight.w900,
-                        letterSpacing: -0.2,
-                      ),
+                    const SizedBox(height: 14),
+                    details,
+                  ],
+                )
+              : Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    avatar,
+                    const SizedBox(width: 14),
+                    Expanded(child: details),
+                    const SizedBox(width: 7),
+                    Padding(
+                      padding: const EdgeInsets.only(top: 27),
+                      child: chevron,
                     ),
-                    const SizedBox(height: 5),
-                    Text(
-                      room.description.isEmpty
-                          ? 'Hosted by ${room.hostName}'
-                          : room.description,
-                      maxLines: 2,
+                  ],
+                ),
+        ),
+      ),
+    );
+  }
+}
+
+class _PremiumRoomDetails extends StatelessWidget {
+  const _PremiumRoomDetails({
+    required this.room,
+    required this.accent,
+    required this.roomTypeLabel,
+    required this.peopleLabel,
+    required this.roomIcon,
+    required this.occupancy,
+    required this.useAccessibleLayout,
+  });
+
+  final VoiceRoom room;
+  final Color accent;
+  final String roomTypeLabel;
+  final String peopleLabel;
+  final IconData roomIcon;
+  final double? occupancy;
+  final bool useAccessibleLayout;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final visuals = DiscoverCategoryVisuals.fromSeed(
+      accent,
+      Theme.of(context).brightness,
+    );
+    final statusBadges = <Widget>[
+      _TypeBadge(label: roomTypeLabel, icon: roomIcon, accent: accent),
+      const _SmallLiveBadge(),
+    ];
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (useAccessibleLayout)
+          Wrap(spacing: 8, runSpacing: 8, children: statusBadges)
+        else
+          Row(
+            children: [statusBadges.first, const Spacer(), statusBadges.last],
+          ),
+        const SizedBox(height: 9),
+        Text(
+          room.name,
+          maxLines: useAccessibleLayout ? 3 : 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            color: palette.textPrimary,
+            fontSize: 17,
+            fontWeight: FontWeight.w900,
+            letterSpacing: -0.2,
+          ),
+        ),
+        const SizedBox(height: 5),
+        Text(
+          room.description.isEmpty
+              ? 'Hosted by ${room.hostName}'
+              : room.description,
+          maxLines: useAccessibleLayout ? 4 : 2,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            color: palette.textSecondary,
+            fontSize: 12,
+            height: 1.35,
+          ),
+        ),
+        const SizedBox(height: 11),
+        Row(
+          children: [
+            _HostAvatar(
+              photoUrl: room.hostPhotoUrl,
+              hostName: room.hostName,
+              accent: accent,
+              size: 28,
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Row(
+                children: [
+                  Flexible(
+                    child: Text(
+                      room.hostName,
+                      maxLines: useAccessibleLayout ? 2 : 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                         color: palette.textSecondary,
-                        fontSize: 12,
-                        height: 1.35,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
                       ),
                     ),
-                    const SizedBox(height: 11),
-                    Row(
-                      children: [
-                        _HostAvatar(
-                          photoUrl: room.hostPhotoUrl,
-                          hostName: room.hostName,
-                          accent: accent,
-                          size: 28,
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Row(
-                            children: [
-                              Flexible(
-                                child: Text(
-                                  room.hostName,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    color: palette.textSecondary,
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: 4),
-                              UserIdentityBadges(
-                                uid: room.hostId,
-                                variant: IdentityBadgeVariant.icon,
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 10),
-                    Wrap(
-                      spacing: 7,
-                      runSpacing: 7,
-                      children: [
-                        _RoomTag(
-                          icon: room.isBroadcast
-                              ? Icons.headphones_rounded
-                              : Icons.people_alt_rounded,
-                          label: _peopleLabel,
-                        ),
-                        _RoomTag(
-                          icon: Icons.language_rounded,
-                          label: room.language,
-                        ),
-                        _RoomTag(
-                          icon: Icons.local_offer_rounded,
-                          label: room.category,
-                        ),
-                      ],
-                    ),
-                    if (occupancy != null) ...[
-                      const SizedBox(height: 12),
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(30),
-                        child: LinearProgressIndicator(
-                          value: occupancy,
-                          minHeight: 4,
-                          backgroundColor: palette.surfaceSunken,
-                          color: occupancy >= 0.9
-                              ? const Color(0xFFFF416C)
-                              : accent,
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
+                  ),
+                  const SizedBox(width: 4),
+                  UserIdentityBadges(
+                    uid: room.hostId,
+                    variant: IdentityBadgeVariant.icon,
+                  ),
+                ],
               ),
-              const SizedBox(width: 7),
-              Padding(
-                padding: const EdgeInsets.only(top: 27),
-                child: Icon(
-                  Icons.chevron_right_rounded,
-                  color: accent.withValues(alpha: 0.85),
-                  size: 27,
-                ),
-              ),
-            ],
-          ),
+            ),
+          ],
         ),
-      ),
+        const SizedBox(height: 10),
+        Wrap(
+          spacing: 7,
+          runSpacing: 7,
+          children: [
+            _RoomTag(
+              icon: room.isBroadcast
+                  ? Icons.headphones_rounded
+                  : Icons.people_alt_rounded,
+              label: peopleLabel,
+            ),
+            _RoomTag(icon: Icons.language_rounded, label: room.language),
+            _RoomTag(icon: Icons.local_offer_rounded, label: room.category),
+          ],
+        ),
+        if (occupancy != null) ...[
+          const SizedBox(height: 12),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(30),
+            child: LinearProgressIndicator(
+              value: occupancy,
+              minHeight: 4,
+              backgroundColor: palette.surfaceSunken,
+              color: occupancy! >= 0.9
+                  ? const Color(0xFFFF416C)
+                  : visuals.foreground,
+            ),
+          ),
+        ],
+      ],
     );
   }
 }
@@ -1443,6 +1483,11 @@ class _RoomAvatar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final normalizedUrl = imageUrl?.trim();
+    final palette = context.appPalette;
+    final visuals = DiscoverCategoryVisuals.fromSeed(
+      accent,
+      Theme.of(context).brightness,
+    );
 
     return Container(
       width: size,
@@ -1454,11 +1499,11 @@ class _RoomAvatar extends StatelessWidget {
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
           colors: [
-            accent.withValues(alpha: 0.36),
-            accent.withValues(alpha: 0.1),
+            visuals.surface,
+            Color.lerp(visuals.surface, palette.surface, 0.55)!,
           ],
         ),
-        border: Border.all(color: accent.withValues(alpha: 0.72)),
+        border: Border.all(color: visuals.border),
         boxShadow: [
           BoxShadow(color: accent.withValues(alpha: 0.14), blurRadius: 16),
         ],
@@ -1497,21 +1542,20 @@ class _RoomAvatarFallback extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final palette = context.appPalette;
     final normalized = fallbackText.trim();
+    final visuals = DiscoverCategoryVisuals.fromSeed(
+      accent,
+      Theme.of(context).brightness,
+    );
 
     return Stack(
       alignment: Alignment.center,
       children: [
-        Icon(
-          icon,
-          color: palette.textTertiary.withValues(alpha: 0.35),
-          size: 43,
-        ),
+        Icon(icon, color: visuals.foreground.withValues(alpha: 0.42), size: 43),
         Text(
           normalized.isEmpty ? 'YV' : normalized[0].toUpperCase(),
           style: TextStyle(
-            color: Color.lerp(palette.textPrimary, accent, 0.15),
+            color: visuals.foreground,
             fontSize: 20,
             fontWeight: FontWeight.w900,
           ),
@@ -1536,11 +1580,14 @@ class _HostAvatar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final palette = context.appPalette;
     final normalizedUrl = photoUrl?.trim();
     final initial = hostName.trim().isEmpty
         ? 'Y'
         : hostName.trim()[0].toUpperCase();
+    final visuals = DiscoverCategoryVisuals.fromSeed(
+      accent,
+      Theme.of(context).brightness,
+    );
 
     return Container(
       width: size,
@@ -1549,8 +1596,8 @@ class _HostAvatar extends StatelessWidget {
       alignment: Alignment.center,
       decoration: BoxDecoration(
         shape: BoxShape.circle,
-        color: accent.withValues(alpha: 0.24),
-        border: Border.all(color: accent.withValues(alpha: 0.72)),
+        color: visuals.surface,
+        border: Border.all(color: visuals.border),
       ),
       child: normalizedUrl != null && normalizedUrl.isNotEmpty
           ? Image.network(
@@ -1562,7 +1609,7 @@ class _HostAvatar extends StatelessWidget {
                 return Text(
                   initial,
                   style: TextStyle(
-                    color: palette.textPrimary,
+                    color: visuals.onSurface,
                     fontSize: size * 0.38,
                     fontWeight: FontWeight.w900,
                   ),
@@ -1572,7 +1619,7 @@ class _HostAvatar extends StatelessWidget {
           : Text(
               initial,
               style: TextStyle(
-                color: palette.textPrimary,
+                color: visuals.onSurface,
                 fontSize: size * 0.38,
                 fontWeight: FontWeight.w900,
               ),
@@ -1628,22 +1675,27 @@ class _TypeBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final visuals = DiscoverCategoryVisuals.fromSeed(
+      accent,
+      Theme.of(context).brightness,
+    );
     return Container(
+      key: ValueKey('discover-type-badge-$label'),
       padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
       decoration: BoxDecoration(
-        color: accent.withValues(alpha: 0.13),
+        color: visuals.surface,
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: accent.withValues(alpha: 0.4)),
+        border: Border.all(color: visuals.border),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, color: accent, size: 12),
+          Icon(icon, color: visuals.onSurface, size: 12),
           const SizedBox(width: 5),
           Text(
             label,
             style: TextStyle(
-              color: accent,
+              color: visuals.onSurface,
               fontSize: 8,
               fontWeight: FontWeight.w900,
               letterSpacing: 0.65,

@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
 
-import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/home/data/services/home_feed_service.dart';
 import 'package:yovoice/features/moderation/data/services/content_report_service.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
@@ -74,12 +74,13 @@ Future<void> showMomentSheet(
   final live = moments?.watchMoment(moment.id);
 
   final navigator = Navigator.of(context);
+  final palette = context.appPalette;
   final expiryAnnouncer = MomentExpiryAnnouncer();
   var expiryHandled = false;
 
   await showModalBottomSheet<void>(
     context: context,
-    backgroundColor: AppColors.surface,
+    backgroundColor: palette.surfaceRaised,
     isScrollControlled: true,
     showDragHandle: false,
     constraints: const BoxConstraints(maxWidth: 560),
@@ -98,9 +99,9 @@ Future<void> showMomentSheet(
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const YoModalSheetChrome(
+              YoModalSheetChrome(
                 sheetLabel: 'Moment',
-                surfaceColor: AppColors.surface,
+                surfaceColor: palette.surfaceRaised,
               ),
               Flexible(
                 child: SingleChildScrollView(

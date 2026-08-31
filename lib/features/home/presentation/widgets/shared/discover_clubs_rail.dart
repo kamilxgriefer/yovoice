@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/helpers/error_messages.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/clubs/data/models/club.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
@@ -69,6 +70,7 @@ class DiscoverClubsRail extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     final waiting =
         snapshot.connectionState == ConnectionState.waiting &&
         !snapshot.hasData;
@@ -83,10 +85,10 @@ class DiscoverClubsRail extends StatelessWidget {
             padding: EdgeInsets.symmetric(horizontal: gutter),
             child: Semantics(
               header: true,
-              child: const Text(
+              child: Text(
                 'Discover clubs',
                 style: TextStyle(
-                  color: AppColors.textPrimary,
+                  color: palette.textPrimary,
                   fontSize: 20,
                   fontWeight: FontWeight.w900,
                 ),
@@ -116,7 +118,7 @@ class DiscoverClubsRail extends StatelessWidget {
                   padding: EdgeInsets.symmetric(horizontal: gutter),
                   child: _RailNote(
                     icon: Icons.cloud_off_rounded,
-                    tone: AppColors.error,
+                    tone: palette.dangerForeground,
                     liveRegion: true,
                     title: 'Clubs could not be loaded.',
                     message: friendlyErrorMessage(
@@ -224,12 +226,14 @@ class _ClubCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     final members = club.memberCount == 1
         ? '1 member'
         : '${club.memberCount} members';
 
     return Material(
-      color: AppColors.surface,
+      key: ValueKey('discover-club-card-${club.id}'),
+      color: palette.surface,
       borderRadius: BorderRadius.circular(22),
       child: InkWell(
         onTap: onTap,
@@ -238,7 +242,7 @@ class _ClubCard extends StatelessWidget {
           padding: const EdgeInsets.all(14),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(22),
-            border: Border.all(color: AppColors.border),
+            border: Border.all(color: palette.border),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -259,8 +263,8 @@ class _ClubCard extends StatelessWidget {
                 // the first word helps nobody.
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: AppColors.textPrimary,
+                style: TextStyle(
+                  color: palette.textPrimary,
                   fontWeight: FontWeight.w900,
                 ),
               ),
@@ -269,16 +273,13 @@ class _ClubCard extends StatelessWidget {
                 members,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: AppColors.textSecondary,
-                  fontSize: 11,
-                ),
+                style: TextStyle(color: palette.textSecondary, fontSize: 11),
               ),
               const SizedBox(height: 10),
-              const Text(
+              Text(
                 'View club',
                 style: TextStyle(
-                  color: AppColors.secondary,
+                  color: palette.interactiveForeground,
                   fontWeight: FontWeight.w800,
                   fontSize: 12,
                 ),
@@ -300,23 +301,25 @@ class _ClubCardSkeleton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     Widget block(double width, double height) => Container(
       width: width,
       height: height,
       decoration: BoxDecoration(
-        color: AppColors.surfaceLight,
+        color: palette.surfaceMuted,
         borderRadius: BorderRadius.circular(6),
       ),
     );
 
     return Semantics(
+      key: const ValueKey('discover-club-skeleton'),
       label: 'Loading clubs',
       child: Container(
         padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
-          color: AppColors.surface,
+          color: palette.surface,
           borderRadius: BorderRadius.circular(22),
-          border: Border.all(color: AppColors.border),
+          border: Border.all(color: palette.border),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -325,8 +328,8 @@ class _ClubCardSkeleton extends StatelessWidget {
             Container(
               width: 56,
               height: 56,
-              decoration: const BoxDecoration(
-                color: AppColors.surfaceLight,
+              decoration: BoxDecoration(
+                color: palette.surfaceMuted,
                 shape: BoxShape.circle,
               ),
             ),
@@ -369,16 +372,18 @@ class _RailNote extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return Semantics(
+      key: const ValueKey('discover-clubs-note'),
       liveRegion: liveRegion,
       container: true,
       child: Container(
         width: double.infinity,
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
-          color: AppColors.surface,
+          color: palette.surface,
           borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: AppColors.border),
+          border: Border.all(color: palette.border),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -392,8 +397,8 @@ class _RailNote extends StatelessWidget {
                 Expanded(
                   child: Text(
                     title,
-                    style: const TextStyle(
-                      color: AppColors.textPrimary,
+                    style: TextStyle(
+                      color: palette.textPrimary,
                       fontSize: 13.5,
                       fontWeight: FontWeight.w800,
                     ),
@@ -404,8 +409,8 @@ class _RailNote extends StatelessWidget {
             const SizedBox(height: 6),
             Text(
               message,
-              style: const TextStyle(
-                color: AppColors.textSecondary,
+              style: TextStyle(
+                color: palette.textSecondary,
                 fontSize: 12.5,
                 height: 1.35,
               ),
@@ -416,10 +421,6 @@ class _RailNote extends StatelessWidget {
                 alignment: Alignment.centerLeft,
                 child: FilledButton.tonal(
                   onPressed: onAction,
-                  style: FilledButton.styleFrom(
-                    backgroundColor: AppColors.surfaceLight,
-                    foregroundColor: AppColors.textPrimary,
-                  ),
                   child: Text(actionLabel!),
                 ),
               ),

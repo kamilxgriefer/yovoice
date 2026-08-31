@@ -467,6 +467,26 @@ void main() {
     // These cases assert it is queued, retried under its ORIGINAL requestId,
     // and delivered exactly once.
 
+    test(
+      'an absent typing callable never writes the server-owned root',
+      () async {
+        final service = MessageService(
+          firestore: db,
+          auth: authFor(senderId),
+          functions: _UnavailableFunctions('unimplemented'),
+        );
+
+        await service.setTyping(conversationId: conversationId, isTyping: true);
+
+        final conversation = await conversationDoc();
+        expect(conversation['typing'], isEmpty);
+        expect(
+          conversation['updatedAt'],
+          Timestamp.fromDate(DateTime.utc(2026, 3, 1, 11)),
+        );
+      },
+    );
+
     test('nothing is written to Firestore and the message is queued '
         'instead', () async {
       final outbox = MessageOutbox(

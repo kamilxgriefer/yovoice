@@ -20,7 +20,7 @@ import 'dart:async';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 
-import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/core/theme/app_immersive_colors.dart';
 import 'package:yovoice/core/theme/app_theme.dart';
 import 'package:yovoice/firebase_options.dart';
 import 'package:yovoice/features/friends/data/models/friend_user.dart';
@@ -180,7 +180,7 @@ class _PreviewAppState extends State<_PreviewApp> {
       theme: AppTheme.darkTheme,
       home: Builder(
         builder: (context) => Scaffold(
-          backgroundColor: AppColors.background,
+          backgroundColor: AppImmersiveColors.background,
           body: Center(
             child: Column(
               mainAxisSize: MainAxisSize.min,

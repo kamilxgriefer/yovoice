@@ -467,11 +467,8 @@ void main() {
 
       for (final theme in [AppTheme.darkTheme, AppTheme.lightTheme]) {
         await pumpTheme(theme);
-        final scheme = theme.colorScheme;
         final palette = theme.extension<AppPalette>()!;
-        final accent = theme.brightness == Brightness.dark
-            ? const Color(0xFFD3A5FF)
-            : scheme.primary;
+        final accent = palette.interactiveForeground;
         final activeBackground = Color.alphaBlend(
           accent.withValues(alpha: .18),
           palette.navigationSurface,
@@ -518,6 +515,97 @@ void main() {
         );
       }
     });
+
+    testWidgets(
+      'navigation and creation actions expose 3:1 keyboard focus in Dark and Pearl',
+      (tester) async {
+        useDesktopWindow(tester);
+
+        for (final theme in [AppTheme.darkTheme, AppTheme.lightTheme]) {
+          await tester.pumpWidget(
+            MaterialApp(
+              key: ValueKey('desktop-focus-${theme.brightness.name}'),
+              theme: theme,
+              darkTheme: theme,
+              themeMode: theme.brightness == Brightness.dark
+                  ? ThemeMode.dark
+                  : ThemeMode.light,
+              home: Scaffold(body: rail()),
+            ),
+          );
+          await tester.pump();
+
+          final palette = theme.extension<AppPalette>()!;
+
+          final navFocus = find.byKey(
+            const ValueKey('desktop-nav-focus-moments'),
+          );
+          final navInk = tester.widget<InkWell>(
+            find.ancestor(of: navFocus, matching: find.byType(InkWell)).first,
+          );
+          navInk.focusNode!.requestFocus();
+          await tester.pumpAndSettle();
+          final navDecoration =
+              tester.widget<AnimatedContainer>(navFocus).decoration!
+                  as BoxDecoration;
+          final navBorder = (navDecoration.border! as Border).top;
+          expect(navBorder.color, palette.focus);
+          expect(navBorder.width, 2);
+          expect(
+            _contrastRatio(navBorder.color, palette.navigationSurface),
+            greaterThanOrEqualTo(3),
+          );
+
+          final createRoomFocus = find.byKey(
+            const ValueKey('desktop-create-room-focus'),
+          );
+          final createRoomInk = tester.widget<InkWell>(
+            find.descendant(
+              of: createRoomFocus,
+              matching: find.byType(InkWell),
+            ),
+          );
+          createRoomInk.focusNode!.requestFocus();
+          await tester.pumpAndSettle();
+          final roomDecoration =
+              tester.widget<DecoratedBox>(createRoomFocus).decoration
+                  as BoxDecoration;
+          final roomBorder = (roomDecoration.border! as Border).top;
+          expect(roomBorder.color, theme.colorScheme.onPrimary);
+          expect(roomBorder.width, 2);
+          for (final endpoint in [
+            theme.colorScheme.primary,
+            theme.colorScheme.secondary,
+          ]) {
+            expect(
+              _contrastRatio(roomBorder.color, endpoint),
+              greaterThanOrEqualTo(3),
+            );
+          }
+
+          final createMomentFocus = find.byKey(
+            const ValueKey('desktop-create-moment-focus'),
+          );
+          final createMomentInk = tester.widget<InkWell>(
+            find
+                .ancestor(of: createMomentFocus, matching: find.byType(InkWell))
+                .first,
+          );
+          createMomentInk.focusNode!.requestFocus();
+          await tester.pumpAndSettle();
+          final momentDecoration =
+              tester.widget<AnimatedContainer>(createMomentFocus).decoration!
+                  as BoxDecoration;
+          final momentBorder = (momentDecoration.border! as Border).top;
+          expect(momentBorder.color, palette.focus);
+          expect(momentBorder.width, 2);
+          expect(
+            _contrastRatio(momentBorder.color, palette.surfaceRaised),
+            greaterThanOrEqualTo(3),
+          );
+        }
+      },
+    );
 
     testWidgets('keyboard focus reaches Home then Notifications in order', (
       tester,
@@ -1234,7 +1322,11 @@ void main() {
 
       expect(find.text('Awards body'), findsOneWidget);
       expect(find.byType(DesktopSidebar), findsNothing);
-      expect(find.text('Home'), findsWidgets);
+      expect(
+        find.byKey(const ValueKey('yo-floating-navigation-dock')),
+        findsOneWidget,
+      );
+      expect(find.byKey(const ValueKey('yo-destination-0')), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
 
@@ -1262,7 +1354,11 @@ void main() {
       expect(find.text('Awards body'), findsOneWidget);
       // Mobile is untouched: no desktop rail, dock still hosted.
       expect(find.byType(DesktopSidebar), findsNothing);
-      expect(find.text('Home'), findsWidgets);
+      expect(
+        find.byKey(const ValueKey('yo-floating-navigation-dock')),
+        findsOneWidget,
+      );
+      expect(find.byKey(const ValueKey('yo-destination-0')), findsOneWidget);
     });
   });
 

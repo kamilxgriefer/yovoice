@@ -24,7 +24,7 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/core/theme/app_immersive_colors.dart';
 import 'package:yovoice/core/theme/app_theme.dart';
 import 'package:yovoice/features/calls/data/services/voice_call_service.dart';
 import 'package:yovoice/features/clubs/data/services/club_service.dart';
@@ -879,7 +879,7 @@ void main() {
       await tester.pumpWidget(
         _host(
           const Scaffold(
-            backgroundColor: AppColors.background,
+            backgroundColor: AppImmersiveColors.background,
             body: YoLoadingIndicator.fullscreen(message: 'Joining room…'),
           ),
         ),
@@ -890,7 +890,7 @@ void main() {
       await tester.pumpWidget(
         _host(
           const Scaffold(
-            backgroundColor: AppColors.background,
+            backgroundColor: AppImmersiveColors.background,
             body: SafeArea(
               child: RoomEndedState(roomName: 'Sunday Morning Talk'),
             ),

@@ -396,18 +396,24 @@ class _SummaryCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     return Container(
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(24),
-        gradient: const LinearGradient(
+        gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [Color(0xFF3A175A), Color(0xFF1D112B)],
+          colors: [palette.surfaceRaised, palette.surface],
         ),
-        border: Border.all(color: const Color(0xFF623287)),
-        boxShadow: const [
-          BoxShadow(color: Color(0x449D20FF), blurRadius: 28, spreadRadius: 1),
+        border: Border.all(color: palette.border),
+        boxShadow: [
+          BoxShadow(
+            color: palette.shadow.withValues(alpha: .12),
+            blurRadius: 28,
+            offset: const Offset(0, 10),
+          ),
         ],
       ),
       child: Row(
@@ -416,12 +422,12 @@ class _SummaryCard extends StatelessWidget {
             width: 58,
             height: 58,
             decoration: BoxDecoration(
-              color: const Color(0xFF9D20FF).withValues(alpha: 0.2),
+              color: colors.primaryContainer,
               borderRadius: BorderRadius.circular(18),
             ),
-            child: const Icon(
+            child: Icon(
               Icons.groups_2_rounded,
-              color: Color(0xFFC982FF),
+              color: colors.onPrimaryContainer,
               size: 32,
             ),
           ),
@@ -432,17 +438,17 @@ class _SummaryCard extends StatelessWidget {
               children: [
                 Text(
                   clubCount == 1 ? '1 club joined' : '$clubCount clubs joined',
-                  style: const TextStyle(
-                    color: Colors.white,
+                  style: TextStyle(
+                    color: palette.textPrimary,
                     fontSize: 18,
                     fontWeight: FontWeight.w900,
                   ),
                 ),
                 const SizedBox(height: 4),
-                const Text(
+                Text(
                   'Chat, voice rooms and people that stay together.',
                   style: TextStyle(
-                    color: Color(0xFFC5B8D0),
+                    color: palette.textSecondary,
                     fontSize: 12,
                     height: 1.35,
                   ),
@@ -562,10 +568,7 @@ class _ClubCard extends StatelessWidget {
                                   : 'Quiet now',
                               style: TextStyle(
                                 color: club.onlineCount > 0
-                                    ? (Theme.of(context).brightness ==
-                                              Brightness.dark
-                                          ? const Color(0xFF68E6A1)
-                                          : const Color(0xFF08784E))
+                                    ? palette.successForeground
                                     : palette.textSecondary,
                                 fontSize: 11,
                                 fontWeight: FontWeight.w800,

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
 import 'package:yovoice/features/moments/presentation/screens/moments_screen.dart';
 import 'package:yovoice/shared/widgets/avatars/yo_avatar.dart';
@@ -42,7 +43,7 @@ void main() {
         find.descendant(of: region, matching: find.byType(AnimatedContainer)),
       );
       final decoration = focusRing.decoration! as BoxDecoration;
-      expect((decoration.border! as Border).top.color, const Color(0xFFD28AFF));
+      expect((decoration.border! as Border).top.color, AppPalette.light.focus);
     },
   );
 

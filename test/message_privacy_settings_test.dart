@@ -128,7 +128,7 @@ void main() {
     final fixture = await _fixture(stored: 'friends');
     await tester.pumpWidget(
       MaterialApp(
-        theme: ThemeData.dark(useMaterial3: true),
+        theme: AppTheme.lightTheme,
         home: Scaffold(
           body: MessagePrivacySettingsTile(service: fixture.service),
         ),
@@ -138,6 +138,14 @@ void main() {
 
     expect(find.text('Who can message you'), findsOneWidget);
     expect(find.text('Friends only'), findsOneWidget);
+    final tile = tester.widget<ListTile>(
+      find.byKey(const ValueKey('message-privacy-settings-tile')),
+    );
+    expect((tile.title! as Text).style!.color, AppPalette.light.textPrimary);
+    expect(
+      ((tile.leading! as Container).decoration! as BoxDecoration).color,
+      AppTheme.lightTheme.colorScheme.primaryContainer,
+    );
     await tester.tap(
       find.byKey(const ValueKey('message-privacy-settings-tile')),
     );

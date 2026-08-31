@@ -148,7 +148,7 @@ class ProfileHeader extends StatelessWidget {
               tooltip: 'Edit profile',
               constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
               style: IconButton.styleFrom(backgroundColor: colors.primary),
-              icon: const Icon(Icons.edit_rounded, color: Colors.white),
+              icon: Icon(Icons.edit_rounded, color: colors.onPrimary),
             ),
           ],
         ),
@@ -168,6 +168,7 @@ class ProfileHeader extends StatelessWidget {
     required double ringPadding,
     required bool isWide,
   }) {
+    final palette = context.appPalette;
     // Bottom-weighted scrim: keeps the banner's lower edge dark enough
     // that the name stays legible when it rides over the card's bottom
     // seam, on the gradient fallback and on user-uploaded images alike.
@@ -176,9 +177,9 @@ class ProfileHeader extends StatelessWidget {
       end: Alignment.bottomCenter,
       stops: const [0, .55, 1],
       colors: [
-        Colors.black.withValues(alpha: .04),
-        Colors.black.withValues(alpha: .16),
-        const Color(0xFF09050F).withValues(alpha: .68),
+        palette.scrim.withValues(alpha: .04),
+        palette.scrim.withValues(alpha: .16),
+        palette.scrim.withValues(alpha: .68),
       ],
     );
 
@@ -220,6 +221,7 @@ class ProfileHeader extends StatelessWidget {
     required bool isWide,
   }) {
     final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     final nameSize = isWide ? 27.0 : 22.0;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -231,20 +233,17 @@ class ProfileHeader extends StatelessWidget {
             Container(
               key: const Key('profile-header-avatar'),
               padding: EdgeInsets.all(ringPadding),
-              decoration: const BoxDecoration(
+              decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 gradient: LinearGradient(
-                  colors: [Color(0xFF6A00FF), Color(0xFFD12CFF)],
+                  colors: [colors.primary, colors.secondary],
                 ),
               ),
               child: UserAvatar(
                 radius: avatarRadius,
                 photoUrl: profile.photoUrl,
                 displayName: profile.displayName,
-                backgroundColor:
-                    Theme.of(context).brightness == Brightness.light
-                    ? Theme.of(context).colorScheme.primary
-                    : palette.surfaceSunken,
+                backgroundColor: colors.primary,
                 premium: profile.premiumIdentity,
               ),
             ),
@@ -450,40 +449,48 @@ class AccountTypeBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isLight = Theme.of(context).brightness == Brightness.light;
-    final (icon, label, accent, foreground) = switch (accountType) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
+    final (icon, label, surface, foreground, border) = switch (accountType) {
       AccountType.official => (
         Icons.verified_rounded,
         'Official',
-        const Color(0xFF4DA3FF),
-        isLight ? const Color(0xFF075A97) : const Color(0xFF4DA3FF),
+        palette.infoSurface,
+        palette.infoForeground,
+        Color.alphaBlend(
+          palette.infoForeground.withValues(alpha: .38),
+          palette.border,
+        ),
       ),
       AccountType.creator => (
         Icons.auto_awesome_rounded,
         'Creator',
-        isLight ? const Color(0xFF7130A8) : const Color(0xFFD3A5FF),
-        isLight ? const Color(0xFF7130A8) : const Color(0xFFD3A5FF),
+        colors.primaryContainer,
+        colors.onPrimaryContainer,
+        Color.alphaBlend(colors.primary.withValues(alpha: .42), palette.border),
       ),
       AccountType.personal => (
         Icons.person_rounded,
         'Personal',
-        isLight ? const Color(0xFF594B63) : const Color(0xFFB8ADC1),
-        isLight ? const Color(0xFF594B63) : const Color(0xFFB8ADC1),
+        palette.surfaceMuted,
+        palette.textSecondary,
+        palette.borderStrong,
       ),
     };
 
     return Tooltip(
       message: '$label account',
       child: Container(
+        key: ValueKey('profile-account-type-${accountType.name}'),
         constraints: BoxConstraints(minHeight: compact ? 24 : 28),
         padding: EdgeInsets.symmetric(
           horizontal: compact ? 7 : 9,
           vertical: compact ? 2 : 4,
         ),
         decoration: BoxDecoration(
-          color: accent.withValues(alpha: .14),
+          color: surface,
           borderRadius: BorderRadius.circular(99),
-          border: Border.all(color: accent.withValues(alpha: .45)),
+          border: Border.all(color: border),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,

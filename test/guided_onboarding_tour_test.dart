@@ -135,6 +135,30 @@ void main() {
             .first,
       );
       expect(material.color, palette.surfaceRaised);
+      await _tapControl(tester, const ValueKey('guided-tour-next'));
+      final highlight = find.byKey(
+        const ValueKey('guided-tour-highlight-create'),
+      );
+      final highlightDecoration =
+          tester
+                  .widget<DecoratedBox>(
+                    find
+                        .descendant(
+                          of: highlight,
+                          matching: find.byType(DecoratedBox),
+                        )
+                        .first,
+                  )
+                  .decoration
+              as BoxDecoration;
+      expect(
+        highlightDecoration.border,
+        Border.all(color: palette.textPrimary, width: 3),
+      );
+      expect(
+        highlightDecoration.boxShadow!.single.color,
+        palette.interactiveForeground.withValues(alpha: .38),
+      );
       expect(tester.takeException(), isNull);
 
       await _tapControl(tester, const ValueKey('guided-tour-skip'));

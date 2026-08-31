@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/space_identity.dart';
 import 'package:yovoice/shared/widgets/identity/official_role_badge.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
@@ -338,14 +339,14 @@ class _SpeakerTileState extends State<SpeakerTile>
                     const Icon(
                       Icons.workspace_premium_rounded,
                       size: 12,
-                      color: Color(0xFFFFC94D),
+                      color: AppColors.warning,
                     ),
                     const SizedBox(width: 3),
                   ] else if (speaker.isModerator) ...[
                     const Icon(
                       Icons.shield_rounded,
                       size: 11,
-                      color: Color(0xFF6FC3FF),
+                      color: AppColors.info,
                     ),
                     const SizedBox(width: 3),
                   ],

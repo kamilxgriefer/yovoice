@@ -37,6 +37,23 @@ class _FailingRoomService extends RoomService {
       );
 }
 
+class _RecoveringRoomService extends RoomService {
+  _RecoveringRoomService({super.firestore, super.auth});
+
+  int subscriptions = 0;
+
+  @override
+  Stream<List<VoiceRoom>> watchLivePublicRooms() {
+    subscriptions += 1;
+    if (subscriptions == 1) {
+      return Stream<List<VoiceRoom>>.error(
+        StateError('temporary room query failure'),
+      );
+    }
+    return Stream<List<VoiceRoom>>.value(const <VoiceRoom>[]);
+  }
+}
+
 void main() {
   const uid = 'me-uid';
 
@@ -129,6 +146,8 @@ void main() {
 
     expect(find.textContaining('could not be loaded'), findsOneWidget);
     expect(find.textContaining('No rooms to show yet'), findsNothing);
+    expect(find.byIcon(Icons.cloud_off_rounded), findsOneWidget);
+    expect(find.text('Try again'), findsOneWidget);
   });
 
   testWidgets('mobile: an empty room list still reads as empty', (
@@ -137,7 +156,11 @@ void main() {
     useSize(tester, const Size(390, 2600));
 
     await tester.pumpWidget(
-      host(mobileHome(rooms: RoomService(firestore: db, auth: auth()))),
+      host(
+        mobileHome(
+          rooms: RoomService(firestore: db, auth: auth()),
+        ),
+      ),
     );
     await tester.pump(const Duration(milliseconds: 150));
 
@@ -159,6 +182,8 @@ void main() {
 
     expect(find.textContaining('could not be loaded'), findsOneWidget);
     expect(find.textContaining('No rooms to show yet'), findsNothing);
+    expect(find.byIcon(Icons.cloud_off_rounded), findsOneWidget);
+    expect(find.text('Try again'), findsOneWidget);
   });
 
   testWidgets('desktop: an empty room list still reads as empty', (
@@ -167,10 +192,52 @@ void main() {
     useSize(tester, const Size(1440, 2600));
 
     await tester.pumpWidget(
-      host(desktopHome(rooms: RoomService(firestore: db, auth: auth()))),
+      host(
+        desktopHome(
+          rooms: RoomService(firestore: db, auth: auth()),
+        ),
+      ),
     );
     await tester.pump(const Duration(milliseconds: 150));
 
+    expect(find.textContaining('No rooms to show yet'), findsOneWidget);
+    expect(find.textContaining('could not be loaded'), findsNothing);
+  });
+
+  testWidgets('mobile: Try again creates a fresh room subscription', (
+    tester,
+  ) async {
+    useSize(tester, const Size(390, 2600));
+    final rooms = _RecoveringRoomService(firestore: db, auth: auth());
+
+    await tester.pumpWidget(host(mobileHome(rooms: rooms)));
+    await tester.pump(const Duration(milliseconds: 150));
+    expect(find.text('Try again'), findsOneWidget);
+
+    await tester.tap(find.text('Try again'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 150));
+
+    expect(rooms.subscriptions, 2);
+    expect(find.textContaining('No rooms to show yet'), findsOneWidget);
+    expect(find.textContaining('could not be loaded'), findsNothing);
+  });
+
+  testWidgets('desktop: Try again creates a fresh room subscription', (
+    tester,
+  ) async {
+    useSize(tester, const Size(1440, 2600));
+    final rooms = _RecoveringRoomService(firestore: db, auth: auth());
+
+    await tester.pumpWidget(host(desktopHome(rooms: rooms)));
+    await tester.pump(const Duration(milliseconds: 150));
+    expect(find.text('Try again'), findsOneWidget);
+
+    await tester.tap(find.text('Try again'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 150));
+
+    expect(rooms.subscriptions, 2);
     expect(find.textContaining('No rooms to show yet'), findsOneWidget);
     expect(find.textContaining('could not be loaded'), findsNothing);
   });

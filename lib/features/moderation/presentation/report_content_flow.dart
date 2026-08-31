@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/helpers/error_messages.dart';
-import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/moderation/data/services/content_report_service.dart';
 import 'package:yovoice/features/moderation/presentation/widgets/report_reason_sheet.dart';
 
@@ -30,6 +30,7 @@ Future<bool> reportContent({
   // its context would then be dead by the time there is something to
   // say. The messenger outlives it.
   final messenger = ScaffoldMessenger.maybeOf(context);
+  final palette = context.appPalette;
 
   final reason = await showReportReasonSheet(
     context: context,
@@ -43,7 +44,7 @@ Future<bool> reportContent({
       content: content,
       reason: reason,
     );
-    _say(messenger, 'Thanks — your report is with our team.');
+    _say(messenger, palette, 'Thanks — your report is with our team.');
     return true;
   } catch (error) {
     // ContentReportException is a StateError carrying deliberate copy,
@@ -51,6 +52,7 @@ Future<bool> reportContent({
     // laundered instead of being pasted into the UI raw.
     _say(
       messenger,
+      palette,
       intentionalOrFriendly(
         error,
         fallback: 'Your report could not be sent. Please try again.',
@@ -66,11 +68,10 @@ Future<bool> reportContent({
 /// Three things here are deliberate, and all three came out of looking at
 /// the rendered result rather than at the code:
 ///
-///  * an explicit content colour, because the Material dark snackbar
-///    theme paints `onInverseSurface` — which on this palette rendered as
-///    dim grey on near-black, and the one sentence explaining a failed
-///    safety action is the last sentence in the app that should be hard
-///    to read;
+///  * an explicit semantic status pair, because inverse-surface snackbar
+///    defaults do not communicate success versus failure consistently in
+///    both Dark and Pearl, and the one sentence explaining a failed safety
+///    action is the last sentence in the app that should be hard to read;
 ///  * an icon, so success and failure are not distinguished by wording
 ///    alone for someone skimming, or by colour alone for someone who
 ///    cannot separate the two;
@@ -79,13 +80,22 @@ Future<bool> reportContent({
 ///    "thanks" is not.
 void _say(
   ScaffoldMessengerState? messenger,
+  AppPalette palette,
   String message, {
   bool isError = false,
 }) {
+  final statusSurface = isError
+      ? palette.dangerSurface
+      : palette.successSurface;
+  final statusForeground = isError
+      ? palette.dangerForeground
+      : palette.successForeground;
+
   messenger
     ?..hideCurrentSnackBar()
     ..showSnackBar(
       SnackBar(
+        key: const ValueKey('report-result-snackbar'),
         content: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -94,14 +104,14 @@ void _say(
                   ? Icons.error_outline_rounded
                   : Icons.check_circle_outline_rounded,
               size: 20,
-              color: isError ? AppColors.warning : AppColors.success,
+              color: statusForeground,
             ),
             const SizedBox(width: 12),
             Expanded(
               child: Text(
                 message,
-                style: const TextStyle(
-                  color: AppColors.textPrimary,
+                style: TextStyle(
+                  color: statusForeground,
                   fontSize: 14,
                   height: 1.35,
                 ),
@@ -110,12 +120,12 @@ void _say(
           ],
         ),
         behavior: SnackBarBehavior.floating,
-        backgroundColor: AppColors.surfaceLight,
+        backgroundColor: statusSurface,
         margin: const EdgeInsets.all(16),
         duration: Duration(seconds: isError ? 6 : 4),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(14),
-          side: const BorderSide(color: AppColors.border),
+          side: BorderSide(color: statusForeground),
         ),
       ),
     );

@@ -34,9 +34,9 @@ class MessageBubble extends StatelessWidget {
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
     final bubbleForeground = isMine ? Colors.white : palette.textPrimary;
-    final bubbleMuted = isMine
-        ? Colors.white.withValues(alpha: .78)
-        : palette.textSecondary;
+    // Outgoing metadata is small text on the brightest gradient stop. Keep it
+    // opaque so the worst-case pair remains AA-readable in both themes.
+    final bubbleMuted = isMine ? Colors.white : palette.textSecondary;
 
     return Align(
       alignment: isMine ? Alignment.centerRight : Alignment.centerLeft,
@@ -99,7 +99,7 @@ class MessageBubble extends StatelessWidget {
                           borderRadius: BorderRadius.circular(11),
                           border: Border(
                             left: BorderSide(
-                              color: isMine ? Colors.white70 : palette.focus,
+                              color: isMine ? Colors.white : palette.focus,
                               width: 3,
                             ),
                           ),

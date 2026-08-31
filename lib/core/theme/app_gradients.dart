@@ -10,10 +10,4 @@ class AppGradients {
     end: Alignment.bottomRight,
     colors: [AppColors.primary, AppColors.secondary],
   );
-
-  static const LinearGradient background = LinearGradient(
-    begin: Alignment.topCenter,
-    end: Alignment.bottomCenter,
-    colors: [Color(0xFF130A22), AppColors.background],
-  );
 }

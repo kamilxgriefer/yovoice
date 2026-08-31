@@ -15,6 +15,7 @@ class _AnimatedWavesBackgroundState extends State<AnimatedWavesBackground>
     with TickerProviderStateMixin {
   late final AnimationController _backgroundController;
   late final AnimationController _particlesController;
+  bool _motionDisabled = false;
 
   @override
   void initState() {
@@ -29,6 +30,28 @@ class _AnimatedWavesBackgroundState extends State<AnimatedWavesBackground>
       vsync: this,
       duration: const Duration(seconds: 24),
     )..repeat();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final media = MediaQuery.maybeOf(context);
+    final disabled =
+        media?.disableAnimations == true || media?.accessibleNavigation == true;
+    if (disabled == _motionDisabled) return;
+
+    _motionDisabled = disabled;
+    if (disabled) {
+      _backgroundController
+        ..stop()
+        ..value = 0;
+      _particlesController
+        ..stop()
+        ..value = 0;
+    } else {
+      _backgroundController.repeat();
+      _particlesController.repeat();
+    }
   }
 
   @override

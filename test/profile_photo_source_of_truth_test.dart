@@ -28,6 +28,22 @@ class _SwitchingFirebaseAuth extends MockFirebaseAuth {
   }
 }
 
+// MockUser deliberately exposes mutable displayName/photoURL so update and
+// reload behaviour can be modelled by tests.
+// ignore: must_be_immutable
+class _ReloadingRegistrationUser extends MockUser {
+  _ReloadingRegistrationUser({
+    required super.uid,
+    required super.email,
+    required this.onReload,
+  }) : super(isEmailVerified: false);
+
+  final Future<void> Function(_ReloadingRegistrationUser user) onReload;
+
+  @override
+  Future<void> reload() => onReload(this);
+}
+
 /// An email/password account: FirebaseAuth's own photoURL is null, which is
 /// the case that made the clobber destructive.
 MockFirebaseAuth _auth({String? photoURL}) {
@@ -114,6 +130,78 @@ void main() {
         final data = await _readUser(db);
         expect(data['displayName'], 'Ada Lovelace');
         expect(data['username'], 'Ada Lovelace');
+      },
+    );
+
+    test(
+      'unverified password registration never seeds identity from email',
+      () async {
+        final db = FakeFirebaseFirestore();
+        final auth = MockFirebaseAuth(
+          signedIn: true,
+          mockUser: MockUser(
+            uid: _uid,
+            email: 'private.person@example.com',
+            isEmailVerified: false,
+          ),
+        );
+        await db.collection('users').doc(_uid).set({'isOnline': true});
+
+        await expectLater(
+          ProfileService(firestore: db, auth: auth).ensureProfile(),
+          throwsA(isA<ProfileProvisioningPendingException>()),
+        );
+
+        final data = await _readUser(db);
+        expect(data.containsKey('displayName'), isFalse);
+        expect(data.containsKey('username'), isFalse);
+        expect(data.toString(), isNot(contains('private.person')));
+      },
+    );
+
+    test(
+      'cross-tab bootstrap returns when registration wrote the chosen name during reload',
+      () async {
+        final db = FakeFirebaseFirestore();
+        final user = _ReloadingRegistrationUser(
+          uid: _uid,
+          email: 'private.person@example.com',
+          onReload: (_) => db.collection('users').doc(_uid).set({
+            'uid': _uid,
+            'displayName': 'Chosen Handle',
+            'username': 'Chosen Handle',
+          }, SetOptions(merge: true)),
+        );
+        final auth = MockFirebaseAuth(signedIn: true, mockUser: user);
+
+        await ProfileService(firestore: db, auth: auth).ensureProfile();
+
+        final data = await _readUser(db);
+        expect(data['displayName'], 'Chosen Handle');
+        expect(data['username'], 'Chosen Handle');
+        expect(data['displayName'], isNot('private.person'));
+        expect(data['username'], isNot('private.person'));
+      },
+    );
+
+    test(
+      'cross-tab bootstrap uses the chosen Auth name revealed by reload',
+      () async {
+        final db = FakeFirebaseFirestore();
+        final user = _ReloadingRegistrationUser(
+          uid: _uid,
+          email: 'private.person@example.com',
+          onReload: (user) async => user.displayName = 'Chosen Handle',
+        );
+        final auth = MockFirebaseAuth(signedIn: true, mockUser: user);
+
+        await ProfileService(firestore: db, auth: auth).ensureProfile();
+
+        final data = await _readUser(db);
+        expect(data['displayName'], 'Chosen Handle');
+        expect(data['username'], 'Chosen Handle');
+        expect(data['displayName'], isNot('private.person'));
+        expect(data['username'], isNot('private.person'));
       },
     );
 

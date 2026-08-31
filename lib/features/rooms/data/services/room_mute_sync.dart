@@ -19,18 +19,28 @@ class RoomMuteSync {
     required bool currentMuted,
     required Future<void> Function(bool muted) persistRosterState,
     required Future<void> Function(bool muted) applyMicrophoneState,
+    bool Function()? isOperationCurrent,
   }) async {
     if (_busy) return false;
+
+    bool isCurrent() => isOperationCurrent?.call() ?? true;
+    if (!isCurrent()) return false;
 
     final targetMuted = !currentMuted;
     _busy = true;
     onBusyChanged?.call();
     try {
       if (targetMuted) {
+        if (!isCurrent()) return false;
         await applyMicrophoneState(true);
+        if (!isCurrent()) return false;
         await persistRosterState(true);
       } else {
+        if (!isCurrent()) return false;
         await persistRosterState(false);
+        // The room can be replaced while the authority write is in flight.
+        // Never enable the process-wide microphone for that newer session.
+        if (!isCurrent()) return false;
         await applyMicrophoneState(false);
       }
       return true;

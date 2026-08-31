@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/helpers/error_messages.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/core/theme/app_immersive_colors.dart';
 import 'package:yovoice/features/calls/data/models/direct_call.dart';
 import 'package:yovoice/features/calls/data/services/direct_call_service.dart';
 import 'package:yovoice/features/calls/data/services/voice_call_service.dart';
@@ -232,13 +233,13 @@ class _DirectCallScreenState extends State<DirectCallScreen>
             if (!didPop) unawaited(_finish());
           },
           child: Scaffold(
-            backgroundColor: AppColors.background,
+            backgroundColor: AppImmersiveColors.background,
             body: DecoratedBox(
               decoration: const BoxDecoration(
                 gradient: RadialGradient(
                   center: Alignment(0, -0.28),
                   radius: 1.05,
-                  colors: [Color(0xFF2A0B49), AppColors.background],
+                  colors: [Color(0xFF2A0B49), AppImmersiveColors.background],
                   stops: [0, .72],
                 ),
               ),
@@ -279,7 +280,7 @@ class _DirectCallScreenState extends State<DirectCallScreen>
               onPressed: _actionBusy ? null : _finish,
               tooltip: active ? 'End call and close' : 'Close call',
               icon: const Icon(Icons.keyboard_arrow_down_rounded, size: 34),
-              color: AppColors.textPrimary,
+              color: AppImmersiveColors.textPrimary,
             ),
           ),
           Expanded(
@@ -323,7 +324,7 @@ class _DirectCallScreenState extends State<DirectCallScreen>
                       contact.displayName,
                       textAlign: TextAlign.center,
                       style: const TextStyle(
-                        color: AppColors.textPrimary,
+                        color: AppImmersiveColors.textPrimary,
                         fontSize: 30,
                         fontWeight: FontWeight.w900,
                         letterSpacing: -.4,
@@ -338,7 +339,7 @@ class _DirectCallScreenState extends State<DirectCallScreen>
                         style: TextStyle(
                           color: active && connected
                               ? AppColors.success
-                              : AppColors.textSecondary,
+                              : AppImmersiveColors.textSecondary,
                           fontSize: 16,
                           fontWeight: FontWeight.w700,
                         ),
@@ -419,7 +420,7 @@ class _CallAvatar extends StatelessWidget {
               child: Text(
                 initial,
                 style: TextStyle(
-                  color: AppColors.textPrimary,
+                  color: AppImmersiveColors.textPrimary,
                   fontSize: size * .38,
                   fontWeight: FontWeight.w900,
                 ),
@@ -432,7 +433,7 @@ class _CallAvatar extends StatelessWidget {
                 child: Text(
                   initial,
                   style: TextStyle(
-                    color: AppColors.textPrimary,
+                    color: AppImmersiveColors.textPrimary,
                     fontSize: size * .38,
                     fontWeight: FontWeight.w900,
                   ),
@@ -513,16 +514,16 @@ class _CallControls extends StatelessWidget {
           _RoundCallAction(
             label: 'Retry',
             icon: Icons.refresh_rounded,
-            color: AppColors.surfaceLight,
-            foregroundColor: AppColors.textPrimary,
+            color: AppImmersiveColors.surfaceRaised,
+            foregroundColor: AppImmersiveColors.textPrimary,
             onPressed: actionBusy ? null : onRetry,
           )
         else
           _RoundCallAction(
             label: muted ? 'Unmute' : 'Mute',
             icon: muted ? Icons.mic_off_rounded : Icons.mic_rounded,
-            color: AppColors.surfaceLight,
-            foregroundColor: AppColors.textPrimary,
+            color: AppImmersiveColors.surfaceRaised,
+            foregroundColor: AppImmersiveColors.textPrimary,
             onPressed: !connected || muteBusy ? null : onMute,
           ),
         _RoundCallAction(
@@ -542,7 +543,7 @@ class _RoundCallAction extends StatelessWidget {
     required this.icon,
     required this.color,
     required this.onPressed,
-    this.foregroundColor = AppColors.textPrimary,
+    this.foregroundColor = AppImmersiveColors.textPrimary,
   });
 
   final String label;
@@ -577,7 +578,7 @@ class _RoundCallAction extends StatelessWidget {
             textAlign: TextAlign.center,
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(
-              color: AppColors.textSecondary,
+              color: AppImmersiveColors.textSecondary,
               fontSize: 13,
               fontWeight: FontWeight.w700,
             ),
@@ -604,14 +605,14 @@ class _CallFailure extends StatelessWidget {
             const Icon(
               Icons.phone_disabled_rounded,
               size: 52,
-              color: AppColors.textSecondary,
+              color: AppImmersiveColors.textSecondary,
             ),
             const SizedBox(height: 16),
             const Text(
               'This call is no longer available.',
               textAlign: TextAlign.center,
               style: TextStyle(
-                color: AppColors.textPrimary,
+                color: AppImmersiveColors.textPrimary,
                 fontSize: 20,
                 fontWeight: FontWeight.w800,
               ),

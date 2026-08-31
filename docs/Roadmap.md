@@ -16,6 +16,46 @@ someone decide what to pick up next.
 
 ## Done
 
+- **The Dark/Pearl colour system now has one enforceable semantic contract**
+  (2026-08-30, ADR-133, **SOURCE + VISUAL QA VERIFIED; COORDINATED TESTER
+  BUILD PENDING**): navigation chrome, interactive copy, control boundaries,
+  status pairs and focus-on-brand are separate roles instead of variations of
+  one purple. Normal Home, social, Profile, Moments, Settings, Notifications,
+  Premium, onboarding and public report surfaces now follow the active theme;
+  documented voice/media, branded-auth and staff/creator workspaces keep a
+  complete dark atom. A dynamic source guard derives all 26 Dark and Pearl
+  roles (52 declarations), rejects their exact raw copies, dark-only immersive
+  container copies and immersive imports on normal routes, and permits only a
+  line-local uploaded-media exception. Profile status/fact chips and
+  Club/Family identity treatments now resolve readable Dark/Pearl pairs.
+  Discover keeps stable category branding seeds but resolves feature-local
+  surface, foreground, boundary and action pairs, so Music/Business/Broadcast
+  accents no longer become low-contrast compact ink in Pearl.
+  Automated contrast/component/state tests pass, and real-font Dark/Pearl
+  renders cover 320 px at 200% text plus 390/430/768/1440 px, populated,
+  empty, error, focus, loading, disabled and overlay states. The 320 px header,
+  section actions, Moment labels and dock reflow rather than overlap; public
+  Home errors remain distinct and retryable, and primary gradient buttons now
+  retain their full raster contrast. Dark/Pearl report sheets, standalone
+  snackbars and real emoji fallback are included in the evidence set.
+  Physical-device and store evidence waits for the next explicitly requested
+  coordinated tester build.
+
+- **Authentication now shares one responsive stage and fails closed during
+  password-profile provisioning** (2026-08-31, ADR-134, **SOURCE + ADVERSARIAL
+  TESTS VERIFIED; COORDINATED TESTER BUILD PENDING**): compact and medium
+  layouts use one Voice Relay transition, wide screens use the matching
+  two-panel curtain and reduced motion swaps atomically. Controllers and
+  validation survive breakpoint changes, keyboard/focus remain reachable and
+  registration retains the root Navigator long enough to open verification
+  after Firebase publishes Auth state. The shipped registration screen now
+  drives the AuthGate provisioning interlock. Independently, ProfileService
+  reloads Auth and re-reads Firestore before bootstrapping an unverified
+  password account with no display name; if the chosen pseudonym is still not
+  authoritative it stops rather than deriving identity from the email. That
+  second boundary covers another browser tab/process and keeps the existing
+  server-authoritative display-name rule intact.
+
 - **New users now get a short, optional guided tour instead of an unexplained
   Home screen** (2026-08-29, ADR-132, **SOURCE VERIFIED; WEB + NATIVE RELEASE
   PENDING**): five focused steps introduce YO creation, Moments, Chats and
@@ -55,25 +95,25 @@ someone decide what to pick up next.
   contrast. Repository-swap coverage also pins badge-listener ownership.
 
 - **The signed iOS shell now follows YO Voice's selected runtime theme**
-  (2026-08-29, ADR-129, **NATIVE STORE BUILD 12 PENDING**): the obsolete
+  (2026-08-29, ADR-129, **NEXT COORDINATED NATIVE TESTER BUILD PENDING**): the obsolete
   `UIUserInterfaceStyle=Dark` application-wide override is gone, so System can
   report the device appearance and Pearl can reach the Flutter surface and
   platform controls. The branded launch storyboard and initial native window
   stay dark while preferences load, preventing the old white startup flash.
   A source-level release regression prevents a future global appearance pin.
 
-- **The central YO action now sits in a real sculpted dock cradle**
-  (2026-08-29, ADR-128, **WEB HOSTING DEPLOYED; NATIVE STORE BUILD PENDING**):
-  the shared mobile navigation surface no longer paints a circular logo over a
-  complete rounded rectangle. Its border, translucent fill, clipping and
-  shadows now follow one smooth tangent notch around the raised YO action in
-  both Dark and Pearl. The five actions, active capsule, unread badge, haptics,
-  safe-area reservation and reduced-motion behavior remain unchanged. Geometry
-  tests pin the sculpted opening, centred 64/68 px action, 44 px targets and
-  320/768 px resilience. Keyboard focus follows Home → Chats → YO → Moments →
-  More with an explicit YO focus ring; at 160%+ text the dock expands into a
-  two-by-two destination layout so every label stays complete. Real-font
-  Dark/Pearl renders include Home- and Chats-selected states at 320/390/430 px.
+- **The final mobile dock uses one continuous sculpted rise and transparent YO
+  mark** (2026-08-30, ADR-128, **SOURCE IMPLEMENTED; NATIVE STORE BUILD
+  PENDING**): the old circular notch, socket and resting centre tile are gone.
+  Dark and Pearl share one responsive Bézier outline while keeping distinct
+  material hierarchy. The official transparent favicon rests directly on the
+  surface; compact navigation is icon-only with semantic labels and 48 px
+  targets. One 52 px glass capsule commits only after `MainShell` accepts the
+  route, retargets rapid taps from its live position, stretches between
+  neighbours and fades behind YO on cross-dock travel. More is selected only
+  while its actual panel is open. Geometry, focus, unread `99+`, reduced
+  motion, safe areas and 320/390/430 plus 200% text are covered before the next
+  coordinated tester build.
 
 - **Pearl light theme is a complete, premium normal-product experience**
   (2026-08-29, ADR-127, **WEB HOSTING DEPLOYED; NATIVE STORE BUILD PENDING**):
@@ -363,6 +403,22 @@ someone decide what to pick up next.
   its tap to the bar's parent InkWell and NAVIGATE INTO THE ROOM. Flutter
   suite → 1132 (18-test isolation matrix, bug reproduced RED first). Three
   pre-deploy reviews; every high/medium fixed before release.
+
+- **The final dock now hands a real room session into the existing compact
+  player** (2026-08-30, ADR-102 amendment, **SOURCE IMPLEMENTED; NATIVE STORE
+  BUILD PENDING**): a non-interactive clone of the official transparent YO mark
+  rises from the central dock axis, gains the real room orb treatment and
+  yields to the sole production `CompactActiveRoomBar`. Direct calls never
+  create the bar, an already-active mount never replays the flight, reduced
+  motion is immediate and interrupted end/new-room transitions retarget safely.
+  A projected session model also prevents 20 Hz audio-meter notifications from
+  rebuilding the whole bottom chrome. Every async Return, mute, host lookup,
+  chat sheet and confirmation is pinned to a monotonic room-session generation;
+  a completion from room A cannot navigate, unmute or disconnect room B. Hosted
+  destinations suppress the covered shell's player until their reverse route
+  completes, preserving a single listener/subscription owner. The focused
+  dock/room/mute/onboarding verification is now 147 passing tests, with
+  Dark/Pearl and 320 px / 200% renders checked before release.
 
 - **Voice Moments are 24-hour audio stories** (2026-08-22, ADR-101,
   DEPLOYED — indexes/rules/functions/hosting in that order): many Moments
@@ -1940,11 +1996,21 @@ regression test pinning the contract.
 
 ### 6. Two-factor authentication
 
-- **Status**: Implemented and tested in source on 2026-08-18; Firebase TOTP
-  provider configuration and the coordinated client rollout remain pending.
+- **Status**: Implemented and tested in source; the sign-in challenge received
+  its local-only Voice Constellation interaction and accessibility refinement
+  on 2026-08-30. Firebase TOTP provider configuration and the coordinated
+  client rollout remain pending; none of this work is deployed.
 - **Description**: A Firebase Auth TOTP factor managed from Settings, including
   enrollment, removal, recent-login reauthentication and the second-factor
   resolver shown after password, Google or Apple primary sign-in.
+- **Challenge presentation**: The six-digit challenge keeps one real,
+  autofill-ready input while its decorative cells move through the branded
+  field-to-orbit-to-wave confirmation sequence. Firebase remains the sole
+  validity authority. An invalid credential now shows a red X, clears all six
+  digits after feedback and refocuses the input; network and rate-limit errors
+  preserve the code for one deliberate manual retry. Reduced-motion users get
+  a static row and short semantic colour transitions instead of travel, shake
+  or looping motion.
 - **Dependencies**: Identity Platform TOTP must be enabled immediately before
   the compatible clients are released. The app deliberately does not offer SMS
   MFA.
@@ -2113,7 +2179,11 @@ regression test pinning the contract.
   direct-call start; bounded exactly-one foreground call alerts; local
   voice-message preview; a durable account-scoped photo/voice outbox with
   reservation rotation and failed Retry/Discard; and a server-only conversation
-  root/message mutation boundary enforced by Rules.
+  root/message mutation boundary enforced by Rules. Profile repair also
+  converges exact participant identity-map key sets so an obsolete malformed
+  avatar key cannot disable every guarded operation in one conversation;
+  typing presence now degrades silently and never attempts a forbidden client
+  root write when its callable is absent.
 - **Release target**: local tap-to-bubble p95 <= 50 ms, warm server ACK p95 <=
   750 ms, recipient visibility p95 <= 1 s, exactly zero message alerts while
   that same conversation is foregrounded, and one background alert per

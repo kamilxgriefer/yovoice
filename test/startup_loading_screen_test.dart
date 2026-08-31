@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -175,6 +176,46 @@ void main() {
     expect(find.byType(StartupLoadingScreen), findsNothing);
     expect(find.text('Something went wrong'), findsOneWidget);
   });
+
+  testWidgets(
+    'AuthGate defers profile bootstrap until registration provisioning ends',
+    (tester) async {
+      final auth = StreamController<User?>();
+      addTearDown(auth.close);
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            authStateChangesProvider.overrideWith((ref) => auth.stream),
+            authLoadingProvider.overrideWith((ref) => true),
+          ],
+          child: const MaterialApp(home: AuthGate()),
+        ),
+      );
+
+      auth.add(MockUser(uid: 'new-account', email: 'chosen.name@example.com'));
+      await tester.pump();
+
+      expect(
+        find.byKey(const ValueKey('auth-operation-loading')),
+        findsOneWidget,
+      );
+      expect(
+        find.byType(StartupLoadingScreen),
+        findsWidgets,
+        reason:
+            'the previous startup frame may still be fading while the '
+            'operation-owned frame is already present',
+      );
+      expect(
+        find.text('Finishing your profile'),
+        findsNothing,
+        reason:
+            'ensureProfile must not race the authoritative registration write',
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   test('authenticated entry has no fixed welcome delay', () {
     final source = File(

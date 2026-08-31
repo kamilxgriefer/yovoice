@@ -398,15 +398,11 @@ class MessageService {
 
     if (called) return;
 
-    final userId = _currentUserId;
-    await _conversations.doc(conversationId).set({
-      'typing': {
-        userId: {
-          'isTyping': isTyping,
-          'updatedAt': FieldValue.serverTimestamp(),
-        },
-      },
-    }, SetOptions(merge: true));
+    // Conversation roots are server-owned. Current Firestore Rules reject a
+    // client-side typing fallback, and attempting it only turns an optional
+    // presence signal into a second permission error. An old backend that
+    // does not expose the callable therefore degrades to no indicator while
+    // text, media and calls keep their independent delivery paths.
   }
 
   Future<String> openOrCreateConversation({

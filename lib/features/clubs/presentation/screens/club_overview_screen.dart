@@ -370,7 +370,11 @@ class _ClubHero extends StatelessWidget {
             gradient: LinearGradient(
               begin: Alignment.topCenter,
               end: Alignment.bottomCenter,
-              colors: [Colors.transparent, Color(0xEE080711)],
+              colors: [
+                Colors.transparent,
+                // semantic-color-guard: uploaded-media scrim
+                Color(0xEE080711),
+              ],
             ),
           ),
         ),
@@ -383,7 +387,11 @@ class _ClubHero extends StatelessWidget {
             decoration: BoxDecoration(
               shape: BoxShape.circle,
               color: const Color(0xFF7A2BB6),
-              border: Border.all(color: const Color(0xFF080711), width: 5),
+              border: Border.all(
+                // semantic-color-guard: uploaded-media boundary
+                color: const Color(0xFF080711),
+                width: 5,
+              ),
               image: hasAvatar
                   ? DecorationImage(
                       image: NetworkImage(club.avatarUrl!),
@@ -735,9 +743,7 @@ class _MemberTile extends StatelessWidget {
               height: 13,
               decoration: BoxDecoration(
                 color: member.isOnline
-                    ? (Theme.of(context).brightness == Brightness.dark
-                          ? const Color(0xFF49D58A)
-                          : const Color(0xFF08784E))
+                    ? palette.successForeground
                     : palette.navigationInactive,
                 shape: BoxShape.circle,
                 border: Border.all(color: palette.surface, width: 2),

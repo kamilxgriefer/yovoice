@@ -89,7 +89,7 @@ class _ProfileVibeHeadlineState extends State<ProfileVibeHeadline> {
       palette.surfaceMuted,
     );
     final border = Color.alphaBlend(
-      palette.focus.withValues(alpha: isDark ? .44 : .28),
+      palette.interactiveForeground.withValues(alpha: isDark ? .44 : .28),
       palette.border,
     );
 
@@ -115,7 +115,7 @@ class _ProfileVibeHeadlineState extends State<ProfileVibeHeadline> {
                     key: const ValueKey('profile-vibe-accent-icon'),
                     Icons.auto_awesome_rounded,
                     size: widget.compact ? 17 : 19,
-                    color: palette.focus,
+                    color: palette.interactiveForeground,
                   ),
                 ),
                 SizedBox(width: widget.compact ? 8 : 10),
@@ -127,7 +127,7 @@ class _ProfileVibeHeadlineState extends State<ProfileVibeHeadline> {
                         'VIBE',
                         key: const ValueKey('profile-vibe-label'),
                         style: TextStyle(
-                          color: palette.focus,
+                          color: palette.interactiveForeground,
                           fontSize: 11,
                           fontWeight: FontWeight.w900,
                           letterSpacing: 1.25,

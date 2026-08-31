@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_theme.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/messages/data/models/message.dart';
@@ -77,6 +78,8 @@ Future<FocusNode> _openPreview(
   _OpenConversation? openConversation,
   String statusMessage =
       'Recording a new episode https://open.spotify.com/episode/123',
+  String accountType = 'creator',
+  bool isFriend = false,
 }) async {
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1;
@@ -99,11 +102,19 @@ Future<FocusNode> _openPreview(
         'Independent interviews, culture, music, design and thoughtful '
         'conversations from communities around the world.',
     'statusMessage': statusMessage,
-    'accountType': 'creator',
+    'accountType': accountType,
     'premiumIdentity': true,
     'isOnline': true,
     'followerCount': 1842,
   });
+  if (isFriend) {
+    await firestore
+        .collection('users')
+        .doc('me')
+        .collection('friends')
+        .doc('creator')
+        .set({'uid': 'creator'});
+  }
 
   final launcherFocus = FocusNode(debugLabel: 'profile-preview-launcher');
   addTearDown(launcherFocus.dispose);
@@ -158,7 +169,128 @@ Future<FocusNode> _openPreview(
   return launcherFocus;
 }
 
+double _contrastRatio(Color first, Color second) {
+  final firstLuminance = first.computeLuminance();
+  final secondLuminance = second.computeLuminance();
+  final lighter = firstLuminance > secondLuminance
+      ? firstLuminance
+      : secondLuminance;
+  final darker = firstLuminance > secondLuminance
+      ? secondLuminance
+      : firstLuminance;
+  return (lighter + .05) / (darker + .05);
+}
+
+void _expectProfileFactChipContrast(
+  WidgetTester tester, {
+  required String kind,
+  required String label,
+  required Color expectedSurface,
+  required Color expectedForeground,
+  required Color expectedBorder,
+  required Color expectedAdjacentSurface,
+}) {
+  final chip = find.byKey(ValueKey<String>('profile-preview-$kind-chip'));
+  expect(chip, findsOneWidget);
+
+  final container = tester.widget<Container>(chip);
+  final decoration = container.decoration! as BoxDecoration;
+  final border = decoration.border! as Border;
+  final text = tester.widget<Text>(
+    find.descendant(of: chip, matching: find.text(label)),
+  );
+  final icon = tester.widget<Icon>(
+    find.descendant(of: chip, matching: find.byType(Icon)),
+  );
+
+  expect(decoration.color, expectedSurface);
+  expect(text.style!.color, expectedForeground);
+  expect(icon.color, expectedForeground);
+  expect(border.top.color, expectedBorder);
+  expect(
+    _contrastRatio(text.style!.color!, decoration.color!),
+    greaterThanOrEqualTo(4.5),
+    reason: '$label text must meet WCAG 2.1 AA',
+  );
+  expect(
+    _contrastRatio(icon.color!, decoration.color!),
+    greaterThanOrEqualTo(3),
+    reason: '$label icon must meet WCAG 1.4.11',
+  );
+  expect(
+    _contrastRatio(border.top.color, decoration.color!),
+    greaterThanOrEqualTo(3),
+    reason: '$label inner boundary must meet WCAG 1.4.11',
+  );
+  expect(
+    _contrastRatio(border.top.color, expectedAdjacentSurface),
+    greaterThanOrEqualTo(3),
+    reason: '$label outer boundary must meet WCAG 1.4.11',
+  );
+  expect(text.style!.fontSize, greaterThanOrEqualTo(12));
+}
+
 void main() {
+  for (final variant in <({String name, ThemeData theme, AppPalette palette})>[
+    (name: 'Dark', theme: AppTheme.darkTheme, palette: AppPalette.dark),
+    (name: 'Pearl', theme: AppTheme.lightTheme, palette: AppPalette.light),
+  ]) {
+    testWidgets(
+      '${variant.name} Creator and Friends preview chips use AA semantic pairs',
+      (tester) async {
+        await _openPreview(
+          tester,
+          size: const Size(390, 844),
+          theme: variant.theme,
+          statusMessage: '',
+          isFriend: true,
+        );
+
+        _expectProfileFactChipContrast(
+          tester,
+          kind: 'creator',
+          label: 'Creator',
+          expectedSurface: variant.palette.surfaceMuted,
+          expectedForeground: variant.palette.interactiveForeground,
+          expectedBorder: variant.palette.interactiveForeground,
+          expectedAdjacentSurface: variant.palette.surface,
+        );
+        _expectProfileFactChipContrast(
+          tester,
+          kind: 'friends',
+          label: 'Friends',
+          expectedSurface: variant.palette.successSurface,
+          expectedForeground: variant.palette.successForeground,
+          expectedBorder: variant.palette.successForeground,
+          expectedAdjacentSurface: variant.palette.surface,
+        );
+      },
+    );
+
+    testWidgets(
+      '${variant.name} Official preview chip uses an AA semantic info pair',
+      (tester) async {
+        await _openPreview(
+          tester,
+          size: const Size(390, 844),
+          theme: variant.theme,
+          statusMessage: '',
+          accountType: 'official',
+        );
+
+        _expectProfileFactChipContrast(
+          tester,
+          kind: 'official',
+          label: 'Official',
+          expectedSurface: variant.palette.infoSurface,
+          expectedForeground: variant.palette.infoForeground,
+          expectedBorder: variant.palette.infoForeground,
+          expectedAdjacentSurface: variant.palette.surface,
+        );
+      },
+    );
+  }
+
   for (final size in const <Size>[
     Size(320, 640),
     Size(390, 844),

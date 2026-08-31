@@ -34,8 +34,6 @@ class FamilyCheckInPanel extends StatefulWidget {
 
   final ClubService? clubService;
 
-  static const emerald = Color(0xFF28D17C);
-
   @override
   State<FamilyCheckInPanel> createState() => _FamilyCheckInPanelState();
 }
@@ -85,10 +83,7 @@ class _FamilyCheckInPanelState extends State<FamilyCheckInPanel> {
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final accent = isDark
-        ? FamilyCheckInPanel.emerald
-        : const Color(0xFF08784E);
+    final accent = palette.successForeground;
     return Container(
       key: const ValueKey('family-check-in-panel'),
       padding: const EdgeInsets.all(16),
@@ -240,10 +235,7 @@ class _CheckInChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final accent = isDark
-        ? FamilyCheckInPanel.emerald
-        : const Color(0xFF08784E);
+    final accent = palette.successForeground;
     return Material(
       color: palette.successSurface,
       shape: StadiumBorder(

@@ -12,10 +12,14 @@ import 'package:yovoice/features/premium/presentation/screens/premium_plans_scre
 import 'package:yovoice/features/premium/presentation/widgets/premium_badge_pill.dart';
 import 'package:yovoice/features/profile/data/models/user_profile.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
+import 'package:yovoice/shared/widgets/buttons/yo_button.dart';
 import 'package:yovoice/shared/widgets/profile/premium_avatar_frame.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
-const _premiumGradientColors = [AppColors.primary, Color(0xFFB020E8)];
+List<Color> _premiumGradientColors(BuildContext context) {
+  final colors = Theme.of(context).colorScheme;
+  return <Color>[colors.primary, colors.secondary];
+}
 
 /// The YO Voice Premium presentation — what a free member sees when they
 /// open Premium. Marketing surface only: the "Check plans" CTA leads to
@@ -337,10 +341,10 @@ class _CrownChip extends StatelessWidget {
       alignment: Alignment.center,
       decoration: BoxDecoration(
         shape: BoxShape.circle,
-        gradient: const LinearGradient(
+        gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: _premiumGradientColors,
+          colors: _premiumGradientColors(context),
         ),
         border: Border.all(color: Colors.white.withValues(alpha: .22)),
         boxShadow: [
@@ -464,55 +468,11 @@ class _CheckPlansButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      width: double.infinity,
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(minHeight: 58),
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(999),
-            gradient: const LinearGradient(colors: _premiumGradientColors),
-            boxShadow: [
-              BoxShadow(
-                color: AppColors.secondary.withValues(alpha: .38),
-                blurRadius: 26,
-                offset: const Offset(0, 6),
-              ),
-            ],
-          ),
-          child: Material(
-            color: Colors.transparent,
-            child: InkWell(
-              borderRadius: BorderRadius.circular(999),
-              onTap: onTap,
-              child: const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 18, vertical: 15),
-                child: Wrap(
-                  alignment: WrapAlignment.center,
-                  crossAxisAlignment: WrapCrossAlignment.center,
-                  spacing: 8,
-                  runSpacing: 4,
-                  children: [
-                    Text(
-                      'Check plans',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 16.5,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                    Icon(
-                      Icons.arrow_forward_rounded,
-                      size: 19,
-                      color: Colors.white,
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
+    return YoButton(
+      key: const ValueKey('premium-check-plans-gradient'),
+      label: 'Check plans',
+      onPressed: onTap,
+      icon: const Icon(Icons.arrow_forward_rounded),
     );
   }
 }
@@ -551,13 +511,13 @@ class _PremiumActiveView extends StatelessWidget {
                 curve: Curves.easeOutBack,
                 builder: (context, scale, child) =>
                     Transform.scale(scale: scale, child: child),
-                child: const PremiumAvatarFrame(
+                child: PremiumAvatarFrame(
                   child: CircleAvatar(
                     radius: 44,
-                    backgroundColor: Color(0xFF281133),
+                    backgroundColor: colors.primaryContainer,
                     child: Icon(
                       Icons.graphic_eq_rounded,
-                      color: Color(0xFFD3A5FF),
+                      color: colors.onPrimaryContainer,
                       size: 38,
                     ),
                   ),

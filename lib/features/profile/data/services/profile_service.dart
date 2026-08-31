@@ -30,6 +30,21 @@ class ProfileUnavailableException implements Exception {
   String toString() => 'This profile is not available.';
 }
 
+/// The password-registration owner has not finished publishing the identity
+/// selected by the member yet.
+///
+/// Firebase Auth emits a newly created user before `AuthService.register()`
+/// can update its display name and write `users/{uid}`. A second browser tab
+/// can observe that same principal, so a process-local loading flag is not a
+/// sufficient interlock. Profile bootstrap must fail closed in that window
+/// instead of deriving a permanent display name from the email address.
+class ProfileProvisioningPendingException implements Exception {
+  const ProfileProvisioningPendingException();
+
+  @override
+  String toString() => 'The new account profile is still being provisioned.';
+}
+
 enum DisplayNameChangeFailure {
   cooldown,
   authSyncPending,
@@ -206,13 +221,14 @@ class ProfileService {
   }
 
   Future<void> ensureProfile() async {
-    final user = _auth.currentUser;
-    if (user == null) return;
-    final uid = user.uid;
+    final capturedUser = _auth.currentUser;
+    if (capturedUser == null) return;
+    final uid = capturedUser.uid;
     final document = _firestore.collection('users').doc(uid);
 
-    final existing = await document.get();
-    final data = existing.data();
+    var identityUser = capturedUser;
+    var existing = await document.get();
+    var data = existing.data();
 
     // Keyed off displayName, not document existence: other services
     // (friend_service's ensureUserDocument, presence) legitimately create
@@ -222,14 +238,45 @@ class ProfileService {
         (data?['displayName'] as String?)?.trim().isNotEmpty == true;
     if (alreadySeeded) return;
 
+    // createUserWithEmailAndPassword publishes Auth state before register()
+    // owns the selected username in Auth + Firestore. Never let this fallback
+    // race turn `private.person@example.com` into the canonical name
+    // `private.person`. Reloading plus a second document read covers another
+    // browser tab/process too: either the registration owner has finished the
+    // profile, or Auth now contains the exact selected name. Preserve the
+    // initial unverified-password classification even if reload observes a
+    // just-verified account, otherwise verification could reopen the fallback
+    // race.
+    final waitsForRegistrationIdentity =
+        _needsAuthoritativePasswordRegistrationName(capturedUser);
+    if (waitsForRegistrationIdentity) {
+      await capturedUser.reload();
+
+      final refreshedUser = _auth.currentUser;
+      if (refreshedUser == null || refreshedUser.uid != uid) {
+        throw StateError('Authenticated account changed during profile setup.');
+      }
+      identityUser = refreshedUser;
+
+      existing = await document.get();
+      data = existing.data();
+      final registrationFinished =
+          (data?['displayName'] as String?)?.trim().isNotEmpty == true;
+      if (registrationFinished) return;
+
+      if (!_hasUsableAuthDisplayName(identityUser.displayName)) {
+        throw const ProfileProvisioningPendingException();
+      }
+    }
+
     final displayName = resolveAuthProfileName(
-      displayName: user.displayName,
-      email: user.email,
+      displayName: identityUser.displayName,
+      email: identityUser.email,
     );
 
     final seed = <String, Object?>{
-      'uid': user.uid,
-      'email': user.email ?? '',
+      'uid': identityUser.uid,
+      'email': identityUser.email ?? '',
       'displayName': displayName,
       'username': displayName,
       'profileUpdatedAt': FieldValue.serverTimestamp(),
@@ -240,8 +287,8 @@ class ProfileService {
     // once set, and FirebaseAuth's copy is a separate, staler source.
     final hasProfilePhoto =
         (data?['photoUrl'] as String?)?.trim().isNotEmpty == true;
-    if (!hasProfilePhoto && user.photoURL?.trim().isNotEmpty == true) {
-      seed['photoUrl'] = user.photoURL;
+    if (!hasProfilePhoto && identityUser.photoURL?.trim().isNotEmpty == true) {
+      seed['photoUrl'] = identityUser.photoURL;
     }
 
     // Counters are only safe to write on true first creation — rewriting
@@ -261,6 +308,24 @@ class ProfileService {
 
     await document.set(seed, SetOptions(merge: true));
   }
+
+  bool _needsAuthoritativePasswordRegistrationName(User user) {
+    if (user.isAnonymous || user.emailVerified) return false;
+    if (_hasUsableAuthDisplayName(user.displayName)) return false;
+
+    final providerIds = user.providerData
+        .map((provider) => provider.providerId)
+        .where((providerId) => providerId.isNotEmpty)
+        .toSet();
+
+    // Firebase Auth reports `password` in production. Some test doubles and
+    // a just-restored web session briefly expose no provider data; treating
+    // that defensively as password avoids reopening the identity-poison race.
+    return providerIds.isEmpty || providerIds.contains('password');
+  }
+
+  bool _hasUsableAuthDisplayName(String? value) =>
+      (value?.trim().length ?? 0) >= 2;
 
   Map<String, Object?> _initialCounters() {
     return {

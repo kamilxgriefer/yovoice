@@ -9,6 +9,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:yovoice/core/theme/app_palette.dart';
+import 'package:yovoice/core/theme/app_theme.dart';
 import 'package:yovoice/features/creator/data/services/creator_pinned_post_service.dart';
 import 'package:yovoice/features/creator/presentation/screens/creator_pinned_posts_screen.dart';
 import 'package:yovoice/features/creator/presentation/widgets/creator_pinned_moment_card.dart';
@@ -960,6 +962,7 @@ void main() {
     );
     await tester.pumpWidget(
       MaterialApp(
+        theme: AppTheme.lightTheme,
         home: Scaffold(
           body: Builder(
             builder: (context) => FilledButton(
@@ -986,6 +989,10 @@ void main() {
     await tester.tap(find.text('open sheet'));
     await tester.pumpAndSettle();
     expect(find.text('caption sheet'), findsOneWidget);
+    expect(
+      tester.widget<BottomSheet>(find.byType(BottomSheet)).backgroundColor,
+      AppPalette.light.surfaceRaised,
+    );
 
     await tester.tap(find.bySemanticsLabel('Play this Moment'));
     await tester.pump();

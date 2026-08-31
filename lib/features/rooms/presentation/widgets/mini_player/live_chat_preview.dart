@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/core/theme/app_immersive_colors.dart';
 import 'package:yovoice/features/rooms/data/models/room_message.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
@@ -17,6 +18,7 @@ class LiveChatPreview extends StatelessWidget {
     required this.newCount,
     required this.onExpand,
     this.compact = false,
+    this.expandFocusNode,
     super.key,
   });
 
@@ -24,6 +26,7 @@ class LiveChatPreview extends StatelessWidget {
   final int newCount;
   final VoidCallback onExpand;
   final bool compact;
+  final FocusNode? expandFocusNode;
 
   @override
   Widget build(BuildContext context) {
@@ -75,8 +78,16 @@ class LiveChatPreview extends StatelessWidget {
         SizedBox(height: compact ? 5 : 7),
         _LatestMessage(latest: latest, compact: compact),
         SizedBox(height: compact ? 5 : 7),
-        const Divider(height: 1, thickness: 1, color: AppColors.divider),
-        _ExpandChatButton(onExpand: onExpand, compact: compact),
+        const Divider(
+          height: 1,
+          thickness: 1,
+          color: AppImmersiveColors.divider,
+        ),
+        _ExpandChatButton(
+          onExpand: onExpand,
+          compact: compact,
+          focusNode: expandFocusNode,
+        ),
       ],
     );
   }
@@ -148,7 +159,7 @@ class _LatestMessage extends StatelessWidget {
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
-                  color: AppColors.textSecondary,
+                  color: AppImmersiveColors.textSecondary,
                   fontSize: compact ? 11 : 12,
                   height: 1.3,
                 ),
@@ -162,10 +173,15 @@ class _LatestMessage extends StatelessWidget {
 }
 
 class _ExpandChatButton extends StatelessWidget {
-  const _ExpandChatButton({required this.onExpand, required this.compact});
+  const _ExpandChatButton({
+    required this.onExpand,
+    required this.compact,
+    this.focusNode,
+  });
 
   final VoidCallback onExpand;
   final bool compact;
+  final FocusNode? focusNode;
 
   @override
   Widget build(BuildContext context) {
@@ -175,8 +191,10 @@ class _ExpandChatButton extends StatelessWidget {
       // text a screen reader heard "Expand chat" twice.
       excludeSemantics: true,
       label: 'Expand chat',
+      onTap: onExpand,
       child: InkWell(
         key: const ValueKey('mini-player-expand-chat'),
+        focusNode: focusNode,
         borderRadius: BorderRadius.circular(8),
         onTap: onExpand,
         child: ConstrainedBox(

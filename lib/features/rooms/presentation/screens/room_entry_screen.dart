@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/core/theme/app_immersive_colors.dart';
 import 'package:yovoice/features/rooms/data/models/room_experience.dart';
 import 'package:yovoice/features/rooms/data/models/room_voice_access.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
@@ -69,14 +69,14 @@ class _RoomEntryScreenState extends State<RoomEntryScreen> {
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
           return const Scaffold(
-            backgroundColor: AppColors.background,
+            backgroundColor: AppImmersiveColors.background,
             body: YoLoadingIndicator.fullscreen(message: 'Joining room…'),
           );
         }
 
         if (snapshot.hasError) {
           return Scaffold(
-            backgroundColor: AppColors.background,
+            backgroundColor: AppImmersiveColors.background,
             body: Center(
               child: YoErrorState(
                 error: snapshot.error,
@@ -92,7 +92,7 @@ class _RoomEntryScreenState extends State<RoomEntryScreen> {
         // enter, so say so instead of opening a stage nothing can happen on.
         if (entry.outcome == RoomVoiceEntryOutcome.unavailable) {
           return Scaffold(
-            backgroundColor: AppColors.background,
+            backgroundColor: AppImmersiveColors.background,
             body: SafeArea(
               child: entry.room.isBroadcast
                   // The palette is the single source of truth (CLAUDE.md).

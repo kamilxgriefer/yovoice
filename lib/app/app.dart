@@ -45,7 +45,9 @@ SnackBar buildForegroundNotificationBanner({
   required String? actorId,
   String? notificationId,
   double bottomClearance = 104,
+  AppPalette? palette,
 }) {
+  final semanticPalette = palette ?? AppPalette.dark;
   final isAchievement = type == NotificationType.achievementUnlocked;
   if (isAchievement) {
     return SnackBar(
@@ -61,10 +63,10 @@ SnackBar buildForegroundNotificationBanner({
           constraints: const BoxConstraints(maxWidth: 380),
           child: Material(
             key: const ValueKey('achievement-toast'),
-            color: const Color(0xFF241132),
+            color: semanticPalette.surfaceRaised,
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(16),
-              side: const BorderSide(color: Color(0xFF7330A8)),
+              side: BorderSide(color: semanticPalette.borderStrong),
             ),
             clipBehavior: Clip.antiAlias,
             child: InkWell(
@@ -82,10 +84,10 @@ SnackBar buildForegroundNotificationBanner({
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Icon(
+                    Icon(
                       Icons.emoji_events_rounded,
                       size: 22,
-                      color: Color(0xFFD28AFF),
+                      color: semanticPalette.warningForeground,
                     ),
                     const SizedBox(width: 10),
                     Flexible(
@@ -93,17 +95,17 @@ SnackBar buildForegroundNotificationBanner({
                         title,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: Colors.white,
+                        style: TextStyle(
+                          color: semanticPalette.textPrimary,
                           fontWeight: FontWeight.w800,
                         ),
                       ),
                     ),
                     const SizedBox(width: 8),
-                    const Icon(
+                    Icon(
                       Icons.chevron_right_rounded,
                       size: 20,
-                      color: Color(0xFFD28AFF),
+                      color: semanticPalette.interactiveForeground,
                     ),
                   ],
                 ),
@@ -119,16 +121,16 @@ SnackBar buildForegroundNotificationBanner({
     behavior: SnackBarBehavior.floating,
     margin: EdgeInsets.fromLTRB(16, 16, 16, bottomClearance),
     duration: const Duration(seconds: 5),
-    backgroundColor: const Color(0xFF241132),
+    backgroundColor: semanticPalette.surfaceRaised,
     shape: RoundedRectangleBorder(
       borderRadius: BorderRadius.circular(16),
-      side: const BorderSide(color: Color(0xFF7330A8)),
+      side: BorderSide(color: semanticPalette.borderStrong),
     ),
     content: Row(
       children: [
-        const Icon(
+        Icon(
           Icons.notifications_active_rounded,
-          color: Color(0xFFD28AFF),
+          color: semanticPalette.interactiveForeground,
         ),
         const SizedBox(width: 12),
         Expanded(
@@ -140,8 +142,8 @@ SnackBar buildForegroundNotificationBanner({
                 title,
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: Colors.white,
+                style: TextStyle(
+                  color: semanticPalette.textPrimary,
                   fontWeight: FontWeight.w800,
                 ),
               ),
@@ -151,8 +153,8 @@ SnackBar buildForegroundNotificationBanner({
                   body!,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Color(0xFFB8ADBF),
+                  style: TextStyle(
+                    color: semanticPalette.textSecondary,
                     fontSize: 12,
                   ),
                 ),
@@ -164,7 +166,7 @@ SnackBar buildForegroundNotificationBanner({
     ),
     action: SnackBarAction(
       label: 'Open',
-      textColor: const Color(0xFFD28AFF),
+      textColor: semanticPalette.interactiveForeground,
       onPressed: () => NotificationRouter.route(
         type: type,
         targetId: targetId,
@@ -557,6 +559,7 @@ class _YoVoiceAppState extends State<YoVoiceApp> {
             actorId: actorId,
             notificationId: notificationId,
             bottomClearance: bottomClearance,
+            palette: navigatorContext?.appPalette,
           ),
         );
     } catch (error) {

@@ -5,7 +5,6 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:share_plus/share_plus.dart';
 
-import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/home/data/services/home_feed_service.dart';
 import 'package:yovoice/features/moderation/data/services/content_report_service.dart';
@@ -628,9 +627,7 @@ class _MomentDetailScreenState extends State<MomentDetailScreen> {
                         // a warning-coloured countdown.
                         color: moment.isPermanent
                             ? palette.textTertiary
-                            : Theme.of(context).brightness == Brightness.dark
-                            ? AppColors.warning
-                            : const Color(0xFF8A4B00),
+                            : palette.warningForeground,
                         fontSize: 12,
                         fontWeight: FontWeight.w700,
                       ),

@@ -16,6 +16,7 @@ import 'package:yovoice/features/premium/data/services/premium_billing_service.d
 import 'package:yovoice/features/premium/presentation/screens/premium_plans_screen.dart';
 import 'package:yovoice/features/premium/presentation/screens/premium_screen.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
+import 'package:yovoice/shared/widgets/buttons/yo_button.dart';
 
 /// Responsive matrix (320 → 1440) for the mockup-pass Premium surfaces.
 /// The real screens, pumped at every width in the device matrix, must lay out
@@ -161,7 +162,9 @@ void main() {
         size.width == 320 ? _scaledApp(screen) : _app(screen),
       );
       // Fixed pumps only — the premium hero ring animates forever.
-      await tester.pump(const Duration(milliseconds: 80));
+      // MaterialApp animates ThemeData changes when this loop switches from
+      // Dark to Pearl; wait past that transition before inspecting tokens.
+      await tester.pump(const Duration(milliseconds: 300));
 
       expect(find.text('More room\nfor your voice.'), findsOneWidget);
       await tester.scrollUntilVisible(
@@ -255,6 +258,81 @@ void main() {
     );
     expect(find.text('More room\nfor your voice.'), findsOneWidget);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('Premium primary CTA uses accessible theme action gradient', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    for (final theme in [AppTheme.darkTheme, AppTheme.lightTheme]) {
+      final db = FakeFirebaseFirestore();
+      final auth = _auth();
+      await tester.pumpWidget(
+        MaterialApp(
+          key: ValueKey(theme.brightness),
+          theme: theme,
+          home: PremiumScreen(
+            entitlementService: EntitlementService(firestore: db, auth: auth),
+            profileService: ProfileService(firestore: db, auth: auth),
+            billingService: const _FakeBilling(),
+          ),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 80));
+      await tester.scrollUntilVisible(
+        find.byKey(const ValueKey('premium-check-plans-gradient')),
+        300,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await tester.pump();
+
+      final action = find.byKey(const ValueKey('premium-check-plans-gradient'));
+      expect(tester.widget<YoButton>(action).label, 'Check plans');
+      final paintedButton = find.descendant(
+        of: action,
+        matching: find.byType(AnimatedContainer),
+      );
+      final decoration =
+          tester.widget<AnimatedContainer>(paintedButton).decoration!
+              as BoxDecoration;
+      final gradient = decoration.gradient!;
+      expect(gradient.colors, [
+        theme.colorScheme.primary,
+        theme.colorScheme.secondary,
+      ]);
+      final label = tester.widget<Text>(
+        find.descendant(of: action, matching: find.text('Check plans')),
+      );
+      expect(label.style!.color, theme.colorScheme.onPrimary);
+      for (final stop in gradient.colors) {
+        expect(_contrast(label.style!.color!, stop), greaterThanOrEqualTo(4.5));
+      }
+
+      Border? focusBorder;
+      for (var attempt = 0; attempt < 4 && focusBorder == null; attempt++) {
+        await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+        await tester.pump();
+        final focusedDecoration =
+            tester.widget<AnimatedContainer>(paintedButton).decoration!
+                as BoxDecoration;
+        final candidate = focusedDecoration.border;
+        if (candidate is Border &&
+            candidate.top.color == theme.colorScheme.onPrimary) {
+          focusBorder = candidate;
+        }
+      }
+      expect(focusBorder, isNotNull);
+      for (final stop in gradient.colors) {
+        expect(
+          _contrast(focusBorder!.top.color, stop),
+          greaterThanOrEqualTo(3),
+        );
+      }
+      expect(tester.takeException(), isNull);
+    }
   });
 
   testWidgets('active Premium state scrolls at 320px and 200 percent text', (
@@ -518,4 +596,12 @@ void main() {
     expect(find.text('Try again'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+}
+
+double _contrast(Color first, Color second) {
+  final light = first.computeLuminance() > second.computeLuminance()
+      ? first
+      : second;
+  final dark = identical(light, first) ? second : first;
+  return (light.computeLuminance() + .05) / (dark.computeLuminance() + .05);
 }

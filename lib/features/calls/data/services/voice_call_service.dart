@@ -150,6 +150,19 @@ class VoiceCallService extends ChangeNotifier {
     return (sum / values.length).clamp(0, 1).toDouble();
   }
 
+  /// Number used by lightweight persistent chrome.
+  ///
+  /// Unlike [participants], this does not allocate view models or read audio
+  /// levels. The service emits meter notifications every 50 ms, so a cheap
+  /// count prevents the mini player from rebuilding an O(n) participant list
+  /// merely to display one integer.
+  int get participantCount {
+    final room = _room;
+    if (room == null) return 0;
+    return (room.localParticipant == null ? 0 : 1) +
+        room.remoteParticipants.length;
+  }
+
   List<VoiceParticipantViewData> get participants {
     final room = _room;
     if (room == null) return const [];

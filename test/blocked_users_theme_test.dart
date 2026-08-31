@@ -82,7 +82,7 @@ void main() {
       );
       expect(
         button.style!.foregroundColor!.resolve(<WidgetState>{}),
-        themeCase.theme.colorScheme.primary,
+        themeCase.palette.interactiveForeground,
       );
       expect(tester.takeException(), isNull);
     }

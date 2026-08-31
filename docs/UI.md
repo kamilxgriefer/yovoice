@@ -50,24 +50,36 @@ keyboard/focus access on desktop, and preserved safe-area/keyboard insets.
 
 `YoFloatingNavigationDock` is the only mobile shell navigation surface. Its
 central YO action is a real action, not a destination tab, and sits in a
-sculpted circular cradle cut into the dock. One tangent notched path must own
-the translucent fill, outline, shadow and clipping together; do not recreate
-the effect by painting a circle over a rectangular bar or with theme-coloured
-mask widgets. A non-interactive `surfaceSunken` socket fills the opening behind
-the action so the cradle stays legible over every page. The action remains
-centred independently of translated labels, uses 64 px below 332 logical
-pixels and 68 px otherwise, and retains a five pixel ring inside the cradle.
+continuous sculpted rise that belongs to the dock's single outer vector path.
+There is no circular notch, socket, cradle or detached centre tile. The
+official transparent `yo-voice-favicon-512.png` mark rests directly on the
+Dark/Pearl dock material with no permanent disc or halo. Its invisible target
+is 64 px below 332 logical pixels and 68 px otherwise; the asset may overflow
+that target so its measured alpha bounds remain approximately 52–62 px. The
+transparent artwork is translated 19 px inside that stable target: the visible
+alpha, rather than the PNG canvas, sits approximately 22 px below the rise apex
+and keeps approximately 19 px of material beneath it.
 
 The control's visible top edge remains tappable, all five actions keep at least
-44x44 logical pixels, and safe-area reservation belongs to the dock rather
+48x48 logical pixels, and safe-area reservation belongs to the dock rather
 than each hosting screen. Dark and Pearl use the same geometry with semantic
 navigation surfaces. Ordered keyboard traversal is Home, Chats, YO, Moments,
-More; the focused YO action owns a two-pixel semantic focus ring above its
-opaque centre. At 160% text and above, the dock grows vertically and places
-the four destinations in two columns by two rows around the centre action, so
-full labels remain visible without shrinking the requested text scale. Reduced
-motion disables the YO ripple, capsule travel and breathing without changing
-layout.
+More; the focused YO action owns a temporary two-pixel semantic focus ring.
+The compact layout is icon-only while localized labels remain in semantics.
+At 160% text and above the dock grows and exposes fitted labels without
+shrinking the requested scale. One 52x52, r18 capsule follows only a
+parent-accepted destination; adjacent moves stretch gently, cross-YO moves
+fade behind the transparent action, and rapid changes retarget from the
+currently rendered position. Reduced motion commits capsule and icon state
+immediately and disables the YO ripple.
+
+When a real room is minimized, a non-interactive copy of the same transparent
+mark rises from the centre axis and resolves into the one real compact room
+bar. It never owns room data or controls. The production bar remains the sole
+Chat/Mic/More/Return surface, direct calls are excluded, and Reduce Motion
+shows the settled bar immediately. Pushed destinations temporarily own that
+bar while the covered shell suppresses its copy, so there is one voice listener
+and one latest-message subscription throughout route transitions.
 
 ## Semantic colour ownership
 
@@ -85,12 +97,73 @@ and controls use the stronger semantic boundary; decorative card borders may
 use the quieter one. Essential text pairs meet 4.5:1 and focus/control
 boundaries meet 3:1.
 
-Voice rooms, calls, recording/review, story viewing and image croppers are
-intentional immersive-dark islands. They own a complete dark surface +
-foreground + scrim treatment; never let an inherited light foreground leak
-onto their media, and never use their dark literals for a normal Pearl page.
-When migrating legacy UI, migrate the complete surface atomically rather than
-mixing semantic and screen-local roles.
+The canonical brightness-dependent mapping is:
+
+| Semantic role | Dark | Pearl | Ownership |
+| --- | --- | --- | --- |
+| `background` | `#080711` | `#F6F2F8` | page canvas |
+| `backgroundTop` | `#130A22` | `#FFFCFF` | quiet canvas gradient |
+| `surface` | `#17121F` | `#FCFAFD` | standard card/sheet |
+| `surfaceMuted` | `#100D18` | `#F1EBF4` | disabled/quiet region |
+| `surfaceRaised` | `#21192B` | `#FFFFFF` | dialog/menu/raised card |
+| `surfaceSunken` | `#0C0814` | `#E9E1EF` | inset/disabled fill |
+| `border` | `#342A43` | `#D6C8DF` | decorative separation |
+| `borderStrong` | `#7C6790` | `#967AA9` | control boundary |
+| `textPrimary` | `#F8F5FC` | `#211629` | headings/body emphasis |
+| `textSecondary` | `#B8AFC2` | `#5D5067` | supporting copy |
+| `textTertiary` | `#958B9F` | `#706078` | disabled/tertiary copy |
+| `navigationSurface` | `#17111F` | `#FFFCFF` | dock/sidebar fill |
+| `navigationOutline` | `#725C86` | `#9A83AA` | persistent chrome edge |
+| `navigationInactive` | `#9189A6` | `#594B63` | inactive destination |
+| `interactiveForeground` | `#D986FF` | `#6F1DCE` | links/quiet actions |
+| `focus` | `#D986FF` | `#6F1DCE` | focus on neutral surfaces |
+| `shadow` | `#000000` | `#3D1F50` | elevation shadow source |
+| `scrim` | `#09050F` | `#1A1021` | modal/media scrim source |
+| `dangerSurface` / `dangerForeground` | `#32131D` / `#FFB3BE` | `#FDEDF1` / `#B4233F` | destructive/error pair |
+| `successSurface` / `successForeground` | `#10271C` / `#57D99A` | `#E8F7EF` / `#08784E` | success pair |
+| `warningSurface` / `warningForeground` | `#2E2410` / `#FFC94D` | `#FFF4D8` / `#8C5A00` | warning pair |
+| `infoSurface` / `infoForeground` | `#102337` / `#6FC3FF` | `#E8F3FF` / `#006B91` | information pair |
+
+Filled primary and danger controls use their Material `onPrimary` / `onError`
+foreground as the two-pixel keyboard-focus boundary. This keeps the indicator
+above 3:1 against the actual brand or error fill; `focus` remains the correct
+ring on neutral surfaces. `navigationOutline` is deliberately not a focus
+token.
+
+Voice rooms (including their shared stage and compact live capsule), calls,
+recording/review, story viewing, image croppers, the branded auth/startup
+curtain and its inbox-confirmation sheet, and the explicitly dark staff/creator
+workspaces are intentional immersive-dark islands. They own a complete dark
+surface + foreground + scrim treatment; never let an inherited light
+foreground leak onto their media, and never use their dark literals for a
+normal Pearl page. Development previews may model one of those atoms but do
+not define product colour. When migrating legacy UI, migrate the complete
+surface atomically rather than mixing semantic and screen-local roles.
+
+`AppImmersiveColors` is the explicit legacy-dark atom for those documented
+islands only. Public sheets opened from normal journeys — including content
+reporting — always inherit `AppPalette`; being launched from a dark screen is
+not enough to classify a component as immersive. The source guard inventories
+all 26 roles in both schemes and rejects either scheme's exact raw token value,
+the dark atom's container/border literals, and immersive imports throughout
+Pearl-capable presentation roots. Its sole line-local exception is an
+`uploaded-media` pixel value. Complete immersive atoms are an explicit,
+reviewed path allowlist; a normal route cannot add a file-wide or free-form
+opt-out.
+
+Room-family swatches in `SpaceIdentity` are stable identity seeds for immersive
+rooms. Pearl-capable create and confirmation journeys must call
+`SpaceIdentity.resolve(brightness)` and use its paired surface/on-surface,
+foreground, boundary and CTA roles. Using the raw Club gold or Family emerald
+as body copy or a light-theme button fill is not a supported identity style.
+
+Discover category swatches follow the same identity/presentation split.
+`DiscoverCategoryIdentity` owns the stable Talk, Chill, Broadcast, Music,
+Gaming, Business, Study and Tech seeds; normal-route badges, compact copy,
+meaningful icons, boundaries and actions use `resolve(brightness)` instead of
+painting that seed directly. These are feature-derived visuals, not new global
+`AppPalette` tokens: ordinary card chrome still uses the semantic palette and
+the stable seed remains available only for low-opacity decorative branding.
 
 ## The "Coming soon" pattern
 

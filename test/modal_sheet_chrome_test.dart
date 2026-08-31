@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:yovoice/core/theme/app_theme.dart';
+import 'package:yovoice/shared/widgets/buttons/yo_icon_button.dart';
 import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
 
 Future<void> _pumpChrome(
@@ -116,10 +117,10 @@ void main() {
       final paintedHandle = Color.alphaBlend(handleColor, surface);
       expect(_contrastRatio(paintedHandle, surface), greaterThanOrEqualTo(3));
 
-      final close = tester.widget<IconButton>(
+      final close = tester.widget<YoIconButton>(
         find.byKey(const ValueKey('modal-sheet-close')),
       );
-      final closeColor = close.style!.foregroundColor!.resolve({})!;
+      final closeColor = close.foregroundColor!;
       expect(_contrastRatio(closeColor, surface), greaterThanOrEqualTo(3));
     }
   });

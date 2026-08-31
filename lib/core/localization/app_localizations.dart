@@ -55,6 +55,33 @@ class AppLocalizations {
   String get more => text('More', 'Więcej');
   String get profile => text('Profile', 'Profil');
 
+  String unreadConversations(int count) {
+    if (!isPolish) {
+      return count == 1
+          ? '1 unread conversation'
+          : '$count unread conversations';
+    }
+    if (count == 1) return '1 nieprzeczytana rozmowa';
+    final lastTwo = count % 100;
+    final last = count % 10;
+    if (last >= 2 && last <= 4 && (lastTwo < 12 || lastTwo > 14)) {
+      return '$count nieprzeczytane rozmowy';
+    }
+    return '$count nieprzeczytanych rozmów';
+  }
+
+  String navigationUnreadLabel(String destination, int count) =>
+      '$destination, ${unreadConversations(count)}';
+
+  String get openVoiceActions =>
+      text('Open voice actions', 'Otwórz opcje głosowe');
+  String get voiceActionsPrivateCallActive => text(
+    'Voice actions — private call active',
+    'Opcje głosowe — trwa rozmowa prywatna',
+  );
+  String get voiceActionsRoomActive =>
+      text('Voice actions — live in a room', 'Opcje głosowe — aktywny pokój');
+
   String get email => text('Email', 'E-mail');
   String get password => text('Password', 'Hasło');
   String get logIn => text('LOG IN', 'ZALOGUJ SIĘ');

@@ -350,7 +350,7 @@ Future<void> _render(
   await _settle(tester);
   await tester.runAsync(
     () => precacheImage(
-      const AssetImage('assets/images/logo.png'),
+      const AssetImage('assets/images/yo-voice-favicon-512.png'),
       _capture.currentContext!,
     ),
   );
@@ -468,7 +468,7 @@ Future<void> _renderPearlDesktopShellChrome(WidgetTester tester) async {
   await _settle(tester);
   await tester.runAsync(
     () => precacheImage(
-      const AssetImage('assets/images/logo.png'),
+      const AssetImage('assets/images/yo-voice-favicon-512.png'),
       _capture.currentContext!,
     ),
   );
@@ -486,6 +486,7 @@ void main() {
   final populated = <(Size, double)>[
     (const Size(320, 640), 2),
     (const Size(390, 844), 1),
+    (const Size(430, 932), 1),
     (const Size(768, 1024), 1),
     (const Size(1440, 900), 1),
   ];
@@ -509,20 +510,23 @@ void main() {
     }
   }
 
-  for (final state in [_FeedState.empty, _FeedState.error]) {
-    for (final size in [const Size(390, 844), const Size(1440, 900)]) {
-      final label =
-          'home-light-${state.name}-${size.width.toInt()}x${size.height.toInt()}';
-      testWidgets(label, (tester) async {
-        await _render(
-          tester,
-          size: size,
-          brightness: Brightness.light,
-          state: state,
-          textScale: 1,
-        );
-        await _shoot(tester, label);
-      });
+  for (final brightness in Brightness.values) {
+    for (final state in [_FeedState.empty, _FeedState.error]) {
+      for (final size in [const Size(390, 844), const Size(1440, 900)]) {
+        final label =
+            'home-${brightness.name}-${state.name}-'
+            '${size.width.toInt()}x${size.height.toInt()}';
+        testWidgets(label, (tester) async {
+          await _render(
+            tester,
+            size: size,
+            brightness: brightness,
+            state: state,
+            textScale: 1,
+          );
+          await _shoot(tester, label);
+        });
+      }
     }
   }
 

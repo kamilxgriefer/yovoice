@@ -12,6 +12,7 @@ import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/messages/presentation/screens/chat_screen.dart';
 import 'package:yovoice/shared/widgets/buttons/yo_icon_button.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
+import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 
 enum _FriendsFilter { all, online, requests }
@@ -180,7 +181,6 @@ class _FriendsScreenState extends State<FriendsScreen> {
 
   void _showMessage(String message, {bool isError = false}) {
     final palette = context.appPalette;
-    final colors = Theme.of(context).colorScheme;
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(
@@ -188,12 +188,14 @@ class _FriendsScreenState extends State<FriendsScreen> {
           content: Text(
             message,
             style: TextStyle(
-              color: isError ? colors.onErrorContainer : palette.textPrimary,
+              color: isError
+                  ? palette.dangerForeground
+                  : palette.successForeground,
             ),
           ),
           behavior: SnackBarBehavior.floating,
           backgroundColor: isError
-              ? colors.errorContainer
+              ? palette.dangerSurface
               : palette.successSurface,
           margin: const EdgeInsets.all(16),
           shape: RoundedRectangleBorder(
@@ -354,7 +356,6 @@ class _FriendsScreenState extends State<FriendsScreen> {
 
   Widget _buildSearch() {
     final palette = context.appPalette;
-    final colors = Theme.of(context).colorScheme;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 18),
       child: TextField(
@@ -371,6 +372,7 @@ class _FriendsScreenState extends State<FriendsScreen> {
             builder: (context, value, _) {
               if (value.text.isEmpty) return const SizedBox.shrink();
               return IconButton(
+                tooltip: 'Clear search',
                 onPressed: _searchController.clear,
                 icon: Icon(Icons.close_rounded, color: palette.textSecondary),
               );
@@ -385,7 +387,7 @@ class _FriendsScreenState extends State<FriendsScreen> {
           ),
           focusedBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(17),
-            borderSide: BorderSide(color: colors.primary),
+            borderSide: BorderSide(color: palette.focus, width: 2),
           ),
         ),
       ),
@@ -439,7 +441,7 @@ class _FriendsScreenState extends State<FriendsScreen> {
             !snapshot.hasData) {
           return Center(
             child: CircularProgressIndicator(
-              color: Theme.of(context).colorScheme.primary,
+              color: context.appPalette.interactiveForeground,
             ),
           );
         }
@@ -527,7 +529,7 @@ class _FriendsScreenState extends State<FriendsScreen> {
             !snapshot.hasData) {
           return Center(
             child: CircularProgressIndicator(
-              color: Theme.of(context).colorScheme.primary,
+              color: context.appPalette.interactiveForeground,
             ),
           );
         }
@@ -589,7 +591,6 @@ class _FriendsSummary extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
-    final colors = Theme.of(context).colorScheme;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
       decoration: BoxDecoration(
@@ -597,32 +598,58 @@ class _FriendsSummary extends StatelessWidget {
         borderRadius: BorderRadius.circular(18),
         border: Border.all(color: palette.border),
       ),
-      child: Row(
-        children: [
-          Icon(Icons.groups_2_rounded, color: colors.primary),
-          const SizedBox(width: 10),
-          Text(
-            '$totalCount friends',
-            style: TextStyle(
-              color: palette.textPrimary,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-          const Spacer(),
-          Container(
-            width: 8,
-            height: 8,
-            decoration: const BoxDecoration(
-              color: Color(0xFF20D66B),
-              shape: BoxShape.circle,
-            ),
-          ),
-          const SizedBox(width: 7),
-          Text(
-            '$onlineCount online',
-            style: TextStyle(color: palette.textSecondary),
-          ),
-        ],
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final stack =
+              constraints.maxWidth < 300 ||
+              MediaQuery.textScalerOf(context).scale(1) >= 1.6;
+          final total = Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.groups_2_rounded,
+                color: palette.interactiveForeground,
+              ),
+              const SizedBox(width: 10),
+              Flexible(
+                child: Text(
+                  '$totalCount friends',
+                  style: TextStyle(
+                    color: palette.textPrimary,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+            ],
+          );
+          final online = Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 8,
+                height: 8,
+                decoration: BoxDecoration(
+                  color: palette.successForeground,
+                  shape: BoxShape.circle,
+                ),
+              ),
+              const SizedBox(width: 7),
+              Flexible(
+                child: Text(
+                  '$onlineCount online',
+                  style: TextStyle(color: palette.textSecondary),
+                ),
+              ),
+            ],
+          );
+          if (stack) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [total, const SizedBox(height: 10), online],
+            );
+          }
+          return Row(children: [total, const Spacer(), online]);
+        },
       ),
     );
   }
@@ -672,7 +699,7 @@ class _FriendCard extends StatelessWidget {
                     ),
                     child: CircleAvatar(
                       radius: 27,
-                      backgroundColor: const Color(0xFF2A173C),
+                      backgroundColor: palette.surfaceSunken,
                       backgroundImage: hasPhoto
                           ? NetworkImage(friend.photoUrl!)
                           : null,
@@ -680,8 +707,8 @@ class _FriendCard extends StatelessWidget {
                           ? null
                           : Text(
                               friend.initial,
-                              style: const TextStyle(
-                                color: Colors.white,
+                              style: TextStyle(
+                                color: palette.textPrimary,
                                 fontWeight: FontWeight.w900,
                               ),
                             ),
@@ -695,8 +722,8 @@ class _FriendCard extends StatelessWidget {
                       height: 15,
                       decoration: BoxDecoration(
                         color: friend.isOnline
-                            ? const Color(0xFF20D66B)
-                            : const Color(0xFF6D6275),
+                            ? palette.successForeground
+                            : palette.textTertiary,
                         shape: BoxShape.circle,
                         border: Border.all(color: palette.surface, width: 3),
                       ),
@@ -737,9 +764,7 @@ class _FriendCard extends StatelessWidget {
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                         color: friend.isOnline
-                            ? Theme.of(context).brightness == Brightness.dark
-                                  ? const Color(0xFF6EE7A0)
-                                  : colors.tertiary
+                            ? palette.successForeground
                             : palette.textSecondary,
                         fontSize: 12,
                       ),
@@ -802,14 +827,14 @@ class FriendRequestCard extends StatelessWidget {
         children: [
           CircleAvatar(
             radius: 27,
-            backgroundColor: const Color(0xFF5D2181),
+            backgroundColor: palette.surfaceSunken,
             backgroundImage: hasPhoto ? NetworkImage(photo) : null,
             child: hasPhoto
                 ? null
                 : Text(
                     name.isEmpty ? '?' : name[0].toUpperCase(),
-                    style: const TextStyle(
-                      color: Colors.white,
+                    style: TextStyle(
+                      color: palette.textPrimary,
                       fontWeight: FontWeight.w900,
                     ),
                   ),
@@ -854,12 +879,12 @@ class FriendRequestCard extends StatelessWidget {
                         ),
                       ),
                       icon: processing
-                          ? const SizedBox(
+                          ? SizedBox(
                               width: 15,
                               height: 15,
                               child: CircularProgressIndicator(
                                 strokeWidth: 2,
-                                color: Colors.white,
+                                color: colors.onPrimary,
                               ),
                             )
                           : const Icon(Icons.check_rounded, size: 18),
@@ -920,34 +945,26 @@ class _FilterChip extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
-    return Semantics(
-      button: true,
+    return AccessibleTapRegion(
       selected: selected,
-      label: label,
+      semanticLabel: label,
       onTap: onTap,
-      excludeSemantics: true,
-      child: Material(
-        color: selected ? colors.primary : palette.surface,
-        borderRadius: BorderRadius.circular(99),
-        child: InkWell(
-          onTap: onTap,
+      borderRadius: 99,
+      child: Container(
+        constraints: const BoxConstraints(minHeight: 44),
+        alignment: Alignment.center,
+        padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 9),
+        decoration: BoxDecoration(
+          color: selected ? colors.primary : palette.surface,
           borderRadius: BorderRadius.circular(99),
-          child: Container(
-            constraints: const BoxConstraints(minHeight: 44),
-            alignment: Alignment.center,
-            padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 9),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(99),
-              border: selected ? null : Border.all(color: palette.border),
-            ),
-            child: Text(
-              label,
-              style: TextStyle(
-                color: selected ? colors.onPrimary : palette.textPrimary,
-                fontSize: 12,
-                fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
-              ),
-            ),
+          border: selected ? null : Border.all(color: palette.border),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            color: selected ? colors.onPrimary : palette.textPrimary,
+            fontSize: 12,
+            fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
           ),
         ),
       ),
@@ -980,65 +997,57 @@ class _HeaderButton extends StatelessWidget {
     return Tooltip(
       message: tooltip,
       excludeFromSemantics: true,
-      child: Semantics(
-        button: true,
-        label: semanticLabel,
+      child: AccessibleTapRegion(
+        semanticLabel: semanticLabel,
         onTap: onTap,
-        excludeSemantics: true,
-        child: Material(
-          color: highlighted ? colors.primary : palette.surface,
-          borderRadius: BorderRadius.circular(15),
-          child: InkWell(
-            onTap: onTap,
+        borderRadius: 15,
+        child: Container(
+          width: 46,
+          height: 46,
+          decoration: BoxDecoration(
+            color: highlighted ? colors.primary : palette.surface,
             borderRadius: BorderRadius.circular(15),
-            child: Container(
-              width: 46,
-              height: 46,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(15),
-                border: highlighted ? null : Border.all(color: palette.border),
+            border: highlighted ? null : Border.all(color: palette.border),
+          ),
+          child: Stack(
+            clipBehavior: Clip.none,
+            alignment: Alignment.center,
+            children: [
+              Icon(
+                icon,
+                color: highlighted ? colors.onPrimary : palette.textPrimary,
+                size: 21,
               ),
-              child: Stack(
-                clipBehavior: Clip.none,
-                alignment: Alignment.center,
-                children: [
-                  Icon(
-                    icon,
-                    color: highlighted ? colors.onPrimary : palette.textPrimary,
-                    size: 21,
-                  ),
-                  if (badgeCount > 0)
-                    Positioned(
-                      top: -5,
-                      right: -5,
-                      child: Container(
-                        constraints: const BoxConstraints(
-                          minWidth: 20,
-                          minHeight: 20,
-                        ),
-                        alignment: Alignment.center,
-                        padding: const EdgeInsets.symmetric(horizontal: 5),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFE51852),
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(
-                            color: palette.background,
-                            width: 2,
-                          ),
-                        ),
-                        child: Text(
-                          badgeCount > 99 ? '99+' : '$badgeCount',
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 9,
-                            fontWeight: FontWeight.w900,
-                          ),
-                        ),
+              if (badgeCount > 0)
+                Positioned(
+                  top: -5,
+                  right: -5,
+                  child: Container(
+                    constraints: const BoxConstraints(
+                      minWidth: 20,
+                      minHeight: 20,
+                    ),
+                    alignment: Alignment.center,
+                    padding: const EdgeInsets.symmetric(horizontal: 5),
+                    decoration: BoxDecoration(
+                      color: palette.dangerSurface,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: palette.dangerForeground,
+                        width: 1,
                       ),
                     ),
-                ],
-              ),
-            ),
+                    child: Text(
+                      badgeCount > 99 ? '99+' : '$badgeCount',
+                      style: TextStyle(
+                        color: palette.dangerForeground,
+                        fontSize: 9,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ),
+                ),
+            ],
           ),
         ),
       ),

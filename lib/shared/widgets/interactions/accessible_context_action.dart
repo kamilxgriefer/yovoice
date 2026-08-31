@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'package:yovoice/core/theme/app_palette.dart';
+
 /// Gives a long-press context action equivalent keyboard, pointer and
 /// assistive-technology paths without changing the action's business logic.
 class AccessibleContextAction extends StatefulWidget {
@@ -24,12 +26,15 @@ class AccessibleContextAction extends StatefulWidget {
 
 class _AccessibleContextActionState extends State<AccessibleContextAction> {
   bool _showsFocusHighlight = false;
+  bool _hovered = false;
+  bool _pressed = false;
 
   void _open() => widget.onOpen?.call();
 
   @override
   Widget build(BuildContext context) {
     if (widget.onOpen == null) return widget.child;
+    final palette = context.appPalette;
 
     return FocusableActionDetector(
       mouseCursor: SystemMouseCursors.contextMenu,
@@ -58,30 +63,50 @@ class _AccessibleContextActionState extends State<AccessibleContextAction> {
         button: true,
         label: widget.semanticLabel,
         onTap: _open,
-        child: GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onLongPress: _open,
-          onSecondaryTap: _open,
-          child: Stack(
-            children: [
-              widget.child,
-              Positioned.fill(
-                child: IgnorePointer(
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 120),
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(widget.borderRadius),
-                      border: Border.all(
-                        color: _showsFocusHighlight
-                            ? const Color(0xFFD28AFF)
+        child: MouseRegion(
+          onEnter: (_) => setState(() => _hovered = true),
+          onExit: (_) => setState(() => _hovered = false),
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onLongPress: _open,
+            onLongPressStart: (_) => setState(() => _pressed = true),
+            onLongPressEnd: (_) => setState(() => _pressed = false),
+            onLongPressCancel: () => setState(() => _pressed = false),
+            onSecondaryTap: _open,
+            child: Stack(
+              children: [
+                widget.child,
+                Positioned.fill(
+                  child: IgnorePointer(
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 120),
+                      decoration: BoxDecoration(
+                        color: _pressed
+                            ? palette.interactiveForeground.withValues(
+                                alpha: .14,
+                              )
+                            : _hovered
+                            ? palette.interactiveForeground.withValues(
+                                alpha: .06,
+                              )
                             : Colors.transparent,
-                        width: 2,
+                        borderRadius: BorderRadius.circular(
+                          widget.borderRadius,
+                        ),
+                        border: Border.all(
+                          color: _showsFocusHighlight
+                              ? palette.focus
+                              : _hovered
+                              ? palette.borderStrong
+                              : Colors.transparent,
+                          width: _showsFocusHighlight ? 2 : 1,
+                        ),
                       ),
                     ),
                   ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),

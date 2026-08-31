@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
 import 'package:yovoice/core/helpers/error_messages.dart';
+import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 
 import 'package:yovoice/features/calls/data/services/direct_call_service.dart';
@@ -98,11 +99,6 @@ class _ChatScreenState extends State<ChatScreen> {
       const <DirectAttachmentOutboxEntry>[];
   final Map<String, OutboxEntry> _awaitingSnapshots = {};
   Set<String> _committedMessageIds = const <String>{};
-
-  /// Typing presence is pushed on every keystroke, so a broken backend
-  /// would otherwise either be silent or produce a snackbar storm. It is
-  /// reported once per visit and logged every time.
-  bool _typingFailureReported = false;
 
   /// Read receipts follow the conversation snapshot, not the build cycle:
   /// [_newestMarkedMessageId] is the newest incoming unread message we already
@@ -312,11 +308,10 @@ class _ChatScreenState extends State<ChatScreen> {
     setState(() => _awaitingSnapshots[entry.id] = entry);
   }
 
-  /// Never let a rejected typing update disappear. It is not worth
-  /// interrupting the person mid-sentence more than once, but it must not
-  /// be invisible either — silent presence failures are exactly how the
-  /// duplicate-send defect stayed hidden.
-  Future<void> _setTyping(bool isTyping, {bool announceFailure = true}) async {
+  /// Typing presence is an ephemeral enhancement, not a user action that can
+  /// be repaired from inside the conversation. Keep failures observable in
+  /// diagnostics without covering the composer with an unactionable warning.
+  Future<void> _setTyping(bool isTyping) async {
     try {
       await _service.setTyping(
         conversationId: widget.conversationId,
@@ -324,18 +319,6 @@ class _ChatScreenState extends State<ChatScreen> {
       );
     } catch (error) {
       debugPrint('ChatScreen typing presence update failed: $error');
-
-      if (!announceFailure || !mounted || _typingFailureReported) {
-        return;
-      }
-
-      _typingFailureReported = true;
-      _showMessage(
-        friendlyErrorMessage(
-          error,
-          fallback: "Others won't see when you're typing right now.",
-        ),
-      );
     }
   }
 
@@ -2324,7 +2307,7 @@ class _VoiceMessageRecorderSheetState
                         ? const Color(0xFFFF4F78)
                         : colors.primary,
                     foregroundColor: _recording
-                        ? const Color(0xFF211629)
+                        ? AppColors.contrastInk
                         : colors.onPrimary,
                   ),
                   icon: Icon(

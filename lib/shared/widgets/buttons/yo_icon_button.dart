@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_radius.dart';
 
-class YoIconButton extends StatelessWidget {
+class YoIconButton extends StatefulWidget {
   const YoIconButton({
     super.key,
     required this.icon,
@@ -33,63 +33,141 @@ class YoIconButton extends StatelessWidget {
   final bool autofocus;
   final String? semanticLabel;
 
-  bool get _enabled => onPressed != null && !isLoading;
+  @override
+  State<YoIconButton> createState() => _YoIconButtonState();
+}
+
+class _YoIconButtonState extends State<YoIconButton> {
+  late FocusNode _focusNode;
+  late bool _ownsFocusNode;
+  bool _focused = false;
+  bool _hovered = false;
+
+  bool get _enabled => widget.onPressed != null && !widget.isLoading;
 
   String? get _inferredLabel {
-    if (icon == Icons.arrow_back_rounded ||
-        icon == Icons.arrow_back_ios_new_rounded) {
+    if (widget.icon == Icons.arrow_back_rounded ||
+        widget.icon == Icons.arrow_back_ios_new_rounded) {
       return 'Back';
     }
-    if (icon == Icons.close_rounded) return 'Close';
-    if (icon == Icons.settings_rounded) return 'Settings';
-    if (icon == Icons.search_rounded) return 'Search';
-    if (icon == Icons.add_rounded) return 'Add';
-    if (icon == Icons.more_horiz_rounded || icon == Icons.more_vert_rounded) {
+    if (widget.icon == Icons.close_rounded) return 'Close';
+    if (widget.icon == Icons.settings_rounded) return 'Settings';
+    if (widget.icon == Icons.search_rounded) return 'Search';
+    if (widget.icon == Icons.add_rounded) return 'Add';
+    if (widget.icon == Icons.more_horiz_rounded ||
+        widget.icon == Icons.more_vert_rounded) {
       return 'More options';
     }
     return null;
   }
 
   @override
+  void initState() {
+    super.initState();
+    _ownsFocusNode = widget.focusNode == null;
+    _focusNode = widget.focusNode ?? FocusNode();
+    _focused = _focusNode.hasFocus;
+    _focusNode.addListener(_handleFocusChange);
+  }
+
+  @override
+  void didUpdateWidget(covariant YoIconButton oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.focusNode == widget.focusNode) return;
+    _focusNode.removeListener(_handleFocusChange);
+    if (_ownsFocusNode) _focusNode.dispose();
+    _ownsFocusNode = widget.focusNode == null;
+    _focusNode = widget.focusNode ?? FocusNode();
+    _focusNode.addListener(_handleFocusChange);
+    _focused = _focusNode.hasFocus;
+  }
+
+  @override
+  void dispose() {
+    _focusNode.removeListener(_handleFocusChange);
+    if (_ownsFocusNode) _focusNode.dispose();
+    super.dispose();
+  }
+
+  void _handleFocusChange() {
+    if (mounted && _focused != _focusNode.hasFocus) {
+      setState(() => _focused = _focusNode.hasFocus);
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
-    final targetSize = size < 44 ? 44.0 : size;
-    final effectiveLabel = semanticLabel ?? tooltip ?? _inferredLabel;
+    final targetSize = widget.size < 44 ? 44.0 : widget.size;
+    final effectiveLabel =
+        widget.semanticLabel ?? widget.tooltip ?? _inferredLabel;
+    final foreground = _enabled
+        ? widget.foregroundColor ?? palette.textPrimary
+        : palette.textTertiary;
+    final background = _enabled
+        ? widget.backgroundColor ?? palette.surfaceRaised
+        : palette.surfaceMuted;
+    final border = _focused
+        ? palette.focus
+        : _hovered && _enabled
+        ? palette.interactiveForeground
+        : _enabled
+        ? widget.borderColor ?? palette.borderStrong
+        : palette.border;
+
     final button = IconButton(
-      tooltip: tooltip ?? effectiveLabel,
-      focusNode: focusNode,
-      autofocus: autofocus,
-      onPressed: _enabled ? onPressed : null,
+      tooltip: widget.tooltip ?? effectiveLabel,
+      focusNode: _focusNode,
+      autofocus: widget.autofocus,
+      onPressed: _enabled ? widget.onPressed : null,
       padding: EdgeInsets.zero,
       constraints: BoxConstraints.tightFor(
         width: targetSize,
         height: targetSize,
       ),
       splashRadius: targetSize / 2,
+      style: ButtonStyle(
+        overlayColor: WidgetStateProperty.resolveWith((states) {
+          if (states.contains(WidgetState.pressed)) {
+            return foreground.withValues(alpha: .16);
+          }
+          if (states.contains(WidgetState.hovered)) {
+            return foreground.withValues(alpha: .08);
+          }
+          if (states.contains(WidgetState.focused)) {
+            return palette.focus.withValues(alpha: .12);
+          }
+          return null;
+        }),
+      ),
       icon: SizedBox(
-        width: size,
-        height: size,
-        child: DecoratedBox(
+        width: widget.size,
+        height: widget.size,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 140),
           decoration: BoxDecoration(
-            color: backgroundColor ?? palette.surfaceRaised,
+            color: background,
             borderRadius: AppRadius.md,
-            border: Border.all(color: borderColor ?? palette.borderStrong),
+            border: Border.all(color: border, width: _focused ? 2 : 1),
           ),
           child: Center(
             child: AnimatedSwitcher(
               duration: const Duration(milliseconds: 180),
-              child: isLoading
+              child: widget.isLoading
                   ? SizedBox(
                       key: const ValueKey('loading'),
-                      width: iconSize,
-                      height: iconSize,
-                      child: const CircularProgressIndicator(strokeWidth: 2),
+                      width: widget.iconSize,
+                      height: widget.iconSize,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: foreground,
+                      ),
                     )
                   : Icon(
-                      icon,
+                      widget.icon,
                       key: const ValueKey('icon'),
-                      size: iconSize,
-                      color: foregroundColor ?? palette.textPrimary,
+                      size: widget.iconSize,
+                      color: foreground,
                     ),
             ),
           ),
@@ -103,10 +181,23 @@ class YoIconButton extends StatelessWidget {
       child: Semantics(
         button: true,
         enabled: _enabled,
-        label: effectiveLabel,
-        onTap: _enabled ? onPressed : null,
+        label: widget.isLoading && effectiveLabel != null
+            ? '$effectiveLabel, loading'
+            : effectiveLabel,
+        onTap: _enabled ? widget.onPressed : null,
         excludeSemantics: true,
-        child: button,
+        child: MouseRegion(
+          cursor: _enabled
+              ? SystemMouseCursors.click
+              : SystemMouseCursors.basic,
+          onEnter: (_) {
+            if (!_hovered) setState(() => _hovered = true);
+          },
+          onExit: (_) {
+            if (_hovered) setState(() => _hovered = false);
+          },
+          child: button,
+        ),
       ),
     );
   }

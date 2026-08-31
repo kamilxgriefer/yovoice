@@ -26,6 +26,7 @@ class RoomChatPanel extends StatefulWidget {
     this.scrollController,
     this.service,
     this.currentUserId,
+    this.onMessageActionsRouteChanged,
     super.key,
   });
 
@@ -36,6 +37,8 @@ class RoomChatPanel extends StatefulWidget {
   final ScrollController? scrollController;
   final RoomService? service;
   final String? currentUserId;
+  final ValueChanged<ModalBottomSheetRoute<void>?>?
+  onMessageActionsRouteChanged;
 
   @override
   State<RoomChatPanel> createState() => _RoomChatPanelState();
@@ -119,8 +122,38 @@ class _RoomChatPanelState extends State<RoomChatPanel> {
   }
 
   Future<void> _messageActions(RoomMessage message) async {
-    await showModalBottomSheet<void>(
-      context: context,
+    final routeChanged = widget.onMessageActionsRouteChanged;
+    if (routeChanged == null) {
+      await showModalBottomSheet<void>(
+        context: context,
+        backgroundColor: const Color(0xFF171021),
+        showDragHandle: false,
+        constraints: ResponsiveContentFrame.adaptiveModalConstraints(
+          context,
+          maxWidth: 520,
+        ),
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+        ),
+        builder: (sheetContext) =>
+            _messageActionsContent(sheetContext, message),
+      );
+      return;
+    }
+
+    final navigator = Navigator.of(context);
+    final localizations = MaterialLocalizations.of(context);
+    final route = ModalBottomSheetRoute<void>(
+      builder: (sheetContext) => _messageActionsContent(sheetContext, message),
+      capturedThemes: InheritedTheme.capture(
+        from: context,
+        to: navigator.context,
+      ),
+      isScrollControlled: false,
+      barrierLabel: localizations.scrimLabel,
+      barrierOnTapHint: localizations.scrimOnTapHint(
+        localizations.bottomSheetLabel,
+      ),
       backgroundColor: const Color(0xFF171021),
       showDragHandle: false,
       constraints: ResponsiveContentFrame.adaptiveModalConstraints(
@@ -130,61 +163,71 @@ class _RoomChatPanelState extends State<RoomChatPanel> {
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
       ),
-      builder: (sheetContext) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const YoModalSheetChrome(
-              sheetLabel: 'room message actions',
-              surfaceColor: Color(0xFF171021),
-            ),
-            Padding(
-              padding: const EdgeInsets.only(bottom: 14),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                children: [
-                  for (final emoji in roomReactionEmojis)
-                    InkWell(
-                      borderRadius: BorderRadius.circular(24),
-                      onTap: () {
-                        Navigator.of(sheetContext).pop();
-                        _toggleReaction(message, emoji);
-                      },
-                      child: Padding(
-                        padding: const EdgeInsets.all(8),
-                        child: Text(
-                          emoji,
-                          style: const TextStyle(fontSize: 26),
-                        ),
-                      ),
+    );
+    routeChanged(route);
+    try {
+      await navigator.push<void>(route);
+      await route.completed;
+    } finally {
+      routeChanged(null);
+    }
+  }
+
+  Widget _messageActionsContent(
+    BuildContext sheetContext,
+    RoomMessage message,
+  ) {
+    return SafeArea(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const YoModalSheetChrome(
+            sheetLabel: 'room message actions',
+            surfaceColor: Color(0xFF171021),
+          ),
+          Padding(
+            padding: const EdgeInsets.only(bottom: 14),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: [
+                for (final emoji in roomReactionEmojis)
+                  InkWell(
+                    borderRadius: BorderRadius.circular(24),
+                    onTap: () {
+                      Navigator.of(sheetContext).pop();
+                      _toggleReaction(message, emoji);
+                    },
+                    child: Padding(
+                      padding: const EdgeInsets.all(8),
+                      child: Text(emoji, style: const TextStyle(fontSize: 26)),
                     ),
-                ],
-              ),
+                  ),
+              ],
             ),
-            if (widget.isHost)
-              ListTile(
-                leading: const Icon(
-                  Icons.delete_outline_rounded,
-                  color: Color(0xFFFF6A76),
-                ),
-                title: const Text(
-                  'Delete message',
-                  style: TextStyle(color: Color(0xFFFF6A76)),
-                ),
-                onTap: () async {
-                  Navigator.of(sheetContext).pop();
-                  try {
-                    await _service.deleteRoomMessage(
-                      roomId: widget.roomId,
-                      messageId: message.id,
-                    );
-                  } catch (error) {
-                    _snack(error, "Couldn't delete that message.");
-                  }
-                },
+          ),
+          if (widget.isHost)
+            ListTile(
+              leading: const Icon(
+                Icons.delete_outline_rounded,
+                color: Color(0xFFFF6A76),
               ),
-          ],
-        ),
+              title: const Text(
+                'Delete message',
+                style: TextStyle(color: Color(0xFFFF6A76)),
+              ),
+              onTap: () async {
+                Navigator.of(sheetContext).pop();
+                try {
+                  await _service.deleteRoomMessage(
+                    roomId: widget.roomId,
+                    messageId: message.id,
+                  );
+                } catch (error) {
+                  _snack(error, "Couldn't delete that message.");
+                }
+              },
+            ),
+        ],
       ),
     );
   }
@@ -212,70 +255,63 @@ class _RoomChatPanelState extends State<RoomChatPanel> {
             child: LayoutBuilder(
               builder: (context, constraints) {
                 final compact = constraints.maxWidth < 300;
-                return MediaQuery.withClampedTextScaling(
-                  maxScaleFactor: compact ? 1.35 : 2,
-                  child: Row(
-                    children: [
-                      if (compact)
-                        Icon(
+                return Row(
+                  children: [
+                    if (compact)
+                      Icon(Icons.forum_rounded, color: widget.accent, size: 19)
+                    else
+                      Container(
+                        width: 36,
+                        height: 36,
+                        decoration: BoxDecoration(
+                          color: widget.accent.withValues(alpha: .14),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Icon(
                           Icons.forum_rounded,
                           color: widget.accent,
                           size: 19,
-                        )
-                      else
-                        Container(
-                          width: 36,
-                          height: 36,
-                          decoration: BoxDecoration(
-                            color: widget.accent.withValues(alpha: .14),
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: Icon(
-                            Icons.forum_rounded,
-                            color: widget.accent,
-                            size: 19,
-                          ),
                         ),
-                      SizedBox(width: compact ? 9 : 10),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
+                      ),
+                    SizedBox(width: compact ? 9 : 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Room chat',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 17,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                          if (!compact)
                             const Text(
-                              'Room chat',
+                              'Live conversation',
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 17,
-                                fontWeight: FontWeight.w900,
+                                color: Color(0xFF9C93AB),
+                                fontSize: 11,
+                                fontWeight: FontWeight.w700,
                               ),
                             ),
-                            if (!compact)
-                              const Text(
-                                'Live conversation',
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  color: Color(0xFF9C93AB),
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
-                          ],
-                        ),
+                        ],
                       ),
-                      if (widget.onClose != null) ...[
-                        const SizedBox(width: 4),
-                        IconButton(
-                          tooltip: 'Back to stage',
-                          onPressed: widget.onClose,
-                          icon: const Icon(Icons.close_rounded),
-                          color: Colors.white70,
-                        ),
-                      ],
+                    ),
+                    if (widget.onClose != null) ...[
+                      const SizedBox(width: 4),
+                      IconButton(
+                        tooltip: 'Back to stage',
+                        onPressed: widget.onClose,
+                        icon: const Icon(Icons.close_rounded),
+                        color: Colors.white70,
+                      ),
                     ],
-                  ),
+                  ],
                 );
               },
             ),

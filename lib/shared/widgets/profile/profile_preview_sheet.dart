@@ -586,19 +586,19 @@ class _Body extends StatelessWidget {
                         const _Chip(
                           icon: Icons.auto_awesome_rounded,
                           label: 'Creator',
-                          color: Color(0xFFC98BFF),
+                          kind: _ProfileFactChipKind.creator,
                         ),
                       if (profile?.accountType == AccountType.official)
                         const _Chip(
                           icon: Icons.verified_rounded,
                           label: 'Official',
-                          color: Color(0xFF6FC3FF),
+                          kind: _ProfileFactChipKind.official,
                         ),
                       if (relationship == FriendRelationshipStatus.friends)
                         const _Chip(
                           icon: Icons.people_alt_rounded,
                           label: 'Friends',
-                          color: Color(0xFF35D07F),
+                          kind: _ProfileFactChipKind.friends,
                         ),
                     ],
                   ),
@@ -854,35 +854,73 @@ class _PresenceDot extends StatelessWidget {
   }
 }
 
+enum _ProfileFactChipKind { creator, official, friends }
+
+@immutable
+class _ProfileFactChipColors {
+  const _ProfileFactChipColors({
+    required this.surface,
+    required this.foreground,
+    required this.border,
+  });
+
+  final Color surface;
+  final Color foreground;
+  final Color border;
+
+  static _ProfileFactChipColors resolve(
+    _ProfileFactChipKind kind,
+    AppPalette palette,
+  ) => switch (kind) {
+    _ProfileFactChipKind.creator => _ProfileFactChipColors(
+      surface: palette.surfaceMuted,
+      foreground: palette.interactiveForeground,
+      border: palette.interactiveForeground,
+    ),
+    _ProfileFactChipKind.official => _ProfileFactChipColors(
+      surface: palette.infoSurface,
+      foreground: palette.infoForeground,
+      border: palette.infoForeground,
+    ),
+    _ProfileFactChipKind.friends => _ProfileFactChipColors(
+      surface: palette.successSurface,
+      foreground: palette.successForeground,
+      border: palette.successForeground,
+    ),
+  };
+}
+
 class _Chip extends StatelessWidget {
-  const _Chip({required this.icon, required this.label, required this.color});
+  const _Chip({required this.icon, required this.label, required this.kind});
 
   final IconData icon;
   final String label;
-  final Color color;
+  final _ProfileFactChipKind kind;
 
   @override
   Widget build(BuildContext context) {
     final showIcon = MediaQuery.textScalerOf(context).scale(1) < 1.5;
+    final colors = _ProfileFactChipColors.resolve(kind, context.appPalette);
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+      key: ValueKey<String>('profile-preview-${kind.name}-chip'),
+      padding: EdgeInsets.symmetric(horizontal: showIcon ? 9 : 2, vertical: 4),
       decoration: BoxDecoration(
-        color: color.withValues(alpha: .12),
+        color: colors.surface,
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: color.withValues(alpha: .4)),
+        border: Border.all(color: colors.border),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
           if (showIcon) ...[
-            Icon(icon, size: 12, color: color),
+            Icon(icon, size: 13, color: colors.foreground),
             const SizedBox(width: 4),
           ],
           Text(
             label,
             style: TextStyle(
-              color: color,
-              fontSize: 11,
+              color: colors.foreground,
+              fontSize: 12,
               fontWeight: FontWeight.w800,
             ),
           ),

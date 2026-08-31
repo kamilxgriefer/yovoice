@@ -26,10 +26,9 @@ class PremiumDesktopCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
     final palette = context.appPalette;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
     final iconColors = <Color>[
       colors.primary,
-      isDark ? const Color(0xFFFFC24D) : const Color(0xFF8C5A00),
+      palette.warningForeground,
       palette.focus,
     ];
     return Container(

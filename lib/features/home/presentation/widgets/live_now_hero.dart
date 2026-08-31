@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/rooms/data/models/room_participant.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
@@ -13,11 +15,7 @@ import 'package:yovoice/shared/widgets/voice/voice_core.dart';
 /// participants, and every count come from Firestore; when no room is
 /// live it renders the empty state, never invented people.
 class LiveNowHero extends StatelessWidget {
-  const LiveNowHero({
-    required this.room,
-    required this.onJoin,
-    super.key,
-  });
+  const LiveNowHero({required this.room, required this.onJoin, super.key});
 
   /// Null renders the polished empty state.
   final VoiceRoom? room;
@@ -28,18 +26,26 @@ class LiveNowHero extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final featured = room;
+    final palette = context.appPalette;
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(18, 4, 18, 8),
       child: Container(
         decoration: BoxDecoration(
-          gradient: const LinearGradient(
+          gradient: LinearGradient(
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
-            colors: [Color(0xFF2A1140), Color(0xFF120B1B)],
+            colors: [palette.surfaceRaised, palette.surface],
           ),
           borderRadius: BorderRadius.circular(26),
-          border: Border.all(color: const Color(0xFF432D5A)),
+          border: Border.all(color: palette.border),
+          boxShadow: [
+            BoxShadow(
+              color: palette.shadow.withValues(alpha: .12),
+              blurRadius: 22,
+              offset: const Offset(0, 10),
+            ),
+          ],
         ),
         padding: const EdgeInsets.fromLTRB(18, 16, 18, 18),
         child: featured == null
@@ -64,6 +70,8 @@ class _FeaturedRoom extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final identity = RoomCardIdentity.of(room);
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
 
     return StreamBuilder<List<RoomParticipant>>(
       stream: service.watchParticipants(room.id),
@@ -77,10 +85,10 @@ class _FeaturedRoom extends StatelessWidget {
           children: [
             Row(
               children: [
-                const Text(
+                Text(
                   'LIVE NOW',
                   style: TextStyle(
-                    color: Color(0xFFD28AFF),
+                    color: palette.interactiveForeground,
                     fontSize: 11,
                     fontWeight: FontWeight.w900,
                     letterSpacing: 1.6,
@@ -92,7 +100,7 @@ class _FeaturedRoom extends StatelessWidget {
                   height: 7,
                   decoration: const BoxDecoration(
                     shape: BoxShape.circle,
-                    color: Color(0xFFFF3F72),
+                    color: AppColors.live,
                   ),
                 ),
                 const Spacer(),
@@ -102,13 +110,13 @@ class _FeaturedRoom extends StatelessWidget {
                     vertical: 3,
                   ),
                   decoration: BoxDecoration(
-                    color: const Color(0xFFFF416C),
+                    color: AppColors.live,
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: const Text(
                     'LIVE',
                     style: TextStyle(
-                      color: Colors.white,
+                      color: AppColors.onLive,
                       fontSize: 9.5,
                       fontWeight: FontWeight.w900,
                       letterSpacing: .4,
@@ -135,8 +143,8 @@ class _FeaturedRoom extends StatelessWidget {
               room.name,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: Colors.white,
+              style: TextStyle(
+                color: palette.textPrimary,
                 fontSize: 24,
                 fontWeight: FontWeight.w900,
                 letterSpacing: -.6,
@@ -150,14 +158,14 @@ class _FeaturedRoom extends StatelessWidget {
                   vertical: 5,
                 ),
                 decoration: BoxDecoration(
-                  color: Colors.black.withValues(alpha: .3),
+                  color: palette.surfaceMuted,
                   borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: const Color(0xFF432D5A)),
+                  border: Border.all(color: palette.border),
                 ),
                 child: Text(
                   room.category,
-                  style: const TextStyle(
-                    color: Color(0xFFCFC5D8),
+                  style: TextStyle(
+                    color: palette.textSecondary,
                     fontSize: 11.5,
                     fontWeight: FontWeight.w600,
                   ),
@@ -185,25 +193,31 @@ class _FeaturedRoom extends StatelessWidget {
             const SizedBox(height: 6),
             Row(
               children: [
-                Icon(Icons.people_alt_rounded,
-                    size: 15, color: identity.accent),
+                Icon(
+                  Icons.people_alt_rounded,
+                  size: 15,
+                  color: identity.accent,
+                ),
                 const SizedBox(width: 5),
                 Text(
                   '${participants.length} people',
-                  style: const TextStyle(
-                    color: Colors.white,
+                  style: TextStyle(
+                    color: palette.textPrimary,
                     fontSize: 12.5,
                     fontWeight: FontWeight.w800,
                   ),
                 ),
                 const SizedBox(width: 12),
-                const Icon(Icons.graphic_eq_rounded,
-                    size: 15, color: Color(0xFFD28AFF)),
+                Icon(
+                  Icons.graphic_eq_rounded,
+                  size: 15,
+                  color: palette.interactiveForeground,
+                ),
                 const SizedBox(width: 5),
                 Text(
                   '$speaking speaking',
-                  style: const TextStyle(
-                    color: Color(0xFFCFC5D8),
+                  style: TextStyle(
+                    color: palette.textSecondary,
                     fontSize: 12.5,
                     fontWeight: FontWeight.w600,
                   ),
@@ -212,7 +226,8 @@ class _FeaturedRoom extends StatelessWidget {
                 FilledButton(
                   onPressed: () => onJoin(room),
                   style: FilledButton.styleFrom(
-                    backgroundColor: const Color(0xFF9D20FF),
+                    backgroundColor: colors.primary,
+                    foregroundColor: colors.onPrimary,
                     padding: const EdgeInsets.symmetric(
                       horizontal: 22,
                       vertical: 13,
@@ -259,6 +274,7 @@ class _OrbitingParticipant extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final speaking = participant.isSpeaker;
+    final palette = context.appPalette;
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -268,8 +284,8 @@ class _OrbitingParticipant extends StatelessWidget {
             shape: BoxShape.circle,
             border: Border.all(
               color: speaking
-                  ? const Color(0xFFB44BFF)
-                  : Colors.white.withValues(alpha: .22),
+                  ? palette.interactiveForeground
+                  : palette.borderStrong,
               width: speaking ? 2 : 1.2,
             ),
           ),
@@ -284,8 +300,8 @@ class _OrbitingParticipant extends StatelessWidget {
           participant.displayName,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
-          style: const TextStyle(
-            color: Color(0xFFCFC5D8),
+          style: TextStyle(
+            color: palette.textSecondary,
             fontSize: 10,
             fontWeight: FontWeight.w600,
           ),
@@ -302,13 +318,14 @@ class _EmptyState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return Column(
       children: [
         const SizedBox(height: 6),
-        const Text(
+        Text(
           'LIVE NOW',
           style: TextStyle(
-            color: Color(0xFFD28AFF),
+            color: palette.interactiveForeground,
             fontSize: 11,
             fontWeight: FontWeight.w900,
             letterSpacing: 1.6,
@@ -317,19 +334,19 @@ class _EmptyState extends StatelessWidget {
         const SizedBox(height: 14),
         const VoiceCore(size: 84),
         const SizedBox(height: 12),
-        const Text(
+        Text(
           "It's quiet right now",
           style: TextStyle(
-            color: Colors.white,
+            color: palette.textPrimary,
             fontSize: 18,
             fontWeight: FontWeight.w900,
           ),
         ),
         const SizedBox(height: 4),
-        const Text(
+        Text(
           'Start a room and your people will hear about it.',
           textAlign: TextAlign.center,
-          style: TextStyle(color: Color(0xFF9E92A8), fontSize: 13),
+          style: TextStyle(color: palette.textSecondary, fontSize: 13),
         ),
         const SizedBox(height: 6),
       ],

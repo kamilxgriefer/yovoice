@@ -665,8 +665,8 @@ class _YourMomentTile extends StatelessWidget {
                           ),
                           decoration: BoxDecoration(
                             borderRadius: BorderRadius.circular(999),
-                            gradient: const LinearGradient(
-                              colors: [AppColors.primary, AppColors.secondary],
+                            gradient: LinearGradient(
+                              colors: [colors.primary, colors.secondary],
                             ),
                             border: Border.all(
                               color: palette.surfaceSunken,
@@ -675,8 +675,8 @@ class _YourMomentTile extends StatelessWidget {
                           ),
                           child: Text(
                             '${mine.length}',
-                            style: const TextStyle(
-                              color: Colors.white,
+                            style: TextStyle(
+                              color: colors.onPrimary,
                               fontSize: 10,
                               fontWeight: FontWeight.w800,
                             ),

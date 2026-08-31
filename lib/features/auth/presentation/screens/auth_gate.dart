@@ -31,10 +31,17 @@ class AuthGate extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final authState = ref.watch(authStateChangesProvider);
+    final authOperationLoading = ref.watch(authLoadingProvider);
+    void setRegistrationLoading(bool loading) {
+      ref.read(authLoadingProvider.notifier).state = loading;
+    }
+
     final immediateBoundary = switch (authState) {
-      AsyncLoading() when initiallySignedOut => const KeyedSubtree(
-        key: ValueKey('auth-signed-out'),
-        child: LoginScreen(),
+      AsyncLoading() when initiallySignedOut => KeyedSubtree(
+        key: const ValueKey('auth-signed-out'),
+        child: LoginScreen(
+          onRegistrationLoadingChanged: setRegistrationLoading,
+        ),
       ),
       AsyncLoading() when initialAuthError != null => KeyedSubtree(
         key: const ValueKey('auth-error'),
@@ -65,9 +72,28 @@ class AuthGate extends ConsumerWidget {
           },
           data: (user) {
             if (user == null) {
+              return KeyedSubtree(
+                key: const ValueKey('auth-signed-out'),
+                child: LoginScreen(
+                  onRegistrationLoadingChanged: setRegistrationLoading,
+                ),
+              );
+            }
+
+            // Firebase Auth publishes a newly created principal before
+            // AuthService.register() has finished writing the username the
+            // member selected. Starting ProfileService.ensureProfile() in
+            // that window can seed the email local-part as a non-empty
+            // canonical displayName; Rules then correctly prevent the
+            // registration write from replacing it. Keep the authenticated
+            // entry behind the shared operation flag wired into the shipped
+            // responsive registration screen, so profile bootstrap starts
+            // only after registration provisioning has completed.
+            // ProfileService enforces the same boundary across tabs/processes.
+            if (authOperationLoading) {
               return const KeyedSubtree(
-                key: ValueKey('auth-signed-out'),
-                child: LoginScreen(),
+                key: ValueKey('auth-operation-loading'),
+                child: StartupLoadingScreen(),
               );
             }
 

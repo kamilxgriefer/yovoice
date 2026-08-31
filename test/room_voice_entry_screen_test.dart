@@ -1,3 +1,6 @@
+import 'dart:async';
+
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:firebase_storage_mocks/firebase_storage_mocks.dart';
@@ -10,6 +13,7 @@ import 'package:yovoice/features/rooms/data/models/room_metadata.dart';
 import 'package:yovoice/features/rooms/data/models/room_voice_access.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
+import 'package:yovoice/features/rooms/data/services/room_mute_coordinator.dart';
 import 'package:yovoice/features/rooms/data/services/room_voice_entry_coordinator.dart';
 import 'package:yovoice/features/rooms/presentation/screens/broadcast_room_screen.dart';
 import 'package:yovoice/features/rooms/presentation/screens/community_voice_room_screen.dart';
@@ -74,6 +78,16 @@ class _RecordingVoice extends VoiceCallService {
 
   @override
   List<VoiceParticipantViewData> get participants => cast;
+
+  void replaceSessionForTest(String roomId) {
+    _joinedRoom = roomId;
+    _connected = true;
+    notifyListeners();
+  }
+}
+
+class _ServerRefusal extends FirebaseFunctionsException {
+  _ServerRefusal(String code) : super(code: code, message: 'refused');
 }
 
 void main() {
@@ -183,6 +197,7 @@ void main() {
     required _RecordingVoice voice,
     required String uid,
     RoomVoiceEntryCoordinator? coordinator,
+    RoomMuteCoordinator? muteCoordinator,
     ClubService? clubService,
     bool playInitialJoinSound = true,
     Size size = const Size(420, 900),
@@ -199,6 +214,7 @@ void main() {
           roomService: serviceFor(uid),
           voiceService: voice,
           entryCoordinator: coordinator,
+          muteCoordinator: muteCoordinator,
           clubService: clubService,
           playInitialJoinSound: playInitialJoinSound,
         ),
@@ -366,6 +382,53 @@ void main() {
       expect(find.text('Not live'), findsNothing);
       expect(find.text('Start voice'), findsNothing);
     });
+
+    testWidgets(
+      'a delayed Community unmute cannot enable the replacement room mic',
+      (tester) async {
+        await seedRoom(isLive: true);
+        final voice = _RecordingVoice(muted: true);
+        final rosterGate = Completer<void>();
+        final events = <String>[];
+        final muteCoordinator = RoomMuteCoordinator(
+          persistRosterState: (roomId, muted) async {
+            events.add('persist:$roomId:$muted');
+            await rosterGate.future;
+          },
+          applyMicrophoneState: (muted) async {
+            events.add('apply:$muted');
+          },
+          readCurrentMuted: () => true,
+          disconnectStaleSession: () async => events.add('disconnect'),
+        );
+        addTearDown(muteCoordinator.dispose);
+
+        await pumpCommunity(
+          tester,
+          uid: 'relative',
+          voice: voice,
+          muteCoordinator: muteCoordinator,
+          entry: RoomVoiceEntry(
+            outcome: RoomVoiceEntryOutcome.live,
+            room: roomModel(isLive: true),
+            authority: RoomVoiceStartAuthority.none,
+          ),
+        );
+        await tester.pump();
+
+        await tester.tap(find.text('Unmute'));
+        await tester.pump();
+        expect(events, ['persist:$roomId:false']);
+
+        voice.replaceSessionForTest('room-2');
+        rosterGate.complete();
+        await tester.pump();
+
+        expect(events, [
+          'persist:$roomId:false',
+        ], reason: 'Room A must not apply its delayed unmute to room B.');
+      },
+    );
 
     testWidgets(
       'Community shows one connected people count and no listener layer',
@@ -774,6 +837,7 @@ void main() {
       required _RecordingVoice voice,
       Size size = const Size(420, 900),
       String uid = 'relative',
+      RoomMuteCoordinator? muteCoordinator,
     }) async {
       tester.view.devicePixelRatio = 1;
       tester.view.physicalSize = size;
@@ -786,6 +850,7 @@ void main() {
             voiceEntry: entry,
             roomService: serviceFor(uid),
             voiceService: voice,
+            muteCoordinator: muteCoordinator,
           ),
         ),
       );
@@ -865,6 +930,69 @@ void main() {
       expect(find.textContaining('On stage', findRichText: true), findsWidgets);
       expect(find.textContaining('Audience', findRichText: true), findsWidgets);
     });
+
+    testWidgets(
+      'a delayed Broadcast refusal cannot disconnect the replacement room',
+      (tester) async {
+        await seedRoom(isLive: true, experience: 'broadcast');
+        await db
+            .collection('rooms')
+            .doc(roomId)
+            .collection('participants')
+            .doc('relative')
+            .set({
+              'userId': 'relative',
+              'displayName': 'relative',
+              'role': 'speaker',
+              'isMuted': true,
+              'isSpeaker': true,
+              'isHandRaised': false,
+            });
+        final voice = _RecordingVoice(muted: true);
+        final rosterGate = Completer<void>();
+        final events = <String>[];
+        final muteCoordinator = RoomMuteCoordinator(
+          persistRosterState: (roomId, muted) async {
+            events.add('persist:$roomId:$muted');
+            await rosterGate.future;
+            throw _ServerRefusal('not-found');
+          },
+          applyMicrophoneState: (muted) async {
+            events.add('apply:$muted');
+          },
+          readCurrentMuted: () => true,
+          disconnectStaleSession: () async => events.add('disconnect'),
+        );
+        addTearDown(muteCoordinator.dispose);
+
+        await pumpBroadcast(
+          tester,
+          voice: voice,
+          muteCoordinator: muteCoordinator,
+          entry: RoomVoiceEntry(
+            outcome: RoomVoiceEntryOutcome.live,
+            room: roomModel(isLive: true, experience: 'broadcast'),
+            authority: RoomVoiceStartAuthority.none,
+          ),
+        );
+        await tester.pump();
+        await tester.pump();
+        expect(find.text('Unmute'), findsOneWidget);
+
+        await tester.tap(find.text('Unmute'));
+        await tester.pump();
+        expect(events, ['persist:$roomId:false']);
+
+        voice.replaceSessionForTest('room-2');
+        rosterGate.complete();
+        await tester.pump();
+
+        expect(events, [
+          'persist:$roomId:false',
+        ], reason: 'Room A refusal must not disconnect room B.');
+        expect(voice.roomId, 'room-2');
+      },
+    );
 
     testWidgets('a host can close listener stage requests for an episode', (
       tester,

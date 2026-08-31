@@ -377,11 +377,11 @@ class _CreatorRowState extends State<_CreatorRow> {
             const SizedBox(width: 6),
             AnimatedOpacity(
               duration: const Duration(milliseconds: 130),
-              opacity: _hover ? 1 : .45,
+              opacity: _hover ? 1 : .82,
               child: Icon(
                 Icons.chevron_right_rounded,
                 size: 18,
-                color: colors.primary,
+                color: palette.interactiveForeground,
               ),
             ),
           ],

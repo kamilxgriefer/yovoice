@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
 import 'package:yovoice/features/rooms/presentation/widgets/room_chat_sheet.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
@@ -17,6 +18,7 @@ class ExpandedMiniChat extends StatelessWidget {
     required this.service,
     required this.onCollapse,
     this.scrollController,
+    this.onMessageActionsRouteChanged,
     super.key,
   });
 
@@ -25,6 +27,8 @@ class ExpandedMiniChat extends StatelessWidget {
   final RoomService service;
   final VoidCallback onCollapse;
   final ScrollController? scrollController;
+  final ValueChanged<ModalBottomSheetRoute<void>?>?
+  onMessageActionsRouteChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -38,6 +42,7 @@ class ExpandedMiniChat extends StatelessWidget {
       scrollController: scrollController,
       service: service,
       currentUserId: service.currentUserId,
+      onMessageActionsRouteChanged: onMessageActionsRouteChanged,
     );
     // The SHEET variant (scrollController != null) carries its own handle
     // ON the surface: the modal wrapper is transparent, so a theme-drawn
@@ -69,11 +74,23 @@ Future<void> showExpandedMiniChatSheet(
   required String roomId,
   required bool isHost,
   required RoomService service,
-}) {
-  return showModalBottomSheet<void>(
-    context: context,
+  ValueChanged<ModalBottomSheetRoute<void>>? onRouteCreated,
+  ValueChanged<ModalBottomSheetRoute<void>?>? onMessageActionsRouteChanged,
+}) async {
+  final navigator = Navigator.of(context, rootNavigator: true);
+  final localizations = MaterialLocalizations.of(context);
+  final route = ModalBottomSheetRoute<void>(
+    capturedThemes: InheritedTheme.capture(
+      from: context,
+      to: navigator.context,
+    ),
     isScrollControlled: true,
     useSafeArea: true,
+    barrierLabel: localizations.scrimLabel,
+    barrierOnTapHint: localizations.scrimOnTapHint(
+      localizations.bottomSheetLabel,
+    ),
+    modalBarrierColor: context.appPalette.scrim.withValues(alpha: .72),
     backgroundColor: Colors.transparent,
     constraints: ResponsiveContentFrame.adaptiveModalConstraints(context),
     // The theme's handle is drawn on THIS transparent wrapper, ~20px above
@@ -94,10 +111,14 @@ Future<void> showExpandedMiniChatSheet(
           roomId: roomId,
           isHost: isHost,
           service: service,
+          onMessageActionsRouteChanged: onMessageActionsRouteChanged,
           scrollController: scrollController,
           onCollapse: () => Navigator.of(sheetContext).pop(),
         ),
       ),
     ),
   );
+  onRouteCreated?.call(route);
+  await navigator.push<void>(route);
+  await route.completed;
 }

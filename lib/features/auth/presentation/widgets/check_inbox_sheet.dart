@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/core/theme/app_immersive_colors.dart';
 import 'package:yovoice/features/auth/data/auth_service.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
@@ -118,7 +120,7 @@ class _CheckInboxSheetState extends State<_CheckInboxSheet> {
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: const Color(0xFF120D1A),
+      color: AppImmersiveColors.surface,
       clipBehavior: Clip.antiAlias,
       borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
       child: SafeArea(
@@ -130,7 +132,7 @@ class _CheckInboxSheetState extends State<_CheckInboxSheet> {
             children: [
               const YoModalSheetChrome(
                 sheetLabel: 'check your inbox',
-                surfaceColor: Color(0xFF120D1A),
+                surfaceColor: AppImmersiveColors.surface,
               ),
               const SizedBox(height: 6),
               Container(
@@ -139,14 +141,14 @@ class _CheckInboxSheetState extends State<_CheckInboxSheet> {
                 alignment: Alignment.center,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: const Color(0xFF7B2FF7).withValues(alpha: .14),
+                  color: AppColors.primary.withValues(alpha: .14),
                   border: Border.all(
-                    color: const Color(0xFF7B2FF7).withValues(alpha: .4),
+                    color: AppColors.primary.withValues(alpha: .4),
                   ),
                 ),
                 child: const Icon(
                   Icons.mark_email_unread_outlined,
-                  color: Color(0xFFD3A5FF),
+                  color: AppColors.secondary,
                   size: 30,
                 ),
               ),
@@ -154,7 +156,7 @@ class _CheckInboxSheetState extends State<_CheckInboxSheet> {
               const Text(
                 'Check your inbox',
                 style: TextStyle(
-                  color: Colors.white,
+                  color: AppImmersiveColors.textPrimary,
                   fontSize: 22,
                   fontWeight: FontWeight.w900,
                 ),
@@ -165,7 +167,7 @@ class _CheckInboxSheetState extends State<_CheckInboxSheet> {
                 'instructions to reset your password.',
                 textAlign: TextAlign.center,
                 style: const TextStyle(
-                  color: Color(0xFF9D95AD),
+                  color: AppImmersiveColors.textSecondary,
                   fontSize: 13.5,
                   height: 1.45,
                 ),
@@ -173,7 +175,10 @@ class _CheckInboxSheetState extends State<_CheckInboxSheet> {
               const SizedBox(height: 24),
               Text(
                 "Didn't receive it?",
-                style: const TextStyle(color: Color(0xFF9D95AD), fontSize: 13),
+                style: const TextStyle(
+                  color: AppImmersiveColors.textSecondary,
+                  fontSize: 13,
+                ),
               ),
               const SizedBox(height: 10),
               SizedBox(
@@ -181,8 +186,8 @@ class _CheckInboxSheetState extends State<_CheckInboxSheet> {
                 child: OutlinedButton(
                   onPressed: _sending || _cooldownSeconds > 0 ? null : _resend,
                   style: OutlinedButton.styleFrom(
-                    foregroundColor: Colors.white,
-                    side: const BorderSide(color: Color(0xFF3A3151)),
+                    foregroundColor: AppImmersiveColors.textPrimary,
+                    side: const BorderSide(color: AppImmersiveColors.border),
                     padding: const EdgeInsets.symmetric(vertical: 15),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(16),
@@ -204,7 +209,7 @@ class _CheckInboxSheetState extends State<_CheckInboxSheet> {
                 child: FilledButton(
                   onPressed: () => Navigator.of(context).pop(true),
                   style: FilledButton.styleFrom(
-                    backgroundColor: const Color(0xFF7B2FF7),
+                    backgroundColor: AppColors.primary,
                     padding: const EdgeInsets.symmetric(vertical: 15),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(16),
@@ -214,7 +219,7 @@ class _CheckInboxSheetState extends State<_CheckInboxSheet> {
                     'Back to log in',
                     style: TextStyle(
                       fontWeight: FontWeight.w800,
-                      color: Colors.white,
+                      color: AppImmersiveColors.textPrimary,
                     ),
                   ),
                 ),

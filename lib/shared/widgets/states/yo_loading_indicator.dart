@@ -24,7 +24,6 @@ class YoLoadingIndicator extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
-    final colors = Theme.of(context).colorScheme;
     final Widget content = TweenAnimationBuilder<double>(
       tween: Tween<double>(begin: 0, end: 1),
       duration: const Duration(milliseconds: 260),
@@ -43,7 +42,7 @@ class YoLoadingIndicator extends StatelessWidget {
             height: size,
             child: CircularProgressIndicator(
               strokeWidth: 2.6,
-              color: colors.primary,
+              color: palette.interactiveForeground,
             ),
           ),
           if (message != null) ...<Widget>[

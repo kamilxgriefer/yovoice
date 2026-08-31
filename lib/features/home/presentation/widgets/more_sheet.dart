@@ -184,9 +184,7 @@ Future<MoreDestination?> showDesktopMoreMenu(
 }) {
   final palette = context.appPalette;
   final colors = Theme.of(context).colorScheme;
-  final lockColor = Theme.of(context).brightness == Brightness.dark
-      ? const Color(0xFFFFC24D)
-      : const Color(0xFF8C5A00);
+  final lockColor = palette.warningForeground;
   // Moments is deliberately absent: it is a rail item now, and listing
   // it here as well would show the same destination twice.
   final items = <(MoreDestination, IconData, String, String)>[
@@ -720,9 +718,7 @@ class _MoreTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
-    final lockColor = Theme.of(context).brightness == Brightness.dark
-        ? const Color(0xFFFFC24D)
-        : const Color(0xFF8C5A00);
+    final lockColor = palette.warningForeground;
     final semanticLabel = [
       label,
       subtitle,
@@ -838,9 +834,7 @@ class _WideMoreTile extends StatelessWidget {
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
     final accent = accentColor ?? colors.primary;
-    final lockColor = Theme.of(context).brightness == Brightness.dark
-        ? const Color(0xFFFFC24D)
-        : const Color(0xFF8C5A00);
+    final lockColor = palette.warningForeground;
     final semanticLabel = [
       label,
       subtitle,

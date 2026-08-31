@@ -728,6 +728,7 @@ class _ProfileImagePreview extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     final pendingBannerBytes = pendingBanner?.bytes;
     final pendingAvatarBytes = pendingAvatar?.bytes;
 
@@ -749,10 +750,10 @@ class _ProfileImagePreview extends StatelessWidget {
               bottom: 16,
               child: Container(
                 padding: const EdgeInsets.all(3),
-                decoration: const BoxDecoration(
+                decoration: BoxDecoration(
                   shape: BoxShape.circle,
                   gradient: LinearGradient(
-                    colors: [Color(0xFF6A00FF), Color(0xFFD12CFF)],
+                    colors: [colors.primary, colors.secondary],
                   ),
                 ),
                 child: pendingAvatarBytes != null

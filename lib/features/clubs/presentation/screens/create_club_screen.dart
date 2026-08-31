@@ -41,9 +41,6 @@ class _CreateClubScreenState extends State<CreateClubScreen> {
   SpaceIdentity get _identity =>
       widget.isFamily ? SpaceIdentity.family : SpaceIdentity.club;
 
-  /// Focus rings, selected chips, benefit ticks and the CTA all read this.
-  Color get _primary => _identity.primary;
-
   static const _languages = <String>[
     'English',
     'Polish',
@@ -200,6 +197,7 @@ class _CreateClubScreenState extends State<CreateClubScreen> {
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
+    final identityVisuals = _identity.resolve(colors.brightness);
     return Scaffold(
       key: const ValueKey('create-club-screen'),
       backgroundColor: palette.background,
@@ -341,7 +339,7 @@ class _CreateClubScreenState extends State<CreateClubScreen> {
               DropdownButtonFormField<String>(
                 initialValue: _language,
                 dropdownColor: palette.surfaceRaised,
-                iconEnabledColor: _primary,
+                iconEnabledColor: identityVisuals.foreground,
                 style: TextStyle(
                   color: palette.textPrimary,
                   fontWeight: FontWeight.w700,
@@ -349,7 +347,10 @@ class _CreateClubScreenState extends State<CreateClubScreen> {
                 decoration: InputDecoration(
                   filled: true,
                   fillColor: palette.surface,
-                  prefixIcon: Icon(Icons.language_rounded, color: _primary),
+                  prefixIcon: Icon(
+                    Icons.language_rounded,
+                    color: identityVisuals.foreground,
+                  ),
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(18),
                     borderSide: BorderSide(color: palette.border),
@@ -392,11 +393,17 @@ class _CreateClubScreenState extends State<CreateClubScreen> {
               child: SizedBox(
                 height: 58,
                 child: FilledButton.icon(
+                  key: const ValueKey('space-identity-create-cta'),
                   onPressed: _busy || _pickingImage ? null : _createClub,
                   style: FilledButton.styleFrom(
-                    backgroundColor: _primary,
-                    foregroundColor: colors.onPrimary,
-                    disabledBackgroundColor: _primary.withValues(alpha: .45),
+                    backgroundColor: identityVisuals.cta,
+                    foregroundColor: identityVisuals.onCta,
+                    disabledBackgroundColor: _busy
+                        ? identityVisuals.cta
+                        : palette.surfaceSunken,
+                    disabledForegroundColor: _busy
+                        ? identityVisuals.onCta
+                        : palette.textTertiary,
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(19),
                     ),
@@ -407,7 +414,7 @@ class _CreateClubScreenState extends State<CreateClubScreen> {
                           height: 20,
                           child: CircularProgressIndicator(
                             strokeWidth: 2.5,
-                            color: colors.onPrimary,
+                            color: identityVisuals.spinner,
                           ),
                         )
                       : const Icon(Icons.add_business_rounded),
@@ -442,14 +449,15 @@ class _HeroCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [Color(0xFF35104F), Color(0xFF171121)],
+        gradient: LinearGradient(
+          colors: [palette.surfaceRaised, palette.surface],
         ),
         borderRadius: BorderRadius.circular(26),
-        border: Border.all(color: const Color(0xFF7130A5)),
+        border: Border.all(color: palette.border),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -463,7 +471,7 @@ class _HeroCard extends StatelessWidget {
                 Text(
                   'Build your home on YO Voice',
                   style: TextStyle(
-                    color: Colors.white,
+                    color: palette.textPrimary,
                     fontSize: 21,
                     fontWeight: FontWeight.w900,
                   ),
@@ -475,7 +483,7 @@ class _HeroCard extends StatelessWidget {
                             'closest to you.'
                       : 'A Club is permanent: members, roles, a main chat, '
                             'announcements and a private voice lounge.',
-                  style: TextStyle(color: Color(0xFFD1C4DA), height: 1.42),
+                  style: TextStyle(color: palette.textSecondary, height: 1.42),
                 ),
               ],
             ),
@@ -492,8 +500,7 @@ class _PrivateFamilyMediaNotice extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final accent = isDark ? const Color(0xFF35D58A) : const Color(0xFF08784E);
+    final accent = palette.successForeground;
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -524,16 +531,20 @@ class _ClubMark extends StatelessWidget {
   final SpaceIdentity identity;
 
   @override
-  Widget build(BuildContext context) => Container(
-    width: 62,
-    height: 62,
-    decoration: BoxDecoration(
-      color: identity.wash,
-      borderRadius: BorderRadius.circular(20),
-      border: Border.all(color: identity.primary),
-    ),
-    child: Icon(identity.icon, color: identity.accent, size: 34),
-  );
+  Widget build(BuildContext context) {
+    final visuals = identity.resolve(Theme.of(context).brightness);
+    return Container(
+      key: const ValueKey('space-identity-mark'),
+      width: 62,
+      height: 62,
+      decoration: BoxDecoration(
+        color: visuals.surface,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: visuals.border),
+      ),
+      child: Icon(identity.icon, color: visuals.onSurface, size: 34),
+    );
+  }
 }
 
 class _SectionTitle extends StatelessWidget {

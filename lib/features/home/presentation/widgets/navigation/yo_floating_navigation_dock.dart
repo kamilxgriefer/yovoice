@@ -53,14 +53,20 @@ class YoFloatingNavigationDock extends StatefulWidget {
   });
 
   static const double horizontalMargin = 14;
-  static const double topClearance = 12;
+  static const double topClearance = 4;
   static const double minimumBottomClearance = 10;
-  static const double visualHeight = 86;
+  static const double visualHeight = 104;
   static const double accessibleVisualHeight = 112;
-  static const double cornerRadius = 30;
-  static const double notchCenterFromTop = 24;
-  static const double notchGap = 5;
+  static const double cornerRadius = 31;
+  static const double centralRise = 30;
   static const double expandedLabelScaleThreshold = 1.6;
+
+  /// The dock outline is navigation chrome, not a generic card boundary and
+  /// not a focus indicator. Keeping the mapping named makes that distinction
+  /// testable without exposing the private custom shape.
+  @visibleForTesting
+  static BorderSide outlineSideFor(AppPalette palette) =>
+      BorderSide(color: palette.navigationOutline, width: 1.15);
 
   final int selectedTabIndex;
   final int momentsTabIndex;
@@ -77,9 +83,6 @@ class YoFloatingNavigationDock extends StatefulWidget {
   final Map<int, GlobalKey>? tourDestinationKeys;
   final GlobalKey? tourVoiceKey;
 
-  /// Exact vertical space reserved by the Scaffold bottom-navigation child.
-  /// Keeping this calculation public prevents content-inset tests or future
-  /// overlays from growing a second device-specific magic number.
   static double visualHeightFor({required double textScale}) =>
       textScale >= expandedLabelScaleThreshold
       ? accessibleVisualHeight
@@ -110,15 +113,36 @@ class YoFloatingNavigationDock extends StatefulWidget {
       _YoFloatingNavigationDockState();
 }
 
-class _YoFloatingNavigationDockState extends State<YoFloatingNavigationDock> {
+class _YoFloatingNavigationDockState extends State<YoFloatingNavigationDock>
+    with TickerProviderStateMixin {
   static const _premiumCurve = Cubic(0.22, 1, 0.36, 1);
-  static const _breathingTravel = Duration(milliseconds: 2800);
-  static const _breathingCadence = Duration(milliseconds: 3100);
+  static const _capsuleSize = 52.0;
+  static const double _yoFadeInnerRadius = 22;
+  static const double _yoFadeOuterRadius = 52;
 
-  Timer? _breathingTimer;
-  bool _breathingHigh = false;
+  final GlobalKey _geometryRootKey = GlobalKey();
+  final Map<int, GlobalKey> _destinationGeometryKeys = {
+    0: GlobalKey(),
+    1: GlobalKey(),
+    3: GlobalKey(),
+    4: GlobalKey(),
+  };
+
+  late final AnimationController _selectionController = AnimationController(
+    vsync: this,
+    value: 1,
+  );
+
+  Timer? _pendingSelectionExpiry;
   bool? _reduceMotion;
-  int _breathingGeneration = 0;
+  bool _geometrySyncScheduled = false;
+  bool _selectionLaidOut = false;
+  bool _selectionCrossesYo = false;
+  int? _selectionTargetSlot;
+  int? _pendingSelectionSlot;
+  Offset _selectionFrom = Offset.zero;
+  Offset _selectionTo = Offset.zero;
+  Map<int, Offset> _destinationCenters = const {};
 
   int? get _activeVisualSlot => widget.moreSelected
       ? 4
@@ -127,46 +151,254 @@ class _YoFloatingNavigationDockState extends State<YoFloatingNavigationDock> {
           momentsTabIndex: widget.momentsTabIndex,
         );
 
+  double get _selectionProgress =>
+      _premiumCurve.transform(_selectionController.value.clamp(0.0, 1.0));
+
+  Offset get _renderedSelectionCenter =>
+      Offset.lerp(_selectionFrom, _selectionTo, _selectionProgress) ??
+      _selectionTo;
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
     final reduceMotion = MediaQuery.disableAnimationsOf(context);
     if (_reduceMotion == reduceMotion) return;
     _reduceMotion = reduceMotion;
-    _configureBreathing();
-  }
-
-  void _configureBreathing() {
-    _breathingTimer?.cancel();
-    _breathingTimer = null;
-    _breathingGeneration += 1;
-    final generation = _breathingGeneration;
-
-    if (_reduceMotion ?? true) {
-      _breathingHigh = false;
-      return;
+    if (reduceMotion && _selectionLaidOut) {
+      _selectionController.stop();
+      _selectionFrom = _selectionTo;
+      _selectionCrossesYo = false;
+      _selectionController.value = 1;
     }
-
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || generation != _breathingGeneration) return;
-      setState(() => _breathingHigh = true);
-      _breathingTimer = Timer.periodic(_breathingCadence, (_) {
-        if (!mounted) return;
-        setState(() => _breathingHigh = !_breathingHigh);
-      });
-    });
+    _scheduleGeometrySync();
   }
 
   @override
-  void dispose() {
-    _breathingGeneration += 1;
-    _breathingTimer?.cancel();
-    super.dispose();
+  void didUpdateWidget(YoFloatingNavigationDock oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final oldAcceptedSlot = oldWidget.moreSelected
+        ? 4
+        : YoFloatingNavigationDock.visualSlotForTab(
+            oldWidget.selectedTabIndex,
+            momentsTabIndex: oldWidget.momentsTabIndex,
+          );
+    final acceptedSlot = _activeVisualSlot;
+    if (oldAcceptedSlot != acceptedSlot) {
+      _retargetAcceptedSelection(acceptedSlot);
+    }
+    _scheduleGeometrySync();
+  }
+
+  void _retargetAcceptedSelection(int? acceptedSlot) {
+    if (acceptedSlot == null) {
+      _selectionController.stop();
+      _selectionLaidOut = false;
+      _selectionTargetSlot = null;
+      _selectionCrossesYo = false;
+      return;
+    }
+
+    final requestedCenter = _destinationCenters[acceptedSlot];
+    final rootObject = _geometryRootKey.currentContext?.findRenderObject();
+    if (requestedCenter == null ||
+        rootObject is! RenderBox ||
+        !rootObject.hasSize) {
+      return;
+    }
+
+    if (!_selectionLaidOut || _selectionTargetSlot == null) {
+      _selectionLaidOut = true;
+      _selectionTargetSlot = acceptedSlot;
+      _selectionFrom = requestedCenter;
+      _selectionTo = requestedCenter;
+      _selectionCrossesYo = false;
+      _selectionController.value = 1;
+      _clearPendingSelection(acceptedSlot: acceptedSlot);
+      return;
+    }
+
+    if (_selectionTargetSlot == acceptedSlot) return;
+
+    final previousSlot = _selectionTargetSlot!;
+    final currentCenter = _renderedSelectionCenter;
+    final rootCenter = rootObject.size.width / 2;
+    final crossesYo = _selectionTravelsBehindYo(
+      from: currentCenter,
+      to: requestedCenter,
+      rootCenter: rootCenter,
+    );
+
+    _selectionTargetSlot = acceptedSlot;
+    _selectionFrom = currentCenter;
+    _selectionTo = requestedCenter;
+    _selectionCrossesYo = crossesYo;
+
+    if (_pendingSelectionSlot == acceptedSlot) {
+      unawaited(HapticFeedback.selectionClick());
+    }
+    _clearPendingSelection(acceptedSlot: acceptedSlot);
+
+    if (_reduceMotion ?? false) {
+      _selectionCrossesYo = false;
+      _selectionController.value = 1;
+    } else {
+      _selectionController.duration = _selectionDuration(
+        previousSlot,
+        acceptedSlot,
+        crossesYo,
+      );
+      _selectionController.forward(from: 0);
+    }
+  }
+
+  void _scheduleGeometrySync() {
+    if (_geometrySyncScheduled) return;
+    _geometrySyncScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _geometrySyncScheduled = false;
+      if (!mounted) return;
+      _syncDestinationGeometry();
+    });
+  }
+
+  void _syncDestinationGeometry() {
+    final rootObject = _geometryRootKey.currentContext?.findRenderObject();
+    if (rootObject is! RenderBox || !rootObject.hasSize) return;
+
+    final centres = <int, Offset>{};
+    for (final entry in _destinationGeometryKeys.entries) {
+      final object = entry.value.currentContext?.findRenderObject();
+      if (object is! RenderBox || !object.hasSize) return;
+      final topLeft = object.localToGlobal(Offset.zero, ancestor: rootObject);
+      centres[entry.key] = topLeft + object.size.center(Offset.zero);
+    }
+
+    final requested = _activeVisualSlot;
+    if (requested == null) {
+      if (!_selectionLaidOut && _centresEqual(_destinationCenters, centres)) {
+        return;
+      }
+      _selectionController.stop();
+      setState(() {
+        _destinationCenters = centres;
+        _selectionLaidOut = false;
+        _selectionTargetSlot = null;
+        _selectionCrossesYo = false;
+      });
+      return;
+    }
+
+    final requestedCenter = centres[requested];
+    if (requestedCenter == null) return;
+
+    if (!_selectionLaidOut || _selectionTargetSlot == null) {
+      setState(() {
+        _destinationCenters = centres;
+        _selectionLaidOut = true;
+        _selectionTargetSlot = requested;
+        _selectionFrom = requestedCenter;
+        _selectionTo = requestedCenter;
+        _selectionCrossesYo = false;
+      });
+      _selectionController.value = 1;
+      _clearPendingSelection(acceptedSlot: requested);
+      return;
+    }
+
+    if (_selectionTargetSlot == requested) {
+      final moved = (_selectionTo - requestedCenter).distance > .25;
+      if (_centresEqual(_destinationCenters, centres) && !moved) return;
+      setState(() {
+        _destinationCenters = centres;
+        if (moved) {
+          _selectionFrom = requestedCenter;
+          _selectionTo = requestedCenter;
+          _selectionCrossesYo = false;
+        }
+      });
+      if (moved) _selectionController.value = 1;
+      return;
+    }
+
+    final previousSlot = _selectionTargetSlot!;
+    final currentCenter = _renderedSelectionCenter;
+    final crossesYo = _selectionTravelsBehindYo(
+      from: currentCenter,
+      to: requestedCenter,
+      rootCenter: rootObject.size.width / 2,
+    );
+    final duration = _selectionDuration(previousSlot, requested, crossesYo);
+
+    setState(() {
+      _destinationCenters = centres;
+      _selectionTargetSlot = requested;
+      _selectionFrom = currentCenter;
+      _selectionTo = requestedCenter;
+      _selectionCrossesYo = crossesYo;
+    });
+
+    if (_pendingSelectionSlot == requested) {
+      unawaited(HapticFeedback.selectionClick());
+    }
+    _clearPendingSelection(acceptedSlot: requested);
+
+    if (_reduceMotion ?? false) {
+      _selectionCrossesYo = false;
+      _selectionController.value = 1;
+    } else {
+      _selectionController.duration = duration;
+      _selectionController.forward(from: 0);
+    }
+  }
+
+  static bool _centresEqual(Map<int, Offset> a, Map<int, Offset> b) {
+    if (a.length != b.length) return false;
+    for (final entry in a.entries) {
+      final other = b[entry.key];
+      if (other == null || (entry.value - other).distance > .25) return false;
+    }
+    return true;
+  }
+
+  bool _selectionTravelsBehindYo({
+    required Offset from,
+    required Offset to,
+    required double rootCenter,
+  }) {
+    final changesSide =
+        (from.dx < rootCenter && to.dx > rootCenter) ||
+        (from.dx > rootCenter && to.dx < rootCenter);
+    final reversesInsideFadeZone =
+        _selectionCrossesYo &&
+        (from.dx - rootCenter).abs() < _yoFadeOuterRadius;
+    return changesSide || reversesInsideFadeZone;
+  }
+
+  static Duration _selectionDuration(int from, int to, bool crossesYo) {
+    final distance = (from - to).abs();
+    if (!crossesYo) return const Duration(milliseconds: 330);
+    return switch (distance) {
+      >= 4 => const Duration(milliseconds: 620),
+      3 => const Duration(milliseconds: 560),
+      _ => const Duration(milliseconds: 480),
+    };
+  }
+
+  void _clearPendingSelection({required int acceptedSlot}) {
+    if (_pendingSelectionSlot != acceptedSlot) return;
+    _pendingSelectionExpiry?.cancel();
+    _pendingSelectionExpiry = null;
+    _pendingSelectionSlot = null;
   }
 
   void _select(YoNavigationDestinationConfig destination) {
     if (!destination.isSelected) {
-      unawaited(HapticFeedback.selectionClick());
+      _pendingSelectionSlot = destination.visualSlot;
+      _pendingSelectionExpiry?.cancel();
+      _pendingSelectionExpiry = Timer(const Duration(milliseconds: 900), () {
+        if (!mounted || _pendingSelectionSlot != destination.visualSlot) return;
+        _pendingSelectionSlot = null;
+      });
     }
     destination.onPressed();
   }
@@ -182,16 +414,24 @@ class _YoFloatingNavigationDockState extends State<YoFloatingNavigationDock> {
   }
 
   @override
+  void dispose() {
+    _pendingSelectionExpiry?.cancel();
+    _selectionController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
+    final tokens = _DockMaterialTokens.of(context);
     final reduceMotion = _reduceMotion ?? false;
     final textScale = MediaQuery.textScalerOf(context).scale(1);
+    final expandedLabels =
+        textScale >= YoFloatingNavigationDock.expandedLabelScaleThreshold;
     final dockVisualHeight = YoFloatingNavigationDock.visualHeightFor(
       textScale: textScale,
     );
-    final expandedLabels =
-        textScale >= YoFloatingNavigationDock.expandedLabelScaleThreshold;
     final selectedTabIndex = widget.selectedTabIndex;
     final destinations = <YoNavigationDestinationConfig>[
       YoNavigationDestinationConfig(
@@ -264,252 +504,194 @@ class _YoFloatingNavigationDockState extends State<YoFloatingNavigationDock> {
                     height:
                         YoFloatingNavigationDock.topClearance +
                         dockVisualHeight,
-                    child: LayoutBuilder(
-                      builder: (context, constraints) {
-                        const horizontalContentPadding = 6.0;
-                        final contentWidth =
-                            constraints.maxWidth - horizontalContentPadding * 2;
-                        final slotWidth = contentWidth / 5;
-                        final capsuleWidth = (slotWidth + 8).clamp(64.0, 72.0);
-                        final expandedCellWidth = contentWidth / 2;
-                        final expandedCellHeight = (dockVisualHeight - 16) / 2;
-                        final activeSlot = _activeVisualSlot;
-                        final activeOnRight =
-                            activeSlot == 3 || activeSlot == 4;
-                        final activeOnBottom =
-                            activeSlot == 1 || activeSlot == 4;
-                        final centerDiameter = constraints.maxWidth < 332
-                            ? 64.0
-                            : 68.0;
-                        final centerX = constraints.maxWidth / 2;
-                        final centerLeft = centerX - centerDiameter / 2;
-                        final centerTop =
-                            YoFloatingNavigationDock.topClearance +
-                            YoFloatingNavigationDock.notchCenterFromTop -
-                            centerDiameter / 2;
-                        final dockShape = _YoDockNotchedShape(
-                          cornerRadius: YoFloatingNavigationDock.cornerRadius,
-                          notchCenterX: centerX,
-                          notchCenterY:
-                              YoFloatingNavigationDock.notchCenterFromTop,
-                          notchRadius:
-                              centerDiameter / 2 +
-                              YoFloatingNavigationDock.notchGap,
-                          side: BorderSide(color: palette.border),
-                        );
+                    child: Padding(
+                      padding: const EdgeInsets.only(
+                        top: YoFloatingNavigationDock.topClearance,
+                      ),
+                      child: LayoutBuilder(
+                        builder: (context, constraints) {
+                          final width = constraints.maxWidth;
+                          final narrow = width < 332;
+                          final slotWidth = width / 5;
+                          final destinationWidth = math.min(
+                            narrow ? 52.0 : 56.0,
+                            slotWidth - 2,
+                          );
+                          final destinationHeight = expandedLabels
+                              ? 68.0
+                              : 52.0;
+                          final destinationTop = expandedLabels ? 37.0 : 41.0;
+                          final centerDiameter = narrow ? 64.0 : 68.0;
+                          final centerLogoAssetSize = narrow ? 68.0 : 76.0;
+                          const centerLogoOpticalOffset = 19.0;
+                          final centerLogoTop =
+                              (centerDiameter - centerLogoAssetSize) / 2 +
+                              centerLogoOpticalOffset;
+                          final centerHitWidth = centerDiameter;
+                          final centerHitHeight = math.max(
+                            centerDiameter,
+                            centerLogoTop + centerLogoAssetSize,
+                          );
+                          final centerHitLeft = (width - centerHitWidth) / 2;
+                          final shape = _YoSculptedDockShape(
+                            cornerRadius: YoFloatingNavigationDock.cornerRadius,
+                            riseHeight: YoFloatingNavigationDock.centralRise,
+                            side: YoFloatingNavigationDock.outlineSideFor(
+                              palette,
+                            ),
+                            rimColors: tokens.rimColors,
+                          );
 
-                        return Stack(
-                          clipBehavior: Clip.none,
-                          children: [
-                            Positioned(
-                              left: 0,
-                              right: 0,
-                              top: YoFloatingNavigationDock.topClearance,
-                              height: dockVisualHeight,
-                              child: Container(
-                                key: const ValueKey(
-                                  'yo-floating-navigation-dock',
-                                ),
-                                decoration: ShapeDecoration(
-                                  color: palette.navigationSurface.withValues(
-                                    alpha: .97,
+                          _scheduleGeometrySync();
+
+                          return Stack(
+                            key: _geometryRootKey,
+                            clipBehavior: Clip.none,
+                            children: [
+                              Positioned.fill(
+                                child: DecoratedBox(
+                                  key: const ValueKey(
+                                    'yo-floating-navigation-dock',
                                   ),
-                                  shape: dockShape,
-                                  shadows: [
-                                    BoxShadow(
-                                      color: palette.shadow.withValues(
-                                        alpha: .30,
+                                  decoration: ShapeDecoration(
+                                    gradient: tokens.shellGradient,
+                                    shape: shape,
+                                    shadows: tokens.shellShadows,
+                                  ),
+                                  child: ClipPath(
+                                    key: const ValueKey(
+                                      'yo-dock-sculpted-clip',
+                                    ),
+                                    clipper: ShapeBorderClipper(shape: shape),
+                                    child: CustomPaint(
+                                      painter: _DockSurfaceFinishPainter(
+                                        shape: shape,
+                                        highlight: tokens.innerHighlight,
+                                        lowerShade: tokens.lowerShade,
                                       ),
-                                      blurRadius: 24,
-                                      offset: const Offset(0, 10),
+                                      child: const SizedBox.expand(),
                                     ),
-                                    BoxShadow(
-                                      color: AppColors.navigationPrimary
-                                          .withValues(alpha: .09),
-                                      blurRadius: 32,
-                                    ),
-                                  ],
+                                  ),
                                 ),
-                                child: ClipPath(
-                                  key: const ValueKey('yo-dock-notch-clip'),
-                                  clipper: ShapeBorderClipper(shape: dockShape),
-                                  child: Stack(
-                                    children: [
-                                      if (activeSlot != null)
-                                        AnimatedPositioned(
-                                          key: const ValueKey(
-                                            'yo-active-capsule-position',
-                                          ),
-                                          duration: reduceMotion
-                                              ? Duration.zero
-                                              : const Duration(
-                                                  milliseconds: 290,
+                              ),
+                              if (_selectionLaidOut &&
+                                  _selectionTargetSlot != null)
+                                Positioned.fill(
+                                  child: IgnorePointer(
+                                    child: AnimatedBuilder(
+                                      animation: _selectionController,
+                                      builder: (context, child) {
+                                        final center = _renderedSelectionCenter;
+                                        final travel = math.sin(
+                                          math.pi * _selectionController.value,
+                                        );
+                                        final centerDistance =
+                                            (center.dx - width / 2).abs();
+                                        final centerVisibility =
+                                            _selectionCrossesYo
+                                            ? ((centerDistance -
+                                                          _yoFadeInnerRadius) /
+                                                      (_yoFadeOuterRadius -
+                                                          _yoFadeInnerRadius))
+                                                  .clamp(0.0, 1.0)
+                                            : 1.0;
+                                        final stretch = reduceMotion
+                                            ? 1.0
+                                            : 1 +
+                                                  travel *
+                                                      (_selectionCrossesYo
+                                                          ? .06
+                                                          : .11) *
+                                                      centerVisibility;
+                                        final contract =
+                                            .78 + .22 * centerVisibility;
+                                        return Stack(
+                                          clipBehavior: Clip.none,
+                                          children: [
+                                            Positioned(
+                                              left:
+                                                  center.dx - _capsuleSize / 2,
+                                              top: center.dy - _capsuleSize / 2,
+                                              child: Opacity(
+                                                key: const ValueKey(
+                                                  'yo-active-capsule-opacity',
                                                 ),
-                                          curve: _premiumCurve,
-                                          left: expandedLabels
-                                              ? horizontalContentPadding +
-                                                    (activeOnRight
-                                                        ? expandedCellWidth
-                                                        : 0) +
-                                                    4
-                                              : horizontalContentPadding +
-                                                    slotWidth * activeSlot +
-                                                    (slotWidth - capsuleWidth) /
-                                                        2,
-                                          top: expandedLabels
-                                              ? 10 +
-                                                    (activeOnBottom
-                                                        ? expandedCellHeight
-                                                        : 0)
-                                              : 8,
-                                          width: expandedLabels
-                                              ? expandedCellWidth - 8
-                                              : capsuleWidth,
-                                          height: expandedLabels
-                                              ? expandedCellHeight - 4
-                                              : dockVisualHeight - 16,
-                                          child: _ActiveCapsule(
-                                            breathingHigh: _breathingHigh,
-                                            reduceMotion: reduceMotion,
-                                          ),
-                                        ),
-                                      Padding(
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: horizontalContentPadding,
-                                          vertical: 8,
-                                        ),
-                                        child: expandedLabels
-                                            ? Stack(
-                                                children: [
-                                                  for (final slot in [
-                                                    0,
-                                                    1,
-                                                    3,
-                                                    4,
-                                                  ])
-                                                    Positioned(
-                                                      left:
-                                                          slot == 3 || slot == 4
-                                                          ? expandedCellWidth
-                                                          : 0,
-                                                      top:
-                                                          slot == 1 || slot == 4
-                                                          ? expandedCellHeight
-                                                          : 0,
-                                                      width: expandedCellWidth,
-                                                      height:
-                                                          expandedCellHeight,
-                                                      child:
-                                                          _tourDestinationAnchor(
-                                                            slot,
-                                                            _YoDockDestination(
-                                                              config:
-                                                                  bySlot[slot]!,
-                                                              reduceMotion:
-                                                                  reduceMotion,
-                                                              onPressed: () =>
-                                                                  _select(
-                                                                    bySlot[slot]!,
-                                                                  ),
-                                                            ),
-                                                          ),
+                                                opacity: centerVisibility,
+                                                child: Transform.scale(
+                                                  key: const ValueKey(
+                                                    'yo-active-capsule-scale',
+                                                  ),
+                                                  scaleX: stretch * contract,
+                                                  scaleY: contract,
+                                                  child: SizedBox.square(
+                                                    key: const ValueKey(
+                                                      'yo-active-capsule-position',
                                                     ),
-                                                ],
-                                              )
-                                            : Row(
-                                                children: [
-                                                  for (
-                                                    var slot = 0;
-                                                    slot < 5;
-                                                    slot++
-                                                  )
-                                                    Expanded(
-                                                      child: slot == 2
-                                                          ? const SizedBox.expand()
-                                                          : _tourDestinationAnchor(
-                                                              slot,
-                                                              _YoDockDestination(
-                                                                config:
-                                                                    bySlot[slot]!,
-                                                                reduceMotion:
-                                                                    reduceMotion,
-                                                                onPressed: () =>
-                                                                    _select(
-                                                                      bySlot[slot]!,
-                                                                    ),
-                                                              ),
-                                                            ),
-                                                    ),
-                                                ],
+                                                    dimension: _capsuleSize,
+                                                    child: child,
+                                                  ),
+                                                ),
                                               ),
+                                            ),
+                                          ],
+                                        );
+                                      },
+                                      child: _ActiveCapsule(
+                                        tokens: tokens,
+                                        reduceMotion: reduceMotion,
                                       ),
-                                    ],
+                                    ),
                                   ),
                                 ),
-                              ),
-                            ),
-                            Positioned(
-                              left:
-                                  centerLeft -
-                                  YoFloatingNavigationDock.notchGap,
-                              top:
-                                  centerTop - YoFloatingNavigationDock.notchGap,
-                              width:
-                                  centerDiameter +
-                                  YoFloatingNavigationDock.notchGap * 2,
-                              height:
-                                  centerDiameter +
-                                  YoFloatingNavigationDock.notchGap * 2,
-                              child: IgnorePointer(
-                                key: const ValueKey('yo-center-cradle'),
-                                child: ExcludeSemantics(
-                                  child: DecoratedBox(
-                                    decoration: BoxDecoration(
-                                      shape: BoxShape.circle,
-                                      gradient: RadialGradient(
-                                        center: const Alignment(-.28, -.34),
-                                        radius: .92,
-                                        colors: [
-                                          palette.surfaceRaised,
-                                          palette.surfaceSunken,
-                                        ],
+                              for (final slot in [0, 1, 3, 4])
+                                Positioned(
+                                  key: ValueKey(
+                                    'yo-destination-position-$slot',
+                                  ),
+                                  left:
+                                      slotWidth * (slot + .5) -
+                                      destinationWidth / 2,
+                                  top: destinationTop,
+                                  width: destinationWidth,
+                                  height: destinationHeight,
+                                  child: _tourDestinationAnchor(
+                                    slot,
+                                    _YoDockDestination(
+                                      key: ValueKey(
+                                        'yo-destination-widget-$slot',
                                       ),
-                                      border: Border.all(
-                                        color: palette.borderStrong,
-                                      ),
-                                      boxShadow: [
-                                        BoxShadow(
-                                          color: palette.shadow.withValues(
-                                            alpha: .26,
-                                          ),
-                                          blurRadius: 12,
-                                          offset: const Offset(0, 5),
-                                        ),
-                                      ],
+                                      geometryKey:
+                                          _destinationGeometryKeys[slot]!,
+                                      config: bySlot[slot]!,
+                                      expandedLabel: expandedLabels,
+                                      reduceMotion: reduceMotion,
+                                      onPressed: () => _select(bySlot[slot]!),
+                                    ),
+                                  ),
+                                ),
+                              Positioned(
+                                left: centerHitLeft,
+                                top: 0,
+                                width: centerHitWidth,
+                                height: centerHitHeight,
+                                child: FocusTraversalOrder(
+                                  order: const NumericFocusOrder(2),
+                                  child: _tourVoiceAnchor(
+                                    _YoCenterActionButton(
+                                      diameter: centerDiameter,
+                                      logoAssetSize: centerLogoAssetSize,
+                                      logoOpticalOffset:
+                                          centerLogoOpticalOffset,
+                                      onPressed: widget.onVoicePressed,
+                                      reduceMotion: reduceMotion,
                                     ),
                                   ),
                                 ),
                               ),
-                            ),
-                            Positioned(
-                              left: centerLeft,
-                              top: centerTop,
-                              width: centerDiameter,
-                              height: centerDiameter,
-                              child: FocusTraversalOrder(
-                                order: const NumericFocusOrder(2),
-                                child: _tourVoiceAnchor(
-                                  _YoCenterActionButton(
-                                    diameter: centerDiameter,
-                                    onPressed: widget.onVoicePressed,
-                                    reduceMotion: reduceMotion,
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ],
-                        );
-                      },
+                            ],
+                          );
+                        },
+                      ),
                     ),
                   ),
                 ),
@@ -522,117 +704,167 @@ class _YoFloatingNavigationDockState extends State<YoFloatingNavigationDock> {
   }
 }
 
-/// A rounded dock outline with a real, tangent circular cradle for the YO
-/// action. The notch is part of the surface geometry (rather than a circle
-/// painted over a rectangular bar), so its rim, shadows and clipping all agree.
-class _YoDockNotchedShape extends ShapeBorder {
-  const _YoDockNotchedShape({
+@immutable
+class _DockMaterialTokens {
+  const _DockMaterialTokens({
+    required this.shellGradient,
+    required this.rimColors,
+    required this.shellShadows,
+    required this.innerHighlight,
+    required this.lowerShade,
+    required this.selectionGradient,
+    required this.selectionBorder,
+    required this.selectionGlow,
+  });
+
+  factory _DockMaterialTokens.of(BuildContext context) {
+    final palette = context.appPalette;
+    final scheme = Theme.of(context).colorScheme;
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    return _DockMaterialTokens(
+      shellGradient: LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: dark
+            ? [
+                Color.lerp(
+                  palette.navigationSurface,
+                  palette.surfaceRaised,
+                  .12,
+                )!.withValues(alpha: .98),
+                palette.navigationSurface.withValues(alpha: .98),
+                palette.surfaceSunken.withValues(alpha: .99),
+              ]
+            : [
+                palette.surfaceRaised.withValues(alpha: .98),
+                palette.navigationSurface.withValues(alpha: .97),
+                palette.surfaceMuted.withValues(alpha: .91),
+              ],
+      ),
+      rimColors: [
+        palette.textPrimary.withValues(alpha: dark ? .48 : .42),
+        palette.navigationOutline.withValues(alpha: .92),
+        AppColors.secondary.withValues(alpha: dark ? .88 : .72),
+        AppColors.navigationPrimary.withValues(alpha: dark ? .82 : .68),
+      ],
+      shellShadows: [
+        BoxShadow(
+          color: palette.shadow.withValues(alpha: dark ? .42 : .12),
+          blurRadius: dark ? 25 : 18,
+          offset: Offset(0, dark ? 11 : 8),
+        ),
+        BoxShadow(
+          color: AppColors.navigationPrimary.withValues(
+            alpha: dark ? .10 : .08,
+          ),
+          blurRadius: dark ? 30 : 24,
+          spreadRadius: dark ? 1 : 0,
+        ),
+      ],
+      innerHighlight: palette.textPrimary.withValues(alpha: dark ? .13 : .42),
+      lowerShade: palette.shadow.withValues(alpha: dark ? .18 : .08),
+      selectionGradient: LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: dark
+            ? [
+                Color.lerp(
+                  palette.surfaceRaised,
+                  scheme.primaryContainer,
+                  .28,
+                )!,
+                palette.surfaceMuted,
+              ]
+            : [
+                palette.surfaceRaised,
+                Color.lerp(palette.surfaceMuted, scheme.primaryContainer, .34)!,
+              ],
+      ),
+      selectionBorder: Color.lerp(
+        palette.navigationOutline,
+        scheme.primary,
+        dark ? .54 : .42,
+      )!,
+      selectionGlow: scheme.primary.withValues(alpha: dark ? .17 : .14),
+    );
+  }
+
+  final LinearGradient shellGradient;
+  final List<Color> rimColors;
+  final List<BoxShadow> shellShadows;
+  final Color innerHighlight;
+  final Color lowerShade;
+  final LinearGradient selectionGradient;
+  final Color selectionBorder;
+  final Color selectionGlow;
+}
+
+/// One continuous vector outline: the central rise and the pill body share the
+/// same path, border and shadow. There is deliberately no FAB notch or cutout.
+class _YoSculptedDockShape extends ShapeBorder {
+  const _YoSculptedDockShape({
     required this.cornerRadius,
-    required this.notchCenterX,
-    required this.notchCenterY,
-    required this.notchRadius,
+    required this.riseHeight,
     required this.side,
+    required this.rimColors,
   });
 
   final double cornerRadius;
-  final double notchCenterX;
-  final double notchCenterY;
-  final double notchRadius;
+  final double riseHeight;
   final BorderSide side;
+  final List<Color> rimColors;
 
   @override
   EdgeInsetsGeometry get dimensions => EdgeInsets.all(side.width);
 
   @override
-  ShapeBorder scale(double t) => _YoDockNotchedShape(
+  ShapeBorder scale(double t) => _YoSculptedDockShape(
     cornerRadius: cornerRadius * t,
-    notchCenterX: notchCenterX * t,
-    notchCenterY: notchCenterY * t,
-    notchRadius: notchRadius * t,
+    riseHeight: riseHeight * t,
     side: side.scale(t),
+    rimColors: rimColors,
   );
 
   @override
   Path getOuterPath(Rect rect, {TextDirection? textDirection}) =>
-      _notchedRoundedRectPath(rect);
+      _pathFor(rect);
 
   @override
-  Path getInnerPath(Rect rect, {TextDirection? textDirection}) {
-    final inset = side.width;
-    if (inset == 0) return getOuterPath(rect);
-    return _notchedRoundedRectPath(rect.deflate(inset));
-  }
+  Path getInnerPath(Rect rect, {TextDirection? textDirection}) =>
+      _pathFor(rect.deflate(side.width));
 
-  Path _notchedRoundedRectPath(Rect rect) {
-    final radius = cornerRadius.clamp(
-      0.0,
-      math.min(rect.width, rect.height) / 2,
+  Path _pathFor(Rect rect) {
+    final radius = math.min(
+      cornerRadius,
+      math.min(rect.width / 2, (rect.height - riseHeight) / 2),
     );
-    final guestCenter = Offset(
-      rect.left + notchCenterX,
-      rect.top + notchCenterY,
-    );
-    final guestRadius = notchRadius;
-
-    // This is the same tangent construction used by Material's circular FAB
-    // notch, continued into YO's rounded floating-dock outline.
-    const shoulder = 15.0;
-    const edgeGap = 1.0;
-    final a = -guestRadius - edgeGap;
-    final b = rect.top - guestCenter.dy;
-    final denominator = a * a + b * b;
-    final discriminant = math.max(
-      0.0,
-      b *
-          b *
-          guestRadius *
-          guestRadius *
-          (denominator - guestRadius * guestRadius),
-    );
-    final root = math.sqrt(discriminant);
-    final p2xA = (a * b * b - root) / denominator;
-    final p2xB = (a * b * b + root) / denominator;
-    final p2yA = math.sqrt(
-      math.max(0, guestRadius * guestRadius - p2xA * p2xA),
-    );
-    final p2yB = math.sqrt(
-      math.max(0, guestRadius * guestRadius - p2xB * p2xB),
-    );
-    final comparison = b < 0 ? -1.0 : 1.0;
-    final tangent = comparison * p2yA > comparison * p2yB
-        ? Offset(p2xA, p2yA)
-        : Offset(p2xB, p2yB);
-    final points = <Offset>[
-      Offset(a - shoulder, b),
-      Offset(a, b),
-      tangent,
-      Offset(-tangent.dx, tangent.dy),
-      Offset(-a, b),
-      Offset(-a + shoulder, b),
-    ].map((point) => point + guestCenter).toList(growable: false);
+    final center = rect.center.dx;
+    final shoulder = math.min(64.0, rect.width * .18);
+    final innerControl = math.min(39.0, shoulder * .62);
+    final outerControl = math.min(47.0, shoulder * .75);
+    final bodyTop = rect.top + riseHeight;
 
     return Path()
-      ..moveTo(rect.left + radius, rect.top)
-      ..lineTo(points[0].dx, points[0].dy)
-      ..quadraticBezierTo(
-        points[1].dx,
-        points[1].dy,
-        points[2].dx,
-        points[2].dy,
+      ..moveTo(rect.left + radius, bodyTop)
+      ..lineTo(center - shoulder, bodyTop)
+      ..cubicTo(
+        center - outerControl,
+        bodyTop,
+        center - innerControl,
+        rect.top,
+        center,
+        rect.top,
       )
-      ..arcToPoint(
-        points[3],
-        radius: Radius.circular(guestRadius),
-        clockwise: false,
+      ..cubicTo(
+        center + innerControl,
+        rect.top,
+        center + outerControl,
+        bodyTop,
+        center + shoulder,
+        bodyTop,
       )
-      ..quadraticBezierTo(
-        points[4].dx,
-        points[4].dy,
-        points[5].dx,
-        points[5].dy,
-      )
-      ..lineTo(rect.right - radius, rect.top)
-      ..quadraticBezierTo(rect.right, rect.top, rect.right, rect.top + radius)
+      ..lineTo(rect.right - radius, bodyTop)
+      ..quadraticBezierTo(rect.right, bodyTop, rect.right, bodyTop + radius)
       ..lineTo(rect.right, rect.bottom - radius)
       ..quadraticBezierTo(
         rect.right,
@@ -647,64 +879,89 @@ class _YoDockNotchedShape extends ShapeBorder {
         rect.left,
         rect.bottom - radius,
       )
-      ..lineTo(rect.left, rect.top + radius)
-      ..quadraticBezierTo(rect.left, rect.top, rect.left + radius, rect.top)
+      ..lineTo(rect.left, bodyTop + radius)
+      ..quadraticBezierTo(rect.left, bodyTop, rect.left + radius, bodyTop)
       ..close();
   }
 
   @override
   void paint(Canvas canvas, Rect rect, {TextDirection? textDirection}) {
     if (side.style == BorderStyle.none || side.width == 0) return;
-    canvas.drawPath(
-      getOuterPath(rect, textDirection: textDirection),
-      side.toPaint()..style = PaintingStyle.stroke,
-    );
+    final paint = side.toPaint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = side.width
+      ..shader = LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: rimColors,
+      ).createShader(rect);
+    canvas.drawPath(getOuterPath(rect), paint);
   }
 }
 
-class _ActiveCapsule extends StatelessWidget {
-  const _ActiveCapsule({
-    required this.breathingHigh,
-    required this.reduceMotion,
+class _DockSurfaceFinishPainter extends CustomPainter {
+  const _DockSurfaceFinishPainter({
+    required this.shape,
+    required this.highlight,
+    required this.lowerShade,
   });
 
-  final bool breathingHigh;
+  final ShapeBorder shape;
+  final Color highlight;
+  final Color lowerShade;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final rect = Offset.zero & size;
+    final path = shape.getOuterPath(rect);
+    canvas.save();
+    canvas.clipPath(path);
+    canvas.drawPath(
+      shape.getOuterPath(rect.deflate(1.25)),
+      Paint()
+        ..color = highlight
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = .8,
+    );
+    canvas.drawLine(
+      Offset(34, size.height - 1.5),
+      Offset(size.width - 34, size.height - 1.5),
+      Paint()
+        ..color = lowerShade
+        ..strokeWidth = 2,
+    );
+    canvas.restore();
+  }
+
+  @override
+  bool shouldRepaint(_DockSurfaceFinishPainter oldDelegate) =>
+      oldDelegate.highlight != highlight ||
+      oldDelegate.lowerShade != lowerShade ||
+      oldDelegate.shape != shape;
+}
+
+class _ActiveCapsule extends StatelessWidget {
+  const _ActiveCapsule({required this.tokens, required this.reduceMotion});
+
+  final _DockMaterialTokens tokens;
   final bool reduceMotion;
 
   @override
   Widget build(BuildContext context) {
-    final palette = context.appPalette;
-    final colors = Theme.of(context).colorScheme;
-    return AnimatedContainer(
+    return DecoratedBox(
       key: ValueKey(
         reduceMotion
             ? 'yo-active-capsule-reduced-motion'
-            : 'yo-active-breathing-animation',
+            : 'yo-active-capsule-static',
       ),
-      duration: reduceMotion
-          ? Duration.zero
-          : _YoFloatingNavigationDockState._breathingTravel,
-      curve: Curves.easeInOut,
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(22),
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [colors.primaryContainer, palette.surfaceRaised],
-        ),
-        border: Border.all(color: colors.primary.withValues(alpha: .42)),
+        borderRadius: BorderRadius.circular(18),
+        gradient: tokens.selectionGradient,
+        border: Border.all(color: tokens.selectionBorder),
         boxShadow: [
           BoxShadow(
-            color: AppColors.navigationPrimary.withValues(alpha: .12),
-            blurRadius: 12,
-            spreadRadius: 1,
-          ),
-          BoxShadow(
-            color: AppColors.secondary.withValues(
-              alpha: reduceMotion || !breathingHigh ? .10 : .16,
-            ),
-            blurRadius: 20,
-            spreadRadius: 1,
+            color: tokens.selectionGlow.withValues(alpha: .68),
+            blurRadius: 11,
           ),
         ],
       ),
@@ -714,12 +971,17 @@ class _ActiveCapsule extends StatelessWidget {
 
 class _YoDockDestination extends StatefulWidget {
   const _YoDockDestination({
+    required this.geometryKey,
     required this.config,
+    required this.expandedLabel,
     required this.reduceMotion,
     required this.onPressed,
+    super.key,
   });
 
+  final GlobalKey geometryKey;
   final YoNavigationDestinationConfig config;
+  final bool expandedLabel;
   final bool reduceMotion;
   final VoidCallback onPressed;
 
@@ -733,12 +995,26 @@ class _YoDockDestinationState extends State<_YoDockDestination> {
     debugLabel: 'YO dock ${widget.config.visualSlot}',
   );
   bool _pressed = false;
+  bool _focused = false;
 
   Duration get _duration =>
-      widget.reduceMotion ? Duration.zero : const Duration(milliseconds: 240);
+      widget.reduceMotion ? Duration.zero : const Duration(milliseconds: 310);
+
+  @override
+  void initState() {
+    super.initState();
+    _focusNode.addListener(_handleFocusChange);
+  }
+
+  void _handleFocusChange() {
+    if (mounted && _focused != _focusNode.hasFocus) {
+      setState(() => _focused = _focusNode.hasFocus);
+    }
+  }
 
   @override
   void dispose() {
+    _focusNode.removeListener(_handleFocusChange);
     _focusNode.dispose();
     super.dispose();
   }
@@ -749,160 +1025,151 @@ class _YoDockDestinationState extends State<_YoDockDestination> {
     final selected = config.isSelected;
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
-    final expandedLabels =
-        MediaQuery.textScalerOf(context).scale(1) >=
-        YoFloatingNavigationDock.expandedLabelScaleThreshold;
     final iconColor = selected
         ? colors.onPrimaryContainer
         : palette.navigationInactive;
     final semanticsLabel = config.badgeCount > 0
-        ? '${config.semanticLabel}, ${config.badgeCount} unread conversations'
+        ? AppLocalizations.of(
+            context,
+          ).navigationUnreadLabel(config.semanticLabel, config.badgeCount)
         : config.semanticLabel;
+    final selectedSlide = switch (config.visualSlot) {
+      0 => const Offset(0, -.06),
+      1 => const Offset(.025, -.035),
+      3 => const Offset(0, -.045),
+      4 => const Offset(0, -.02),
+      _ => Offset.zero,
+    };
 
-    return FocusTraversalOrder(
-      order: NumericFocusOrder(config.visualSlot.toDouble()),
-      child: Semantics(
-        button: true,
-        selected: selected,
-        label: semanticsLabel,
-        onTap: widget.onPressed,
-        excludeSemantics: true,
-        child: AnimatedScale(
-          duration: widget.reduceMotion
-              ? Duration.zero
-              : Duration(milliseconds: _pressed ? 90 : 180),
-          curve: _premiumCurve,
-          scale: _pressed ? .96 : 1,
-          child: Material(
-            color: Colors.transparent,
-            child: InkWell(
-              key: ValueKey('yo-destination-${config.visualSlot}'),
-              focusNode: _focusNode,
-              onTap: widget.onPressed,
-              onHighlightChanged: (pressed) {
-                if (_pressed == pressed) return;
-                setState(() => _pressed = pressed);
-              },
-              borderRadius: BorderRadius.circular(22),
-              overlayColor: WidgetStateProperty.resolveWith((states) {
-                if (states.contains(WidgetState.focused)) {
-                  return palette.focus.withValues(alpha: .20);
-                }
-                if (states.contains(WidgetState.pressed) ||
-                    states.contains(WidgetState.hovered)) {
-                  return AppColors.secondary.withValues(alpha: .10);
-                }
-                return null;
-              }),
-              child: SizedBox.expand(
-                child: Padding(
-                  padding: EdgeInsets.symmetric(
-                    horizontal: 1,
-                    vertical: expandedLabels ? 0 : 3,
-                  ),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Stack(
-                        clipBehavior: Clip.none,
-                        alignment: Alignment.center,
-                        children: [
-                          AnimatedContainer(
-                            duration: _duration,
-                            curve: _premiumCurve,
-                            width: expandedLabels ? 34 : 40,
-                            height: expandedLabels ? 24 : 29,
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              color: selected
-                                  ? AppColors.secondary.withValues(alpha: .10)
-                                  : Colors.transparent,
-                              boxShadow: selected
-                                  ? [
-                                      BoxShadow(
-                                        color: AppColors.secondary.withValues(
-                                          alpha: .16,
-                                        ),
-                                        blurRadius: 10,
-                                      ),
-                                    ]
-                                  : const [],
-                            ),
+    return SizedBox.expand(
+      key: widget.geometryKey,
+      child: FocusTraversalOrder(
+        order: NumericFocusOrder(config.visualSlot.toDouble()),
+        child: Semantics(
+          button: true,
+          selected: selected,
+          label: semanticsLabel,
+          onTap: widget.onPressed,
+          excludeSemantics: true,
+          child: AnimatedScale(
+            duration: widget.reduceMotion
+                ? Duration.zero
+                : Duration(milliseconds: _pressed ? 90 : 190),
+            curve: _premiumCurve,
+            scale: _pressed ? .96 : 1,
+            child: Material(
+              key: ValueKey('yo-destination-focus-${config.visualSlot}'),
+              type: MaterialType.transparency,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(18),
+                side: BorderSide(
+                  color: _focused ? palette.focus : Colors.transparent,
+                  width: 2,
+                ),
+              ),
+              child: InkWell(
+                key: ValueKey('yo-destination-${config.visualSlot}'),
+                focusNode: _focusNode,
+                onTap: widget.onPressed,
+                onHighlightChanged: (pressed) {
+                  if (_pressed == pressed) return;
+                  setState(() => _pressed = pressed);
+                },
+                borderRadius: BorderRadius.circular(18),
+                overlayColor: WidgetStateProperty.resolveWith((states) {
+                  if (states.contains(WidgetState.focused)) {
+                    return palette.focus.withValues(alpha: .10);
+                  }
+                  if (states.contains(WidgetState.pressed) ||
+                      states.contains(WidgetState.hovered)) {
+                    return AppColors.secondary.withValues(alpha: .08);
+                  }
+                  return null;
+                }),
+                child: Stack(
+                  clipBehavior: Clip.none,
+                  alignment: Alignment.center,
+                  children: [
+                    Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        AnimatedSlide(
+                          key: ValueKey(
+                            'yo-destination-icon-slide-${config.visualSlot}',
                           ),
-                          AnimatedSwitcher(
-                            duration: _duration,
-                            reverseDuration: _duration,
-                            switchInCurve: _premiumCurve,
-                            switchOutCurve: Curves.easeOut,
-                            transitionBuilder: (child, animation) {
-                              final scale = TweenSequence<double>([
-                                TweenSequenceItem(
-                                  tween: Tween(begin: .92, end: 1.08),
-                                  weight: 62,
-                                ),
-                                TweenSequenceItem(
-                                  tween: Tween(begin: 1.08, end: 1),
-                                  weight: 38,
-                                ),
-                              ]).animate(animation);
-                              return FadeTransition(
-                                opacity: animation,
-                                child: ScaleTransition(
-                                  scale: scale,
-                                  child: child,
-                                ),
-                              );
-                            },
-                            child: Icon(
-                              selected ? config.selectedIcon : config.icon,
-                              key: ValueKey(selected),
-                              color: iconColor,
-                              size: expandedLabels
-                                  ? (selected ? 22 : 20)
-                                  : (selected ? 26 : 24),
-                            ),
-                          ),
-                          if (config.badgeCount > 0)
-                            Positioned(
-                              top: -7,
-                              right: -13,
-                              child: _UnreadBadge(count: config.badgeCount),
-                            ),
-                        ],
-                      ),
-                      SizedBox(height: expandedLabels ? 0 : 3),
-                      AnimatedSlide(
-                        duration: _duration,
-                        curve: _premiumCurve,
-                        offset: selected ? const Offset(0, -.09) : Offset.zero,
-                        child: AnimatedDefaultTextStyle(
                           duration: _duration,
                           curve: _premiumCurve,
-                          style: TextStyle(
-                            color: selected
-                                ? colors.onPrimaryContainer
-                                : palette.navigationInactive,
-                            fontFamily: Theme.of(
-                              context,
-                            ).textTheme.labelMedium?.fontFamily,
-                            fontSize: selected ? 11.8 : 11.3,
-                            fontWeight: selected
-                                ? FontWeight.w700
-                                : FontWeight.w500,
-                            height: expandedLabels ? .90 : 1.05,
-                          ),
-                          child: Text(
-                            config.label,
-                            textAlign: TextAlign.center,
-                            maxLines: 1,
-                            overflow: expandedLabels
-                                ? TextOverflow.visible
-                                : TextOverflow.ellipsis,
+                          offset: selected ? selectedSlide : Offset.zero,
+                          child: AnimatedScale(
+                            key: ValueKey(
+                              'yo-destination-icon-scale-${config.visualSlot}',
+                            ),
+                            duration: _duration,
+                            curve: _premiumCurve,
+                            scale: selected ? 1 : .95,
+                            child: AnimatedSwitcher(
+                              duration: _duration,
+                              reverseDuration: _duration,
+                              switchInCurve: _premiumCurve,
+                              switchOutCurve: Curves.easeOut,
+                              transitionBuilder: (child, animation) {
+                                final scale = TweenSequence<double>([
+                                  TweenSequenceItem(
+                                    tween: Tween(begin: .92, end: 1.04),
+                                    weight: 68,
+                                  ),
+                                  TweenSequenceItem(
+                                    tween: Tween(begin: 1.04, end: 1),
+                                    weight: 32,
+                                  ),
+                                ]).animate(animation);
+                                return FadeTransition(
+                                  opacity: animation,
+                                  child: ScaleTransition(
+                                    scale: scale,
+                                    child: child,
+                                  ),
+                                );
+                              },
+                              child: Icon(
+                                selected ? config.selectedIcon : config.icon,
+                                key: ValueKey('${config.visualSlot}-$selected'),
+                                color: iconColor,
+                                size: selected ? 26 : 25,
+                              ),
+                            ),
                           ),
                         ),
-                      ),
-                      SizedBox(height: expandedLabels ? 0 : 3),
-                      AnimatedOpacity(
+                        if (widget.expandedLabel) ...[
+                          const SizedBox(height: 3),
+                          SizedBox(
+                            width: 52,
+                            height: 18,
+                            child: FittedBox(
+                              fit: BoxFit.scaleDown,
+                              child: Text(
+                                config.label,
+                                maxLines: 1,
+                                overflow: TextOverflow.visible,
+                                style: TextStyle(
+                                  color: selected
+                                      ? colors.onPrimaryContainer
+                                      : palette.navigationInactive,
+                                  fontSize: 11,
+                                  fontWeight: selected
+                                      ? FontWeight.w700
+                                      : FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                    Positioned(
+                      bottom: widget.expandedLabel ? 1 : 5,
+                      child: AnimatedOpacity(
                         key: ValueKey('yo-active-line-${config.visualSlot}'),
                         duration: _duration,
                         opacity: selected ? 1 : 0,
@@ -915,16 +1182,22 @@ class _YoDockDestinationState extends State<_YoDockDestination> {
                             boxShadow: [
                               BoxShadow(
                                 color: AppColors.secondary.withValues(
-                                  alpha: .75,
+                                  alpha: .62,
                                 ),
-                                blurRadius: 7,
+                                blurRadius: 6,
                               ),
                             ],
                           ),
                         ),
                       ),
-                    ],
-                  ),
+                    ),
+                    if (config.badgeCount > 0)
+                      Positioned(
+                        top: -6,
+                        right: 2,
+                        child: _UnreadBadge(count: config.badgeCount),
+                      ),
+                  ],
                 ),
               ),
             ),
@@ -943,27 +1216,36 @@ class _UnreadBadge extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
-    return Container(
-      constraints: const BoxConstraints(minWidth: 19, minHeight: 19),
-      alignment: Alignment.center,
-      padding: const EdgeInsets.symmetric(horizontal: 4),
-      decoration: BoxDecoration(
-        color: AppColors.live,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: palette.navigationSurface, width: 2),
-        boxShadow: [
-          BoxShadow(
-            color: AppColors.live.withValues(alpha: .38),
-            blurRadius: 8,
+    return UnconstrainedBox(
+      child: Container(
+        key: const ValueKey('yo-chats-unread-badge'),
+        width: count > 99 ? 31 : 19,
+        height: 19,
+        alignment: Alignment.center,
+        padding: EdgeInsets.symmetric(horizontal: count > 99 ? 3 : 0),
+        decoration: BoxDecoration(
+          color: AppColors.live,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: palette.navigationSurface, width: 2),
+          boxShadow: [
+            BoxShadow(
+              color: AppColors.live.withValues(alpha: .34),
+              blurRadius: 8,
+            ),
+          ],
+        ),
+        child: FittedBox(
+          fit: BoxFit.scaleDown,
+          child: Text(
+            count > 99 ? '99+' : '$count',
+            maxLines: 1,
+            textScaler: TextScaler.noScaling,
+            style: const TextStyle(
+              color: AppColors.onLive,
+              fontSize: 9,
+              fontWeight: FontWeight.w900,
+            ),
           ),
-        ],
-      ),
-      child: Text(
-        count > 99 ? '99+' : '$count',
-        style: const TextStyle(
-          color: AppColors.background,
-          fontSize: 9,
-          fontWeight: FontWeight.w900,
         ),
       ),
     );
@@ -973,11 +1255,15 @@ class _UnreadBadge extends StatelessWidget {
 class _YoCenterActionButton extends StatefulWidget {
   const _YoCenterActionButton({
     required this.diameter,
+    required this.logoAssetSize,
+    required this.logoOpticalOffset,
     required this.onPressed,
     required this.reduceMotion,
   });
 
   final double diameter;
+  final double logoAssetSize;
+  final double logoOpticalOffset;
   final VoidCallback onPressed;
   final bool reduceMotion;
 
@@ -992,9 +1278,42 @@ class _YoCenterActionButtonState extends State<_YoCenterActionButton>
   AnimationController? _ripple;
   bool _pressed = false;
   bool _focused = false;
+  late ({bool live, bool direct}) _voiceState;
+
+  ({bool live, bool direct}) _readVoiceState() {
+    final voice = VoiceCallService.instance;
+    final live =
+        voice.roomId != null &&
+        voice.status != VoiceCallStatus.disconnected &&
+        voice.status != VoiceCallStatus.failed;
+    return (live: live, direct: live && voice.isDirectCall);
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _voiceState = _readVoiceState();
+    VoiceCallService.instance.addListener(_handleVoiceStateChange);
+  }
+
+  void _handleVoiceStateChange() {
+    final next = _readVoiceState();
+    if (!mounted || next == _voiceState) return;
+    setState(() => _voiceState = next);
+  }
+
+  @override
+  void didUpdateWidget(_YoCenterActionButton oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!oldWidget.reduceMotion && widget.reduceMotion) {
+      _ripple?.stop();
+      _ripple?.value = 0;
+    }
+  }
 
   @override
   void dispose() {
+    VoiceCallService.instance.removeListener(_handleVoiceStateChange);
     _ripple?.dispose();
     _focusNode.dispose();
     super.dispose();
@@ -1006,7 +1325,7 @@ class _YoCenterActionButtonState extends State<_YoCenterActionButton>
         vsync: this,
         duration: const Duration(milliseconds: 380),
       );
-      setState(() {});
+      if (mounted) setState(() {});
       ripple.forward(from: 0);
     }
     widget.onPressed();
@@ -1015,195 +1334,159 @@ class _YoCenterActionButtonState extends State<_YoCenterActionButton>
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
-    return ListenableBuilder(
-      listenable: VoiceCallService.instance,
-      builder: (context, _) {
-        final voice = VoiceCallService.instance;
-        final live =
-            voice.roomId != null &&
-            voice.status != VoiceCallStatus.disconnected &&
-            voice.status != VoiceCallStatus.failed;
-        final glow = live ? AppColors.live : AppColors.secondary;
-        final semanticLabel = live
-            ? voice.isDirectCall
-                  ? 'Voice actions — private call active'
-                  : 'Voice actions — live in a room'
-            : 'Open voice actions';
-        // The source asset's alpha bounds occupy about 81–84% of its box.
-        // These boxes produce a real visible mark of roughly 48–51 px while
-        // retaining at least 7 px to the circular edge.
-        final logoSize = widget.diameter < 66 ? 59.0 : 60.0;
-        final ripple = _ripple;
+    final copy = AppLocalizations.of(context);
+    final semanticLabel = _voiceState.live
+        ? _voiceState.direct
+              ? copy.voiceActionsPrivateCallActive
+              : copy.voiceActionsRoomActive
+        : copy.openVoiceActions;
+    final ripple = _ripple;
 
-        return RepaintBoundary(
-          key: const ValueKey('yo-center-action-boundary'),
-          child: Semantics(
-            button: true,
-            label: semanticLabel,
-            onTap: _activate,
-            excludeSemantics: true,
-            child: Stack(
-              alignment: Alignment.center,
-              clipBehavior: Clip.none,
-              children: [
-                if (!widget.reduceMotion)
-                  IgnorePointer(
-                    child: AnimatedBuilder(
-                      key: const ValueKey('yo-center-ripple'),
-                      animation: ripple ?? kAlwaysDismissedAnimation,
-                      builder: (context, child) {
-                        final t = Curves.easeOutCubic.transform(
-                          ripple?.value ?? 0,
-                        );
-                        return Opacity(
-                          opacity: ripple == null ? 0 : (1 - t) * .34,
-                          child: Transform.scale(
-                            scale: 1 + .55 * t,
-                            child: child,
-                          ),
-                        );
-                      },
-                      child: SizedBox.square(
-                        dimension: widget.diameter,
-                        child: DecoratedBox(
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            border: Border.all(
-                              color: AppColors.secondary,
-                              width: 1.2,
+    return RepaintBoundary(
+      child: Semantics(
+        key: const ValueKey('yo-center-action-hit-target'),
+        button: true,
+        label: semanticLabel,
+        onTap: _activate,
+        excludeSemantics: true,
+        child: Stack(
+          alignment: Alignment.topCenter,
+          clipBehavior: Clip.none,
+          children: [
+            if (!widget.reduceMotion)
+              IgnorePointer(
+                child: AnimatedBuilder(
+                  key: const ValueKey('yo-center-ripple'),
+                  animation: ripple ?? kAlwaysDismissedAnimation,
+                  builder: (context, child) {
+                    final t = Curves.easeOutCubic.transform(ripple?.value ?? 0);
+                    return Opacity(
+                      opacity: ripple == null ? 0 : (1 - t) * .46,
+                      child: Transform.scale(scale: 1 + .48 * t, child: child),
+                    );
+                  },
+                  child: SizedBox.square(
+                    dimension: widget.diameter,
+                    child: CustomPaint(
+                      painter: _OutlineRipplePainter(
+                        color: AppColors.secondary,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            AnimatedScale(
+              key: const ValueKey('yo-center-press-scale'),
+              duration: widget.reduceMotion
+                  ? Duration.zero
+                  : Duration(milliseconds: _pressed ? 90 : 230),
+              curve: _premiumCurve,
+              scale: _pressed ? .95 : 1,
+              child: SizedBox.square(
+                key: const ValueKey('yo-center-action-boundary'),
+                dimension: widget.diameter,
+                child: Material(
+                  type: MaterialType.transparency,
+                  child: Center(
+                    child: Transform.translate(
+                      offset: Offset(0, widget.logoOpticalOffset),
+                      child: OverflowBox(
+                        minWidth: widget.logoAssetSize,
+                        maxWidth: widget.logoAssetSize,
+                        minHeight: widget.logoAssetSize,
+                        maxHeight: widget.logoAssetSize,
+                        child: SizedBox.square(
+                          dimension: widget.logoAssetSize,
+                          child: Image.asset(
+                            'assets/images/yo-voice-favicon-512.png',
+                            key: const ValueKey('dock-logo'),
+                            fit: BoxFit.contain,
+                            filterQuality: FilterQuality.high,
+                            errorBuilder: (_, __, ___) => Icon(
+                              Icons.graphic_eq_rounded,
+                              color: palette.textPrimary,
+                              size: 34,
                             ),
                           ),
                         ),
                       ),
                     ),
                   ),
-                AnimatedScale(
-                  duration: widget.reduceMotion
-                      ? Duration.zero
-                      : Duration(milliseconds: _pressed ? 90 : 260),
-                  curve: _premiumCurve,
-                  scale: _pressed ? .94 : 1,
-                  child: SizedBox.square(
-                    dimension: widget.diameter,
-                    child: Stack(
-                      fit: StackFit.expand,
-                      children: [
-                        IgnorePointer(
-                          child: DecoratedBox(
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              gradient: const LinearGradient(
-                                begin: Alignment.topLeft,
-                                end: Alignment.bottomRight,
-                                colors: [
-                                  AppColors.secondary,
-                                  AppColors.navigationPrimary,
-                                ],
-                              ),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: glow.withValues(
-                                    alpha: _pressed ? .18 : (live ? .38 : .28),
-                                  ),
-                                  blurRadius: _pressed ? 14 : 22,
-                                  spreadRadius: 2,
-                                ),
-                                BoxShadow(
-                                  color: palette.shadow.withValues(alpha: .38),
-                                  blurRadius: 14,
-                                  offset: const Offset(0, 7),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                        Material(
-                          color: Colors.transparent,
-                          shape: const CircleBorder(),
-                          clipBehavior: Clip.antiAlias,
-                          child: InkWell(
-                            focusNode: _focusNode,
-                            onTap: _activate,
-                            onFocusChange: (focused) {
-                              if (_focused == focused) return;
-                              setState(() => _focused = focused);
-                            },
-                            onHighlightChanged: (pressed) {
-                              if (_pressed == pressed) return;
-                              setState(() => _pressed = pressed);
-                            },
-                            customBorder: const CircleBorder(),
-                            splashFactory: NoSplash.splashFactory,
-                            focusColor: AppColors.secondary.withValues(
-                              alpha: .20,
-                            ),
-                            highlightColor: AppColors.secondary.withValues(
-                              alpha: .10,
-                            ),
-                            child: Padding(
-                              padding: const EdgeInsets.all(2),
-                              child: DecoratedBox(
-                                decoration: BoxDecoration(
-                                  color: palette.navigationSurface,
-                                  shape: BoxShape.circle,
-                                ),
-                                child: Center(
-                                  child: SizedBox.square(
-                                    dimension: logoSize,
-                                    child: Image.asset(
-                                      'assets/images/logo.png',
-                                      key: const ValueKey('dock-logo'),
-                                      fit: BoxFit.contain,
-                                      filterQuality: FilterQuality.high,
-                                      errorBuilder: (_, __, ___) => Icon(
-                                        Icons.graphic_eq_rounded,
-                                        color: palette.textPrimary,
-                                        size: 34,
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                        IgnorePointer(
-                          child: AnimatedContainer(
-                            key: const ValueKey('yo-center-focus-outline'),
-                            duration: widget.reduceMotion
-                                ? Duration.zero
-                                : const Duration(milliseconds: 160),
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              border: Border.all(
-                                color: _focused
-                                    ? palette.focus
-                                    : Colors.transparent,
-                                width: 2,
-                              ),
-                              boxShadow: _focused
-                                  ? [
-                                      BoxShadow(
-                                        color: palette.focus.withValues(
-                                          alpha: .28,
-                                        ),
-                                        blurRadius: 10,
-                                        spreadRadius: 1,
-                                      ),
-                                    ]
-                                  : const [],
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
                 ),
-              ],
+              ),
             ),
-          ),
-        );
-      },
+            IgnorePointer(
+              child: AnimatedContainer(
+                key: const ValueKey('yo-center-focus-outline'),
+                duration: widget.reduceMotion
+                    ? Duration.zero
+                    : const Duration(milliseconds: 160),
+                width: widget.diameter,
+                height: widget.diameter,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: _focused ? palette.focus : Colors.transparent,
+                    width: 2,
+                  ),
+                  boxShadow: _focused
+                      ? [
+                          BoxShadow(
+                            color: palette.focus.withValues(alpha: .24),
+                            blurRadius: 9,
+                            spreadRadius: 1,
+                          ),
+                        ]
+                      : const [],
+                ),
+              ),
+            ),
+            Positioned.fill(
+              child: Material(
+                type: MaterialType.transparency,
+                child: InkWell(
+                  focusNode: _focusNode,
+                  onTap: _activate,
+                  onFocusChange: (focused) {
+                    if (_focused == focused) return;
+                    setState(() => _focused = focused);
+                  },
+                  onHighlightChanged: (pressed) {
+                    if (_pressed == pressed) return;
+                    setState(() => _pressed = pressed);
+                  },
+                  splashFactory: NoSplash.splashFactory,
+                  overlayColor: const WidgetStatePropertyAll(
+                    Colors.transparent,
+                  ),
+                  child: const ColoredBox(color: Colors.transparent),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
+}
+
+class _OutlineRipplePainter extends CustomPainter {
+  const _OutlineRipplePainter({required this.color});
+
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    canvas.drawOval(
+      Offset.zero & size,
+      Paint()
+        ..color = color
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.2,
+    );
+  }
+
+  @override
+  bool shouldRepaint(_OutlineRipplePainter oldDelegate) =>
+      oldDelegate.color != color;
 }

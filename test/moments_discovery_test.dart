@@ -821,9 +821,14 @@ void main() {
       await tester.pumpWidget(dockHost(selectedIndex: 0));
       await tester.pumpAndSettle();
 
-      // Four labelled destinations plus the unlabelled voice action.
+      // Compact dock labels stay available to assistive technologies even
+      // though the visual treatment is intentionally icon-only.
       for (final label in ['Home', 'Chats', 'Moments', 'More']) {
-        expect(find.text(label), findsOneWidget, reason: '$label missing');
+        expect(
+          find.bySemanticsLabel(label),
+          findsOneWidget,
+          reason: '$label semantics missing',
+        );
       }
       expect(
         find.text('Friends'),
@@ -869,7 +874,7 @@ void main() {
         dockHost(selectedIndex: 0, onSelect: (index) => selected = index),
       );
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Moments'));
+      await tester.tap(find.bySemanticsLabel('Moments'));
       await tester.pumpAndSettle();
 
       expect(selected, momentsSlot);

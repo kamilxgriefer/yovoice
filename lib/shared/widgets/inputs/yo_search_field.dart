@@ -33,6 +33,7 @@ class YoSearchField extends StatelessWidget {
       prefixIcon: const Icon(Icons.search_rounded),
       suffixIcon: controller != null && controller!.text.isNotEmpty
           ? IconButton(
+              tooltip: 'Clear search',
               onPressed: () {
                 controller!.clear();
                 onChanged?.call('');

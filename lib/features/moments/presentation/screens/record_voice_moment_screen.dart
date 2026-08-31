@@ -10,6 +10,7 @@ import 'package:record/record.dart' show Amplitude;
 
 import 'package:yovoice/core/helpers/error_messages.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/core/theme/app_immersive_colors.dart';
 import 'package:yovoice/features/moments/data/models/moment_availability.dart';
 import 'package:yovoice/features/moments/data/services/moment_service.dart';
 import 'package:yovoice/features/moments/data/services/recorded_audio.dart';
@@ -72,17 +73,17 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
   // its own purple (0xFF9D20FF), visibly different from the AppColors
   // purple used by moments_screen.dart directly beside it. Local names are
   // kept for readability; none of them is a raw hex value.
-  static const Color _background = AppColors.background;
-  static const Color _surface = AppColors.surface;
-  static const Color _inset = AppColors.background;
-  static const Color _border = AppColors.border;
+  static const Color _background = AppImmersiveColors.background;
+  static const Color _surface = AppImmersiveColors.surface;
+  static const Color _inset = AppImmersiveColors.background;
+  static const Color _border = AppImmersiveColors.border;
   // Interactive control outlines need >=3:1 against the fixed dark inset,
   // even when the ambient app theme is light.
-  static const Color _controlBorder = AppColors.textHint;
-  static const Color _muted = AppColors.textSecondary;
+  static const Color _controlBorder = AppImmersiveColors.textTertiary;
+  static const Color _muted = AppImmersiveColors.textSecondary;
   static const Color _primary = AppColors.primary;
 
-  /// The cosmic backdrop's top stop, shared with [AppGradients.background].
+  /// The immersive recorder's cosmic backdrop top stop.
   static const Color _skyTop = Color(0xFF130A22);
 
   /// Recording is a live state, not an error state.
@@ -1001,7 +1002,7 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
             gradient: RadialGradient(
               center: Alignment(0, -0.8),
               radius: 1.1,
-              colors: [_skyTop, AppColors.surface, _background],
+              colors: [_skyTop, AppImmersiveColors.surface, _background],
             ),
           ),
           child: SafeArea(
@@ -1456,7 +1457,7 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
                 support!.action!,
                 textAlign: TextAlign.center,
                 style: const TextStyle(
-                  color: AppColors.textPrimary,
+                  color: AppImmersiveColors.textPrimary,
                   fontSize: 13.5,
                   height: 1.5,
                   fontWeight: FontWeight.w700,
@@ -1805,7 +1806,7 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
             child: Text(
               'No sound detected — check your microphone.',
               style: const TextStyle(
-                color: AppColors.textPrimary,
+                color: AppImmersiveColors.textPrimary,
                 fontSize: 12.5,
                 fontWeight: FontWeight.w600,
               ),
@@ -1921,7 +1922,9 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
         // and the field becomes anonymous.
         labelText: 'Caption',
         labelStyle: const TextStyle(color: _muted),
-        floatingLabelStyle: const TextStyle(color: AppColors.textPrimary),
+        floatingLabelStyle: const TextStyle(
+          color: AppImmersiveColors.textPrimary,
+        ),
         hintText: 'Add a caption…',
         hintStyle: const TextStyle(color: _muted),
         counterStyle: const TextStyle(color: _muted),
@@ -2039,7 +2042,7 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
                     labelText: 'Duration',
                     labelStyle: const TextStyle(color: _muted),
                     floatingLabelStyle: const TextStyle(
-                      color: AppColors.textPrimary,
+                      color: AppImmersiveColors.textPrimary,
                     ),
                     errorText: _availabilityError,
                     filled: true,
@@ -2060,7 +2063,7 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
                   labelText: 'Unit',
                   labelStyle: const TextStyle(color: _muted),
                   floatingLabelStyle: const TextStyle(
-                    color: AppColors.textPrimary,
+                    color: AppImmersiveColors.textPrimary,
                   ),
                   filled: true,
                   fillColor: _inset,
@@ -2074,7 +2077,7 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
                 dropdownColor: _surface,
                 style: const TextStyle(color: Colors.white),
                 iconEnabledColor: _muted,
-                iconDisabledColor: AppColors.textHint,
+                iconDisabledColor: AppImmersiveColors.textTertiary,
                 items: const [
                   DropdownMenuItem(
                     value: _AvailabilityUnit.hours,
@@ -2249,7 +2252,7 @@ class _AvailabilityModeButton extends StatelessWidget {
       child: Material(
         color: selected
             ? AppColors.primary
-            : AppColors.background.withValues(alpha: .55),
+            : AppImmersiveColors.background.withValues(alpha: .55),
         borderRadius: BorderRadius.circular(999),
         child: InkWell(
           onTap: enabled ? onTap : null,
@@ -2262,7 +2265,9 @@ class _AvailabilityModeButton extends StatelessWidget {
               border: Border.all(
                 color: selected
                     ? AppColors.primary
-                    : AppColors.textHint.withValues(alpha: enabled ? 1 : .5),
+                    : AppImmersiveColors.textTertiary.withValues(
+                        alpha: enabled ? 1 : .5,
+                      ),
               ),
             ),
             child: Row(
@@ -2272,8 +2277,8 @@ class _AvailabilityModeButton extends StatelessWidget {
                   icon,
                   size: 15,
                   color: selected
-                      ? AppColors.textPrimary
-                      : AppColors.textSecondary,
+                      ? AppImmersiveColors.textPrimary
+                      : AppImmersiveColors.textSecondary,
                 ),
                 const SizedBox(width: 6),
                 Expanded(
@@ -2283,10 +2288,10 @@ class _AvailabilityModeButton extends StatelessWidget {
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
                       color: selected
-                          ? AppColors.textPrimary
+                          ? AppImmersiveColors.textPrimary
                           : (enabled
-                                ? AppColors.textSecondary
-                                : AppColors.textHint),
+                                ? AppImmersiveColors.textSecondary
+                                : AppImmersiveColors.textTertiary),
                       fontSize: 12.5,
                       fontWeight: FontWeight.w700,
                     ),

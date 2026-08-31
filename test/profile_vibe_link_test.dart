@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_theme.dart';
 import 'package:yovoice/features/profile/presentation/widgets/profile_vibe_headline.dart';
 import 'package:yovoice/features/profile/presentation/widgets/profile_vibe_link.dart';
@@ -149,7 +150,7 @@ void main() {
       );
       expect(
         (focusedSurface.shape! as RoundedRectangleBorder).side,
-        const BorderSide(color: Color(0xFFD986FF), width: 2),
+        BorderSide(color: AppPalette.dark.focus, width: 2),
       );
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);
       await tester.pump();
@@ -244,6 +245,49 @@ void main() {
       );
     });
 
+    testWidgets('Dark and Pearl use semantic Vibe accents and link surfaces', (
+      tester,
+    ) async {
+      for (final (theme, palette) in [
+        (AppTheme.darkTheme, AppPalette.dark),
+        (AppTheme.lightTheme, AppPalette.light),
+      ]) {
+        await _pumpVibe(
+          tester,
+          vibe: 'Now playing https://open.spotify.com/track/123',
+          theme: theme,
+        );
+
+        final accentIcon = tester.widget<Icon>(
+          find.byKey(const ValueKey('profile-vibe-accent-icon')),
+        );
+        final label = tester.widget<Text>(
+          find.byKey(const ValueKey('profile-vibe-label')),
+        );
+        final linkSurface = tester.widget<Material>(
+          find.byKey(
+            const ValueKey(
+              'profile-vibe-link-surface-https://open.spotify.com/track/123',
+            ),
+          ),
+        );
+
+        expect(accentIcon.color, palette.interactiveForeground);
+        expect(label.style!.color, palette.interactiveForeground);
+        expect(
+          linkSurface.color,
+          theme.brightness == Brightness.dark
+              ? palette.surfaceSunken
+              : palette.surfaceRaised,
+        );
+        expect(
+          _contrastRatio(palette.textPrimary, linkSurface.color!),
+          greaterThanOrEqualTo(4.5),
+        );
+        expect(tester.takeException(), isNull);
+      }
+    });
+
     testWidgets('pending launch can outlive the widget safely', (tester) async {
       final pending = Completer<bool>();
       await _pumpVibe(
@@ -299,6 +343,7 @@ Future<void> _pumpVibe(
   ProfileVibeLinkLauncher? launcher,
   double width = 390,
   double textScale = 1,
+  ThemeData? theme,
 }) async {
   tester.view.physicalSize = Size(width, 760);
   tester.view.devicePixelRatio = 1;
@@ -306,21 +351,23 @@ Future<void> _pumpVibe(
 
   await tester.pumpWidget(
     MaterialApp(
-      theme: AppTheme.darkTheme,
+      theme: theme ?? AppTheme.darkTheme,
       builder: (context, child) => MediaQuery(
         data: MediaQuery.of(
           context,
         ).copyWith(textScaler: TextScaler.linear(textScale)),
         child: child!,
       ),
-      home: Scaffold(
-        backgroundColor: const Color(0xFF09050F),
-        body: SingleChildScrollView(
-          padding: const EdgeInsets.all(18),
-          child: ProfileVibeHeadline(vibe: vibe, launcher: launcher),
+      home: Builder(
+        builder: (context) => Scaffold(
+          backgroundColor: context.appPalette.background,
+          body: SingleChildScrollView(
+            padding: const EdgeInsets.all(18),
+            child: ProfileVibeHeadline(vibe: vibe, launcher: launcher),
+          ),
         ),
       ),
     ),
   );
-  await tester.pump();
+  await tester.pumpAndSettle();
 }

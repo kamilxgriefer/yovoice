@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:firebase_auth/firebase_auth.dart';
 
+import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/helpers/error_messages.dart';
@@ -238,11 +239,18 @@ class _MainShellState extends State<MainShell>
   int _previousSelectedIndex = 0;
   int _tabDirection = 1;
   int _unreadConversationCount = 0;
+  final ValueNotifier<int> _unreadConversationCountListenable =
+      ValueNotifier<int>(0);
   bool _hasInitialConversationSnapshot = false;
   bool _isMoreMenuActive = false;
+  int _hostedDestinationDepth = 0;
+
+  bool get _hostedDestinationActive => _hostedDestinationDepth > 0;
 
   /// Desktop sidebar badge only — the same routed count the bell shows.
   int _unreadNotificationCount = 0;
+  final ValueNotifier<int> _unreadNotificationCountListenable =
+      ValueNotifier<int>(0);
   StreamSubscription<int>? _notificationCountSubscription;
 
   SubscriptionEntitlements _entitlements = SubscriptionEntitlements.free;
@@ -451,6 +459,14 @@ class _MainShellState extends State<MainShell>
 
   String get _currentUserId => FirebaseAuth.instance.currentUser?.uid ?? '';
 
+  /// A hosted destination finishes its reverse transition asynchronously.
+  /// Do not let a callback captured by the previous authenticated shell
+  /// present private UI after logout or a principal switch has replaced the
+  /// Navigator stack.
+  bool _hostNavigationEpochIsCurrent() {
+    return mounted && _currentUserId == _onboardingUserId;
+  }
+
   @override
   void initState() {
     super.initState();
@@ -484,7 +500,10 @@ class _MainShellState extends State<MainShell>
         .watchUnreadCount()
         .listen(
           (count) {
-            if (mounted) setState(() => _unreadNotificationCount = count);
+            if (mounted && count != _unreadNotificationCount) {
+              setState(() => _unreadNotificationCount = count);
+              _unreadNotificationCountListenable.value = count;
+            }
           },
           onError: (_) {
             // A badge is not worth surfacing an error for.
@@ -692,6 +711,8 @@ class _MainShellState extends State<MainShell>
     _conversationSubscription?.cancel();
     _notificationCountSubscription?.cancel();
     _entitlementSubscription?.cancel();
+    _unreadConversationCountListenable.dispose();
+    _unreadNotificationCountListenable.dispose();
     _verificationCheckTimer?.cancel();
     _removeMessageOverlay();
     super.dispose();
@@ -741,6 +762,7 @@ class _MainShellState extends State<MainShell>
       setState(() {
         _unreadConversationCount = newUnreadConversationCount;
       });
+      _unreadConversationCountListenable.value = newUnreadConversationCount;
     }
 
     if (_hasInitialConversationSnapshot &&
@@ -855,6 +877,7 @@ class _MainShellState extends State<MainShell>
   }
 
   Future<void> _openVoiceAction() async {
+    final palette = context.appPalette;
     await showModalBottomSheet<void>(
       context: context,
       useSafeArea: true,
@@ -865,7 +888,7 @@ class _MainShellState extends State<MainShell>
         context,
         maxWidth: 560,
       ),
-      barrierColor: Colors.black.withValues(alpha: 0.7),
+      barrierColor: palette.scrim.withValues(alpha: 0.7),
       builder: (sheetContext) {
         return const _VoiceActionSheet();
       },
@@ -935,7 +958,7 @@ class _MainShellState extends State<MainShell>
       return;
     }
 
-    await _openMoreDestination(destination, openedFromMore: true);
+    await _openMoreDestination(destination);
   }
 
   // Pushes the destination's own screen directly -- every destination
@@ -944,10 +967,7 @@ class _MainShellState extends State<MainShell>
   // another Scaffold+AppBar here used to double up chrome on every single
   // "More" destination: two stacked titles at best (Settings), a second
   // full Material AppBar at worst (Awards) -- see ADR-019.
-  Future<void> _openMoreDestination(
-    MoreDestination destination, {
-    bool openedFromMore = false,
-  }) async {
+  Future<void> _openMoreDestination(MoreDestination destination) async {
     final premiumFeature = premiumFeatureForMoreDestination(destination);
     if (premiumFeature != null &&
         !await PremiumGates.ensureFeatureAccess(
@@ -988,10 +1008,15 @@ class _MainShellState extends State<MainShell>
     route = MaterialPageRoute<void>(
       builder: (_) => MoreDestinationHost(
         body: screen,
-        selectedIndex: _selectedIndex,
-        moreSelected: openedFromMore,
+        selectedIndex: _mobileIndex,
+        // The More capsule belongs to the real sheet/popover only. Once a
+        // destination is pushed, the panel has closed and the underlying
+        // accepted destination remains the navigation truth.
+        moreSelected: false,
         unreadConversationCount: _unreadConversationCount,
+        unreadConversationCountListenable: _unreadConversationCountListenable,
         unreadNotificationCount: _unreadNotificationCount,
+        unreadNotificationCountListenable: _unreadNotificationCountListenable,
         activeDesktopItem: _desktopItemFor(destination),
         onDestinationSelected: _onDestinationSelected,
         onVoicePressed: _openVoiceAction,
@@ -1001,9 +1026,29 @@ class _MainShellState extends State<MainShell>
         onCreateMoment: _openCreateMoment,
         onOpenProfile: () => unawaited(_openProfile()),
         onOpenProfileSettings: () => unawaited(_openProfileSettings()),
+        canForwardNavigation: _hostNavigationEpochIsCurrent,
       ),
     );
-    await Navigator.of(context).push<void>(route);
+    await _pushHostedDestination(route);
+  }
+
+  /// A hosted destination paints its own copy of the persistent chrome.
+  /// Suspend the covered shell copy until the pushed route has finished its
+  /// reverse transition, so only one room listener and one chat subscription
+  /// exist at a time.
+  Future<void> _pushHostedDestination(MaterialPageRoute<void> route) async {
+    if (!mounted) return;
+    setState(() => _hostedDestinationDepth++);
+    try {
+      await Navigator.of(context).push<void>(route);
+      await route.completed;
+    } finally {
+      if (mounted) {
+        setState(() {
+          if (_hostedDestinationDepth > 0) _hostedDestinationDepth--;
+        });
+      }
+    }
   }
 
   /// Which rail item should read as active while a pushed destination is
@@ -1138,26 +1183,27 @@ class _MainShellState extends State<MainShell>
   /// screen draws its own Back control, which pops this route straight
   /// back to wherever it was opened from.
   Future<void> _openMomentDetail(VoiceMoment moment) async {
-    await Navigator.of(context).push<void>(
-      MaterialPageRoute<void>(
-        builder: (_) => MoreDestinationHost(
-          body: MomentDetailScreen(moment: moment),
-          selectedIndex: _momentsSlot,
-          unreadConversationCount: _unreadConversationCount,
-          unreadNotificationCount: _unreadNotificationCount,
-          activeDesktopItem: DesktopNavItem.moments,
-          onDestinationSelected: _onDestinationSelected,
-          onVoicePressed: _openVoiceAction,
-          onMorePressed: _openMoreMenu,
-          onDesktopNavSelected: (item) =>
-              unawaited(_onDesktopNavSelected(item)),
-          onCreateRoom: () => unawaited(_openCreateRoom()),
-          onCreateMoment: _openCreateMoment,
-          onOpenProfile: () => unawaited(_openProfile()),
-          onOpenProfileSettings: () => unawaited(_openProfileSettings()),
-        ),
+    final route = MaterialPageRoute<void>(
+      builder: (_) => MoreDestinationHost(
+        body: MomentDetailScreen(moment: moment),
+        selectedIndex: _momentsSlot,
+        unreadConversationCount: _unreadConversationCount,
+        unreadConversationCountListenable: _unreadConversationCountListenable,
+        unreadNotificationCount: _unreadNotificationCount,
+        unreadNotificationCountListenable: _unreadNotificationCountListenable,
+        activeDesktopItem: DesktopNavItem.moments,
+        onDestinationSelected: _onDestinationSelected,
+        onVoicePressed: _openVoiceAction,
+        onMorePressed: _openMoreMenu,
+        onDesktopNavSelected: (item) => unawaited(_onDesktopNavSelected(item)),
+        onCreateRoom: () => unawaited(_openCreateRoom()),
+        onCreateMoment: _openCreateMoment,
+        onOpenProfile: () => unawaited(_openProfile()),
+        onOpenProfileSettings: () => unawaited(_openProfileSettings()),
+        canForwardNavigation: _hostNavigationEpochIsCurrent,
       ),
     );
+    await _pushHostedDestination(route);
   }
 
   Widget _tabContent({
@@ -1306,7 +1352,8 @@ class _MainShellState extends State<MainShell>
                   ),
                   // The dock now belongs to the content column, so appearing
                   // or expanding it cannot change the rail's height.
-                  const SafeArea(top: false, child: RoomMiniBar()),
+                  if (!_hostedDestinationActive)
+                    const SafeArea(top: false, child: RoomMiniBar()),
                 ],
               ),
             ),
@@ -1333,9 +1380,9 @@ class _MainShellState extends State<MainShell>
       bottomNavigationBar: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // Live-room mini player: renders nothing unless a room
-          // connection is active, so it can sit here unconditionally.
-          const RoomMiniBar(),
+          // A hosted destination owns the visible persistent chrome while
+          // this covered shell is suspended, preserving one room listener.
+          if (!_hostedDestinationActive) const RoomMiniBar(),
           YoFloatingNavigationDock(
             tourDestinationKeys: {
               1: _onboardingAnchors[GuidedOnboardingTarget.chats]!,
@@ -1458,19 +1505,23 @@ class MoreDestinationHost extends StatefulWidget {
     required this.onVoicePressed,
     required this.onMorePressed,
     this.moreSelected = false,
+    this.unreadConversationCountListenable,
     this.unreadNotificationCount = 0,
+    this.unreadNotificationCountListenable,
     this.activeDesktopItem,
     this.onDesktopNavSelected,
     this.onCreateRoom,
     this.onCreateMoment,
     this.onOpenProfile,
     this.onOpenProfileSettings,
+    this.canForwardNavigation,
     super.key,
   });
 
   final Widget body;
   final int selectedIndex;
   final int unreadConversationCount;
+  final ValueListenable<int>? unreadConversationCountListenable;
   final ValueChanged<int> onDestinationSelected;
   final VoidCallback onVoicePressed;
   final VoidCallback onMorePressed;
@@ -1480,12 +1531,14 @@ class MoreDestinationHost extends StatefulWidget {
   // destination renders INSIDE the persistent desktop shell — the mobile
   // dock/HUD never appears at desktop widths.
   final int unreadNotificationCount;
+  final ValueListenable<int>? unreadNotificationCountListenable;
   final DesktopNavItem? activeDesktopItem;
   final ValueChanged<DesktopNavItem>? onDesktopNavSelected;
   final VoidCallback? onCreateRoom;
   final VoidCallback? onCreateMoment;
   final VoidCallback? onOpenProfile;
   final VoidCallback? onOpenProfileSettings;
+  final bool Function()? canForwardNavigation;
 
   @override
   State<MoreDestinationHost> createState() => _MoreDestinationHostState();
@@ -1502,25 +1555,52 @@ class _MoreDestinationHostState extends State<MoreDestinationHost> {
     if (_navigationCommitted) return;
     _navigationCommitted = true;
 
+    void forwardIfCurrent() {
+      if (widget.canForwardNavigation?.call() ?? true) action();
+    }
+
     final navigator = Navigator.of(context);
     if (!navigator.canPop()) {
       // MoreDestinationHost is normally pushed above MainShell, but keeping
       // its public/test harness contract safe at a root route costs nothing:
       // there is no transition to wait for in that shape.
-      action();
+      forwardIfCurrent();
       return;
     }
     final route = ModalRoute.of(context);
     navigator.pop();
     if (route == null) {
-      action();
+      forwardIfCurrent();
       return;
     }
-    unawaited(route.completed.then<void>((_) => action()));
+    unawaited(route.completed.then<void>((_) => forwardIfCurrent()));
   }
 
   @override
   Widget build(BuildContext context) {
+    final liveCounts = Listenable.merge(<Listenable>[
+      ?widget.unreadConversationCountListenable,
+      ?widget.unreadNotificationCountListenable,
+    ]);
+    return ListenableBuilder(
+      listenable: liveCounts,
+      builder: (context, _) => _buildHost(
+        context,
+        unreadConversationCount:
+            widget.unreadConversationCountListenable?.value ??
+            widget.unreadConversationCount,
+        unreadNotificationCount:
+            widget.unreadNotificationCountListenable?.value ??
+            widget.unreadNotificationCount,
+      ),
+    );
+  }
+
+  Widget _buildHost(
+    BuildContext context, {
+    required int unreadConversationCount,
+    required int unreadNotificationCount,
+  }) {
     final viewport = MediaQuery.sizeOf(context);
     final isDesktop = MainShell.usesDesktopLayout(viewport);
 
@@ -1532,8 +1612,8 @@ class _MoreDestinationHostState extends State<MoreDestinationHost> {
           children: [
             DesktopSidebar(
               active: widget.activeDesktopItem,
-              unreadConversationCount: widget.unreadConversationCount,
-              unreadNotificationCount: widget.unreadNotificationCount,
+              unreadConversationCount: unreadConversationCount,
+              unreadNotificationCount: unreadNotificationCount,
               onSelect: (item) =>
                   _popThen(() => widget.onDesktopNavSelected!(item)),
               onCreateRoom: () => _popThen(widget.onCreateRoom ?? () {}),
@@ -1572,7 +1652,7 @@ class _MoreDestinationHostState extends State<MoreDestinationHost> {
           YoFloatingNavigationDock(
             selectedTabIndex: widget.selectedIndex,
             momentsTabIndex: _MainShellState._momentsSlot,
-            unreadConversationCount: widget.unreadConversationCount,
+            unreadConversationCount: unreadConversationCount,
             onDestinationSelected: (index) =>
                 _popThen(() => widget.onDestinationSelected(index)),
             onVoicePressed: () => _popThen(widget.onVoicePressed),
@@ -1593,10 +1673,8 @@ class _VerificationBanner extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final accent = isDark ? const Color(0xFFFFC94D) : const Color(0xFF8C5A00);
     return Material(
-      color: isDark ? const Color(0xFF2E2410) : const Color(0xFFFFF4D8),
+      color: palette.warningSurface,
       child: InkWell(
         onTap: onTap,
         child: SafeArea(
@@ -1605,7 +1683,11 @@ class _VerificationBanner extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
             child: Row(
               children: [
-                Icon(Icons.mark_email_unread_outlined, color: accent, size: 18),
+                Icon(
+                  Icons.mark_email_unread_outlined,
+                  color: palette.warningForeground,
+                  size: 18,
+                ),
                 const SizedBox(width: 10),
                 Expanded(
                   child: Text(
@@ -1620,13 +1702,17 @@ class _VerificationBanner extends StatelessWidget {
                 Text(
                   'Verify now',
                   style: TextStyle(
-                    color: accent,
+                    color: palette.warningForeground,
                     fontSize: 13,
                     fontWeight: FontWeight.w800,
                   ),
                 ),
                 const SizedBox(width: 4),
-                Icon(Icons.chevron_right_rounded, color: accent, size: 18),
+                Icon(
+                  Icons.chevron_right_rounded,
+                  color: palette.warningForeground,
+                  size: 18,
+                ),
               ],
             ),
           ),
@@ -1653,15 +1739,18 @@ class _IncomingMessageBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     final hasPhoto = photoUrl.trim().isNotEmpty;
     final initial = senderName.trim().isEmpty
         ? '?'
         : senderName.trim()[0].toUpperCase();
 
     return Material(
-      color: const Color(0xFF181120),
+      key: const ValueKey('incoming-message-banner'),
+      color: palette.surfaceRaised,
       elevation: 18,
-      shadowColor: Colors.black54,
+      shadowColor: palette.shadow.withValues(alpha: .42),
       borderRadius: BorderRadius.circular(20),
       child: InkWell(
         onTap: onTap,
@@ -1670,11 +1759,14 @@ class _IncomingMessageBanner extends StatelessWidget {
           padding: const EdgeInsets.fromLTRB(12, 11, 8, 11),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: const Color(0xFF513065)),
-            gradient: const LinearGradient(
+            border: Border.all(color: palette.borderStrong),
+            gradient: LinearGradient(
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
-              colors: [Color(0xFF251432), Color(0xFF17101F)],
+              colors: [
+                Color.lerp(palette.surfaceRaised, colors.primary, .055)!,
+                palette.surface,
+              ],
             ),
           ),
           child: Row(
@@ -1684,14 +1776,14 @@ class _IncomingMessageBanner extends StatelessWidget {
                 children: [
                   CircleAvatar(
                     radius: 23,
-                    backgroundColor: const Color(0xFF7526B4),
+                    backgroundColor: colors.primary,
                     backgroundImage: hasPhoto ? NetworkImage(photoUrl) : null,
                     child: hasPhoto
                         ? null
                         : Text(
                             initial,
-                            style: const TextStyle(
-                              color: Colors.white,
+                            style: TextStyle(
+                              color: colors.onPrimary,
                               fontWeight: FontWeight.w900,
                             ),
                           ),
@@ -1703,16 +1795,16 @@ class _IncomingMessageBanner extends StatelessWidget {
                       width: 16,
                       height: 16,
                       decoration: BoxDecoration(
-                        color: const Color(0xFF9D20FF),
+                        color: colors.primary,
                         shape: BoxShape.circle,
                         border: Border.all(
-                          color: const Color(0xFF181120),
+                          color: palette.surfaceRaised,
                           width: 2,
                         ),
                       ),
-                      child: const Icon(
+                      child: Icon(
                         Icons.chat_bubble_rounded,
-                        color: Colors.white,
+                        color: colors.onPrimary,
                         size: 9,
                       ),
                     ),
@@ -1731,17 +1823,17 @@ class _IncomingMessageBanner extends StatelessWidget {
                             senderName,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: Colors.white,
+                            style: TextStyle(
+                              color: palette.textPrimary,
                               fontSize: 14,
                               fontWeight: FontWeight.w900,
                             ),
                           ),
                         ),
-                        const Text(
+                        Text(
                           'now',
                           style: TextStyle(
-                            color: Color(0xFF9D95AD),
+                            color: palette.textTertiary,
                             fontSize: 10,
                           ),
                         ),
@@ -1752,8 +1844,8 @@ class _IncomingMessageBanner extends StatelessWidget {
                       preview,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: Color(0xFFC8C0D0),
+                      style: TextStyle(
+                        color: palette.textSecondary,
                         fontSize: 12,
                       ),
                     ),
@@ -1763,9 +1855,9 @@ class _IncomingMessageBanner extends StatelessWidget {
               IconButton(
                 onPressed: onClose,
                 visualDensity: VisualDensity.compact,
-                icon: const Icon(
+                icon: Icon(
                   Icons.close_rounded,
-                  color: Color(0xFF9D95AD),
+                  color: palette.textTertiary,
                   size: 19,
                 ),
               ),
@@ -1814,35 +1906,37 @@ class _VoiceActionSheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return Container(
+      key: const ValueKey('voice-action-sheet'),
       padding: const EdgeInsets.fromLTRB(20, 12, 20, 28),
-      decoration: const BoxDecoration(
-        color: Color(0xFF151020),
-        borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
-        border: Border(top: BorderSide(color: Color(0xFF3A284A))),
+      decoration: BoxDecoration(
+        color: palette.surfaceRaised,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(30)),
+        border: Border(top: BorderSide(color: palette.border)),
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const YoModalSheetChrome(
+          YoModalSheetChrome(
             sheetLabel: 'voice actions',
-            surfaceColor: Color(0xFF151020),
+            surfaceColor: palette.surfaceRaised,
           ),
           const SizedBox(height: 4),
-          const Text(
+          Text(
             'Use your voice',
             style: TextStyle(
-              color: Colors.white,
+              color: palette.textPrimary,
               fontSize: 23,
               fontWeight: FontWeight.w800,
               letterSpacing: -0.5,
             ),
           ),
           const SizedBox(height: 7),
-          const Text(
+          Text(
             'Choose what you want to create.',
             textAlign: TextAlign.center,
-            style: TextStyle(color: Color(0xFF9D95AD), fontSize: 14),
+            style: TextStyle(color: palette.textSecondary, fontSize: 14),
           ),
           const SizedBox(height: 24),
           _VoiceOption(
@@ -1887,8 +1981,11 @@ class _VoiceOption extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final scheme = Theme.of(context).colorScheme;
     return Material(
-      color: const Color(0xFF1C1627),
+      key: ValueKey('voice-option-$title'),
+      color: palette.surface,
       borderRadius: BorderRadius.circular(20),
       child: InkWell(
         onTap: onPressed,
@@ -1897,7 +1994,7 @@ class _VoiceOption extends StatelessWidget {
           padding: const EdgeInsets.all(15),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: const Color(0xFF382A47)),
+            border: Border.all(color: palette.border),
           ),
           child: Row(
             children: [
@@ -1912,7 +2009,7 @@ class _VoiceOption extends StatelessWidget {
                   ),
                   borderRadius: BorderRadius.circular(17),
                 ),
-                child: Icon(icon, color: Colors.white, size: 27),
+                child: Icon(icon, color: scheme.onPrimary, size: 27),
               ),
               const SizedBox(width: 14),
               Expanded(
@@ -1921,8 +2018,8 @@ class _VoiceOption extends StatelessWidget {
                   children: [
                     Text(
                       title,
-                      style: const TextStyle(
-                        color: Colors.white,
+                      style: TextStyle(
+                        color: palette.textPrimary,
                         fontSize: 15,
                         fontWeight: FontWeight.w800,
                       ),
@@ -1930,8 +2027,8 @@ class _VoiceOption extends StatelessWidget {
                     const SizedBox(height: 5),
                     Text(
                       subtitle,
-                      style: const TextStyle(
-                        color: Color(0xFF9D95AD),
+                      style: TextStyle(
+                        color: palette.textSecondary,
                         fontSize: 12,
                         height: 1.35,
                       ),
@@ -1939,7 +2036,7 @@ class _VoiceOption extends StatelessWidget {
                   ],
                 ),
               ),
-              const Icon(Icons.chevron_right_rounded, color: Color(0xFF81768E)),
+              Icon(Icons.chevron_right_rounded, color: palette.textTertiary),
             ],
           ),
         ),

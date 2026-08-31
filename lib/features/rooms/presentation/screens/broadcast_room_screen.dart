@@ -38,6 +38,7 @@ class BroadcastRoomScreen extends StatefulWidget {
     this.roomService,
     this.voiceService,
     this.entryCoordinator,
+    this.muteCoordinator,
     this.playInitialJoinSound = true,
     super.key,
   });
@@ -48,10 +49,11 @@ class BroadcastRoomScreen extends StatefulWidget {
   /// Null means nothing was resolved, which is treated as "no authority".
   final RoomVoiceEntry? voiceEntry;
 
-  /// Test seams. All three default to the production wiring.
+  /// Test seams. All four default to the production wiring.
   final RoomService? roomService;
   final VoiceCallService? voiceService;
   final RoomVoiceEntryCoordinator? entryCoordinator;
+  final RoomMuteCoordinator? muteCoordinator;
 
   /// Room creation already has its own confirmation; all other entry points
   /// keep the normal connected cue.
@@ -74,7 +76,8 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
       widget.entryCoordinator ??
       RoomVoiceEntryCoordinator.production(rooms: _rooms);
   final RoomLeaveCoordinator _leaveCoordinator = RoomLeaveCoordinator();
-  final RoomMuteCoordinator _muteCoordinator = RoomMuteCoordinator.production;
+  late final RoomMuteCoordinator _muteCoordinator =
+      widget.muteCoordinator ?? RoomMuteCoordinator.production;
 
   /// The resolved voice state, kept current by the room document stream.
   late RoomVoiceEntry _entry =
@@ -207,6 +210,17 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
   /// This screen may only cut audio it actually owns.
   bool get _ownsAudioSession => _voice.roomId == widget.room.id;
 
+  /// A roster write can finish after the process-wide voice service has moved
+  /// to another room. Fail closed unless this broadcast still owns the exact
+  /// room session that initiated the mute operation.
+  bool _isCurrentMuteOperation(String roomId) =>
+      mounted &&
+      !_ending &&
+      !_roomOver &&
+      _live &&
+      _voice.isRoomSession &&
+      _voice.roomId == roomId;
+
   /// The broadcast's liveness authority, followed live so a host opening the
   /// show reaches everyone already waiting on the stage screen.
   void _handleRoomState(VoiceRoom room) {
@@ -314,9 +328,20 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
   Future<void> _toggleMic() async {
     // `setOwnRoomParticipantMute` is refused on a room that is not live; the
     // affordance already prevents this call, and the guard keeps it true.
-    if (!_live) return;
-    final outcome = await _muteCoordinator.toggle(roomId: widget.room.id);
+    final roomId = widget.room.id;
+    if (!_isCurrentMuteOperation(roomId)) return;
+    final outcome = await _muteCoordinator.toggle(
+      roomId: roomId,
+      isOperationCurrent: () => _isCurrentMuteOperation(roomId),
+    );
     if (!mounted) return;
+    // `sessionEnded` normally clears roomId itself. If another non-null
+    // session has appeared, this stale result must not disconnect or pop it.
+    if (outcome == RoomMuteOutcome.sessionEnded) {
+      if (_voice.roomId != null && !_isCurrentMuteOperation(roomId)) return;
+    } else if (!_isCurrentMuteOperation(roomId)) {
+      return;
+    }
     switch (outcome) {
       case RoomMuteOutcome.applied:
       case RoomMuteOutcome.busy:

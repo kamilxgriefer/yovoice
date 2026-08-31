@@ -19,6 +19,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_theme.dart';
 import 'package:yovoice/features/profile/data/models/user_profile.dart';
 import 'package:yovoice/features/profile/presentation/widgets/profile_header.dart';
@@ -150,25 +151,32 @@ void main() {
     testWidgets('Pearl account and Premium rail labels retain AA contrast', (
       tester,
     ) async {
-      final canvas = AppTheme.lightTheme.scaffoldBackgroundColor;
-      await tester.pumpWidget(
-        host(
-          const AccountTypeBadge(
-            accountType: AccountType.official,
-            compact: true,
-          ),
-          theme: AppTheme.lightTheme,
+      for (final (accountType, label, expectedSurface) in [
+        (AccountType.official, 'Official', AppPalette.light.infoSurface),
+        (
+          AccountType.creator,
+          'Creator',
+          AppTheme.lightTheme.colorScheme.primaryContainer,
         ),
-      );
-      final official = tester.widget<Text>(find.text('Official'));
-      final officialSurface = Color.alphaBlend(
-        const Color(0xFF4DA3FF).withValues(alpha: .14),
-        canvas,
-      );
-      expect(
-        _contrast(official.style!.color!, officialSurface),
-        greaterThanOrEqualTo(4.5),
-      );
+        (AccountType.personal, 'Personal', AppPalette.light.surfaceMuted),
+      ]) {
+        await tester.pumpWidget(
+          host(
+            AccountTypeBadge(accountType: accountType, compact: true),
+            theme: AppTheme.lightTheme,
+          ),
+        );
+        final text = tester.widget<Text>(find.text(label));
+        final badge = tester.widget<Container>(
+          find.byKey(ValueKey('profile-account-type-${accountType.name}')),
+        );
+        final surface = (badge.decoration! as BoxDecoration).color!;
+        expect(surface, expectedSurface);
+        expect(
+          _contrast(text.style!.color!, surface),
+          greaterThanOrEqualTo(4.5),
+        );
+      }
 
       await tester.pumpWidget(
         host(

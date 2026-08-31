@@ -3,6 +3,11 @@ const { getAuth } = require("firebase-admin/auth");
 const { FieldPath } = require("firebase-admin/firestore");
 const { logger } = require("firebase-functions/v2");
 
+const {
+  canonicalPair,
+  timestampMillis,
+} = require("../integrity/guards");
+const { canonicalPairKey } = require("../messaging/direct_integrity");
 const { db } = require("../utils/firestore");
 
 const REGION = "europe-west1";
@@ -10,6 +15,46 @@ const REGION = "europe-west1";
 // A transaction may read up to 500 documents. Each discovery page becomes
 // one transaction containing the canonical user plus at most 150 targets.
 const TARGET_PAGE_SIZE = 150;
+
+const CONVERSATION_ROOT_KEYS = Object.freeze([
+  "archivedBy",
+  "createdAt",
+  "lastMessage",
+  "lastMessageId",
+  "lastMessageSenderId",
+  "lastMessageSequence",
+  "lastMessageType",
+  "mutedBy",
+  "pairKey",
+  "participantEmails",
+  "participantIds",
+  "participantNames",
+  "participantPhotoUrls",
+  "readSequences",
+  "schemaVersion",
+  "typing",
+  "unreadCounts",
+  "updatedAt",
+]);
+
+const PAIR_GUARD_KEYS = Object.freeze([
+  "conversationId",
+  "createdAt",
+  "pairKey",
+  "participantIds",
+  "schemaVersion",
+]);
+
+function codeUnitCompare(left, right) {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function hasExactKeys(value, expected) {
+  if (!isPlainObject(value)) return false;
+  const keys = Object.keys(value).sort(codeUnitCompare);
+  return keys.length === expected.length &&
+    keys.every((key, index) => key === expected[index]);
+}
 
 function isRetiredSource(data) {
   return (
@@ -30,18 +75,114 @@ async function fetchAuthUserOrNull(uid) {
   }
 }
 
-function isCanonicalConversationTarget(data, uid) {
+function canonicalConversationBinding(data, uid) {
+  if (!hasExactKeys(data, CONVERSATION_ROOT_KEYS) || data.schemaVersion !== 2) {
+    return null;
+  }
   const participantIds = data.participantIds;
+  if (!Array.isArray(participantIds) || participantIds.length !== 2) return null;
+  let participants;
+  try {
+    participants = canonicalPair(...participantIds);
+  } catch (_) {
+    return null;
+  }
+  if (!participants.includes(uid) ||
+      participantIds.some((participantId, index) =>
+        participantId !== participants[index])) {
+    return null;
+  }
+  const pairKey = canonicalPairKey(...participants);
+  return data.pairKey === pairKey ? { pairKey, participants } : null;
+}
+
+function isCanonicalConversationTarget(data, uid) {
+  return canonicalConversationBinding(data, uid) !== null;
+}
+
+function hasExactPairGuard(snapshot, conversationId, binding) {
+  if (!snapshot?.exists) return false;
+  const guard = snapshot.data() ?? {};
+  return hasExactKeys(guard, PAIR_GUARD_KEYS) &&
+    guard.schemaVersion === 1 &&
+    guard.pairKey === binding.pairKey &&
+    guard.conversationId === conversationId &&
+    Array.isArray(guard.participantIds) &&
+    guard.participantIds.length === binding.participants.length &&
+    guard.participantIds.every((participantId, index) =>
+      participantId === binding.participants[index]) &&
+    timestampMillis(guard.createdAt) !== null;
+}
+
+function isPlainObject(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function hasExactParticipantKeys(value, participants) {
+  if (!isPlainObject(value)) return false;
+  const keys = Object.keys(value).sort(codeUnitCompare);
   return (
-    Array.isArray(participantIds) &&
-    participantIds.length === 2 &&
-    new Set(participantIds).size === 2 &&
-    participantIds.every(
-      (participantId) =>
-        typeof participantId === "string" && participantId.length > 0,
-    ) &&
-    participantIds.includes(uid)
+    keys.length === participants.length &&
+    keys.every((key, index) => key === participants[index])
   );
+}
+
+/**
+ * Rebuilds both denormalized identity maps from the canonical participant
+ * pair. The current user's values come from users/{uid}; the peer's values
+ * must already be valid and are preserved byte-for-byte. Returning null is a
+ * fail-closed response to a malformed peer snapshot: fan-out may repair its
+ * own identity, but it must never invent or erase somebody else's identity.
+ */
+function canonicalConversationIdentityMaps(data, uid, identity, binding) {
+  if (
+    !isPlainObject(data.participantNames) ||
+    !isPlainObject(data.participantPhotoUrls)
+  ) {
+    return null;
+  }
+
+  const nameEntries = [];
+  const photoEntries = [];
+  for (const participantId of binding.participants) {
+    if (participantId === uid) {
+      nameEntries.push([participantId, identity.displayName]);
+      photoEntries.push([participantId, identity.photoUrl ?? ""]);
+      continue;
+    }
+
+    if (!Object.prototype.hasOwnProperty.call(
+      data.participantNames,
+      participantId,
+    ) || !Object.prototype.hasOwnProperty.call(
+      data.participantPhotoUrls,
+      participantId,
+    )) {
+      return null;
+    }
+    const peerName = data.participantNames[participantId];
+    const peerPhotoUrl = data.participantPhotoUrls[participantId];
+    if (
+      typeof peerName !== "string" ||
+      !peerName.trim() ||
+      peerName.length > 80 ||
+      typeof peerPhotoUrl !== "string" ||
+      peerPhotoUrl.length > 2048
+    ) {
+      return null;
+    }
+    nameEntries.push([participantId, peerName]);
+    photoEntries.push([participantId, peerPhotoUrl]);
+  }
+
+  // Object.fromEntries defines opaque uid keys as own data properties. In
+  // particular, "__proto__" and "constructor" cannot mutate or shadow the
+  // builder while the canonical maps are assembled.
+  return {
+    participants: binding.participants,
+    participantNames: Object.fromEntries(nameEntries),
+    participantPhotoUrls: Object.fromEntries(photoEntries),
+  };
 }
 
 function safePhotoUrl(value) {
@@ -70,6 +211,9 @@ function canonicalIdentity(data) {
 }
 
 async function syncTargetPage({ userReference, uid, targets, apply }) {
+  if (!Array.isArray(targets) || targets.length > TARGET_PAGE_SIZE) {
+    throw new RangeError(`targets must contain at most ${TARGET_PAGE_SIZE} items`);
+  }
   return db.runTransaction(async (transaction) => {
     const snapshots = await transaction.getAll(
       userReference,
@@ -93,6 +237,30 @@ async function syncTargetPage({ userReference, uid, targets, apply }) {
     }
 
     const identity = canonicalIdentity(sourceData);
+    const conversationBindings = new Map();
+    const pairGuardReferences = new Map();
+    for (let index = 0; index < targets.length; index += 1) {
+      const target = targets[index];
+      if (target.kind !== "conversation") continue;
+      const snapshot = snapshots[index + 1];
+      if (!snapshot.exists) continue;
+      const binding = canonicalConversationBinding(snapshot.data() ?? {}, uid);
+      if (binding === null) continue;
+      conversationBindings.set(index, binding);
+      const reference = db.doc(`directConversationPairs/${binding.pairKey}`);
+      pairGuardReferences.set(reference.path, reference);
+    }
+
+    // 150 targets + one source + at most 150 unique pair guards = 301 reads,
+    // below Firestore's 500-document transaction limit. This second read
+    // phase deliberately completes before the first possible write.
+    const guardReferences = [...pairGuardReferences.values()];
+    const guardSnapshots = guardReferences.length === 0
+      ? []
+      : await transaction.getAll(...guardReferences);
+    const guardsByPath = new Map(
+      guardSnapshots.map((snapshot) => [snapshot.ref.path, snapshot]),
+    );
     let writes = 0;
     let verifiedClubMemberships = 0;
 
@@ -106,22 +274,43 @@ async function syncTargetPage({ userReference, uid, targets, apply }) {
         // Discovery can race a delete/recreate or migration. The transaction
         // snapshot is the final authority; never inject identity into a root
         // that no longer describes this exact two-party conversation.
-        if (!isCanonicalConversationTarget(data, uid)) continue;
-        const conversationPhoto = identity.photoUrl ?? "";
+        const binding = conversationBindings.get(index) ?? null;
+        if (binding === null) continue;
+        const guardPath = `directConversationPairs/${binding.pairKey}`;
+        if (!hasExactPairGuard(
+          guardsByPath.get(guardPath),
+          target.reference.id,
+          binding,
+        )) {
+          continue;
+        }
+        const maps = canonicalConversationIdentityMaps(
+          data,
+          uid,
+          identity,
+          binding,
+        );
+        if (maps === null) continue;
         if (
-          (data.participantPhotoUrls?.[uid] ?? "") === conversationPhoto &&
-          (data.participantNames?.[uid] ?? "") === identity.displayName
+          hasExactParticipantKeys(data.participantNames, maps.participants) &&
+          hasExactParticipantKeys(
+            data.participantPhotoUrls,
+            maps.participants,
+          ) &&
+          data.participantPhotoUrls[uid] ===
+            maps.participantPhotoUrls[uid] &&
+          data.participantNames[uid] === maps.participantNames[uid]
         ) {
           continue;
         }
         if (apply) {
-          transaction.update(
-            target.reference,
-            new FieldPath("participantPhotoUrls", uid),
-            conversationPhoto,
-            new FieldPath("participantNames", uid),
-            identity.displayName,
-          );
+          // Replace the complete maps instead of updating one nested leaf.
+          // Besides converging the fresh identity, this removes poison keys
+          // left by the historical FieldPath-as-object-key implementation.
+          transaction.update(target.reference, {
+            participantPhotoUrls: maps.participantPhotoUrls,
+            participantNames: maps.participantNames,
+          });
         }
         writes += 1;
         continue;

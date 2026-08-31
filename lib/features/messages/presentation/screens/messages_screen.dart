@@ -15,6 +15,7 @@ import 'package:yovoice/features/messages/presentation/screens/chat_screen.dart'
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
+import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
 
 /// Opens the production New message route.
 ///
@@ -254,11 +255,23 @@ class _MessagesScreenState extends State<MessagesScreen> {
   }
 
   void _showMessage(String message) {
+    final palette = context.appPalette;
+    final isError = message.startsWith('Could not');
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(
         SnackBar(
-          content: Text(message),
+          content: Text(
+            message,
+            style: TextStyle(
+              color: isError
+                  ? palette.dangerForeground
+                  : palette.infoForeground,
+            ),
+          ),
+          backgroundColor: isError
+              ? palette.dangerSurface
+              : palette.infoSurface,
           behavior: SnackBarBehavior.floating,
           margin: const EdgeInsets.all(16),
           shape: RoundedRectangleBorder(
@@ -340,7 +353,7 @@ class _MessagesScreenState extends State<MessagesScreen> {
                                     !snapshot.hasData) {
                                   return Center(
                                     child: CircularProgressIndicator(
-                                      color: colors.primary,
+                                      color: palette.interactiveForeground,
                                       strokeWidth: 2.5,
                                     ),
                                   );
@@ -545,31 +558,26 @@ class _HeaderButton extends StatelessWidget {
 
     return Tooltip(
       message: tooltip,
-      child: Semantics(
-        button: true,
-        label: tooltip,
-        child: Material(
-          color: highlighted ? colors.primary : palette.surfaceRaised,
-          borderRadius: BorderRadius.circular(15),
-          child: InkWell(
-            onTap: onTap,
+      excludeFromSemantics: true,
+      child: AccessibleTapRegion(
+        semanticLabel: tooltip,
+        onTap: onTap,
+        borderRadius: 15,
+        child: Container(
+          width: 46,
+          height: 46,
+          decoration: BoxDecoration(
+            color: highlighted ? colors.primary : palette.surfaceRaised,
             borderRadius: BorderRadius.circular(15),
-            child: Container(
-              width: 46,
-              height: 46,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(15),
-                border: highlighted
-                    ? null
-                    : Border.all(color: palette.borderStrong),
-              ),
-              child: ExcludeSemantics(
-                child: Icon(
-                  icon,
-                  color: highlighted ? colors.onPrimary : palette.textPrimary,
-                  size: 21,
-                ),
-              ),
+            border: highlighted
+                ? null
+                : Border.all(color: palette.borderStrong),
+          ),
+          child: ExcludeSemantics(
+            child: Icon(
+              icon,
+              color: highlighted ? colors.onPrimary : palette.textPrimary,
+              size: 21,
             ),
           ),
         ),
@@ -586,7 +594,6 @@ class _SearchField extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
-    final colors = Theme.of(context).colorScheme;
 
     return TextField(
       controller: controller,
@@ -622,7 +629,7 @@ class _SearchField extends StatelessWidget {
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(17),
-          borderSide: BorderSide(color: colors.primary, width: 2),
+          borderSide: BorderSide(color: palette.focus, width: 2),
         ),
       ),
     );
@@ -686,74 +693,67 @@ class _FriendStory extends StatelessWidget {
     final hasPhoto = user?.photoUrl?.trim().isNotEmpty == true;
     final palette = context.appPalette;
 
-    return Semantics(
-      button: true,
+    return AccessibleTapRegion(
       onTap: onTap,
-      label: user == null
+      semanticLabel: user == null
           ? 'New message'
           : '${user.displayName}, ${user.isOnline ? 'online' : 'offline'}',
+      borderRadius: 18,
       child: ExcludeSemantics(
         child: SizedBox(
           width: 76,
-          child: InkWell(
-            onTap: onTap,
-            borderRadius: BorderRadius.circular(18),
-            child: Column(
-              children: [
-                Stack(
-                  clipBehavior: Clip.none,
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.all(2),
-                      decoration: const BoxDecoration(
-                        shape: BoxShape.circle,
-                        gradient: LinearGradient(
-                          colors: [
-                            Color(0xFFFF416C),
-                            Color(0xFFB42DFF),
-                            Color(0xFF5D00D7),
-                          ],
-                        ),
-                      ),
-                      child: UserAvatar(
-                        radius: 27,
-                        photoUrl: hasPhoto ? user!.photoUrl : null,
-                        displayName: user?.displayName,
-                        fallbackIcon: icon,
+          child: Column(
+            children: [
+              Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(2),
+                    decoration: const BoxDecoration(
+                      shape: BoxShape.circle,
+                      gradient: LinearGradient(
+                        colors: [
+                          Color(0xFFFF416C),
+                          Color(0xFFB42DFF),
+                          Color(0xFF5D00D7),
+                        ],
                       ),
                     ),
-                    if (user?.isOnline == true)
-                      Positioned(
-                        right: 2,
-                        bottom: 2,
-                        child: Container(
-                          width: 15,
-                          height: 15,
-                          decoration: BoxDecoration(
-                            color:
-                                Theme.of(context).brightness == Brightness.dark
-                                ? const Color(0xFF20D66B)
-                                : const Color(0xFF08783F),
-                            shape: BoxShape.circle,
-                            border: Border.all(
-                              color: palette.background,
-                              width: 3,
-                            ),
+                    child: UserAvatar(
+                      radius: 27,
+                      photoUrl: hasPhoto ? user!.photoUrl : null,
+                      displayName: user?.displayName,
+                      fallbackIcon: icon,
+                    ),
+                  ),
+                  if (user?.isOnline == true)
+                    Positioned(
+                      right: 2,
+                      bottom: 2,
+                      child: Container(
+                        width: 15,
+                        height: 15,
+                        decoration: BoxDecoration(
+                          color: palette.successForeground,
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                            color: palette.background,
+                            width: 3,
                           ),
                         ),
                       ),
-                  ],
-                ),
-                const SizedBox(height: 7),
-                Text(
-                  label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  textAlign: TextAlign.center,
-                  style: TextStyle(color: palette.textSecondary, fontSize: 11),
-                ),
-              ],
-            ),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 7),
+              Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+                style: TextStyle(color: palette.textSecondary, fontSize: 11),
+              ),
+            ],
           ),
         ),
       ),
@@ -1037,7 +1037,7 @@ class _ConversationAvatarState extends State<_ConversationAvatar> {
             children: [
               UserAvatar(
                 radius: 29,
-                backgroundColor: const Color(0xFF67259A),
+                backgroundColor: palette.surfaceSunken,
                 photoUrl: photoUrl,
                 displayName: name,
               ),
@@ -1049,9 +1049,7 @@ class _ConversationAvatarState extends State<_ConversationAvatar> {
                     width: 16,
                     height: 16,
                     decoration: BoxDecoration(
-                      color: Theme.of(context).brightness == Brightness.dark
-                          ? const Color(0xFF20D66B)
-                          : const Color(0xFF08783F),
+                      color: palette.successForeground,
                       shape: BoxShape.circle,
                       border: Border.all(color: palette.background, width: 3),
                     ),
@@ -1178,7 +1176,6 @@ class NewMessageSheetState extends State<NewMessageSheet> {
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
-    final colors = Theme.of(context).colorScheme;
 
     return DraggableScrollableSheet(
       expand: false,
@@ -1248,7 +1245,7 @@ class NewMessageSheetState extends State<NewMessageSheet> {
                         if (loading) {
                           return Center(
                             child: CircularProgressIndicator(
-                              color: colors.primary,
+                              color: palette.interactiveForeground,
                             ),
                           );
                         }
@@ -1421,7 +1418,7 @@ class _RecentChatTile extends StatelessWidget {
       onTap: onTap,
       leading: UserAvatar(
         radius: 25,
-        backgroundColor: const Color(0xFF67259A),
+        backgroundColor: palette.surfaceSunken,
         photoUrl: photoUrl,
         displayName: name,
       ),
@@ -1467,7 +1464,7 @@ class _FriendTile extends StatelessWidget {
           children: [
             UserAvatar(
               radius: 25,
-              backgroundColor: const Color(0xFF67259A),
+              backgroundColor: palette.surfaceSunken,
               photoUrl: friend.photoUrl,
               displayName: friend.displayName,
             ),
@@ -1479,9 +1476,7 @@ class _FriendTile extends StatelessWidget {
                   width: 14,
                   height: 14,
                   decoration: BoxDecoration(
-                    color: Theme.of(context).brightness == Brightness.dark
-                        ? const Color(0xFF20D66B)
-                        : const Color(0xFF08783F),
+                    color: palette.successForeground,
                     shape: BoxShape.circle,
                     border: Border.all(color: palette.surfaceRaised, width: 3),
                   ),
@@ -1519,58 +1514,56 @@ class _InviteFriendsTile extends StatelessWidget {
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
 
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(16),
-        child: Container(
-          padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: colors.primary.withValues(alpha: .55)),
-          ),
-          child: Row(
-            children: [
-              Container(
-                width: 40,
-                height: 40,
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  color: colors.primaryContainer,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Icon(
-                  Icons.person_add_alt_1_rounded,
-                  color: colors.onPrimaryContainer,
-                  size: 20,
-                ),
+    return AccessibleTapRegion(
+      onTap: onTap,
+      semanticLabel: 'Invite friends to YO Voice',
+      borderRadius: 16,
+      child: Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: colors.primary.withValues(alpha: .55)),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 40,
+              height: 40,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: colors.primaryContainer,
+                borderRadius: BorderRadius.circular(12),
               ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Invite friends',
-                      style: TextStyle(
-                        color: palette.textPrimary,
-                        fontWeight: FontWeight.w800,
-                        fontSize: 13.5,
-                      ),
-                    ),
-                    Text(
-                      'Not on YO Voice yet? Send them an invite.',
-                      style: TextStyle(
-                        color: palette.textSecondary,
-                        fontSize: 11.5,
-                      ),
-                    ),
-                  ],
-                ),
+              child: Icon(
+                Icons.person_add_alt_1_rounded,
+                color: colors.onPrimaryContainer,
+                size: 20,
               ),
-            ],
-          ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Invite friends',
+                    style: TextStyle(
+                      color: palette.textPrimary,
+                      fontWeight: FontWeight.w800,
+                      fontSize: 13.5,
+                    ),
+                  ),
+                  Text(
+                    'Not on YO Voice yet? Send them an invite.',
+                    style: TextStyle(
+                      color: palette.textSecondary,
+                      fontSize: 11.5,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -1654,7 +1647,6 @@ class _NewMessageErrorState extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
-    final colors = Theme.of(context).colorScheme;
 
     return Center(
       child: Padding(
@@ -1667,13 +1659,13 @@ class _NewMessageErrorState extends StatelessWidget {
               height: 64,
               alignment: Alignment.center,
               decoration: BoxDecoration(
-                color: colors.errorContainer,
+                color: palette.dangerSurface,
                 shape: BoxShape.circle,
-                border: Border.all(color: colors.onErrorContainer),
+                border: Border.all(color: palette.dangerForeground),
               ),
               child: Icon(
                 Icons.cloud_off_rounded,
-                color: colors.onErrorContainer,
+                color: palette.dangerForeground,
                 size: 28,
               ),
             ),

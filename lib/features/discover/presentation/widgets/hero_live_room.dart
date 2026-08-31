@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
+import 'package:yovoice/features/discover/presentation/discover_category_identity.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 
 class HeroLiveRoom extends StatefulWidget {
@@ -16,8 +17,6 @@ class HeroLiveRoom extends StatefulWidget {
 
 class _HeroLiveRoomState extends State<HeroLiveRoom>
     with SingleTickerProviderStateMixin {
-  static const Color _purple = Color(0xFF9D20FF);
-  static const Color _pink = Color(0xFFFF3F8E);
   static const Color _red = Color(0xFFFF416C);
   late final AnimationController _animationController;
 
@@ -37,35 +36,11 @@ class _HeroLiveRoomState extends State<HeroLiveRoom>
     super.dispose();
   }
 
-  Color get _accent {
-    final category = widget.room.category.trim().toLowerCase();
-
-    if (widget.room.isBroadcast) {
-      return _pink;
-    }
-
-    if (category.contains('music')) {
-      return const Color(0xFFFFA63D);
-    }
-
-    if (category.contains('gaming')) {
-      return const Color(0xFF4D8DFF);
-    }
-
-    if (category.contains('business')) {
-      return const Color(0xFF3FD19B);
-    }
-
-    if (category.contains('study')) {
-      return const Color(0xFF6E7CFF);
-    }
-
-    if (category.contains('tech')) {
-      return const Color(0xFF37D6E8);
-    }
-
-    return _purple;
-  }
+  DiscoverCategoryIdentity get _identity =>
+      DiscoverCategoryIdentity.forCategory(
+        widget.room.category,
+        isBroadcast: widget.room.isBroadcast,
+      );
 
   String get _roomTypeLabel {
     return widget.room.isBroadcast
@@ -114,9 +89,12 @@ class _HeroLiveRoomState extends State<HeroLiveRoom>
   @override
   Widget build(BuildContext context) {
     final room = widget.room;
-    final accent = _accent;
     final palette = context.appPalette;
-    final dark = Theme.of(context).brightness == Brightness.dark;
+    final brightness = Theme.of(context).brightness;
+    final dark = brightness == Brightness.dark;
+    final identity = _identity;
+    final accent = identity.seed;
+    final identityVisuals = identity.resolve(brightness);
     final largeText = MediaQuery.textScalerOf(context).scale(1) > 1.4;
     final occupancyStatus = Text(
       _occupancyLabel,
@@ -131,8 +109,8 @@ class _HeroLiveRoomState extends State<HeroLiveRoom>
     final joinButton = FilledButton.icon(
       onPressed: widget.onJoin,
       style: FilledButton.styleFrom(
-        backgroundColor: accent,
-        foregroundColor: _foregroundForAccent(accent),
+        backgroundColor: identityVisuals.action,
+        foregroundColor: identityVisuals.onAction,
         padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 13),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         elevation: 0,
@@ -194,7 +172,7 @@ class _HeroLiveRoomState extends State<HeroLiveRoom>
                           ],
                     stops: const [0, 0.5, 1],
                   ),
-                  border: Border.all(color: accent.withValues(alpha: 0.7)),
+                  border: Border.all(color: identityVisuals.border),
                 ),
                 child: Stack(
                   children: [
@@ -211,7 +189,8 @@ class _HeroLiveRoomState extends State<HeroLiveRoom>
                       bottom: -100,
                       child: _GlowOrb(
                         size: 210,
-                        color: _pink.withValues(alpha: 0.1),
+                        color: DiscoverCategoryIdentity.broadcast.seed
+                            .withValues(alpha: 0.1),
                       ),
                     ),
                     Positioned.fill(
@@ -240,7 +219,7 @@ class _HeroLiveRoomState extends State<HeroLiveRoom>
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
                                   style: TextStyle(
-                                    color: accent,
+                                    color: identityVisuals.foreground,
                                     fontSize: 10,
                                     fontWeight: FontWeight.w900,
                                     letterSpacing: 1.15,
@@ -335,7 +314,9 @@ class _HeroLiveRoomState extends State<HeroLiveRoom>
                                       value: _occupancy,
                                       minHeight: 5,
                                       backgroundColor: palette.surfaceSunken,
-                                      color: _occupancy! >= 0.9 ? _red : accent,
+                                      color: _occupancy! >= 0.9
+                                          ? _red
+                                          : identityVisuals.foreground,
                                     ),
                                   ),
                                 ),
@@ -436,7 +417,10 @@ class _RoomArtwork extends StatelessWidget {
   Widget build(BuildContext context) {
     final imageUrl = room.imageUrl?.trim();
     final palette = context.appPalette;
-    final dark = Theme.of(context).brightness == Brightness.dark;
+    final visuals = DiscoverCategoryVisuals.fromSeed(
+      accent,
+      Theme.of(context).brightness,
+    );
 
     return Container(
       width: 82,
@@ -447,14 +431,12 @@ class _RoomArtwork extends StatelessWidget {
         gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: dark
-              ? [accent.withValues(alpha: 0.42), accent.withValues(alpha: 0.12)]
-              : [
-                  Color.lerp(palette.surfaceRaised, accent, .22)!,
-                  Color.lerp(palette.surface, accent, .07)!,
-                ],
+          colors: [
+            visuals.surface,
+            Color.lerp(visuals.surface, palette.surface, .55)!,
+          ],
         ),
-        border: Border.all(color: accent.withValues(alpha: 0.82)),
+        border: Border.all(color: visuals.border),
         boxShadow: [
           BoxShadow(
             color: accent.withValues(alpha: 0.17 + pulse * 0.11),
@@ -483,9 +465,13 @@ class _RoomArtworkFallback extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final visuals = DiscoverCategoryVisuals.fromSeed(
+      accent,
+      Theme.of(context).brightness,
+    );
     return Icon(
       room.isBroadcast ? Icons.podcasts_rounded : Icons.graphic_eq_rounded,
-      color: _foregroundForAccent(accent),
+      color: visuals.foreground,
       size: 39,
     );
   }
@@ -540,6 +526,10 @@ class _HostAndSpeakersPreview extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
+    final visuals = DiscoverCategoryVisuals.fromSeed(
+      accent,
+      Theme.of(context).brightness,
+    );
     final visiblePeople = math.min(math.max(room.participantCount, 1), 4);
 
     return Row(
@@ -597,7 +587,7 @@ class _HostAndSpeakersPreview extends StatelessWidget {
           Text(
             '+${room.participantCount - visiblePeople}',
             style: TextStyle(
-              color: accent,
+              color: visuals.foreground,
               fontSize: 11,
               fontWeight: FontWeight.w900,
             ),
@@ -620,11 +610,14 @@ class _HostAvatar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final palette = context.appPalette;
     final normalizedUrl = photoUrl?.trim();
     final initial = hostName.trim().isEmpty
         ? 'Y'
         : hostName.trim()[0].toUpperCase();
+    final visuals = DiscoverCategoryVisuals.fromSeed(
+      accent,
+      Theme.of(context).brightness,
+    );
 
     return Container(
       width: 36,
@@ -633,8 +626,8 @@ class _HostAvatar extends StatelessWidget {
       alignment: Alignment.center,
       decoration: BoxDecoration(
         shape: BoxShape.circle,
-        color: accent.withValues(alpha: 0.28),
-        border: Border.all(color: palette.surface, width: 2),
+        color: visuals.surface,
+        border: Border.all(color: visuals.border, width: 2),
       ),
       child: normalizedUrl != null && normalizedUrl.isNotEmpty
           ? Image.network(
@@ -646,7 +639,7 @@ class _HostAvatar extends StatelessWidget {
                 return Text(
                   initial,
                   style: TextStyle(
-                    color: palette.textPrimary,
+                    color: visuals.onSurface,
                     fontSize: 11,
                     fontWeight: FontWeight.w900,
                   ),
@@ -656,7 +649,7 @@ class _HostAvatar extends StatelessWidget {
           : Text(
               initial,
               style: TextStyle(
-                color: palette.textPrimary,
+                color: visuals.onSurface,
                 fontSize: 11,
                 fontWeight: FontWeight.w900,
               ),
@@ -673,19 +666,22 @@ class _SpeakerPlaceholder extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final palette = context.appPalette;
+    final visuals = DiscoverCategoryVisuals.fromSeed(
+      accent,
+      Theme.of(context).brightness,
+    );
     return Container(
       width: 36,
       height: 36,
       alignment: Alignment.center,
       decoration: BoxDecoration(
         shape: BoxShape.circle,
-        color: Color.lerp(accent, palette.surfaceRaised, index * 0.17),
-        border: Border.all(color: palette.surface, width: 2),
+        color: visuals.surface,
+        border: Border.all(color: visuals.border, width: 2),
       ),
       child: Icon(
         index.isEven ? Icons.graphic_eq_rounded : Icons.person_rounded,
-        color: palette.textPrimary,
+        color: visuals.onSurface,
         size: 16,
       ),
     );
@@ -764,10 +760,4 @@ class _HeroPatternPainter extends CustomPainter {
         oldDelegate.accent != accent ||
         oldDelegate.dotColor != dotColor;
   }
-}
-
-Color _foregroundForAccent(Color accent) {
-  return accent.computeLuminance() > .52
-      ? const Color(0xFF211629)
-      : Colors.white;
 }

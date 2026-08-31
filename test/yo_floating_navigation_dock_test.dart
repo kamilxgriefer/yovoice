@@ -1,10 +1,14 @@
-import 'dart:ui' show SemanticsAction;
+import 'dart:math' as math;
+import 'dart:ui' show PointerDeviceKind, SemanticsAction;
 
+import 'package:flutter/foundation.dart' show ValueListenable, ValueNotifier;
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart' show SemanticsNode;
+import 'package:flutter/rendering.dart' show RenderBox, SemanticsNode;
 import 'package:flutter/services.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_theme.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/home/presentation/screens/main_shell.dart';
@@ -12,6 +16,16 @@ import 'package:yovoice/features/home/presentation/widgets/navigation/yo_floatin
 import 'package:yovoice/features/home/presentation/widgets/navigation/yo_preserving_tab_transition.dart';
 
 const _momentsTab = 5;
+
+double _contrastRatio(Color first, Color second) {
+  final lighter = first.computeLuminance() > second.computeLuminance()
+      ? first.computeLuminance()
+      : second.computeLuminance();
+  final darker = first.computeLuminance() > second.computeLuminance()
+      ? second.computeLuminance()
+      : first.computeLuminance();
+  return (lighter + .05) / (darker + .05);
+}
 
 bool _selected(WidgetTester tester, String label) {
   return tester
@@ -48,7 +62,14 @@ Future<SemanticsHandle> _pumpDock(
   double textScale = 1,
   double keyboardInset = 0,
   bool reduceMotion = false,
+  ValueListenable<bool>? reduceMotionListenable,
   ThemeData? theme,
+  Locale locale = const Locale('en'),
+  int initialSelected = 0,
+  int unreadConversationCount = 3,
+  bool autoAccept = true,
+  ValueChanged<int>? onRequested,
+  GlobalKey<_DockHarnessState>? harnessKey,
   Map<int, GlobalKey>? tourDestinationKeys,
   GlobalKey? tourVoiceKey,
 }) async {
@@ -56,20 +77,42 @@ Future<SemanticsHandle> _pumpDock(
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
   final semantics = tester.ensureSemantics();
+  final ownedReduceMotion = reduceMotionListenable == null
+      ? ValueNotifier<bool>(reduceMotion)
+      : null;
+  final effectiveReduceMotion = reduceMotionListenable ?? ownedReduceMotion!;
+  if (ownedReduceMotion != null) addTearDown(ownedReduceMotion.dispose);
 
   await tester.pumpWidget(
     MaterialApp(
       theme: theme ?? AppTheme.darkTheme,
-      home: MediaQuery(
-        data: MediaQueryData(
-          size: Size(width, height),
-          padding: EdgeInsets.only(bottom: safeBottom),
-          viewPadding: EdgeInsets.only(bottom: safeBottom),
-          viewInsets: EdgeInsets.only(bottom: keyboardInset),
-          textScaler: TextScaler.linear(textScale),
-          disableAnimations: reduceMotion,
+      locale: locale,
+      supportedLocales: AppLocalizations.supportedLocales,
+      localizationsDelegates: const [
+        AppLocalizationsDelegate(),
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
+      home: ValueListenableBuilder<bool>(
+        valueListenable: effectiveReduceMotion,
+        builder: (context, animationsDisabled, child) => MediaQuery(
+          data: MediaQueryData(
+            size: Size(width, height),
+            padding: EdgeInsets.only(bottom: safeBottom),
+            viewPadding: EdgeInsets.only(bottom: safeBottom),
+            viewInsets: EdgeInsets.only(bottom: keyboardInset),
+            textScaler: TextScaler.linear(textScale),
+            disableAnimations: animationsDisabled,
+          ),
+          child: child!,
         ),
         child: _DockHarness(
+          key: harnessKey,
+          initialSelected: initialSelected,
+          unreadConversationCount: unreadConversationCount,
+          autoAccept: autoAccept,
+          onRequested: onRequested,
           tourDestinationKeys: tourDestinationKeys,
           tourVoiceKey: tourVoiceKey,
         ),
@@ -81,8 +124,20 @@ Future<SemanticsHandle> _pumpDock(
 }
 
 class _DockHarness extends StatefulWidget {
-  const _DockHarness({this.tourDestinationKeys, this.tourVoiceKey});
+  const _DockHarness({
+    required this.initialSelected,
+    required this.unreadConversationCount,
+    required this.autoAccept,
+    this.onRequested,
+    this.tourDestinationKeys,
+    this.tourVoiceKey,
+    super.key,
+  });
 
+  final int initialSelected;
+  final int unreadConversationCount;
+  final bool autoAccept;
+  final ValueChanged<int>? onRequested;
   final Map<int, GlobalKey>? tourDestinationKeys;
   final GlobalKey? tourVoiceKey;
 
@@ -91,9 +146,22 @@ class _DockHarness extends StatefulWidget {
 }
 
 class _DockHarnessState extends State<_DockHarness> {
-  int selected = 0;
+  late int selected;
   int voiceActions = 0;
   bool moreSelected = false;
+
+  @override
+  void initState() {
+    super.initState();
+    selected = widget.initialSelected;
+  }
+
+  void acceptDestination(int index) {
+    setState(() {
+      selected = index;
+      moreSelected = false;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -116,13 +184,11 @@ class _DockHarnessState extends State<_DockHarness> {
         tourVoiceKey: widget.tourVoiceKey,
         selectedTabIndex: selected,
         momentsTabIndex: _momentsTab,
-        unreadConversationCount: 3,
+        unreadConversationCount: widget.unreadConversationCount,
         moreSelected: moreSelected,
         onDestinationSelected: (index) {
-          setState(() {
-            selected = index;
-            moreSelected = false;
-          });
+          widget.onRequested?.call(index);
+          if (widget.autoAccept) acceptDestination(index);
         },
         onVoicePressed: () => setState(() => voiceActions += 1),
         onMorePressed: () => setState(() => moreSelected = true),
@@ -132,6 +198,42 @@ class _DockHarnessState extends State<_DockHarness> {
 }
 
 void main() {
+  testWidgets(
+    'compact dock is icon-only while semantics and 48px targets remain',
+    (tester) async {
+      for (final width in [320.0, 390.0, 430.0]) {
+        for (final theme in [AppTheme.darkTheme, AppTheme.lightTheme]) {
+          final semantics = await _pumpDock(
+            tester,
+            width: width,
+            height: 700,
+            theme: theme,
+            reduceMotion: true,
+          );
+          for (final label in ['Home', 'Chats', 'Moments', 'More']) {
+            expect(find.text(label), findsNothing);
+          }
+          for (final slot in [0, 1, 3, 4]) {
+            final target = tester.getSize(
+              find.byKey(ValueKey('yo-destination-$slot')),
+            );
+            expect(target.width, greaterThanOrEqualTo(48));
+            expect(target.height, greaterThanOrEqualTo(48));
+          }
+          expect(find.bySemanticsLabel('Home'), findsOneWidget);
+          expect(
+            find.bySemanticsLabel('Chats, 3 unread conversations'),
+            findsOneWidget,
+          );
+          expect(find.bySemanticsLabel('Moments'), findsOneWidget);
+          expect(find.bySemanticsLabel('More'), findsOneWidget);
+          expect(tester.takeException(), isNull);
+          semantics.dispose();
+        }
+      }
+    },
+  );
+
   testWidgets(
     'guided-tour anchors follow Chats 1, Moments 3, More 4 and central YO',
     (tester) async {
@@ -165,7 +267,7 @@ void main() {
 
         final voiceAnchorRect = tester.getRect(find.byKey(voiceKey));
         final productionVoiceRect = tester.getRect(
-          find.byKey(const ValueKey('yo-center-action-boundary')),
+          find.byKey(const ValueKey('yo-center-action-hit-target')),
         );
         expect(voiceAnchorRect.left, closeTo(productionVoiceRect.left, .01));
         expect(voiceAnchorRect.top, closeTo(productionVoiceRect.top, .01));
@@ -194,42 +296,52 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      final dock = tester.widget<Container>(
+      final dock = tester.widget<DecoratedBox>(
         find.byKey(const ValueKey('yo-floating-navigation-dock')),
       );
-      final dockDecoration = dock.decoration! as ShapeDecoration;
+      final dockDecoration = dock.decoration as ShapeDecoration;
+      expect(dockDecoration.gradient, isA<LinearGradient>());
+      expect(dockDecoration.color, isNull);
+      expect(dockDecoration.shape.dimensions.horizontal, closeTo(2.3, .01));
       expect(
-        dockDecoration.color,
-        palette.navigationSurface.withValues(alpha: .97),
+        YoFloatingNavigationDock.outlineSideFor(palette).color,
+        palette.navigationOutline,
       );
-      expect(dockDecoration.shape.dimensions, const EdgeInsets.all(1));
 
       final clip = tester.widget<ClipPath>(
-        find.byKey(const ValueKey('yo-dock-notch-clip')),
+        find.byKey(const ValueKey('yo-dock-sculpted-clip')),
       );
       final dockSize = tester.getSize(
         find.byKey(const ValueKey('yo-floating-navigation-dock')),
       );
       final path = clip.clipper!.getClip(dockSize);
-      expect(path.contains(Offset(dockSize.width / 2, 2)), isFalse);
-      expect(path.contains(const Offset(20, 20)), isTrue);
       expect(
-        path.contains(
-          Offset(
-            dockSize.width / 2,
-            YoFloatingNavigationDock.notchCenterFromTop + 46,
-          ),
-        ),
+        path.contains(Offset(dockSize.width / 2, 2)),
+        isTrue,
+        reason: 'the centre rise belongs to the one continuous shell path',
+      );
+      expect(
+        path.contains(const Offset(20, 2)),
+        isFalse,
+        reason: 'the side body begins below the central rise',
+      );
+      expect(
+        path.contains(Offset(dockSize.width / 2, dockSize.height - 4)),
         isTrue,
       );
+      expect(find.byKey(const ValueKey('yo-center-cradle')), findsNothing);
 
-      final active = tester.widget<AnimatedContainer>(
+      final active = tester.widget<DecoratedBox>(
         find.byKey(const ValueKey('yo-active-capsule-reduced-motion')),
       );
-      final activeDecoration = active.decoration! as BoxDecoration;
+      final activeDecoration = active.decoration as BoxDecoration;
+      expect(activeDecoration.gradient, isA<LinearGradient>());
+      expect(activeDecoration.borderRadius, BorderRadius.circular(18));
       expect(
-        (activeDecoration.gradient! as LinearGradient).colors.last,
-        palette.surfaceRaised,
+        tester.getSize(
+          find.byKey(const ValueKey('yo-active-capsule-position')),
+        ),
+        const Size.square(52),
       );
       expect(tester.takeException(), isNull);
       semantics.dispose();
@@ -298,6 +410,143 @@ void main() {
     },
   );
 
+  testWidgets(
+    'selected More remains axis-aligned while the pointer hovers it',
+    (tester) async {
+      final semantics = await _pumpDock(tester, reduceMotion: false);
+      final moreTarget = find.byKey(const ValueKey('yo-destination-4'));
+
+      await tester.tap(moreTarget);
+      await tester.pumpAndSettle();
+
+      final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+      addTearDown(mouse.removePointer);
+      await mouse.addPointer(location: Offset.zero);
+      await mouse.moveTo(tester.getCenter(moreTarget));
+      await tester.pump(const Duration(milliseconds: 120));
+
+      final selectedIcon = find.byKey(const ValueKey('4-true'));
+      final iconBox = tester.renderObject<RenderBox>(selectedIcon);
+      final targetBox = tester.renderObject<RenderBox>(moreTarget);
+      final iconTransform = iconBox.getTransformTo(targetBox);
+      expect(
+        find.descendant(
+          of: moreTarget,
+          matching: find.byType(AnimatedRotation),
+        ),
+        findsNothing,
+      );
+      expect(iconTransform.storage[1], closeTo(0, .000001));
+      expect(iconTransform.storage[4], closeTo(0, .000001));
+
+      final capsuleTransform = tester
+          .widget<Transform>(
+            find.byKey(const ValueKey('yo-active-capsule-scale')),
+          )
+          .transform;
+      expect(capsuleTransform.storage[1], closeTo(0, .000001));
+      expect(capsuleTransform.storage[4], closeTo(0, .000001));
+      expect(_selected(tester, 'More'), isTrue);
+      expect(tester.takeException(), isNull);
+      semantics.dispose();
+    },
+  );
+
+  testWidgets('parent acceptance, not a tap, commits the shared capsule', (
+    tester,
+  ) async {
+    final requested = <int>[];
+    final harnessKey = GlobalKey<_DockHarnessState>();
+    final semantics = await _pumpDock(
+      tester,
+      autoAccept: false,
+      onRequested: requested.add,
+      harnessKey: harnessKey,
+      reduceMotion: false,
+    );
+    final before = tester.getRect(
+      find.byKey(const ValueKey('yo-active-capsule-position')),
+    );
+
+    await tester.tap(find.byKey(const ValueKey('yo-destination-1')));
+    await tester.pump(const Duration(milliseconds: 180));
+    final rejected = tester.getRect(
+      find.byKey(const ValueKey('yo-active-capsule-position')),
+    );
+    expect(requested, [1]);
+    expect(_selected(tester, 'Home'), isTrue);
+    expect(rejected.center.dx, closeTo(before.center.dx, .01));
+
+    harnessKey.currentState!.acceptDestination(1);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 330));
+    final accepted = tester.getRect(
+      find.byKey(const ValueKey('yo-active-capsule-position')),
+    );
+    final chats = tester.getRect(
+      find.byKey(const ValueKey('yo-destination-1')),
+    );
+    expect(_selected(tester, 'Chats, 3 unread conversations'), isTrue);
+    expect(accepted.center.dx, closeTo(chats.center.dx, .5));
+    semantics.dispose();
+  });
+
+  testWidgets('capsule stretches adjacent and disappears while crossing YO', (
+    tester,
+  ) async {
+    final semantics = await _pumpDock(tester);
+
+    await tester.tap(find.byKey(const ValueKey('yo-destination-1')));
+    await tester.pump();
+    var maximumScaleX = 1.0;
+    for (var elapsed = 0; elapsed < 330; elapsed += 30) {
+      await tester.pump(const Duration(milliseconds: 30));
+      final transform = tester.widget<Transform>(
+        find.byKey(const ValueKey('yo-active-capsule-scale')),
+      );
+      maximumScaleX = math.max(maximumScaleX, transform.transform.storage[0]);
+    }
+    expect(maximumScaleX, inInclusiveRange(1.05, 1.12));
+
+    await tester.tap(find.byKey(const ValueKey('yo-destination-3')));
+    await tester.pump();
+    var minimumOpacity = 1.0;
+    for (var elapsed = 0; elapsed < 480; elapsed += 20) {
+      await tester.pump(const Duration(milliseconds: 20));
+      final opacity = tester.widget<Opacity>(
+        find.byKey(const ValueKey('yo-active-capsule-opacity')),
+      );
+      minimumOpacity = math.min(minimumOpacity, opacity.opacity);
+      expect(_selected(tester, 'Open voice actions'), isFalse);
+    }
+    expect(minimumOpacity, lessThan(.15));
+    final finalCapsule = tester.getRect(
+      find.byKey(const ValueKey('yo-active-capsule-position')),
+    );
+    final moments = tester.getRect(
+      find.byKey(const ValueKey('yo-destination-3')),
+    );
+    expect(finalCapsule.center.dx, closeTo(moments.center.dx, .5));
+    semantics.dispose();
+  });
+
+  testWidgets(
+    'unread badge caps visually at 99+ but announces the real count',
+    (tester) async {
+      final semantics = await _pumpDock(
+        tester,
+        unreadConversationCount: 100,
+        reduceMotion: true,
+      );
+      expect(find.text('99+'), findsOneWidget);
+      expect(
+        find.bySemanticsLabel('Chats, 100 unread conversations'),
+        findsOneWidget,
+      );
+      semantics.dispose();
+    },
+  );
+
   testWidgets('the central YO action fires once without changing the tab', (
     tester,
   ) async {
@@ -312,6 +561,58 @@ void main() {
     expect(find.byKey(const ValueKey('yo-center-ripple')), findsNothing);
     semantics.dispose();
   });
+
+  testWidgets(
+    'the whole visible YO mark including its lower edge is tappable',
+    (tester) async {
+      var expectedActivations = 0;
+      for (final width in [320.0, 390.0]) {
+        final semantics = await _pumpDock(
+          tester,
+          width: width,
+          height: 700,
+          reduceMotion: true,
+        );
+        final logo = tester.getRect(find.byKey(const ValueKey('dock-logo')));
+        final hitTarget = tester.getRect(
+          find.byKey(const ValueKey('yo-center-action-hit-target')),
+        );
+        final visualBoundary = tester.getRect(
+          find.byKey(const ValueKey('yo-center-action-boundary')),
+        );
+        final semanticsNode = tester.getSemantics(
+          find.bySemanticsLabel('Open voice actions'),
+        );
+
+        expect(hitTarget.center.dx, closeTo(logo.center.dx, .01));
+        expect(
+          hitTarget.width,
+          greaterThan(logo.width * .814),
+          reason: 'the target must cover the visible horizontal logo alpha',
+        );
+        expect(hitTarget.bottom, closeTo(logo.bottom, .01));
+        expect(hitTarget.bottom, greaterThan(visualBoundary.bottom));
+        expect(semanticsNode.rect.size, hitTarget.size);
+        for (final slot in [1, 3]) {
+          final neighbour = tester.getRect(
+            find.byKey(ValueKey('yo-destination-$slot')),
+          );
+          expect(
+            hitTarget.overlaps(neighbour),
+            isFalse,
+            reason: 'the expanded YO target must not cover slot $slot',
+          );
+        }
+
+        await tester.tapAt(Offset(logo.center.dx, logo.bottom - 1));
+        await tester.pump();
+        expectedActivations += 1;
+        expect(find.text('Voice $expectedActivations'), findsOneWidget);
+        expect(tester.takeException(), isNull);
+        semantics.dispose();
+      }
+    },
+  );
 
   testWidgets('all five controls expose an actionable semantics tap', (
     tester,
@@ -347,8 +648,14 @@ void main() {
         find.byKey(const ValueKey('yo-destination-0')),
       );
       home.focusNode!.requestFocus();
-      await tester.pump();
+      await tester.pumpAndSettle();
       expect(FocusManager.instance.primaryFocus?.debugLabel, 'YO dock 0');
+      final homeFocus = tester.widget<Material>(
+        find.byKey(const ValueKey('yo-destination-focus-0')),
+      );
+      final homeFocusShape = homeFocus.shape! as RoundedRectangleBorder;
+      expect(homeFocusShape.side.color, AppPalette.dark.focus);
+      expect(homeFocusShape.side.width, 2);
 
       await tester.sendKeyEvent(LogicalKeyboardKey.tab);
       await tester.pump();
@@ -381,44 +688,69 @@ void main() {
     },
   );
 
-  testWidgets('the exposed top and side edges of the YO circle are tappable', (
-    tester,
-  ) async {
-    final semantics = await _pumpDock(tester, reduceMotion: true);
-    final button = tester.getRect(
-      find.byKey(const ValueKey('yo-center-action-boundary')),
-    );
-    final dock = tester.getRect(
-      find.byKey(const ValueKey('yo-floating-navigation-dock')),
-    );
-    expect(button.top, lessThan(dock.top));
-    expect(button.center.dx, closeTo(dock.center.dx, .01));
+  testWidgets(
+    'the YO focus boundary uses the semantic focus colour in Dark and Pearl',
+    (tester) async {
+      for (final theme in [AppTheme.darkTheme, AppTheme.lightTheme]) {
+        final semantics = await _pumpDock(
+          tester,
+          theme: theme,
+          reduceMotion: true,
+        );
+        final home = tester.widget<InkWell>(
+          find.byKey(const ValueKey('yo-destination-0')),
+        );
+        home.focusNode!.requestFocus();
+        await tester.pumpAndSettle();
+        await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+        await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+        await tester.pumpAndSettle();
 
-    final cradle = tester.getRect(
-      find.byKey(const ValueKey('yo-center-cradle')),
-    );
-    expect(cradle.center, button.center);
-    expect(cradle.width, button.width + YoFloatingNavigationDock.notchGap * 2);
-    expect(
-      tester
-          .widget<IgnorePointer>(find.byKey(const ValueKey('yo-center-cradle')))
-          .ignoring,
-      isTrue,
-    );
+        final outline = tester.widget<AnimatedContainer>(
+          find.byKey(const ValueKey('yo-center-focus-outline')),
+        );
+        final decoration = outline.decoration! as BoxDecoration;
+        final ring = (decoration.border! as Border).top.color;
+        final palette = theme.extension<AppPalette>()!;
+        expect(ring, palette.focus);
+        expect(
+          _contrastRatio(ring, palette.navigationSurface),
+          greaterThanOrEqualTo(3),
+          reason: '${theme.brightness.name} focus ring must clear the shell',
+        );
+        semantics.dispose();
+      }
+    },
+  );
 
-    await tester.tapAt(Offset(button.center.dx, button.top + 2));
-    await tester.pump();
-    expect(find.text('Voice 1'), findsOneWidget);
-    await tester.tapAt(Offset(button.left + 2, button.center.dy));
-    await tester.pump();
-    expect(find.text('Voice 2'), findsOneWidget);
-    await tester.tapAt(Offset(button.right - 2, button.center.dy));
-    await tester.pump();
+  testWidgets(
+    'the exposed top and side edges of the transparent YO target tap',
+    (tester) async {
+      final semantics = await _pumpDock(tester, reduceMotion: true);
+      final button = tester.getRect(
+        find.byKey(const ValueKey('yo-center-action-boundary')),
+      );
+      final dock = tester.getRect(
+        find.byKey(const ValueKey('yo-floating-navigation-dock')),
+      );
+      expect(button.top, closeTo(dock.top, .01));
+      expect(button.center.dx, closeTo(dock.center.dx, .01));
+      expect(find.byKey(const ValueKey('yo-center-cradle')), findsNothing);
 
-    expect(find.text('Voice 3'), findsOneWidget);
-    expect(tester.takeException(), isNull);
-    semantics.dispose();
-  });
+      await tester.tapAt(Offset(button.center.dx, button.top + 2));
+      await tester.pump();
+      expect(find.text('Voice 1'), findsOneWidget);
+      await tester.tapAt(Offset(button.left + 2, button.center.dy));
+      await tester.pump();
+      expect(find.text('Voice 2'), findsOneWidget);
+      await tester.tapAt(Offset(button.right - 2, button.center.dy));
+      await tester.pump();
+
+      expect(find.text('Voice 3'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      semantics.dispose();
+    },
+  );
 
   testWidgets('one ripple is reused across rapid central action taps', (
     tester,
@@ -436,16 +768,17 @@ void main() {
     semantics.dispose();
   });
 
-  testWidgets('320px, 200% text and a home indicator work in both themes', (
+  testWidgets('320x640, 200% text and a home indicator work in both themes', (
     tester,
   ) async {
     for (final theme in [AppTheme.darkTheme, AppTheme.lightTheme]) {
       final semantics = await _pumpDock(
         tester,
         width: 320,
-        height: 700,
+        height: 640,
         safeBottom: 34,
         textScale: 2,
+        unreadConversationCount: 100,
         reduceMotion: true,
         theme: theme,
       );
@@ -462,27 +795,59 @@ void main() {
       expect(dock.left, greaterThanOrEqualTo(14));
       expect(dock.right, lessThanOrEqualTo(306));
       expect(dock.height, YoFloatingNavigationDock.accessibleVisualHeight);
-      expect(capsule.width, 132);
+      expect(capsule.size, const Size.square(52));
       expect(button.width, 64);
+      final badge = tester.getRect(
+        find.byKey(const ValueKey('yo-chats-unread-badge')),
+      );
+      expect(badge.width, lessThanOrEqualTo(36));
+      expect(
+        badge.overlaps(button),
+        isFalse,
+        reason: 'the clamped 99+ badge must stay outside the YO action',
+      );
       for (final slot in [0, 1, 3, 4]) {
-        final target = tester.getSize(
+        final target = tester.getRect(
           find.byKey(ValueKey('yo-destination-$slot')),
         );
-        expect(target.width, greaterThanOrEqualTo(44));
-        expect(target.height, greaterThanOrEqualTo(44));
+        expect(target.width, greaterThanOrEqualTo(48));
+        expect(target.height, greaterThanOrEqualTo(48));
+        expect(
+          target.overlaps(button),
+          isFalse,
+          reason: 'destination $slot must not enter the central YO zone',
+        );
       }
       for (final label in ['Home', 'Chats', 'Moments', 'More']) {
         final text = tester.widget<Text>(find.text(label));
         expect(text.maxLines, 1);
         expect(text.overflow, TextOverflow.visible);
+        expect(
+          tester.getRect(find.text(label)).overlaps(button),
+          isFalse,
+          reason: '$label must remain clear of the central YO control',
+        );
+      }
+
+      for (final slot in [0, 1, 3, 4]) {
+        await tester.tap(find.byKey(ValueKey('yo-destination-$slot')));
+        await tester.pump();
+        final selectedCapsule = tester.getRect(
+          find.byKey(const ValueKey('yo-active-capsule-position')),
+        );
+        expect(
+          selectedCapsule.overlaps(button),
+          isFalse,
+          reason: 'active capsule for slot $slot must clear the YO control',
+        );
       }
       expect(tester.takeException(), isNull);
       semantics.dispose();
     }
-    expect(YoFloatingNavigationDock.reservedHeightFor(safeBottom: 34), 132);
+    expect(YoFloatingNavigationDock.reservedHeightFor(safeBottom: 34), 142);
     expect(
       YoFloatingNavigationDock.reservedHeightFor(safeBottom: 34, textScale: 2),
-      158,
+      150,
     );
   });
 
@@ -525,7 +890,47 @@ void main() {
     semantics.dispose();
   });
 
-  testWidgets('active breathing and ripple dispose without lifecycle errors', (
+  testWidgets('rapid reversal inside the YO fade zone never flashes', (
+    tester,
+  ) async {
+    final semantics = await _pumpDock(tester, initialSelected: 1);
+
+    await tester.tap(find.byKey(const ValueKey('yo-destination-3')));
+    await tester.pump();
+    double opacity = 1;
+    for (var elapsed = 0; elapsed < 360 && opacity >= .4; elapsed += 20) {
+      await tester.pump(const Duration(milliseconds: 20));
+      opacity = tester
+          .widget<Opacity>(
+            find.byKey(const ValueKey('yo-active-capsule-opacity')),
+          )
+          .opacity;
+    }
+    expect(opacity, lessThan(.4));
+
+    await tester.tap(find.byKey(const ValueKey('yo-destination-1')));
+    await tester.pump();
+    final reversedOpacity = tester
+        .widget<Opacity>(
+          find.byKey(const ValueKey('yo-active-capsule-opacity')),
+        )
+        .opacity;
+    expect(reversedOpacity, lessThan(.55));
+    expect(reversedOpacity, lessThanOrEqualTo(opacity + .12));
+
+    await tester.pump(const Duration(milliseconds: 620));
+    final capsule = tester.getRect(
+      find.byKey(const ValueKey('yo-active-capsule-position')),
+    );
+    final chats = tester.getRect(
+      find.byKey(const ValueKey('yo-destination-1')),
+    );
+    expect(capsule.center.dx, closeTo(chats.center.dx, .5));
+    expect(tester.takeException(), isNull);
+    semantics.dispose();
+  });
+
+  testWidgets('active capsule and ripple dispose without lifecycle errors', (
     tester,
   ) async {
     final semantics = await _pumpDock(tester);
@@ -557,6 +962,96 @@ void main() {
       findsNothing,
     );
     expect(find.byKey(const ValueKey('yo-center-ripple')), findsNothing);
+    semantics.dispose();
+  });
+
+  testWidgets('enabling reduced motion mid-flight settles immediately', (
+    tester,
+  ) async {
+    final reduceMotion = ValueNotifier<bool>(false);
+    addTearDown(reduceMotion.dispose);
+    final semantics = await _pumpDock(
+      tester,
+      reduceMotionListenable: reduceMotion,
+    );
+
+    await tester.tap(find.bySemanticsLabel('Open voice actions'));
+    await tester.pump(const Duration(milliseconds: 20));
+    await tester.tap(find.byKey(const ValueKey('yo-destination-4')));
+    await tester.pump(const Duration(milliseconds: 80));
+    reduceMotion.value = true;
+    await tester.pump();
+
+    final capsule = tester.getRect(
+      find.byKey(const ValueKey('yo-active-capsule-position')),
+    );
+    final more = tester.getRect(find.byKey(const ValueKey('yo-destination-4')));
+    expect(capsule.center.dx, closeTo(more.center.dx, .5));
+    expect(
+      tester
+          .widget<Opacity>(
+            find.byKey(const ValueKey('yo-active-capsule-opacity')),
+          )
+          .opacity,
+      1,
+    );
+    expect(find.byKey(const ValueKey('yo-center-ripple')), findsNothing);
+    await tester.pump(const Duration(milliseconds: 120));
+    final settled = tester.getRect(
+      find.byKey(const ValueKey('yo-active-capsule-position')),
+    );
+    expect(settled.center.dx, closeTo(more.center.dx, .5));
+    semantics.dispose();
+  });
+
+  testWidgets('Friends keeps destination geometry fresh across resize', (
+    tester,
+  ) async {
+    final harnessKey = GlobalKey<_DockHarnessState>();
+    final semantics = await _pumpDock(
+      tester,
+      width: 390,
+      height: 700,
+      initialSelected: 2,
+      harnessKey: harnessKey,
+    );
+    expect(
+      find.byKey(const ValueKey('yo-active-capsule-position')),
+      findsNothing,
+    );
+
+    tester.view.physicalSize = const Size(320, 700);
+    await tester.pump();
+    await tester.pump();
+    harnessKey.currentState!.acceptDestination(1);
+    await tester.pump();
+
+    final capsule = tester.getRect(
+      find.byKey(const ValueKey('yo-active-capsule-position')),
+    );
+    final chats = tester.getRect(
+      find.byKey(const ValueKey('yo-destination-1')),
+    );
+    expect(capsule.center.dx, closeTo(chats.center.dx, .5));
+    expect(tester.takeException(), isNull);
+    semantics.dispose();
+  });
+
+  testWidgets('Polish dock semantics localize unread and voice state', (
+    tester,
+  ) async {
+    final semantics = await _pumpDock(
+      tester,
+      locale: const Locale('pl'),
+      unreadConversationCount: 23,
+      reduceMotion: true,
+    );
+
+    expect(
+      find.bySemanticsLabel('Czaty, 23 nieprzeczytane rozmowy'),
+      findsOneWidget,
+    );
+    expect(find.bySemanticsLabel('Otwórz opcje głosowe'), findsOneWidget);
     semantics.dispose();
   });
 

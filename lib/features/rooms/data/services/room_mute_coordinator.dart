@@ -74,8 +74,14 @@ class RoomMuteCoordinator extends ChangeNotifier {
 
   bool get isBusy => _sync.isBusy;
 
-  Future<RoomMuteOutcome> toggle({required String roomId}) async {
+  Future<RoomMuteOutcome> toggle({
+    required String roomId,
+    bool Function()? isOperationCurrent,
+  }) async {
     if (_sync.isBusy) return RoomMuteOutcome.busy;
+
+    bool isCurrent() => isOperationCurrent?.call() ?? true;
+    if (!isCurrent()) return RoomMuteOutcome.busy;
 
     final wasMuted = _readCurrentMuted();
     try {
@@ -83,9 +89,11 @@ class RoomMuteCoordinator extends ChangeNotifier {
         currentMuted: wasMuted,
         persistRosterState: (muted) => _persistRosterState(roomId, muted),
         applyMicrophoneState: _applyMicrophoneState,
+        isOperationCurrent: isOperationCurrent,
       );
       return applied ? RoomMuteOutcome.applied : RoomMuteOutcome.busy;
     } on FirebaseFunctionsException catch (error) {
+      if (!isCurrent()) return RoomMuteOutcome.busy;
       if (error.code == 'failed-precondition' || error.code == 'not-found') {
         // "This room is not currently live." / participant row gone: the
         // authority says this voice session should not exist any more.
@@ -102,6 +110,7 @@ class RoomMuteCoordinator extends ChangeNotifier {
       }
       return RoomMuteOutcome.failed;
     } catch (_) {
+      if (!isCurrent()) return RoomMuteOutcome.busy;
       if (!wasMuted && _readCurrentMuted()) {
         return RoomMuteOutcome.mutedLocally;
       }

@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/shared/widgets/buttons/yo_icon_button.dart';
+
 /// The single close affordance for YO Voice modal bottom sheets.
 ///
 /// Phones and tablets keep one attached drag cue. Pointer-first desktop
@@ -68,27 +70,17 @@ class YoModalSheetChrome extends StatelessWidget {
               ),
             Positioned(
               right: horizontalPadding,
-              child: Semantics(
-                button: true,
-                enabled: true,
-                label: closeLabel,
-                onTap: close,
-                excludeSemantics: true,
-                child: IconButton(
-                  key: const ValueKey('modal-sheet-close'),
-                  tooltip: closeLabel,
-                  onPressed: close,
-                  constraints: const BoxConstraints.tightFor(
-                    width: 44,
-                    height: 44,
-                  ),
-                  padding: EdgeInsets.zero,
-                  style: IconButton.styleFrom(
-                    foregroundColor: closeColor ?? surfaceForeground,
-                    backgroundColor: closeBackgroundColor,
-                  ),
-                  icon: const Icon(Icons.close_rounded, size: 22),
-                ),
+              child: YoIconButton(
+                key: const ValueKey('modal-sheet-close'),
+                icon: Icons.close_rounded,
+                tooltip: closeLabel,
+                semanticLabel: closeLabel,
+                onPressed: close,
+                size: 44,
+                iconSize: 22,
+                foregroundColor: closeColor ?? surfaceForeground,
+                backgroundColor: closeBackgroundColor,
+                borderColor: Colors.transparent,
               ),
             ),
           ],

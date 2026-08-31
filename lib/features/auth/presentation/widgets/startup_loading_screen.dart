@@ -2,7 +2,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
-import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/core/theme/app_immersive_colors.dart';
 import 'package:yovoice/shared/widgets/theme/yo_immersive_dark_surface.dart';
 
 @visibleForTesting
@@ -56,7 +56,7 @@ class _StartupLoadingScreenState extends State<StartupLoadingScreen>
     final compact = width < 420;
 
     final content = Scaffold(
-      backgroundColor: AppColors.background,
+      backgroundColor: AppImmersiveColors.background,
       body: Semantics(
         liveRegion: true,
         label: 'Opening YO Voice',
@@ -144,7 +144,7 @@ class _StartupLoadingScreenState extends State<StartupLoadingScreen>
                         'Create your space',
                         textAlign: TextAlign.center,
                         style: TextStyle(
-                          color: AppColors.textSecondary,
+                          color: AppImmersiveColors.textSecondary,
                           fontSize: 17,
                           fontWeight: FontWeight.w600,
                         ),
@@ -183,7 +183,7 @@ class _StartupBackdrop extends StatelessWidget {
         gradient: RadialGradient(
           center: Alignment(0, -0.2),
           radius: 0.9,
-          colors: [Color(0xFF1B0C31), AppColors.background],
+          colors: [Color(0xFF1B0C31), AppImmersiveColors.background],
           stops: [0, 0.72],
         ),
       ),

@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_theme.dart';
+import 'package:yovoice/core/theme/space_identity.dart';
 import 'package:yovoice/features/clubs/data/models/club.dart';
 import 'package:yovoice/features/clubs/data/models/club_channel.dart';
 import 'package:yovoice/features/clubs/data/services/club_service.dart';
@@ -87,7 +88,44 @@ void main() {
         final created = tester.widget<Scaffold>(
           find.byKey(const ValueKey('club-created-screen')),
         );
+        final identityVisuals = SpaceIdentity.club.resolve(brightness);
         expect(created.backgroundColor, _palette(brightness).background);
+        final createdHero = tester.widget<Container>(
+          find.byKey(const ValueKey('space-identity-created-hero')),
+        );
+        expect(
+          (createdHero.decoration! as BoxDecoration).gradient,
+          identityVisuals.heroGradient,
+        );
+        expect(
+          tester
+              .widget<Text>(
+                find.byKey(const ValueKey('space-identity-created-hero-label')),
+              )
+              .style
+              ?.color,
+          identityVisuals.heroForeground,
+        );
+        expect(
+          tester
+              .widget<Text>(
+                find.byKey(const ValueKey('space-identity-created-name')),
+              )
+              .style
+              ?.color,
+          identityVisuals.foreground,
+        );
+        final createdCta = tester.widget<FilledButton>(
+          find.byKey(const ValueKey('space-identity-created-cta')),
+        );
+        expect(
+          createdCta.style?.backgroundColor?.resolve(<WidgetState>{}),
+          identityVisuals.cta,
+        );
+        expect(
+          createdCta.style?.foregroundColor?.resolve(<WidgetState>{}),
+          identityVisuals.onCta,
+        );
         expect(tester.takeException(), isNull);
 
         final db = FakeFirebaseFirestore();
@@ -111,6 +149,37 @@ void main() {
           find.byKey(const ValueKey('create-club-screen')),
         );
         expect(create.backgroundColor, _palette(brightness).background);
+        final identityMark = tester.widget<Container>(
+          find.byKey(const ValueKey('space-identity-mark')),
+        );
+        final markDecoration = identityMark.decoration! as BoxDecoration;
+        expect(markDecoration.color, identityVisuals.surface);
+        expect(
+          (markDecoration.border! as Border).top.color,
+          identityVisuals.border,
+        );
+        expect(
+          tester
+              .widget<Icon>(
+                find.descendant(
+                  of: find.byKey(const ValueKey('space-identity-mark')),
+                  matching: find.byIcon(Icons.shield_rounded),
+                ),
+              )
+              .color,
+          identityVisuals.onSurface,
+        );
+        final createCta = tester.widget<FilledButton>(
+          find.byKey(const ValueKey('space-identity-create-cta')),
+        );
+        expect(
+          createCta.style?.backgroundColor?.resolve(<WidgetState>{}),
+          identityVisuals.cta,
+        );
+        expect(
+          createCta.style?.foregroundColor?.resolve(<WidgetState>{}),
+          identityVisuals.onCta,
+        );
         expect(tester.takeException(), isNull);
 
         await tester.pumpWidget(

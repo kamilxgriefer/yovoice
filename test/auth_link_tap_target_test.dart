@@ -12,11 +12,9 @@ import 'package:yovoice/features/auth/presentation/screens/register_screen.dart'
 import 'package:yovoice/features/auth/presentation/screens/forgot_password_screen.dart';
 import 'package:yovoice/services/firestore_service.dart';
 
-// Both LoginScreen and RegisterScreen previously shrank their
-// "Sign up" / "Log in" cross-links to a near-zero hit box (padding:
-// EdgeInsets.zero + minimumSize: Size.zero + tapTargetSize: shrinkWrap),
-// well under Apple/Material's 44/48pt minimum touch target. These tests
-// guard against that regression coming back.
+// The responsive auth shell exposes both modes through a full-width,
+// two-option rail. The compatibility RegisterScreen route still pops when
+// its Log in option is selected.
 
 // LoginScreen constructs a real AuthService(), which reaches for
 // FirebaseAuth.instance -> Firebase.app() at State-construction time.
@@ -86,7 +84,7 @@ void main() {
   });
 
   testWidgets(
-    'tapping "Sign up" at its default TextButton hit box navigates to RegisterScreen',
+    'Create account rail option switches the shared shell to Register mode',
     (tester) async {
       // LoginScreen's background has a continuously-repeating animation,
       // so pumpAndSettle() never terminates here -- use bounded pump()
@@ -97,19 +95,15 @@ void main() {
       await tester.pumpWidget(const MaterialApp(home: LoginScreen()));
       await tester.pump(const Duration(milliseconds: 500));
 
-      expect(find.text('Sign up'), findsOneWidget);
+      expect(find.text('Create account'), findsOneWidget);
       expect(find.byType(RegisterScreen), findsNothing);
 
-      // The row sits inside a SingleChildScrollView below the fold on a
-      // real device too -- ensureVisible mirrors the user scrolling down
-      // to it before tapping.
-      await tester.ensureVisible(find.text('Sign up'));
+      await tester.tap(find.text('Create account'));
       await tester.pump();
-      await tester.tap(find.text('Sign up'));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 500));
+      await tester.pump(const Duration(milliseconds: 520));
 
-      expect(find.byType(RegisterScreen), findsOneWidget);
+      expect(find.byKey(const ValueKey('auth-form-register')), findsOneWidget);
+      expect(find.byType(RegisterScreen), findsNothing);
     },
   );
 

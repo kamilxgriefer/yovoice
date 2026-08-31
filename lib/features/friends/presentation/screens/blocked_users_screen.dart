@@ -33,22 +33,32 @@ class _BlockedUsersScreenState extends State<BlockedUsersScreen> {
     try {
       await _friendService.unblockUser(user.id);
       if (mounted) {
+        final palette = context.appPalette;
         ScaffoldMessenger.of(context)
           ..hideCurrentSnackBar()
           ..showSnackBar(
             SnackBar(
-              content: Text('${user.displayName} unblocked.'),
+              content: Text(
+                '${user.displayName} unblocked.',
+                style: TextStyle(color: palette.successForeground),
+              ),
+              backgroundColor: palette.successSurface,
               behavior: SnackBarBehavior.floating,
             ),
           );
       }
     } catch (_) {
       if (mounted) {
+        final palette = context.appPalette;
         ScaffoldMessenger.of(context)
           ..hideCurrentSnackBar()
           ..showSnackBar(
-            const SnackBar(
-              content: Text('Something went wrong. Please try again.'),
+            SnackBar(
+              content: Text(
+                'Something went wrong. Please try again.',
+                style: TextStyle(color: palette.dangerForeground),
+              ),
+              backgroundColor: palette.dangerSurface,
               behavior: SnackBarBehavior.floating,
             ),
           );
@@ -61,7 +71,6 @@ class _BlockedUsersScreenState extends State<BlockedUsersScreen> {
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
-    final colors = Theme.of(context).colorScheme;
     return Scaffold(
       key: const ValueKey('blocked-users-screen'),
       backgroundColor: palette.background,
@@ -77,6 +86,7 @@ class _BlockedUsersScreenState extends State<BlockedUsersScreen> {
                   children: [
                     IconButton(
                       onPressed: () => Navigator.of(context).pop(),
+                      tooltip: 'Back',
                       icon: Icon(
                         Icons.arrow_back_ios_new_rounded,
                         color: palette.textPrimary,
@@ -107,7 +117,9 @@ class _BlockedUsersScreenState extends State<BlockedUsersScreen> {
                     if (snapshot.connectionState == ConnectionState.waiting &&
                         !snapshot.hasData) {
                       return Center(
-                        child: CircularProgressIndicator(color: colors.primary),
+                        child: CircularProgressIndicator(
+                          color: palette.interactiveForeground,
+                        ),
                       );
                     }
 
@@ -120,7 +132,7 @@ class _BlockedUsersScreenState extends State<BlockedUsersScreen> {
                             children: [
                               Icon(
                                 Icons.cloud_off_rounded,
-                                color: colors.primary,
+                                color: palette.interactiveForeground,
                                 size: 40,
                               ),
                               const SizedBox(height: 16),
@@ -158,7 +170,7 @@ class _BlockedUsersScreenState extends State<BlockedUsersScreen> {
                             children: [
                               Icon(
                                 Icons.block_rounded,
-                                color: colors.primary,
+                                color: palette.interactiveForeground,
                                 size: 40,
                               ),
                               const SizedBox(height: 16),
@@ -209,7 +221,7 @@ class _BlockedUsersScreenState extends State<BlockedUsersScreen> {
                                 children: [
                                   CircleAvatar(
                                     radius: 24,
-                                    backgroundColor: const Color(0xFF2A173C),
+                                    backgroundColor: palette.surfaceSunken,
                                     backgroundImage: hasPhoto
                                         ? NetworkImage(user.photoUrl!)
                                         : null,
@@ -217,8 +229,8 @@ class _BlockedUsersScreenState extends State<BlockedUsersScreen> {
                                         ? null
                                         : Text(
                                             user.initial,
-                                            style: const TextStyle(
-                                              color: Colors.white,
+                                            style: TextStyle(
+                                              color: palette.textPrimary,
                                               fontWeight: FontWeight.w900,
                                             ),
                                           ),
@@ -243,7 +255,9 @@ class _BlockedUsersScreenState extends State<BlockedUsersScreen> {
                                     ? null
                                     : () => _unblock(user),
                                 style: OutlinedButton.styleFrom(
-                                  foregroundColor: colors.primary,
+                                  foregroundColor:
+                                      palette.interactiveForeground,
+                                  disabledForegroundColor: palette.textTertiary,
                                   side: BorderSide(color: palette.borderStrong),
                                   minimumSize: const Size(0, 44),
                                   shape: RoundedRectangleBorder(

@@ -6210,6 +6210,28 @@ remote-end cleanup and a real sentinel-route race. Dark/Pearl stills at
 320/390/430 px and 200% text use the production YO dock; visual, accessibility
 and principal reviews all passed.
 
+**Amendment, 2026-08-30 — real-session dock continuity.** The existing
+`CompactActiveRoomBar` remains the only interactive player and the only owner
+of Chat, Mic, More and room-return actions. A real room transition uses an
+`IgnorePointer`/`ExcludeSemantics` clone of the official transparent YO mark,
+starting on the dock's centre axis below the bar, morphing into its voice orb
+and revealing the real surface. The reverse path is interruptible. Direct
+calls never render it; an active session present at mount is shown immediately
+without replay; `MediaQuery.disableAnimations` bypasses the clone and switcher.
+Because `VoiceCallService` also notifies for the 20 Hz audio meter, the player
+now compares a compact projection of room id/name, connection state,
+participant count, mic state and mute-busy state before rebuilding; the count
+uses a non-allocating service projection rather than materialising and sorting
+participant view models on every meter tick. Async Return, mute/unmute, host
+lookup, chat sheets, More sheets and destructive confirmation carry a monotonic
+room-session generation. A stale completion for room A therefore cannot open,
+unmute or disconnect a replacement room B. Pushed shell destinations suppress
+the covered shell player until the route's reverse transition completes, so
+exactly one player owns voice listeners and latest-chat subscriptions. The
+focused dock/room/mute/onboarding run is 147 passing tests and covers lifecycle,
+no-fake-data boundaries, direct-call exclusion, reduced motion, meter filtering,
+session replacement races and the legacy interaction-isolation contract.
+
 ## ADR-103: The author chooses a Moment's availability — and a missing `expiresAt` now means permanent
 
 **Context.** ADR-101 fixed every Moment's life at 24 hours and read a
@@ -7593,6 +7615,10 @@ remain explicit until the sender chooses.
 All writes to `conversations/{id}` roots are Admin-only. Text, media, typing,
 read, mute and archive mutations go through their owning callables; clients may
 read their conversations but cannot forge another participant's state.
+Typing remains best-effort UI presence: a rejected heartbeat is logged but does
+not cover the composer with an unactionable warning. If an older backend does
+not expose the typing callable, the client performs no forbidden conversation-
+root fallback and simply renders no typing indicator.
 
 ### Consequences
 
@@ -7824,24 +7850,30 @@ state during animation.
 instances. `YoFloatingNavigationDock` is a reusable presentation component
 with one five-slot configuration list. It maps selectable domain indexes to
 visual slots 0, 1 and 3, while More uses slot 4 only for the lifetime of its
-actual sheet/popover or a destination opened from it. The centre slot invokes
-the existing action callback independently and never mutates tab selection.
+actual sheet/popover. A screen pushed from More restores the underlying real
+destination. The centre slot invokes the existing action callback independently
+and never mutates tab selection.
 
 One `LayoutBuilder` divides the available dock width into five equal slots and
-centres a single 64–72 px capsule within the selected slot; the circular YO
-button is painted last. The dock is supplied through `Scaffold.bottomNavigationBar`,
-so the Scaffold reserves its calculated 86 px visual height, 12 px top
-clearance and the one device bottom inset without duplicating SafeArea padding.
-The same component hosts pushed mobile More destinations, whose callbacks pop
-before forwarding to the shell.
+measures each rendered destination. A single 52x52 capsule follows the
+parent-accepted selection and retargets from its current rendered position;
+the transparent 64/68 px YO action is painted last. The dock is supplied
+through `Scaffold.bottomNavigationBar`, so the Scaffold reserves its calculated
+104/112 px visual height, four-pixel top clearance and the one device bottom
+inset without duplicating SafeArea padding. The same component hosts pushed
+mobile More destinations, whose callbacks pop before forwarding to the shell.
+While such a destination is visible it owns the persistent room bar and live
+unread listenables; the covered `MainShell` suspends its copy through route
+completion, including the reverse animation. This preserves one real-time
+listener/subscription owner without freezing badges in the hosted chrome.
 
 Tab content remains one keyed set of lazy children. A Stack makes only the
 selected and briefly outgoing layers visible, with hidden children Offstage
 and their tickers disabled. One shell controller retargets rapid selections;
 the incoming layer moves 12 px horizontally and fades from 0.82, while page
 objects, scroll controllers and nested state remain mounted. Reduced motion
-sets transitions immediately and disables the capsule breathing and centre
-ripple.
+sets transitions immediately and disables capsule travel, icon motion and the
+centre ripple. There is no continuous idle animation.
 
 ### Consequences
 
@@ -7963,49 +7995,48 @@ Flutter owns correct chrome from the first rendered app frame.
 - The preference remains device-local and keeps the persisted enum introduced
   by ADR-072, so no migration or Firestore write is needed.
 
-## ADR-128: The central YO action is cradled by the dock's actual outline
+## ADR-128: The central YO action belongs to one continuous sculpted rise
 
-**Status**: Implemented; web Hosting deployed; native store build pending
-**Date**: 2026-08-29
+**Status**: Implemented in source; native store build pending
+**Date**: 2026-08-30
 
 ### Context
 
-The redesigned mobile navigation raised the branded YO action above a rounded
-floating bar, but the bar itself remained an uninterrupted rectangle. The
-button therefore read as a circle laid on top of navigation rather than the
-intentional recessed cradle in the approved interaction reference. Adding a
-background-coloured mask would only work in one theme and would separate the
-visible edge from hit testing, clipping and shadows.
+The intermediate redesign solved the rectangular bar by cutting a circular
+notch and filling it with a socket. The final visual references instead show a
+continuous central rise: the dock itself lifts behind a transparent YO mark.
+Keeping the circular treatment would preserve a detached FAB silhouette and
+would contradict both Dark and Pearl material references.
 
 ### Decision
 
 The shared `YoFloatingNavigationDock` owns one custom rounded `ShapeBorder`.
-Its top edge uses the Material circular-notch tangent construction around the
-64/68 px YO control with a five-pixel gap, then continues into the existing
-30 px outer corners. The same path paints the semantic Dark/Pearl surface,
-border and shadow and clips active decoration. A non-interactive semantic
-`surfaceSunken` socket with a strong boundary fills the cut-out behind the
-button, so the recess remains visible regardless of page content. The centre
-control stays a separate semantic action above that surface; product tab
-indexes and routing remain unchanged.
+Its top edge rises from two smooth Bézier shoulders to the centre apex, then
+continues into 31 px outer corners. The same responsive path paints the
+semantic Dark/Pearl fill, rim and shadow. The official transparent favicon is
+not recoloured and has no resting disc, clipped Material or socket; only
+temporary focus/ripple outlines may surround its 64/68 px hit target. The
+centre control stays a separate semantic action above the surface. A 19 px
+optical translation aligns the artwork's visible alpha (not its transparent
+canvas) to the reference while the hit target and focus geometry remain stable;
+product tab indexes and routing remain unchanged.
 
 ### Consequences
 
-- The cut-out is self-contained and cannot expose a theme-mismatched page or
-  masking colour through its five-pixel socket.
-- Fill, border, shadow and clipping cannot drift into four approximations of
-  the same silhouette.
-- Widget coverage asserts the top-centre opening, filled lower centre,
-  centring, full tappable edge, 320/768 px layouts and unchanged destination
-  semantics. Ordered focus, Enter/Space activation, visible focus chrome and
-  the 160%+ two-by-two full-label layout are pinned independently. Real-font
-  Dark and Pearl frames cover Home and Chats selection at 320/390/430 px.
+- No page-colour mask or centre fill can leak around the transparent mark.
+- Fill, gradient rim and shadow share one continuous silhouette.
+- Widget coverage asserts the centre rise, absence of a resting disc, measured
+  alpha size, full tappable edge, 320/390/430 px layouts and unchanged
+  destination semantics. Ordered focus, Enter/Space activation, visible focus
+  chrome, 200% text, accepted-parent selection, rapid retargeting and cross-YO
+  fading are pinned independently. Dark and Pearl frames cover the supported
+  mobile widths.
 - A physical native visual/haptic pass remains release evidence for the next
   coordinated tester build; no native build is created by this source change.
 
 ## ADR-129: Dark launch chrome does not globally pin Pearl's iOS runtime
 
-**Status**: Implemented in source; native tester build 12 pending
+**Status**: Implemented in source; next coordinated native tester build pending
 **Date**: 2026-08-29
 
 ### Context
@@ -8038,11 +8069,12 @@ appearance override preserves that protection without contradicting Pearl.
 - Startup stays intentionally dark for the brief preference-loading boundary.
 - Immersive rooms, calls, recording and crop routes continue to apply their
   complete local dark theme and system overlay explicitly.
-- A physical build-12 Dark/Pearl/System pass remains native release evidence.
+- A physical Dark/Pearl/System pass on the next coordinated signed tester
+  build remains required native release evidence.
 
 ## ADR-130: Canonical profile identity converges snapshots and live chat UI
 
-**Status**: Implemented in source; coordinated tester build 14 pending
+**Status**: Implemented in source; next coordinated signed tester build pending
 **Date**: 2026-08-29
 
 ### Context
@@ -8074,6 +8106,15 @@ fan-out or repair may republish identity. A project-pinned bounded script
 reports aggregate counts, defaults to dry-run and repairs existing snapshots
 only after explicit `--apply`.
 
+The conversation fan-out replaces both complete two-participant identity maps
+instead of updating one nested leaf. It proceeds only when the peer's existing
+name and photo value satisfy the canonical bounds, preserves those values, and
+skips the document otherwise. Exact key-set comparison makes a historical
+`FieldPath`-stringification key visible to both dry-run and apply; replacing the
+maps removes that extra key atomically. Concurrent profile updates remain safe
+because each transaction re-reads the conversation and retries before
+rebuilding the peer side.
+
 ### Consequences
 
 - Old and duplicate events cannot restore an obsolete avatar or display name.
@@ -8085,6 +8126,8 @@ only after explicit `--apply`.
   processed in retryable chunks and the repair run is capped and resumable.
 - Each conversation transaction revalidates exact two-party membership, so a
   stale discovery result cannot inject identity after a delete/recreate race.
+- Extra or missing identity-map keys no longer survive a profile repair, while
+  malformed peer identity still fails closed instead of being guessed.
 - Repair failures emit no document paths or account identifiers to the CLI.
 - Build 14 and a two-account Chats/Home smoke test remain native release
   evidence; automated coverage is not represented as physical-device proof.
@@ -8203,3 +8246,144 @@ Reduced motion removes route and progress animation.
   frames cover phone, accessible phone and desktop.
 - Physical VoiceOver/TalkBack behavior remains a native tester smoke item even
   though widget semantics probes pass.
+
+## ADR-133: Dark and Pearl separate navigation, interaction, focus and status semantics
+
+**Status**: Implemented and source/visual-QA verified; coordinated tester release pending
+**Date**: 2026-08-30
+
+### Context
+
+ADR-127 introduced the Dark/Pearl boundary, but several roles were still too
+broad. Navigation outlines borrowed focus purple, small interactive copy used
+a brand swatch that did not remain readable in Pearl, status surfaces lacked
+paired foregrounds and focused filled controls drew a purple ring on a purple
+button. Public report sheets and parts of Home still carried legacy dark
+literals. The screenshot harness also treated "no overflow exception" as
+success while 320 px at 200% visibly truncated the display name, Moment labels
+and section actions.
+
+### Decision
+
+`AppPalette` is the single brightness-dependent contract for normal routes.
+It explicitly owns `navigationOutline`, `interactiveForeground`, strong and
+quiet boundaries, three copy levels, the surface elevation ladder and paired
+danger/success/warning/info containers. Persistent navigation chrome never
+borrows the focus role. Neutral controls use `focus`; primary and destructive
+filled controls use their contrasting Material `onPrimary` or `onError` as the
+two-pixel focus boundary against the actual fill.
+
+`AppColors` retains only brightness-stable brand, voice, status source and
+identity colours. `AppImmersiveColors` names the complete legacy-dark atom and
+may only be imported by documented voice/media, recording, call, crop,
+branded-auth/startup and staff/creator workspaces. A public dialog, sheet or
+snackbar inherits the active palette even when launched from a dark route. A
+source guard derives all 26 roles in both Dark and Pearl directly from
+`AppPalette`, rejects every exact raw token copy, every dark-only immersive
+container/border copy and immersive imports across normal presentation roots,
+and accepts only one line-local `uploaded-media` exception. Complete immersive
+atoms live in an explicit path allowlist; file-wide or free-form annotations
+on a normal route fail the guard.
+
+Normal Home and shared/social/Profile/Moments/Settings/Notifications/Premium/
+onboarding/reporting surfaces migrate atomically. The public Home failure state
+uses a paired danger surface, distinct icon/copy and a real Retry action rather
+than looking like an empty state. At enlarged text, the mobile identity header
+gives the display name its own reflow row, section actions move below their
+heading, Moment tiles expand in the horizontal rail and the sculpted dock
+reserves a non-overlapping centre zone for YO. No text scale is reduced to make
+the old geometry fit. Primary gradient actions leave their decoration fill
+unset rather than painting transparent over the shader; a raster-level check
+and visual evidence protect the resulting foreground contrast.
+
+Profile people-status rings and Creator/Official/Friends facts use paired
+semantic foreground, surface and boundary roles, so their previously bright
+Dark-only ink remains readable in Pearl. Club and Family swatches remain
+stable identity seeds for immersive rooms; normal create/success journeys
+resolve accessible tonal roles from the active brightness rather than placing
+the raw gold or emerald swatch on Pearl. Discover category branding follows
+the same boundary: stable category seeds still identify Talk, Chill,
+Broadcast, Music, Gaming, Business, Study and Tech, while feature-local
+brightness-aware surface/on-surface, foreground, border and action pairs carry
+all functional UI. They are derived visuals rather than additions to the
+global palette; ordinary card chrome continues to use `AppPalette`.
+
+### Consequences
+
+- Essential text and paired statuses meet 4.5:1; persistent boundaries and
+  focus indicators meet 3:1 against the surface they actually touch.
+- Shared controls explicitly cover enabled, disabled, hover, press, focus,
+  loading and selected behavior without making disabled UI look actionable.
+- Real-font Dark/Pearl evidence covers 320 px at 200% text and 390, 430, 768
+  and 1440 px, including populated, empty, error, focus, loading, disabled,
+  dialog, standalone snackbar and sheet states. Component and production-route
+  captures include Dark and Pearl reporting, and use a deterministic emoji
+  fallback so a missing harness glyph cannot masquerade as a product defect.
+  They are inspected manually rather than accepted solely because the test ran.
+- Dark islands remain deliberate complete atoms. Adding one requires an
+  explicit classification; copying its literals into a Pearl-capable route is
+  a regression.
+- Physical iOS/Android dynamic-type, VoiceOver/TalkBack and system-chrome
+  checks remain evidence for the next coordinated tester build. This decision
+  does not authorize a one-off web or store release.
+
+## ADR-134: Password registration owns initial identity; profile bootstrap never guesses across that boundary
+
+**Status**: Implemented and adversarially source-verified; tester release pending
+**Date**: 2026-08-31
+
+### Context
+
+`createUserWithEmailAndPassword` publishes a signed-in Firebase principal
+before registration can update the Auth display name and create the private
+profile. AuthGate reacts immediately and starts its idempotent profile
+bootstrap. If that fallback observes no Auth display name, its otherwise useful
+social/legacy resolver chooses the email local-part. The first non-empty
+Firestore display name is intentionally protected by Rules, so the later
+registration write cannot replace that guessed value. A process-local loading
+flag reduces the same-tab window but cannot protect a second tab or restored
+web context watching the same Auth account.
+
+### Decision
+
+`AuthService.register` and `FirestoreService.createUserProfile` remain the
+owners of the pseudonym selected during password registration. The production
+responsive registration surface reports its in-flight state to AuthGate, which
+withholds authenticated profile bootstrap until that operation settles even
+if the form widget is disposed after the Auth emission.
+
+ProfileService also enforces an independent, cross-context boundary. When the
+initial principal is a non-anonymous, unverified password account with no
+usable Auth display name and the profile has no identity, it must not call the
+email fallback. It reloads the captured Auth user, verifies that the current
+uid is unchanged and reads `users/{uid}` again. A completed profile wins. A
+newly visible Auth display name may seed the same chosen identity. If neither
+exists, bootstrap throws `ProfileProvisioningPendingException` without writing
+`displayName` or `username`; AuthGate's bounded retry/error surface handles the
+temporary state. The initial classification is retained even if reload sees
+email verification, so a fast verification cannot reopen the fallback race.
+
+Federated and established legacy accounts keep the existing bounded resolver.
+Firestore Rules are not widened, and `createUserProfile` still only fills an
+empty identity rather than overwriting an established name.
+
+### Reasoning
+
+The selected pseudonym is user intent; an email-derived guess is not. Waiting
+or showing a retryable setup state is therefore safer than committing the
+wrong canonical identity. The reload and second document read close both
+possible success paths without relying on shared memory: the registration
+owner may have completed Firestore, or it may have completed Auth first. Any
+cross-account change fails closed before a write.
+
+### Consequences
+
+- New password registration cannot poison canonical identity with an email
+  local-part, including from another browser tab.
+- A very slow or interrupted registration may briefly show the explicit
+  profile-finishing retry surface instead of entering Home with guessed data.
+- Same-tab UX remains smooth through the shared loading interlock; correctness
+  does not depend on that interlock.
+- Deterministic tests cover no-write pending, Firestore completion during
+  reload, Auth-name completion during reload and loading release after the
+  registration form has been disposed.

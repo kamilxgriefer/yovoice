@@ -34,14 +34,10 @@ import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
 
 Color _successForeground(BuildContext context) =>
-    Theme.of(context).brightness == Brightness.dark
-    ? const Color(0xFF3FDA8E)
-    : const Color(0xFF087A44);
+    context.appPalette.successForeground;
 
 Color _warningForeground(BuildContext context) =>
-    Theme.of(context).brightness == Brightness.dark
-    ? const Color(0xFFFFB547)
-    : const Color(0xFF8A4B00);
+    context.appPalette.warningForeground;
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({
@@ -1046,6 +1042,7 @@ class _ProfileHeroCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     final avatar = profile.photoUrl?.trim();
     return Material(
       color: palette.surface,
@@ -1063,15 +1060,15 @@ class _ProfileHeroCard extends StatelessWidget {
             children: [
               Container(
                 padding: const EdgeInsets.all(3),
-                decoration: const BoxDecoration(
+                decoration: BoxDecoration(
                   shape: BoxShape.circle,
                   gradient: LinearGradient(
-                    colors: [Color(0xFF6A00FF), Color(0xFFD12CFF)],
+                    colors: [colors.primary, colors.secondary],
                   ),
                 ),
                 child: CircleAvatar(
                   radius: 30,
-                  backgroundColor: const Color(0xFF281133),
+                  backgroundColor: colors.primary,
                   backgroundImage: avatar?.isNotEmpty == true
                       ? NetworkImage(avatar!)
                       : null,
@@ -1081,8 +1078,8 @@ class _ProfileHeroCard extends StatelessWidget {
                           profile.displayName.isEmpty
                               ? '?'
                               : profile.displayName[0].toUpperCase(),
-                          style: const TextStyle(
-                            color: Colors.white,
+                          style: TextStyle(
+                            color: colors.onPrimary,
                             fontSize: 24,
                             fontWeight: FontWeight.w900,
                           ),
@@ -1253,20 +1250,27 @@ class _VerifiedChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = verified
+    final palette = context.appPalette;
+    final foreground = verified
         ? _successForeground(context)
         : _warningForeground(context);
+    final surface = verified ? palette.successSurface : palette.warningSurface;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
       decoration: BoxDecoration(
-        color: color.withValues(alpha: .14),
+        color: surface,
         borderRadius: BorderRadius.circular(99),
-        border: Border.all(color: color.withValues(alpha: .3)),
+        border: Border.all(
+          color: Color.alphaBlend(
+            foreground.withValues(alpha: .38),
+            palette.border,
+          ),
+        ),
       ),
       child: Text(
         verified ? 'VERIFIED' : 'UNVERIFIED',
         style: TextStyle(
-          color: color,
+          color: foreground,
           fontSize: 9.5,
           fontWeight: FontWeight.w900,
           letterSpacing: .4,

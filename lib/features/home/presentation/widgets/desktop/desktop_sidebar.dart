@@ -119,21 +119,11 @@ class DesktopSidebar extends StatelessWidget {
   /// Below this measured rail height the creation actions share one row.
   static const double compactCreateActionsBelow = 700;
 
-  /// The rail's bright violet accent tint (established in this file long
-  /// before this redesign) — readable on the dark surface where the
-  /// saturated brand primary would sink.
-  static const Color _accentTint = Color(0xFFD3A5FF);
-
-  /// Brand primary is sufficiently strong on the light surface, while the
-  /// established pale violet is the accessible interactive foreground on
-  /// the dark rail. Keeping this decision here prevents header and creation
-  /// actions from drifting to different contrast behaviour.
-  static Color _interactiveAccent(BuildContext context) {
-    final theme = Theme.of(context);
-    return theme.brightness == Brightness.dark
-        ? _accentTint
-        : theme.colorScheme.primary;
-  }
+  /// Text/icon actions use a brightness-aware foreground rather than the
+  /// button-fill brand swatch, whose Dark-theme contrast is intentionally
+  /// tuned for white content instead of small copy on dark surfaces.
+  static Color _interactiveAccent(BuildContext context) =>
+      context.appPalette.interactiveForeground;
 
   Widget _tourItemAnchor(DesktopNavItem item, Widget child) {
     final key = tourItemKeys?[item];
@@ -176,7 +166,7 @@ class DesktopSidebar extends StatelessWidget {
           padding: const EdgeInsets.fromLTRB(14, 16, 14, 14),
           decoration: BoxDecoration(
             color: palette.navigationSurface,
-            border: Border(right: BorderSide(color: palette.border)),
+            border: Border(right: BorderSide(color: palette.navigationOutline)),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -543,7 +533,17 @@ class _NavTile extends StatefulWidget {
 }
 
 class _NavTileState extends State<_NavTile> {
+  late final FocusNode _focusNode = FocusNode(
+    debugLabel: 'Desktop ${widget.item.name}',
+  );
   bool _hovered = false;
+  bool _focused = false;
+
+  @override
+  void dispose() {
+    _focusNode.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -563,10 +563,13 @@ class _NavTileState extends State<_NavTile> {
           // destination is current.
           selected: active,
           child: InkWell(
+            focusNode: _focusNode,
             borderRadius: BorderRadius.circular(10),
             onHover: (value) => setState(() => _hovered = value),
+            onFocusChange: (value) => setState(() => _focused = value),
             onTap: () => widget.onTap(widget.item),
             child: AnimatedContainer(
+              key: ValueKey('desktop-nav-focus-${widget.item.name}'),
               duration: const Duration(milliseconds: 140),
               // 44, the project's own minimum for interactive targets
               // (docs/UI.md) — the rail rows sat at 40.
@@ -579,6 +582,10 @@ class _NavTileState extends State<_NavTile> {
                     : _hovered
                     ? palette.surfaceMuted
                     : Colors.transparent,
+                border: Border.all(
+                  color: _focused ? palette.focus : Colors.transparent,
+                  width: 2,
+                ),
               ),
               child: Row(
                 children: [
@@ -668,10 +675,26 @@ class _Badge extends StatelessWidget {
 
 /// THE primary CTA of the rail: full-width, YO purple gradient, visibly
 /// heavier than everything else in the Create section.
-class _CreateRoomButton extends StatelessWidget {
+class _CreateRoomButton extends StatefulWidget {
   const _CreateRoomButton({required this.onTap});
 
   final VoidCallback onTap;
+
+  @override
+  State<_CreateRoomButton> createState() => _CreateRoomButtonState();
+}
+
+class _CreateRoomButtonState extends State<_CreateRoomButton> {
+  late final FocusNode _focusNode = FocusNode(
+    debugLabel: 'Desktop create room',
+  );
+  bool _focused = false;
+
+  @override
+  void dispose() {
+    _focusNode.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -680,9 +703,14 @@ class _CreateRoomButton extends StatelessWidget {
       width: double.infinity,
       height: 46,
       child: DecoratedBox(
+        key: const ValueKey('desktop-create-room-focus'),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(14),
           gradient: LinearGradient(colors: [colors.primary, colors.secondary]),
+          border: Border.all(
+            color: _focused ? colors.onPrimary : Colors.transparent,
+            width: 2,
+          ),
           boxShadow: [
             BoxShadow(
               color: AppColors.primary.withValues(alpha: .32),
@@ -694,8 +722,10 @@ class _CreateRoomButton extends StatelessWidget {
         child: Material(
           color: Colors.transparent,
           child: InkWell(
+            focusNode: _focusNode,
             borderRadius: BorderRadius.circular(14),
-            onTap: onTap,
+            onFocusChange: (value) => setState(() => _focused = value),
+            onTap: widget.onTap,
             child: Center(
               child: Row(
                 mainAxisSize: MainAxisSize.min,
@@ -743,7 +773,17 @@ class _CreateMomentButton extends StatefulWidget {
 }
 
 class _CreateMomentButtonState extends State<_CreateMomentButton> {
+  late final FocusNode _focusNode = FocusNode(
+    debugLabel: 'Desktop create Voice Moment',
+  );
   bool _hovered = false;
+  bool _focused = false;
+
+  @override
+  void dispose() {
+    _focusNode.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -757,17 +797,27 @@ class _CreateMomentButtonState extends State<_CreateMomentButton> {
       color: Colors.transparent,
       borderRadius: BorderRadius.circular(12),
       child: InkWell(
+        focusNode: _focusNode,
         borderRadius: BorderRadius.circular(12),
         onHover: (value) => setState(() => _hovered = value),
+        onFocusChange: (value) => setState(() => _focused = value),
         onTap: widget.onTap,
         child: AnimatedContainer(
+          key: const ValueKey('desktop-create-moment-focus'),
           duration: const Duration(milliseconds: 140),
           width: widget.compact ? 46 : double.infinity,
           height: 46,
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(12),
             color: _hovered ? colors.primaryContainer : palette.surfaceRaised,
-            border: Border.all(color: _hovered ? accent : palette.borderStrong),
+            border: Border.all(
+              color: _focused
+                  ? palette.focus
+                  : _hovered
+                  ? accent
+                  : palette.borderStrong,
+              width: _focused ? 2 : 1,
+            ),
           ),
           padding: const EdgeInsets.symmetric(horizontal: 10),
           child: Center(

@@ -57,7 +57,13 @@ void main() {
           '${entry.$1} tertiary copy',
           palette.textTertiary,
           palette.surface,
-          3,
+          4.5,
+        );
+        _expectContrast(
+          '${entry.$1} tertiary copy on sunken surfaces',
+          palette.textTertiary,
+          palette.surfaceSunken,
+          4.5,
         );
         _expectContrast(
           '${entry.$1} inactive navigation',
@@ -71,6 +77,69 @@ void main() {
           palette.surface,
           3,
         );
+        _expectContrast(
+          '${entry.$1} navigation outline',
+          palette.navigationOutline,
+          palette.navigationSurface,
+          3,
+        );
+        _expectContrast(
+          '${entry.$1} interactive copy',
+          palette.interactiveForeground,
+          palette.surface,
+          4.5,
+        );
+        _expectContrast(
+          '${entry.$1} focus ring',
+          palette.focus,
+          palette.surfaceRaised,
+          3,
+        );
+        _expectContrast(
+          '${entry.$1} primary-button focus boundary',
+          scheme.onPrimary,
+          scheme.primary,
+          3,
+        );
+        _expectContrast(
+          '${entry.$1} gradient-button focus boundary',
+          scheme.onPrimary,
+          scheme.secondary,
+          3,
+        );
+        _expectContrast(
+          '${entry.$1} danger-button focus boundary',
+          scheme.onError,
+          scheme.error,
+          3,
+        );
+        for (final status in <(String, Color, Color)>[
+          ('danger', palette.dangerForeground, palette.dangerSurface),
+          ('success', palette.successForeground, palette.successSurface),
+          ('warning', palette.warningForeground, palette.warningSurface),
+          ('info', palette.infoForeground, palette.infoSurface),
+        ]) {
+          _expectContrast(
+            '${entry.$1} ${status.$1} container',
+            status.$2,
+            status.$3,
+            4.5,
+          );
+        }
+        expect(
+          palette.navigationOutline,
+          isNot(palette.focus),
+          reason: 'Navigation chrome must not borrow the focus token.',
+        );
+
+        expect(scheme.surfaceContainerLowest, palette.surfaceSunken);
+        expect(scheme.surfaceContainerLow, palette.surfaceMuted);
+        expect(scheme.surfaceContainer, palette.surface);
+        expect(scheme.surfaceContainerHigh, palette.surfaceRaised);
+        expect(scheme.surfaceContainerHighest, palette.surfaceRaised);
+        expect(scheme.surfaceBright, palette.surfaceRaised);
+        expect(scheme.surfaceDim, palette.surfaceSunken);
+        expect(scheme.surfaceTint, Colors.transparent);
       });
     }
 
@@ -90,7 +159,106 @@ void main() {
       expect(light.systemNavigationBarIconBrightness, Brightness.dark);
       expect(light.statusBarColor, Colors.transparent);
       expect(light.systemNavigationBarColor, AppPalette.light.background);
+      expect(
+        dark.systemNavigationBarDividerColor,
+        AppPalette.dark.navigationOutline,
+      );
+      expect(
+        light.systemNavigationBarDividerColor,
+        AppPalette.light.navigationOutline,
+      );
     });
+
+    test('copyWith and lerp preserve every refined semantic role', () {
+      const marker = Color(0xFF123456);
+      final copy = AppPalette.dark.copyWith(
+        navigationOutline: marker,
+        interactiveForeground: marker,
+        dangerSurface: marker,
+        dangerForeground: marker,
+        successSurface: marker,
+        successForeground: marker,
+        warningSurface: marker,
+        warningForeground: marker,
+        infoSurface: marker,
+        infoForeground: marker,
+      );
+
+      for (final value in <Color>[
+        copy.navigationOutline,
+        copy.interactiveForeground,
+        copy.dangerSurface,
+        copy.dangerForeground,
+        copy.successSurface,
+        copy.successForeground,
+        copy.warningSurface,
+        copy.warningForeground,
+        copy.infoSurface,
+        copy.infoForeground,
+      ]) {
+        expect(value, marker);
+      }
+
+      expect(
+        _paletteValues(AppPalette.dark.lerp(AppPalette.light, 0)),
+        _paletteValues(AppPalette.dark),
+      );
+      expect(
+        _paletteValues(AppPalette.dark.lerp(AppPalette.light, 1)),
+        _paletteValues(AppPalette.light),
+      );
+    });
+
+    for (final entry in <(String, ThemeData, AppPalette)>[
+      ('dark', AppTheme.darkTheme, AppPalette.dark),
+      ('Pearl light', AppTheme.lightTheme, AppPalette.light),
+    ]) {
+      test('${entry.$1} component states stay semantic', () {
+        final theme = entry.$2;
+        final palette = entry.$3;
+        final disabled = <WidgetState>{WidgetState.disabled};
+        final focused = <WidgetState>{WidgetState.focused};
+        final selected = <WidgetState>{WidgetState.selected};
+
+        expect(
+          theme.filledButtonTheme.style?.backgroundColor?.resolve(disabled),
+          palette.surfaceSunken,
+        );
+        expect(
+          theme.filledButtonTheme.style?.foregroundColor?.resolve(disabled),
+          palette.textTertiary,
+        );
+        expect(
+          theme.filledButtonTheme.style?.side?.resolve(focused)?.color,
+          theme.colorScheme.onPrimary,
+        );
+        expect(
+          theme.outlinedButtonTheme.style?.foregroundColor?.resolve({}),
+          palette.interactiveForeground,
+        );
+        expect(
+          theme.outlinedButtonTheme.style?.side?.resolve(focused)?.color,
+          palette.focus,
+        );
+        expect(
+          theme.textButtonTheme.style?.foregroundColor?.resolve({}),
+          palette.interactiveForeground,
+        );
+        expect(
+          theme.inputDecorationTheme.focusedBorder?.borderSide.color,
+          palette.focus,
+        );
+        expect(
+          theme.switchTheme.trackColor?.resolve(disabled),
+          palette.surfaceSunken,
+        );
+        expect(
+          theme.switchTheme.trackColor?.resolve(selected),
+          theme.colorScheme.primary,
+        );
+        expect(theme.tabBarTheme.labelColor, palette.interactiveForeground);
+      });
+    }
   });
 
   group('shared component theme matrix', () {
@@ -130,6 +298,13 @@ void main() {
               palette.background,
             );
             expect(find.text('Primary action'), findsOneWidget);
+            await tester.scrollUntilVisible(
+              find.text('A quiet empty state'),
+              240,
+              scrollable: find.byType(Scrollable).first,
+            );
+            await tester.pump();
+            expect(tester.takeException(), isNull);
             expect(find.text('A quiet empty state'), findsOneWidget);
           },
         );
@@ -211,6 +386,35 @@ class _ComponentGallery extends StatelessWidget {
 }
 
 void _noop() {}
+
+List<Color> _paletteValues(AppPalette palette) => <Color>[
+  palette.background,
+  palette.backgroundTop,
+  palette.surface,
+  palette.surfaceMuted,
+  palette.surfaceRaised,
+  palette.surfaceSunken,
+  palette.border,
+  palette.borderStrong,
+  palette.textPrimary,
+  palette.textSecondary,
+  palette.textTertiary,
+  palette.navigationSurface,
+  palette.navigationOutline,
+  palette.navigationInactive,
+  palette.interactiveForeground,
+  palette.shadow,
+  palette.scrim,
+  palette.focus,
+  palette.dangerSurface,
+  palette.dangerForeground,
+  palette.successSurface,
+  palette.successForeground,
+  palette.warningSurface,
+  palette.warningForeground,
+  palette.infoSurface,
+  palette.infoForeground,
+];
 
 void _expectContrast(
   String reason,

@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/core/theme/app_immersive_colors.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/calls/data/services/voice_call_service.dart';
 import 'package:yovoice/features/rooms/data/models/room_message.dart';
@@ -73,8 +74,16 @@ class _ActiveRoomMiniPlayerState extends State<ActiveRoomMiniPlayer> {
 
   final LayerLink _dockLink = LayerLink();
   OverlayEntry? _desktopChatOverlay;
+  final FocusNode _desktopExpandFocusNode = FocusNode(
+    debugLabel: 'desktop room chat expand',
+  );
+  late final FocusScopeNode _desktopChatFocusScope;
+
+  late _RoomBarProjection _projection;
+  late bool _coordinatorBusy;
 
   String? _watchedRoomId;
+  int _sessionGeneration = 0;
   StreamSubscription<RoomMessage?>? _latestSub;
   RoomMessage? _latest;
   bool _sawFirstLatestSnapshot = false;
@@ -88,6 +97,8 @@ class _ActiveRoomMiniPlayerState extends State<ActiveRoomMiniPlayer> {
   /// exist.
   int _newCount = 0;
   bool _isHost = false;
+  _RoomAuthorityStatus _roomAuthority = _RoomAuthorityStatus.checking;
+  int _authorityAttempt = 0;
 
   /// True only when the destructive action will genuinely END the session
   /// right now: RoomService.leaveRoom routes ONLY a temporary room's host
@@ -104,53 +115,120 @@ class _ActiveRoomMiniPlayerState extends State<ActiveRoomMiniPlayer> {
   @override
   void initState() {
     super.initState();
-    _voice.addListener(_handleSessionChanged);
-    _handleSessionChanged();
+    _desktopChatFocusScope = FocusScopeNode(
+      debugLabel: 'desktop room chat modal scope',
+      traversalEdgeBehavior: TraversalEdgeBehavior.closedLoop,
+      directionalTraversalEdgeBehavior: TraversalEdgeBehavior.stop,
+      onKeyEvent: _handleDesktopChatKeyEvent,
+    );
+    _projection = _readProjection();
+    _coordinatorBusy = _mutes.isBusy;
+    _voice.addListener(_handleVoiceChanged);
+    _mutes.addListener(_handleCoordinatorChanged);
+    _syncRoomSession(_projection.roomId);
   }
 
   @override
   void didUpdateWidget(ActiveRoomMiniPlayer oldWidget) {
     super.didUpdateWidget(oldWidget);
+    final roomServiceChanged = oldWidget.roomService != widget.roomService;
     if (oldWidget.voiceService != widget.voiceService) {
       (oldWidget.voiceService ?? VoiceCallService.instance).removeListener(
-        _handleSessionChanged,
+        _handleVoiceChanged,
       );
-      _voice.addListener(_handleSessionChanged);
-      _handleSessionChanged();
+      _voice.addListener(_handleVoiceChanged);
+      _projection = _readProjection();
+      if (roomServiceChanged) _watchedRoomId = null;
+      _syncRoomSession(_projection.roomId);
+    } else if (roomServiceChanged) {
+      // Test seams and scoped service overrides must not leave the preview
+      // subscribed to the previous repository when the room id itself stays
+      // unchanged.
+      _watchedRoomId = null;
+      _syncRoomSession(_projection.roomId);
+    }
+    if (oldWidget.muteCoordinator != widget.muteCoordinator) {
+      (oldWidget.muteCoordinator ?? RoomMuteCoordinator.production)
+          .removeListener(_handleCoordinatorChanged);
+      _mutes.addListener(_handleCoordinatorChanged);
+      _coordinatorBusy = _mutes.isBusy;
     }
   }
 
   @override
   void dispose() {
-    _voice.removeListener(_handleSessionChanged);
+    _voice.removeListener(_handleVoiceChanged);
+    _mutes.removeListener(_handleCoordinatorChanged);
     unawaited(_latestSub?.cancel());
+    _dismissChatAuxiliaryRouteIfOpen();
     _removeDesktopChatOverlay();
+    _dismissMobileSheetIfOpen();
+    _dismissMobileActionsIfOpen();
     _dismissEndConfirmationIfOpen();
+    _desktopChatFocusScope.dispose();
+    _desktopExpandFocusNode.dispose();
     super.dispose();
   }
 
-  /// The session this player is a view over, or null when there is none.
-  String? get _activeRoomId {
-    if (!_voice.isRoomSession) return null;
-    final roomId = _voice.roomId;
-    if (roomId == null) return null;
-    switch (_voice.status) {
-      case VoiceCallStatus.connected:
-      case VoiceCallStatus.connecting:
-      case VoiceCallStatus.reconnecting:
-        return roomId;
-      case VoiceCallStatus.disconnected:
-      case VoiceCallStatus.failed:
-        return null;
+  KeyEventResult _handleDesktopChatKeyEvent(FocusNode node, KeyEvent event) {
+    if (event is KeyDownEvent &&
+        event.logicalKey == LogicalKeyboardKey.escape) {
+      _collapseExpandedChat();
+      return KeyEventResult.handled;
     }
+    return KeyEventResult.ignored;
+  }
+
+  /// Captures only fields that can change this surface. VoiceCallService also
+  /// notifies for its ~20 Hz audio meter; those samples intentionally do not
+  /// rebuild the entire mini player.
+  _RoomBarProjection _readProjection() {
+    String? roomId;
+    if (_voice.isRoomSession) roomId = _voice.roomId;
+    if (roomId != null) {
+      switch (_voice.status) {
+        case VoiceCallStatus.connected:
+        case VoiceCallStatus.connecting:
+        case VoiceCallStatus.reconnecting:
+          break;
+        case VoiceCallStatus.disconnected:
+        case VoiceCallStatus.failed:
+          roomId = null;
+      }
+    }
+
+    return _RoomBarProjection(
+      roomId: roomId,
+      roomName: _voice.roomName ?? 'Live room',
+      status: _voice.status,
+      participantCount: _voice.participantCount,
+      micState: _voice.micState,
+      voiceMuteBusy: _voice.muteChangeInProgress,
+    );
+  }
+
+  void _handleVoiceChanged() {
+    final next = _readProjection();
+    final changed = next != _projection;
+    _projection = next;
+    _syncRoomSession(next.roomId);
+    if (changed && mounted) setState(() {});
+  }
+
+  void _handleCoordinatorChanged() {
+    final next = _mutes.isBusy;
+    if (next == _coordinatorBusy) return;
+    _coordinatorBusy = next;
+    if (mounted) setState(() {});
   }
 
   /// Re-targets the preview stream and per-room state when the session's
   /// room changes (including ending: a room that ends remotely drops the
-  /// subscription and the player disappears via the ListenableBuilder).
-  void _handleSessionChanged() {
-    final roomId = _activeRoomId;
+  /// subscription and the player reverses out through the continuity shell).
+  void _syncRoomSession(String? roomId) {
     if (roomId == _watchedRoomId) return;
+    _sessionGeneration++;
+    _authorityAttempt++;
     _watchedRoomId = roomId;
     unawaited(_latestSub?.cancel());
     _latestSub = null;
@@ -159,6 +237,9 @@ class _ActiveRoomMiniPlayerState extends State<ActiveRoomMiniPlayer> {
     _newCount = 0;
     _isHost = false;
     _hostEndsNow = false;
+    _roomAuthority = _RoomAuthorityStatus.checking;
+    _navigatingIntoRoom = false;
+    _dismissChatAuxiliaryRouteIfOpen();
     _removeDesktopChatOverlay();
     _dismissMobileSheetIfOpen();
     _dismissMobileActionsIfOpen();
@@ -168,24 +249,44 @@ class _ActiveRoomMiniPlayerState extends State<ActiveRoomMiniPlayer> {
     // (The mobile sheet also clears the latch itself when it pops.)
     _expandedOpen = false;
     if (roomId == null) return;
-    _latestSub = _rooms
-        .watchLatestRoomMessage(roomId)
-        .listen(_handleLatestMessage, onError: (Object _) {});
-    unawaited(_resolveHost(roomId));
+    final generation = _sessionGeneration;
+    _latestSub = _rooms.watchLatestRoomMessage(roomId).listen((message) {
+      if (_isCurrentSession(roomId, generation)) {
+        _handleLatestMessage(message);
+      }
+    }, onError: (Object _) {});
+    unawaited(_resolveHost(roomId, generation));
   }
 
-  Future<void> _resolveHost(String roomId) async {
+  bool _isCurrentSession(String roomId, int generation) {
+    return mounted &&
+        generation == _sessionGeneration &&
+        _watchedRoomId == roomId &&
+        _voice.isRoomSession &&
+        _voice.roomId == roomId;
+  }
+
+  Future<bool> _resolveHost(String roomId, int generation) async {
+    final attempt = ++_authorityAttempt;
     try {
       final room = await _rooms.getRoom(roomId);
-      if (!mounted || _watchedRoomId != roomId) return;
+      if (!_isCurrentSession(roomId, generation) ||
+          attempt != _authorityAttempt) {
+        return false;
+      }
       final uid = _rooms.currentUserId;
       setState(() {
         _isHost = uid.isNotEmpty && room.hostId == uid;
         _hostEndsNow = _isHost && room.roomType == RoomType.temporary;
+        _roomAuthority = _RoomAuthorityStatus.resolved;
       });
+      return true;
     } catch (_) {
-      // Unknown host (offline, room doc gone): stay in the participant
-      // shape — Leave keeps working and never overclaims "End room".
+      if (_isCurrentSession(roomId, generation) &&
+          attempt == _authorityAttempt) {
+        setState(() => _roomAuthority = _RoomAuthorityStatus.unavailable);
+      }
+      return false;
     }
   }
 
@@ -226,6 +327,7 @@ class _ActiveRoomMiniPlayerState extends State<ActiveRoomMiniPlayer> {
   Future<void> _returnToRoom() async {
     final roomId = _watchedRoomId;
     if (roomId == null || _navigatingIntoRoom) return;
+    final generation = _sessionGeneration;
     _collapseExpandedChat();
     setState(() {
       _newCount = 0;
@@ -238,7 +340,7 @@ class _ActiveRoomMiniPlayerState extends State<ActiveRoomMiniPlayer> {
       } else {
         try {
           final room = await _rooms.getRoom(roomId);
-          if (!mounted) return;
+          if (!mounted || !_isCurrentSession(roomId, generation)) return;
           await Navigator.of(context).push<void>(
             MaterialPageRoute<void>(
               builder: (_) => RoomEntryScreen(room: room),
@@ -246,20 +348,24 @@ class _ActiveRoomMiniPlayerState extends State<ActiveRoomMiniPlayer> {
           );
         } catch (_) {
           // Room doc gone (ended while minimized): drop the stale session.
-          await _voice.disconnect();
+          if (_isCurrentSession(roomId, generation)) {
+            await _voice.disconnect();
+          }
         }
       }
     } finally {
-      _navigatingIntoRoom = false;
-      if (mounted) {
+      if (_isCurrentSession(roomId, generation)) {
         // Back from the room: whatever arrived meanwhile was on screen in
         // the room itself, so the session-local count restarts at zero.
-        setState(() => _newCount = 0);
+        setState(() {
+          _navigatingIntoRoom = false;
+          _newCount = 0;
+        });
       }
     }
   }
 
-  bool get _muteBusy => _voice.muteChangeInProgress || _mutes.isBusy;
+  bool get _muteBusy => _projection.voiceMuteBusy || _coordinatorBusy;
 
   /// Mute goes through the ONE coordinator the room screens use — roster
   /// with privacy-first local mute and authority-first unmute (ADR-094:
@@ -267,8 +373,12 @@ class _ActiveRoomMiniPlayerState extends State<ActiveRoomMiniPlayer> {
   Future<void> _toggleMute() async {
     final roomId = _watchedRoomId;
     if (roomId == null || _muteBusy) return;
-    final outcome = await _mutes.toggle(roomId: roomId);
-    if (!mounted) return;
+    final generation = _sessionGeneration;
+    final outcome = await _mutes.toggle(
+      roomId: roomId,
+      isOperationCurrent: () => _isCurrentSession(roomId, generation),
+    );
+    if (!mounted || !_isCurrentSession(roomId, generation)) return;
     switch (outcome) {
       case RoomMuteOutcome.applied:
       case RoomMuteOutcome.busy:
@@ -299,13 +409,22 @@ class _ActiveRoomMiniPlayerState extends State<ActiveRoomMiniPlayer> {
   Future<void> _leaveOrEnd() async {
     final roomId = _watchedRoomId;
     if (roomId == null) return;
-    if (_hostEndsNow) {
-      final confirmed = await _confirmEnd();
+    final generation = _sessionGeneration;
+    if (_roomAuthority != _RoomAuthorityStatus.resolved) {
+      await _resolveHost(roomId, generation);
+      if (!mounted || !_isCurrentSession(roomId, generation)) return;
+    }
+    final authorityUncertain = _roomAuthority != _RoomAuthorityStatus.resolved;
+    if (_hostEndsNow || authorityUncertain) {
+      final confirmed = await _confirmEnd(
+        authorityUncertain: authorityUncertain,
+      );
       // The dialog belongs to the session captured above. A remote end can
       // replace that session while it is open; a stale confirmation must
       // never disconnect the new room that now owns VoiceCallService.
-      if (confirmed != true || !mounted || _watchedRoomId != roomId) return;
+      if (confirmed != true || !_isCurrentSession(roomId, generation)) return;
     }
+    if (!_isCurrentSession(roomId, generation)) return;
     _collapseExpandedChat();
     // Same order and semantics as the room screens: audio first, then the
     // idempotent RoomService.leaveRoom (ADR-091) — which routes a host's
@@ -323,7 +442,7 @@ class _ActiveRoomMiniPlayerState extends State<ActiveRoomMiniPlayer> {
   NavigatorState? _endConfirmationNavigator;
   bool _endConfirmationOpen = false;
 
-  Future<bool?> _confirmEnd() async {
+  Future<bool?> _confirmEnd({bool authorityUncertain = false}) async {
     if (_endConfirmationOpen) return false;
     _endConfirmationOpen = true;
     _endConfirmationNavigator = Navigator.of(context, rootNavigator: true);
@@ -337,15 +456,18 @@ class _ActiveRoomMiniPlayerState extends State<ActiveRoomMiniPlayer> {
           return AlertDialog(
             backgroundColor: palette.surfaceRaised,
             title: Text(
-              'End room?',
+              authorityUncertain ? 'Leave or end room?' : 'End room?',
               style: TextStyle(
                 color: palette.textPrimary,
                 fontWeight: FontWeight.w900,
               ),
             ),
             content: Text(
-              'You are the host. Leaving can end this live session for '
-              'everyone still inside.',
+              authorityUncertain
+                  ? 'Room authority could not be verified. Leaving may end '
+                        'this live session if you are its host.'
+                  : 'You are the host. Leaving can end this live session for '
+                        'everyone still inside.',
               style: TextStyle(color: palette.textSecondary, height: 1.4),
             ),
             actions: [
@@ -361,7 +483,7 @@ class _ActiveRoomMiniPlayerState extends State<ActiveRoomMiniPlayer> {
                   backgroundColor: colorScheme.error,
                   foregroundColor: colorScheme.onError,
                 ),
-                child: const Text('End room'),
+                child: Text(authorityUncertain ? 'Leave anyway' : 'End room'),
               ),
             ],
           );
@@ -383,12 +505,20 @@ class _ActiveRoomMiniPlayerState extends State<ActiveRoomMiniPlayer> {
   Future<void> _expandChat() async {
     final roomId = _watchedRoomId;
     if (roomId == null || _expandedOpen) return;
+    final generation = _sessionGeneration;
     setState(() {
       _newCount = 0;
       _expandedOpen = true;
     });
+    // Chat moderation must be based on resolved room authority. Without this
+    // gate, a host who expanded during the initial lookup received a frozen
+    // participant-only surface until they closed and reopened it.
+    if (_roomAuthority != _RoomAuthorityStatus.resolved) {
+      await _resolveHost(roomId, generation);
+      if (!mounted || !_isCurrentSession(roomId, generation)) return;
+    }
     if (_lastLayoutIsDock) {
-      _openDesktopChatOverlay(roomId);
+      _openDesktopChatOverlay(roomId, generation);
       unawaited(
         SemanticsService.sendAnnouncement(
           View.of(context),
@@ -398,8 +528,8 @@ class _ActiveRoomMiniPlayerState extends State<ActiveRoomMiniPlayer> {
       );
       return;
     }
-    _mobileSheetNavigator = Navigator.of(context, rootNavigator: true);
     _mobileSheetOpen = true;
+    _mobileSheetGeneration = generation;
     await showExpandedMiniChatSheet(
       context,
       roomId: roomId,
@@ -408,45 +538,72 @@ class _ActiveRoomMiniPlayerState extends State<ActiveRoomMiniPlayer> {
       // moderates their chat even though their tap merely leaves.
       isHost: _isHost,
       service: _rooms,
+      onRouteCreated: (route) {
+        if (_mobileSheetGeneration == generation) {
+          _mobileSheetRoute = route;
+        }
+      },
+      onMessageActionsRouteChanged: (route) =>
+          _trackChatAuxiliaryRoute(route, generation),
     );
-    _mobileSheetOpen = false;
-    _mobileSheetNavigator = null;
-    if (mounted) {
+    if (_mobileSheetGeneration == generation) {
+      _mobileSheetOpen = false;
+      _mobileSheetRoute = null;
+      _mobileSheetGeneration = null;
+    }
+    if (_isCurrentSession(roomId, generation)) {
       setState(() {
         _expandedOpen = false;
         _newCount = 0;
       });
-    } else {
+    } else if (!mounted) {
       _expandedOpen = false;
     }
   }
 
-  NavigatorState? _mobileSheetNavigator;
+  ModalBottomSheetRoute<void>? _mobileSheetRoute;
   bool _mobileSheetOpen = false;
+  int? _mobileSheetGeneration;
   ModalBottomSheetRoute<CompactRoomMoreAction>? _mobileActionsRoute;
   bool _mobileActionsOpen = false;
+  int? _mobileActionsGeneration;
+  ModalBottomSheetRoute<void>? _chatAuxiliaryRoute;
+  int? _chatAuxiliaryGeneration;
 
   Future<void> _openMobileActions() async {
     final roomId = _watchedRoomId;
     if (roomId == null || _mobileActionsOpen) return;
-
+    final generation = _sessionGeneration;
     _mobileActionsOpen = true;
+    _mobileActionsGeneration = generation;
     CompactRoomMoreAction? action;
     try {
+      if (_roomAuthority != _RoomAuthorityStatus.resolved) {
+        await _resolveHost(roomId, generation);
+        if (!mounted || !_isCurrentSession(roomId, generation)) return;
+      }
       action = await showCompactRoomMoreSheet(
         context,
         endsRoomNow: _hostEndsNow,
-        onRouteCreated: (route) => _mobileActionsRoute = route,
+        authorityResolved: _roomAuthority == _RoomAuthorityStatus.resolved,
+        onRouteCreated: (route) {
+          if (_mobileActionsGeneration == generation) {
+            _mobileActionsRoute = route;
+          }
+        },
       );
     } finally {
       // Clear the route handle BEFORE running Return/Leave. Leave disconnects
       // the session synchronously; keeping the handle alive until then would
       // make the session-change cleanup pop the root route after this sheet's
       // own reverse transition had already completed.
-      _mobileActionsOpen = false;
-      _mobileActionsRoute = null;
+      if (_mobileActionsGeneration == generation) {
+        _mobileActionsOpen = false;
+        _mobileActionsRoute = null;
+        _mobileActionsGeneration = null;
+      }
     }
-    if (!mounted || _watchedRoomId != roomId) return;
+    if (!_isCurrentSession(roomId, generation)) return;
     switch (action) {
       case CompactRoomMoreAction.returnToRoom:
         await _returnToRoom();
@@ -463,8 +620,12 @@ class _ActiveRoomMiniPlayerState extends State<ActiveRoomMiniPlayer> {
   /// leave a controls sheet mounted over a mini player that no longer exists.
   void _dismissMobileActionsIfOpen() {
     final route = _mobileActionsRoute;
-    if (!_mobileActionsOpen || route == null || !route.isCurrent) return;
-    route.navigator?.pop();
+    if (_mobileActionsOpen && route != null && route.isActive) {
+      route.navigator?.removeRoute(route);
+    }
+    _mobileActionsOpen = false;
+    _mobileActionsRoute = null;
+    _mobileActionsGeneration = null;
   }
 
   /// A remote room end while the MOBILE sheet is open: the desktop overlay
@@ -475,87 +636,124 @@ class _ActiveRoomMiniPlayerState extends State<ActiveRoomMiniPlayer> {
   /// dialog stacked over it by the same surface — both belong to the dead
   /// session.
   void _dismissMobileSheetIfOpen() {
-    if (!_mobileSheetOpen) return;
+    final route = _mobileSheetRoute;
+    if (_mobileSheetOpen && route != null && route.isActive) {
+      route.navigator?.removeRoute(route);
+    }
     _mobileSheetOpen = false;
-    final navigator = _mobileSheetNavigator;
-    _mobileSheetNavigator = null;
-    navigator?.maybePop();
+    _mobileSheetRoute = null;
+    _mobileSheetGeneration = null;
   }
 
-  void _openDesktopChatOverlay(String roomId) {
+  void _trackChatAuxiliaryRoute(
+    ModalBottomSheetRoute<void>? route,
+    int generation,
+  ) {
+    if (route == null) {
+      if (_chatAuxiliaryGeneration == generation) {
+        _chatAuxiliaryRoute = null;
+        _chatAuxiliaryGeneration = null;
+      }
+      return;
+    }
+    if (generation != _sessionGeneration) return;
+    _chatAuxiliaryRoute = route;
+    _chatAuxiliaryGeneration = generation;
+  }
+
+  void _dismissChatAuxiliaryRouteIfOpen() {
+    final route = _chatAuxiliaryRoute;
+    _chatAuxiliaryRoute = null;
+    _chatAuxiliaryGeneration = null;
+    if (route != null && route.isActive) {
+      route.navigator?.removeRoute(route);
+    }
+  }
+
+  void _openDesktopChatOverlay(String roomId, int generation) {
     _removeDesktopChatOverlay();
-    final entry = OverlayEntry(
+    late final OverlayEntry entry;
+    entry = OverlayEntry(
       builder: (overlayContext) {
         final screen = MediaQuery.sizeOf(overlayContext);
         final width = math.min(440.0, screen.width - 32);
         final height = math.min(560.0, screen.height * .68);
-        return Stack(
-          children: [
-            // Tap anywhere outside: collapse. The chat is a popover, not
-            // a route — the RTC session and the shell stay untouched.
-            Positioned.fill(
-              child: Semantics(
-                button: true,
-                label: 'Close room chat',
-                child: GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onTap: _collapseExpandedChat,
-                  child: const SizedBox.expand(),
-                ),
-              ),
-            ),
-            Positioned(
-              left: 0,
-              top: 0,
-              child: CompositedTransformFollower(
-                link: _dockLink,
-                showWhenUnlinked: false,
-                targetAnchor: Alignment.topCenter,
-                followerAnchor: Alignment.bottomCenter,
-                offset: const Offset(0, -10),
-                child: SizedBox(
-                  width: width,
-                  height: height,
-                  // Overlay entries sit outside any route's Material; the
-                  // chat surface (TextField included) needs one. The
-                  // FocusScope is the a11y half: a raw OverlayEntry is not
-                  // a route, so without it Escape did nothing and keyboard
-                  // focus never entered the popover.
-                  child: FocusScope(
-                    autofocus: true,
-                    onKeyEvent: (node, event) {
-                      if (event is KeyDownEvent &&
-                          event.logicalKey == LogicalKeyboardKey.escape) {
-                        _collapseExpandedChat();
-                        return KeyEventResult.handled;
-                      }
-                      return KeyEventResult.ignored;
-                    },
-                    child: Material(
-                      color: Colors.transparent,
-                      child: ExpandedMiniChat(
-                        roomId: roomId,
-                        // True host status — moderation powers, not the label.
-                        isHost: _isHost,
-                        service: _rooms,
-                        onCollapse: _collapseExpandedChat,
+        return FocusScope.withExternalFocusNode(
+          focusScopeNode: _desktopChatFocusScope,
+          autofocus: true,
+          child: FocusTraversalGroup(
+            policy: ReadingOrderTraversalPolicy(),
+            child: BlockSemantics(
+              child: Stack(
+                children: [
+                  // Tap anywhere outside: collapse. The chat is a popover,
+                  // not a route — RTC and shell state stay untouched.
+                  Positioned.fill(
+                    child: Semantics(
+                      button: true,
+                      label: 'Close room chat',
+                      child: GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTap: _collapseExpandedChat,
+                        child: const SizedBox.expand(),
                       ),
                     ),
                   ),
-                ),
+                  Positioned(
+                    left: 0,
+                    top: 0,
+                    child: CompositedTransformFollower(
+                      link: _dockLink,
+                      showWhenUnlinked: false,
+                      targetAnchor: Alignment.topCenter,
+                      followerAnchor: Alignment.bottomCenter,
+                      offset: const Offset(0, -10),
+                      child: SizedBox(
+                        width: width,
+                        height: height,
+                        // Overlay entries sit outside any route's Material;
+                        // the chat surface (TextField included) needs one.
+                        // The outer modal FocusScope traps Tab/Shift-Tab and
+                        // Escape.
+                        child: Material(
+                          color: Colors.transparent,
+                          child: ExpandedMiniChat(
+                            roomId: roomId,
+                            // True host status — moderation powers, not the
+                            // destructive label.
+                            isHost: _isHost,
+                            service: _rooms,
+                            onMessageActionsRouteChanged: (route) =>
+                                _trackChatAuxiliaryRoute(route, generation),
+                            onCollapse: _collapseExpandedChat,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
-          ],
+          ),
         );
       },
     );
     _desktopChatOverlay = entry;
     Overlay.of(context, rootOverlay: true).insert(entry);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && identical(_desktopChatOverlay, entry)) {
+        _desktopChatFocusScope.requestFocus();
+      }
+    });
   }
 
   void _removeDesktopChatOverlay() {
     _desktopChatOverlay?.remove();
     _desktopChatOverlay = null;
+    if (_desktopExpandFocusNode.context != null &&
+        _desktopExpandFocusNode.canRequestFocus) {
+      _desktopExpandFocusNode.requestFocus();
+    }
   }
 
   void _collapseExpandedChat() {
@@ -584,86 +782,313 @@ class _ActiveRoomMiniPlayerState extends State<ActiveRoomMiniPlayer> {
 
   @override
   Widget build(BuildContext context) {
-    return ListenableBuilder(
-      listenable: Listenable.merge([_voice, _mutes]),
-      builder: (context, _) {
-        final roomId = _activeRoomId;
-        if (roomId == null) return const SizedBox.shrink();
+    final projection = _projection;
+    final roomId = projection.roomId;
+    final reduceMotion = MediaQuery.disableAnimationsOf(context);
+    final activePlayer = roomId == null
+        ? null
+        : KeyedSubtree(
+            key: const ValueKey('active-room-player'),
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final isDock = constraints.maxWidth >= _dockBreakpoint;
+                _lastLayoutIsDock = isDock;
 
-        final reconnecting = _voice.status != VoiceCallStatus.connected;
-        final roomName = _voice.roomName ?? 'Live room';
-        final participantCount = _voice.participants.length;
+                final Widget surface;
+                if (isDock) {
+                  // Desktop intentionally keeps the established four-zone
+                  // dock. The YO clone hand-off is mobile-only because the
+                  // desktop shell has no central floating YO action.
+                  surface = _DockSurface(
+                    info: ActiveRoomInfo(
+                      roomName: projection.roomName,
+                      reconnecting: projection.reconnecting,
+                      participantCount: projection.participantCount,
+                      onReturnToRoom: () => unawaited(_returnToRoom()),
+                    ),
+                    preview: LiveChatPreview(
+                      latest: _latest,
+                      newCount: _newCount,
+                      onExpand: () => unawaited(_expandChat()),
+                      expandFocusNode: _desktopExpandFocusNode,
+                    ),
+                    controls: ActiveRoomControls(
+                      micState: projection.micState,
+                      muteBusy: _muteBusy,
+                      isHost: _hostEndsNow,
+                      authorityResolved:
+                          _roomAuthority == _RoomAuthorityStatus.resolved,
+                      onToggleMute: () => unawaited(_toggleMute()),
+                      onReturnToRoom: () => unawaited(_returnToRoom()),
+                      onLeave: () => unawaited(_leaveOrEnd()),
+                    ),
+                  );
+                } else {
+                  surface = CompactActiveRoomBar(
+                    roomName: projection.roomName,
+                    reconnecting: projection.reconnecting,
+                    participantCount: projection.participantCount,
+                    latest: _latest,
+                    newCount: _newCount,
+                    micState: projection.micState,
+                    muteBusy: _muteBusy,
+                    onReturnToRoom: () => unawaited(_returnToRoom()),
+                    onExpandChat: () => unawaited(_expandChat()),
+                    onToggleMute: () => unawaited(_toggleMute()),
+                    onMore: () => unawaited(_openMobileActions()),
+                  );
+                }
 
-        return LayoutBuilder(
-          builder: (context, constraints) {
-            final isDock = constraints.maxWidth >= _dockBreakpoint;
-            _lastLayoutIsDock = isDock;
+                final player = KeyedSubtree(
+                  key: const ValueKey('mini-player'),
+                  child: SafeArea(top: false, bottom: false, child: surface),
+                );
 
-            final Widget surface;
-            if (isDock) {
-              // Desktop intentionally keeps the established four-zone dock.
-              // The requested density change is a phone/tablet concern only.
-              surface = _DockSurface(
-                info: ActiveRoomInfo(
-                  roomName: roomName,
-                  reconnecting: reconnecting,
-                  participantCount: participantCount,
-                  onReturnToRoom: () => unawaited(_returnToRoom()),
-                ),
-                preview: LiveChatPreview(
-                  latest: _latest,
-                  newCount: _newCount,
-                  onExpand: () => unawaited(_expandChat()),
-                ),
-                controls: ActiveRoomControls(
-                  micState: _voice.micState,
-                  muteBusy: _muteBusy,
-                  isHost: _hostEndsNow,
-                  onToggleMute: () => unawaited(_toggleMute()),
-                  onReturnToRoom: () => unawaited(_returnToRoom()),
-                  onLeave: () => unawaited(_leaveOrEnd()),
-                ),
+                // Both layouts honor the user's full system text scale. The
+                // one-line identity and metadata fields ellipsize, while the
+                // dock's intrinsic height is allowed to grow at 200%.
+                return player;
+              },
+            ),
+          );
+
+    final transitioned = reduceMotion
+        ? activePlayer ?? const SizedBox.shrink()
+        : AnimatedSwitcher(
+            duration: const Duration(milliseconds: 280),
+            reverseDuration: const Duration(milliseconds: 240),
+            switchInCurve: const Cubic(.22, 1, .36, 1),
+            switchOutCurve: const Cubic(.22, 1, .36, 1),
+            layoutBuilder: (currentChild, previousChildren) => Stack(
+              alignment: Alignment.bottomCenter,
+              clipBehavior: Clip.none,
+              children: [...previousChildren, ?currentChild],
+            ),
+            transitionBuilder: (child, animation) {
+              if (child.key != const ValueKey('active-room-player')) {
+                return child;
+              }
+              return _ActiveRoomContinuityTransition(
+                animation: animation,
+                child: child,
               );
-            } else {
-              surface = CompactActiveRoomBar(
-                roomName: roomName,
-                reconnecting: reconnecting,
-                participantCount: participantCount,
-                latest: _latest,
-                newCount: _newCount,
-                micState: _voice.micState,
-                muteBusy: _muteBusy,
-                onReturnToRoom: () => unawaited(_returnToRoom()),
-                onExpandChat: () => unawaited(_expandChat()),
-                onToggleMute: () => unawaited(_toggleMute()),
-                onMore: () => unawaited(_openMobileActions()),
-              );
-            }
+            },
+            child:
+                activePlayer ??
+                const SizedBox.shrink(key: ValueKey('inactive-room-player')),
+          );
 
-            final player = KeyedSubtree(
-              key: const ValueKey('mini-player'),
-              child: SafeArea(
-                top: false,
-                bottom: false,
-                child: CompositedTransformTarget(
-                  link: _dockLink,
-                  child: surface,
+    // The target is outside AnimatedSwitcher so an interrupted reverse can
+    // briefly retain two visual surfaces without ever registering two
+    // leaders for the same LayerLink.
+    return CompositedTransformTarget(link: _dockLink, child: transitioned);
+  }
+}
+
+enum _RoomAuthorityStatus { checking, resolved, unavailable }
+
+@immutable
+class _RoomBarProjection {
+  const _RoomBarProjection({
+    required this.roomId,
+    required this.roomName,
+    required this.status,
+    required this.participantCount,
+    required this.micState,
+    required this.voiceMuteBusy,
+  });
+
+  final String? roomId;
+  final String roomName;
+  final VoiceCallStatus status;
+  final int participantCount;
+  final MicState micState;
+  final bool voiceMuteBusy;
+
+  bool get reconnecting => status != VoiceCallStatus.connected;
+
+  @override
+  bool operator ==(Object other) {
+    return other is _RoomBarProjection &&
+        other.roomId == roomId &&
+        other.roomName == roomName &&
+        other.status == status &&
+        other.participantCount == participantCount &&
+        other.micState == micState &&
+        other.voiceMuteBusy == voiceMuteBusy;
+  }
+
+  @override
+  int get hashCode => Object.hash(
+    roomId,
+    roomName,
+    status,
+    participantCount,
+    micState,
+    voiceMuteBusy,
+  );
+}
+
+/// A safe visual equivalent of the reference's dock-to-room flight.
+///
+/// The shell owns the true YO geometry, so this view cannot measure both
+/// endpoints without coupling navigation and RTC lifecycles. Instead the
+/// non-interactive official mark starts just below this bar (over the central
+/// dock area), rises toward the real bar's existing voice orb, gradually gains
+/// the orb material/waveform, and then yields to the one production surface.
+/// No controls or session data are duplicated.
+class _ActiveRoomContinuityTransition extends StatelessWidget {
+  const _ActiveRoomContinuityTransition({
+    required this.animation,
+    required this.child,
+  });
+
+  final Animation<double> animation;
+  final Widget child;
+
+  static const Curve _curve = Cubic(.22, 1, .36, 1);
+
+  static double _interval(double value, double begin, double end) {
+    return ((value - begin) / (end - begin)).clamp(0, 1).toDouble();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final mobile = constraints.maxWidth < 880;
+        return AnimatedBuilder(
+          animation: animation,
+          builder: (context, _) {
+            final raw = animation.value.clamp(0, 1).toDouble();
+            final shell = _curve.transform(_interval(raw, .08, 1));
+            final content = _curve.transform(_interval(raw, .30, 1));
+            final orbMorph = _curve.transform(_interval(raw, .30, .78));
+            final cloneFade = _curve.transform(_interval(raw, .70, .96));
+            final cloneOpacity = mobile ? 1 - cloneFade : 0.0;
+
+            return Stack(
+              clipBehavior: Clip.none,
+              alignment: Alignment.bottomCenter,
+              children: [
+                ClipRect(
+                  child: Align(
+                    alignment: Alignment.bottomCenter,
+                    heightFactor: .14 + (.86 * shell),
+                    child: IgnorePointer(
+                      ignoring: raw < .985,
+                      child: Transform.scale(
+                        alignment: Alignment.bottomCenter,
+                        scale: .96 + (.04 * shell),
+                        child: ClipRect(
+                          child: Align(
+                            alignment: Alignment.bottomCenter,
+                            widthFactor: .14 + (.86 * shell),
+                            child: Opacity(opacity: content, child: child),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
                 ),
-              ),
-            );
-
-            // Mobile honors the user's full text scale. The one-line title
-            // and metadata ellipsize before the 48pt controls can shrink or
-            // overlap. The established desktop dock keeps its documented
-            // 1.6x cap until that separate four-zone layout is redesigned.
-            if (!isDock) return player;
-            return MediaQuery.withClampedTextScaling(
-              maxScaleFactor: 1.6,
-              child: player,
+                if (mobile && cloneOpacity > 0)
+                  Positioned(
+                    left: Tween<double>(
+                      begin: (constraints.maxWidth / 2) - 34,
+                      end: 21,
+                    ).transform(shell),
+                    bottom: Tween<double>(begin: -56, end: 18).transform(shell),
+                    child: IgnorePointer(
+                      child: ExcludeSemantics(
+                        child: RepaintBoundary(
+                          child: Opacity(
+                            key: const ValueKey(
+                              'mini-player-continuity-logo-clone',
+                            ),
+                            opacity: cloneOpacity,
+                            child: _MorphingRoomOrb(
+                              progress: orbMorph,
+                              palette: palette,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
             );
           },
         );
       },
+    );
+  }
+}
+
+class _MorphingRoomOrb extends StatelessWidget {
+  const _MorphingRoomOrb({required this.progress, required this.palette});
+
+  final double progress;
+  final AppPalette palette;
+
+  @override
+  Widget build(BuildContext context) {
+    final size = 68 - (30 * progress);
+    return SizedBox(
+      width: size,
+      height: size,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: Color.lerp(
+            Colors.transparent,
+            palette.surfaceRaised,
+            progress,
+          ),
+          border: Border.all(
+            color: Color.lerp(
+              Colors.transparent,
+              AppColors.voice.withValues(alpha: .72),
+              progress,
+            )!,
+          ),
+          boxShadow: progress <= 0
+              ? const []
+              : [
+                  BoxShadow(
+                    color: AppColors.primary.withValues(alpha: .28 * progress),
+                    blurRadius: 16 * progress,
+                  ),
+                ],
+        ),
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            Opacity(
+              opacity: 1 - progress,
+              child: Image.asset(
+                'assets/images/yo-voice-favicon-512.png',
+                fit: BoxFit.contain,
+                filterQuality: FilterQuality.high,
+              ),
+            ),
+            Center(
+              child: Opacity(
+                opacity: progress,
+                child: Icon(
+                  Icons.graphic_eq_rounded,
+                  color: Color.lerp(
+                    Colors.transparent,
+                    palette.textPrimary,
+                    progress,
+                  ),
+                  size: 21,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -722,14 +1147,18 @@ class _ZoneDivider extends StatelessWidget {
     return Container(
       width: 1,
       margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
-      color: AppColors.divider,
+      color: AppImmersiveColors.divider,
     );
   }
 }
 
 BoxDecoration _playerDecoration({required double radius}) {
   return BoxDecoration(
-    color: Color.lerp(AppColors.surface, AppColors.background, .25),
+    color: Color.lerp(
+      AppImmersiveColors.surface,
+      AppImmersiveColors.background,
+      .25,
+    ),
     borderRadius: BorderRadius.circular(radius),
     border: Border.all(color: AppColors.voice.withValues(alpha: .45)),
     boxShadow: [

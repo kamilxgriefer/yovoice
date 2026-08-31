@@ -13,7 +13,10 @@ import 'package:yovoice/features/premium/data/services/premium_billing_service.d
 import 'package:yovoice/features/premium/presentation/widgets/premium_badge_pill.dart';
 import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
 
-const _premiumPlanGradientColors = [AppColors.primary, Color(0xFFB020E8)];
+List<Color> _premiumPlanGradientColors(BuildContext context) {
+  final colors = Theme.of(context).colorScheme;
+  return <Color>[colors.primary, colors.secondary];
+}
 
 /// The plans & purchase screen — where the "Check plans" CTA lands.
 ///
@@ -650,8 +653,8 @@ class _PlanToggle extends StatelessWidget {
                       ),
                       decoration: BoxDecoration(
                         borderRadius: BorderRadius.circular(999),
-                        gradient: const LinearGradient(
-                          colors: _premiumPlanGradientColors,
+                        gradient: LinearGradient(
+                          colors: _premiumPlanGradientColors(context),
                         ),
                       ),
                       child: Text(
@@ -695,7 +698,7 @@ class _PlanCards extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final checkColor = context.appPalette.focus;
+    final checkColor = context.appPalette.interactiveForeground;
     final monthly = plans.firstWhere(
       (plan) => plan.plan == PremiumPlan.monthly,
     );
@@ -843,8 +846,8 @@ class _PlanCard extends StatelessWidget {
                 ),
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(999),
-                  gradient: const LinearGradient(
-                    colors: _premiumPlanGradientColors,
+                  gradient: LinearGradient(
+                    colors: _premiumPlanGradientColors(context),
                   ),
                 ),
                 child: Text(
@@ -907,8 +910,8 @@ class _PlanCard extends StatelessWidget {
                   ),
                   decoration: BoxDecoration(
                     borderRadius: BorderRadius.circular(999),
-                    gradient: const LinearGradient(
-                      colors: _premiumPlanGradientColors,
+                    gradient: LinearGradient(
+                      colors: _premiumPlanGradientColors(context),
                     ),
                     boxShadow: [
                       BoxShadow(
@@ -956,8 +959,8 @@ class _PlanCard extends StatelessWidget {
           child: DecoratedBox(
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(16),
-              gradient: const LinearGradient(
-                colors: _premiumPlanGradientColors,
+              gradient: LinearGradient(
+                colors: _premiumPlanGradientColors(context),
               ),
               boxShadow: [
                 BoxShadow(

@@ -1,9 +1,40 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:yovoice/app/app.dart';
+import 'package:yovoice/core/theme/app_palette.dart';
+import 'package:yovoice/core/theme/app_theme.dart';
 import 'package:yovoice/features/notifications/data/models/app_notification.dart';
 
 void main() {
+  testWidgets('foreground notification banner follows Pearl semantics', (
+    tester,
+  ) async {
+    final messengerKey = GlobalKey<ScaffoldMessengerState>();
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.lightTheme,
+        scaffoldMessengerKey: messengerKey,
+        home: const Scaffold(body: SizedBox.expand()),
+      ),
+    );
+    messengerKey.currentState!.showSnackBar(
+      buildForegroundNotificationBanner(
+        title: 'A new message',
+        body: 'Open the conversation.',
+        type: NotificationType.directMessage,
+        targetId: 'conversation-pearl',
+        actorId: 'friend',
+        palette: AppPalette.light,
+      ),
+    );
+    await tester.pump();
+
+    final snackBar = tester.widget<SnackBar>(find.byType(SnackBar));
+    expect(snackBar.backgroundColor, AppPalette.light.surfaceRaised);
+    expect(snackBar.action?.textColor, AppPalette.light.interactiveForeground);
+    expect(tester.takeException(), isNull);
+  });
+
   for (final size in const [Size(320, 640), Size(390, 844), Size(430, 932)]) {
     testWidgets('foreground notification banner fits ${size.width}px', (
       tester,

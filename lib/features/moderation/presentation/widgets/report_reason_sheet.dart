@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/moderation/data/services/report_service.dart';
 import 'package:yovoice/features/moderation/presentation/report_reason_labels.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
@@ -62,11 +62,14 @@ class ReportReasonSheet extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final media = MediaQuery.of(context);
+    final palette = context.appPalette;
 
     return Container(
-      decoration: const BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(26)),
+      key: const ValueKey('report-reason-sheet'),
+      decoration: BoxDecoration(
+        color: palette.surface,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(26)),
+        border: Border(top: BorderSide(color: palette.border)),
       ),
       // The list is the only thing allowed to grow. Capped at 82% of the
       // height so the sheet never becomes a full-screen page on a short
@@ -78,9 +81,11 @@ class ReportReasonSheet extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const YoModalSheetChrome(
+            YoModalSheetChrome(
               sheetLabel: 'report reason',
-              surfaceColor: AppColors.surface,
+              surfaceColor: palette.surface,
+              handleColor: palette.borderStrong,
+              closeColor: palette.textSecondary,
             ),
             Padding(
               padding: const EdgeInsets.fromLTRB(20, 2, 20, 4),
@@ -91,8 +96,8 @@ class ReportReasonSheet extends StatelessWidget {
                     width: double.infinity,
                     child: Text(
                       title,
-                      style: const TextStyle(
-                        color: AppColors.textPrimary,
+                      style: TextStyle(
+                        color: palette.textPrimary,
                         fontSize: 18,
                         fontWeight: FontWeight.w700,
                       ),
@@ -103,8 +108,8 @@ class ReportReasonSheet extends StatelessWidget {
                     width: double.infinity,
                     child: Text(
                       subtitle,
-                      style: const TextStyle(
-                        color: AppColors.textSecondary,
+                      style: TextStyle(
+                        color: palette.textSecondary,
                         fontSize: 13,
                         height: 1.35,
                       ),
@@ -113,29 +118,17 @@ class ReportReasonSheet extends StatelessWidget {
                 ],
               ),
             ),
-            const Divider(color: AppColors.divider, height: 20),
+            Divider(color: palette.border, height: 20),
             Flexible(
               child: ListView(
                 shrinkWrap: true,
                 padding: EdgeInsets.only(bottom: 12 + media.padding.bottom),
                 children: [
                   for (final reason in ReportReason.values)
-                    ListTile(
+                    _ReportReasonTile(
                       key: ValueKey('report-reason-${reason.name}'),
+                      reason: reason,
                       onTap: () => Navigator.of(context).pop(reason),
-                      leading: Icon(
-                        _iconFor(reason),
-                        color: reason == ReportReason.selfHarm
-                            ? AppColors.accent
-                            : AppColors.textSecondary,
-                      ),
-                      title: Text(
-                        reportReasonLabel(reason),
-                        style: const TextStyle(
-                          color: AppColors.textPrimary,
-                          fontSize: 15,
-                        ),
-                      ),
                     ),
                 ],
               ),
@@ -161,4 +154,72 @@ class ReportReasonSheet extends StatelessWidget {
     ReportReason.impersonation => Icons.person_off_outlined,
     ReportReason.other => Icons.more_horiz_rounded,
   };
+}
+
+class _ReportReasonTile extends StatefulWidget {
+  const _ReportReasonTile({
+    required this.reason,
+    required this.onTap,
+    super.key,
+  });
+
+  final ReportReason reason;
+  final VoidCallback onTap;
+
+  @override
+  State<_ReportReasonTile> createState() => _ReportReasonTileState();
+}
+
+class _ReportReasonTileState extends State<_ReportReasonTile> {
+  late final FocusNode _focusNode = FocusNode(
+    debugLabel: 'Report reason ${widget.reason.name}',
+  )..addListener(_handleFocusChange);
+  bool _focused = false;
+
+  void _handleFocusChange() {
+    if (mounted && _focused != _focusNode.hasFocus) {
+      setState(() => _focused = _focusNode.hasFocus);
+    }
+  }
+
+  @override
+  void dispose() {
+    _focusNode
+      ..removeListener(_handleFocusChange)
+      ..dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final reason = widget.reason;
+    return AnimatedContainer(
+      key: ValueKey('report-reason-focus-${reason.name}'),
+      duration: const Duration(milliseconds: 120),
+      foregroundDecoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: _focused ? palette.focus : Colors.transparent,
+          width: 2,
+        ),
+      ),
+      child: ListTile(
+        focusNode: _focusNode,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        focusColor: palette.focus.withValues(alpha: .12),
+        onTap: widget.onTap,
+        leading: Icon(
+          ReportReasonSheet._iconFor(reason),
+          color: reason == ReportReason.selfHarm
+              ? palette.dangerForeground
+              : palette.textSecondary,
+        ),
+        title: Text(
+          reportReasonLabel(reason),
+          style: TextStyle(color: palette.textPrimary, fontSize: 15),
+        ),
+      ),
+    );
+  }
 }

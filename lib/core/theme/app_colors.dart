@@ -1,7 +1,11 @@
 import 'package:flutter/material.dart';
 
-/// Centralne miejsce definiowania kolorów aplikacji.
-/// Nie używamy Color(...) bezpośrednio w widgetach.
+/// Theme-invariant brand, status, identity and primitive colours.
+///
+/// Brightness-dependent canvas, surface, copy, navigation and interaction
+/// roles belong to `AppPalette`; complete immersive-dark routes use
+/// `AppImmersiveColors`. The neutral primitives at the bottom are deliberate
+/// paint atoms, not substitutes for semantic theme roles.
 
 class AppColors {
   AppColors._();
@@ -15,29 +19,13 @@ class AppColors {
   static const Color navigationPrimary = Color(0xFF8A2BE2);
   static const Color accent = Color(0xFF5CE1E6);
 
-  // =========================
-  // Backgrounds
-  // =========================
-
-  static const Color background = Color(0xFF0D0618);
-  static const Color surface = Color(0xFF191329);
-  static const Color surfaceLight = Color(0xFF241B39);
-
-  // =========================
-  // Text
-  // =========================
-
-  static const Color textPrimary = Colors.white;
-  static const Color textSecondary = Color(0xFFB4ADC8);
-  static const Color textHint = Color(0xFF7E7895);
-  static const Color navigationInactive = Color(0xFF9189A6);
-
-  // =========================
-  // Borders
-  // =========================
-
-  static const Color border = Color(0xFF3A3151);
-  static const Color divider = Color(0xFF2B233F);
+  /// Readable ink for bright, saturated brand/status fills.
+  ///
+  /// This is deliberately brightness-independent: custom accent surfaces
+  /// (for example a live-room category or an active recording control) use
+  /// it only after determining that their fill is light enough to need dark
+  /// foreground content.
+  static const Color contrastInk = Color(0xFF211629);
 
   // =========================
   // Status
@@ -54,6 +42,7 @@ class AppColors {
 
   static const Color voice = Color(0xFF8D5BFF);
   static const Color live = Color(0xFFFF335C);
+  static const Color onLive = Color(0xFF16040A);
 
   // =========================
   // Identity badges

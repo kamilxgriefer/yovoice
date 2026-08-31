@@ -31,7 +31,6 @@ class YoErrorState extends StatelessWidget {
   Widget build(BuildContext context) {
     final String text = message ?? friendlyErrorMessage(error!);
     final palette = context.appPalette;
-    final colors = Theme.of(context).colorScheme;
 
     return TweenAnimationBuilder<double>(
       tween: Tween<double>(begin: 0, end: 1),
@@ -58,13 +57,13 @@ class YoErrorState extends StatelessWidget {
               width: 76,
               height: 76,
               decoration: BoxDecoration(
-                color: colors.errorContainer,
+                color: palette.dangerSurface,
                 shape: BoxShape.circle,
               ),
               child: Icon(
                 Icons.cloud_off_rounded,
                 size: 34,
-                color: colors.onErrorContainer,
+                color: palette.dangerForeground,
               ),
             ),
             const SizedBox(height: AppSpacing.lg),

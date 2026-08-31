@@ -13,6 +13,7 @@ import 'package:yovoice/features/profile/data/models/user_profile.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/shared/widgets/identity/official_role_badge.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
+import 'package:yovoice/shared/widgets/buttons/yo_button.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
 /// Mobile-native presentations of the desktop Home sections.
@@ -42,61 +43,76 @@ class MobileSectionHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
-    final colors = Theme.of(context).colorScheme;
-    return Padding(
-      padding: const EdgeInsets.only(top: 18, bottom: 10),
-      child: Row(
-        children: [
-          Expanded(
-            child: Text(
-              title,
-              maxLines: 2,
-              overflow: TextOverflow.visible,
-              style: TextStyle(
-                color: palette.textPrimary,
-                fontSize: 16.5,
-                fontWeight: FontWeight.w800,
-              ),
+    final enlargedText = MediaQuery.textScalerOf(context).scale(1) >= 1.6;
+    final titleWidget = Text(
+      title,
+      maxLines: 2,
+      overflow: TextOverflow.visible,
+      style: TextStyle(
+        color: palette.textPrimary,
+        fontSize: 16.5,
+        fontWeight: FontWeight.w800,
+      ),
+    );
+    final viewAllButton = onSeeAll == null
+        ? null
+        : TextButton(
+            onPressed: onSeeAll,
+            style: TextButton.styleFrom(
+              minimumSize: const Size(44, 44),
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              foregroundColor: palette.interactiveForeground,
+            ),
+            child: const Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  'View all',
+                  style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700),
+                ),
+                SizedBox(width: 2),
+                Icon(Icons.chevron_right_rounded, size: 18),
+              ],
+            ),
+          );
+    final titleAndStatus = Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Flexible(child: titleWidget),
+        if (live) ...[
+          const SizedBox(width: 6),
+          Container(
+            width: 6,
+            height: 6,
+            decoration: const BoxDecoration(
+              shape: BoxShape.circle,
+              color: AppColors.live,
             ),
           ),
-          if (live) ...[
-            const SizedBox(width: 6),
-            Container(
-              width: 6,
-              height: 6,
-              decoration: const BoxDecoration(
-                shape: BoxShape.circle,
-                color: Color(0xFFFF7A93),
-              ),
-            ),
-          ],
-          if (onSeeAll != null) ...[
-            const SizedBox(width: 8),
-            TextButton(
-              onPressed: onSeeAll,
-              style: TextButton.styleFrom(
-                minimumSize: const Size(44, 44),
-                padding: const EdgeInsets.symmetric(horizontal: 8),
-                foregroundColor: colors.primary,
-              ),
-              child: const Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    'View all',
-                    style: TextStyle(
-                      fontSize: 12.5,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  SizedBox(width: 2),
-                  Icon(Icons.chevron_right_rounded, size: 18),
-                ],
-              ),
-            ),
-          ],
         ],
-      ),
+      ],
+    );
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 18, bottom: 10),
+      child: enlargedText
+          ? Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                titleAndStatus,
+                if (viewAllButton != null)
+                  Align(alignment: Alignment.centerRight, child: viewAllButton),
+              ],
+            )
+          : Row(
+              children: [
+                Expanded(child: titleAndStatus),
+                if (viewAllButton != null) ...[
+                  const SizedBox(width: 8),
+                  viewAllButton,
+                ],
+              ],
+            ),
     );
   }
 }
@@ -275,6 +291,11 @@ class _MomentBubble extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
+    final enlargedText = MediaQuery.textScalerOf(context).scale(1) >= 1.6;
+    final tileWidth = showAdd
+        ? (enlargedText ? 118.0 : 94.0)
+        : (enlargedText ? 104.0 : 72.0);
     return Semantics(
       button: true,
       // Followed-author tiles are one atomic action. The own tile keeps
@@ -286,12 +307,12 @@ class _MomentBubble extends StatelessWidget {
         onTap: onTap,
         borderRadius: BorderRadius.circular(999),
         child: SizedBox(
-          width: showAdd ? 94 : 72,
+          width: tileWidth,
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               SizedBox(
-                width: showAdd ? 94 : MobileMomentsStrip._tile,
+                width: tileWidth,
                 height: MobileMomentsStrip._tile,
                 child: Stack(
                   clipBehavior: Clip.none,
@@ -333,8 +354,8 @@ class _MomentBubble extends StatelessWidget {
                           ),
                           decoration: BoxDecoration(
                             borderRadius: BorderRadius.circular(999),
-                            gradient: const LinearGradient(
-                              colors: [AppColors.primary, AppColors.secondary],
+                            gradient: LinearGradient(
+                              colors: [colors.primary, colors.secondary],
                             ),
                             border: Border.all(
                               color: palette.surfaceSunken,
@@ -343,8 +364,8 @@ class _MomentBubble extends StatelessWidget {
                           ),
                           child: Text(
                             '$count',
-                            style: const TextStyle(
-                              color: Colors.white,
+                            style: TextStyle(
+                              color: colors.onPrimary,
                               fontSize: 10,
                               fontWeight: FontWeight.w800,
                             ),
@@ -383,8 +404,10 @@ class _MomentBubble extends StatelessWidget {
               const SizedBox(height: 6),
               Text(
                 label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
+                maxLines: enlargedText ? 2 : 1,
+                overflow: enlargedText
+                    ? TextOverflow.visible
+                    : TextOverflow.ellipsis,
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   color: palette.textSecondary,
@@ -884,34 +907,11 @@ class MobilePremiumCard extends StatelessWidget {
             ),
           ],
           const SizedBox(height: 14),
-          SizedBox(
-            width: double.infinity,
+          YoButton(
+            key: const ValueKey('home-premium-check-plans'),
+            label: 'Check plans  ›',
+            onPressed: onCheckPlans,
             height: 48,
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(999),
-                gradient: const LinearGradient(
-                  colors: [AppColors.primary, AppColors.secondary],
-                ),
-              ),
-              child: Material(
-                color: Colors.transparent,
-                child: InkWell(
-                  borderRadius: BorderRadius.circular(999),
-                  onTap: onCheckPlans,
-                  child: const Center(
-                    child: Text(
-                      'Check plans  ›',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 14,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ),
           ),
         ],
       ),

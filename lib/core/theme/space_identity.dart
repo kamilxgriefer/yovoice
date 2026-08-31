@@ -15,10 +15,15 @@ enum SpaceKind { community, podcast, club, family }
 /// Family flow ended up wearing Club violet. Every surface that needs to
 /// look like a type asks here instead.
 ///
-/// This is a small, closed palette on top of the app's existing dark
-/// base. It is NOT four design systems: the surfaces, radii, spacing and
-/// type scale stay shared, and colour is used for identity, focus and
-/// state — never to tint body text.
+/// This is a small, closed identity palette, not four design systems: the
+/// surfaces, radii, spacing and type scale stay shared, and colour is used for
+/// identity, focus and state — never to tint body text.
+///
+/// The canonical swatches below remain stable because immersive room UI uses
+/// them as part of each room family's identity. Normal product screens must
+/// call [resolve] instead of placing those swatches directly on a themed
+/// surface. The resolved treatment preserves the hue while selecting a tone
+/// with accessible foreground and boundary pairs for Dark and Pearl.
 @immutable
 class SpaceIdentity {
   const SpaceIdentity({
@@ -102,6 +107,38 @@ class SpaceIdentity {
     SpaceKind.family => family,
   };
 
+  /// Resolves this stable identity into accessible colours for a normal,
+  /// theme-aware product surface.
+  ///
+  /// Material's tonal palette is deliberately derived from [primary] instead
+  /// of duplicating separate Club/Family light-theme literals. This keeps the
+  /// identity recognisable while providing matched foreground/container pairs
+  /// with WCAG-safe contrast in both brightnesses.
+  SpaceIdentityVisuals resolve(Brightness brightness) {
+    final scheme = ColorScheme.fromSeed(
+      seedColor: primary,
+      brightness: brightness,
+    );
+    return SpaceIdentityVisuals(
+      surface: scheme.primaryContainer,
+      onSurface: scheme.onPrimaryContainer,
+      foreground: scheme.primary,
+      border: scheme.primary,
+      cta: scheme.primary,
+      onCta: scheme.onPrimary,
+      spinner: scheme.onPrimary,
+      heroGradient: LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: [scheme.primary, scheme.secondary],
+      ),
+      heroForeground: scheme.onPrimary,
+      heroGlow: scheme.primary.withValues(
+        alpha: brightness == Brightness.dark ? .28 : .18,
+      ),
+    );
+  }
+
   // ------------------------------------------------ derived treatments
   //
   // Named so call sites read as intent ("focus border") rather than as a
@@ -125,10 +162,60 @@ class SpaceIdentity {
   Color get glow => accent.withValues(alpha: .12);
 
   /// The gradient a primary CTA carries.
-  LinearGradient get ctaGradient =>
-      LinearGradient(colors: [primary, accent]);
+  LinearGradient get ctaGradient => LinearGradient(colors: [primary, accent]);
 
   /// Text that is genuinely part of the identity — an eyebrow, a badge
   /// label, a benefit tick. Never body copy.
   Color get onSurfaceAccent => accent;
+}
+
+/// Theme-aware presentation roles derived from a stable [SpaceIdentity].
+///
+/// These roles are intentionally narrow. General page copy and cards still
+/// use `AppPalette`; this object only styles the identity mark, identity copy,
+/// branded hero and branded primary action.
+@immutable
+class SpaceIdentityVisuals {
+  const SpaceIdentityVisuals({
+    required this.surface,
+    required this.onSurface,
+    required this.foreground,
+    required this.border,
+    required this.cta,
+    required this.onCta,
+    required this.spinner,
+    required this.heroGradient,
+    required this.heroForeground,
+    required this.heroGlow,
+  });
+
+  /// Tonal identity container used by compact marks and branded callouts.
+  final Color surface;
+
+  /// Readable icon or copy placed on [surface].
+  final Color onSurface;
+
+  /// Identity-coloured copy or icon placed on the app's semantic surfaces.
+  final Color foreground;
+
+  /// Meaningful identity boundary for [surface].
+  final Color border;
+
+  /// Accessible solid background for the primary space action.
+  final Color cta;
+
+  /// Foreground paired with [cta].
+  final Color onCta;
+
+  /// Progress indicator shown while the CTA is busy.
+  final Color spinner;
+
+  /// Accessible, restrained identity gradient for a celebratory hero.
+  final LinearGradient heroGradient;
+
+  /// Foreground that remains readable over both [heroGradient] endpoints.
+  final Color heroForeground;
+
+  /// Theme-adjusted bloom for the celebratory hero only.
+  final Color heroGlow;
 }

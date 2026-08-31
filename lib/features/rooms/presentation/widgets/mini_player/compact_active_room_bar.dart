@@ -477,6 +477,7 @@ enum CompactRoomMoreAction { returnToRoom, leave }
 Future<CompactRoomMoreAction?> showCompactRoomMoreSheet(
   BuildContext context, {
   required bool endsRoomNow,
+  required bool authorityResolved,
   ValueChanged<ModalBottomSheetRoute<CompactRoomMoreAction>>? onRouteCreated,
 }) async {
   final navigator = Navigator.of(context, rootNavigator: true);
@@ -484,6 +485,7 @@ Future<CompactRoomMoreAction?> showCompactRoomMoreSheet(
   final route = ModalBottomSheetRoute<CompactRoomMoreAction>(
     builder: (sheetContext) => _CompactRoomMoreSheet(
       endsRoomNow: endsRoomNow,
+      authorityResolved: authorityResolved,
       onSelected: (action) => Navigator.of(sheetContext).pop(action),
     ),
     capturedThemes: InheritedTheme.capture(
@@ -510,10 +512,12 @@ Future<CompactRoomMoreAction?> showCompactRoomMoreSheet(
 class _CompactRoomMoreSheet extends StatelessWidget {
   const _CompactRoomMoreSheet({
     required this.endsRoomNow,
+    required this.authorityResolved,
     required this.onSelected,
   });
 
   final bool endsRoomNow;
+  final bool authorityResolved;
   final ValueChanged<CompactRoomMoreAction> onSelected;
 
   @override
@@ -564,10 +568,14 @@ class _CompactRoomMoreSheet extends StatelessWidget {
               child: _SheetAction(
                 key: const ValueKey('mini-player-leave'),
                 icon: Icons.logout_rounded,
-                title: endsRoomNow ? 'End room' : 'Leave room',
-                subtitle: endsRoomNow
-                    ? 'End this live session'
-                    : 'Leave this live session',
+                title: !authorityResolved
+                    ? 'Leave / end room'
+                    : (endsRoomNow ? 'End room' : 'Leave room'),
+                subtitle: !authorityResolved
+                    ? 'Confirmation required'
+                    : (endsRoomNow
+                          ? 'End this live session'
+                          : 'Leave this live session'),
                 accent: colorScheme.error,
                 danger: true,
                 onTap: () => onSelected(CompactRoomMoreAction.leave),

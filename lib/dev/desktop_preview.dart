@@ -14,7 +14,7 @@
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 
-import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/core/theme/app_immersive_colors.dart';
 import 'package:yovoice/core/theme/app_theme.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/desktop_sidebar.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/premium_desktop_card.dart';
@@ -129,7 +129,10 @@ class _CenterPlaceholder extends StatelessWidget {
         ),
         child: Text(
           'Home content row ${index + 1} — scroll me; the rail must not move',
-          style: TextStyle(color: AppColors.textHint, fontSize: 13),
+          style: TextStyle(
+            color: AppImmersiveColors.textTertiary,
+            fontSize: 13,
+          ),
         ),
       ),
     );

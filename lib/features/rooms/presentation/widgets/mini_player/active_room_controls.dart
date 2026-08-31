@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/core/theme/app_immersive_colors.dart';
 import 'package:yovoice/features/calls/data/services/voice_call_service.dart';
 
 /// The blue-violet Return accent, derived from the palette rather than a
@@ -20,6 +21,7 @@ class ActiveRoomControls extends StatelessWidget {
     required this.micState,
     required this.muteBusy,
     required this.isHost,
+    required this.authorityResolved,
     required this.onToggleMute,
     required this.onReturnToRoom,
     required this.onLeave,
@@ -33,6 +35,7 @@ class ActiveRoomControls extends StatelessWidget {
   /// shows progress and swallows taps until it lands.
   final bool muteBusy;
   final bool isHost;
+  final bool authorityResolved;
   final VoidCallback onToggleMute;
   final VoidCallback onReturnToRoom;
   final VoidCallback onLeave;
@@ -52,6 +55,7 @@ class ActiveRoomControls extends StatelessWidget {
     );
     final leave = MiniPlayerLeaveButton(
       isHost: isHost,
+      authorityResolved: authorityResolved,
       onLeave: onLeave,
       horizontal: layout == ActiveRoomControlsLayout.grid,
     );
@@ -186,12 +190,14 @@ class MiniPlayerReturnButton extends StatelessWidget {
 class MiniPlayerLeaveButton extends StatelessWidget {
   const MiniPlayerLeaveButton({
     required this.isHost,
+    required this.authorityResolved,
     required this.onLeave,
     this.horizontal = false,
     super.key,
   });
 
   final bool isHost;
+  final bool authorityResolved;
   final VoidCallback onLeave;
   final bool horizontal;
 
@@ -200,8 +206,10 @@ class MiniPlayerLeaveButton extends StatelessWidget {
     return _ControlTile(
       key: const ValueKey('mini-player-leave'),
       icon: Icons.logout_rounded,
-      title: isHost ? 'End room' : 'Leave room',
-      subtitle: 'End session',
+      title: authorityResolved
+          ? (isHost ? 'End room' : 'Leave room')
+          : 'Leave / end room',
+      subtitle: authorityResolved ? 'End session' : 'Confirmation required',
       accent: AppColors.error,
       horizontal: horizontal,
       onTap: onLeave,
@@ -237,8 +245,8 @@ class _ControlTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final iconColor = dimmed ? accent.withValues(alpha: .65) : accent;
     final titleColor = dimmed
-        ? AppColors.textPrimary.withValues(alpha: .72)
-        : AppColors.textPrimary;
+        ? AppImmersiveColors.textPrimary.withValues(alpha: .72)
+        : AppImmersiveColors.textPrimary;
     final subtitleColor = Color.lerp(accent, Colors.white, .38)!;
 
     final Widget leading = showSpinner
@@ -325,6 +333,7 @@ class _ControlTile extends StatelessWidget {
       // are live") — measured in the accessibility review's semantics dump.
       excludeSemantics: true,
       label: '$title. $subtitle',
+      onTap: enabled ? onTap : null,
       child: Material(
         color: accent.withValues(alpha: dimmed ? .06 : .09),
         borderRadius: BorderRadius.circular(14),

@@ -107,4 +107,26 @@ void main() {
     persisted.complete();
     expect(await first, isTrue);
   });
+
+  test('does not apply a stale unmute after the roster await', () async {
+    final persisted = Completer<void>();
+    final microphoneStates = <bool>[];
+    var current = true;
+    final sync = RoomMuteSync();
+
+    final operation = sync.toggle(
+      currentMuted: true,
+      persistRosterState: (_) => persisted.future,
+      applyMicrophoneState: (muted) async => microphoneStates.add(muted),
+      isOperationCurrent: () => current,
+    );
+
+    await Future<void>.delayed(Duration.zero);
+    current = false;
+    persisted.complete();
+
+    expect(await operation, isFalse);
+    expect(microphoneStates, isEmpty);
+    expect(sync.isBusy, isFalse);
+  });
 }

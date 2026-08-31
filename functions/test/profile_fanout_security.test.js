@@ -13,7 +13,7 @@ process.env.GCLOUD_PROJECT = process.env.GCLOUD_PROJECT ?? "yovoice-fn-test";
 
 const { getApps, initializeApp } = require("firebase-admin/app");
 const { getAuth } = require("firebase-admin/auth");
-const { getFirestore } = require("firebase-admin/firestore");
+const { getFirestore, Timestamp } = require("firebase-admin/firestore");
 
 if (getApps().length === 0) initializeApp();
 
@@ -22,6 +22,7 @@ const {
   syncTargetPage,
   syncProfileIdentity,
 } = require("../profile/fanout");
+const { canonicalPairKey } = require("../messaging/direct_integrity");
 
 const db = getFirestore();
 const auth = getAuth();
@@ -35,6 +36,116 @@ const otherMomentId = "pf-security-other-moment";
 const legacyMomentId = "pf-security-legacy-moment";
 const conversationId = "pf-security-conversation";
 const malformedMomentId = "pf-security-malformed-moment";
+const friendUid = "pf-security-friend";
+const fixedTimestamp = Timestamp.fromMillis(1_725_000_000_000);
+
+function codeUnitPair(firstUid, secondUid) {
+  return [firstUid, secondUid].sort((left, right) =>
+    left < right ? -1 : left > right ? 1 : 0);
+}
+
+function ownValue(values, key, fallback) {
+  return Object.prototype.hasOwnProperty.call(values, key)
+    ? values[key]
+    : fallback;
+}
+
+function canonicalConversationData({
+  participants = codeUnitPair(uid, friendUid),
+  names = {},
+  photos = {},
+  overrides = {},
+} = {}) {
+  const pairKey = canonicalPairKey(...participants);
+  const participantNames = Object.fromEntries(participants.map((participantId) => [
+    participantId,
+    ownValue(
+      names,
+      participantId,
+      participantId === uid ? "Before" : "Friend",
+    ),
+  ]));
+  const participantPhotoUrls = Object.fromEntries(
+    participants.map((participantId) => [
+      participantId,
+      ownValue(photos, participantId, ""),
+    ]),
+  );
+  return {
+    schemaVersion: 2,
+    pairKey,
+    participantIds: participants,
+    participantNames,
+    participantEmails: Object.fromEntries(
+      participants.map((participantId) => [participantId, ""]),
+    ),
+    participantPhotoUrls,
+    unreadCounts: Object.fromEntries(
+      participants.map((participantId) => [participantId, 0]),
+    ),
+    readSequences: Object.fromEntries(
+      participants.map((participantId) => [participantId, 0]),
+    ),
+    typing: {},
+    archivedBy: [],
+    mutedBy: [],
+    lastMessage: "",
+    lastMessageId: null,
+    lastMessageSequence: 0,
+    lastMessageType: "text",
+    lastMessageSenderId: "",
+    createdAt: fixedTimestamp,
+    updatedAt: fixedTimestamp,
+    ...overrides,
+  };
+}
+
+function canonicalPairGuardData({
+  conversationId: guardedConversationId = conversationId,
+  participants = codeUnitPair(uid, friendUid),
+  overrides = {},
+} = {}) {
+  const pairKey = canonicalPairKey(...participants);
+  return {
+    schemaVersion: 1,
+    pairKey,
+    conversationId: guardedConversationId,
+    participantIds: participants,
+    createdAt: fixedTimestamp,
+    ...overrides,
+  };
+}
+
+async function setCanonicalConversation({
+  reference = db.collection("conversations").doc(conversationId),
+  participants = codeUnitPair(uid, friendUid),
+  names = {},
+  photos = {},
+  rootOverrides = {},
+  guard = true,
+  guardOverrides = {},
+} = {}) {
+  const pairKey = canonicalPairKey(...participants);
+  const operations = [reference.set(canonicalConversationData({
+    participants,
+    names,
+    photos,
+    overrides: rootOverrides,
+  }))];
+  if (guard) {
+    operations.push(
+      db.collection("directConversationPairs").doc(pairKey).set(
+        canonicalPairGuardData({
+          conversationId: reference.id,
+          participants,
+          overrides: guardOverrides,
+        }),
+      ),
+    );
+  }
+  await Promise.all(operations);
+  return { pairKey, reference };
+}
 
 function identityEvent(before, after) {
   return {
@@ -51,8 +162,10 @@ async function setCanonical(after) {
 }
 
 async function wipeOwn() {
+  const pairKey = canonicalPairKey(...codeUnitPair(uid, friendUid));
   await Promise.all([
     db.collection("users").doc(uid).delete(),
+    db.collection("users").doc(friendUid).delete(),
     db
       .collection("users")
       .doc(uid)
@@ -87,6 +200,7 @@ async function wipeOwn() {
     db.collection("voiceMoments").doc(otherMomentId).delete(),
     db.collection("voice_moments").doc(legacyMomentId).delete(),
     db.collection("conversations").doc(conversationId).delete(),
+    db.collection("directConversationPairs").doc(pairKey).delete(),
     db.collection("voiceMoments").doc(malformedMomentId).delete(),
   ]);
 }
@@ -267,20 +381,13 @@ describe("profile identity Club fan-out authorization", () => {
         displayName: "Newest name",
         photoUrl: "https://example.com/newest.jpg",
       }),
-      db
-        .collection("conversations")
-        .doc(conversationId)
-        .set({
-          participantIds: [uid, "pf-security-friend"],
-          participantNames: {
-            [uid]: "Old name",
-            "pf-security-friend": "Friend",
-          },
-          participantPhotoUrls: {
-            [uid]: "https://example.com/old.jpg",
-            "pf-security-friend": "https://example.com/friend.jpg",
-          },
-        }),
+      setCanonicalConversation({
+        names: { [uid]: "Old name", [friendUid]: "Friend" },
+        photos: {
+          [uid]: "https://example.com/old.jpg",
+          [friendUid]: "https://example.com/friend.jpg",
+        },
+      }),
     ]);
 
     // Simulates delivery of A -> B after users/{uid} has already reached C.
@@ -313,19 +420,377 @@ describe("profile identity Club fan-out authorization", () => {
     );
   });
 
+  test("fan-out removes legacy FieldPath poison and is idempotent", async () => {
+    const reference = db.collection("conversations").doc(conversationId);
+    const poisonKey = `\`${uid}\``;
+    await Promise.all([
+      setCanonical({
+        displayName: "Canonical name",
+        photoUrl: "https://example.com/canonical.jpg",
+      }),
+      setCanonicalConversation({
+        reference,
+        names: { [uid]: "Canonical name", [friendUid]: "Friend" },
+        photos: Object.fromEntries([
+          [uid, "https://example.com/canonical.jpg"],
+          [friendUid, "https://example.com/friend.jpg"],
+        ]),
+        rootOverrides: {
+          participantPhotoUrls: Object.fromEntries([
+            [uid, "https://example.com/canonical.jpg"],
+            [friendUid, "https://example.com/friend.jpg"],
+            [poisonKey, "https://example.com/poison.jpg"],
+          ]),
+        },
+      }),
+    ]);
+
+    const target = { kind: "conversation", reference };
+    const dryRun = await syncTargetPage({
+      userReference: db.collection("users").doc(uid),
+      uid,
+      targets: [target],
+      apply: false,
+    });
+    assert.equal(dryRun.writes, 1);
+    assert.equal(
+      (await reference.get()).data().participantPhotoUrls[poisonKey],
+      "https://example.com/poison.jpg",
+    );
+
+    const applied = await syncTargetPage({
+      userReference: db.collection("users").doc(uid),
+      uid,
+      targets: [target],
+      apply: true,
+    });
+    assert.equal(applied.writes, 1);
+    const repaired = (await reference.get()).data();
+    assert.deepEqual(Object.keys(repaired.participantNames).sort(), [
+      friendUid,
+      uid,
+    ].sort());
+    assert.deepEqual(Object.keys(repaired.participantPhotoUrls).sort(), [
+      friendUid,
+      uid,
+    ].sort());
+    assert.equal(
+      repaired.participantPhotoUrls[uid],
+      "https://example.com/canonical.jpg",
+    );
+    assert.equal(
+      repaired.participantPhotoUrls[friendUid],
+      "https://example.com/friend.jpg",
+    );
+    assert.equal(repaired.participantNames[friendUid], "Friend");
+
+    const idempotent = await syncTargetPage({
+      userReference: db.collection("users").doc(uid),
+      uid,
+      targets: [target],
+      apply: true,
+    });
+    assert.equal(idempotent.writes, 0);
+  });
+
+  const rejectedConversationCases = [
+    {
+      label: "a schema-v1 conversation",
+      rootOverrides: { schemaVersion: 1 },
+    },
+    {
+      label: "non-canonically ordered participant ids",
+      rootOverrides: { participantIds: [uid, friendUid] },
+    },
+    {
+      label: "a mismatched root pair key",
+      rootOverrides: { pairKey: "not-the-canonical-pair-key" },
+    },
+    {
+      label: "an unexpected outer root field",
+      rootOverrides: { legacyIdentityRepair: true },
+    },
+    {
+      label: "a missing exact pair guard",
+      guard: false,
+    },
+    {
+      label: "a conflicting exact pair guard",
+      guardOverrides: { conversationId: "different-conversation" },
+    },
+  ];
+
+  for (const scenario of rejectedConversationCases) {
+    test(`fan-out refuses to clean ${scenario.label}`, async () => {
+      const reference = db.collection("conversations").doc(conversationId);
+      const poisonKey = `\`${uid}\``;
+      await Promise.all([
+        setCanonical({
+          displayName: "Canonical name",
+          photoUrl: "https://example.com/canonical.jpg",
+        }),
+        setCanonicalConversation({
+          reference,
+          rootOverrides: {
+            participantPhotoUrls: Object.fromEntries([
+              [uid, "https://example.com/canonical.jpg"],
+              [friendUid, "https://example.com/friend.jpg"],
+              [poisonKey, "https://example.com/poison.jpg"],
+            ]),
+            ...(scenario.rootOverrides ?? {}),
+          },
+          guard: scenario.guard ?? true,
+          guardOverrides: scenario.guardOverrides ?? {},
+        }),
+      ]);
+
+      const result = await syncTargetPage({
+        userReference: db.collection("users").doc(uid),
+        uid,
+        targets: [{ kind: "conversation", reference }],
+        apply: true,
+      });
+      const after = (await reference.get()).data();
+      assert.equal(result.writes, 0);
+      assert.equal(
+        after.participantPhotoUrls[poisonKey],
+        "https://example.com/poison.jpg",
+      );
+    });
+  }
+
+  test("a reserved __proto__ participant uid fails closed", async () => {
+    const protoUid = "__proto__";
+    const constructorUid = "constructor";
+    const participants = codeUnitPair(protoUid, constructorUid);
+    const reference = db
+      .collection("conversations")
+      .doc("pf-security-opaque-uids");
+    const guardReference = db
+      .collection("directConversationPairs")
+      .doc(canonicalPairKey(...participants));
+    const constructorReference = db.collection("users").doc(constructorUid);
+    try {
+      await Promise.all([
+        constructorReference.set({
+          displayName: "Constructor after",
+          photoUrl: "https://example.com/constructor-after.jpg",
+        }),
+        setCanonicalConversation({
+          reference,
+          participants,
+          names: Object.fromEntries([
+            [protoUid, "Proto before"],
+            [constructorUid, "Constructor before"],
+          ]),
+          photos: Object.fromEntries([
+            [protoUid, "https://example.com/proto-before.jpg"],
+            [constructorUid, "https://example.com/constructor-before.jpg"],
+          ]),
+          rootOverrides: {
+            participantNames: Object.fromEntries([
+              [protoUid, "Proto before"],
+              [constructorUid, "Constructor before"],
+              ["`__proto__`", "Poison"],
+            ]),
+            participantPhotoUrls: Object.fromEntries([
+              [protoUid, "https://example.com/proto-before.jpg"],
+              [constructorUid, "https://example.com/constructor-before.jpg"],
+              ["`__proto__`", "https://example.com/poison.jpg"],
+            ]),
+          },
+        }),
+      ]);
+
+      const result = await syncTargetPage({
+        userReference: constructorReference,
+        uid: constructorUid,
+        targets: [{ kind: "conversation", reference }],
+        apply: true,
+      });
+
+      // Firestore reserves __.*__ document ids and its Admin deserializer
+      // cannot expose a stored __proto__ map field as an own enumerable key.
+      // The fan-out must therefore refuse the root rather than erase or
+      // reinterpret the peer identity while attempting a cleanup.
+      const snapshot = await reference.get();
+      const unchanged = snapshot.data();
+      assert.equal(result.writes, 0);
+      assert.equal(
+        unchanged.participantNames[constructorUid],
+        "Constructor before",
+      );
+      assert.equal(
+        unchanged.participantNames["`__proto__`"],
+        "Poison",
+      );
+    } finally {
+      await Promise.all([
+        constructorReference.delete(),
+        reference.delete(),
+        guardReference.delete(),
+      ]);
+    }
+  });
+
+  test("an opaque constructor uid remains an own canonical map key", async () => {
+    const constructorUid = "constructor";
+    const peerUid = "opaque-peer";
+    const participants = codeUnitPair(constructorUid, peerUid);
+    const reference = db
+      .collection("conversations")
+      .doc("pf-security-constructor-uid");
+    const guardReference = db
+      .collection("directConversationPairs")
+      .doc(canonicalPairKey(...participants));
+    const constructorReference = db.collection("users").doc(constructorUid);
+    try {
+      await Promise.all([
+        constructorReference.set({
+          displayName: "Constructor after",
+          photoUrl: "https://example.com/constructor-after.jpg",
+        }),
+        setCanonicalConversation({
+          reference,
+          participants,
+          names: Object.fromEntries([
+            [constructorUid, "Constructor before"],
+            [peerUid, "Peer"],
+          ]),
+          photos: Object.fromEntries([
+            [constructorUid, "https://example.com/constructor-before.jpg"],
+            [peerUid, "https://example.com/peer.jpg"],
+          ]),
+          rootOverrides: {
+            participantNames: Object.fromEntries([
+              [constructorUid, "Constructor before"],
+              [peerUid, "Peer"],
+              ["stale", "Poison"],
+            ]),
+            participantPhotoUrls: Object.fromEntries([
+              [constructorUid, "https://example.com/constructor-before.jpg"],
+              [peerUid, "https://example.com/peer.jpg"],
+              ["stale", "https://example.com/poison.jpg"],
+            ]),
+          },
+        }),
+      ]);
+
+      const result = await syncTargetPage({
+        userReference: constructorReference,
+        uid: constructorUid,
+        targets: [{ kind: "conversation", reference }],
+        apply: true,
+      });
+      const repaired = (await reference.get()).data();
+      assert.equal(result.writes, 1);
+      assert.deepEqual(
+        Object.keys(repaired.participantNames).sort(),
+        [...participants].sort(),
+      );
+      assert.deepEqual(
+        Object.keys(repaired.participantPhotoUrls).sort(),
+        [...participants].sort(),
+      );
+      assert.equal(repaired.participantNames[peerUid], "Peer");
+      assert.equal(
+        repaired.participantNames[constructorUid],
+        "Constructor after",
+      );
+      assert.equal(
+        repaired.participantPhotoUrls[constructorUid],
+        "https://example.com/constructor-after.jpg",
+      );
+      assert.equal(
+        Object.prototype.hasOwnProperty.call(
+          repaired.participantNames,
+          constructorUid,
+        ),
+        true,
+      );
+    } finally {
+      await Promise.all([
+        constructorReference.delete(),
+        reference.delete(),
+        guardReference.delete(),
+      ]);
+    }
+  });
+
+  test("concurrent identity fan-outs preserve both participants", async () => {
+    const reference = db.collection("conversations").doc(conversationId);
+    await Promise.all([
+      setCanonical({
+        displayName: "Owner after",
+        photoUrl: "https://example.com/owner-after.jpg",
+      }),
+      db.collection("users").doc(friendUid).set({
+        displayName: "Friend after",
+        photoUrl: "https://example.com/friend-after.jpg",
+      }),
+      setCanonicalConversation({
+        reference,
+        rootOverrides: {
+          participantNames: {
+            [uid]: "Owner before",
+            [friendUid]: "Friend before",
+            stale: "Poison",
+          },
+          participantPhotoUrls: {
+            [uid]: "https://example.com/owner-before.jpg",
+            [friendUid]: "https://example.com/friend-before.jpg",
+            stale: "https://example.com/poison.jpg",
+          },
+        },
+      }),
+    ]);
+
+    const target = { kind: "conversation", reference };
+    await Promise.all([
+      syncTargetPage({
+        userReference: db.collection("users").doc(uid),
+        uid,
+        targets: [target],
+        apply: true,
+      }),
+      syncTargetPage({
+        userReference: db.collection("users").doc(friendUid),
+        uid: friendUid,
+        targets: [target],
+        apply: true,
+      }),
+    ]);
+
+    const repaired = (await reference.get()).data();
+    assert.deepEqual(Object.keys(repaired.participantNames).sort(), [
+      friendUid,
+      uid,
+    ].sort());
+    assert.deepEqual(Object.keys(repaired.participantPhotoUrls).sort(), [
+      friendUid,
+      uid,
+    ].sort());
+    assert.equal(repaired.participantNames[uid], "Owner after");
+    assert.equal(repaired.participantNames[friendUid], "Friend after");
+    assert.equal(
+      repaired.participantPhotoUrls[uid],
+      "https://example.com/owner-after.jpg",
+    );
+    assert.equal(
+      repaired.participantPhotoUrls[friendUid],
+      "https://example.com/friend-after.jpg",
+    );
+  });
+
   test("removing an avatar clears the chat snapshot", async () => {
     await Promise.all([
       setCanonical({ displayName: "After", photoUrl: null }),
-      db
-        .collection("conversations")
-        .doc(conversationId)
-        .set({
-          participantIds: [uid, "pf-security-friend"],
-          participantNames: { [uid]: "Before" },
-          participantPhotoUrls: {
-            [uid]: "https://example.com/avatar.jpg",
-          },
-        }),
+      setCanonicalConversation({
+        photos: {
+          [uid]: "https://example.com/avatar.jpg",
+          [friendUid]: "https://example.com/friend.jpg",
+        },
+      }),
     ]);
 
     await run(
@@ -348,14 +813,12 @@ describe("profile identity Club fan-out authorization", () => {
     const unsafePhoto = `https://example.com/${"x".repeat(2050)}`;
     await Promise.all([
       setCanonical({ displayName: longName, photoUrl: unsafePhoto }),
-      db
-        .collection("conversations")
-        .doc(conversationId)
-        .set({
-          participantIds: [uid, "pf-security-friend"],
-          participantNames: { [uid]: "Before" },
-          participantPhotoUrls: { [uid]: "https://example.com/before.jpg" },
-        }),
+      setCanonicalConversation({
+        photos: {
+          [uid]: "https://example.com/before.jpg",
+          [friendUid]: "https://example.com/friend.jpg",
+        },
+      }),
       db.collection("voiceMoments").doc(malformedMomentId).set({
         authorId: uid,
         authorName: "Before",
@@ -488,18 +951,42 @@ describe("profile identity Club fan-out authorization", () => {
     const references = Array.from({ length: count }, (_, index) =>
       db.collection("conversations").doc(`pf-security-page-${index}`),
     );
+    const peerUids = Array.from(
+      { length: count },
+      (_, index) => `pf-security-page-peer-${String(index).padStart(3, "0")}`,
+    );
+    const guardReferences = peerUids.map((peerUid) =>
+      db.collection("directConversationPairs").doc(
+        canonicalPairKey(...codeUnitPair(uid, peerUid)),
+      ),
+    );
     await setCanonical({
       displayName: "Paged identity",
       photoUrl: "https://example.com/paged.jpg",
     });
-    for (let offset = 0; offset < references.length; offset += 400) {
+    for (let offset = 0; offset < references.length; offset += 200) {
       const batch = db.batch();
-      for (const reference of references.slice(offset, offset + 400)) {
-        batch.set(reference, {
-          participantIds: [uid, "pf-security-friend"],
-          participantNames: { [uid]: "Before" },
-          participantPhotoUrls: { [uid]: "" },
-        });
+      for (let index = offset;
+        index < Math.min(offset + 200, references.length);
+        index += 1) {
+        const reference = references[index];
+        const peerUid = peerUids[index];
+        const participants = codeUnitPair(uid, peerUid);
+        batch.set(reference, canonicalConversationData({
+          participants,
+          names: {
+            [uid]: "Before",
+            [peerUid]: "Friend",
+          },
+          photos: {
+            [uid]: "",
+            [peerUid]: "https://example.com/friend.jpg",
+          },
+        }));
+        batch.set(guardReferences[index], canonicalPairGuardData({
+          conversationId: reference.id,
+          participants,
+        }));
       }
       await batch.commit();
     }
@@ -515,10 +1002,13 @@ describe("profile identity Club fan-out authorization", () => {
         "https://example.com/paged.jpg",
       );
     } finally {
-      for (let offset = 0; offset < references.length; offset += 400) {
+      for (let offset = 0; offset < references.length; offset += 200) {
         const batch = db.batch();
-        for (const reference of references.slice(offset, offset + 400)) {
-          batch.delete(reference);
+        for (let index = offset;
+          index < Math.min(offset + 200, references.length);
+          index += 1) {
+          batch.delete(references[index]);
+          batch.delete(guardReferences[index]);
         }
         await batch.commit();
       }

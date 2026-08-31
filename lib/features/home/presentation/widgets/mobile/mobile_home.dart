@@ -25,6 +25,7 @@ import 'package:yovoice/features/rooms/data/services/room_service.dart';
 import 'package:yovoice/features/staff/data/staff_capabilities.dart';
 import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
+import 'package:yovoice/shared/widgets/states/yo_error_state.dart';
 
 /// The MOBILE Home — "Voice Briefing".
 ///
@@ -189,6 +190,18 @@ class _MobileHomeState extends State<MobileHome> {
     );
   }
 
+  void _retryLiveRooms() {
+    setState(() {
+      try {
+        _rooms ??= widget.roomService ?? RoomService();
+        _liveRooms = _rooms!.watchLivePublicRooms();
+        _owned ??= _rooms!.watchOwnedRooms();
+      } catch (_) {
+        _liveRooms = null;
+      }
+    });
+  }
+
   void _openRoomSettings(VoiceRoom room) {
     Navigator.of(context).push<void>(
       MaterialPageRoute<void>(builder: (_) => RoomSettingsScreen(room: room)),
@@ -279,9 +292,12 @@ class _MobileHomeState extends State<MobileHome> {
               onSeeAll: widget.onOpenDiscover,
             ),
             if (roomsUnavailable)
-              const _MobileNote(
-                'Live rooms could not be loaded. Check your connection '
-                'and try again.',
+              YoErrorState(
+                message:
+                    'Live rooms could not be loaded. Check your connection '
+                    'and try again.',
+                onRetry: _retryLiveRooms,
+                compact: true,
               )
             else if (rankRoomsForHome(live: live, recommended: live).isEmpty)
               const _MobileNote(
@@ -371,6 +387,74 @@ class _MobileHeader extends StatelessWidget {
       stream: profile,
       builder: (context, snapshot) {
         final data = snapshot.data;
+        final enlargedText = MediaQuery.textScalerOf(context).scale(1) >= 1.6;
+        final displayName = data?.displayName.trim().isNotEmpty == true
+            ? data!.displayName.trim()
+            : 'Welcome';
+        final greeting = Text(
+          _partOfDay(),
+          style: TextStyle(color: palette.textSecondary, fontSize: 14),
+        );
+        final name = Text(
+          displayName,
+          maxLines: enlargedText ? 2 : 1,
+          overflow: enlargedText ? TextOverflow.visible : TextOverflow.ellipsis,
+          style: TextStyle(
+            color: palette.textPrimary,
+            fontSize: 26,
+            fontWeight: FontWeight.w900,
+            letterSpacing: -.5,
+          ),
+        );
+        final notification = _CircleIconButton(
+          icon: Icons.notifications_none_rounded,
+          onTap: onNotifications,
+          tooltip: unreadNotificationCount > 0
+              ? 'Notifications, $unreadNotificationCount unread'
+              : 'Notifications',
+          badgeCount: unreadNotificationCount,
+        );
+        final avatar = AccessibleTapRegion(
+          onTap: onProfile,
+          semanticLabel: 'Open your profile',
+          tooltip: 'Profile',
+          circular: true,
+          child: Container(
+            padding: const EdgeInsets.all(2),
+            decoration: const BoxDecoration(
+              shape: BoxShape.circle,
+              gradient: LinearGradient(
+                colors: [AppColors.primary, AppColors.secondary],
+              ),
+            ),
+            child: UserAvatar(
+              radius: 21,
+              photoUrl: data?.photoUrl,
+              displayName: data?.displayName,
+              fallbackIcon: Icons.person_rounded,
+            ),
+          ),
+        );
+
+        if (enlargedText) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Expanded(child: greeting),
+                  notification,
+                  const SizedBox(width: 10),
+                  avatar,
+                ],
+              ),
+              const SizedBox(height: 8),
+              name,
+            ],
+          );
+        }
+
         return Row(
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
@@ -378,62 +462,13 @@ class _MobileHeader extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    _partOfDay(),
-                    style: TextStyle(
-                      color: palette.textSecondary,
-                      fontSize: 14,
-                    ),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    data?.displayName.trim().isNotEmpty == true
-                        ? data!.displayName.trim()
-                        : 'Welcome',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: palette.textPrimary,
-                      fontSize: 26,
-                      fontWeight: FontWeight.w900,
-                      letterSpacing: -.5,
-                    ),
-                  ),
-                ],
+                children: [greeting, const SizedBox(height: 2), name],
               ),
             ),
             const SizedBox(width: 10),
-            _CircleIconButton(
-              icon: Icons.notifications_none_rounded,
-              onTap: onNotifications,
-              tooltip: unreadNotificationCount > 0
-                  ? 'Notifications, $unreadNotificationCount unread'
-                  : 'Notifications',
-              badgeCount: unreadNotificationCount,
-            ),
+            notification,
             const SizedBox(width: 10),
-            AccessibleTapRegion(
-              onTap: onProfile,
-              semanticLabel: 'Open your profile',
-              tooltip: 'Profile',
-              circular: true,
-              child: Container(
-                padding: const EdgeInsets.all(2),
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  gradient: const LinearGradient(
-                    colors: [AppColors.primary, AppColors.secondary],
-                  ),
-                ),
-                child: UserAvatar(
-                  radius: 21,
-                  photoUrl: data?.photoUrl,
-                  displayName: data?.displayName,
-                  fallbackIcon: Icons.person_rounded,
-                ),
-              ),
-            ),
+            avatar,
           ],
         );
       },

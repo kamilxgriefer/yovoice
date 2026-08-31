@@ -323,30 +323,35 @@ class _CommentCard extends StatefulWidget {
 }
 
 class _CommentCardState extends State<_CommentCard> {
-  final AudioPlayer _player = AudioPlayer();
+  AudioPlayer? _player;
   bool _playing = false;
 
   @override
   void initState() {
     super.initState();
-    _player.onPlayerComplete.listen((_) {
+    if (!widget.isVoice) return;
+    final player = AudioPlayer();
+    _player = player;
+    player.onPlayerComplete.listen((_) {
       if (mounted) setState(() => _playing = false);
     });
   }
 
   @override
   void dispose() {
-    _player.dispose();
+    _player?.dispose();
     super.dispose();
   }
 
   Future<void> _toggle() async {
+    final player = _player;
+    if (player == null) return;
     final url = widget.data['audioUrl'] as String?;
     if (url == null || url.isEmpty) return;
     if (_playing) {
-      await _player.pause();
+      await player.pause();
     } else {
-      await _player.play(UrlSource(url));
+      await player.play(UrlSource(url));
     }
     if (mounted) setState(() => _playing = !_playing);
   }

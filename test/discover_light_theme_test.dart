@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_theme.dart';
+import 'package:yovoice/features/discover/presentation/discover_category_identity.dart';
 import 'package:yovoice/features/discover/presentation/screens/discover_screen.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
@@ -88,6 +89,83 @@ void main() {
     );
     expect(selected.color, AppTheme.lightTheme.colorScheme.primary);
     expect(find.byKey(const ValueKey('discover-hero-pearl-room')), findsOne);
+    final heroCategory = tester.widget<Text>(find.text('FEATURED COMMUNITY'));
+    expect(
+      heroCategory.style?.color,
+      DiscoverCategoryIdentity.talk.resolve(Brightness.light).foreground,
+    );
     expect(tester.takeException(), isNull);
   });
+
+  for (final variant in [
+    (name: 'Pearl', theme: AppTheme.lightTheme, brightness: Brightness.light),
+    (name: 'Dark', theme: AppTheme.darkTheme, brightness: Brightness.dark),
+  ]) {
+    testWidgets(
+      'Discover ${variant.name} search card reflows at 320px / 200%',
+      (tester) async {
+        tester.view.physicalSize = const Size(320, 640);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.reset);
+
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: variant.theme,
+            home: MediaQuery(
+              data: const MediaQueryData(
+                size: Size(320, 640),
+                textScaler: TextScaler.linear(2),
+              ),
+              child: DiscoverScreen(
+                isRootTab: true,
+                roomService: _StaticRoomService([_room()]),
+              ),
+            ),
+          ),
+        );
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 300));
+
+        await tester.enterText(
+          find.byKey(const ValueKey('discover-search-field')),
+          'Talk',
+        );
+        await tester.pump(const Duration(milliseconds: 300));
+
+        const badgeKey = ValueKey('discover-type-badge-COMMUNITY');
+        await tester.drag(
+          find.byType(CustomScrollView),
+          const Offset(0, -420),
+        );
+        await tester.pump();
+        expect(find.byKey(badgeKey), findsOne);
+        final badge = tester.widget<Container>(find.byKey(badgeKey));
+        final badgeDecoration = badge.decoration! as BoxDecoration;
+        final badgeVisuals = DiscoverCategoryVisuals.fromSeed(
+          DiscoverCategoryIdentity.chill.seed,
+          variant.brightness,
+        );
+        expect(badgeDecoration.color, badgeVisuals.surface);
+        expect(
+          (badgeDecoration.border! as Border).top.color,
+          badgeVisuals.border,
+        );
+        final badgeIcon = tester.widget<Icon>(
+          find.descendant(
+            of: find.byKey(badgeKey),
+            matching: find.byIcon(Icons.groups_rounded),
+          ),
+        );
+        expect(badgeIcon.color, badgeVisuals.onSurface);
+        final badgeText = tester.widget<Text>(
+          find.descendant(
+            of: find.byKey(badgeKey),
+            matching: find.text('COMMUNITY'),
+          ),
+        );
+        expect(badgeText.style?.color, badgeVisuals.onSurface);
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
 }

@@ -149,7 +149,7 @@ Future<void> _renderSequence(
 
   await tester.runAsync(
     () => precacheImage(
-      const AssetImage('assets/images/logo.png'),
+      const AssetImage('assets/images/yo-voice-favicon-512.png'),
       _capture.currentContext!,
     ),
   );

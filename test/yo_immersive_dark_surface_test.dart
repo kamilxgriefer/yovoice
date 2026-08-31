@@ -42,7 +42,10 @@ void main() {
       expect(style.statusBarIconBrightness, Brightness.light);
       expect(style.statusBarBrightness, Brightness.dark);
       expect(style.systemNavigationBarColor, AppPalette.dark.background);
-      expect(style.systemNavigationBarDividerColor, AppPalette.dark.border);
+      expect(
+        style.systemNavigationBarDividerColor,
+        AppPalette.dark.navigationOutline,
+      );
       expect(style.systemNavigationBarIconBrightness, Brightness.light);
       expect(style.systemStatusBarContrastEnforced, isFalse);
       expect(style.systemNavigationBarContrastEnforced, isFalse);

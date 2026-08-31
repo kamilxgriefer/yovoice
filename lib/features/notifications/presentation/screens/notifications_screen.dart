@@ -15,9 +15,7 @@ import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 
 Color _notificationSuccess(BuildContext context) =>
-    Theme.of(context).brightness == Brightness.dark
-    ? const Color(0xFF54DB8C)
-    : const Color(0xFF087A44);
+    context.appPalette.successForeground;
 
 class NotificationsScreen extends StatefulWidget {
   const NotificationsScreen({
@@ -1056,29 +1054,30 @@ class _Avatar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
     final initial = name.trim().isEmpty ? '?' : name.trim()[0].toUpperCase();
 
     return Container(
       width: 50,
       height: 50,
       padding: const EdgeInsets.all(2),
-      decoration: const BoxDecoration(
+      decoration: BoxDecoration(
         shape: BoxShape.circle,
-        gradient: LinearGradient(
-          colors: [Color(0xFFC32BFF), Color(0xFF6D25FF)],
-        ),
+        gradient: LinearGradient(colors: [colors.primary, colors.secondary]),
       ),
       child: ClipOval(
         child: Container(
-          color: const Color(0xFF2A173C),
+          color: colors.primary,
           child: photoUrl.trim().isNotEmpty
               ? Image.network(
                   photoUrl,
                   fit: BoxFit.cover,
-                  errorBuilder: (_, __, ___) =>
-                      _AvatarInitial(initial: initial),
+                  errorBuilder: (_, __, ___) => _AvatarInitial(
+                    initial: initial,
+                    foreground: colors.onPrimary,
+                  ),
                 )
-              : _AvatarInitial(initial: initial),
+              : _AvatarInitial(initial: initial, foreground: colors.onPrimary),
         ),
       ),
     );
@@ -1086,17 +1085,18 @@ class _Avatar extends StatelessWidget {
 }
 
 class _AvatarInitial extends StatelessWidget {
-  const _AvatarInitial({required this.initial});
+  const _AvatarInitial({required this.initial, required this.foreground});
 
   final String initial;
+  final Color foreground;
 
   @override
   Widget build(BuildContext context) {
     return Center(
       child: Text(
         initial,
-        style: const TextStyle(
-          color: Colors.white,
+        style: TextStyle(
+          color: foreground,
           fontSize: 18,
           fontWeight: FontWeight.w800,
         ),
@@ -1115,22 +1115,32 @@ class _DegradedNotice extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     return Container(
+      key: const ValueKey('notifications-degraded-notice'),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(12),
-        color: palette.surface,
-        border: Border.all(color: palette.border),
+        color: palette.warningSurface,
+        border: Border.all(
+          color: Color.alphaBlend(
+            palette.warningForeground.withValues(alpha: .38),
+            palette.border,
+          ),
+        ),
       ),
       child: Row(
         children: [
-          Icon(Icons.cloud_off_rounded, size: 16, color: palette.textSecondary),
+          Icon(
+            Icons.cloud_off_rounded,
+            size: 16,
+            color: palette.warningForeground,
+          ),
           const SizedBox(width: 9),
           Expanded(
             child: Text(
               'Friend requests and unread messages could not be loaded. '
               'Your activity below is up to date.',
               style: TextStyle(
-                color: palette.textSecondary,
+                color: palette.warningForeground,
                 fontSize: 12,
                 height: 1.35,
               ),

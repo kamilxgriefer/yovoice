@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/core/theme/app_immersive_colors.dart';
 import 'package:yovoice/features/clubs/data/models/club.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
 import 'package:yovoice/features/profile/data/models/user_profile.dart';
@@ -41,7 +42,7 @@ class CreatorAnalyticsScreen extends StatelessWidget {
     );
 
     final content = Scaffold(
-      backgroundColor: AppColors.background,
+      backgroundColor: AppImmersiveColors.background,
       body: SafeArea(
         child: ResponsiveContentFrame(
           width: ResponsiveContentWidth.dashboard,
@@ -280,7 +281,7 @@ class _Header extends StatelessWidget {
               Text(
                 'Analytics',
                 style: TextStyle(
-                  color: AppColors.textPrimary,
+                  color: AppImmersiveColors.textPrimary,
                   fontSize: 26,
                   fontWeight: FontWeight.w900,
                   letterSpacing: -0.6,
@@ -290,7 +291,7 @@ class _Header extends StatelessWidget {
               Text(
                 'A truthful snapshot of your audience and content.',
                 style: TextStyle(
-                  color: AppColors.textSecondary,
+                  color: AppImmersiveColors.textSecondary,
                   fontSize: 13,
                   height: 1.35,
                 ),
@@ -311,9 +312,9 @@ class _TruthNotice extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: AppColors.surface,
+        color: AppImmersiveColors.surface,
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: AppColors.border),
+        border: Border.all(color: AppImmersiveColors.border),
       ),
       child: const Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -327,7 +328,7 @@ class _TruthNotice extends StatelessWidget {
                 Text(
                   'Real data, clearly labeled',
                   style: TextStyle(
-                    color: AppColors.textPrimary,
+                    color: AppImmersiveColors.textPrimary,
                     fontSize: 14,
                     fontWeight: FontWeight.w800,
                   ),
@@ -340,7 +341,7 @@ class _TruthNotice extends StatelessWidget {
                   'are not recorded yet, so this page never invents growth '
                   'percentages, views or attendance.',
                   style: TextStyle(
-                    color: AppColors.textSecondary,
+                    color: AppImmersiveColors.textSecondary,
                     fontSize: 12,
                     height: 1.45,
                   ),
@@ -368,7 +369,7 @@ class _SectionHeading extends StatelessWidget {
         Text(
           title,
           style: const TextStyle(
-            color: AppColors.textPrimary,
+            color: AppImmersiveColors.textPrimary,
             fontSize: 18,
             fontWeight: FontWeight.w900,
           ),
@@ -377,7 +378,7 @@ class _SectionHeading extends StatelessWidget {
         Text(
           subtitle,
           style: const TextStyle(
-            color: AppColors.textSecondary,
+            color: AppImmersiveColors.textSecondary,
             fontSize: 12,
             height: 1.4,
           ),
@@ -452,9 +453,9 @@ class _MetricCard extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: AppColors.surface,
+        color: AppImmersiveColors.surface,
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: AppColors.border),
+        border: Border.all(color: AppImmersiveColors.border),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -476,7 +477,7 @@ class _MetricCard extends StatelessWidget {
                 Text(
                   item.value,
                   style: const TextStyle(
-                    color: AppColors.textPrimary,
+                    color: AppImmersiveColors.textPrimary,
                     fontSize: 23,
                     fontWeight: FontWeight.w900,
                     letterSpacing: -0.5,
@@ -486,7 +487,7 @@ class _MetricCard extends StatelessWidget {
                 Text(
                   item.label,
                   style: const TextStyle(
-                    color: AppColors.textPrimary,
+                    color: AppImmersiveColors.textPrimary,
                     fontSize: 12.5,
                     fontWeight: FontWeight.w700,
                   ),
@@ -495,7 +496,7 @@ class _MetricCard extends StatelessWidget {
                 Text(
                   item.supporting,
                   style: const TextStyle(
-                    color: AppColors.textSecondary,
+                    color: AppImmersiveColors.textSecondary,
                     fontSize: 10.5,
                     height: 1.35,
                   ),
@@ -528,9 +529,9 @@ class _TopMoments extends StatelessWidget {
           width: double.infinity,
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
-            color: AppColors.surface,
+            color: AppImmersiveColors.surface,
             borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: AppColors.border),
+            border: Border.all(color: AppImmersiveColors.border),
           ),
           child: moments.isEmpty
               ? const _EmptyInline(
@@ -543,7 +544,10 @@ class _TopMoments extends StatelessWidget {
                     for (var index = 0; index < moments.length; index++) ...[
                       _MomentRow(index: index, moment: moments[index]),
                       if (index != moments.length - 1)
-                        const Divider(color: AppColors.divider, height: 24),
+                        const Divider(
+                          color: AppImmersiveColors.divider,
+                          height: 24,
+                        ),
                     ],
                   ],
                 ),
@@ -570,8 +574,8 @@ class _MomentRow extends StatelessWidget {
       children: [
         CircleAvatar(
           radius: 17,
-          backgroundColor: AppColors.surfaceLight,
-          foregroundColor: AppColors.textPrimary,
+          backgroundColor: AppImmersiveColors.surfaceRaised,
+          foregroundColor: AppImmersiveColors.textPrimary,
           child: Text(
             '${index + 1}',
             style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w900),
@@ -587,7 +591,7 @@ class _MomentRow extends StatelessWidget {
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(
-                  color: AppColors.textPrimary,
+                  color: AppImmersiveColors.textPrimary,
                   fontSize: 12.5,
                   fontWeight: FontWeight.w700,
                   height: 1.35,
@@ -633,11 +637,11 @@ class _TinyStat extends StatelessWidget {
       runSpacing: 2,
       crossAxisAlignment: WrapCrossAlignment.center,
       children: [
-        Icon(icon, color: AppColors.textHint, size: 13),
+        Icon(icon, color: AppImmersiveColors.textTertiary, size: 13),
         Text(
           value,
           style: const TextStyle(
-            color: AppColors.textSecondary,
+            color: AppImmersiveColors.textSecondary,
             fontSize: 10.5,
           ),
         ),
@@ -656,9 +660,9 @@ class _OwnedSpaces extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: AppColors.surface,
+        color: AppImmersiveColors.surface,
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: AppColors.border),
+        border: Border.all(color: AppImmersiveColors.border),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -666,7 +670,7 @@ class _OwnedSpaces extends StatelessWidget {
           const Text(
             'Owned spaces',
             style: TextStyle(
-              color: AppColors.textPrimary,
+              color: AppImmersiveColors.textPrimary,
               fontSize: 16,
               fontWeight: FontWeight.w900,
             ),
@@ -675,7 +679,7 @@ class _OwnedSpaces extends StatelessWidget {
           const Text(
             'Membership counters are current totals per space. The same person may belong to more than one space, so they are not labeled as unique audience.',
             style: TextStyle(
-              color: AppColors.textSecondary,
+              color: AppImmersiveColors.textSecondary,
               fontSize: 11.5,
               height: 1.45,
             ),
@@ -712,14 +716,14 @@ class _CountChip extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
       decoration: BoxDecoration(
-        color: AppColors.surfaceLight,
+        color: AppImmersiveColors.surfaceRaised,
         borderRadius: BorderRadius.circular(99),
-        border: Border.all(color: AppColors.border),
+        border: Border.all(color: AppImmersiveColors.border),
       ),
       child: Text(
         '$value $label',
         style: const TextStyle(
-          color: AppColors.textPrimary,
+          color: AppImmersiveColors.textPrimary,
           fontSize: 11.5,
           fontWeight: FontWeight.w700,
         ),
@@ -739,13 +743,13 @@ class _EmptyInline extends StatelessWidget {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Icon(icon, color: AppColors.textHint, size: 20),
+        Icon(icon, color: AppImmersiveColors.textTertiary, size: 20),
         const SizedBox(width: 10),
         Expanded(
           child: Text(
             text,
             style: const TextStyle(
-              color: AppColors.textSecondary,
+              color: AppImmersiveColors.textSecondary,
               fontSize: 12,
               height: 1.4,
             ),

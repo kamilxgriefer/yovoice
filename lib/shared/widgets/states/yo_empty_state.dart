@@ -67,7 +67,7 @@ class YoEmptyState extends StatelessWidget {
                 ),
                 shape: BoxShape.circle,
               ),
-              child: Icon(icon, size: 34, color: colors.primary),
+              child: Icon(icon, size: 34, color: palette.interactiveForeground),
             ),
             const SizedBox(height: AppSpacing.lg),
             Text(

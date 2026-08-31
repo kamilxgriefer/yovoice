@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/core/theme/app_immersive_colors.dart';
 
 /// The mini player's room-identity zone: waveform badge, title, live line
 /// and the "N inside" chip. The WHOLE zone — and nothing outside it — is
@@ -63,7 +64,7 @@ class ActiveRoomInfo extends StatelessWidget {
                 if (!reconnecting)
                   const TextSpan(
                     text: ' · tap to return',
-                    style: TextStyle(color: AppColors.textSecondary),
+                    style: TextStyle(color: AppImmersiveColors.textSecondary),
                   ),
               ],
             ),
@@ -79,7 +80,7 @@ class ActiveRoomInfo extends StatelessWidget {
       maxLines: 1,
       overflow: TextOverflow.ellipsis,
       style: TextStyle(
-        color: AppColors.textPrimary,
+        color: AppImmersiveColors.textPrimary,
         fontSize: compact ? 13 : 14.5,
         fontWeight: FontWeight.w800,
       ),
@@ -203,9 +204,9 @@ class _InsideChip extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
         decoration: BoxDecoration(
-          color: AppColors.surfaceLight.withValues(alpha: .8),
+          color: AppImmersiveColors.surfaceRaised.withValues(alpha: .8),
           borderRadius: BorderRadius.circular(999),
-          border: Border.all(color: AppColors.border),
+          border: Border.all(color: AppImmersiveColors.border),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
@@ -213,7 +214,7 @@ class _InsideChip extends StatelessWidget {
             const Icon(
               Icons.people_alt_rounded,
               size: 12,
-              color: AppColors.textSecondary,
+              color: AppImmersiveColors.textSecondary,
             ),
             const SizedBox(width: 4),
             Flexible(
@@ -222,7 +223,7 @@ class _InsideChip extends StatelessWidget {
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(
-                  color: AppColors.textSecondary,
+                  color: AppImmersiveColors.textSecondary,
                   fontSize: 10.5,
                   fontWeight: FontWeight.w700,
                 ),

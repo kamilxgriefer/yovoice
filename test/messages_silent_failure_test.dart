@@ -21,18 +21,13 @@ import 'package:yovoice/features/messages/presentation/screens/messages_screen.d
 import 'package:yovoice/shared/identity/public_identity_repository.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
-/// A user-visible action that fails must not fail invisibly.
+/// User actions stay recoverable while background bookkeeping stays quiet.
 ///
-/// Reacting to a message, publishing typing presence and un-archiving a
-/// conversation were all fired through `unawaited(...)` with no error
-/// handling, so a rejection from Firestore or a callable simply
-/// evaporated: the tap did nothing and said nothing. That silence is how
-/// the duplicate-send defect in `sendTextMessage` survived in production.
-///
-/// These tests hold each of the three to the project's shared error
-/// presentation (`intentionalOrFriendly` / `friendlyErrorMessage`), at
-/// narrow, medium and wide widths, and check that the recovery path is
-/// still intact afterwards.
+/// Reactions and un-archiving have actionable failure presentation. Typing
+/// presence is deliberately best-effort: the sender cannot repair a rejected
+/// heartbeat, so it remains diagnostic-only and must never cover the composer.
+/// These tests pin both sides of that boundary and keep the real send recovery
+/// path intact at narrow, medium and wide widths.
 void main() {
   const currentUserId = 'me-uid';
   const otherUserId = 'them-uid';
@@ -386,8 +381,8 @@ void main() {
     });
   });
 
-  group('typing presence failures surface once, not per keystroke', () {
-    testWidgets('the first rejection is reported and later ones are not', (
+  group('typing presence is best-effort and never blocks the composer', () {
+    testWidgets('a rejected heartbeat stays silent across later keystrokes', (
       tester,
     ) async {
       final service = _StubMessageService(
@@ -406,17 +401,10 @@ void main() {
 
       expect(service.typingCalls, greaterThanOrEqualTo(1));
       expect(
-        find.text('This is taking longer than expected. Please try again.'),
-        findsOneWidget,
+        find.byType(SnackBar),
+        findsNothing,
+        reason: 'typing is not an actionable failure for the sender',
       );
-
-      // Let the snackbar retire, then keep typing: the composer must not
-      // turn into a nag.
-      ScaffoldMessenger.of(
-        tester.element(find.byType(TextField)),
-      ).hideCurrentSnackBar();
-      await tester.pumpAndSettle();
-      expect(find.byType(SnackBar), findsNothing);
 
       final callsSoFar = service.typingCalls;
       await tester.enterText(find.byType(TextField), 'hello there');
@@ -430,12 +418,13 @@ void main() {
       expect(
         find.byType(SnackBar),
         findsNothing,
-        reason: 'reported once per visit, not once per keystroke',
+        reason: 'presence failures stay silent for the whole visit',
       );
     });
 
-    testWidgets('typing presence that works is silent, and sending still '
-        'works after a presence failure', (tester) async {
+    testWidgets('sending still works after a silent presence failure', (
+      tester,
+    ) async {
       final service = _StubMessageService(
         messages: const <Message>[],
         typingFailure: FirebaseException(
@@ -448,13 +437,6 @@ void main() {
       await pumpChat(tester, service, size: wide);
 
       await tester.enterText(find.byType(TextField), 'still sendable');
-      await tester.pumpAndSettle();
-
-      // The presence warning sits over the composer; retire it the way a
-      // real user would before reaching for Send.
-      ScaffoldMessenger.of(
-        tester.element(find.byType(TextField)),
-      ).hideCurrentSnackBar();
       await tester.pumpAndSettle();
 
       await sendAndWaitForQueuedMessage(tester, service);

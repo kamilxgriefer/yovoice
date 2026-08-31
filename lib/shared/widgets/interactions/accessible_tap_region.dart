@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/theme/app_palette.dart';
+
 /// Turns an arbitrary visual surface into a complete primary action.
 ///
 /// Unlike a bare gesture recognizer this contributes a button node to the
@@ -43,9 +45,11 @@ class AccessibleTapRegion extends StatefulWidget {
 
 class _AccessibleTapRegionState extends State<AccessibleTapRegion> {
   bool _showsFocusHighlight = false;
+  bool _hovered = false;
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     final borderRadius = widget.circular
         ? null
         : BorderRadius.circular(widget.borderRadius);
@@ -73,7 +77,10 @@ class _AccessibleTapRegionState extends State<AccessibleTapRegion> {
         type: MaterialType.transparency,
         child: InkWell(
           onTap: widget.onTap,
-          onHover: widget.onHover,
+          onHover: (value) {
+            if (_hovered != value) setState(() => _hovered = value);
+            widget.onHover?.call(value);
+          },
           onFocusChange: (focused) {
             if (_showsFocusHighlight != focused) {
               setState(() => _showsFocusHighlight = focused);
@@ -84,6 +91,18 @@ class _AccessibleTapRegionState extends State<AccessibleTapRegion> {
           mouseCursor: widget.onTap == null
               ? SystemMouseCursors.basic
               : SystemMouseCursors.click,
+          overlayColor: WidgetStateProperty.resolveWith((states) {
+            if (states.contains(WidgetState.pressed)) {
+              return palette.interactiveForeground.withValues(alpha: .14);
+            }
+            if (states.contains(WidgetState.hovered)) {
+              return palette.interactiveForeground.withValues(alpha: .07);
+            }
+            if (states.contains(WidgetState.focused)) {
+              return palette.focus.withValues(alpha: .1);
+            }
+            return null;
+          }),
           excludeFromSemantics: true,
           child: Stack(
             children: [
@@ -133,9 +152,15 @@ class _AccessibleTapRegionState extends State<AccessibleTapRegion> {
                           color: _showsFocusHighlight
                               ? contrastedFocus
                                     ? Colors.white
-                                    : const Color(0xFFD28AFF)
+                                    : palette.focus
+                              : widget.selected == true
+                              ? palette.interactiveForeground
+                              : _hovered && widget.onTap != null
+                              ? palette.borderStrong
                               : Colors.transparent,
-                          width: 2,
+                          width: _showsFocusHighlight || widget.selected == true
+                              ? 2
+                              : 1,
                         ),
                       ),
                     ),

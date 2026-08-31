@@ -9,9 +9,7 @@ import 'package:yovoice/features/auth/data/totp_mfa_service.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 
 Color _twoFactorSuccess(BuildContext context) =>
-    Theme.of(context).brightness == Brightness.dark
-    ? const Color(0xFF3FDA8E)
-    : const Color(0xFF087A44);
+    context.appPalette.successForeground;
 
 class TwoFactorAuthenticationScreen extends StatefulWidget {
   const TwoFactorAuthenticationScreen({
@@ -463,9 +461,10 @@ class _StatusCard extends StatelessWidget {
     final palette = context.appPalette;
     final color = enabled ? _twoFactorSuccess(context) : palette.textSecondary;
     return Container(
+      key: const ValueKey('two-factor-status-card'),
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
-        color: palette.surface,
+        color: enabled ? palette.successSurface : palette.surface,
         borderRadius: BorderRadius.circular(20),
         border: Border.all(
           color: enabled ? color.withValues(alpha: .55) : palette.border,

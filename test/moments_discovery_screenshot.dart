@@ -39,7 +39,7 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/core/theme/app_immersive_colors.dart';
 import 'package:yovoice/core/theme/app_theme.dart';
 import 'package:yovoice/features/home/data/services/home_feed_service.dart';
 import 'package:yovoice/features/home/presentation/screens/main_shell.dart';
@@ -964,10 +964,7 @@ void main() {
               DateTime.now().subtract(const Duration(minutes: 40)),
             ),
           });
-      final likes = db
-          .collection('voiceMoments')
-          .doc('m1')
-          .collection('likes');
+      final likes = db.collection('voiceMoments').doc('m1').collection('likes');
       var minute = 0;
       for (final (uid, name) in const [
         ('tomas', 'Tomás Oliveira'),
@@ -1187,7 +1184,7 @@ void main() {
         // an empty anchor where the logo belongs.
         await tester.runAsync(() async {
           await precacheImage(
-            const AssetImage('assets/images/logo.png'),
+            const AssetImage('assets/images/yo-voice-favicon-512.png'),
             tester.element(find.byType(MaterialApp)),
           );
         });
@@ -1210,15 +1207,15 @@ void main() {
       await tester.pumpWidget(
         _host(
           Scaffold(
-            backgroundColor: AppColors.background,
+            backgroundColor: AppImmersiveColors.background,
             body: Row(
               children: [
                 Container(
                   width: 264,
                   decoration: const BoxDecoration(
-                    color: AppColors.surface,
+                    color: AppImmersiveColors.surface,
                     border: Border(
-                      right: BorderSide(color: AppColors.divider),
+                      right: BorderSide(color: AppImmersiveColors.divider),
                     ),
                   ),
                   child: Column(

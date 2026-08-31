@@ -719,8 +719,10 @@ permission flags).
   The same commit closed three messaging failures that were invisible to
   the user, found while in the file: `toggleReaction`, `setTyping` and the
   un-archive inside an unawaited handler all swallowed their errors. They
-  now use the shared error mapping, with typing raising at most one
-  snackbar per visit because it fires per keystroke. Covered by
+  initially used the shared error mapping. The 2026-08-29 incident refined
+  that boundary: reaction and un-archive failures remain actionable, while
+  ephemeral typing failures are logged but silent because the sender cannot
+  repair them from the composer. Covered by
   `test/messages_silent_failure_test.dart`.
 
 - **FIXED 2026-08-16 — accounts with no public profile were invisible to
@@ -2702,3 +2704,36 @@ permission flags).
   identities and a conversation-membership race; widget regressions cover the
   Chats row, open route and standard Home card. Coordinated native tester build
   13 remains the physical-device release evidence.
+- **FIXED 2026-08-29 — one active direct
+  conversation was rejected by every guarded operation after an old profile
+  fan-out stringified a `FieldPath` into a literal backtick-wrapped map key.**
+  The root still had both real participant photo entries, but the third key
+  made the exact-map validator return `data-loss`; text became terminal
+  `Not sent` and typing showed an unrelated warning from the same rejection.
+  The recipient's installed build was never consulted and was not causal.
+  Profile fan-out now rebuilds both exact two-key identity maps atomically,
+  preserves validated peer values, removes extras, and is transaction-safe
+  when both users update concurrently. Dry-run/apply/idempotency and concurrent
+  emulator regressions cover the repair. Typing failures are diagnostic-only,
+  and an absent callable no longer attempts the Firestore-root write that
+  deployed Rules always deny. A bounded production dry-run found exactly one
+  matching conversation; a private `0600` backup was written before a single
+  transaction removed the poison key. The post-write scan found zero matching
+  records, and the full identity dry-run then reported 48 users, zero affected
+  users and zero planned writes. No application, Hosting, Functions or store
+  build was published as part of this data repair.
+- **Fixed in source 2026-08-31 — a newly created password account could race
+  profile bootstrap and permanently receive the email local-part instead of
+  the pseudonym selected during registration.** Firebase Auth emits the new
+  principal before `updateDisplayName` and `users/{uid}` finish. AuthGate could
+  therefore call the legacy/social fallback, write a non-empty guessed name,
+  and correctly be prevented by Rules from replacing it later. A UI-only
+  Riverpod flag was insufficient because a second browser tab does not share
+  process state. The shipped responsive form now drives the local AuthGate
+  interlock, while ProfileService independently fails closed for an
+  unverified password user with no usable Auth name: it reloads Auth, checks
+  the uid, re-reads the profile, and either observes the registration owner's
+  exact name or throws a retryable provisioning-pending error without writing
+  identity. Three deterministic cross-tab/poison regressions plus the
+  disposed-form navigation test pin the boundary. No Rules relaxation or
+  arbitrary overwrite path was added.

@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/core/theme/app_immersive_colors.dart';
 import 'package:yovoice/features/home/data/services/home_feed_service.dart';
 import 'package:yovoice/features/moderation/data/services/content_report_service.dart';
 import 'package:yovoice/features/moderation/presentation/report_content_flow.dart';
@@ -68,11 +69,13 @@ Future<void> showMomentStoryViewer(
       builder: (dialogContext) {
         final viewport = MediaQuery.sizeOf(dialogContext);
         return Dialog(
-          backgroundColor: AppColors.background,
+          backgroundColor: AppImmersiveColors.background,
           insetPadding: const EdgeInsets.symmetric(vertical: 28),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(24),
-            side: BorderSide(color: AppColors.border.withValues(alpha: .6)),
+            side: BorderSide(
+              color: AppImmersiveColors.border.withValues(alpha: .6),
+            ),
           ),
           clipBehavior: Clip.antiAlias,
           child: SizedBox(
@@ -89,8 +92,10 @@ Future<void> showMomentStoryViewer(
   await Navigator.of(context).push<void>(
     MaterialPageRoute<void>(
       fullscreenDialog: true,
-      builder: (_) =>
-          Scaffold(backgroundColor: AppColors.background, body: viewer),
+      builder: (_) => Scaffold(
+        backgroundColor: AppImmersiveColors.background,
+        body: viewer,
+      ),
     ),
   );
 }
@@ -589,14 +594,14 @@ class _MomentStoryViewerState extends State<MomentStoryViewer> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        backgroundColor: AppColors.surfaceLight,
+        backgroundColor: AppImmersiveColors.surfaceRaised,
         title: const Text(
           'Delete this moment?',
-          style: TextStyle(color: AppColors.textPrimary),
+          style: TextStyle(color: AppImmersiveColors.textPrimary),
         ),
         content: const Text(
           'This cannot be undone.',
-          style: TextStyle(color: AppColors.textSecondary),
+          style: TextStyle(color: AppImmersiveColors.textSecondary),
         ),
         actions: [
           TextButton(
@@ -818,7 +823,7 @@ class _ProgressBars extends StatelessWidget {
                 height: 3.5,
                 child: Stack(
                   children: [
-                    Container(color: AppColors.surfaceLight),
+                    Container(color: AppImmersiveColors.surfaceRaised),
                     FractionallySizedBox(
                       widthFactor: fillFor(i).clamp(0.0, 1.0),
                       child: const DecoratedBox(
@@ -893,7 +898,7 @@ class _StoryHeader extends StatelessWidget {
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
-                          color: AppColors.textPrimary,
+                          color: AppImmersiveColors.textPrimary,
                           fontSize: 14.5,
                           fontWeight: FontWeight.w800,
                         ),
@@ -911,7 +916,7 @@ class _StoryHeader extends StatelessWidget {
                       Text(
                         age,
                         style: const TextStyle(
-                          color: AppColors.textSecondary,
+                          color: AppImmersiveColors.textSecondary,
                           fontSize: 11.5,
                         ),
                       ),
@@ -922,7 +927,7 @@ class _StoryHeader extends StatelessWidget {
                           // A permanent Moment's label is a calm fact,
                           // not a warning-coloured countdown.
                           color: moment.isPermanent
-                              ? AppColors.textHint
+                              ? AppImmersiveColors.textTertiary
                               : AppColors.warning,
                           fontSize: 11.5,
                           fontWeight: FontWeight.w700,
@@ -938,7 +943,7 @@ class _StoryHeader extends StatelessWidget {
             '${position + 1} of $total',
             key: const ValueKey('story-position-indicator'),
             style: const TextStyle(
-              color: AppColors.textSecondary,
+              color: AppImmersiveColors.textSecondary,
               fontSize: 12,
               fontWeight: FontWeight.w700,
             ),
@@ -950,14 +955,17 @@ class _StoryHeader extends StatelessWidget {
               tooltip: 'Moment details',
               icon: const Icon(
                 Icons.info_outline_rounded,
-                color: AppColors.textSecondary,
+                color: AppImmersiveColors.textSecondary,
               ),
             ),
           IconButton(
             key: const ValueKey('story-close'),
             onPressed: onClose,
             tooltip: 'Close',
-            icon: const Icon(Icons.close_rounded, color: AppColors.textPrimary),
+            icon: const Icon(
+              Icons.close_rounded,
+              color: AppImmersiveColors.textPrimary,
+            ),
           ),
         ],
       ),
@@ -1009,7 +1017,7 @@ class _StoryStage extends StatelessWidget {
               overflow: TextOverflow.ellipsis,
               textAlign: TextAlign.center,
               style: const TextStyle(
-                color: AppColors.textPrimary,
+                color: AppImmersiveColors.textPrimary,
                 fontSize: 16,
                 height: 1.45,
                 fontWeight: FontWeight.w600,
@@ -1036,7 +1044,7 @@ class _StoryStage extends StatelessWidget {
                 height: 64,
                 child: Icon(
                   isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
-                  color: AppColors.textPrimary,
+                  color: AppImmersiveColors.textPrimary,
                   size: 34,
                 ),
               ),
@@ -1049,7 +1057,7 @@ class _StoryStage extends StatelessWidget {
               ? '${_clock(position.inSeconds)} / ${_clock(totalSeconds)}'
               : '',
           style: const TextStyle(
-            color: AppColors.textHint,
+            color: AppImmersiveColors.textTertiary,
             fontSize: 12,
             fontWeight: FontWeight.w700,
           ),
@@ -1294,7 +1302,7 @@ class _StoryActions extends StatelessWidget {
                     icon: const Icon(
                       Icons.flag_outlined,
                       size: 20,
-                      color: AppColors.textSecondary,
+                      color: AppImmersiveColors.textSecondary,
                     ),
                   ),
                 ],
@@ -1361,7 +1369,7 @@ class _ActionChip extends StatelessWidget {
       button: onTap != null,
       label: semanticLabel ?? label,
       child: Material(
-        color: AppColors.surface.withValues(alpha: .55),
+        color: AppImmersiveColors.surface.withValues(alpha: .55),
         borderRadius: BorderRadius.circular(14),
         child: InkWell(
           onTap: onTap,
@@ -1375,7 +1383,9 @@ class _ActionChip extends StatelessWidget {
                 Icon(
                   icon,
                   size: 20,
-                  color: active ? AppColors.secondary : AppColors.textSecondary,
+                  color: active
+                      ? AppColors.secondary
+                      : AppImmersiveColors.textSecondary,
                 ),
                 const SizedBox(width: 6),
                 Flexible(
@@ -1384,7 +1394,7 @@ class _ActionChip extends StatelessWidget {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
-                      color: AppColors.textSecondary,
+                      color: AppImmersiveColors.textSecondary,
                       fontSize: 12.5,
                       fontWeight: FontWeight.w700,
                     ),

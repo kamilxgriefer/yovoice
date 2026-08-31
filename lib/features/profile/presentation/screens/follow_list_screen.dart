@@ -24,6 +24,7 @@ class FollowListScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     final isFollowers = type == FollowListType.followers;
     final stream = isFollowers
         ? _service.watchFollowers(userId)
@@ -85,15 +86,15 @@ class FollowListScreen extends StatelessWidget {
                     children: [
                       CircleAvatar(
                         radius: 24,
-                        backgroundColor: const Color(0xFF5D2181),
+                        backgroundColor: colors.primary,
                         backgroundImage: user.photoUrl == null
                             ? null
                             : NetworkImage(user.photoUrl!),
                         child: user.photoUrl == null
                             ? Text(
                                 user.initial,
-                                style: const TextStyle(
-                                  color: Colors.white,
+                                style: TextStyle(
+                                  color: colors.onPrimary,
                                   fontWeight: FontWeight.w900,
                                 ),
                               )

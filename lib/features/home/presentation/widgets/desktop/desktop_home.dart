@@ -27,6 +27,7 @@ import 'package:yovoice/features/rooms/data/services/room_service.dart';
 import 'package:yovoice/features/staff/data/staff_capabilities.dart';
 import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
+import 'package:yovoice/shared/widgets/states/yo_error_state.dart';
 
 /// "Pulse Home" — the DESKTOP Home surface.
 ///
@@ -212,6 +213,18 @@ class _DesktopHomeState extends State<DesktopHome> {
     );
   }
 
+  void _retryLiveRooms() {
+    setState(() {
+      try {
+        _rooms ??= widget.roomService ?? RoomService();
+        _liveRooms = _rooms!.watchLivePublicRooms();
+        _owned ??= _rooms!.watchOwnedRooms();
+      } catch (_) {
+        _liveRooms = null;
+      }
+    });
+  }
+
   void _openRoomSettings(VoiceRoom room) {
     // The existing settings screen, which re-checks authorship; rules
     // refuse a non-host write regardless of what the UI offers.
@@ -291,9 +304,12 @@ class _DesktopHomeState extends State<DesktopHome> {
                   onViewAll: widget.onSeeAllRooms,
                 ),
                 if (roomsUnavailable)
-                  const _HomeSectionNote(
-                    'Live rooms could not be loaded. Check your connection '
-                    'and try again.',
+                  YoErrorState(
+                    message:
+                        'Live rooms could not be loaded. Check your connection '
+                        'and try again.',
+                    onRetry: _retryLiveRooms,
+                    compact: true,
                   )
                 else if (board.isEmpty)
                   const _HomeSectionNote(

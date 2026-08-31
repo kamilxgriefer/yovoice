@@ -256,6 +256,7 @@ void main() {
       addTearDown(tester.view.reset);
       await tester.pumpWidget(
         MaterialApp(
+          theme: AppTheme.lightTheme,
           home: NotificationsScreen(
             isRootTab: true,
             friendService: FriendService(firestore: db, auth: authFor(me)),
@@ -292,6 +293,20 @@ void main() {
       expect(find.text('Could not load notifications'), findsNothing);
       // ...and the missing section is admitted rather than hidden.
       expect(find.textContaining('could not be loaded'), findsOneWidget);
+      final notice = tester.widget<Container>(
+        find.byKey(const ValueKey('notifications-degraded-notice')),
+      );
+      expect(
+        (notice.decoration! as BoxDecoration).color,
+        AppPalette.light.warningSurface,
+      );
+      expect(
+        tester
+            .widget<Text>(find.textContaining('could not be loaded'))
+            .style!
+            .color,
+        AppPalette.light.warningForeground,
+      );
     });
 
     testWidgets('an auxiliary stream stuck loading cannot hold the screen '

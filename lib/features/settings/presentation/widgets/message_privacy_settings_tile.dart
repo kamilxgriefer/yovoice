@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/settings/data/models/message_privacy.dart';
 import 'package:yovoice/features/settings/data/services/message_privacy_service.dart';
 import 'package:yovoice/features/settings/presentation/screens/message_privacy_screen.dart';
@@ -24,6 +24,8 @@ class _MessagePrivacySettingsTileState
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     return StreamBuilder<MessagePrivacyOption>(
       stream: _service.watchCurrent(),
       builder: (context, snapshot) {
@@ -46,19 +48,19 @@ class _MessagePrivacySettingsTileState
             height: 38,
             alignment: Alignment.center,
             decoration: BoxDecoration(
-              color: AppColors.primary.withValues(alpha: .14),
+              color: colors.primaryContainer,
               borderRadius: BorderRadius.circular(12),
             ),
-            child: const Icon(
+            child: Icon(
               Icons.forum_outlined,
-              color: AppColors.secondary,
+              color: colors.onPrimaryContainer,
               size: 20,
             ),
           ),
-          title: const Text(
+          title: Text(
             'Who can message you',
             style: TextStyle(
-              color: AppColors.textPrimary,
+              color: palette.textPrimary,
               fontWeight: FontWeight.w700,
               fontSize: 14.5,
             ),
@@ -67,14 +69,11 @@ class _MessagePrivacySettingsTileState
             subtitle,
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              color: AppColors.textSecondary,
-              fontSize: 12,
-            ),
+            style: TextStyle(color: palette.textSecondary, fontSize: 12),
           ),
-          trailing: const Icon(
+          trailing: Icon(
             Icons.chevron_right_rounded,
-            color: AppColors.textSecondary,
+            color: palette.textSecondary,
           ),
         );
       },

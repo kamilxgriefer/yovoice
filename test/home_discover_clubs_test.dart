@@ -6,9 +6,21 @@ import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:yovoice/core/theme/app_palette.dart';
+import 'package:yovoice/core/theme/app_theme.dart';
 import 'package:yovoice/features/clubs/data/models/club.dart';
 import 'package:yovoice/features/home/data/services/home_feed_service.dart';
 import 'package:yovoice/features/home/presentation/widgets/shared/discover_clubs_rail.dart';
+
+double _contrastRatio(Color first, Color second) {
+  final lighter = first.computeLuminance() > second.computeLuminance()
+      ? first.computeLuminance()
+      : second.computeLuminance();
+  final darker = first.computeLuminance() > second.computeLuminance()
+      ? second.computeLuminance()
+      : first.computeLuminance();
+  return (lighter + .05) / (darker + .05);
+}
 
 /// Home's "Discover clubs" rail, on both halves of the defect that kept it
 /// invisible for the entire life of the product:
@@ -124,11 +136,7 @@ void main() {
     test('private and invite-only clubs stay out of the rail', () async {
       await seedClub(id: 'public', name: 'Night Owls');
       await seedClub(id: 'private', name: 'Private Club', privacy: 'private');
-      await seedClub(
-        id: 'invite',
-        name: 'Invite Club',
-        privacy: 'inviteOnly',
-      );
+      await seedClub(id: 'invite', name: 'Invite Club', privacy: 'inviteOnly');
 
       final clubs = await service.watchSuggestedClubs().first;
 
@@ -189,18 +197,20 @@ void main() {
       addTearDown(tester.view.reset);
     }
 
-    Widget host(Widget child, {double textScale = 1}) => MaterialApp(
-      home: Scaffold(
-        body: Builder(
-          builder: (context) => MediaQuery(
-            data: MediaQuery.of(
-              context,
-            ).copyWith(textScaler: TextScaler.linear(textScale)),
-            child: SingleChildScrollView(child: child),
+    Widget host(Widget child, {double textScale = 1, ThemeData? theme}) =>
+        MaterialApp(
+          theme: theme,
+          home: Scaffold(
+            body: Builder(
+              builder: (context) => MediaQuery(
+                data: MediaQuery.of(
+                  context,
+                ).copyWith(textScaler: TextScaler.linear(textScale)),
+                child: SingleChildScrollView(child: child),
+              ),
+            ),
           ),
-        ),
-      ),
-    );
+        );
 
     Widget rail(
       AsyncSnapshot<List<Club>> snapshot, {
@@ -343,6 +353,79 @@ void main() {
       expect(find.text('1 member'), findsOneWidget);
     });
 
+    for (final brightness in Brightness.values) {
+      testWidgets(
+        'cards and empty/loading states use ${brightness.name} semantic '
+        'surfaces',
+        (tester) async {
+          useWidth(tester, const Size(390, 900));
+          final theme = brightness == Brightness.dark
+              ? AppTheme.darkTheme
+              : AppTheme.lightTheme;
+          final palette = brightness == Brightness.dark
+              ? AppPalette.dark
+              : AppPalette.light;
+
+          await tester.pumpWidget(
+            host(
+              rail(
+                AsyncSnapshot<List<Club>>.withData(ConnectionState.active, [
+                  club('semantic', 'Semantic Club'),
+                ]),
+              ),
+              theme: theme,
+            ),
+          );
+
+          final card = tester.widget<Material>(
+            find.byKey(const ValueKey('discover-club-card-semantic')),
+          );
+          expect(card.color, palette.surface);
+          expect(
+            tester.widget<Text>(find.text('Semantic Club')).style?.color,
+            palette.textPrimary,
+          );
+          final viewClub = tester.widget<Text>(find.text('View club'));
+          expect(viewClub.style?.color, palette.interactiveForeground);
+          expect(
+            _contrastRatio(viewClub.style!.color!, palette.surface),
+            greaterThanOrEqualTo(4.5),
+          );
+
+          await tester.pumpWidget(
+            host(
+              rail(
+                const AsyncSnapshot<List<Club>>.withData(
+                  ConnectionState.active,
+                  <Club>[],
+                ),
+              ),
+              theme: theme,
+            ),
+          );
+          final note = tester.widget<Semantics>(
+            find.byKey(const ValueKey('discover-clubs-note')),
+          );
+          final noteDecoration =
+              ((note.child! as Container).decoration! as BoxDecoration);
+          expect(noteDecoration.color, palette.surface);
+          expect(noteDecoration.border!.top.color, palette.border);
+
+          await tester.pumpWidget(
+            host(rail(const AsyncSnapshot<List<Club>>.waiting()), theme: theme),
+          );
+          final skeleton = tester.widget<Semantics>(
+            find.byKey(const ValueKey('discover-club-skeleton')).first,
+          );
+          final skeletonDecoration =
+              ((skeleton.child! as Container).decoration! as BoxDecoration);
+          expect(skeletonDecoration.color, palette.surface);
+          expect(skeletonDecoration.border!.top.color, palette.border);
+          expect(tester.takeException(), isNull);
+        },
+      );
+    }
+
     testWidgets('an error after a first successful emission replaces the '
         'stale list instead of hiding behind it', (tester) async {
       useWidth(tester, const Size(390, 900));
@@ -353,10 +436,8 @@ void main() {
         host(
           StreamBuilder<List<Club>>(
             stream: controller.stream,
-            builder: (context, snapshot) => DiscoverClubsRail(
-              snapshot: snapshot,
-              onOpenClub: (_) {},
-            ),
+            builder: (context, snapshot) =>
+                DiscoverClubsRail(snapshot: snapshot, onOpenClub: (_) {}),
           ),
         ),
       );
@@ -455,78 +536,69 @@ void main() {
       Size(768, 2200),
       Size(1280, 2200),
     ]) {
-      testWidgets(
-        'long names at a doubled text scale still lay out at '
-        '${size.width.toInt()} px',
-        (tester) async {
-          useWidth(tester, size);
-          await tester.pumpWidget(
-            host(
-              rail(
-                AsyncSnapshot<List<Club>>.withData(ConnectionState.active, [
-                  club(
-                    'a',
-                    'The Extremely Long Late Night Voice Club For People '
-                        'Who Cannot Sleep',
-                    memberCount: 123456,
-                  ),
-                  club('b', 'Another Considerably Overlong Club Name Here'),
-                ]),
-              ),
-              textScale: 2,
-            ),
-          );
-
-          expect(tester.takeException(), isNull);
-          expect(find.textContaining('The Extremely Long'), findsOneWidget);
-        },
-      );
-
-      testWidgets(
-        'the error state wraps rather than overflowing at '
-        '${size.width.toInt()} px',
-        (tester) async {
-          useWidth(tester, size);
-          await tester.pumpWidget(
-            host(
-              rail(
-                AsyncSnapshot<List<Club>>.withError(
-                  ConnectionState.active,
-                  Exception('permission-denied'),
+      testWidgets('long names at a doubled text scale still lay out at '
+          '${size.width.toInt()} px', (tester) async {
+        useWidth(tester, size);
+        await tester.pumpWidget(
+          host(
+            rail(
+              AsyncSnapshot<List<Club>>.withData(ConnectionState.active, [
+                club(
+                  'a',
+                  'The Extremely Long Late Night Voice Club For People '
+                      'Who Cannot Sleep',
+                  memberCount: 123456,
                 ),
-                onRetry: () {},
-              ),
-              textScale: 2,
+                club('b', 'Another Considerably Overlong Club Name Here'),
+              ]),
             ),
-          );
+            textScale: 2,
+          ),
+        );
 
-          expect(find.text('Clubs could not be loaded.'), findsOneWidget);
-          expect(find.text('Try again'), findsOneWidget);
-          expect(tester.takeException(), isNull);
-        },
-      );
+        expect(tester.takeException(), isNull);
+        expect(find.textContaining('The Extremely Long'), findsOneWidget);
+      });
 
-      testWidgets(
-        'the empty state wraps rather than overflowing at '
-        '${size.width.toInt()} px',
-        (tester) async {
-          useWidth(tester, size);
-          await tester.pumpWidget(
-            host(
-              rail(
-                const AsyncSnapshot<List<Club>>.withData(
-                  ConnectionState.active,
-                  <Club>[],
-                ),
+      testWidgets('the error state wraps rather than overflowing at '
+          '${size.width.toInt()} px', (tester) async {
+        useWidth(tester, size);
+        await tester.pumpWidget(
+          host(
+            rail(
+              AsyncSnapshot<List<Club>>.withError(
+                ConnectionState.active,
+                Exception('permission-denied'),
               ),
-              textScale: 2,
+              onRetry: () {},
             ),
-          );
+            textScale: 2,
+          ),
+        );
 
-          expect(find.text('No public clubs yet.'), findsOneWidget);
-          expect(tester.takeException(), isNull);
-        },
-      );
+        expect(find.text('Clubs could not be loaded.'), findsOneWidget);
+        expect(find.text('Try again'), findsOneWidget);
+        expect(tester.takeException(), isNull);
+      });
+
+      testWidgets('the empty state wraps rather than overflowing at '
+          '${size.width.toInt()} px', (tester) async {
+        useWidth(tester, size);
+        await tester.pumpWidget(
+          host(
+            rail(
+              const AsyncSnapshot<List<Club>>.withData(
+                ConnectionState.active,
+                <Club>[],
+              ),
+            ),
+            textScale: 2,
+          ),
+        );
+
+        expect(find.text('No public clubs yet.'), findsOneWidget);
+        expect(tester.takeException(), isNull);
+      });
     }
   });
 }

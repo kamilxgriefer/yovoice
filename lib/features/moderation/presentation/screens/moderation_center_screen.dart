@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/core/theme/app_immersive_colors.dart';
 import 'package:yovoice/features/messages/data/models/global_message.dart';
 import 'package:yovoice/features/moderation/data/models/moderation_report.dart';
 import 'package:yovoice/features/moderation/data/services/moderation_service.dart';
@@ -207,16 +208,16 @@ class _ModerationCenterScreenState extends State<ModerationCenterScreen> {
 
     if (widget.embedded) {
       return YoImmersiveDarkSurface(
-        child: Material(color: AppColors.background, child: content),
+        child: Material(color: AppImmersiveColors.background, child: content),
       );
     }
 
     final scaffold = Scaffold(
-      backgroundColor: AppColors.background,
+      backgroundColor: AppImmersiveColors.background,
       appBar: inShellSlot
           ? null
           : AppBar(
-              backgroundColor: AppColors.background,
+              backgroundColor: AppImmersiveColors.background,
               foregroundColor: Colors.white,
               centerTitle: false,
               titleSpacing: 0,

@@ -36,6 +36,7 @@ class CommunityVoiceRoomScreen extends StatefulWidget {
     this.roomService,
     this.voiceService,
     this.entryCoordinator,
+    this.muteCoordinator,
     this.clubService,
     this.playInitialJoinSound = true,
     super.key,
@@ -50,10 +51,11 @@ class CommunityVoiceRoomScreen extends StatefulWidget {
   /// invents a start control it cannot back up.
   final RoomVoiceEntry? voiceEntry;
 
-  /// Test seams. All four default to the production wiring.
+  /// Test seams. All five default to the production wiring.
   final RoomService? roomService;
   final VoiceCallService? voiceService;
   final RoomVoiceEntryCoordinator? entryCoordinator;
+  final RoomMuteCoordinator? muteCoordinator;
   final ClubService? clubService;
 
   /// Room creation already has its own confirmation; all other entry points
@@ -75,7 +77,8 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
       widget.entryCoordinator ??
       RoomVoiceEntryCoordinator.production(rooms: _rooms);
   final _leaveCoordinator = RoomLeaveCoordinator();
-  final _muteCoordinator = RoomMuteCoordinator.production;
+  late final RoomMuteCoordinator _muteCoordinator =
+      widget.muteCoordinator ?? RoomMuteCoordinator.production;
 
   /// The resolved voice state. Seeded from what the entry screen decided and
   /// then kept current by the room document stream below, so a host starting
@@ -190,6 +193,17 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
   /// route-gated: a moderator ending the room has to reach the microphone
   /// even while a sheet or profile preview sits on top.
   bool get _ownsAudioSession => _voice.roomId == widget.room.id;
+
+  /// A process-wide voice service can move to another room while the roster
+  /// write is awaiting the server. Every continuation of this room's mute
+  /// operation must therefore prove it still owns the same audio session.
+  bool _isCurrentMuteOperation(String roomId) =>
+      mounted &&
+      !_leaving &&
+      !_roomOver &&
+      _live &&
+      _voice.isRoomSession &&
+      _voice.roomId == roomId;
 
   /// The room document is the authority on liveness, and it moves while
   /// people are on this screen: a host can end voice, and a member with
@@ -372,9 +386,21 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
     // A mute toggle persists through `setOwnRoomParticipantMute`, which the
     // server refuses on a room that is not live. The affordance already
     // prevents this call; the guard keeps it true if a future caller forgets.
-    if (!_live) return;
-    final outcome = await _muteCoordinator.toggle(roomId: widget.room.id);
+    final roomId = widget.room.id;
+    if (!_isCurrentMuteOperation(roomId)) return;
+    final outcome = await _muteCoordinator.toggle(
+      roomId: roomId,
+      isOperationCurrent: () => _isCurrentMuteOperation(roomId),
+    );
     if (!mounted) return;
+    // A valid session-ended outcome disconnects this room before returning,
+    // so `roomId == null` is expected. A non-null replacement belongs to a
+    // different room and must not receive this screen's UI/leave side effects.
+    if (outcome == RoomMuteOutcome.sessionEnded) {
+      if (_voice.roomId != null && !_isCurrentMuteOperation(roomId)) return;
+    } else if (!_isCurrentMuteOperation(roomId)) {
+      return;
+    }
     switch (outcome) {
       case RoomMuteOutcome.applied:
       case RoomMuteOutcome.busy:

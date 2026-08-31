@@ -90,7 +90,7 @@ bool _isSelected(WidgetTester tester, String label) {
 }
 
 void main() {
-  testWidgets('the dock centre is the YO Voice logo in its glowing anchor, '
+  testWidgets('the dock centre is the transparent official YO mark, '
       'and it still opens the voice action', (tester) async {
     var voiceOpened = 0;
     final semantics = await _pumpHost(
@@ -103,9 +103,12 @@ void main() {
     final logo = tester.widget<Image>(find.byKey(const ValueKey('dock-logo')));
     expect(
       (logo.image as AssetImage).assetName,
-      'assets/images/logo.png',
+      'assets/images/yo-voice-favicon-512.png',
       reason: 'the centre anchor renders the real brand asset',
     );
+    expect(logo.color, isNull);
+    expect(logo.fit, BoxFit.contain);
+    expect(logo.filterQuality, FilterQuality.high);
 
     await tester.tap(find.bySemanticsLabel('Open voice actions'));
     await tester.pump();
@@ -144,10 +147,10 @@ void main() {
     expect(find.byKey(const ValueKey('moment-detail-play')), findsOneWidget);
 
     // The persistent dock, with Moments lit.
-    expect(find.text('Home'), findsOneWidget);
-    expect(find.text('Chats'), findsOneWidget);
-    expect(find.text('Moments'), findsOneWidget);
-    expect(find.text('More'), findsOneWidget);
+    expect(find.text('Home'), findsNothing);
+    expect(find.text('Chats'), findsNothing);
+    expect(find.text('Moments'), findsNothing);
+    expect(find.text('More'), findsNothing);
     expect(find.byKey(const ValueKey('dock-logo')), findsOneWidget);
     expect(_isSelected(tester, 'Moments'), isTrue);
     semantics.dispose();
@@ -163,48 +166,55 @@ void main() {
       onDestinationSelected: (index) => selected = index,
     );
 
-    await tester.tap(find.text('Home'));
+    await tester.tap(find.byKey(const ValueKey('yo-destination-0')));
     await tester.pumpAndSettle();
     expect(selected, 0);
     semantics.dispose();
   });
 
-  testWidgets('the approved circular centre fully contains the real logo', (
-    tester,
-  ) async {
-    final semantics = await _pumpHost(
-      tester,
-      body: const SizedBox.shrink(),
-      selectedIndex: 0,
-      onVoicePressed: () {},
-    );
-    final logo = find.byKey(const ValueKey('dock-logo'));
-    expect(logo, findsOneWidget);
+  testWidgets(
+    'the official logo rests without a permanent circular backplate',
+    (tester) async {
+      final semantics = await _pumpHost(
+        tester,
+        body: const SizedBox.shrink(),
+        selectedIndex: 0,
+        onVoicePressed: () {},
+      );
+      final logo = find.byKey(const ValueKey('dock-logo'));
+      expect(logo, findsOneWidget);
 
-    final boundary = find.byKey(const ValueKey('yo-center-action-boundary'));
-    expect(boundary, findsOneWidget);
-    final buttonRect = tester.getRect(boundary);
-    final logoRect = tester.getRect(logo);
-    expect(buttonRect.width, inInclusiveRange(64, 68));
-    expect(buttonRect.height, buttonRect.width);
-    expect(logoRect.width, inInclusiveRange(59, 60));
-    expect(logoRect.height, logoRect.width);
-    expect(logoRect.width * .814, inInclusiveRange(48, 52));
-    expect(logoRect.height * .844, inInclusiveRange(48, 52));
-    expect(buttonRect.contains(logoRect.topLeft), isTrue);
-    expect(buttonRect.contains(logoRect.bottomRight), isTrue);
-    expect(
-      find.ancestor(
-        of: logo,
-        matching: find.byWidgetPredicate(
-          (widget) => widget is Material && widget.shape is CircleBorder,
+      final boundary = find.byKey(const ValueKey('yo-center-action-boundary'));
+      expect(boundary, findsOneWidget);
+      final buttonRect = tester.getRect(boundary);
+      final logoRect = tester.getRect(logo);
+      expect(buttonRect.width, inInclusiveRange(64, 68));
+      expect(buttonRect.height, buttonRect.width);
+      expect(logoRect.width, 76);
+      expect(logoRect.height, logoRect.width);
+      expect(logoRect.width * .814, inInclusiveRange(60, 62));
+      expect(logoRect.height * .844, inInclusiveRange(63, 65));
+      expect(
+        find.descendant(
+          of: boundary,
+          matching: find.byWidgetPredicate(
+            (widget) =>
+                widget is Material &&
+                widget.type != MaterialType.transparency &&
+                widget.color != null &&
+                widget.color!.a > 0,
+          ),
         ),
-      ),
-      findsOneWidget,
-      reason: 'the approved centre uses one clipped circular surface',
-    );
-    semantics.dispose();
-  });
+        findsNothing,
+        reason: 'the transparent mark must not inherit a filled material disc',
+      );
+      expect(
+        find.descendant(of: boundary, matching: find.byType(ClipOval)),
+        findsNothing,
+      );
+      semantics.dispose();
+    },
+  );
 
   testWidgets(
     'the button and contained logo follow the responsive size guide',
@@ -222,7 +232,8 @@ void main() {
         find.byKey(const ValueKey('yo-center-action-boundary')),
       );
       expect(smallButton.width, 64);
-      expect(small.width, 59);
+      expect(small.width, 68);
+      expect(small.width * .814, inInclusiveRange(55, 56));
       expect(tester.takeException(), isNull);
 
       tester.view.physicalSize = const Size(430, 900);
@@ -232,7 +243,8 @@ void main() {
         find.byKey(const ValueKey('yo-center-action-boundary')),
       );
       expect(largeButton.width, 68);
-      expect(large.width, 60);
+      expect(large.width, 76);
+      expect(large.width * .814, inInclusiveRange(60, 62));
       semantics.dispose();
     },
   );

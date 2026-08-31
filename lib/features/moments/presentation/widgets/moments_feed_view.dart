@@ -1640,7 +1640,7 @@ class _FeaturedCard extends StatelessWidget {
                           child: Text(
                             moment.durationLabel,
                             style: const TextStyle(
-                              color: AppColors.textPrimary,
+                              color: AppColors.white,
                               fontSize: 10.5,
                               fontWeight: FontWeight.w800,
                             ),
@@ -1731,9 +1731,7 @@ class _FeaturedCard extends StatelessWidget {
                             textAlign: TextAlign.right,
                             style: TextStyle(
                               color: expiry != null
-                                  ? (isDark
-                                        ? AppColors.warning
-                                        : const Color(0xFF8A4B00))
+                                  ? palette.warningForeground
                                   : palette.textTertiary,
                               fontSize: 11,
                               fontWeight: expiry != null
@@ -1924,9 +1922,7 @@ class _MomentRow extends StatelessWidget {
                                   // fact, not a warning-coloured countdown.
                                   color: permanent
                                       ? palette.textTertiary
-                                      : (isDark
-                                            ? AppColors.warning
-                                            : const Color(0xFF8A4B00)),
+                                      : palette.warningForeground,
                                   fontSize: 11.5,
                                   fontWeight: FontWeight.w700,
                                 ),
@@ -2270,7 +2266,6 @@ class _MomentDetailPanelState extends State<MomentDetailPanel> {
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
     final moment = widget.moment;
     final age = momentRelativeAge(moment.createdAt);
     // The author sees the availability fact even for a permanent Moment
@@ -2363,9 +2358,7 @@ class _MomentDetailPanelState extends State<MomentDetailPanel> {
                                       // calm fact, not a countdown.
                                       color: moment.isPermanent
                                           ? palette.textTertiary
-                                          : (isDark
-                                                ? AppColors.warning
-                                                : const Color(0xFF8A4B00)),
+                                          : palette.warningForeground,
                                       fontSize: 12,
                                       fontWeight: FontWeight.w700,
                                     ),

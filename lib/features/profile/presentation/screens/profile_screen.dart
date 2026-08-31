@@ -676,8 +676,8 @@ class _CommunityTile extends StatelessWidget {
                       ? null
                       : Text(
                           name.isEmpty ? '?' : name[0].toUpperCase(),
-                          style: const TextStyle(
-                            color: Colors.white,
+                          style: TextStyle(
+                            color: colors.onPrimary,
                             fontWeight: FontWeight.w900,
                           ),
                         ),
@@ -689,7 +689,7 @@ class _CommunityTile extends StatelessWidget {
                     child: Icon(
                       Icons.workspace_premium_rounded,
                       size: 15,
-                      color: Color(0xFFFFC24D),
+                      color: AppColors.vipGold,
                     ),
                   ),
                 Container(
@@ -895,6 +895,7 @@ class _SuperAdminOption extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     return Column(
       children: [
         ListTile(
@@ -903,14 +904,14 @@ class _SuperAdminOption extends StatelessWidget {
             width: 38,
             height: 38,
             decoration: BoxDecoration(
-              gradient: const LinearGradient(
-                colors: [Color(0xFF7A1BFF), Color(0xFFD12CFF)],
+              gradient: LinearGradient(
+                colors: [colors.primary, colors.secondary],
               ),
               borderRadius: BorderRadius.circular(12),
             ),
-            child: const Icon(
+            child: Icon(
               Icons.admin_panel_settings_rounded,
-              color: Colors.white,
+              color: colors.onPrimary,
               size: 22,
             ),
           ),
@@ -1020,7 +1021,7 @@ class _Chip extends StatelessWidget {
     final colors = Theme.of(context).colorScheme;
     final accent = switch (tone) {
       _IdentityChipTone.external => colors.tertiary,
-      _IdentityChipTone.voice => palette.focus,
+      _IdentityChipTone.voice => palette.interactiveForeground,
       _IdentityChipTone.learning =>
         theme.brightness == Brightness.dark
             ? AppColors.vipGold

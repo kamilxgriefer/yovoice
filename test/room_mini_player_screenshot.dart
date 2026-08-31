@@ -15,7 +15,7 @@
 //
 // MainShell itself reads FirebaseAuth.instance and cannot be pumped in a
 // widget test, but this harness mounts its real YoFloatingNavigationDock so
-// capsule spacing, notch adjacency and both semantic themes are rendered.
+// capsule spacing, sculpted-rise adjacency and both semantic themes render.
 
 import 'dart:io';
 import 'dart:ui' as ui;
@@ -239,7 +239,7 @@ void main() {
     );
     await tester.runAsync(
       () => precacheImage(
-        const AssetImage('assets/images/logo.png'),
+        const AssetImage('assets/images/yo-voice-favicon-512.png'),
         _capture.currentContext!,
       ),
     );

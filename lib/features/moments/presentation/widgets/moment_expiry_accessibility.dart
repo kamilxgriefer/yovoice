@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 
+import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
 
 /// Accessibility plumbing shared by exact-expiry surfaces.
@@ -270,14 +271,14 @@ class MomentExpiryFocusTarget extends StatefulWidget {
     required this.focusNode,
     required this.semanticLabel,
     required this.child,
-    this.focusColor = const Color(0xFFB932FF),
+    this.focusColor,
     super.key,
   });
 
   final FocusNode focusNode;
   final String semanticLabel;
   final Widget child;
-  final Color focusColor;
+  final Color? focusColor;
 
   @override
   State<MomentExpiryFocusTarget> createState() =>
@@ -305,7 +306,9 @@ class _MomentExpiryFocusTargetState extends State<MomentExpiryFocusTarget> {
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(8),
             border: Border.all(
-              color: _focused ? widget.focusColor : Colors.transparent,
+              color: _focused
+                  ? widget.focusColor ?? context.appPalette.focus
+                  : Colors.transparent,
               width: 2,
             ),
           ),

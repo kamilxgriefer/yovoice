@@ -143,4 +143,39 @@ void main() {
     expect(observed, [true, false]);
     expect(harness.events, ['apply:true', 'persist:room-1:true']);
   });
+
+  test(
+    'a stale server refusal never disconnects the replacement room',
+    () async {
+      final gate = Completer<void>();
+      final events = <String>[];
+      var current = true;
+      var muted = true;
+      final coordinator = RoomMuteCoordinator(
+        persistRosterState: (roomId, targetMuted) async {
+          events.add('persist:$roomId:$targetMuted');
+          await gate.future;
+          throw _ServerRefusal('not-found');
+        },
+        applyMicrophoneState: (targetMuted) async {
+          events.add('apply:$targetMuted');
+          muted = targetMuted;
+        },
+        readCurrentMuted: () => muted,
+        disconnectStaleSession: () async => events.add('disconnect'),
+      );
+
+      final operation = coordinator.toggle(
+        roomId: 'room-1',
+        isOperationCurrent: () => current,
+      );
+      await Future<void>.delayed(Duration.zero);
+      current = false;
+      gate.complete();
+
+      expect(await operation, RoomMuteOutcome.busy);
+      expect(events, ['persist:room-1:false']);
+      expect(coordinator.isBusy, isFalse);
+    },
+  );
 }
