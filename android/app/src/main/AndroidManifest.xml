@@ -20,6 +20,18 @@
     <uses-feature
         android:name="android.hardware.camera.any"
         android:required="false" />
+    <!-- CAMERA permission otherwise makes Play infer camera + autofocus as
+         required hardware. Keep video calls available on capable devices
+         without excluding tablets, Chromebooks, TVs or cars. -->
+    <uses-feature
+        android:name="android.hardware.camera"
+        android:required="false" />
+    <uses-feature
+        android:name="android.hardware.camera.autofocus"
+        android:required="false" />
+    <uses-feature
+        android:name="android.hardware.camera.front"
+        android:required="false" />
 
     <application
         android:label="YO Voice"
