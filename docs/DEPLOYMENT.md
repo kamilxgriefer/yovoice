@@ -2712,3 +2712,25 @@ Rollback clients first, then restore Rules only after the previous compatible
 Functions are restored. Do not delete notification ledgers, call documents or
 locks manually. Keep call expiry/control cleanup running until no active call
 or pending control row remains.
+
+## Build 17 tester release evidence (2026-09-01)
+
+Build 17 supersedes the unpublished Android build 16 candidate. Google Play's
+pre-publication review showed that the new `CAMERA` permission implicitly made
+camera and autofocus hardware mandatory, excluding 425 previously supported
+devices. The manifest now declares camera, camera-any, front-camera and
+autofocus hardware optional, with a regression test that prevents this device
+coverage loss from returning.
+
+- source commit: `2eb063d9a74b5f94d7af81f4575119e312bdafa8`;
+- Android: `app.yovoice`, `1.0.0 (17)`, min SDK 24, target SDK 36,
+  SHA-256 `511a46b3901daf7c15ff3f9ce9c159ffcc00a8114422383b4137ee8d7087ec9e`;
+- iOS: `app.yovoice`, `1.0.0 (17)`, minimum iOS 15.0,
+  SHA-256 `8fa12cddf4a07cd8e68b1080180cb589c324a2e78fe4ebdddd7755a6c7b2acc7`;
+- local compatibility regression and `flutter analyze`: green;
+- the exact commit's CI full Flutter, Functions and Rules gates must be green
+  before Hosting or either tester channel is declared delivered.
+
+Functions are deployed first. Restrictive Firestore/Storage Rules remain held
+until the private-media IAM, signed-read, migration, zero-token inventory and
+compatible-client adoption gates in [SECURITY.md](SECURITY.md) are complete.

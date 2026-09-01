@@ -203,7 +203,7 @@ runs overlap the broader suite.
 | Check | Confirmed result | Status |
 |---|---:|---|
 | `flutter analyze` | 0 issues | Green |
-| Full Flutter suite | 1,925 / 1,925 | Green |
+| Full Flutter suite plus Android hardware-compatibility regression | 1,926 / 1,926 | Green |
 | Final full serial Functions suite | 1,098 / 1,098 (118 suites) | Green |
 | Participant-control targeted suite | 32 / 32 | Green |
 | Callable invocation contract | 6 / 6 | Green |
@@ -229,5 +229,22 @@ runs overlap the broader suite.
 5. Re-run dependency, secret, signed-build and store-delivery checks on the
    exact release commit.
 
-No Hosting, Functions, Rules, TestFlight or Google Play publication is claimed
-by this document.
+### Production rollout readback
+
+The Functions-first phase is deployed and all 157 listed Functions report
+`ACTIVE`. The restrictive Firestore and Storage Rules remain intentionally
+held. The final production inventory found that the current Functions runtime
+service account cannot call `iam.serviceAccounts.signBlob`, canonical media
+migrations have not run, and durable Firebase download tokens still exist on
+all inventoried legacy profile, room-cover and Voice Moment objects.
+
+The data boundary is also mixed-version: 4 of 7 direct-message roots and 66 of
+102 messages use schema v2. No migration-operation ledger confirms an applied
+production migration. Cutting over Rules now could break chats and media for
+installed pre-build-17 clients. The production decision is therefore NO-GO for
+the restrictive Rules until IAM signing, a real V4 signed-read smoke, compatible
+client adoption, migrations, zero-token inventory and post-migration no-op
+proof all pass in that order.
+
+No Firestore/Storage Rules, TestFlight or Google Play publication is claimed by
+this document.
