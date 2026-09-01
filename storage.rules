@@ -20,7 +20,10 @@ service firebase.storage {
           request.auth.uid == userId &&
           firestore.exists(userPath) &&
           firestore.get(userPath).data.get('banned', false) != true &&
-          firestore.get(userPath).data.get('disabled', false) != true;
+          firestore.get(userPath).data.get('disabled', false) != true &&
+          firestore.get(userPath).data.get('deleted', false) != true &&
+          firestore.get(userPath).data.get('status', '') != 'deleted' &&
+          !firestore.get(userPath).data.keys().hasAny(['authDeletedAt']);
     }
 
     function isAllowedImageType() {
@@ -60,43 +63,130 @@ service firebase.storage {
       );
     }
 
-    // Profile images remain public by product design. Creates are append-only;
-    // the client switches the Firestore pointer before deleting the old object.
+    // Profile artwork is private object storage. A callable authorizes the
+    // current viewer against the live profile state and returns a
+    // generation-bound V4 URL for at most 90 seconds. Direct object reads are
+    // available only to the owner while a reservation is live, which supports
+    // upload recovery without turning object names into bearer credentials.
     match /users/{userId}/profile/{fileName} {
-      function validProfileUpload() {
-        return fileName.matches('(avatar|banner)_[0-9]+[.](jpg|jpeg|png|webp)') &&
-            imageExtensionMatchesMime(fileName) &&
-            isValidImagePayload(2 * 1024 * 1024);
+      function reservationPath(uploadId) {
+        return /databases/(default)/documents/profileMediaUploadReservations/$(userId)/uploads/$(uploadId);
       }
 
-      allow read: if true;
+      function hasLiveReservation(uploadId, profileKind) {
+        let path = reservationPath(uploadId);
+        return firestore.exists(path) &&
+            firestore.get(path).data.keys().hasOnly([
+              'schemaVersion', 'ownerId', 'uploadId', 'kind', 'contentType',
+              'size', 'storagePath', 'baseRevision', 'status', 'createdAt',
+              'expiresAt'
+            ]) &&
+            firestore.get(path).data.schemaVersion == 1 &&
+            firestore.get(path).data.ownerId == userId &&
+            firestore.get(path).data.uploadId == uploadId &&
+            firestore.get(path).data.kind == profileKind &&
+            firestore.get(path).data.status == 'uploading' &&
+            firestore.get(path).data.storagePath ==
+                'users/' + userId + '/profile/' + fileName &&
+            firestore.get(path).data.expiresAt > request.time;
+      }
+
+      function validProfileUpload() {
+        return fileName.matches('(avatar|banner)_[a-f0-9]{32}[.](jpg|png|webp)') &&
+            imageExtensionMatchesMime(fileName) &&
+            isValidImagePayload(2 * 1024 * 1024) &&
+            request.resource.metadata.keys().hasOnly([
+              'ownerId', 'profileKind', 'uploadId'
+            ]) &&
+            request.resource.metadata.ownerId == userId &&
+            request.resource.metadata.profileKind in ['avatar', 'banner'] &&
+            request.resource.metadata.uploadId.matches('[a-f0-9]{32}') &&
+            fileName.matches(
+              request.resource.metadata.profileKind + '_' +
+              request.resource.metadata.uploadId + '[.](jpg|png|webp)'
+            ) &&
+            hasLiveReservation(
+              request.resource.metadata.uploadId,
+              request.resource.metadata.profileKind
+            ) &&
+            firestore.get(
+              reservationPath(request.resource.metadata.uploadId)
+            ).data.contentType == request.resource.contentType &&
+            firestore.get(
+              reservationPath(request.resource.metadata.uploadId)
+            ).data.size == request.resource.size;
+      }
+
+      allow read: if isActiveUser(userId) &&
+          resource != null &&
+          resource.metadata.keys().hasOnly([
+            'ownerId', 'profileKind', 'uploadId'
+          ]) &&
+          resource.metadata.ownerId == userId &&
+          resource.metadata.profileKind in ['avatar', 'banner'] &&
+          resource.metadata.uploadId.matches('[a-f0-9]{32}') &&
+          hasLiveReservation(
+            resource.metadata.uploadId,
+            resource.metadata.profileKind
+          );
       allow create: if resource == null &&
+          isVerified() &&
           isActiveUser(userId) &&
           validProfileUpload();
       allow update: if false;
-      allow delete: if isActiveUser(userId);
+      allow delete: if false;
     }
 
     match /room_images/{roomId}/{fileName} {
+      function roomPath() {
+        return /databases/(default)/documents/rooms/$(roomId);
+      }
+
       function canManageActiveRoom() {
-        let roomPath = /databases/(default)/documents/rooms/$(roomId);
         return isActiveUser(request.auth.uid) &&
-            firestore.exists(roomPath) &&
-            firestore.get(roomPath).data.hostId == request.auth.uid &&
-            firestore.get(roomPath).data.get('status', 'active') == 'active' &&
-            firestore.get(roomPath).data.get('deletionInProgress', false) != true;
+            firestore.exists(roomPath()) &&
+            firestore.get(roomPath()).data.hostId == request.auth.uid &&
+            firestore.get(roomPath()).data.get('status', 'active') == 'active' &&
+            firestore.get(roomPath()).data.get('deletionInProgress', false) != true;
+      }
+
+      function reservationPath() {
+        return /databases/(default)/documents/roomCoverUploadReservations/$(request.resource.metadata.get('reservationId', ''));
       }
 
       function validRoomImageUpload() {
-        return fileName.matches(request.auth.uid + '_[0-9]+[.](jpg|png)') &&
+        let reservationId = request.resource.metadata.get('reservationId', '');
+        let reservation = firestore.get(reservationPath()).data;
+        return request.resource.metadata.keys().hasOnly([
+              'ownerId', 'reservationId', 'roomId'
+            ]) &&
+            reservationId.matches('[a-f0-9]{40}') &&
+            fileName.matches(request.auth.uid + '_[a-f0-9]{32}[.](jpg|png)') &&
             imageExtensionMatchesMime(fileName) &&
-            isValidImagePayload(8 * 1024 * 1024);
+            isValidImagePayload(8 * 1024 * 1024) &&
+            request.resource.metadata.get('ownerId', '') == request.auth.uid &&
+            request.resource.metadata.get('roomId', '') == roomId &&
+            firestore.exists(reservationPath()) &&
+            reservation.schemaVersion == 1 &&
+            reservation.ownerId == request.auth.uid &&
+            reservation.roomId == roomId &&
+            reservation.reservationId == reservationId &&
+            reservation.storagePath ==
+              'room_images/' + roomId + '/' + fileName &&
+            reservation.status == 'uploading' &&
+            reservation.expiresAt > request.time &&
+            reservation.contentType == request.resource.contentType &&
+            reservation.size == request.resource.size;
       }
 
-      allow read: if true;
+      // Object names are not a public gallery. Even a public room may have
+      // abandoned/superseded uploads under its prefix, so direct get AND list
+      // both fail closed. Only the exact Firestore-bound object is exposed by
+      // getRoomCoverMediaAccess through a <=90-second generation-bound grant.
+      allow read: if false;
       allow create: if resource == null &&
           isVerified() &&
-          canManageActiveRoom() &&
+          isActiveUser(request.auth.uid) &&
           validRoomImageUpload();
       allow update: if false;
       allow delete: if isVerified() && canManageActiveRoom();
@@ -326,10 +416,16 @@ service firebase.storage {
             firestore.get(momentPath).data.authorId == userId &&
             firestore.get(momentPath).data.storagePath ==
                 'voice_moments/' + userId + '/' + fileName &&
-            (
-              request.auth.uid == userId ||
-              firestore.get(momentPath).data.get('isPublished', false) == true
-            );
+            // Direct SDK reads exist only for the author's still-uploading
+            // draft so an ambiguous upload can recover its generation.
+            // Published playback is authorized by the
+            // getVoiceMomentMediaAccess callable and uses a short-lived,
+            // generation-bound signed URL. Never expose a durable Firebase
+            // download token through this rule.
+            request.auth.uid == userId &&
+            firestore.get(momentPath).data.get('isPublished', true) == false &&
+            firestore.get(momentPath).data.get('isDeleted', true) == false &&
+            firestore.get(momentPath).data.get('status', '') == 'uploading';
       }
 
       allow read: if canReadMomentAudio();
@@ -375,10 +471,37 @@ service firebase.storage {
             reservation.expiresAt > request.time;
       }
 
-      // Existing reply media remains signed-in readable, including legacy
-      // mixed-case object ids. New allocation remains a deliberately lowercase,
-      // reservation-bound operation.
-      allow read: if isSignedIn();
+      function canReadReservedVoiceReply() {
+        let commentId = resource.metadata.get('commentId', '');
+        let reservationPath =
+            /databases/(default)/documents/voiceMomentUploadReservations/$(commentId);
+        let reservation = firestore.get(reservationPath).data;
+        return isSignedIn() &&
+            request.auth.uid == userId &&
+            resource.metadata.keys().hasOnly([
+              'authorId', 'momentId', 'commentId'
+            ]) &&
+            resource.metadata.get('authorId', '') == userId &&
+            resource.metadata.get('momentId', '') == momentId &&
+            commentId.matches('[a-f0-9]{20}') &&
+            fileName == commentId + '.m4a' &&
+            firestore.exists(reservationPath) &&
+            reservation.schemaVersion == 1 &&
+            reservation.kind == 'voiceMomentComment' &&
+            reservation.status == 'uploading' &&
+            reservation.ownerId == userId &&
+            reservation.momentId == momentId &&
+            reservation.commentId == commentId &&
+            reservation.storagePath ==
+                'voice_replies/' + userId + '/' + momentId + '/' + fileName &&
+            reservation.expiresAt is timestamp &&
+            reservation.expiresAt > request.time;
+      }
+
+      // Only the uploader may recover metadata while the reservation is
+      // alive. Published reply playback uses the same short-lived callable
+      // grants as root Moments.
+      allow read: if canReadReservedVoiceReply();
       allow create: if resource == null &&
           isVerified() &&
           isActiveUser(userId) &&

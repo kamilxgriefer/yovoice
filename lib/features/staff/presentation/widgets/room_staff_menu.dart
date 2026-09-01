@@ -37,8 +37,8 @@ class RoomStaffMenu extends StatelessWidget {
   Color get _tierColor => capabilities.isOwner
       ? RoleIdentity.ownerColor
       : capabilities.endAnyRoom
-          ? RoleIdentity.superModeratorColor
-          : RoleIdentity.moderatorColor;
+      ? RoleIdentity.superModeratorColor
+      : RoleIdentity.moderatorColor;
 
   @override
   Widget build(BuildContext context) {
@@ -101,7 +101,10 @@ class RoomStaffMenu extends StatelessWidget {
           confirmLabel: 'End room',
           onConfirm: (reason) => _functions
               .httpsCallable('forceEndRoom')
-              .call<Map<String, dynamic>>({'roomId': room.id, 'reason': reason}),
+              .call<Map<String, dynamic>>({
+                'roomId': room.id,
+                'reason': reason,
+              }),
         );
       case _StaffAction.quarantine:
         await _withReason(
@@ -111,19 +114,17 @@ class RoomStaffMenu extends StatelessWidget {
           onConfirm: (reason) => _functions
               .httpsCallable('setRoomModerationStatus')
               .call<Map<String, dynamic>>({
-            'roomId': room.id,
-            'status': 'quarantined',
-            'reason': reason,
-          }),
+                'roomId': room.id,
+                'status': 'quarantined',
+                'reason': reason,
+              }),
         );
       case _StaffAction.deletePermanently:
         final deleted = await showDialog<bool>(
           context: context,
           barrierDismissible: false,
-          builder: (_) => OwnerDeleteRoomDialog(
-            room: room,
-            functions: _functions,
-          ),
+          builder: (_) =>
+              OwnerDeleteRoomDialog(room: room, functions: _functions),
         );
         if (deleted == true) onRoomDeleted?.call();
     }
@@ -252,7 +253,10 @@ class _ReasonDialogState extends State<_ReasonDialog> {
               padding: const EdgeInsets.only(top: 8),
               child: Text(
                 _error!,
-                style: const TextStyle(color: Color(0xFFFF9BB0), fontSize: 12.5),
+                style: const TextStyle(
+                  color: Color(0xFFFF9BB0),
+                  fontSize: 12.5,
+                ),
               ),
             ),
         ],
@@ -326,10 +330,10 @@ class _OwnerDeleteRoomDialogState extends State<OwnerDeleteRoomDialog> {
       await widget.functions
           .httpsCallable('adminDeleteRoom')
           .call<Map<String, dynamic>>({
-        'roomId': widget.room.id,
-        'reason': _reason.text.trim(),
-        'confirmation': widget.room.id,
-      });
+            'roomId': widget.room.id,
+            'reason': _reason.text.trim(),
+            'confirmation': widget.room.id,
+          });
       if (mounted) Navigator.of(context).pop(true);
     } catch (error) {
       if (mounted) {

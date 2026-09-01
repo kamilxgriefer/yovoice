@@ -14,6 +14,7 @@ import 'package:yovoice/shared/widgets/buttons/yo_icon_button.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
+import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
 enum _FriendsFilter { all, online, requests }
 
@@ -668,7 +669,6 @@ class _FriendCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final hasPhoto = friend.photoUrl?.trim().isNotEmpty == true;
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
 
@@ -697,21 +697,11 @@ class _FriendCard extends StatelessWidget {
                         colors: [Color(0xFFC32BFF), Color(0xFF6D25FF)],
                       ),
                     ),
-                    child: CircleAvatar(
+                    child: UserAvatar(
                       radius: 27,
+                      userId: friend.id,
+                      displayName: friend.displayName,
                       backgroundColor: palette.surfaceSunken,
-                      backgroundImage: hasPhoto
-                          ? NetworkImage(friend.photoUrl!)
-                          : null,
-                      child: hasPhoto
-                          ? null
-                          : Text(
-                              friend.initial,
-                              style: TextStyle(
-                                color: palette.textPrimary,
-                                fontWeight: FontWeight.w900,
-                              ),
-                            ),
                     ),
                   ),
                   Positioned(
@@ -809,8 +799,6 @@ class FriendRequestCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
-    final photo = request.senderPhotoUrl;
-    final hasPhoto = photo != null && photo.trim().isNotEmpty;
     final name = request.senderName.trim().isNotEmpty
         ? request.senderName.trim()
         : 'YO Voice user';
@@ -825,19 +813,11 @@ class FriendRequestCard extends StatelessWidget {
       ),
       child: Row(
         children: [
-          CircleAvatar(
+          UserAvatar(
             radius: 27,
+            userId: request.senderId,
+            displayName: name,
             backgroundColor: palette.surfaceSunken,
-            backgroundImage: hasPhoto ? NetworkImage(photo) : null,
-            child: hasPhoto
-                ? null
-                : Text(
-                    name.isEmpty ? '?' : name[0].toUpperCase(),
-                    style: TextStyle(
-                      color: palette.textPrimary,
-                      fontWeight: FontWeight.w900,
-                    ),
-                  ),
           ),
           const SizedBox(width: 13),
           Expanded(

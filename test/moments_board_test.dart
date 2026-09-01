@@ -49,6 +49,8 @@ import 'package:yovoice/features/moments/presentation/screens/moments_screen.dar
 import 'package:yovoice/features/moments/presentation/widgets/moment_story_viewer.dart';
 import 'package:yovoice/shared/identity/public_identity_repository.dart';
 
+import 'voice_moment_test_doubles.dart';
+
 const _me = 'me';
 
 /// One fixed "now" for the run: every live fixture sits inside its
@@ -72,7 +74,8 @@ VoiceMoment _moment(
   authorName: authorName ?? 'Author $author',
   authorPhotoUrl: null,
   caption: 'caption $id',
-  audioUrl: 'https://cdn.example/$id.m4a',
+  audioUrl: null,
+  mediaGeneration: '1700000000000001',
   durationSeconds: durationSeconds,
   likeCount: likes,
   commentCount: comments,
@@ -81,6 +84,7 @@ VoiceMoment _moment(
   expiresAt: _anchor.subtract(age).add(const Duration(hours: 24)),
   schemaVersion: 2,
   status: 'published',
+  isDeleted: false,
 );
 
 Map<String, dynamic> _doc(VoiceMoment moment) => <String, dynamic>{
@@ -88,7 +92,9 @@ Map<String, dynamic> _doc(VoiceMoment moment) => <String, dynamic>{
   'authorName': moment.authorName,
   'authorPhotoUrl': null,
   'caption': moment.caption,
-  'audioUrl': moment.audioUrl,
+  'mediaGeneration': moment.mediaGeneration,
+  'mediaContentType': 'audio/mp4',
+  'mediaSize': 4096,
   'durationSeconds': moment.durationSeconds,
   'likeCount': moment.likeCount,
   'commentCount': moment.commentCount,
@@ -120,6 +126,15 @@ void main() {
 
   MockFirebaseAuth authMe() =>
       MockFirebaseAuth(signedIn: true, mockUser: MockUser(uid: _me));
+
+  MomentService privateMoments({FakeFirebaseFirestore? firestore}) {
+    return MomentService(
+      firestore: firestore ?? FakeFirebaseFirestore(),
+      auth: authMe(),
+      storage: MockFirebaseStorage(),
+      mediaAccessInvoker: fakeMomentMediaAccessInvoker(),
+    );
+  }
 
   _QuietFeed feed({List<VoiceMoment> social = const []}) => _QuietFeed(
     firestore: FakeFirebaseFirestore(),
@@ -239,7 +254,9 @@ void main() {
         find.byKey(const ValueKey('moments-filter-mostEngaged')),
       );
       await tester.pump();
-      await tester.tap(find.byKey(const ValueKey('moments-filter-mostEngaged')));
+      await tester.tap(
+        find.byKey(const ValueKey('moments-filter-mostEngaged')),
+      );
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 50));
 
@@ -310,10 +327,15 @@ void main() {
           home: MomentsScreen(
             feedService: feed(),
             auth: authMe(),
+            momentService: privateMoments(),
             playerFactory: () => player,
             discoveryService: _StaticDiscovery([
-              _moment('first', author: 'a', likes: 9,
-                  age: const Duration(hours: 4)),
+              _moment(
+                'first',
+                author: 'a',
+                likes: 9,
+                age: const Duration(hours: 4),
+              ),
               _moment('second', author: 'a', age: const Duration(hours: 1)),
             ]),
           ),
@@ -331,7 +353,11 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
 
       expect(player.playCount, 1);
-      expect(player.lastUrl, 'https://cdn.example/second.m4a');
+      expect(
+        player.lastUrl,
+        'https://storage.googleapis.com/yovoice-test/'
+        'second.m4a?X-Goog-Signature=test',
+      );
       // The viewer opened the author's chain POSITIONED at the tapped
       // Moment: `second` is the newer of the two, so "2 of 2".
       expect(
@@ -365,7 +391,10 @@ void main() {
 
       final row = find.byKey(const ValueKey('moment-row-solo'));
       // First paint already shows the real loaded count...
-      expect(find.descendant(of: row, matching: find.text('1')), findsOneWidget);
+      expect(
+        find.descendant(of: row, matching: find.text('1')),
+        findsOneWidget,
+      );
       // ...and a zero comment count renders NOTHING, never a fabricated
       // "0".
       expect(find.descendant(of: row, matching: find.text('0')), findsNothing);
@@ -377,8 +406,14 @@ void main() {
       await tester.pump();
       await tester.pump();
 
-      expect(find.descendant(of: row, matching: find.text('7')), findsOneWidget);
-      expect(find.descendant(of: row, matching: find.text('3')), findsOneWidget);
+      expect(
+        find.descendant(of: row, matching: find.text('7')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: row, matching: find.text('3')),
+        findsOneWidget,
+      );
     });
 
     testWidgets('a counter stream that fails leaves the loaded counts alone '
@@ -391,11 +426,12 @@ void main() {
           home: MomentsScreen(
             feedService: feed(),
             auth: authMe(),
-            discoveryService: _StaticDiscovery([
-              _moment('solo', author: 'a', likes: 4),
-            ], counters: Stream<Map<String, MomentEngagement>>.error(
-              StateError('counter stream down'),
-            )),
+            discoveryService: _StaticDiscovery(
+              [_moment('solo', author: 'a', likes: 4)],
+              counters: Stream<Map<String, MomentEngagement>>.error(
+                StateError('counter stream down'),
+              ),
+            ),
           ),
         ),
       );
@@ -404,7 +440,10 @@ void main() {
 
       final row = find.byKey(const ValueKey('moment-row-solo'));
       expect(row, findsOneWidget);
-      expect(find.descendant(of: row, matching: find.text('4')), findsOneWidget);
+      expect(
+        find.descendant(of: row, matching: find.text('4')),
+        findsOneWidget,
+      );
       expect(tester.takeException(), isNull);
     });
 
@@ -497,8 +536,13 @@ void main() {
 
   group('the story viewer', () {
     List<VoiceMoment> chainOfThree() => [
-      _moment('c1', author: 'a', age: const Duration(hours: 5),
-          likes: 58, comments: 6),
+      _moment(
+        'c1',
+        author: 'a',
+        age: const Duration(hours: 5),
+        likes: 58,
+        comments: 6,
+      ),
       _moment('c2', author: 'a', age: const Duration(hours: 3)),
       _moment('c3', author: 'a', age: const Duration(hours: 1)),
     ];
@@ -564,6 +608,7 @@ void main() {
                     context,
                     chain: chain,
                     feedService: feed(),
+                    momentService: privateMoments(),
                     playerFactory: () => player,
                   ),
                   child: const Text('open'),
@@ -581,7 +626,11 @@ void main() {
 
       // Opening a chain plays it — that is what the tap meant.
       expect(player.playCount, 1);
-      expect(player.lastUrl, 'https://cdn.example/c1.m4a');
+      expect(
+        player.lastUrl,
+        'https://storage.googleapis.com/yovoice-test/'
+        'c1.m4a?X-Goog-Signature=test',
+      );
       expect(find.text('1 of 3'), findsOneWidget);
 
       // The first Moment finishes: the next one starts by itself.
@@ -589,14 +638,22 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 100));
       expect(player.playCount, 2);
-      expect(player.lastUrl, 'https://cdn.example/c2.m4a');
+      expect(
+        player.lastUrl,
+        'https://storage.googleapis.com/yovoice-test/'
+        'c2.m4a?X-Goog-Signature=test',
+      );
       expect(find.text('2 of 3'), findsOneWidget);
 
       player.complete();
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 100));
       expect(player.playCount, 3);
-      expect(player.lastUrl, 'https://cdn.example/c3.m4a');
+      expect(
+        player.lastUrl,
+        'https://storage.googleapis.com/yovoice-test/'
+        'c3.m4a?X-Goog-Signature=test',
+      );
 
       // The LAST completion closes the viewer: the chain has been told
       // in full. (The route pop animates, hence the settle.)
@@ -622,6 +679,7 @@ void main() {
             body: MomentStoryViewer(
               chain: chain,
               feedService: feed(),
+              momentService: privateMoments(),
               viewsService: views,
               playerFactory: () => player,
               autoPlay: false,
@@ -675,6 +733,7 @@ void main() {
           home: MomentsScreen(
             feedService: feed(),
             auth: authMe(),
+            momentService: privateMoments(),
             viewsService: views,
             playerFactory: () => player,
             discoveryService: _StaticDiscovery(chainOfThree()),
@@ -690,7 +749,11 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
 
       expect(find.text('2 of 3'), findsOneWidget);
-      expect(player.lastUrl, 'https://cdn.example/c2.m4a');
+      expect(
+        player.lastUrl,
+        'https://storage.googleapis.com/yovoice-test/'
+        'c2.m4a?X-Goog-Signature=test',
+      );
     });
   });
 
@@ -705,18 +768,24 @@ void main() {
           home: MomentsScreen(
             feedService: feed(
               social: [
-                _moment('social-1', author: 'friend',
-                    age: const Duration(hours: 6)),
+                _moment(
+                  'social-1',
+                  author: 'friend',
+                  age: const Duration(hours: 6),
+                ),
               ],
             ),
             auth: authMe(),
             discoveryService: _StaticDiscovery([
               // `pool-liked` is older but far more engaged; `pool-new`
               // is fresher. The two orderings disagree on purpose.
-              _moment('pool-liked', author: 'a', likes: 30,
-                  age: const Duration(hours: 8)),
-              _moment('pool-new', author: 'b',
-                  age: const Duration(hours: 1)),
+              _moment(
+                'pool-liked',
+                author: 'a',
+                likes: 30,
+                age: const Duration(hours: 8),
+              ),
+              _moment('pool-new', author: 'b', age: const Duration(hours: 1)),
             ]),
           ),
         ),
@@ -745,8 +814,9 @@ void main() {
         find.byKey(const ValueKey('moments-filter-mostEngaged')),
       );
       await tester.pump();
-      await tester
-          .tap(find.byKey(const ValueKey('moments-filter-mostEngaged')));
+      await tester.tap(
+        find.byKey(const ValueKey('moments-filter-mostEngaged')),
+      );
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 50));
       expect(at('pool-liked').dy, lessThan(at('pool-new').dy));
@@ -770,10 +840,7 @@ void main() {
       for (var i = 0; i < 4; i++) {
         await tester.pump(const Duration(milliseconds: 50));
       }
-      expect(
-        find.byKey(const ValueKey('moment-row-social-1')),
-        findsOneWidget,
-      );
+      expect(find.byKey(const ValueKey('moment-row-social-1')), findsOneWidget);
       expect(find.byKey(const ValueKey('moment-row-pool-new')), findsNothing);
       expect(find.byKey(const ValueKey('moment-row-pool-liked')), findsNothing);
       expect(find.text('From your circle'), findsOneWidget);
@@ -788,11 +855,7 @@ void main() {
       for (final moment in mine) {
         await db.collection('voiceMoments').doc(moment.id).set(_doc(moment));
       }
-      return MomentService(
-        firestore: db,
-        auth: authMe(),
-        storage: MockFirebaseStorage(),
-      );
+      return privateMoments(firestore: db);
     }
 
     Future<void> pumpFollowing(
@@ -828,8 +891,13 @@ void main() {
       // Delete on my own rows (the author's exit, the ONLY one for a
       // permanent Moment), Report only on someone else's.
       final moments = await seeded([
-        _moment('mine-1', author: _me, likes: 1, comments: 1,
-            age: const Duration(hours: 1)),
+        _moment(
+          'mine-1',
+          author: _me,
+          likes: 1,
+          comments: 1,
+          age: const Duration(hours: 1),
+        ),
         _moment('mine-2', author: _me, age: const Duration(hours: 2)),
       ]);
 
@@ -903,8 +971,13 @@ void main() {
     testWidgets('the open sheet re-reads its own Moment, so a like made '
         'inside it moves its own counter', (tester) async {
       final moments = await seeded([
-        _moment('mine-1', author: _me, likes: 2, comments: 0,
-            age: const Duration(hours: 1)),
+        _moment(
+          'mine-1',
+          author: _me,
+          likes: 2,
+          comments: 0,
+          age: const Duration(hours: 1),
+        ),
       ]);
 
       await pumpFollowing(tester, moments: moments);
@@ -913,7 +986,10 @@ void main() {
       await tester.pumpAndSettle();
 
       final card = find.byType(MomentCard);
-      expect(find.descendant(of: card, matching: find.text('2')), findsOneWidget);
+      expect(
+        find.descendant(of: card, matching: find.text('2')),
+        findsOneWidget,
+      );
 
       // The counter changes on the server the way a like does.
       await db.collection('voiceMoments').doc('mine-1').update(
@@ -922,8 +998,14 @@ void main() {
       await tester.pump();
       await tester.pump();
 
-      expect(find.descendant(of: card, matching: find.text('3')), findsOneWidget);
-      expect(find.descendant(of: card, matching: find.text('5')), findsOneWidget);
+      expect(
+        find.descendant(of: card, matching: find.text('3')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: card, matching: find.text('5')),
+        findsOneWidget,
+      );
     });
 
     for (final width in <double>[390, 768, 1100, 1440]) {
@@ -931,8 +1013,12 @@ void main() {
           '${width.toInt()} px', (tester) async {
         final moments = await seeded([
           for (var i = 0; i < 9; i++)
-            _moment('mine-$i', author: _me, likes: i,
-                age: Duration(hours: 1, minutes: i)),
+            _moment(
+              'mine-$i',
+              author: _me,
+              likes: i,
+              age: Duration(hours: 1, minutes: i),
+            ),
         ]);
 
         await pumpFollowing(
@@ -954,10 +1040,7 @@ void main() {
         expect(tester.takeException(), isNull);
         // Mine lead the list; the circle's rows queue below them and are
         // reachable by scrolling the (lazy) feed.
-        expect(
-          find.byKey(const ValueKey('moment-row-mine-0')),
-          findsOneWidget,
-        );
+        expect(find.byKey(const ValueKey('moment-row-mine-0')), findsOneWidget);
         // The FEED's vertical scrollable specifically: on wide layouts
         // the detail panel scrolls vertically too, and the feed column
         // comes first in the tree.

@@ -15,6 +15,7 @@ const { deriveCapabilities } = require("../utils/capabilities");
 
 const {
   requireAuthentication,
+  requirePrivilegedAuthentication,
   requireVerifiedStaff,
   requireProtectedOwner,
 } = require("../utils/auth");
@@ -122,6 +123,11 @@ exports.bootstrapSuperAdmin = onCall(
       );
     }
 
+    // Bootstrap creates the highest authority in the system. Even though no
+    // staff mirror exists yet, it still requires the same step-up proof as
+    // every later destructive owner action.
+    requirePrivilegedAuthentication(authenticatedUser);
+
     const callerRecord = await auth.getUser(authenticatedUser.uid);
     const callerProfile = await db
       .collection("users")
@@ -199,7 +205,7 @@ exports.assignUserRole = onCall(
     // Role assignment is an OWNERSHIP capability: claim + server record +
     // the protected-owner uid. A superAdmin that is not the owner is
     // refused and recorded by the guard itself.
-    const caller = await requireProtectedOwner(request);
+    const caller = await requireProtectedOwner(request, { privileged: true });
 
     const targetUid = normalizeText(request.data?.uid, 128);
 
@@ -366,7 +372,7 @@ exports.getUserRole = onCall(
       email: targetUser.email ?? profile.email ?? null,
       displayName: profile.displayName ?? targetUser.displayName ?? null,
       username: profile.username ?? null,
-      photoUrl: profile.photoUrl ?? targetUser.photoURL ?? null,
+      photoUrl: null,
       disabled: targetUser.disabled,
       banned: profile.banned === true || targetUser.disabled,
       role: targetUser.customClaims?.role ?? profile.role ?? USER_ROLES.USER,
@@ -421,7 +427,7 @@ exports.listAdminUsers = onCall(
         email: user.email ?? profile.email ?? null,
         displayName: profile.displayName ?? user.displayName ?? "YoVoice user",
         username: profile.username ?? "",
-        photoUrl: profile.photoUrl ?? user.photoURL ?? null,
+        photoUrl: null,
         role,
         isAdministrative: isAdministrativeRole(role),
         disabled: user.disabled,
@@ -462,6 +468,7 @@ exports.setUserBan = onCall(
         USER_ROLES.SUPER_ADMIN,
       ]),
       "You do not have permission to sanction users.",
+      { privileged: true },
     );
     const caps = deriveCapabilities({ uid: caller.uid, user: caller.profile });
 

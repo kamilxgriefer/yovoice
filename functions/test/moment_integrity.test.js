@@ -21,9 +21,7 @@ const {
   momentStoragePath,
   voiceReplyStoragePath,
 } = require("../moments/integrity");
-const {
-  createMomentMigrationService,
-} = require("../moments/migration");
+const { createMomentMigrationService } = require("../moments/migration");
 const { operationIdentity } = require("../integrity/guards");
 
 const db = getFirestore();
@@ -47,22 +45,29 @@ class FakeStorage {
   constructor() {
     this.objects = new Map();
     this.deleted = [];
+    this.revoked = [];
+    this.signedGrants = [];
     this.metadataReads = 0;
+    this.beforeSignedRead = null;
   }
 
-  put(path, {
-    authorId,
-    momentId,
-    commentId,
-    contentType = "audio/mp4",
-    generation = "1001",
-    size = 4096,
-    extraMetadata = {},
-  }) {
+  put(
+    path,
+    {
+      authorId,
+      momentId,
+      commentId,
+      contentType = "audio/mp4",
+      generation = "1001",
+      size = 4096,
+      extraMetadata = {},
+    },
+  ) {
     const custom = {
       authorId,
       momentId,
       ...(commentId ? { commentId } : {}),
+      firebaseStorageDownloadTokens: "durable-test-token",
       ...extraMetadata,
     };
     this.objects.set(path, {
@@ -82,6 +87,22 @@ class FakeStorage {
 
   async getDownloadUrl(path) {
     return `https://storage.example.invalid/${encodeURIComponent(path)}`;
+  }
+
+  async revokeDownloadTokens(path) {
+    const object = this.objects.get(path);
+    if (!object) throw new Error(`Missing fake object: ${path}`);
+    delete object.metadata.firebaseStorageDownloadTokens;
+    this.revoked.push(path);
+    return object;
+  }
+
+  async getSignedReadUrl(path, { expiresAtMs, generation }) {
+    this.signedGrants.push({ path, expiresAtMs, generation });
+    if (this.beforeSignedRead) await this.beforeSignedRead();
+    return `https://storage.googleapis.com/test-bucket/${encodeURIComponent(
+      path,
+    )}?generation=${generation}&signature=short-lived`;
   }
 
   async deleteObject(path, { ignoreNotFound = false } = {}) {
@@ -134,12 +155,24 @@ async function reset() {
       db.doc(`restrictions/${uid}`).delete(),
       db.doc(`momentCapacityLedgers/${uid}`).delete(),
       deleteQuery(db.collection("voiceMoments").where("authorId", "==", uid)),
-      deleteQuery(db.collection("integrityOperationLedgers").where("ownerId", "==", uid)),
-      deleteQuery(db.collection("integrityPreflightLedgers").where("ownerId", "==", uid)),
-      deleteQuery(db.collection("privateRateLimits").where("ownerId", "==", uid)),
-      deleteQuery(db.collection("voiceMomentUploadReservations").where("ownerId", "==", uid)),
+      deleteQuery(
+        db.collection("integrityOperationLedgers").where("ownerId", "==", uid),
+      ),
+      deleteQuery(
+        db.collection("integrityPreflightLedgers").where("ownerId", "==", uid),
+      ),
+      deleteQuery(
+        db.collection("privateRateLimits").where("ownerId", "==", uid),
+      ),
+      deleteQuery(
+        db
+          .collection("voiceMomentUploadReservations")
+          .where("ownerId", "==", uid),
+      ),
       deleteQuery(db.collection("reports").where("reporterId", "==", uid)),
-      deleteQuery(db.collection("contentCleanupOutbox").where("requestedBy", "==", uid)),
+      deleteQuery(
+        db.collection("contentCleanupOutbox").where("requestedBy", "==", uid),
+      ),
     ]);
   }
   for (const first of USERS) {
@@ -198,33 +231,40 @@ async function seed(uid, overrides = {}) {
   ]);
 }
 
-async function publish(service, {
-  uid = B,
-  reserveRequestId = `reserve-${uid}`,
-  finalizeRequestId = `finalize-${uid}`,
-  caption = "Canonical Moment",
-  durationSeconds = 12,
-  generation = "1001",
-  availabilityHours = undefined,
-} = {}) {
-  const reserved = await service.reserveMomentDraft(request(uid, {
-    caption,
-    durationSeconds,
-    requestId: reserveRequestId,
-  }));
+async function publish(
+  service,
+  {
+    uid = B,
+    reserveRequestId = `reserve-${uid}`,
+    finalizeRequestId = `finalize-${uid}`,
+    caption = "Canonical Moment",
+    durationSeconds = 12,
+    generation = "1001",
+    availabilityHours = undefined,
+  } = {},
+) {
+  const reserved = await service.reserveMomentDraft(
+    request(uid, {
+      caption,
+      durationSeconds,
+      requestId: reserveRequestId,
+    }),
+  );
   storage.put(reserved.storagePath, {
     authorId: uid,
     momentId: reserved.momentId,
     generation,
   });
-  await service.finalizeMomentDraft(request(uid, {
-    momentId: reserved.momentId,
-    objectGeneration: generation,
-    requestId: finalizeRequestId,
-    // Absent by default on purpose: most of this suite publishes exactly the
-    // way pre-availability clients do, which must stay the 24-hour story.
-    ...(availabilityHours === undefined ? {} : { availabilityHours }),
-  }));
+  await service.finalizeMomentDraft(
+    request(uid, {
+      momentId: reserved.momentId,
+      objectGeneration: generation,
+      requestId: finalizeRequestId,
+      // Absent by default on purpose: most of this suite publishes exactly the
+      // way pre-availability clients do, which must stay the 24-hour story.
+      ...(availabilityHours === undefined ? {} : { availabilityHours }),
+    }),
+  );
   return reserved;
 }
 
@@ -239,16 +279,20 @@ after(reset);
 
 test("draft reservation and finalize bind canonical identity and immutable media", async () => {
   const service = momentService();
-  const reserved = await service.reserveMomentDraft(request(A, {
-    caption: "  Hello voice  ",
-    durationSeconds: 9,
-    requestId: "reserve-main1",
-  }));
-  const replay = await service.reserveMomentDraft(request(A, {
-    caption: "  Hello voice  ",
-    durationSeconds: 9,
-    requestId: "reserve-main1",
-  }));
+  const reserved = await service.reserveMomentDraft(
+    request(A, {
+      caption: "  Hello voice  ",
+      durationSeconds: 9,
+      requestId: "reserve-main1",
+    }),
+  );
+  const replay = await service.reserveMomentDraft(
+    request(A, {
+      caption: "  Hello voice  ",
+      durationSeconds: 9,
+      requestId: "reserve-main1",
+    }),
+  );
   assert.deepEqual(replay, reserved);
   assert.match(reserved.momentId, /^[a-f0-9]{20}$/u);
   assert.equal(reserved.storagePath, momentStoragePath(A, reserved.momentId));
@@ -264,18 +308,22 @@ test("draft reservation and finalize bind canonical identity and immutable media
     momentId: reserved.momentId,
     generation: "99123",
   });
-  const finalized = await service.finalizeMomentDraft(request(A, {
-    momentId: reserved.momentId,
-    objectGeneration: "99123",
-    requestId: "final-main01",
-  }));
-  assert.equal(finalized.published, true);
-  assert.deepEqual(
-    await service.finalizeMomentDraft(request(A, {
+  const finalized = await service.finalizeMomentDraft(
+    request(A, {
       momentId: reserved.momentId,
       objectGeneration: "99123",
       requestId: "final-main01",
-    })),
+    }),
+  );
+  assert.equal(finalized.published, true);
+  assert.deepEqual(
+    await service.finalizeMomentDraft(
+      request(A, {
+        momentId: reserved.momentId,
+        objectGeneration: "99123",
+        requestId: "final-main01",
+      }),
+    ),
     finalized,
   );
   moment = await db.doc(`voiceMoments/${reserved.momentId}`).get();
@@ -283,24 +331,113 @@ test("draft reservation and finalize bind canonical identity and immutable media
   assert.equal(moment.data().status, "published");
   assert.equal(moment.data().mediaGeneration, "99123");
   assert.equal(moment.data().storagePath, reserved.storagePath);
+  assert.equal(moment.data().audioUrl, null);
+  assert.deepEqual(storage.revoked, [reserved.storagePath]);
+  assert.equal(
+    storage.objects.get(reserved.storagePath).metadata
+      .firebaseStorageDownloadTokens,
+    undefined,
+  );
 
   await assert.rejects(
-    service.finalizeMomentDraft(request(A, {
-      momentId: reserved.momentId,
-      objectGeneration: "99123",
-      requestId: "final-twice1",
-    })),
+    service.finalizeMomentDraft(
+      request(A, {
+        momentId: reserved.momentId,
+        objectGeneration: "99123",
+        requestId: "final-twice1",
+      }),
+    ),
     (error) => error.code === "failed-precondition",
   );
 });
 
+test("private media grants re-authorize every playback and expire quickly", async () => {
+  const service = momentService();
+  const { momentId, storagePath } = await publish(service, {
+    uid: B,
+    generation: "4401",
+  });
+  const access = await service.getVoiceMomentMediaAccess(
+    request(
+      A,
+      {
+        momentId,
+      },
+      false,
+    ),
+  );
+  assert.equal(access.schemaVersion, 1);
+  assert.equal(access.mediaGeneration, "4401");
+  assert.equal(access.mediaContentType, "audio/mp4");
+  assert.equal(access.mediaSize, 4096);
+  assert.equal(access.expiresAtMillis, nowMs + 90_000);
+  assert.match(access.url, /^https:\/\/storage[.]googleapis[.]com\//u);
+  assert.deepEqual(storage.signedGrants, [
+    {
+      path: storagePath,
+      expiresAtMs: nowMs + 90_000,
+      generation: "4401",
+    },
+  ]);
+
+  await db.doc(`users/${A}/blocked/${B}`).set({ blockedAt: Timestamp.now() });
+  await assert.rejects(
+    service.getVoiceMomentMediaAccess(request(A, { momentId })),
+    (error) => error.code === "failed-precondition",
+  );
+  assert.equal(storage.signedGrants.length, 1);
+});
+
+test("private media grant never outlives Moment expiry", async () => {
+  const service = momentService();
+  const { momentId } = await publish(service, {
+    uid: B,
+    generation: "4402",
+  });
+  await db.doc(`voiceMoments/${momentId}`).update({
+    expiresAt: Timestamp.fromMillis(nowMs + 15_000),
+  });
+  const access = await service.getVoiceMomentMediaAccess(
+    request(A, {
+      momentId,
+    }),
+  );
+  assert.equal(access.expiresAtMillis, nowMs + 15_000);
+
+  nowMs += 15_000;
+  await assert.rejects(
+    service.getVoiceMomentMediaAccess(request(A, { momentId })),
+    (error) => error.code === "failed-precondition",
+  );
+});
+
+test("media grant recheck closes a block race before returning the URL", async () => {
+  const service = momentService();
+  const { momentId } = await publish(service, {
+    uid: B,
+    generation: "4403",
+  });
+  storage.beforeSignedRead = async () => {
+    await db.doc(`users/${A}/blocked/${B}`).set({
+      blockedAt: Timestamp.fromMillis(nowMs),
+    });
+  };
+  await assert.rejects(
+    service.getVoiceMomentMediaAccess(request(A, { momentId })),
+    (error) => error.code === "failed-precondition",
+  );
+  assert.equal(storage.signedGrants.length, 1);
+});
+
 test("a one-second recording publishes through the canonical draft contract", async () => {
   const service = momentService();
-  const reserved = await service.reserveMomentDraft(request(A, {
-    caption: "One second",
-    durationSeconds: 1,
-    requestId: "reserve-one-second",
-  }));
+  const reserved = await service.reserveMomentDraft(
+    request(A, {
+      caption: "One second",
+      durationSeconds: 1,
+      requestId: "reserve-one-second",
+    }),
+  );
   storage.put(reserved.storagePath, {
     authorId: A,
     momentId: reserved.momentId,
@@ -308,11 +445,13 @@ test("a one-second recording publishes through the canonical draft contract", as
     size: 1024,
   });
 
-  const finalized = await service.finalizeMomentDraft(request(A, {
-    momentId: reserved.momentId,
-    objectGeneration: "1000000000000001",
-    requestId: "finalize-one-second",
-  }));
+  const finalized = await service.finalizeMomentDraft(
+    request(A, {
+      momentId: reserved.momentId,
+      objectGeneration: "1000000000000001",
+      requestId: "finalize-one-second",
+    }),
+  );
 
   assert.equal(finalized.published, true);
   const moment = await db.doc(`voiceMoments/${reserved.momentId}`).get();
@@ -324,19 +463,27 @@ test("a one-second recording publishes through the canonical draft contract", as
 test("unverified actors cannot reserve or finalize Voice Moment uploads", async () => {
   const service = momentService();
   await assert.rejects(
-    service.reserveMomentDraft(request(A, {
-      caption: "Unverified reserve",
-      durationSeconds: 1,
-      requestId: "reserve-unverified",
-    }, false)),
+    service.reserveMomentDraft(
+      request(
+        A,
+        {
+          caption: "Unverified reserve",
+          durationSeconds: 1,
+          requestId: "reserve-unverified",
+        },
+        false,
+      ),
+    ),
     (error) => error.code === "failed-precondition",
   );
 
-  const reserved = await service.reserveMomentDraft(request(A, {
-    caption: "Verified reserve",
-    durationSeconds: 1,
-    requestId: "reserve-before-unverified-finalize",
-  }));
+  const reserved = await service.reserveMomentDraft(
+    request(A, {
+      caption: "Verified reserve",
+      durationSeconds: 1,
+      requestId: "reserve-before-unverified-finalize",
+    }),
+  );
   storage.put(reserved.storagePath, {
     authorId: A,
     momentId: reserved.momentId,
@@ -344,11 +491,17 @@ test("unverified actors cannot reserve or finalize Voice Moment uploads", async 
     size: 1024,
   });
   await assert.rejects(
-    service.finalizeMomentDraft(request(A, {
-      momentId: reserved.momentId,
-      objectGeneration: "1000000000000002",
-      requestId: "finalize-unverified",
-    }, false)),
+    service.finalizeMomentDraft(
+      request(
+        A,
+        {
+          momentId: reserved.momentId,
+          objectGeneration: "1000000000000002",
+          requestId: "finalize-unverified",
+        },
+        false,
+      ),
+    ),
     (error) => error.code === "failed-precondition",
   );
   const moment = await db.doc(`voiceMoments/${reserved.momentId}`).get();
@@ -360,44 +513,54 @@ test("Moment creation requires an exact HTTPS public identity projection", async
   const service = momentService();
   await db.doc(`publicProfiles/${A}`).delete();
   await assert.rejects(
-    service.reserveMomentDraft(request(A, {
-      caption: "No projection",
-      durationSeconds: 12,
-      requestId: "reserve-nopublic",
-    })),
+    service.reserveMomentDraft(
+      request(A, {
+        caption: "No projection",
+        durationSeconds: 12,
+        requestId: "reserve-nopublic",
+      }),
+    ),
     (error) => error.code === "failed-precondition",
   );
 
   await seed(A);
-  await db.doc(`publicProfiles/${A}`).update({ photoUrl: "javascript:alert(1)" });
+  await db
+    .doc(`publicProfiles/${A}`)
+    .update({ photoUrl: "javascript:alert(1)" });
   await assert.rejects(
-    service.reserveMomentDraft(request(A, {
-      caption: "Poisoned projection",
-      durationSeconds: 12,
-      requestId: "reserve-badpublic",
-    })),
+    service.reserveMomentDraft(
+      request(A, {
+        caption: "Poisoned projection",
+        durationSeconds: 12,
+        requestId: "reserve-badpublic",
+      }),
+    ),
     (error) => error.code === "data-loss",
   );
 });
 
 test("finalize rejects forged metadata, generation, MIME and size", async () => {
   const service = momentService();
-  const reserved = await service.reserveMomentDraft(request(A, {
-    caption: "Upload",
-    durationSeconds: 8,
-    requestId: "reserve-bad01",
-  }));
+  const reserved = await service.reserveMomentDraft(
+    request(A, {
+      caption: "Upload",
+      durationSeconds: 8,
+      requestId: "reserve-bad01",
+    }),
+  );
   storage.put(reserved.storagePath, {
     authorId: B,
     momentId: reserved.momentId,
     generation: "2001",
   });
   await assert.rejects(
-    service.finalizeMomentDraft(request(A, {
-      momentId: reserved.momentId,
-      objectGeneration: "2001",
-      requestId: "final-bad001",
-    })),
+    service.finalizeMomentDraft(
+      request(A, {
+        momentId: reserved.momentId,
+        objectGeneration: "2001",
+        requestId: "final-bad001",
+      }),
+    ),
     (error) => error.code === "failed-precondition",
   );
   storage.put(reserved.storagePath, {
@@ -408,13 +571,15 @@ test("finalize rejects forged metadata, generation, MIME and size", async () => 
     size: 50_000_000,
   });
   await assert.rejects(
-    service.finalizeMomentDraft(request(A, {
-      momentId: reserved.momentId,
-      objectGeneration: "wrong",
-      requestId: "final-bad002",
-    })),
-    (error) => error.code === "invalid-argument" ||
-      error.code === "failed-precondition",
+    service.finalizeMomentDraft(
+      request(A, {
+        momentId: reserved.momentId,
+        objectGeneration: "wrong",
+        requestId: "final-bad002",
+      }),
+    ),
+    (error) =>
+      error.code === "invalid-argument" || error.code === "failed-precondition",
   );
   const moment = await db.doc(`voiceMoments/${reserved.momentId}`).get();
   assert.equal(moment.data().isPublished, false);
@@ -432,37 +597,119 @@ test("upload reservation server-time window blocks distinct-id bursts but not re
   });
   await service.reserveMomentDraft(first);
   await service.reserveMomentDraft(first);
-  await service.reserveMomentDraft(request(A, {
-    caption: "Two",
-    durationSeconds: 5,
-    requestId: "reserve-limit2",
-  }));
-  await assert.rejects(
-    service.reserveMomentDraft(request(A, {
-      caption: "Three",
+  await service.reserveMomentDraft(
+    request(A, {
+      caption: "Two",
       durationSeconds: 5,
-      requestId: "reserve-limit3",
-    })),
+      requestId: "reserve-limit2",
+    }),
+  );
+  await assert.rejects(
+    service.reserveMomentDraft(
+      request(A, {
+        caption: "Three",
+        durationSeconds: 5,
+        requestId: "reserve-limit3",
+      }),
+    ),
     (error) => error.code === "resource-exhausted",
   );
   nowMs += 1_001;
-  const afterWindow = await service.reserveMomentDraft(request(A, {
-    caption: "Four",
-    durationSeconds: 5,
-    requestId: "reserve-limit4",
-  }));
+  const afterWindow = await service.reserveMomentDraft(
+    request(A, {
+      caption: "Four",
+      durationSeconds: 5,
+      requestId: "reserve-limit4",
+    }),
+  );
   assert.match(afterWindow.momentId, /^[a-f0-9]{20}$/u);
+});
+
+test("invalid caller-selected Moment targets consume committed attempt budgets", async () => {
+  const oneAttempt = { maxEvents: 1, windowMs: 60_000 };
+  const service = momentService({
+    like: oneAttempt,
+    uploadReserve: oneAttempt,
+    comment: oneAttempt,
+    delete: oneAttempt,
+    report: oneAttempt,
+    mediaAccess: oneAttempt,
+    mediaAccessHourly: { maxEvents: 20, windowMs: 60 * 60_000 },
+  });
+  const missingMoment = "missing-moment-cost";
+  const missingComment = "missing-comment-cost";
+  const operations = [
+    ["like", () => service.setMomentLike(request(A, {
+      liked: true,
+      momentId: missingMoment,
+      requestId: "cost-like-attempt",
+    }))],
+    ["uploadReserve", () => service.reserveVoiceCommentDraft(request(A, {
+      durationSeconds: 2,
+      momentId: missingMoment,
+      requestId: "cost-voice-reserve",
+      text: "",
+    }))],
+    ["comment", () => service.createMomentComment(request(A, {
+      momentId: missingMoment,
+      requestId: "cost-comment-attempt",
+      text: "bounded",
+    }))],
+    ["delete", () => service.deleteMomentComment(request(A, {
+      commentId: missingComment,
+      momentId: missingMoment,
+      requestId: "cost-comment-delete",
+    }))],
+    ["delete", () => service.deleteMoment(request(B, {
+      momentId: missingMoment,
+      requestId: "cost-moment-delete",
+    }))],
+    ["report", () => service.createContentReport(request(A, {
+      momentId: missingMoment,
+      reason: "Safety report",
+      requestId: "cost-report-attempt",
+      targetType: "voiceMoment",
+    }, false))],
+  ];
+
+  for (const [scope, invoke] of operations) {
+    await assert.rejects(
+      invoke(),
+      (error) => error.code !== "resource-exhausted",
+      `${scope} first target denial should consume its attempt`,
+    );
+    await assert.rejects(
+      invoke(),
+      (error) => error.code === "resource-exhausted",
+      `${scope} retry must stop before rereading the target`,
+    );
+  }
+
+  await assert.rejects(
+    service.getVoiceMomentMediaAccess(request(C, { momentId: missingMoment })),
+    (error) => error.code !== "resource-exhausted",
+  );
+  await assert.rejects(
+    service.getVoiceMomentMediaAccess(request(C, { momentId: missingMoment })),
+    (error) => error.code === "resource-exhausted",
+  );
+  assert.equal(storage.metadataReads, 0);
 });
 
 test("concurrent like intents are exactly once and never make a negative count", async () => {
   const service = momentService();
   const { momentId } = await publish(service);
-  const attempts = await Promise.all(Array.from({ length: 8 }, (_, index) =>
-    service.setMomentLike(request(A, {
-      liked: true,
-      momentId,
-      requestId: `like-add-${index}`,
-    }))));
+  const attempts = await Promise.all(
+    Array.from({ length: 8 }, (_, index) =>
+      service.setMomentLike(
+        request(A, {
+          liked: true,
+          momentId,
+          requestId: `like-add-${index}`,
+        }),
+      ),
+    ),
+  );
   assert.equal(attempts.filter((result) => result.changed).length, 1);
   let [moment, like] = await Promise.all([
     db.doc(`voiceMoments/${momentId}`).get(),
@@ -471,12 +718,17 @@ test("concurrent like intents are exactly once and never make a negative count",
   assert.equal(moment.data().likeCount, 1);
   assert.equal(like.data().userId, A);
 
-  const removals = await Promise.all(Array.from({ length: 5 }, (_, index) =>
-    service.setMomentLike(request(A, {
-      liked: false,
-      momentId,
-      requestId: `like-del-${index}`,
-    }))));
+  const removals = await Promise.all(
+    Array.from({ length: 5 }, (_, index) =>
+      service.setMomentLike(
+        request(A, {
+          liked: false,
+          momentId,
+          requestId: `like-del-${index}`,
+        }),
+      ),
+    ),
+  );
   assert.equal(removals.filter((result) => result.changed).length, 1);
   [moment, like] = await Promise.all([
     db.doc(`voiceMoments/${momentId}`).get(),
@@ -492,14 +744,19 @@ test("concurrent like intents are exactly once and never make a negative count",
     createdAt: Timestamp.fromMillis(nowMs),
   });
   await assert.rejects(
-    service.setMomentLike(request(A, {
-      liked: false,
-      momentId,
-      requestId: "like-negative",
-    })),
+    service.setMomentLike(
+      request(A, {
+        liked: false,
+        momentId,
+        requestId: "like-negative",
+      }),
+    ),
     (error) => error.code === "data-loss",
   );
-  assert.equal((await db.doc(`voiceMoments/${momentId}/likes/${A}`).get()).exists, true);
+  assert.equal(
+    (await db.doc(`voiceMoments/${momentId}/likes/${A}`).get()).exists,
+    true,
+  );
 });
 
 test("comments are canonical, replay-safe and transactionally counted", async () => {
@@ -513,31 +770,43 @@ test("comments are canonical, replay-safe and transactionally counted", async ()
   const replayResults = await Promise.all(
     Array.from({ length: 6 }, () => service.createMomentComment(same)),
   );
-  assert.equal(new Set(replayResults.map((result) => result.commentId)).size, 1);
+  assert.equal(
+    new Set(replayResults.map((result) => result.commentId)).size,
+    1,
+  );
 
-  await Promise.all(Array.from({ length: 5 }, (_, index) =>
-    service.createMomentComment(request(A, {
-      momentId,
-      requestId: `comment-many${index}`,
-      text: `comment ${index}`,
-    }))));
+  await Promise.all(
+    Array.from({ length: 5 }, (_, index) =>
+      service.createMomentComment(
+        request(A, {
+          momentId,
+          requestId: `comment-many${index}`,
+          text: `comment ${index}`,
+        }),
+      ),
+    ),
+  );
   const [moment, comments] = await Promise.all([
     db.doc(`voiceMoments/${momentId}`).get(),
     db.collection(`voiceMoments/${momentId}/comments`).get(),
   ]);
   assert.equal(moment.data().commentCount, 6);
   assert.equal(comments.size, 6);
-  const first = comments.docs.find((doc) => doc.id === replayResults[0].commentId);
+  const first = comments.docs.find(
+    (doc) => doc.id === replayResults[0].commentId,
+  );
   assert.equal(first.data().authorName, `Public ${A}`);
   assert.equal(first.data().text, "A real comment");
 
   await assert.rejects(
-    service.createMomentComment(request(A, {
-      momentId,
-      requestId: "comment-forge",
-      text: "text",
-      authorId: B,
-    })),
+    service.createMomentComment(
+      request(A, {
+        momentId,
+        requestId: "comment-forge",
+        text: "text",
+        authorId: B,
+      }),
+    ),
     (error) => error.code === "invalid-argument",
   );
 });
@@ -547,19 +816,23 @@ test("blocks and active sanctions prevent likes and comments", async () => {
   const { momentId } = await publish(service);
   await db.doc(`users/${B}/blocked/${A}`).set({ userId: A });
   await assert.rejects(
-    service.setMomentLike(request(A, {
-      liked: true,
-      momentId,
-      requestId: "like-blocked1",
-    })),
+    service.setMomentLike(
+      request(A, {
+        liked: true,
+        momentId,
+        requestId: "like-blocked1",
+      }),
+    ),
     (error) => error.code === "failed-precondition",
   );
   await assert.rejects(
-    service.createMomentComment(request(A, {
-      momentId,
-      requestId: "comment-block1",
-      text: "blocked",
-    })),
+    service.createMomentComment(
+      request(A, {
+        momentId,
+        requestId: "comment-block1",
+        text: "blocked",
+      }),
+    ),
     (error) => error.code === "failed-precondition",
   );
   await db.doc(`users/${B}/blocked/${A}`).delete();
@@ -568,11 +841,13 @@ test("blocks and active sanctions prevent likes and comments", async () => {
     expiresAt: null,
   });
   await assert.rejects(
-    service.createMomentComment(request(A, {
-      momentId,
-      requestId: "comment-muted1",
-      text: "muted",
-    })),
+    service.createMomentComment(
+      request(A, {
+        momentId,
+        requestId: "comment-muted1",
+        text: "muted",
+      }),
+    ),
     (error) => error.code === "permission-denied",
   );
 });
@@ -580,11 +855,13 @@ test("blocks and active sanctions prevent likes and comments", async () => {
 test("comment deletion decrements once and fails closed on corrupt counters", async () => {
   const service = momentService();
   const { momentId } = await publish(service);
-  const created = await service.createMomentComment(request(A, {
-    momentId,
-    requestId: "comment-delete-source",
-    text: "delete me",
-  }));
+  const created = await service.createMomentComment(
+    request(A, {
+      momentId,
+      requestId: "comment-delete-source",
+      text: "delete me",
+    }),
+  );
   const deletionRequest = request(A, {
     commentId: created.commentId,
     momentId,
@@ -592,28 +869,45 @@ test("comment deletion decrements once and fails closed on corrupt counters", as
   });
   const deleted = await service.deleteMomentComment(deletionRequest);
   assert.deepEqual(await service.deleteMomentComment(deletionRequest), deleted);
-  assert.equal((await db.doc(
-    `voiceMoments/${momentId}/comments/${created.commentId}`,
-  ).get()).exists, false);
-  assert.equal((await db.doc(`voiceMoments/${momentId}`).get()).data().commentCount, 0);
+  assert.equal(
+    (
+      await db
+        .doc(`voiceMoments/${momentId}/comments/${created.commentId}`)
+        .get()
+    ).exists,
+    false,
+  );
+  assert.equal(
+    (await db.doc(`voiceMoments/${momentId}`).get()).data().commentCount,
+    0,
+  );
 
-  const second = await service.createMomentComment(request(A, {
-    momentId,
-    requestId: "comment-corrupt-source",
-    text: "keep me",
-  }));
+  const second = await service.createMomentComment(
+    request(A, {
+      momentId,
+      requestId: "comment-corrupt-source",
+      text: "keep me",
+    }),
+  );
   await db.doc(`voiceMoments/${momentId}`).update({ commentCount: 0 });
   await assert.rejects(
-    service.deleteMomentComment(request(A, {
-      commentId: second.commentId,
-      momentId,
-      requestId: "comment-corrupt-del",
-    })),
+    service.deleteMomentComment(
+      request(A, {
+        commentId: second.commentId,
+        momentId,
+        requestId: "comment-corrupt-del",
+      }),
+    ),
     (error) => error.code === "data-loss",
   );
-  assert.equal((await db.doc(
-    `voiceMoments/${momentId}/comments/${second.commentId}`,
-  ).get()).exists, true);
+  assert.equal(
+    (
+      await db
+        .doc(`voiceMoments/${momentId}/comments/${second.commentId}`)
+        .get()
+    ).exists,
+    true,
+  );
 });
 
 test("Moment deletion queues canonical cleanup and ignores forged storage paths", async () => {
@@ -650,14 +944,18 @@ test("Moment deletion queues canonical cleanup and ignores forged storage paths"
   });
   await db.doc(`voiceMoments/${momentId}`).update({ commentCount: 1 });
 
-  const deletion = await service.deleteMoment(request(A, {
-    momentId,
-    requestId: "moment-delete1",
-  }));
+  const deletion = await service.deleteMoment(
+    request(A, {
+      momentId,
+      requestId: "moment-delete1",
+    }),
+  );
   const capacity = (await db.doc(`momentCapacityLedgers/${A}`).get()).data();
   assert.equal(capacity.ownerId, A);
   assert.equal(capacity.revision, 2, "publish + delete each advance the mutex");
-  const outbox = await db.doc(`contentCleanupOutbox/${deletion.outboxId}`).get();
+  const outbox = await db
+    .doc(`contentCleanupOutbox/${deletion.outboxId}`)
+    .get();
   assert.deepEqual(outbox.data().objectPaths, [storagePath]);
   assert.equal(outbox.data().status, "pending");
   await service.processCleanupOutbox(deletion.outboxId);
@@ -667,7 +965,8 @@ test("Moment deletion queues canonical cleanup and ignores forged storage paths"
   assert.equal(storage.objects.has(victimPath), true);
   assert.equal((await db.doc(`voiceMoments/${momentId}`).get()).exists, false);
   assert.equal(
-    (await db.doc(`contentCleanupOutbox/${deletion.outboxId}`).get()).data().status,
+    (await db.doc(`contentCleanupOutbox/${deletion.outboxId}`).get()).data()
+      .status,
     "completed",
   );
 });
@@ -695,22 +994,26 @@ test("content reports are canonical, idempotent and DM participant-bound", async
     content: "reported",
   });
   await assert.rejects(
-    service.createContentReport(request(C, {
+    service.createContentReport(
+      request(C, {
+        targetType: "directMessage",
+        conversationId: "mmi-report-conversation",
+        messageId: "message-0001",
+        reason: "Not mine",
+        requestId: "report-denied1",
+      }),
+    ),
+    (error) => error.code === "permission-denied",
+  );
+  const direct = await service.createContentReport(
+    request(A, {
       targetType: "directMessage",
       conversationId: "mmi-report-conversation",
       messageId: "message-0001",
-      reason: "Not mine",
-      requestId: "report-denied1",
-    })),
-    (error) => error.code === "permission-denied",
+      reason: "Abusive",
+      requestId: "report-direct1",
+    }),
   );
-  const direct = await service.createContentReport(request(A, {
-    targetType: "directMessage",
-    conversationId: "mmi-report-conversation",
-    messageId: "message-0001",
-    reason: "Abusive",
-    requestId: "report-direct1",
-  }));
   assert.equal(direct.created, true);
 });
 
@@ -724,7 +1027,10 @@ test("content reports are canonical, idempotent and DM participant-bound", async
 // that the call failed.
 // ---------------------------------------------------------------------------
 
-async function seedRoom(roomId, { hostId = B, visibility = "private", clubId = "" } = {}) {
+async function seedRoom(
+  roomId,
+  { hostId = B, visibility = "private", clubId = "" } = {},
+) {
   await db.doc(`rooms/${roomId}`).set({
     hostId,
     visibility,
@@ -752,8 +1058,14 @@ async function seedClub({
     name: "general",
   });
   await db
-    .doc(`clubs/${REPORT_CLUB}/channels/${CLUB_CHANNEL}/messages/${CLUB_MESSAGE}`)
-    .set({ senderId: ownerId, clubId: REPORT_CLUB, content: "reported club message" });
+    .doc(
+      `clubs/${REPORT_CLUB}/channels/${CLUB_CHANNEL}/messages/${CLUB_MESSAGE}`,
+    )
+    .set({
+      senderId: ownerId,
+      clubId: REPORT_CLUB,
+      content: "reported club message",
+    });
 }
 
 function roomReport(uid, requestId, overrides = {}) {
@@ -786,12 +1098,18 @@ test("reporting is not gated on email verification", async () => {
   // reports/{reportId} create rule is deliberately NOT gated on
   // isVerified() because reporting is a safety action. The callable must
   // agree with the written policy.
-  const result = await service.createContentReport(request(A, {
-    targetType: "voiceMoment",
-    momentId,
-    reason: "Harassment",
-    requestId: "report-unverified1",
-  }, false));
+  const result = await service.createContentReport(
+    request(
+      A,
+      {
+        targetType: "voiceMoment",
+        momentId,
+        reason: "Harassment",
+        requestId: "report-unverified1",
+      },
+      false,
+    ),
+  );
   assert.equal(result.created, true);
   const report = await db.doc(`reports/${result.reportId}`).get();
   assert.equal(report.data().reporterId, A);
@@ -1039,22 +1357,26 @@ test("the new report targets reject conflicting id combinations", async () => {
   );
   // The pre-existing targets must stay closed against the new ids.
   await assert.rejects(
-    service.createContentReport(request(A, {
-      targetType: "voiceMoment",
-      momentId: "whatever",
-      roomId: PRIVATE_ROOM,
-      reason: "Harassment",
-      requestId: "report-conflict5",
-    })),
+    service.createContentReport(
+      request(A, {
+        targetType: "voiceMoment",
+        momentId: "whatever",
+        roomId: PRIVATE_ROOM,
+        reason: "Harassment",
+        requestId: "report-conflict5",
+      }),
+    ),
     (error) => error.code === "invalid-argument",
   );
   await assert.rejects(
-    service.createContentReport(request(A, {
-      targetType: "roomMessage",
-      roomId: PRIVATE_ROOM,
-      reason: "Harassment",
-      requestId: "report-conflict6",
-    })),
+    service.createContentReport(
+      request(A, {
+        targetType: "roomMessage",
+        roomId: PRIVATE_ROOM,
+        reason: "Harassment",
+        requestId: "report-conflict6",
+      }),
+    ),
     (error) => error.code === "invalid-argument",
   );
 });
@@ -1063,47 +1385,55 @@ test("a report carries an optional bounded reporter note", async () => {
   const service = momentService();
   const { momentId } = await publish(service);
 
-  const withNote = await service.createContentReport(request(A, {
-    targetType: "voiceMoment",
-    momentId,
-    reason: "harassment",
-    note: "  They named my employer.  ",
-    requestId: "report-note1",
-  }));
+  const withNote = await service.createContentReport(
+    request(A, {
+      targetType: "voiceMoment",
+      momentId,
+      reason: "harassment",
+      note: "  They named my employer.  ",
+      requestId: "report-note1",
+    }),
+  );
   const stored = await db.doc(`reports/${withNote.reportId}`).get();
   assert.equal(stored.data().note, "They named my employer.");
 
   // Absent and empty both persist as "", the same shape the v1
   // client-written path uses, so one Moderation Center field renders both.
-  const withoutNote = await service.createContentReport(request(C, {
-    targetType: "voiceMoment",
-    momentId,
-    reason: "harassment",
-    requestId: "report-note2",
-  }));
+  const withoutNote = await service.createContentReport(
+    request(C, {
+      targetType: "voiceMoment",
+      momentId,
+      reason: "harassment",
+      requestId: "report-note2",
+    }),
+  );
   assert.equal(
     (await db.doc(`reports/${withoutNote.reportId}`).get()).data().note,
     "",
   );
 
   await assert.rejects(
-    service.createContentReport(request(B, {
-      targetType: "voiceMoment",
-      momentId,
-      reason: "harassment",
-      note: "x".repeat(301),
-      requestId: "report-note3",
-    })),
+    service.createContentReport(
+      request(B, {
+        targetType: "voiceMoment",
+        momentId,
+        reason: "harassment",
+        note: "x".repeat(301),
+        requestId: "report-note3",
+      }),
+    ),
     (error) => error.code === "invalid-argument",
   );
   await assert.rejects(
-    service.createContentReport(request(B, {
-      targetType: "voiceMoment",
-      momentId,
-      reason: "harassment",
-      note: 42,
-      requestId: "report-note4",
-    })),
+    service.createContentReport(
+      request(B, {
+        targetType: "voiceMoment",
+        momentId,
+        reason: "harassment",
+        note: 42,
+        requestId: "report-note4",
+      }),
+    ),
     (error) => error.code === "invalid-argument",
   );
 });
@@ -1119,12 +1449,14 @@ test("the operation identity of an existing report target is unchanged", async (
   // cannot happen by accident.
   const service = momentService();
   const { momentId } = await publish(service);
-  const result = await service.createContentReport(request(A, {
-    targetType: "voiceMoment",
-    momentId,
-    reason: "Harassment",
-    requestId: "report-hashpin1",
-  }));
+  const result = await service.createContentReport(
+    request(A, {
+      targetType: "voiceMoment",
+      momentId,
+      reason: "Harassment",
+      requestId: "report-hashpin1",
+    }),
+  );
   const identity = operationIdentity("content.report", A, "report-hashpin1", {
     reason: "Harassment",
     targetType: "voiceMoment",
@@ -1145,40 +1477,52 @@ test("comment and like distinct-id bursts are independently rate limited", async
     like: { maxEvents: 2, windowMs: 1_000 },
   });
   const { momentId } = await publish(service);
-  await service.createMomentComment(request(A, {
-    momentId,
-    requestId: "rate-comment1",
-    text: "one",
-  }));
-  await service.createMomentComment(request(A, {
-    momentId,
-    requestId: "rate-comment2",
-    text: "two",
-  }));
-  await assert.rejects(
-    service.createMomentComment(request(A, {
+  await service.createMomentComment(
+    request(A, {
       momentId,
-      requestId: "rate-comment3",
-      text: "three",
-    })),
+      requestId: "rate-comment1",
+      text: "one",
+    }),
+  );
+  await service.createMomentComment(
+    request(A, {
+      momentId,
+      requestId: "rate-comment2",
+      text: "two",
+    }),
+  );
+  await assert.rejects(
+    service.createMomentComment(
+      request(A, {
+        momentId,
+        requestId: "rate-comment3",
+        text: "three",
+      }),
+    ),
     (error) => error.code === "resource-exhausted",
   );
-  await service.setMomentLike(request(A, {
-    liked: true,
-    momentId,
-    requestId: "rate-like001",
-  }));
-  await service.setMomentLike(request(A, {
-    liked: true,
-    momentId,
-    requestId: "rate-like002",
-  }));
-  await assert.rejects(
-    service.setMomentLike(request(A, {
+  await service.setMomentLike(
+    request(A, {
       liked: true,
       momentId,
-      requestId: "rate-like003",
-    })),
+      requestId: "rate-like001",
+    }),
+  );
+  await service.setMomentLike(
+    request(A, {
+      liked: true,
+      momentId,
+      requestId: "rate-like002",
+    }),
+  );
+  await assert.rejects(
+    service.setMomentLike(
+      request(A, {
+        liked: true,
+        momentId,
+        requestId: "rate-like003",
+      }),
+    ),
     (error) => error.code === "resource-exhausted",
   );
 });
@@ -1197,12 +1541,14 @@ test("canonical comment IDs are stable but scoped by actor and parent", () => {
 test("voice comments use expiring draft-first reservations and exact-once finalize", async () => {
   const service = momentService();
   const { momentId } = await publish(service);
-  const reserved = await service.reserveVoiceCommentDraft(request(A, {
-    durationSeconds: 7,
-    momentId,
-    requestId: "voice-reserve1",
-    text: "voice reply",
-  }));
+  const reserved = await service.reserveVoiceCommentDraft(
+    request(A, {
+      durationSeconds: 7,
+      momentId,
+      requestId: "voice-reserve1",
+      text: "voice reply",
+    }),
+  );
   assert.equal(
     reserved.storagePath,
     voiceReplyStoragePath(A, momentId, reserved.commentId),
@@ -1220,25 +1566,86 @@ test("voice comments use expiring draft-first reservations and exact-once finali
     requestId: "voice-finalize1",
   });
   const finalized = await service.finalizeVoiceCommentDraft(finalizeRequest);
-  assert.deepEqual(await service.finalizeVoiceCommentDraft(finalizeRequest), finalized);
-  const comment = await db.doc(
-    `voiceMoments/${momentId}/comments/${reserved.commentId}`,
-  ).get();
+  assert.deepEqual(
+    await service.finalizeVoiceCommentDraft(finalizeRequest),
+    finalized,
+  );
+  const comment = await db
+    .doc(`voiceMoments/${momentId}/comments/${reserved.commentId}`)
+    .get();
   assert.equal(comment.data().schemaVersion, 2);
   assert.equal(comment.data().type, "voice");
   assert.equal(comment.data().authorName, `Public ${A}`);
   assert.equal(comment.data().mediaGeneration, "7001");
-  assert.equal((await db.doc(
-    `voiceMomentUploadReservations/${reserved.commentId}`,
-  ).get()).exists, false);
-  assert.equal((await db.doc(`voiceMoments/${momentId}`).get()).data().commentCount, 1);
+  assert.equal(comment.data().audioUrl, null);
+  assert.equal(
+    (await db.doc(`voiceMomentUploadReservations/${reserved.commentId}`).get())
+      .exists,
+    false,
+  );
+  assert.equal(
+    (await db.doc(`voiceMoments/${momentId}`).get()).data().commentCount,
+    1,
+  );
+  const access = await service.getVoiceMomentMediaAccess(
+    request(C, {
+      momentId,
+      commentId: reserved.commentId,
+    }),
+  );
+  assert.equal(access.mediaGeneration, "7001");
+  assert.equal(storage.signedGrants.at(-1).path, reserved.storagePath);
+  const signedGrantCount = storage.signedGrants.length;
+  await db.doc(`users/${C}/blocked/${A}`).set({
+    blockedAt: Timestamp.fromMillis(nowMs),
+  });
+  await assert.rejects(
+    service.getVoiceMomentMediaAccess(
+      request(C, {
+        momentId,
+        commentId: reserved.commentId,
+      }),
+    ),
+    (error) => error.code === "failed-precondition",
+  );
+  assert.equal(storage.signedGrants.length, signedGrantCount);
+
+  await db.doc(`users/${C}/blocked/${A}`).delete();
+  await db.doc(`users/${A}/blocked/${C}`).set({
+    blockedAt: Timestamp.fromMillis(nowMs),
+  });
+  await assert.rejects(
+    service.getVoiceMomentMediaAccess(
+      request(C, {
+        momentId,
+        commentId: reserved.commentId,
+      }),
+    ),
+    (error) => error.code === "failed-precondition",
+  );
+  assert.equal(storage.signedGrants.length, signedGrantCount);
+
+  await db.doc(`users/${A}/blocked/${C}`).delete();
+  await db.doc(`restrictions/${A}`).set({
+    type: "communicationMute",
+    expiresAt: null,
+  });
+  await assert.rejects(
+    service.getVoiceMomentMediaAccess(
+      request(C, {
+        momentId,
+        commentId: reserved.commentId,
+      }),
+    ),
+    (error) => error.code === "permission-denied",
+  );
+  assert.equal(storage.signedGrants.length, signedGrantCount);
 });
 
 test("generic cleanup worker removes private direct-message attachment objects", async () => {
   const conversationId = "direct-cleanup-conversation";
   const messageId = `m_${"d".repeat(40)}`;
-  const objectPath =
-    `message_attachments/${A}/${conversationId}/${messageId}.jpg`;
+  const objectPath = `message_attachments/${A}/${conversationId}/${messageId}.jpg`;
   storage.objects.set(objectPath, {
     contentType: "image/jpeg",
     generation: "1",
@@ -1267,12 +1674,14 @@ test("generic cleanup worker removes private direct-message attachment objects",
 test("expired voice reservation cannot finalize and scheduler deletes its orphan", async () => {
   const service = momentService();
   const { momentId } = await publish(service);
-  const reserved = await service.reserveVoiceCommentDraft(request(A, {
-    durationSeconds: 7,
-    momentId,
-    requestId: "voice-expired1",
-    text: "expired",
-  }));
+  const reserved = await service.reserveVoiceCommentDraft(
+    request(A, {
+      durationSeconds: 7,
+      momentId,
+      requestId: "voice-expired1",
+      text: "expired",
+    }),
+  );
   storage.put(reserved.storagePath, {
     authorId: A,
     commentId: reserved.commentId,
@@ -1281,20 +1690,27 @@ test("expired voice reservation cannot finalize and scheduler deletes its orphan
   });
   nowMs += 31 * 60_000;
   await assert.rejects(
-    service.finalizeVoiceCommentDraft(request(A, {
-      commentId: reserved.commentId,
-      momentId,
-      objectGeneration: "7002",
-      requestId: "voice-exp-fin1",
-    })),
+    service.finalizeVoiceCommentDraft(
+      request(A, {
+        commentId: reserved.commentId,
+        momentId,
+        objectGeneration: "7002",
+        requestId: "voice-exp-fin1",
+      }),
+    ),
     (error) => error.code === "failed-precondition",
   );
-  const expired = await service.expireAbandonedVoiceCommentDrafts({ limit: 10 });
+  const expired = await service.expireAbandonedVoiceCommentDrafts({
+    limit: 10,
+  });
   assert.deepEqual(expired.expired, [reserved.commentId]);
-  assert.equal((await db.doc(
-    `voiceMomentUploadReservations/${reserved.commentId}`,
-  ).get()).exists, false);
-  const outboxes = await db.collection("contentCleanupOutbox")
+  assert.equal(
+    (await db.doc(`voiceMomentUploadReservations/${reserved.commentId}`).get())
+      .exists,
+    false,
+  );
+  const outboxes = await db
+    .collection("contentCleanupOutbox")
     .where("requestedReason", "==", "expiredUploadReservation")
     .get();
   assert.equal(outboxes.size, 1);
@@ -1310,11 +1726,13 @@ test("the same invalid root finalize retry consumes quota before every Storage r
   const service = momentService({
     finalize: { maxEvents: 2, windowMs: 60_000 },
   });
-  const reserved = await service.reserveMomentDraft(request(A, {
-    caption: "preflight",
-    durationSeconds: 8,
-    requestId: "preflight-res1",
-  }));
+  const reserved = await service.reserveMomentDraft(
+    request(A, {
+      caption: "preflight",
+      durationSeconds: 8,
+      requestId: "preflight-res1",
+    }),
+  );
   storage.put(reserved.storagePath, {
     authorId: B,
     momentId: reserved.momentId,
@@ -1322,21 +1740,25 @@ test("the same invalid root finalize retry consumes quota before every Storage r
   });
   for (let attempt = 0; attempt < 2; attempt += 1) {
     await assert.rejects(
-      service.finalizeMomentDraft(request(A, {
-        momentId: reserved.momentId,
-        objectGeneration: "8801",
-        requestId: "preflight-bad1",
-      })),
+      service.finalizeMomentDraft(
+        request(A, {
+          momentId: reserved.momentId,
+          objectGeneration: "8801",
+          requestId: "preflight-bad1",
+        }),
+      ),
       (error) => error.code === "failed-precondition",
     );
   }
   assert.equal(storage.metadataReads, 2);
   await assert.rejects(
-    service.finalizeMomentDraft(request(A, {
-      momentId: reserved.momentId,
-      objectGeneration: "8801",
-      requestId: "preflight-bad1",
-    })),
+    service.finalizeMomentDraft(
+      request(A, {
+        momentId: reserved.momentId,
+        objectGeneration: "8801",
+        requestId: "preflight-bad1",
+      }),
+    ),
     (error) => error.code === "resource-exhausted",
   );
   assert.equal(storage.metadataReads, 2);
@@ -1346,11 +1768,13 @@ test("completed root finalize replay is free and performs no second Storage read
   const service = momentService({
     finalize: { maxEvents: 1, windowMs: 60_000 },
   });
-  const reserved = await service.reserveMomentDraft(request(A, {
-    caption: "completed preflight",
-    durationSeconds: 8,
-    requestId: "preflight-done-res1",
-  }));
+  const reserved = await service.reserveMomentDraft(
+    request(A, {
+      caption: "completed preflight",
+      durationSeconds: 8,
+      requestId: "preflight-done-res1",
+    }),
+  );
   storage.put(reserved.storagePath, {
     authorId: A,
     momentId: reserved.momentId,
@@ -1376,12 +1800,14 @@ test("the same invalid voice-reply finalize retry is bounded before Storage", as
     reserveRequestId: "reply-quota-parent-r1",
     finalizeRequestId: "reply-quota-parent-f1",
   });
-  const reserved = await service.reserveVoiceCommentDraft(request(A, {
-    durationSeconds: 5,
-    momentId,
-    requestId: "reply-quota-res1",
-    text: "bounded reply",
-  }));
+  const reserved = await service.reserveVoiceCommentDraft(
+    request(A, {
+      durationSeconds: 5,
+      momentId,
+      requestId: "reply-quota-res1",
+      text: "bounded reply",
+    }),
+  );
   storage.put(reserved.storagePath, {
     authorId: B,
     commentId: reserved.commentId,
@@ -1418,12 +1844,14 @@ test("completed voice-reply finalize replay is free and skips Storage", async ()
     reserveRequestId: "reply-replay-parent-r1",
     finalizeRequestId: "reply-replay-parent-f1",
   });
-  const reserved = await service.reserveVoiceCommentDraft(request(A, {
-    durationSeconds: 5,
-    momentId,
-    requestId: "reply-replay-res1",
-    text: "replayed reply",
-  }));
+  const reserved = await service.reserveVoiceCommentDraft(
+    request(A, {
+      durationSeconds: 5,
+      momentId,
+      requestId: "reply-replay-res1",
+      text: "replayed reply",
+    }),
+  );
   storage.put(reserved.storagePath, {
     authorId: A,
     commentId: reserved.commentId,
@@ -1476,10 +1904,12 @@ test("cleanup paginates comments and quarantines malformed voice identities", as
     }
   }
   await db.doc(`voiceMoments/${momentId}`).update({ commentCount: 5 });
-  const deletion = await service.deleteMoment(request(A, {
-    momentId,
-    requestId: "delete-paged1",
-  }));
+  const deletion = await service.deleteMoment(
+    request(A, {
+      momentId,
+      requestId: "delete-paged1",
+    }),
+  );
   let result = await service.processCleanupOutbox(deletion.outboxId);
   assert.equal(result.completed, false);
   result = await service.processCleanupOutbox(deletion.outboxId);
@@ -1487,7 +1917,8 @@ test("cleanup paginates comments and quarantines malformed voice identities", as
   result = await service.processCleanupOutbox(deletion.outboxId);
   assert.equal(result.completed, true);
   assert.ok(storage.deleted.includes(storagePath));
-  const quarantine = await db.collection("contentCleanupQuarantine")
+  const quarantine = await db
+    .collection("contentCleanupQuarantine")
     .where("outboxId", "==", deletion.outboxId)
     .get();
   assert.equal(quarantine.size, 1);
@@ -1522,10 +1953,16 @@ test("abandoned draft query cannot be starved by fresh low-id drafts", async () 
     limit: 2,
   });
   assert.deepEqual(result.expired, [oldId]);
-  assert.equal((await db.doc(`voiceMoments/${oldId}`).get()).data().status, "deleting");
+  assert.equal(
+    (await db.doc(`voiceMoments/${oldId}`).get()).data().status,
+    "deleting",
+  );
   for (let index = 0; index < 5; index += 1) {
     const id = `${index}`.padStart(20, "0");
-    assert.equal((await db.doc(`voiceMoments/${id}`).get()).data().status, "uploading");
+    assert.equal(
+      (await db.doc(`voiceMoments/${id}`).get()).data().status,
+      "uploading",
+    );
   }
 });
 
@@ -1536,24 +1973,31 @@ test("like and comment counter overflow fail without edge creation", async () =>
     likeCount: Number.MAX_SAFE_INTEGER,
   });
   await assert.rejects(
-    service.setMomentLike(request(A, {
-      liked: true,
-      momentId,
-      requestId: "like-overflow1",
-    })),
+    service.setMomentLike(
+      request(A, {
+        liked: true,
+        momentId,
+        requestId: "like-overflow1",
+      }),
+    ),
     (error) => error.code === "data-loss",
   );
-  assert.equal((await db.doc(`voiceMoments/${momentId}/likes/${A}`).get()).exists, false);
+  assert.equal(
+    (await db.doc(`voiceMoments/${momentId}/likes/${A}`).get()).exists,
+    false,
+  );
   await db.doc(`voiceMoments/${momentId}`).update({
     likeCount: 0,
     commentCount: Number.MAX_SAFE_INTEGER,
   });
   await assert.rejects(
-    service.createMomentComment(request(A, {
-      momentId,
-      requestId: "comm-overflow1",
-      text: "must fail",
-    })),
+    service.createMomentComment(
+      request(A, {
+        momentId,
+        requestId: "comm-overflow1",
+        text: "must fail",
+      }),
+    ),
     (error) => error.code === "data-loss",
   );
   assert.equal(
@@ -1607,7 +2051,10 @@ test("legacy Moment and child schemas migrate in place before secure deletion", 
     storage,
     clock: () => nowMs,
   });
-  assert.equal((await migrator.migrateMoment({ momentId, dryRun: true })).status, "ready");
+  assert.equal(
+    (await migrator.migrateMoment({ momentId, dryRun: true })).status,
+    "ready",
+  );
   const applied = await migrator.migrateMoment({ momentId, dryRun: false });
   assert.equal(applied.status, "migrated");
   const migrated = await db.doc(`voiceMoments/${momentId}`).get();
@@ -1615,25 +2062,138 @@ test("legacy Moment and child schemas migrate in place before secure deletion", 
   assert.equal(migrated.data().authorName, `Public ${B}`);
   assert.equal(migrated.data().likeCount, 1);
   assert.equal(migrated.data().commentCount, 1);
-  assert.equal((await db.doc(
-    `voiceMoments/${momentId}/comments/${commentId}`,
-  ).get()).data().schemaVersion, 2);
+  assert.equal(
+    (
+      await db.doc(`voiceMoments/${momentId}/comments/${commentId}`).get()
+    ).data().schemaVersion,
+    2,
+  );
   assert.equal(
     (await migrator.migrateMoment({ momentId, dryRun: false })).status,
     "alreadyMigrated",
   );
 
-  await service.deleteMomentComment(request(A, {
-    commentId,
-    momentId,
-    requestId: "legacy-comment-delete",
-  }));
-  const deletion = await service.deleteMoment(request(B, {
-    momentId,
-    requestId: "legacy-moment-delete",
-  }));
+  await service.deleteMomentComment(
+    request(A, {
+      commentId,
+      momentId,
+      requestId: "legacy-comment-delete",
+    }),
+  );
+  const deletion = await service.deleteMoment(
+    request(B, {
+      momentId,
+      requestId: "legacy-moment-delete",
+    }),
+  );
   await service.processCleanupOutbox(deletion.outboxId);
   assert.equal((await db.doc(`voiceMoments/${momentId}`).get()).exists, false);
+});
+
+test("media hardening preserves an expired Moment deadline and lifecycle", async () => {
+  const service = momentService();
+  const { momentId, storagePath } = await publish(service, {
+    uid: B,
+    generation: "9151",
+  });
+  const expiresAt = Timestamp.fromMillis(nowMs - 1_000);
+  await db.doc(`voiceMoments/${momentId}`).update({
+    audioUrl: "https://firebasestorage.googleapis.com/legacy-token",
+    expiresAt,
+    isPublished: false,
+    status: "expired",
+    updatedAt: Timestamp.fromMillis(nowMs),
+  });
+  storage.objects.get(storagePath).metadata.firebaseStorageDownloadTokens =
+    "legacy-token";
+
+  const migrator = createMomentMigrationService({
+    db,
+    FieldPath,
+    Timestamp,
+    storage,
+    clock: () => nowMs,
+  });
+  assert.equal(
+    (await migrator.migrateMoment({ momentId, dryRun: true })).status,
+    "ready",
+  );
+  assert.equal(
+    (await migrator.migrateMoment({ momentId, dryRun: false })).status,
+    "migrated",
+  );
+  const migrated = (await db.doc(`voiceMoments/${momentId}`).get()).data();
+  assert.equal(migrated.audioUrl, null);
+  assert.equal(migrated.status, "expired");
+  assert.equal(migrated.isPublished, false);
+  assert.equal(migrated.expiresAt.toMillis(), expiresAt.toMillis());
+  assert.equal(migrated.mediaGeneration, "9151");
+  assert.equal(
+    storage.objects.get(storagePath).metadata.firebaseStorageDownloadTokens,
+    undefined,
+  );
+  assert.equal(
+    (await migrator.migrateMoment({ momentId, dryRun: false })).status,
+    "alreadyMigrated",
+  );
+});
+
+test("a migration conflict still revokes every referenced reply token", async () => {
+  const service = momentService();
+  const { momentId } = await publish(service, {
+    uid: B,
+    generation: "9152",
+  });
+  const replyIds = ["11111111111111111111", "22222222222222222222"];
+  for (const [index, commentId] of replyIds.entries()) {
+    const authorId = index === 0 ? A : C;
+    const storagePath = voiceReplyStoragePath(authorId, momentId, commentId);
+    storage.put(storagePath, {
+      authorId,
+      commentId,
+      momentId,
+      generation: `916${index}`,
+    });
+    await db.doc(`voiceMoments/${momentId}/comments/${commentId}`).set({
+      schemaVersion: 2,
+      type: "voice",
+      authorId,
+      authorName: `Public ${authorId}`,
+      authorPhotoUrl: `https://public.invalid/${authorId}.png`,
+      text: "reply",
+      audioUrl: "https://firebasestorage.googleapis.com/legacy-token",
+      storagePath,
+      durationSeconds: 7,
+      mediaGeneration: `916${index}`,
+      mediaSize: 4096,
+      mediaContentType: "audio/mp4",
+      createdAt: Timestamp.fromMillis(nowMs),
+    });
+  }
+  await db.doc(`voiceMoments/${momentId}`).update({ commentCount: 2 });
+
+  const migrator = createMomentMigrationService({
+    db,
+    FieldPath,
+    Timestamp,
+    storage,
+    clock: () => nowMs,
+  });
+  const result = await migrator.migrateMoment({
+    momentId,
+    dryRun: false,
+    maxRelated: 1,
+  });
+  assert.equal(result.status, "conflict");
+  assert.equal(result.mediaHardening.revoked, 2);
+  for (const [index, commentId] of replyIds.entries()) {
+    const authorId = index === 0 ? A : C;
+    const storagePath = voiceReplyStoragePath(authorId, momentId, commentId);
+    assert.equal(
+      storage.objects.get(storagePath).metadata.firebaseStorageDownloadTokens,
+      undefined,
+    );
+  }
 });
 
 test("Moment migration aborts atomically when a child changes after inspection", async () => {
@@ -1730,11 +2290,13 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 test("finalize stamps expiresAt exactly 24 hours after the stored createdAt", async () => {
   const service = momentService();
-  const reserved = await service.reserveMomentDraft(request(A, {
-    caption: "Expiring story",
-    durationSeconds: 8,
-    requestId: "reserve-expiry-01",
-  }));
+  const reserved = await service.reserveMomentDraft(
+    request(A, {
+      caption: "Expiring story",
+      durationSeconds: 8,
+      requestId: "reserve-expiry-01",
+    }),
+  );
   const reservedAtMs = nowMs;
 
   // Publish 47 minutes later. The deadline must anchor on the STORED
@@ -1747,14 +2309,18 @@ test("finalize stamps expiresAt exactly 24 hours after the stored createdAt", as
     momentId: reserved.momentId,
     generation: "77001",
   });
-  const finalized = await service.finalizeMomentDraft(request(A, {
-    momentId: reserved.momentId,
-    objectGeneration: "77001",
-    requestId: "finalize-expiry-01",
-  }));
+  const finalized = await service.finalizeMomentDraft(
+    request(A, {
+      momentId: reserved.momentId,
+      objectGeneration: "77001",
+      requestId: "finalize-expiry-01",
+    }),
+  );
   assert.equal(finalized.published, true);
 
-  const moment = (await db.doc(`voiceMoments/${reserved.momentId}`).get()).data();
+  const moment = (
+    await db.doc(`voiceMoments/${reserved.momentId}`).get()
+  ).data();
   assert.equal(moment.createdAt.toMillis(), reservedAtMs);
   assert.ok(moment.expiresAt instanceof Timestamp, "expiresAt is stamped");
   assert.equal(
@@ -1764,12 +2330,16 @@ test("finalize stamps expiresAt exactly 24 hours after the stored createdAt", as
   );
 
   // Replay must return the stored result without moving the deadline.
-  await service.finalizeMomentDraft(request(A, {
-    momentId: reserved.momentId,
-    objectGeneration: "77001",
-    requestId: "finalize-expiry-01",
-  }));
-  const replayed = (await db.doc(`voiceMoments/${reserved.momentId}`).get()).data();
+  await service.finalizeMomentDraft(
+    request(A, {
+      momentId: reserved.momentId,
+      objectGeneration: "77001",
+      requestId: "finalize-expiry-01",
+    }),
+  );
+  const replayed = (
+    await db.doc(`voiceMoments/${reserved.momentId}`).get()
+  ).data();
   assert.equal(replayed.expiresAt.toMillis(), moment.expiresAt.toMillis());
 });
 
@@ -1794,11 +2364,12 @@ test("a full active shelf consumes reserve quota before its exact cap query", as
   for (let attempt = 0; attempt < 2; attempt += 1) {
     await assert.rejects(
       service.reserveMomentDraft(reserveRequest),
-      (error) => error.code === "resource-exhausted" &&
-        /10 active/u.test(error.message),
+      (error) =>
+        error.code === "resource-exhausted" && /10 active/u.test(error.message),
     );
   }
-  const rate = await db.collection("privateRateLimits")
+  const rate = await db
+    .collection("privateRateLimits")
     .where("ownerId", "==", A)
     .where("scope", "==", "moment.uploadReserve")
     .get();
@@ -1807,7 +2378,8 @@ test("a full active shelf consumes reserve quota before its exact cap query", as
 
   await assert.rejects(
     service.reserveMomentDraft(reserveRequest),
-    (error) => error.code === "resource-exhausted" &&
+    (error) =>
+      error.code === "resource-exhausted" &&
       /Too many requests/u.test(error.message),
   );
 
@@ -1845,22 +2417,26 @@ test("the active-story cap refuses an eleventh live Moment and frees on expiry",
   }
 
   await assert.rejects(
-    service.reserveMomentDraft(request(A, {
-      caption: "Eleventh story",
-      durationSeconds: 5,
-      requestId: "cap-r-10",
-    })),
-    (error) => error.code === "resource-exhausted" &&
-      /10 active/u.test(error.message),
+    service.reserveMomentDraft(
+      request(A, {
+        caption: "Eleventh story",
+        durationSeconds: 5,
+        requestId: "cap-r-10",
+      }),
+    ),
+    (error) =>
+      error.code === "resource-exhausted" && /10 active/u.test(error.message),
     "the eleventh reserve is refused while ten stories are live",
   );
 
   // Another author is not affected by A's cap.
-  const other = await service.reserveMomentDraft(request(B, {
-    caption: "Someone else's story",
-    durationSeconds: 5,
-    requestId: "cap-r-other",
-  }));
+  const other = await service.reserveMomentDraft(
+    request(B, {
+      caption: "Someone else's story",
+      durationSeconds: 5,
+      requestId: "cap-r-other",
+    }),
+  );
   assert.equal(other.created, true);
 
   // T0 + 24h + 1min: only the FIRST story has expired (the other nine run
@@ -1868,11 +2444,13 @@ test("the active-story cap refuses an eleventh live Moment and frees on expiry",
   // attempt was metered, but its quota window has also elapsed, so the same
   // logical request may now succeed safely.
   nowMs += 22 * 60 * 60_000 + 60_000;
-  const eleventh = await service.reserveMomentDraft(request(A, {
-    caption: "Eleventh story",
-    durationSeconds: 5,
-    requestId: "cap-r-10",
-  }));
+  const eleventh = await service.reserveMomentDraft(
+    request(A, {
+      caption: "Eleventh story",
+      durationSeconds: 5,
+      requestId: "cap-r-10",
+    }),
+  );
   assert.equal(eleventh.created, true);
 });
 
@@ -1883,11 +2461,13 @@ test("unpublished drafts do not count against the active-story cap", async () =>
   // Eleven reservations, none finalized: the cap counts LIVE stories, not
   // reservations, so every one of these must pass.
   for (let index = 0; index < 11; index += 1) {
-    const reserved = await service.reserveMomentDraft(request(A, {
-      caption: `Draft ${index}`,
-      durationSeconds: 5,
-      requestId: `draft-cap-${String(index).padStart(2, "0")}`,
-    }));
+    const reserved = await service.reserveMomentDraft(
+      request(A, {
+        caption: `Draft ${index}`,
+        durationSeconds: 5,
+        requestId: `draft-cap-${String(index).padStart(2, "0")}`,
+      }),
+    );
     assert.equal(reserved.created, true);
   }
 });
@@ -1903,11 +2483,13 @@ test("concurrent finalize caps eleven pre-reserved drafts at ten active Moments"
   // recording first to reproduce the old reserve-many/finalize-many bypass.
   for (let index = 0; index < 11; index += 1) {
     const suffix = String(index).padStart(2, "0");
-    const reserved = await service.reserveMomentDraft(request(A, {
-      caption: `Prepared draft ${index}`,
-      durationSeconds: 5,
-      requestId: `final-cap-r-${suffix}`,
-    }));
+    const reserved = await service.reserveMomentDraft(
+      request(A, {
+        caption: `Prepared draft ${index}`,
+        durationSeconds: 5,
+        requestId: `final-cap-r-${suffix}`,
+      }),
+    );
     const generation = `87${suffix}`;
     storage.put(reserved.storagePath, {
       authorId: A,
@@ -1921,11 +2503,13 @@ test("concurrent finalize caps eleven pre-reserved drafts at ten active Moments"
   // transaction, and the current unpublished draft is not counted as an
   // already-active Moment.
   for (const draft of drafts.slice(0, 9)) {
-    const result = await service.finalizeMomentDraft(request(A, {
-      momentId: draft.momentId,
-      objectGeneration: draft.generation,
-      requestId: `final-cap-f-${draft.suffix}`,
-    }));
+    const result = await service.finalizeMomentDraft(
+      request(A, {
+        momentId: draft.momentId,
+        objectGeneration: draft.generation,
+        requestId: `final-cap-f-${draft.suffix}`,
+      }),
+    );
     assert.equal(result.published, true);
   }
 
@@ -1933,14 +2517,22 @@ test("concurrent finalize caps eleven pre-reserved drafts at ten active Moments"
   // the same transaction as the publish write, so exactly one wins and the
   // other retries against a full shelf before returning resource-exhausted.
   const boundaryResults = await Promise.allSettled(
-    drafts.slice(9).map((draft) => service.finalizeMomentDraft(request(A, {
-      momentId: draft.momentId,
-      objectGeneration: draft.generation,
-      requestId: `final-cap-f-${draft.suffix}`,
-    }))),
+    drafts.slice(9).map((draft) =>
+      service.finalizeMomentDraft(
+        request(A, {
+          momentId: draft.momentId,
+          objectGeneration: draft.generation,
+          requestId: `final-cap-f-${draft.suffix}`,
+        }),
+      ),
+    ),
   );
-  const published = boundaryResults.filter((result) => result.status === "fulfilled");
-  const refused = boundaryResults.filter((result) => result.status === "rejected");
+  const published = boundaryResults.filter(
+    (result) => result.status === "fulfilled",
+  );
+  const refused = boundaryResults.filter(
+    (result) => result.status === "rejected",
+  );
   assert.equal(published.length, 1, "exactly one transaction fills slot ten");
   assert.equal(refused.length, 1, "exactly one transaction is refused");
   assert.equal(refused[0].reason.code, "resource-exhausted");
@@ -1959,7 +2551,11 @@ test("concurrent finalize caps eleven pre-reserved drafts at ten active Moments"
   assert.equal(unpublished.length, 1);
   assert.equal(unpublished[0].data().status, "uploading");
   const capacity = (await db.doc(`momentCapacityLedgers/${A}`).get()).data();
-  assert.equal(capacity.revision, 10, "only successful publishes advance the mutex");
+  assert.equal(
+    capacity.revision,
+    10,
+    "only successful publishes advance the mutex",
+  );
 });
 
 test("more than 100 newer drafts cannot hide old active Moments from capacity", async () => {
@@ -1998,11 +2594,13 @@ test("more than 100 newer drafts cannot hide old active Moments from capacity", 
 
   const contenders = [];
   for (let index = 0; index < 2; index += 1) {
-    const reserved = await service.reserveMomentDraft(request(A, {
-      caption: `Deep contender ${index}`,
-      durationSeconds: 5,
-      requestId: `deep-contender-r-0${index}`,
-    }));
+    const reserved = await service.reserveMomentDraft(
+      request(A, {
+        caption: `Deep contender ${index}`,
+        durationSeconds: 5,
+        requestId: `deep-contender-r-0${index}`,
+      }),
+    );
     const generation = `889${index}`;
     storage.put(reserved.storagePath, {
       authorId: A,
@@ -2013,18 +2611,26 @@ test("more than 100 newer drafts cannot hide old active Moments from capacity", 
   }
 
   const results = await Promise.allSettled(
-    contenders.map((draft) => service.finalizeMomentDraft(request(A, {
-      momentId: draft.momentId,
-      objectGeneration: draft.generation,
-      requestId: `deep-contender-f-0${draft.index}`,
-    }))),
+    contenders.map((draft) =>
+      service.finalizeMomentDraft(
+        request(A, {
+          momentId: draft.momentId,
+          objectGeneration: draft.generation,
+          requestId: `deep-contender-f-0${draft.index}`,
+        }),
+      ),
+    ),
   );
-  assert.equal(results.filter((result) => result.status === "fulfilled").length, 1);
+  assert.equal(
+    results.filter((result) => result.status === "fulfilled").length,
+    1,
+  );
   const refused = results.filter((result) => result.status === "rejected");
   assert.equal(refused.length, 1);
   assert.equal(refused[0].reason.code, "resource-exhausted");
 
-  const published = await db.collection("voiceMoments")
+  const published = await db
+    .collection("voiceMoments")
     .where("authorId", "==", A)
     .where("isPublished", "==", true)
     .get();
@@ -2037,11 +2643,13 @@ test("more than 100 newer drafts cannot hide old active Moments from capacity", 
   // Reserve is advisory, but it uses the same exact query and should now
   // refuse despite all 120 newer unpublished documents.
   await assert.rejects(
-    service.reserveMomentDraft(request(A, {
-      caption: "Hidden eleventh",
-      durationSeconds: 5,
-      requestId: "deep-cap-eleventh",
-    })),
+    service.reserveMomentDraft(
+      request(A, {
+        caption: "Hidden eleventh",
+        durationSeconds: 5,
+        requestId: "deep-cap-eleventh",
+      }),
+    ),
     (error) => error.code === "resource-exhausted",
   );
 });
@@ -2062,28 +2670,34 @@ test("a sweeper-expired Moment refuses likes and comments but the author still d
   });
 
   await assert.rejects(
-    service.setMomentLike(request(A, {
-      liked: true,
-      momentId: reserved.momentId,
-      requestId: "exp-like-01",
-    })),
-    (error) => error.code === "failed-precondition" &&
-      /expired/u.test(error.message),
+    service.setMomentLike(
+      request(A, {
+        liked: true,
+        momentId: reserved.momentId,
+        requestId: "exp-like-01",
+      }),
+    ),
+    (error) =>
+      error.code === "failed-precondition" && /expired/u.test(error.message),
   );
   await assert.rejects(
-    service.createMomentComment(request(A, {
-      momentId: reserved.momentId,
-      requestId: "exp-comment-01",
-      text: "too late",
-    })),
-    (error) => error.code === "failed-precondition" &&
-      /expired/u.test(error.message),
+    service.createMomentComment(
+      request(A, {
+        momentId: reserved.momentId,
+        requestId: "exp-comment-01",
+        text: "too late",
+      }),
+    ),
+    (error) =>
+      error.code === "failed-precondition" && /expired/u.test(error.message),
   );
 
-  const deleted = await service.deleteMoment(request(B, {
-    momentId: reserved.momentId,
-    requestId: "exp-del-01",
-  }));
+  const deleted = await service.deleteMoment(
+    request(B, {
+      momentId: reserved.momentId,
+      requestId: "exp-del-01",
+    }),
+  );
   assert.equal(deleted.deletionQueued, true);
 });
 
@@ -2100,40 +2714,50 @@ test("the deadline itself stops all engagement before the sweeper runs", async (
   // Every engagement path remains available one millisecond before the
   // server-authored deadline.
   nowMs = deadlineMs - 1;
-  await service.setMomentLike(request(A, {
-    liked: true,
-    momentId: reserved.momentId,
-    requestId: "deadline-like-before",
-  }));
-  await service.createMomentComment(request(A, {
-    momentId: reserved.momentId,
-    requestId: "deadline-text-before",
-    text: "just in time",
-  }));
-  const voiceBefore = await service.reserveVoiceCommentDraft(request(A, {
-    durationSeconds: 5,
-    momentId: reserved.momentId,
-    requestId: "deadline-voice-before",
-    text: "before",
-  }));
+  await service.setMomentLike(
+    request(A, {
+      liked: true,
+      momentId: reserved.momentId,
+      requestId: "deadline-like-before",
+    }),
+  );
+  await service.createMomentComment(
+    request(A, {
+      momentId: reserved.momentId,
+      requestId: "deadline-text-before",
+      text: "just in time",
+    }),
+  );
+  const voiceBefore = await service.reserveVoiceCommentDraft(
+    request(A, {
+      durationSeconds: 5,
+      momentId: reserved.momentId,
+      requestId: "deadline-voice-before",
+      text: "before",
+    }),
+  );
   storage.put(voiceBefore.storagePath, {
     authorId: A,
     commentId: voiceBefore.commentId,
     momentId: reserved.momentId,
     generation: "910001",
   });
-  await service.finalizeVoiceCommentDraft(request(A, {
-    commentId: voiceBefore.commentId,
-    momentId: reserved.momentId,
-    objectGeneration: "910001",
-    requestId: "deadline-final-before",
-  }));
-  const voiceAfter = await service.reserveVoiceCommentDraft(request(A, {
-    durationSeconds: 5,
-    momentId: reserved.momentId,
-    requestId: "deadline-voice-pending",
-    text: "pending",
-  }));
+  await service.finalizeVoiceCommentDraft(
+    request(A, {
+      commentId: voiceBefore.commentId,
+      momentId: reserved.momentId,
+      objectGeneration: "910001",
+      requestId: "deadline-final-before",
+    }),
+  );
+  const voiceAfter = await service.reserveVoiceCommentDraft(
+    request(A, {
+      durationSeconds: 5,
+      momentId: reserved.momentId,
+      requestId: "deadline-voice-pending",
+      text: "pending",
+    }),
+  );
   storage.put(voiceAfter.storagePath, {
     authorId: A,
     commentId: voiceAfter.commentId,
@@ -2143,42 +2767,50 @@ test("the deadline itself stops all engagement before the sweeper runs", async (
 
   async function assertEngagementRejected(suffix) {
     await assert.rejects(
-      service.setMomentLike(request(A, {
-        liked: false,
-        momentId: reserved.momentId,
-        requestId: `deadline-like-${suffix}`,
-      })),
-      (error) => error.code === "failed-precondition" &&
-        /expired/u.test(error.message),
+      service.setMomentLike(
+        request(A, {
+          liked: false,
+          momentId: reserved.momentId,
+          requestId: `deadline-like-${suffix}`,
+        }),
+      ),
+      (error) =>
+        error.code === "failed-precondition" && /expired/u.test(error.message),
     );
     await assert.rejects(
-      service.createMomentComment(request(A, {
-        momentId: reserved.momentId,
-        requestId: `deadline-text-${suffix}`,
-        text: "too late",
-      })),
-      (error) => error.code === "failed-precondition" &&
-        /expired/u.test(error.message),
+      service.createMomentComment(
+        request(A, {
+          momentId: reserved.momentId,
+          requestId: `deadline-text-${suffix}`,
+          text: "too late",
+        }),
+      ),
+      (error) =>
+        error.code === "failed-precondition" && /expired/u.test(error.message),
     );
     await assert.rejects(
-      service.reserveVoiceCommentDraft(request(A, {
-        durationSeconds: 5,
-        momentId: reserved.momentId,
-        requestId: `deadline-reserve-${suffix}`,
-        text: "too late",
-      })),
-      (error) => error.code === "failed-precondition" &&
-        /expired/u.test(error.message),
+      service.reserveVoiceCommentDraft(
+        request(A, {
+          durationSeconds: 5,
+          momentId: reserved.momentId,
+          requestId: `deadline-reserve-${suffix}`,
+          text: "too late",
+        }),
+      ),
+      (error) =>
+        error.code === "failed-precondition" && /expired/u.test(error.message),
     );
     await assert.rejects(
-      service.finalizeVoiceCommentDraft(request(A, {
-        commentId: voiceAfter.commentId,
-        momentId: reserved.momentId,
-        objectGeneration: "910002",
-        requestId: `deadline-final-${suffix}`,
-      })),
-      (error) => error.code === "failed-precondition" &&
-        /expired/u.test(error.message),
+      service.finalizeVoiceCommentDraft(
+        request(A, {
+          commentId: voiceAfter.commentId,
+          momentId: reserved.momentId,
+          objectGeneration: "910002",
+          requestId: `deadline-final-${suffix}`,
+        }),
+      ),
+      (error) =>
+        error.code === "failed-precondition" && /expired/u.test(error.message),
     );
   }
 
@@ -2190,10 +2822,12 @@ test("the deadline itself stops all engagement before the sweeper runs", async (
   nowMs = deadlineMs + 1;
   await assertEngagementRejected("after");
 
-  const deleted = await service.deleteMoment(request(B, {
-    momentId: reserved.momentId,
-    requestId: "deadline-delete-after",
-  }));
+  const deleted = await service.deleteMoment(
+    request(B, {
+      momentId: reserved.momentId,
+      requestId: "deadline-delete-after",
+    }),
+  );
   assert.equal(deleted.deletionQueued, true);
 });
 
@@ -2210,11 +2844,13 @@ test("a legacy published Moment without expiresAt stays canonical and likeable",
     expiresAt: FieldValue.delete(),
   });
 
-  const liked = await service.setMomentLike(request(A, {
-    liked: true,
-    momentId: reserved.momentId,
-    requestId: "leg-like-01",
-  }));
+  const liked = await service.setMomentLike(
+    request(A, {
+      liked: true,
+      momentId: reserved.momentId,
+      requestId: "leg-like-01",
+    }),
+  );
   assert.equal(liked.likeCount, 1);
 
   // A present-but-garbage expiresAt is corruption, not legacy.
@@ -2222,11 +2858,13 @@ test("a legacy published Moment without expiresAt stays canonical and likeable",
     expiresAt: "tomorrow",
   });
   await assert.rejects(
-    service.setMomentLike(request(A, {
-      liked: false,
-      momentId: reserved.momentId,
-      requestId: "leg-like-02",
-    })),
+    service.setMomentLike(
+      request(A, {
+        liked: false,
+        momentId: reserved.momentId,
+        requestId: "leg-like-02",
+      }),
+    ),
     (error) => error.code === "data-loss",
   );
 });
@@ -2253,11 +2891,13 @@ test("boundary and arbitrary availability hours stamp exact deadlines", async ()
     finalize: { maxEvents: 100, windowMs: 60_000 },
   });
   for (const hours of [24, 25, 48, 719, 720]) {
-    const reserved = await service.reserveMomentDraft(request(A, {
-      caption: `Available ${hours}h`,
-      durationSeconds: 6,
-      requestId: `avail-r-${hours}`,
-    }));
+    const reserved = await service.reserveMomentDraft(
+      request(A, {
+        caption: `Available ${hours}h`,
+        durationSeconds: 6,
+        requestId: `avail-r-${hours}`,
+      }),
+    );
     const reservedAtMs = nowMs;
     // Finalize minutes after reserve: the deadline must anchor on the
     // STORED createdAt, exactly as the 24-hour contract already requires.
@@ -2267,14 +2907,18 @@ test("boundary and arbitrary availability hours stamp exact deadlines", async ()
       momentId: reserved.momentId,
       generation: `9${hours}`,
     });
-    const finalized = await service.finalizeMomentDraft(request(A, {
-      availabilityHours: hours,
-      momentId: reserved.momentId,
-      objectGeneration: `9${hours}`,
-      requestId: `avail-f-${hours}`,
-    }));
+    const finalized = await service.finalizeMomentDraft(
+      request(A, {
+        availabilityHours: hours,
+        momentId: reserved.momentId,
+        objectGeneration: `9${hours}`,
+        requestId: `avail-f-${hours}`,
+      }),
+    );
     assert.equal(finalized.published, true);
-    const moment = (await db.doc(`voiceMoments/${reserved.momentId}`).get()).data();
+    const moment = (
+      await db.doc(`voiceMoments/${reserved.momentId}`).get()
+    ).data();
     assert.equal(moment.createdAt.toMillis(), reservedAtMs);
     assert.equal(
       moment.expiresAt.toMillis() - moment.createdAt.toMillis(),
@@ -2286,25 +2930,31 @@ test("boundary and arbitrary availability hours stamp exact deadlines", async ()
 
 test("'permanent' publishes with no expiresAt field written at all", async () => {
   const service = momentService();
-  const reserved = await service.reserveMomentDraft(request(A, {
-    caption: "Keep until deleted",
-    durationSeconds: 9,
-    requestId: "perm-r-0001",
-  }));
+  const reserved = await service.reserveMomentDraft(
+    request(A, {
+      caption: "Keep until deleted",
+      durationSeconds: 9,
+      requestId: "perm-r-0001",
+    }),
+  );
   storage.put(reserved.storagePath, {
     authorId: A,
     momentId: reserved.momentId,
     generation: "91001",
   });
-  const finalized = await service.finalizeMomentDraft(request(A, {
-    availabilityHours: "permanent",
-    momentId: reserved.momentId,
-    objectGeneration: "91001",
-    requestId: "perm-f-0001",
-  }));
+  const finalized = await service.finalizeMomentDraft(
+    request(A, {
+      availabilityHours: "permanent",
+      momentId: reserved.momentId,
+      objectGeneration: "91001",
+      requestId: "perm-f-0001",
+    }),
+  );
   assert.equal(finalized.published, true);
 
-  const moment = (await db.doc(`voiceMoments/${reserved.momentId}`).get()).data();
+  const moment = (
+    await db.doc(`voiceMoments/${reserved.momentId}`).get()
+  ).data();
   // The key itself must be ABSENT — not null, not a far-future timestamp.
   // Null-vs-absent is load-bearing: the sweeper's range filter skips missing
   // fields, and every client surface reads a missing deadline as permanent.
@@ -2317,47 +2967,72 @@ test("'permanent' publishes with no expiresAt field written at all", async () =>
   assert.equal(moment.status, "published");
 
   // And it is a first-class published Moment: engageable like any other.
-  const liked = await service.setMomentLike(request(B, {
-    liked: true,
-    momentId: reserved.momentId,
-    requestId: "perm-like-01",
-  }));
+  const liked = await service.setMomentLike(
+    request(B, {
+      liked: true,
+      momentId: reserved.momentId,
+      requestId: "perm-like-01",
+    }),
+  );
   assert.equal(liked.likeCount, 1);
 });
 
 test("availabilityHours rejects out-of-range, fractional, and non-number values", async () => {
   const service = momentService();
-  const reserved = await service.reserveMomentDraft(request(A, {
-    caption: "Never publishes",
-    durationSeconds: 7,
-    requestId: "avail-bad-r-01",
-  }));
+  const reserved = await service.reserveMomentDraft(
+    request(A, {
+      caption: "Never publishes",
+      durationSeconds: 7,
+      requestId: "avail-bad-r-01",
+    }),
+  );
   storage.put(reserved.storagePath, {
     authorId: A,
     momentId: reserved.momentId,
     generation: "92001",
   });
   const invalid = [
-    23, 721, 0, -24, 23.5, 720.5, 1, 8760,
-    Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY,
+    23,
+    721,
+    0,
+    -24,
+    23.5,
+    720.5,
+    1,
+    8760,
+    Number.NaN,
+    Number.POSITIVE_INFINITY,
+    Number.NEGATIVE_INFINITY,
     Number.MAX_SAFE_INTEGER + 1,
-    "24", "720", "Permanent", "PERMANENT", "forever",
-    null, true, false, [24], { hours: 24 },
+    "24",
+    "720",
+    "Permanent",
+    "PERMANENT",
+    "forever",
+    null,
+    true,
+    false,
+    [24],
+    { hours: 24 },
   ];
   for (const [index, value] of invalid.entries()) {
     await assert.rejects(
-      service.finalizeMomentDraft(request(A, {
-        availabilityHours: value,
-        momentId: reserved.momentId,
-        objectGeneration: "92001",
-        requestId: `avail-bad-f-${String(index).padStart(2, "0")}`,
-      })),
+      service.finalizeMomentDraft(
+        request(A, {
+          availabilityHours: value,
+          momentId: reserved.momentId,
+          objectGeneration: "92001",
+          requestId: `avail-bad-f-${String(index).padStart(2, "0")}`,
+        }),
+      ),
       (error) => error.code === "invalid-argument",
       `must refuse availabilityHours: ${JSON.stringify(value)}`,
     );
   }
   // Refused before any transaction: the draft never published.
-  const moment = (await db.doc(`voiceMoments/${reserved.momentId}`).get()).data();
+  const moment = (
+    await db.doc(`voiceMoments/${reserved.momentId}`).get()
+  ).data();
   assert.equal(moment.isPublished, false);
   assert.equal(moment.status, "uploading");
 });
@@ -2372,21 +3047,25 @@ test("absent and explicit 24 share the deployed operation identity", async () =>
   // identically too rather than becoming a "different request" that refuses
   // its own replay.
   const service = momentService();
-  const reserved = await service.reserveMomentDraft(request(A, {
-    caption: "Hash pinned",
-    durationSeconds: 5,
-    requestId: "avail-hash-r-01",
-  }));
+  const reserved = await service.reserveMomentDraft(
+    request(A, {
+      caption: "Hash pinned",
+      durationSeconds: 5,
+      requestId: "avail-hash-r-01",
+    }),
+  );
   storage.put(reserved.storagePath, {
     authorId: A,
     momentId: reserved.momentId,
     generation: "94001",
   });
-  const finalized = await service.finalizeMomentDraft(request(A, {
-    momentId: reserved.momentId,
-    objectGeneration: "94001",
-    requestId: "avail-hash-f-01",
-  }));
+  const finalized = await service.finalizeMomentDraft(
+    request(A, {
+      momentId: reserved.momentId,
+      objectGeneration: "94001",
+      requestId: "avail-hash-f-01",
+    }),
+  );
   const identity = operationIdentity("moment.finalize", A, "avail-hash-f-01", {
     momentId: reserved.momentId,
     objectGeneration: "94001",
@@ -2397,12 +3076,14 @@ test("absent and explicit 24 share the deployed operation identity", async () =>
 
   // A retry that names the default explicitly is the SAME request: replay.
   assert.deepEqual(
-    await service.finalizeMomentDraft(request(A, {
-      availabilityHours: 24,
-      momentId: reserved.momentId,
-      objectGeneration: "94001",
-      requestId: "avail-hash-f-01",
-    })),
+    await service.finalizeMomentDraft(
+      request(A, {
+        availabilityHours: 24,
+        momentId: reserved.momentId,
+        objectGeneration: "94001",
+        requestId: "avail-hash-f-01",
+      }),
+    ),
     finalized,
   );
   assert.equal(
@@ -2410,7 +3091,9 @@ test("absent and explicit 24 share the deployed operation identity", async () =>
     1,
     "an idempotent finalize replay must not advance the capacity mutex",
   );
-  const moment = (await db.doc(`voiceMoments/${reserved.momentId}`).get()).data();
+  const moment = (
+    await db.doc(`voiceMoments/${reserved.momentId}`).get()
+  ).data();
   assert.equal(
     moment.expiresAt.toMillis() - moment.createdAt.toMillis(),
     DAY_MS,
@@ -2420,31 +3103,37 @@ test("absent and explicit 24 share the deployed operation identity", async () =>
 
 test("a finalize retry with a different availability is refused, never silently replayed", async () => {
   const service = momentService();
-  const reserved = await service.reserveMomentDraft(request(A, {
-    caption: "Forty-eight hours",
-    durationSeconds: 8,
-    requestId: "avail-replay-r-01",
-  }));
+  const reserved = await service.reserveMomentDraft(
+    request(A, {
+      caption: "Forty-eight hours",
+      durationSeconds: 8,
+      requestId: "avail-replay-r-01",
+    }),
+  );
   storage.put(reserved.storagePath, {
     authorId: A,
     momentId: reserved.momentId,
     generation: "95001",
   });
-  const finalized = await service.finalizeMomentDraft(request(A, {
-    availabilityHours: 48,
-    momentId: reserved.momentId,
-    objectGeneration: "95001",
-    requestId: "avail-replay-f-01",
-  }));
-
-  // Same requestId, same value: an honest retry replays the stored result.
-  assert.deepEqual(
-    await service.finalizeMomentDraft(request(A, {
+  const finalized = await service.finalizeMomentDraft(
+    request(A, {
       availabilityHours: 48,
       momentId: reserved.momentId,
       objectGeneration: "95001",
       requestId: "avail-replay-f-01",
-    })),
+    }),
+  );
+
+  // Same requestId, same value: an honest retry replays the stored result.
+  assert.deepEqual(
+    await service.finalizeMomentDraft(
+      request(A, {
+        availabilityHours: 48,
+        momentId: reserved.momentId,
+        objectGeneration: "95001",
+        requestId: "avail-replay-f-01",
+      }),
+    ),
     finalized,
   );
 
@@ -2453,12 +3142,14 @@ test("a finalize retry with a different availability is refused, never silently 
   // result would let a caller believe the new duration took effect.
   for (const changed of [49, 720, "permanent", undefined]) {
     await assert.rejects(
-      service.finalizeMomentDraft(request(A, {
-        momentId: reserved.momentId,
-        objectGeneration: "95001",
-        requestId: "avail-replay-f-01",
-        ...(changed === undefined ? {} : { availabilityHours: changed }),
-      })),
+      service.finalizeMomentDraft(
+        request(A, {
+          momentId: reserved.momentId,
+          objectGeneration: "95001",
+          requestId: "avail-replay-f-01",
+          ...(changed === undefined ? {} : { availabilityHours: changed }),
+        }),
+      ),
       (error) => error.code === "already-exists",
       `a changed availability (${JSON.stringify(changed)}) must not replay`,
     );
@@ -2466,7 +3157,9 @@ test("a finalize retry with a different availability is refused, never silently 
 
   // The document kept the original arbitrary 48-hour deadline through all
   // of it.
-  const moment = (await db.doc(`voiceMoments/${reserved.momentId}`).get()).data();
+  const moment = (
+    await db.doc(`voiceMoments/${reserved.momentId}`).get()
+  ).data();
   assert.equal(
     moment.expiresAt.toMillis() - moment.createdAt.toMillis(),
     48 * HOUR_MS,
@@ -2497,27 +3190,33 @@ test("permanent Moments hold active-cap slots forever and free them only on dele
   // published Moment with no deadline.
   nowMs += 365 * DAY_MS;
   await assert.rejects(
-    service.reserveMomentDraft(request(A, {
-      caption: "Eleventh permanent",
-      durationSeconds: 5,
-      requestId: "permcap-r-10",
-    })),
-    (error) => error.code === "resource-exhausted" &&
-      /10 active/u.test(error.message),
+    service.reserveMomentDraft(
+      request(A, {
+        caption: "Eleventh permanent",
+        durationSeconds: 5,
+        requestId: "permcap-r-10",
+      }),
+    ),
+    (error) =>
+      error.code === "resource-exhausted" && /10 active/u.test(error.message),
     "ten permanent Moments still fill the cap a year later",
   );
 
   // Deletion is the author's only exit from a permanent Moment and frees the
   // slot immediately. A year has also moved the metered refusal into a fresh
   // quota window, so the same logical requestId may now succeed.
-  await service.deleteMoment(request(A, {
-    momentId: permanentIds[0],
-    requestId: "permcap-del-01",
-  }));
-  const eleventh = await service.reserveMomentDraft(request(A, {
-    caption: "Eleventh permanent",
-    durationSeconds: 5,
-    requestId: "permcap-r-10",
-  }));
+  await service.deleteMoment(
+    request(A, {
+      momentId: permanentIds[0],
+      requestId: "permcap-del-01",
+    }),
+  );
+  const eleventh = await service.reserveMomentDraft(
+    request(A, {
+      caption: "Eleventh permanent",
+      durationSeconds: 5,
+      requestId: "permcap-r-10",
+    }),
+  );
   assert.equal(eleventh.created, true);
 });

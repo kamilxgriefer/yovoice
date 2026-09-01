@@ -60,10 +60,7 @@ class GlobalMessage {
       senderName: (data['senderName'] as String?)?.trim().isNotEmpty == true
           ? (data['senderName'] as String).trim()
           : 'YO Voice user',
-      senderPhotoUrl: (data['senderPhotoUrl'] as String?)?.trim().isNotEmpty ==
-              true
-          ? (data['senderPhotoUrl'] as String).trim()
-          : null,
+      senderPhotoUrl: null,
       senderIsCreator: data['senderIsCreator'] as bool? ?? false,
       senderIsStaff: data['senderIsStaff'] as bool? ?? false,
       content: data['content'] as String? ?? '',

@@ -80,24 +80,37 @@ void _registerBackgroundMessageHandler() {
 // enforceAppCheck: false, so this only starts attaching tokens to
 // requests — it doesn't reject anything yet.
 //
-// Web is deliberately skipped: activate() requires a providerWeb
-// (ReCaptchaV3Provider) backed by a reCAPTCHA site key registered through
-// Google's reCAPTCHA admin console + Firebase Console's App Check settings
-// — a real external-service registration step, not something to fake here.
-// Without it, the web plugin's activate() throws (confirmed via `flutter
-// run -d chrome`: "TypeError: Cannot read properties of null (reading
-// 'initialize')" deep in firebase_app_check_web), and since that call was
-// unguarded, the exception was escaping main() entirely and runApp() never
-// executed — the actual cause of the blank white page in production, not a
-// build, deploy, or asset problem. The try/catch below is additional
-// defense in depth so App Check can never again take the whole app down on
-// any platform if it fails for some other reason (e.g. attestation being
-// briefly unavailable) — enforcement is off, so a missing token is not
-// something worth blocking startup over.
+// Web debug builds use Firebase's debug provider. A release web build only
+// activates App Check when its public reCAPTCHA v3 site key is supplied with
+// `--dart-define=YOVOICE_WEB_RECAPTCHA_SITE_KEY=...`; that key must also be
+// registered for the web app in Firebase Console. Keeping the release branch
+// explicit prevents the old null-provider startup crash while giving the
+// deployment pipeline a concrete, testable prerequisite before server-side
+// enforcement is enabled. The catch remains defense in depth: attestation
+// outages must not turn the entire client into a blank page during rollout.
 Future<void> _activateAppCheck() async {
-  if (kIsWeb) return;
-
   try {
+    if (kIsWeb) {
+      if (kDebugMode) {
+        await FirebaseAppCheck.instance.activate(
+          providerWeb: WebDebugProvider(),
+        );
+        return;
+      }
+      const siteKey = String.fromEnvironment('YOVOICE_WEB_RECAPTCHA_SITE_KEY');
+      if (siteKey.isEmpty) {
+        debugPrint(
+          'Web App Check is not configured for this release build. '
+          'Server enforcement must remain disabled.',
+        );
+        return;
+      }
+      await FirebaseAppCheck.instance.activate(
+        providerWeb: ReCaptchaV3Provider(siteKey),
+      );
+      return;
+    }
+
     await FirebaseAppCheck.instance.activate(
       providerAndroid: kDebugMode
           ? AndroidDebugProvider()

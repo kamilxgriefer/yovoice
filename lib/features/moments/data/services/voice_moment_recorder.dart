@@ -112,8 +112,7 @@ class VoiceMomentRecorder {
       resolved = await _capture.probeSupport(_backend);
     } on MissingPluginException {
       resolved = const CaptureSupport.unsupported(
-        reason:
-            'Voice recording is not available in this build of YO Voice.',
+        reason: 'Voice recording is not available in this build of YO Voice.',
         action: 'Try the YO Voice web app in Chrome, Edge or Safari.',
       );
     } catch (error) {

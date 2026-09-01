@@ -3,7 +3,9 @@ import 'package:flutter/material.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/messages/data/models/conversation.dart';
+import 'package:yovoice/features/profile/data/services/profile_media_service.dart';
 import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
+import 'package:yovoice/shared/widgets/profile/profile_media_image.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
 enum RecentChatsStyle { standard, desktopBackdrop }
@@ -23,6 +25,7 @@ class RecentChats extends StatelessWidget {
     this.style = RecentChatsStyle.standard,
     this.backdropImageProvider,
     this.photoStreamForUser,
+    this.profileMediaService,
     super.key,
   });
 
@@ -32,13 +35,13 @@ class RecentChats extends StatelessWidget {
   final VoidCallback onFindFriends;
   final RecentChatsStyle style;
   final RecentChatImageProvider? backdropImageProvider;
+  final ProfileMediaService? profileMediaService;
 
-  /// Optional live public-profile photo source for every recent-chat style.
+  /// Optional live profile revision source for every recent-chat style.
   ///
-  /// Conversation snapshots intentionally keep enough denormalized identity
-  /// to render offline, but older conversations can carry an empty or stale
-  /// avatar. Home supplies the current public profile projection and the card
-  /// falls back to the conversation copy while it loads or fails.
+  /// Durable URLs are intentionally not read from public/conversation data.
+  /// Home forwards only a non-sensitive update signal so a short-lived,
+  /// viewer-authorized media grant can be invalidated after an avatar change.
   final RecentChatPhotoStream? photoStreamForUser;
 
   @override
@@ -92,6 +95,7 @@ class RecentChats extends StatelessWidget {
               currentUserId: currentUserId,
               onTap: () => onOpenConversation(conversation),
               photoStreamForUser: photoStreamForUser,
+              profileMediaService: profileMediaService,
             ),
             RecentChatsStyle.desktopBackdrop => _BackdropRecentChatCard(
               conversation: conversation,
@@ -99,6 +103,7 @@ class RecentChats extends StatelessWidget {
               onTap: () => onOpenConversation(conversation),
               imageProvider: backdropImageProvider,
               photoStreamForUser: photoStreamForUser,
+              profileMediaService: profileMediaService,
             ),
           },
         );
@@ -156,12 +161,14 @@ class _RecentChatCard extends StatelessWidget {
     required this.currentUserId,
     required this.onTap,
     required this.photoStreamForUser,
+    required this.profileMediaService,
   });
 
   final Conversation conversation;
   final String currentUserId;
   final VoidCallback onTap;
   final RecentChatPhotoStream? photoStreamForUser;
+  final ProfileMediaService? profileMediaService;
 
   @override
   Widget build(BuildContext context) {
@@ -190,6 +197,7 @@ class _RecentChatCard extends StatelessWidget {
                     conversationPhotoUrl: conversation.photoUrlFor(otherUserId),
                     userId: otherUserId,
                     photoStreamForUser: photoStreamForUser,
+                    profileMediaService: profileMediaService,
                   ),
                   const Spacer(),
                   if (unread > 0) _UnreadBadge(count: unread, compact: true),
@@ -232,17 +240,24 @@ class _LiveRecentChatAvatar extends StatelessWidget {
     required this.conversationPhotoUrl,
     required this.userId,
     required this.photoStreamForUser,
+    required this.profileMediaService,
   });
 
   final String displayName;
   final String conversationPhotoUrl;
   final String userId;
   final RecentChatPhotoStream? photoStreamForUser;
+  final ProfileMediaService? profileMediaService;
 
-  Widget _avatar(String photoUrl) => UserAvatar(
+  Widget _avatar(Object? revision) => UserAvatar(
     key: ValueKey('recent-chat-avatar-$userId'),
+    userId: userId,
     displayName: displayName,
-    photoUrl: photoUrl,
+    // Retained only as an offline compatibility hint. UserAvatar never
+    // dereferences it; media is resolved from [userId].
+    photoUrl: conversationPhotoUrl,
+    mediaRevision: revision,
+    mediaService: profileMediaService,
     radius: 20,
   );
 
@@ -261,13 +276,13 @@ class _LiveRecentChatAvatar extends StatelessWidget {
     return StreamBuilder<String>(
       stream: stream,
       builder: (context, snapshot) {
-        final photoUrl =
+        final revision =
             snapshot.connectionState == ConnectionState.waiting ||
                 snapshot.hasError ||
                 !snapshot.hasData
             ? conversationPhotoUrl
             : snapshot.data!;
-        return _avatar(photoUrl);
+        return _avatar(revision);
       },
     );
   }
@@ -280,6 +295,7 @@ class _BackdropRecentChatCard extends StatelessWidget {
     required this.onTap,
     required this.imageProvider,
     required this.photoStreamForUser,
+    required this.profileMediaService,
   });
 
   final Conversation conversation;
@@ -287,6 +303,7 @@ class _BackdropRecentChatCard extends StatelessWidget {
   final VoidCallback onTap;
   final RecentChatImageProvider? imageProvider;
   final RecentChatPhotoStream? photoStreamForUser;
+  final ProfileMediaService? profileMediaService;
 
   @override
   Widget build(BuildContext context) {
@@ -351,6 +368,7 @@ class _BackdropRecentChatCard extends StatelessWidget {
                 userId: otherUserId,
                 imageProvider: imageProvider,
                 photoStreamForUser: photoStreamForUser,
+                profileMediaService: profileMediaService,
               ),
               const _ChatScrim(),
               Padding(
@@ -462,6 +480,7 @@ class _ChatBackdrop extends StatelessWidget {
     required this.userId,
     required this.imageProvider,
     required this.photoStreamForUser,
+    required this.profileMediaService,
   });
 
   final String conversationId;
@@ -470,6 +489,7 @@ class _ChatBackdrop extends StatelessWidget {
   final String userId;
   final RecentChatImageProvider? imageProvider;
   final RecentChatPhotoStream? photoStreamForUser;
+  final ProfileMediaService? profileMediaService;
 
   static const _accents = <Color>[
     Color(0xFF9D20FF),
@@ -536,36 +556,21 @@ class _ChatBackdrop extends StatelessWidget {
     ),
   );
 
-  Widget _photo(String rawUrl) {
-    final url = rawUrl.trim();
-    if (url.isEmpty) return _fallback();
-    final provider = imageProvider?.call(url) ?? NetworkImage(url);
-
-    return Stack(
-      fit: StackFit.expand,
-      children: [
-        _fallback(),
-        Image(
-          key: ValueKey('recent-chat-photo-$conversationId'),
-          image: provider,
-          fit: BoxFit.cover,
-          alignment: const Alignment(0, -.20),
-          filterQuality: FilterQuality.medium,
-          frameBuilder: (_, child, frame, wasSynchronouslyLoaded) {
-            if (wasSynchronouslyLoaded) return child;
-            return AnimatedOpacity(
-              opacity: frame == null ? 0 : 1,
-              duration: const Duration(milliseconds: 180),
-              child: child,
-            );
-          },
-          errorBuilder: (_, __, ___) => SizedBox.shrink(
-            key: ValueKey('recent-chat-photo-error-$conversationId'),
-          ),
-        ),
-      ],
-    );
-  }
+  Widget _photo(Object? revision) => ProfileMediaImage(
+    userId: userId,
+    kind: ProfileMediaKind.avatar,
+    fit: BoxFit.cover,
+    fallback: _fallback(),
+    service: profileMediaService,
+    revision: revision,
+    imageProvider: imageProvider == null
+        ? null
+        : (uri) => imageProvider!(uri.toString()),
+    imageKey: ValueKey('recent-chat-photo-$conversationId'),
+    errorKey: ValueKey('recent-chat-photo-error-$conversationId'),
+    alignment: const Alignment(0, -.20),
+    filterQuality: FilterQuality.medium,
+  );
 
   @override
   Widget build(BuildContext context) {
@@ -582,16 +587,15 @@ class _ChatBackdrop extends StatelessWidget {
     return StreamBuilder<String>(
       stream: stream,
       builder: (context, snapshot) {
-        // Until the authoritative public projection answers, keep the
-        // conversation copy so the card never flashes to a placeholder.
-        // An emitted empty value is authoritative (the avatar was removed).
-        final photoUrl =
+        // The value is only a cache-busting revision. It is never fetched as
+        // a URL; ProfileMediaImage resolves a fresh viewer-authorized grant.
+        final revision =
             snapshot.connectionState == ConnectionState.waiting ||
                 snapshot.hasError ||
                 !snapshot.hasData
             ? conversationPhotoUrl
             : snapshot.data!;
-        return _photo(photoUrl);
+        return _photo(revision);
       },
     );
   }

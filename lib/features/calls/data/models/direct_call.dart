@@ -1,5 +1,17 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+enum DirectCallMediaType {
+  audio,
+  video;
+
+  static DirectCallMediaType fromName(String? value) {
+    return switch (value) {
+      'video' => DirectCallMediaType.video,
+      _ => DirectCallMediaType.audio,
+    };
+  }
+}
+
 enum DirectCallStatus {
   ringing,
   active,
@@ -40,11 +52,10 @@ class DirectCallIdentity {
         ? Map<String, dynamic>.from(value)
         : const <String, dynamic>{};
     final name = (data['displayName'] as String?)?.trim();
-    final photo = (data['photoUrl'] as String?)?.trim();
     return DirectCallIdentity(
       userId: data['userId'] as String? ?? '',
       displayName: name?.isNotEmpty == true ? name! : 'YO Voice user',
-      photoUrl: photo?.isNotEmpty == true ? photo : null,
+      photoUrl: null,
     );
   }
 }
@@ -61,6 +72,7 @@ class DirectCall {
     required this.expiresAt,
     required this.answeredAt,
     required this.conversationId,
+    this.mediaType = DirectCallMediaType.audio,
   });
 
   final String id;
@@ -73,6 +85,9 @@ class DirectCall {
   final DateTime? expiresAt;
   final DateTime? answeredAt;
   final String? conversationId;
+  final DirectCallMediaType mediaType;
+
+  bool get isVideo => mediaType == DirectCallMediaType.video;
 
   bool isIncomingFor(String userId) => calleeId == userId;
 
@@ -95,6 +110,7 @@ class DirectCall {
       expiresAt: date(data['expiresAt']),
       answeredAt: date(data['answeredAt']),
       conversationId: data['conversationId'] as String?,
+      mediaType: DirectCallMediaType.fromName(data['mediaType'] as String?),
     );
   }
 }
@@ -107,6 +123,7 @@ class IncomingDirectCallSignal {
     required this.callerPhotoUrl,
     required this.status,
     required this.expiresAt,
+    this.mediaType = DirectCallMediaType.audio,
   });
 
   final String callId;
@@ -115,6 +132,7 @@ class IncomingDirectCallSignal {
   final String? callerPhotoUrl;
   final DirectCallStatus status;
   final DateTime? expiresAt;
+  final DirectCallMediaType mediaType;
 
   factory IncomingDirectCallSignal.fromFirestore(
     DocumentSnapshot<Map<String, dynamic>> document,
@@ -130,6 +148,7 @@ class IncomingDirectCallSignal {
       callerPhotoUrl: photo?.isNotEmpty == true ? photo : null,
       status: DirectCallStatus.fromName(data['status'] as String?),
       expiresAt: expiresAt is Timestamp ? expiresAt.toDate() : null,
+      mediaType: DirectCallMediaType.fromName(data['mediaType'] as String?),
     );
   }
 }

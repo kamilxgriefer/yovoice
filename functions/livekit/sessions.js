@@ -19,7 +19,16 @@ function activeVoiceSessionReference(userId, roomId) {
 
 function writeActiveVoiceSession(
   transaction,
-  { userId, roomId, expiresAt, roomKind = null, clubId = null },
+  {
+    userId,
+    roomId,
+    expiresAt,
+    roomKind = null,
+    clubId = null,
+    tokenWindowStartedAt = null,
+    tokenIssueCount = null,
+    tokenLastIssuedAt = null,
+  },
 ) {
   if (!transaction || typeof transaction.set !== "function") {
     throw new Error("A Firestore transaction is required.");
@@ -37,6 +46,13 @@ function writeActiveVoiceSession(
     updatedAt: FieldValue.serverTimestamp(),
     ...(roomKind ? { roomKind } : {}),
     ...(clubId ? { clubId } : {}),
+    ...(tokenWindowStartedAt instanceof Timestamp
+      ? { tokenWindowStartedAt }
+      : {}),
+    ...(Number.isInteger(tokenIssueCount) && tokenIssueCount > 0
+      ? { tokenIssueCount }
+      : {}),
+    ...(tokenLastIssuedAt instanceof Timestamp ? { tokenLastIssuedAt } : {}),
   });
   return reference;
 }

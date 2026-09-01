@@ -33,9 +33,9 @@ class MomentViewsService {
   Stream<Set<String>> watchViewedMomentIds() {
     final uid = _uid;
     if (uid.isEmpty) return Stream.value(const <String>{});
-    return _views(uid).snapshots().map(
-      (snapshot) => snapshot.docs.map((doc) => doc.id).toSet(),
-    );
+    return _views(
+      uid,
+    ).snapshots().map((snapshot) => snapshot.docs.map((doc) => doc.id).toSet());
   }
 
   /// Records that playback of [momentId] started, with the exact

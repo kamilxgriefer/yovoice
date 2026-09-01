@@ -296,8 +296,8 @@ class _MomentDetailScreenState extends State<MomentDetailScreen> {
   }
 
   Future<void> _togglePlay() async {
-    final url = _moment.audioUrl?.trim() ?? '';
-    if (url.isEmpty) {
+    final moments = _moments;
+    if (moments == null || !_moment.hasMediaReference) {
       setState(() => _playbackError = 'This Moment has no audio to play.');
       return;
     }
@@ -330,7 +330,9 @@ class _MomentDetailScreenState extends State<MomentDetailScreen> {
         await player.resume();
       } else {
         _everPlayed = true;
-        await player.play(UrlSource(url));
+        final uri = await moments.resolveMediaUri(momentId: _moment.id);
+        if (!mounted || _missing) return;
+        await player.play(UrlSource(uri.toString()));
       }
     } catch (error) {
       if (!mounted) return;
@@ -579,6 +581,7 @@ class _MomentDetailScreenState extends State<MomentDetailScreen> {
           circular: true,
           child: UserAvatar(
             radius: 23,
+            userId: moment.authorId,
             photoUrl: moment.authorPhotoUrl,
             displayName: moment.authorName,
           ),
@@ -881,6 +884,7 @@ class _MomentDetailScreenState extends State<MomentDetailScreen> {
                         message: reactor.displayName,
                         child: UserAvatar(
                           radius: 15,
+                          userId: reactor.uid,
                           photoUrl: reactor.photoUrl,
                           displayName: reactor.displayName,
                         ),
@@ -1195,6 +1199,7 @@ class _CommentRow extends StatelessWidget {
         children: [
           UserAvatar(
             radius: 15,
+            userId: comment.authorId,
             photoUrl: comment.authorPhotoUrl,
             displayName: comment.authorName,
           ),

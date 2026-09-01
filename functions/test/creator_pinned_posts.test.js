@@ -18,6 +18,7 @@ const {
   applyEntitlements,
   commitExpiredPremiumPage,
 } = require("../premium/entitlements");
+const { rateLimitReference } = require("../integrity/guards");
 
 const db = getFirestore();
 const CREATOR = "pin-creator";
@@ -95,6 +96,11 @@ async function reset() {
     `entitlements/${OPAQUE_CREATOR}`,
   ]) {
     await ignoreMissing(db.doc(path));
+  }
+  for (const uid of [CREATOR, OTHER, OPAQUE_CREATOR]) {
+    await ignoreMissing(
+      rateLimitReference(db, "creator.pinnedPost.attempt", uid),
+    );
   }
 }
 
@@ -345,6 +351,32 @@ test("input is exact and callers must be authenticated and verified", async () =
       (error) => error.code === "invalid-argument",
     );
   }
+});
+
+test("invalid target Moments consume a committed actor-wide attempt budget", async () => {
+  const api = createPinnedPostsService({
+    firestore: db,
+    TimestampImpl: Timestamp,
+    clock: () => nowMs,
+    maxAttempts: 2,
+    attemptWindowMs: 60_000,
+  });
+  for (const momentId of ["missing-a", "missing-b"]) {
+    await assert.rejects(
+      api.setCreatorPinnedPost(request(CREATOR, momentId)),
+      (error) => error.code === "failed-precondition",
+    );
+  }
+  await assert.rejects(
+    api.setCreatorPinnedPost(request(CREATOR, "missing-c")),
+    (error) => error.code === "resource-exhausted",
+  );
+  const rate = await rateLimitReference(
+    db,
+    "creator.pinnedPost.attempt",
+    CREATOR,
+  ).get();
+  assert.equal(rate.data().count, 2);
 });
 
 test("admin revoke atomically removes the pin and paid Creator mode", async () => {

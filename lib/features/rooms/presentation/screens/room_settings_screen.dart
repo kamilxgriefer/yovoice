@@ -61,13 +61,17 @@ class _RoomSettingsScreenState extends State<RoomSettingsScreen> {
       final editor = widget.coverEditor ?? RoomCoverEditor.pickAndCrop;
       final cover = await editor(context, _images);
       if (cover == null || !mounted) return;
-      final previousUrl = _imageUrl;
-      final url = await _images.uploadRoomCover(
+      final upload = await _images.uploadRoomCover(
         roomId: widget.room.id,
         bytes: cover.bytes,
       );
       try {
-        await _service.updateImageUrl(roomId: widget.room.id, imageUrl: url);
+        await _service.finalizeRoomCoverUpload(
+          roomId: widget.room.id,
+          storagePath: upload.storagePath,
+          objectGeneration: upload.objectGeneration,
+          reservationId: upload.reservationId,
+        );
       } catch (error, stackTrace) {
         // A failed write acknowledgement can still mean the pointer committed.
         // Re-read before deleting so cleanup can never break a valid cover.
@@ -76,29 +80,33 @@ class _RoomSettingsScreenState extends State<RoomSettingsScreen> {
         try {
           final canonical = await _service.getRoomFromServer(widget.room.id);
           pointerRead = true;
-          committed = canonical.imageUrl == url;
+          committed =
+              canonical.coverStoragePath == upload.storagePath &&
+              canonical.coverGeneration == upload.objectGeneration;
         } catch (_) {
           // Ambiguous state: preserve the uploaded object and the original
           // error. A later room deletion still cleans the whole prefix.
         }
         if (!committed) {
           if (pointerRead) {
-            await _images.deleteManagedRoomCover(
+            await _images.deleteManagedRoomCoverPath(
               roomId: widget.room.id,
-              url: url,
+              storagePath: upload.storagePath,
             );
           }
           Error.throwWithStackTrace(error, stackTrace);
         }
       }
-      // Cleanup is data lifecycle, not UI lifecycle. Leaving this route after
-      // the pointer commits must not skip removal of the superseded object.
-      await _images.deleteManagedRoomCover(
-        roomId: widget.room.id,
-        url: previousUrl,
-      );
+      String? nextImageUrl;
+      try {
+        nextImageUrl = (await _service.getRoom(widget.room.id)).imageUrl;
+      } catch (_) {
+        // The canonical pointer already committed. The room stream will
+        // retry the short-lived render grant without treating this as an
+        // upload failure.
+      }
       if (!mounted) return;
-      setState(() => _imageUrl = url);
+      setState(() => _imageUrl = nextImageUrl);
     } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(

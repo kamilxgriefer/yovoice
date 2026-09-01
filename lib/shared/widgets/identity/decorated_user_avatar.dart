@@ -16,6 +16,7 @@ import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 class DecoratedUserAvatar extends StatelessWidget {
   const DecoratedUserAvatar({
     required this.radius,
+    this.userId,
     this.photoUrl,
     this.displayName,
     this.premium = false,
@@ -25,6 +26,7 @@ class DecoratedUserAvatar extends StatelessWidget {
   });
 
   final double radius;
+  final String? userId;
   final String? photoUrl;
   final String? displayName;
   final bool premium;
@@ -35,6 +37,7 @@ class DecoratedUserAvatar extends StatelessWidget {
   Widget build(BuildContext context) {
     final avatar = UserAvatar(
       radius: radius,
+      userId: userId,
       photoUrl: photoUrl,
       displayName: displayName,
       premium: premium,

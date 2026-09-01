@@ -99,7 +99,10 @@ function normalizeText(value, maxLength, label, { allowEmpty = false } = {}) {
     fail("invalid-argument", `${label} must be text.`);
   }
   const normalized = value.trim();
-  if ((!allowEmpty && normalized.length === 0) || normalized.length > maxLength) {
+  if (
+    (!allowEmpty && normalized.length === 0) ||
+    normalized.length > maxLength
+  ) {
     fail(
       "invalid-argument",
       `${label} must contain ${allowEmpty ? "0" : "1"}-${maxLength} characters.`,
@@ -109,8 +112,11 @@ function normalizeText(value, maxLength, label, { allowEmpty = false } = {}) {
 }
 
 function requireSafeInteger(value, label, { min = 0, max = undefined } = {}) {
-  if (!Number.isSafeInteger(value) || value < min ||
-      (max !== undefined && value > max)) {
+  if (
+    !Number.isSafeInteger(value) ||
+    value < min ||
+    (max !== undefined && value > max)
+  ) {
     fail("invalid-argument", `${label} is invalid.`);
   }
   return value;
@@ -125,23 +131,27 @@ function canonicalPair(firstId, secondId) {
   // Firebase Auth UIDs are opaque and case-sensitive. Do not use
   // localeCompare here: locale/ICU ordering can differ from the code-unit
   // ordering used by object-key validation and can even vary by runtime.
-  return [firstId, secondId].sort((a, b) => a < b ? -1 : a > b ? 1 : 0);
+  return [firstId, secondId].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
 }
 
 function stableValue(value) {
   if (Array.isArray(value)) return value.map(stableValue);
   if (value && typeof value === "object") {
     return Object.fromEntries(
-      Object.keys(value).sort().map((key) => [key, stableValue(value[key])]),
+      Object.keys(value)
+        .sort()
+        .map((key) => [key, stableValue(value[key])]),
     );
   }
   return value;
 }
 
 function digest(...parts) {
-  const body = parts.map((part) =>
-    typeof part === "string" ? part : JSON.stringify(stableValue(part)),
-  ).join("\u0000");
+  const body = parts
+    .map((part) =>
+      typeof part === "string" ? part : JSON.stringify(stableValue(part)),
+    )
+    .join("\u0000");
   return crypto.createHash("sha256").update(body).digest("hex");
 }
 
@@ -157,8 +167,13 @@ function activeProfile(snapshot, label) {
     fail("not-found", `${label} profile does not exist.`);
   }
   const profile = snapshot.data() ?? {};
-  if (profile.banned === true || profile.disabled === true ||
-      profile.deleted === true || profile.status === "deleted") {
+  if (
+    profile.banned === true ||
+    profile.disabled === true ||
+    profile.deleted === true ||
+    profile.status === "deleted" ||
+    profile.authDeletedAt !== null && profile.authDeletedAt !== undefined
+  ) {
     fail("permission-denied", `${label} account is not active.`);
   }
   return profile;
@@ -186,7 +201,10 @@ function assertNotRestricted(snapshot, label, nowMs) {
 
 function assertNotBlocked(firstSnapshot, secondSnapshot) {
   if (firstSnapshot?.exists || secondSnapshot?.exists) {
-    fail("failed-precondition", "This action is unavailable because of a block.");
+    fail(
+      "failed-precondition",
+      "This action is unavailable because of a block.",
+    );
   }
 }
 
@@ -197,22 +215,26 @@ function canonicalPublicProfile(publicSnapshot, expectedUid) {
   }
   const publicProfile = publicSnapshot.data() ?? {};
   const keys = Object.keys(publicProfile).sort();
-  if (keys.length !== PUBLIC_PROFILE_KEYS.length ||
-      keys.some((key, index) => key !== PUBLIC_PROFILE_KEYS[index]) ||
-      publicProfile.schemaVersion !== 1 ||
-      publicProfile.uid !== expectedUid ||
-      timestampMillis(publicProfile.updatedAt) === null ||
-      typeof publicProfile.displayName !== "string" ||
-      publicProfile.displayName !== publicProfile.displayName.trim() ||
-      publicProfile.displayName.length < 1 ||
-      publicProfile.displayName.length > 120) {
+  if (
+    keys.length !== PUBLIC_PROFILE_KEYS.length ||
+    keys.some((key, index) => key !== PUBLIC_PROFILE_KEYS[index]) ||
+    publicProfile.schemaVersion !== 1 ||
+    publicProfile.uid !== expectedUid ||
+    timestampMillis(publicProfile.updatedAt) === null ||
+    typeof publicProfile.displayName !== "string" ||
+    publicProfile.displayName !== publicProfile.displayName.trim() ||
+    publicProfile.displayName.length < 1 ||
+    publicProfile.displayName.length > 120
+  ) {
     fail("data-loss", "The canonical public profile is malformed.");
   }
   const photoCandidate = publicProfile.photoUrl;
   if (photoCandidate !== null) {
-    if (typeof photoCandidate !== "string" ||
-        photoCandidate !== photoCandidate.trim() ||
-        photoCandidate.length > 2048) {
+    if (
+      typeof photoCandidate !== "string" ||
+      photoCandidate !== photoCandidate.trim() ||
+      photoCandidate.length > 2048
+    ) {
       fail("data-loss", "The canonical public profile photo is malformed.");
     }
     try {
@@ -226,7 +248,9 @@ function canonicalPublicProfile(publicSnapshot, expectedUid) {
   }
   return {
     displayName: publicProfile.displayName.slice(0, 80),
-    photoUrl: photoCandidate,
+    // Identity snapshots carry uid + name only. Renderers resolve private
+    // artwork through a viewer-authorized, short-lived media grant.
+    photoUrl: null,
   };
 }
 
@@ -248,8 +272,13 @@ function incrementCanonicalCount(value, label) {
 function assertLedgerReplay(snapshot, { kind, uid, inputHash }) {
   if (!snapshot?.exists) return null;
   const data = snapshot.data() ?? {};
-  if (data.kind !== kind || data.ownerId !== uid || data.inputHash !== inputHash ||
-      !data.result || typeof data.result !== "object") {
+  if (
+    data.kind !== kind ||
+    data.ownerId !== uid ||
+    data.inputHash !== inputHash ||
+    !data.result ||
+    typeof data.result !== "object"
+  ) {
     fail("already-exists", "requestId was already used for another operation.");
   }
   return data.result;
@@ -271,21 +300,20 @@ function rateLimitReference(db, scope, uid) {
   return db.doc(`privateRateLimits/${digest("rate", scope, uid)}`);
 }
 
-function consumeRateLimit(transaction, snapshot, {
-  reference,
-  scope,
-  uid,
-  nowMs,
-  now,
-  maxEvents,
-  windowMs,
-}) {
+function consumeRateLimit(
+  transaction,
+  snapshot,
+  { reference, scope, uid, nowMs, now, maxEvents, windowMs },
+) {
   requireSafeInteger(maxEvents, "maxEvents", { min: 1, max: 10000 });
   requireSafeInteger(windowMs, "windowMs", { min: 1000 });
-  const data = snapshot?.exists ? snapshot.data() ?? {} : {};
+  const data = snapshot?.exists ? (snapshot.data() ?? {}) : {};
   const priorStart = timestampMillis(data.windowStartedAt);
-  const sameWindow = data.ownerId === uid && data.scope === scope &&
-    Number.isFinite(priorStart) && nowMs >= priorStart &&
+  const sameWindow =
+    data.ownerId === uid &&
+    data.scope === scope &&
+    Number.isFinite(priorStart) &&
+    nowMs >= priorStart &&
     nowMs - priorStart < windowMs;
   const priorCount = sameWindow ? data.count : 0;
   if (!Number.isSafeInteger(priorCount) || priorCount < 0) {

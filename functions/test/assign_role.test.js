@@ -43,9 +43,21 @@ const FAKE_SUPER = `${P}fake-super`;
 const MOD = `${P}mod`;
 const PLAIN = `${P}plain`;
 const TARGET = `${P}target`;
+const ORIGINAL_PRIVILEGED_MFA_MODE =
+  process.env.YOVOICE_PRIVILEGED_MFA_MODE;
 
-function request(uid, role, data) {
-  return { auth: { uid, token: { role } }, data };
+function request(uid, role, data, token = {}) {
+  return {
+    auth: {
+      uid,
+      token: {
+        role,
+        auth_time: Math.floor(Date.now() / 1000),
+        ...token,
+      },
+    },
+    data,
+  };
 }
 
 async function wipeOwn() {
@@ -95,6 +107,12 @@ beforeEach(async () => {
 afterEach(() => {
   setProtectedOwnerUidForTests(null);
   setRoleAuthorityWriterForTests(null);
+  if (ORIGINAL_PRIVILEGED_MFA_MODE === undefined) {
+    delete process.env.YOVOICE_PRIVILEGED_MFA_MODE;
+  } else {
+    process.env.YOVOICE_PRIVILEGED_MFA_MODE =
+      ORIGINAL_PRIVILEGED_MFA_MODE;
+  }
 });
 
 const assignArgs = (role, extra = {}) => ({
@@ -105,6 +123,57 @@ const assignArgs = (role, extra = {}) => ({
 });
 
 describe("allowed: the confirmed owner", () => {
+  test("a stale owner sign-in cannot change any role", async () => {
+    await assert.rejects(
+      run(request(OWNER, "superAdmin", assignArgs("moderator"), {
+        auth_time:
+          Math.floor(Date.now() / 1000) - (5 * 60) - 1,
+      })),
+      (error) => {
+        assert.equal(error.code, "failed-precondition");
+        assert.equal(
+          error.details?.reason,
+          "recent-authentication-required",
+        );
+        return true;
+      },
+    );
+
+    assert.equal(
+      (await adminAuth.getUser(TARGET)).customClaims?.role,
+      undefined,
+    );
+    assert.equal(
+      (await db.collection("users").doc(TARGET).get()).data().role,
+      "user",
+    );
+  });
+
+  test("required MFA rejects an owner token without a second factor", async () => {
+    process.env.YOVOICE_PRIVILEGED_MFA_MODE = "required";
+
+    await assert.rejects(
+      run(request(OWNER, "superAdmin", assignArgs("moderator"))),
+      (error) => {
+        assert.equal(error.code, "failed-precondition");
+        assert.equal(
+          error.details?.reason,
+          "multi-factor-authentication-required",
+        );
+        return true;
+      },
+    );
+
+    assert.equal(
+      (await adminAuth.getUser(TARGET)).customClaims?.role,
+      undefined,
+    );
+    assert.equal(
+      (await db.collection("users").doc(TARGET).get()).data().role,
+      "user",
+    );
+  });
+
   for (const role of [
     "guideMaster",
     "support",

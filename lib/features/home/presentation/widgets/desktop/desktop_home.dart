@@ -21,6 +21,7 @@ import 'package:yovoice/features/profile/data/models/follow_user.dart';
 import 'package:yovoice/features/profile/data/models/user_profile.dart';
 import 'package:yovoice/features/profile/data/services/follow_service.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
+import 'package:yovoice/features/profile/data/services/profile_media_service.dart';
 import 'package:yovoice/features/rooms/data/models/room_participant.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
@@ -67,6 +68,7 @@ class DesktopHome extends StatefulWidget {
     this.friendService,
     this.followService,
     this.profileService,
+    this.profileMediaService,
     this.feedService,
     this.messageService,
     this.clubService,
@@ -106,6 +108,7 @@ class DesktopHome extends StatefulWidget {
   final FriendService? friendService;
   final FollowService? followService;
   final ProfileService? profileService;
+  final ProfileMediaService? profileMediaService;
   final HomeFeedService? feedService;
   final MessageService? messageService;
   final ClubService? clubService;
@@ -208,7 +211,11 @@ class _DesktopHomeState extends State<DesktopHome> {
       userId,
       () => profiles
           .watchProfile(userId)
-          .map((profile) => profile.photoUrl?.trim() ?? '')
+          .map(
+            (profile) =>
+                profile.profileUpdatedAt?.toUtc().toIso8601String() ??
+                'legacy:${profile.uid}',
+          )
           .distinct(),
     );
   }
@@ -361,6 +368,7 @@ class _DesktopHomeState extends State<DesktopHome> {
                     photoStreamForUser: _profiles == null
                         ? null
                         : _recentChatPhotoStream,
+                    profileMediaService: widget.profileMediaService,
                   ),
                 ),
                 if (widget.trailingContent != null) ...[
@@ -605,6 +613,7 @@ class _RosterListState extends State<RoomRosterList> {
                         children: [
                           UserAvatar(
                             radius: 15,
+                            userId: participant.userId,
                             photoUrl: participant.photoUrl,
                             displayName: participant.displayName,
                           ),

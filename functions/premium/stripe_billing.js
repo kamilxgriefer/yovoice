@@ -28,6 +28,14 @@ const BILLING_RETURN_URL = "https://yovoice.app/premium";
 const CHECKOUT_SUCCESS_URL =
   "https://yovoice.app/premium?checkout=success&session_id={CHECKOUT_SESSION_ID}";
 const CHECKOUT_CANCEL_URL = "https://yovoice.app/premium?checkout=cancelled";
+const STRIPE_CHECKOUT_HOST = "checkout.stripe.com";
+const STRIPE_BILLING_PORTAL_HOST = "billing.stripe.com";
+// The Stripe webhook is public by design. Reject work that cannot possibly be
+// authentic before invoking the Stripe SDK so an anonymous oversized request
+// cannot buy unbounded HMAC CPU, instances or warning logs.
+const MAX_STRIPE_WEBHOOK_BODY_BYTES = 128 * 1024;
+const MAX_STRIPE_WEBHOOK_INSTANCES = 10;
+const INVALID_WEBHOOK_WARNING_INTERVAL_MS = 60 * 1000;
 
 const STRIPE_SECRET_KEY = defineSecret("STRIPE_SECRET_KEY");
 const STRIPE_WEBHOOK_SECRET = defineSecret("STRIPE_WEBHOOK_SECRET");
@@ -45,6 +53,21 @@ const STRIPE_PORTAL_CONFIGURATION_ID = defineString(
 );
 const STRIPE_EXPECTED_MODE = defineString("STRIPE_EXPECTED_MODE");
 
+function rawWebhookBodyByteLength(rawBody) {
+  if (Buffer.isBuffer(rawBody)) return rawBody.byteLength;
+  if (typeof rawBody === "string") return Buffer.byteLength(rawBody, "utf8");
+  return null;
+}
+
+function stripeSignatureHeader(request) {
+  const value = typeof request?.get === "function"
+    ? request.get("stripe-signature")
+    : request?.headers?.["stripe-signature"];
+  return typeof value === "string" && value.length > 0 && value.length <= 8192
+    ? value
+    : null;
+}
+
 const BLIK_PLAN_CONFIGURATION = Object.freeze({
   monthly: Object.freeze({ currency: "pln", unitAmount: 2600, durationDays: 30 }),
   yearly: Object.freeze({ currency: "pln", unitAmount: 26000, durationDays: 365 }),
@@ -52,6 +75,22 @@ const BLIK_PLAN_CONFIGURATION = Object.freeze({
 const ACTIVE_SUBSCRIPTION_STATUSES = new Set(["active", "trialing"]);
 const GRACE_SUBSCRIPTION_STATUSES = new Set(["past_due"]);
 const TERMINAL_SUBSCRIPTION_STATUSES = new Set(["canceled", "incomplete_expired"]);
+
+function isAllowedStripeHostedUrl(value, expectedHost) {
+  if (typeof value !== "string" || value.length > 4096) return false;
+  try {
+    const parsed = new URL(value);
+    return (
+      parsed.protocol === "https:" &&
+      parsed.hostname === expectedHost &&
+      parsed.port === "" &&
+      parsed.username === "" &&
+      parsed.password === ""
+    );
+  } catch (_) {
+    return false;
+  }
+}
 
 function parseCheckoutRequest(data) {
   const input = data ?? {};
@@ -630,6 +669,7 @@ function makeStripeBillingHandlers({
   now = () => Timestamp.now(),
 }) {
   let priceCache = null;
+  let lastInvalidWebhookWarningAtMs = Number.NEGATIVE_INFINITY;
 
   async function loadPrices() {
     const nowMs = now().toMillis();
@@ -1014,8 +1054,7 @@ function makeStripeBillingHandlers({
           state.billing.pendingCheckoutPlan === plan &&
           pendingPaymentMethod === paymentMethod &&
           pending.status === "open" &&
-          typeof pending.url === "string" &&
-          pending.url.startsWith("https://")
+          isAllowedStripeHostedUrl(pending.url, STRIPE_CHECKOUT_HOST)
         ) {
           await withActiveCheckoutAccount(user.uid);
           return { url: pending.url };
@@ -1085,8 +1124,7 @@ function makeStripeBillingHandlers({
         typeof session.id !== "string" ||
         !session.id.startsWith("cs_") ||
         session.status !== "open" ||
-        typeof session.url !== "string" ||
-        !session.url.startsWith("https://")
+        !isAllowedStripeHostedUrl(session.url, STRIPE_CHECKOUT_HOST)
       ) {
         await clearCheckoutAttempt(user.uid, attemptToken);
         throw new Error("Stripe Checkout did not return an open hosted Session.");
@@ -1116,7 +1154,8 @@ function makeStripeBillingHandlers({
         } catch (cleanupError) {
           logger.warn("Stripe checkout attempt cleanup failed", {
             uid: user.uid,
-            message: cleanupError.message,
+            errorName: cleanupError?.name ?? null,
+            errorCode: cleanupError?.code ?? null,
           });
         }
         throw error;
@@ -1130,7 +1169,8 @@ function makeStripeBillingHandlers({
         // (or the original Stripe error) behind cleanup-only Firestore noise.
         logger.warn("Stripe checkout lease cleanup failed", {
           uid: user.uid,
-          message: error.message,
+          errorName: error?.name ?? null,
+          errorCode: error?.code ?? null,
         });
       }
     }
@@ -1185,7 +1225,7 @@ function makeStripeBillingHandlers({
       return_url: BILLING_RETURN_URL,
       configuration: portalConfigurationId,
     });
-    if (typeof session.url !== "string" || !session.url.startsWith("https://")) {
+    if (!isAllowedStripeHostedUrl(session.url, STRIPE_BILLING_PORTAL_HOST)) {
       throw new Error("Stripe Billing Portal did not return a hosted URL.");
     }
     return { url: session.url };
@@ -2435,18 +2475,49 @@ function makeStripeBillingHandlers({
   }
 
   async function stripeWebhookHandler(request, response, webhookSecret) {
+    if (request?.method !== "POST") {
+      if (typeof response.set === "function") response.set("Allow", "POST");
+      response.status(405).send("Method Not Allowed");
+      return;
+    }
+    const bodyBytes = rawWebhookBodyByteLength(request?.rawBody);
+    if (bodyBytes === null) {
+      response.status(400).send("Invalid webhook");
+      return;
+    }
+    if (bodyBytes > MAX_STRIPE_WEBHOOK_BODY_BYTES) {
+      response.status(413).send("Payload Too Large");
+      return;
+    }
+    const signature = stripeSignatureHeader(request);
+    if (!signature) {
+      response.status(400).send("Invalid signature");
+      return;
+    }
     let event;
     try {
       event = stripe.webhooks.constructEvent(
         request.rawBody,
-        request.headers["stripe-signature"],
+        signature,
         webhookSecret,
       );
       if (event.livemode !== expectedLiveMode) {
         throw new Error("Stripe webhook mode does not match this deployment.");
       }
     } catch (error) {
-      logger.warn("Stripe webhook signature rejected", { message: error.message });
+      // Do not copy Stripe's externally-derived diagnostic string into logs;
+      // some SDK errors include request/header context. The response stays
+      // intentionally generic and operators still get a bounded class/code.
+      const rejectedAtMs = now().toMillis();
+      if (
+        rejectedAtMs - lastInvalidWebhookWarningAtMs >=
+        INVALID_WEBHOOK_WARNING_INTERVAL_MS
+      ) {
+        // Intentionally generic and sampled per warm instance. Stripe SDK
+        // diagnostics can quote attacker-controlled header/body context.
+        logger.warn("Stripe webhook signature rejected");
+        lastInvalidWebhookWarningAtMs = rejectedAtMs;
+      }
       response.status(400).send("Invalid signature");
       return;
     }
@@ -2493,7 +2564,8 @@ function makeStripeBillingHandlers({
       logger.error("Stripe webhook processing failed", {
         eventId: event.id,
         eventType: event.type,
-        message: error.message,
+        errorName: error?.name ?? null,
+        errorCode: error?.code ?? null,
       });
       response.status(500).send("Webhook processing failed");
     }
@@ -2545,8 +2617,11 @@ const createPremiumPortalSession = onCall(billingCallableOptions, (request) =>
 const stripePremiumWebhook = onRequest(
   {
     region: REGION,
+    cors: false,
     secrets: [STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET],
     invoker: "public",
+    maxInstances: MAX_STRIPE_WEBHOOK_INSTANCES,
+    timeoutSeconds: 60,
   },
   (request, response) =>
     runtimeHandlers().stripeWebhookHandler(
@@ -2592,4 +2667,11 @@ module.exports = {
   requireAuthenticatedBillingOwner,
   PLAN_CONFIGURATION,
   BLIK_PLAN_CONFIGURATION,
+  isAllowedStripeHostedUrl,
+  STRIPE_CHECKOUT_HOST,
+  STRIPE_BILLING_PORTAL_HOST,
+  MAX_STRIPE_WEBHOOK_BODY_BYTES,
+  MAX_STRIPE_WEBHOOK_INSTANCES,
+  rawWebhookBodyByteLength,
+  stripeSignatureHeader,
 };

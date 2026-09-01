@@ -64,7 +64,11 @@ void main() {
 
     final ada = byId('ada-uid');
     expect(ada.displayName, 'Ada');
-    expect(ada.photoUrl, 'https://example.com/ada.png');
+    expect(
+      ada.photoUrl,
+      isNull,
+      reason: 'friends resolve avatars from uid through the media callable',
+    );
 
     final bea = byId('bea-uid');
     expect(

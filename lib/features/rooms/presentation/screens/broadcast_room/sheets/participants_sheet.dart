@@ -196,6 +196,7 @@ class _BroadcastParticipantsSheetState
                       // state and caching as every other surface.
                       leading: UserAvatar(
                         radius: 20,
+                        userId: person.userId,
                         photoUrl: person.photoUrl,
                         displayName: person.displayName,
                         backgroundColor: const Color(0xFF792032),

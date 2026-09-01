@@ -317,7 +317,7 @@ class MomentDiscoveryService {
         drops[moment.id] = MomentDropReason.blockedAuthor;
         continue;
       }
-      if ((moment.audioUrl?.trim() ?? '').isEmpty) {
+      if (!moment.hasMediaReference) {
         drops[moment.id] = MomentDropReason.unplayable;
         continue;
       }

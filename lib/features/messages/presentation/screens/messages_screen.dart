@@ -721,6 +721,7 @@ class _FriendStory extends StatelessWidget {
                     ),
                     child: UserAvatar(
                       radius: 27,
+                      userId: user?.id,
                       photoUrl: hasPhoto ? user!.photoUrl : null,
                       displayName: user?.displayName,
                       fallbackIcon: icon,
@@ -1037,6 +1038,7 @@ class _ConversationAvatarState extends State<_ConversationAvatar> {
             children: [
               UserAvatar(
                 radius: 29,
+                userId: widget.userId,
                 backgroundColor: palette.surfaceSunken,
                 photoUrl: photoUrl,
                 displayName: name,
@@ -1418,6 +1420,7 @@ class _RecentChatTile extends StatelessWidget {
       onTap: onTap,
       leading: UserAvatar(
         radius: 25,
+        userId: otherId,
         backgroundColor: palette.surfaceSunken,
         photoUrl: photoUrl,
         displayName: name,
@@ -1464,6 +1467,7 @@ class _FriendTile extends StatelessWidget {
           children: [
             UserAvatar(
               radius: 25,
+              userId: friend.id,
               backgroundColor: palette.surfaceSunken,
               photoUrl: friend.photoUrl,
               displayName: friend.displayName,

@@ -245,7 +245,11 @@ void main() {
       expect(users.single.uid, friend);
       expect(users.single.displayName, 'Public Friend');
       expect(users.single.username, 'public.friend');
-      expect(users.single.photoUrl, 'https://cdn.example/friend.jpg');
+      expect(
+        users.single.photoUrl,
+        isNull,
+        reason: 'public identity never exposes a durable media bearer URL',
+      );
     },
   );
 }

@@ -315,6 +315,7 @@ class _CreatorRowState extends State<_CreatorRow> {
           children: [
             UserAvatar(
               radius: 17,
+              userId: widget.creator.uid,
               photoUrl: widget.creator.photoUrl,
               displayName: widget.creator.displayName,
             ),

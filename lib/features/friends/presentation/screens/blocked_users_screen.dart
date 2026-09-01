@@ -5,6 +5,7 @@ import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/friends/data/models/friend_user.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
+import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
 class BlockedUsersScreen extends StatefulWidget {
   const BlockedUsersScreen({this.friendService, super.key});
@@ -204,8 +205,6 @@ class _BlockedUsersScreenState extends State<BlockedUsersScreen> {
                       itemBuilder: (context, index) {
                         final user = blocked[index];
                         final processing = _processingIds.contains(user.id);
-                        final hasPhoto =
-                            user.photoUrl?.trim().isNotEmpty == true;
 
                         return Container(
                           key: ValueKey('blocked-user-${user.id}'),
@@ -219,21 +218,11 @@ class _BlockedUsersScreenState extends State<BlockedUsersScreen> {
                             builder: (context, constraints) {
                               final identity = Row(
                                 children: [
-                                  CircleAvatar(
+                                  UserAvatar(
                                     radius: 24,
+                                    userId: user.id,
+                                    displayName: user.displayName,
                                     backgroundColor: palette.surfaceSunken,
-                                    backgroundImage: hasPhoto
-                                        ? NetworkImage(user.photoUrl!)
-                                        : null,
-                                    child: hasPhoto
-                                        ? null
-                                        : Text(
-                                            user.initial,
-                                            style: TextStyle(
-                                              color: palette.textPrimary,
-                                              fontWeight: FontWeight.w900,
-                                            ),
-                                          ),
                                   ),
                                   const SizedBox(width: 12),
                                   Expanded(

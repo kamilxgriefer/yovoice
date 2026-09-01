@@ -42,27 +42,33 @@ const QUARANTINE_ROLES = new Set([
   USER_ROLES.SUPER_ADMIN,
 ]);
 
-async function requireRoomStaff(request) {
+async function requireRoomStaff(request, { privileged = false } = {}) {
   return requireVerifiedStaff(
     request,
     ROOM_MANAGEMENT_ROLES,
     "You do not have permission to manage rooms.",
+    { privileged },
   );
 }
 
-async function requireRoomQuarantineAccess(request) {
+async function requireRoomQuarantineAccess(
+  request,
+  { privileged = false } = {},
+) {
   return requireVerifiedStaff(
     request,
     QUARANTINE_ROLES,
     "You do not have permission to quarantine rooms.",
+    { privileged },
   );
 }
 
-async function requireRoomDeleteAccess(request) {
+async function requireRoomDeleteAccess(request, { privileged = false } = {}) {
   return requireVerifiedStaff(
     request,
     PERMANENT_DELETE_ROLES,
     "Only an administrator or super moderator can delete any room.",
+    { privileged },
   );
 }
 
@@ -344,7 +350,7 @@ const getAdminRoom = onCall(
         id: document.id,
         userId: data.userId ?? document.id,
         displayName: data.displayName ?? data.name ?? "YoVoice user",
-        photoUrl: data.photoUrl ?? null,
+        photoUrl: null,
         role: data.role ?? "listener",
         isSpeaker: data.isSpeaker === true,
         isMuted: data.isMuted === true || data.serverMuted === true,
@@ -367,7 +373,9 @@ const setRoomModerationStatus = onCall(
     enforceAppCheck: false,
   },
   async (request) => {
-    const caller = await requireRoomQuarantineAccess(request);
+    const caller = await requireRoomQuarantineAccess(request, {
+      privileged: true,
+    });
 
     const roomId = normalizeText(request.data?.roomId, 128);
 
@@ -477,7 +485,7 @@ const forceEndRoom = onCall(
     enforceAppCheck: false,
   },
   async (request) => {
-    const caller = await requireRoomStaff(request);
+    const caller = await requireRoomStaff(request, { privileged: true });
 
     const roomId = normalizeText(request.data?.roomId, 128);
 
@@ -568,7 +576,7 @@ const removeRoomParticipant = onCall(
     enforceAppCheck: false,
   },
   async (request) => {
-    const caller = await requireRoomStaff(request);
+    const caller = await requireRoomStaff(request, { privileged: true });
 
     const roomId = normalizeText(request.data?.roomId, 128);
 
@@ -680,7 +688,7 @@ const setParticipantMute = onCall(
     enforceAppCheck: false,
   },
   async (request) => {
-    const caller = await requireRoomStaff(request);
+    const caller = await requireRoomStaff(request, { privileged: true });
 
     const roomId = normalizeText(request.data?.roomId, 128);
 
@@ -806,7 +814,9 @@ const adminDeleteRoom = onCall(
     secrets: LIVEKIT_SECRETS,
   },
   async (request) => {
-    const caller = await requireRoomDeleteAccess(request);
+    const caller = await requireRoomDeleteAccess(request, {
+      privileged: true,
+    });
 
     const roomId = normalizeText(request.data?.roomId, 128);
 

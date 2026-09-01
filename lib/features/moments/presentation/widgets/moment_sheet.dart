@@ -144,6 +144,7 @@ Future<void> showMomentSheet(
                           isOwn: isOwn,
                           canReport: canReport,
                           feedService: feed,
+                          momentService: moments,
                           offlineService: offlineService,
                           contentReportService: contentReportService,
                           playerFactory: playerFactory,
@@ -152,6 +153,7 @@ Future<void> showMomentSheet(
                               MaterialPageRoute<void>(
                                 builder: (_) => MomentCommentsScreen(
                                   moment: current,
+                                  momentService: moments,
                                   expiryClock: expiryClock,
                                   expiryTimerFactory: expiryTimerFactory,
                                 ),

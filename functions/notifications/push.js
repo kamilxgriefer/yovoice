@@ -168,8 +168,12 @@ const PUSH_TITLES = {
   liveStarted: (actor, label) =>
     label ? `${actor} is live: ${label}` : `${actor} is live now`,
   directMessage: (actor) => `${actor} sent you a message`,
-  directCall: (actor) => `${actor} is calling you`,
-  missedCall: (actor) => `Missed call from ${actor}`,
+  directCall: (actor, label) => label === "Incoming video call"
+    ? `${actor} is video calling you`
+    : `${actor} is calling you`,
+  missedCall: (actor, label) => label === "Missed video call"
+    ? `Missed video call from ${actor}`
+    : `Missed call from ${actor}`,
   mention: (actor, label) =>
     label ? `${actor} mentioned you in ${label}` : `${actor} mentioned you`,
   reply: (actor, label) =>
@@ -394,7 +398,12 @@ async function handleNotificationCreated(event, {
       });
     }
   } catch (error) {
-    logger.error("onNotificationCreated failed", error);
+    // Firebase Messaging errors may carry provider response details. Keep
+    // logs useful without persisting registration tokens or payload content.
+    logger.error("onNotificationCreated failed", {
+      errorName: error?.name ?? null,
+      errorCode: error?.code ?? null,
+    });
     if (claimed) {
       // Never throw after the claim. The network operation may have succeeded
       // even when its response or the following Firestore write was lost.

@@ -10,8 +10,10 @@ const { Timestamp } = require("firebase-admin/firestore");
 
 const { db } = require("../utils/firestore");
 const {
+  fanOutRoomLiveFollowers,
   handleDirectMessageCreated,
   handleRoomLiveChanged,
+  processRoomLiveFanoutOutbox,
   writeActivityNotification,
 } = require("../notifications/activity");
 const {
@@ -27,7 +29,181 @@ const { documentGeneration } = require("../notifications/social_source");
 const ACTOR = "activity-actor";
 const RECIPIENT = "activity-recipient";
 
+test("room-live fanout paginates >1k followers with bounded concurrency", async () => {
+  const ids = Array.from(
+    { length: 1005 },
+    (_, index) => `follower-${index.toString().padStart(4, "0")}`,
+  );
+  const cursors = [];
+  let active = 0;
+  let peak = 0;
+  const notified = [];
+  let cursor = null;
+  let complete = false;
+  const totals = { followers: 0, pages: 0, written: 0 };
+  while (!complete) {
+    const outcome = await fanOutRoomLiveFollowers({
+      afterId: cursor,
+      hostId: ACTOR,
+      pageSize: 200,
+      concurrency: 7,
+      pageLoader: async ({ afterId, pageSize }) => {
+        cursors.push(afterId);
+        const start = afterId === null ? 0 : ids.indexOf(afterId) + 1;
+        return ids.slice(start, start + pageSize);
+      },
+      notify: async (id) => {
+        active += 1;
+        peak = Math.max(peak, active);
+        await new Promise((resolve) => setImmediate(resolve));
+        active -= 1;
+        notified.push(id);
+        return "written";
+      },
+    });
+    cursor = outcome.afterId;
+    complete = outcome.complete;
+    totals.followers += outcome.followers;
+    totals.pages += outcome.pages;
+    totals.written += outcome.written;
+  }
+  assert.deepEqual(totals, { followers: 1005, pages: 6, written: 1005 });
+  assert.equal(new Set(notified).size, 1005);
+  assert.ok(peak <= 7);
+  assert.deepEqual(cursors, [
+    null,
+    "follower-0199",
+    "follower-0399",
+    "follower-0599",
+    "follower-0799",
+    "follower-0999",
+  ]);
+});
+
+test("room-live page retry resumes from the durable cursor, never page zero", async () => {
+  const ids = Array.from(
+    { length: 250 },
+    (_, index) => `resume-${index.toString().padStart(4, "0")}`,
+  );
+  const requestedCursors = [];
+  const pageLoader = async ({ afterId, pageSize }) => {
+    requestedCursors.push(afterId);
+    const start = afterId === null ? 0 : ids.indexOf(afterId) + 1;
+    return ids.slice(start, start + pageSize);
+  };
+  const first = await fanOutRoomLiveFollowers({
+    afterId: null,
+    hostId: ACTOR,
+    pageSize: 100,
+    pageLoader,
+    notify: async () => "written",
+  });
+  assert.equal(first.afterId, "resume-0099");
+  let crashed = false;
+  await assert.rejects(
+    fanOutRoomLiveFollowers({
+      afterId: first.afterId,
+      hostId: ACTOR,
+      pageSize: 100,
+      pageLoader,
+      notify: async (id) => {
+        if (!crashed && id === "resume-0150") {
+          crashed = true;
+          throw new Error("simulated timeout");
+        }
+        return "written";
+      },
+    }),
+    /simulated timeout/u,
+  );
+  const retried = await fanOutRoomLiveFollowers({
+    afterId: first.afterId,
+    hostId: ACTOR,
+    pageSize: 100,
+    pageLoader,
+    notify: async () => "skipped:replay",
+  });
+  assert.equal(retried.afterId, "resume-0199");
+  assert.deepEqual(requestedCursors, [
+    null,
+    "resume-0099",
+    "resume-0099",
+  ]);
+});
+
+test("room-live outbox persists its page cursor across a failed worker", async () => {
+  const reference = db.doc("roomLiveFanoutOutbox/durable-cursor-proof");
+  await reference.delete();
+  await reference.set({
+    schemaVersion: 1,
+    roomId: "durable-room",
+    hostId: ACTOR,
+    session: "durable-session-0001",
+    sourcePath: "rooms/durable-room",
+    sourceGeneration: "generation-1",
+    targetLabel: "Durable room",
+    afterId: null,
+    status: "pending",
+    followers: 0,
+    pages: 0,
+    written: 0,
+    createdAt: Timestamp.now(),
+    updatedAt: Timestamp.now(),
+  });
+  const ids = Array.from(
+    { length: 450 },
+    (_, index) => `durable-${index.toString().padStart(4, "0")}`,
+  );
+  const requestedCursors = [];
+  const pageLoader = async ({ afterId, pageSize }) => {
+    requestedCursors.push(afterId);
+    const start = afterId === null ? 0 : ids.indexOf(afterId) + 1;
+    return ids.slice(start, start + pageSize);
+  };
+
+  const first = await processRoomLiveFanoutOutbox(reference, {
+    pageLoader,
+    notify: async () => "written",
+  });
+  assert.equal(first.state, "pending");
+  assert.equal((await reference.get()).data().afterId, "durable-0199");
+
+  let crashed = false;
+  await assert.rejects(
+    processRoomLiveFanoutOutbox(reference, {
+      pageLoader,
+      notify: async (id) => {
+        if (!crashed && id === "durable-0250") {
+          crashed = true;
+          throw new Error("simulated worker timeout");
+        }
+        return "written";
+      },
+    }),
+    /simulated worker timeout/u,
+  );
+  const afterCrash = (await reference.get()).data();
+  assert.equal(afterCrash.afterId, "durable-0199");
+  assert.equal(afterCrash.followers, 200);
+  assert.equal(afterCrash.pages, 1);
+
+  const retry = await processRoomLiveFanoutOutbox(reference, {
+    pageLoader,
+    notify: async () => "skipped:replay",
+  });
+  assert.equal(retry.state, "pending");
+  assert.equal((await reference.get()).data().afterId, "durable-0399");
+  assert.deepEqual(requestedCursors, [
+    null,
+    "durable-0199",
+    "durable-0199",
+  ]);
+  await reference.delete();
+});
+
 async function reset() {
+  const fanoutOutbox = await db.collection("roomLiveFanoutOutbox").get();
+  await Promise.all(fanoutOutbox.docs.map((document) => document.ref.delete()));
   for (const uid of [ACTOR, RECIPIENT]) {
     const user = db.doc(`users/${uid}`);
     for (const collection of [
@@ -86,6 +262,38 @@ test("server-derived activity notifications", async (t) => {
     assert.equal(record.targetLabel, "Friday show");
     assert.equal(record.bellSuppressed, false);
     assert.ok(record.createdAt);
+  });
+
+  await t.test("a room-live trigger retry deduplicates one voice session", async () => {
+    await db.doc(`users/${ACTOR}/followers/${RECIPIENT}`).set({
+      followedAt: Timestamp.now(),
+    });
+    const room = db.doc("rooms/activity-room");
+    await room.set({
+      hostId: ACTOR,
+      isLive: true,
+      visibility: "public",
+      name: "Activity room",
+      voiceSessionId: "voice-session-retry-0001",
+    });
+    const after = await room.get();
+    const event = {
+      params: { roomId: "activity-room" },
+      data: {
+        before: { data: () => ({ isLive: false }) },
+        after,
+      },
+    };
+    await handleRoomLiveChanged(event);
+    await handleRoomLiveChanged(event);
+    const notificationId =
+      "live_activity-room_voice-session-retry-0001";
+    assert.equal((await db.doc(
+      `users/${RECIPIENT}/notifications/${notificationId}`,
+    ).get()).exists, true);
+    assert.equal((await db.collection(
+      `users/${RECIPIENT}/notifications`,
+    ).get()).size, 1);
   });
 
   await t.test("a retry cannot overwrite, unread or resurrect its record", async () => {
@@ -451,9 +659,10 @@ test("server-derived activity notifications", async (t) => {
     },
   );
 
-  await t.test("both activity triggers are part of the deploy export", () => {
+  await t.test("all activity triggers are part of the deploy export", () => {
     const deployed = require("../index");
     assert.equal(typeof deployed.onDirectMessageCreated, "function");
+    assert.equal(typeof deployed.onRoomLiveFanoutOutboxWritten, "function");
     assert.equal(typeof deployed.onRoomLiveChanged, "function");
   });
 });

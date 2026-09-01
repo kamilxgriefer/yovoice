@@ -11,6 +11,7 @@ import 'package:image_picker/image_picker.dart';
 
 import 'package:yovoice/features/premium/data/services/entitlement_service.dart';
 import 'package:yovoice/features/profile/data/models/user_profile.dart';
+import 'package:yovoice/features/profile/data/services/profile_media_service.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
 import 'package:yovoice/features/profile/presentation/screens/edit_profile_screen.dart';
 
@@ -31,6 +32,120 @@ import 'package:yovoice/features/profile/presentation/screens/edit_profile_scree
 /// prove: production-environment failures (deployed rules, App Check,
 /// network) — those need the live run documented in the session report.
 const String _uid = 'e2e-user';
+
+class _ProfileReservation {
+  const _ProfileReservation({
+    required this.kind,
+    required this.path,
+    required this.contentType,
+    required this.size,
+  });
+
+  final String kind;
+  final String path;
+  final String contentType;
+  final int size;
+}
+
+/// Deterministic callable boundary for the real private-media client flow.
+/// The production Functions implementation owns these transitions; this
+/// test double models only its contract while MockFirebaseStorage verifies
+/// the bytes and crop dimensions written by Flutter.
+class _FakeProfileMediaBackend {
+  _FakeProfileMediaBackend(this.storage);
+
+  final MockFirebaseStorage storage;
+  final Map<String, _ProfileReservation> reservations = {};
+  final Map<String, _ProfileReservation> active = {};
+  final Map<String, String> generations = {};
+
+  Future<Map<Object?, Object?>> call(
+    String callable,
+    Map<String, Object?> request,
+  ) async {
+    switch (callable) {
+      case 'reserveProfileMediaUpload':
+        final kind = request['kind']! as String;
+        final uploadId = request['uploadId']! as String;
+        final contentType = request['contentType']! as String;
+        final size = request['size']! as int;
+        final extension = contentType == 'image/jpeg'
+            ? 'jpg'
+            : contentType == 'image/png'
+            ? 'png'
+            : 'webp';
+        final reservation = _ProfileReservation(
+          kind: kind,
+          path: 'users/$_uid/profile/${kind}_$uploadId.$extension',
+          contentType: contentType,
+          size: size,
+        );
+        reservations[uploadId] = reservation;
+        return {
+          'schemaVersion': 1,
+          'uploadId': uploadId,
+          'storagePath': reservation.path,
+          'expiresAtMillis': DateTime.now()
+              .toUtc()
+              .add(const Duration(minutes: 5))
+              .millisecondsSinceEpoch,
+        };
+      case 'finalizeProfileMediaUpload':
+        final uploadId = request['uploadId']! as String;
+        final generation = request['objectGeneration']! as String;
+        final reservation = reservations[uploadId]!;
+        final previous = active[reservation.kind];
+        if (previous != null && previous.path != reservation.path) {
+          await storage.ref(previous.path).delete();
+        }
+        active[reservation.kind] = reservation;
+        generations[reservation.kind] = generation;
+        return {
+          'schemaVersion': 1,
+          'userId': _uid,
+          'kind': reservation.kind,
+          'generation': generation,
+          'contentType': reservation.contentType,
+          'size': reservation.size,
+        };
+      case 'getProfileMediaAccess':
+        final kind = request['kind']! as String;
+        final current = active[kind];
+        final generation = generations[kind];
+        return {
+          'schemaVersion': 1,
+          'available': current != null,
+          'expiresAtMillis': DateTime.now()
+              .toUtc()
+              .add(const Duration(seconds: 80))
+              .millisecondsSinceEpoch,
+          if (current != null) ...{
+            'url':
+                'https://storage.googleapis.com/yovoice-private/'
+                '${Uri.encodeComponent(current.path)}?generation=$generation',
+            'generation': generation,
+            'contentType': current.contentType,
+            'size': current.size,
+          },
+        };
+      default:
+        throw StateError('Unexpected callable: $callable');
+    }
+  }
+}
+
+// ignore: must_be_immutable
+class _RecordingPhotoUser extends MockUser {
+  _RecordingPhotoUser({required super.uid, required super.email});
+
+  final List<String?> photoUpdates = [];
+
+  @override
+  Future<void> updatePhotoURL(String? photoUrl) async {
+    photoUpdates.add(photoUrl);
+    photoURL = photoUrl;
+  }
+}
 
 /// Stands in for the OS file dialog only. Everything downstream of the
 /// picker is real production code.
@@ -121,12 +236,18 @@ UserProfile _seedProfile() => UserProfile(
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  setUp(ProfileService.resetCurrentProfileCache);
-  tearDown(ProfileService.resetCurrentProfileCache);
+  setUp(() {
+    ProfileService.resetCurrentProfileCache();
+    ProfileMediaService.clearAllMediaAccessCaches();
+  });
+  tearDown(() {
+    ProfileService.resetCurrentProfileCache();
+    ProfileMediaService.clearAllMediaAccessCaches();
+  });
 
   testWidgets(
-    'full save pipeline: pick avatar+banner, Save, Storage object exists, '
-    'Firestore fields point at it, shared profile stream emits new URLs',
+    'full save pipeline: pick avatar+banner, Save, private Storage objects '
+    'exist and the shared profile emits a media revision without bearer URLs',
     (tester) async {
       // runAsync: dart:ui image encoding uses real async work that never
       // completes inside the fake-async test zone (this exact call pattern
@@ -149,11 +270,11 @@ void main() {
       ))!;
 
       final db = FakeFirebaseFirestore();
-      final auth = MockFirebaseAuth(
-        signedIn: true,
-        mockUser: MockUser(uid: _uid, email: 'e2e@yovoice.app'),
-      );
+      final authUser = _RecordingPhotoUser(uid: _uid, email: 'e2e@yovoice.app');
+      final auth = MockFirebaseAuth(signedIn: true, mockUser: authUser);
       final storage = MockFirebaseStorage();
+      final mediaBackend = _FakeProfileMediaBackend(storage);
+      var nextGeneration = 0;
       final picker = _FakeImagePicker([
         XFile.fromData(avatarBytes, name: 'test-avatar.png'),
         XFile.fromData(bannerBytes, name: 'test-banner.png'),
@@ -171,6 +292,11 @@ void main() {
         auth: auth,
         storage: storage,
         picker: picker,
+        profileMediaService: ProfileMediaService(
+          auth: auth,
+          invoker: mediaBackend.call,
+        ),
+        profileMediaGenerationResolver: (_) async => '${++nextGeneration}',
       );
 
       // Pushed over a base route so Save's Navigator.pop has somewhere
@@ -307,31 +433,31 @@ void main() {
         reason: 'banner crop output must be the real 16:9 banner ratio',
       );
 
-      // --- PROOF 2: Firestore contains the URLs in the canonical fields.
+      // --- PROOF 2: no durable media bearer URL is copied to Firestore.
       final doc = (await tester.runAsync(
         () => db.collection('users').doc(_uid).get(),
       ))!;
       final data = doc.data()!;
-      expect(data['photoUrl'], isNotNull);
-      expect(data['photoUrl'], contains('avatar_'));
-      expect(data['bannerUrl'], isNotNull);
-      expect(data['bannerUrl'], contains('banner_'));
+      expect(data.containsKey('photoUrl'), isFalse);
+      expect(data.containsKey('bannerUrl'), isFalse);
+      expect(mediaBackend.active.keys, containsAll(['avatar', 'banner']));
       expect(
         data['statusMessage'],
         'Linkin Park · In the End · on repeat tonight',
       );
       expect(data['bio'], 'new e2e bio');
 
-      // --- PROOF 3: FirebaseAuth mirror was updated deliberately. ---
-      expect(auth.currentUser!.photoURL, data['photoUrl']);
+      // --- PROOF 3: FirebaseAuth is not used as an image bearer store. ---
+      expect(authUser.photoUpdates, [null]);
 
       // --- PROOF 4: the shared stream every consumer (Home, Profile,
-      // Settings, Creator Studio) watches emits the new values. ---
+      // Settings, Creator Studio) watches emits the non-sensitive revision. ---
       final emitted = (await tester.runAsync(
         () => service.watchCurrentProfile().first,
       ))!;
-      expect(emitted.photoUrl, data['photoUrl']);
-      expect(emitted.bannerUrl, data['bannerUrl']);
+      expect(emitted.photoUrl, isNull);
+      expect(emitted.bannerUrl, isNull);
+      expect(emitted.profileUpdatedAt, isNotNull);
       expect(
         emitted.statusMessage,
         'Linkin Park · In the End · on repeat tonight',
@@ -343,8 +469,8 @@ void main() {
   );
 
   testWidgets(
-    'replacing the avatar deletes the old Storage object and keeps exactly '
-    'one current file (cache correctness: new name, new URL)',
+    'replacing the avatar uses unique private grants and keeps one current '
+    'Storage object',
     (tester) async {
       final first = (await tester.runAsync(
         () => _makeTestImage(
@@ -369,6 +495,8 @@ void main() {
         mockUser: MockUser(uid: _uid, email: 'e2e@yovoice.app'),
       );
       final storage = MockFirebaseStorage();
+      final mediaBackend = _FakeProfileMediaBackend(storage);
+      var nextGeneration = 0;
       await db.collection('users').doc(_uid).set({'uid': _uid});
 
       final service = ProfileService(
@@ -376,6 +504,11 @@ void main() {
         auth: auth,
         storage: storage,
         picker: _FakeImagePicker([]),
+        profileMediaService: ProfileMediaService(
+          auth: auth,
+          invoker: mediaBackend.call,
+        ),
+        profileMediaGenerationResolver: (_) async => '${++nextGeneration}',
       );
 
       final firstUpload = (await tester.runAsync(
@@ -412,7 +545,7 @@ void main() {
       final doc = (await tester.runAsync(
         () => db.collection('users').doc(_uid).get(),
       ))!;
-      expect(doc.data()!['photoUrl'], secondUpload);
+      expect(doc.data()!.containsKey('photoUrl'), isFalse);
 
       final objects = (await tester.runAsync(
         () => storage.ref('users/$_uid/profile').listAll(),

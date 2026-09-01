@@ -13,6 +13,7 @@ import 'package:yovoice/features/notifications/data/services/notification_servic
 import 'package:yovoice/features/notifications/presentation/notification_router.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
+import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
 Color _notificationSuccess(BuildContext context) =>
     context.appPalette.successForeground;
@@ -631,7 +632,11 @@ class _FriendRequestCard extends StatelessWidget {
 
     final identity = Row(
       children: [
-        _Avatar(name: name, photoUrl: request.senderPhotoUrl ?? ''),
+        _Avatar(
+          userId: request.senderId,
+          name: name,
+          photoUrl: request.senderPhotoUrl ?? '',
+        ),
         const SizedBox(width: 12),
         Expanded(
           child: Column(
@@ -768,6 +773,7 @@ class _UnreadMessageCard extends StatelessWidget {
           child: Row(
             children: [
               _Avatar(
+                userId: otherUserId,
                 name: name,
                 photoUrl: conversation.photoUrlFor(otherUserId),
               ),
@@ -875,6 +881,7 @@ class _NotificationCard extends StatelessWidget {
     final avatar = Stack(
       children: [
         _Avatar(
+          userId: notification.actorId,
           name: notification.actorName,
           photoUrl: notification.actorPhotoUrl ?? '',
         ),
@@ -1047,16 +1054,19 @@ class _NotificationCard extends StatelessWidget {
 }
 
 class _Avatar extends StatelessWidget {
-  const _Avatar({required this.name, required this.photoUrl});
+  const _Avatar({
+    required this.userId,
+    required this.name,
+    required this.photoUrl,
+  });
 
+  final String userId;
   final String name;
   final String photoUrl;
 
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
-    final initial = name.trim().isEmpty ? '?' : name.trim()[0].toUpperCase();
-
     return Container(
       width: 50,
       height: 50,
@@ -1066,39 +1076,12 @@ class _Avatar extends StatelessWidget {
         gradient: LinearGradient(colors: [colors.primary, colors.secondary]),
       ),
       child: ClipOval(
-        child: Container(
-          color: colors.primary,
-          child: photoUrl.trim().isNotEmpty
-              ? Image.network(
-                  photoUrl,
-                  fit: BoxFit.cover,
-                  errorBuilder: (_, __, ___) => _AvatarInitial(
-                    initial: initial,
-                    foreground: colors.onPrimary,
-                  ),
-                )
-              : _AvatarInitial(initial: initial, foreground: colors.onPrimary),
-        ),
-      ),
-    );
-  }
-}
-
-class _AvatarInitial extends StatelessWidget {
-  const _AvatarInitial({required this.initial, required this.foreground});
-
-  final String initial;
-  final Color foreground;
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Text(
-        initial,
-        style: TextStyle(
-          color: foreground,
-          fontSize: 18,
-          fontWeight: FontWeight.w800,
+        child: UserAvatar(
+          radius: 23,
+          userId: userId,
+          photoUrl: photoUrl,
+          displayName: name,
+          backgroundColor: colors.primary,
         ),
       ),
     );

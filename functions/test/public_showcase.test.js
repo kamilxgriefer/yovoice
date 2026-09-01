@@ -118,14 +118,14 @@ describe("public showcase consent schemas", () => {
     assert.equal(validClubMarketingConsent(clubConsent("bad/id", "owner")), false);
   });
 
-  test("bounded scans fail loudly instead of publishing a partial rotation", () => {
+  test("bounded scans stay available when consent volume exceeds one page", () => {
     const documents = Array.from(
       { length: 201 },
       (_, index) => ({ id: `consent-${index}` }),
     );
-    assert.throws(
-      () => boundedConsentDocuments({ docs: documents }, 200, "Profile"),
-      /refusing a partial rotation/,
+    assert.deepEqual(
+      boundedConsentDocuments({ docs: documents }, 200, "Profile"),
+      documents.slice(0, 200),
     );
     assert.equal(
       boundedConsentDocuments({ docs: documents.slice(0, 200) }, 200, "Profile")

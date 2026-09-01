@@ -231,6 +231,7 @@ class _MomentCommentsScreenState extends State<MomentCommentsScreen> {
                             commentId: comments[index].id,
                             isOwn:
                                 authorId.isNotEmpty && authorId == _currentUid,
+                            momentService: _momentService,
                             contentReportService: widget.contentReportService,
                           );
                         },
@@ -306,6 +307,7 @@ class _CommentCard extends StatefulWidget {
     required this.momentId,
     required this.commentId,
     required this.isOwn,
+    required this.momentService,
     this.contentReportService,
   });
   final String name;
@@ -316,6 +318,7 @@ class _CommentCard extends StatefulWidget {
   final String momentId;
   final String commentId;
   final bool isOwn;
+  final MomentService? momentService;
   final ContentReportService? contentReportService;
 
   @override
@@ -346,14 +349,32 @@ class _CommentCardState extends State<_CommentCard> {
   Future<void> _toggle() async {
     final player = _player;
     if (player == null) return;
-    final url = widget.data['audioUrl'] as String?;
-    if (url == null || url.isEmpty) return;
-    if (_playing) {
-      await player.pause();
-    } else {
-      await player.play(UrlSource(url));
+    try {
+      if (_playing) {
+        await player.pause();
+      } else {
+        final moments = widget.momentService;
+        if (moments == null) return;
+        final uri = await moments.resolveMediaUri(
+          momentId: widget.momentId,
+          commentId: widget.commentId,
+        );
+        if (!mounted) return;
+        await player.play(UrlSource(uri.toString()));
+      }
+      if (mounted) setState(() => _playing = !_playing);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _playing = false);
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(
+            behavior: SnackBarBehavior.floating,
+            content: Text('This voice reply is unavailable right now.'),
+          ),
+        );
     }
-    if (mounted) setState(() => _playing = !_playing);
   }
 
   /// Reports this comment.

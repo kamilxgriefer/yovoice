@@ -2737,3 +2737,24 @@ permission flags).
   identity. Three deterministic cross-tab/poison regressions plus the
   disposed-form navigation test pin the boundary. No Rules relaxation or
   arbitrary overwrite path was added.
+- **Fixed in source 2026-08-31 — direct video capability and its privacy races
+  were missing from the audio-only friend-call path.** Direct calls now carry a
+  server-authored immutable media type, mint declared-source-scoped LiveKit
+  grants and render remote video plus a local mirrored preview with camera,
+  microphone, speaker and camera-flip controls. Screen-share labels are not
+  granted, but LiveKit source labels are client-declared and therefore not
+  capture-origin proof against a modified client. A session
+  epoch prevents a late token/permission result from reconnecting after
+  logout, account switch or hang-up; separate microphone and camera epochs
+  prevent late capture changes. Teardown retains and re-stops the original
+  local track objects after delayed SDK work, even when Room publications were
+  already removed. Active calls now expire and queue room teardown. The UI
+  deliberately makes no E2EE promise: LiveKit/WebRTC transport encryption is
+  present, app-level E2EE is not. Native two-device, background-call and
+  mixed-client-version testing remain release gates.
+- **Fixed in source 2026-08-31 — `?room=` links could join a live room without
+  an informed mic boundary.** Room IDs are now bounded to a strict safe
+  character set, the destination is fetched before a named confirmation is
+  shown, cancellation performs no join, and confirmed external entry connects
+  muted until the user explicitly unmutes. Regression coverage pins ID
+  validation and muted propagation through both Community and Podcast rooms.

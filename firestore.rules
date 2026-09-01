@@ -395,8 +395,8 @@ service cloud.firestore {
     function userCreateAllowed(userId) {
       return isOwner(userId) &&
           request.resource.data.keys().hasOnly([
-            'uid', 'email', 'displayName', 'username', 'photoUrl',
-            'bannerUrl', 'bio', 'country', 'nativeLanguage',
+            'uid', 'email', 'displayName', 'username',
+            'bio', 'country', 'nativeLanguage',
             'spokenLanguages', 'learningLanguages', 'website',
             'statusMessage', 'accountType', 'profileUpdatedAt',
             'createdAt', 'isOnline', 'lastSeen', 'presenceUpdatedAt',
@@ -510,6 +510,9 @@ service cloud.firestore {
           exists(memberPath) &&
           get(memberPath).data.userId == request.auth.uid &&
           get(memberPath).data.get('banned', false) != true &&
+          get(memberPath).data.get('role', 'guest') in [
+            'owner', 'coOwner', 'admin', 'moderator', 'member'
+          ] &&
           get(
             /databases/$(database)/documents/clubs/$(clubId)
           ).data.status == 'active' &&
@@ -593,6 +596,7 @@ service cloud.firestore {
             'isSpeaker', 'isHandRaised', 'joinedAt', 'updatedAt'
           ]) &&
           data.userId == request.auth.uid &&
+          data.get('photoUrl', null) == null &&
           displayNameMatchesCanonical(request.auth.uid, data.displayName) &&
           data.role == expectedRole &&
           data.isSpeaker == expectedSpeaker &&
@@ -611,6 +615,7 @@ service cloud.firestore {
             'isSpeaker', 'isHandRaised', 'admittedBy', 'updatedAt'
           ]) &&
           data.userId == participantId &&
+          data.get('photoUrl', null) == null &&
           displayNameMatchesCanonical(participantId, data.displayName) &&
           data.admittedBy == request.auth.uid &&
           data.role in ['listener', 'speaker'] &&
@@ -729,6 +734,7 @@ service cloud.firestore {
             'newcomerFriendly', 'showFormat', 'clubId', 'roomKind'
           ]) &&
           data.hostId == request.auth.uid &&
+          data.get('hostPhotoUrl', null) == null &&
           displayNameMatchesCanonical(request.auth.uid, data.hostName) &&
           data.name is string &&
           data.name.size() >= 3 &&
@@ -738,11 +744,11 @@ service cloud.firestore {
           data.visibility in ['public', 'private'] &&
           data.roomType in ['temporary', 'community'] &&
           data.status == 'active' &&
-          managedRoomImageUrlAllowed(
-            roomId,
-            data.get('imageUrl', null),
-            data
-          ) &&
+          // Room cover pointers are finalized by the server after validating
+          // exact Storage path, generation, media metadata and host state.
+          // A create therefore starts pointerless; clients cannot inject a
+          // durable Firebase token URL (or an arbitrary tracking URL).
+          data.get('imageUrl', null) == null &&
           data.participantCount is int &&
           data.participantCount >= 0 &&
           data.memberCount is int &&
@@ -759,6 +765,7 @@ service cloud.firestore {
             'userId', 'displayName', 'photoUrl', 'role', 'joinedAt'
           ]) &&
           data.userId == request.auth.uid &&
+          data.get('photoUrl', null) == null &&
           memberId == request.auth.uid &&
           displayNameMatchesCanonical(memberId, data.displayName) &&
           data.role == 'owner' &&
@@ -844,13 +851,7 @@ service cloud.firestore {
             request.auth.uid,
             request.resource.data.senderName
           ) &&
-          (
-            request.resource.data.get('senderPhotoUrl', null) == null ||
-            (
-              request.resource.data.senderPhotoUrl is string &&
-              request.resource.data.senderPhotoUrl.size() <= 2048
-            )
-          ) &&
+          request.resource.data.get('senderPhotoUrl', null) == null &&
           // Bounds match what RoomService.sendRoomMessage() already enforces
           // (trimmed, non-empty, <= 500), so this refuses nothing the app
           // sends — and that equivalence is exact rather than approximate,
@@ -877,6 +878,34 @@ service cloud.firestore {
           // was written to stop is not expressible here.
           request.resource.data.reactions is map &&
           request.resource.data.reactions.size() == 0;
+    }
+
+    // A room reaction map has five product-defined emoji keys. For each key,
+    // a participant may only add or remove their own uid, never attribute a
+    // reaction to somebody else. Lists are duplicate-free and bounded so a
+    // reaction toggle cannot inflate a message toward Firestore's 1 MiB cap.
+    function safeRoomReactionListChange(before, after, emoji) {
+      let oldList = before.get(emoji, []);
+      let newList = after.get(emoji, []);
+      return oldList is list && newList is list &&
+          newList.size() <= 500 &&
+          newList.toSet().size() == newList.size() &&
+          newList.toSet().difference(oldList.toSet())
+              .hasOnly([request.auth.uid]) &&
+          oldList.toSet().difference(newList.toSet())
+              .hasOnly([request.auth.uid]);
+    }
+
+    function roomReactionUpdateAllowed() {
+      let before = resource.data.get('reactions', {});
+      let after = request.resource.data.get('reactions', {});
+      return before is map && after is map &&
+          after.keys().hasOnly(['❤️', '😂', '👏', '🔥', '💯']) &&
+          safeRoomReactionListChange(before, after, '❤️') &&
+          safeRoomReactionListChange(before, after, '😂') &&
+          safeRoomReactionListChange(before, after, '👏') &&
+          safeRoomReactionListChange(before, after, '🔥') &&
+          safeRoomReactionListChange(before, after, '💯');
     }
 
     function roomParticipantJoinTransitionAllowed(roomId) {
@@ -1050,25 +1079,12 @@ service cloud.firestore {
     // deletionInProgress` RAISES on the 24-of-45 production rooms that
     // predate the field, and a rule that errors denies — so the bare form
     // would have locked legacy rooms out of voice altogether.
+    // Starting a live session creates global fanout work, so the transition
+    // is server-only. startRoomVoice validates the exact request, authority,
+    // communication restriction, idempotency, cooldown and global quota in
+    // one transaction before the Admin SDK flips isLive.
     function roomVoiceStartAllowed(roomId) {
-      let changed = request.resource.data.diff(resource.data).affectedKeys();
-      return resource.data.get('status', 'active') == 'active' &&
-          resource.data.get('deletionInProgress', false) != true &&
-          resource.data.get('isLive', false) == false &&
-          request.resource.data.isLive == true &&
-          request.resource.data.updatedAt == request.time &&
-          changed.hasOnly(['isLive', 'endedAt', 'updatedAt']) &&
-          (
-            (
-              resource.data.get('clubId', '') is string &&
-              resource.data.get('clubId', '').size() > 0 &&
-              isActiveClubRoomMember(roomId)
-            ) ||
-            (
-              resource.data.get('membersCanStartVoice', false) == true &&
-              isRoomMember(roomId)
-            )
-          );
+      return false;
     }
 
     function hostParticipantJoinTransitionAllowed(roomId) {
@@ -1102,21 +1118,24 @@ service cloud.firestore {
     function hostRoomUpdateAllowed(roomId) {
       let changed = request.resource.data.diff(resource.data).affectedKeys();
       let metadata = changed.hasOnly([
-        'name', 'description', 'category', 'visibility', 'language',
+        'name', 'description', 'category', 'language',
         'maxParticipants', 'approvalRequired', 'slowModeSeconds',
-        'autoMuteNewUsers', 'membersCanStartVoice', 'imageUrl',
+        'autoMuteNewUsers', 'membersCanStartVoice',
         'topic', 'audienceCanSpeak', 'handRaisingEnabled',
         'stageLimit', 'targetAudience', 'topicTags', 'roomGuidelines',
         'conversationStyle', 'newcomerFriendly', 'showFormat', 'updatedAt'
       ]) &&
-          (
-            !changed.hasAny(['imageUrl']) ||
-            managedRoomImageUrlAllowed(
-              roomId,
-              request.resource.data.get('imageUrl', null),
-              request.resource.data
-            )
-          ) &&
+          request.resource.data.visibility == resource.data.visibility &&
+          request.resource.data.get('imageUrl', null) ==
+            resource.data.get('imageUrl', null) &&
+          request.resource.data.get('coverStoragePath', null) ==
+            resource.data.get('coverStoragePath', null) &&
+          request.resource.data.get('coverGeneration', null) ==
+            resource.data.get('coverGeneration', null) &&
+          request.resource.data.get('coverContentType', null) ==
+            resource.data.get('coverContentType', null) &&
+          request.resource.data.get('coverSize', null) ==
+            resource.data.get('coverSize', null) &&
           request.resource.data.updatedAt == request.time &&
           resource.data.get('status', 'active') in
             ['active', 'closed', 'archived'] &&
@@ -1125,18 +1144,6 @@ service cloud.firestore {
             resource.data.get('roomKind', '') != 'clubLounge' ||
             request.resource.data.visibility == 'private'
           );
-      // The host's start branch reads `deletionInProgress` for the same
-      // reason roomVoiceStartAllowed() above does, and for one more: the
-      // metadata branch three lines up has always read it, so without this
-      // the SAME host was refused a rename on a deleting room and allowed to
-      // restart its voice session. Ownership is not a licence to reanimate a
-      // room whose teardown has already committed.
-      let start = resource.data.get('status', 'active') == 'active' &&
-          resource.data.get('deletionInProgress', false) != true &&
-          resource.data.get('isLive', false) == false &&
-          request.resource.data.isLive == true &&
-          request.resource.data.updatedAt == request.time &&
-          changed.hasOnly(['isLive', 'endedAt', 'updatedAt']);
       return isActiveAccount() &&
           request.resource.data.hostId == resource.data.hostId &&
           request.resource.data.get('clubId', '') ==
@@ -1146,7 +1153,7 @@ service cloud.firestore {
           request.resource.data.get('experience', 'community') ==
             resource.data.get('experience', 'community') &&
           (
-            metadata || start ||
+            metadata ||
             hostParticipantJoinTransitionAllowed(roomId)
           );
     }
@@ -1229,10 +1236,7 @@ service cloud.firestore {
             memberId,
             request.resource.data.displayName
           ) &&
-          (
-            request.resource.data.photoUrl == null ||
-            request.resource.data.photoUrl is string
-          ) &&
+          request.resource.data.photoUrl == null &&
           request.resource.data.isOnline is bool &&
           request.resource.data.joinedAt == request.time;
     }
@@ -1462,9 +1466,15 @@ service cloud.firestore {
     }
 
     // ---------------------------------------------------------------
-    // CLUB CHAT MESSAGE REMOVAL
+    // CLUB CHAT MESSAGE REMOVAL — LEGACY CLIENT MODERATOR PATH (DISABLED)
     //
-    // WHY THIS IS A RULE AND NOT A CALLABLE. ADR-056's test is whether
+    // Current authority is deliberately split: an author may retract only
+    // their own message through Rules; removing somebody else's message must
+    // use the server-only moderateClubMessage callable, which enforces rank,
+    // quotas and an atomic audit record. The historical design notes below
+    // document the retired direct-write path and are not live authorization.
+    //
+    // WHY THE RETIRED VERSION WAS A RULE AND NOT A CALLABLE. ADR-056's test is whether
     // the write COMPLETES the action it names. Room eviction failed that
     // test: deleting a roster row left the evicted account connected to
     // live audio, still writing chat through isRoomParticipant, and free
@@ -1484,7 +1494,7 @@ service cloud.firestore {
     // shipped in this file, and it is the product's first
     // client-reachable moderation write. Judge it on its own terms.
     //
-    // WHAT THIS SHIPS AS, PLAINLY:
+    // WHAT THE RETIRED VERSION SHIPPED AS, PLAINLY:
     //  - Removals are RECORDED NOWHERE. The only trigger bound to this
     //    collection is onAchievementClubMessageCreated, which is an
     //    onDocumentCreated. `deletedBy`/`deletedAt` are written so a
@@ -1554,6 +1564,7 @@ service cloud.firestore {
           request.resource.data.get('deletedBy', null) == null &&
           request.resource.data.get('deletedAt', null) == null &&
           request.resource.data.get('editedAt', null) == null &&
+          request.resource.data.get('senderPhotoUrl', null) == null &&
           // Content bounds match what ClubChatService.sendTextMessage
           // already enforces, so this refuses nothing the app sends.
           request.resource.data.get('content', null) is string &&
@@ -1644,7 +1655,7 @@ service cloud.firestore {
           clubMessageRemovalShapeAllowed();
     }
 
-    // A club moderator removes somebody else's message.
+    // Retired client-side path for removing somebody else's message.
     //
     // Attribution is MANDATORY here, because the actor is not derivable
     // from the document the way it is on the author branch — a removal
@@ -1690,17 +1701,12 @@ service cloud.firestore {
     // and isActiveAccount() stay explicit so no reader has to unfold a
     // helper to see them.
     function clubMessageModeratorRemovalAllowed(clubId) {
-      return resource.data.get('senderId', null) != request.auth.uid &&
-          isSignedIn() &&
-          isVerified() &&
-          isActiveAccount() &&
-          canCommunicate() &&
-          isClubMember(clubId) &&
-          clubRole(clubId) in ['owner', 'coOwner', 'admin', 'moderator'] &&
-          resource.data.get('senderId', null) != clubOwnerId(clubId) &&
-          clubMessageRemovalShapeAllowed() &&
-          request.resource.data.get('deletedBy', '') == request.auth.uid &&
-          request.resource.data.get('deletedAt', null) == request.time;
+      // Deliberately unreachable. Moderating somebody else's message now
+      // goes through moderateClubMessage, where rank, rate limiting and an
+      // atomic audit entry can be enforced. Kept as an explicit false guard
+      // during the compatibility transition so it cannot be accidentally
+      // re-enabled by broadening the update expression below.
+      return false;
     }
 
     function publicProfileSchemaIsExact(userId) {
@@ -1886,6 +1892,8 @@ service cloud.firestore {
       allow get: if isOwner(userId);
       allow list: if false;
       allow create, update: if isOwner(userId) &&
+          isVerified() &&
+          isActiveAccount() &&
           marketingConsentSchemaIsExact();
       // Withdrawal stays available even if the account has since been
       // restricted. Publication still independently rejects inactive users.
@@ -1896,6 +1904,8 @@ service cloud.firestore {
       allow get: if ownsMarketingClub(clubId);
       allow list: if false;
       allow create, update: if ownsMarketingClub(clubId) &&
+          isVerified() &&
+          isActiveAccount() &&
           clubMarketingConsentSchemaIsExact(clubId);
       allow delete: if ownsMarketingClub(clubId);
     }
@@ -2001,6 +2011,78 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // Short-lived raw friend-discovery candidate caches. These contain
+    // server-only graph ids and read-cost metadata; clients receive only the
+    // re-authorized callable response, never the cache document itself.
+    match /privateFriendDiscoveryCaches/{cacheId} {
+      allow read, write: if false;
+    }
+
+    // Canonical O(1) block/request counts. Functions migrate each legacy
+    // collection once and then serialize every increment/decrement here.
+    match /privateSocialGraphCapacities/{capacityId} {
+      allow read, write: if false;
+    }
+
+    // Server-owned capacity mutex for ordinary Room creation. It serializes
+    // concurrent devices for one host and stores only the bounded ids needed
+    // to prune rooms that later become inactive. Family/Club lounge creation
+    // uses its own deterministic ownership graph and never reads this guard.
+    match /privateRoomHostGuards/{userId} {
+      allow read, write: if false;
+    }
+
+    // Retry-safe, server-only admissions ensure the global creation budget
+    // commits before a bounded legacy-capacity read begins.
+    match /privateRoomCreationAttempts/{attemptId} {
+      allow read, write: if false;
+    }
+
+    // Server-owned per-host/per-room voice-start cooldown. A client cannot
+    // reset it to manufacture another follower-notification fanout.
+    match /privateRoomVoiceStartGuards/{guardId} {
+      allow read, write: if false;
+    }
+
+    // Retry-safe, actor-wide start admissions are charged before any
+    // caller-selected room id is read.
+    match /privateRoomVoiceStartAttempts/{attemptId} {
+      allow read, write: if false;
+    }
+
+    // Durable server cursor for bounded live-room follower fanout. Clients
+    // cannot forge, rewind or delete a page checkpoint.
+    match /roomLiveFanoutOutbox/{outboxId} {
+      allow read, write: if false;
+    }
+
+    // Server-owned profile-media capability state. Clients never need object
+    // paths, generations, reservations or receipts; all access is mediated by
+    // callable authorization and short-lived V4 grants.
+    match /profileMedia/{userId} {
+      allow read, write: if false;
+    }
+
+    match /profileMediaUploadReservations/{userId}/uploads/{uploadId} {
+      allow read, write: if false;
+    }
+
+    match /profileMediaFinalizations/{userId}/uploads/{uploadId} {
+      allow read, write: if false;
+    }
+
+    match /profileMediaUploadLeases/{leaseId} {
+      allow read, write: if false;
+    }
+
+    match /profileMediaUploadBudgets/{userId}/days/{day} {
+      allow read, write: if false;
+    }
+
+    match /profileMediaMaintenance/{document=**} {
+      allow read, write: if false;
+    }
+
     // Canonical friendship authority. Legacy users/*/friends mirrors remain
     // private list data, but only the Admin-SDK social callables can create
     // these exact guards after accepting a real pending request. No client
@@ -2035,8 +2117,8 @@ service cloud.firestore {
             isOwner(userId)
               ? (request.resource.data.diff(resource.data).affectedKeys()
                   .hasOnly([
-                    'uid', 'email', 'displayName', 'username', 'photoUrl',
-                    'bannerUrl', 'bio', 'country', 'nativeLanguage',
+                    'uid', 'email', 'displayName', 'username',
+                    'bio', 'country', 'nativeLanguage',
                     'spokenLanguages', 'learningLanguages', 'website',
                     'statusMessage',
                     'accountType', 'profileUpdatedAt',
@@ -2207,19 +2289,30 @@ service cloud.firestore {
         allow read: if isOwner(userId);
         allow create, update: if isOwner(userId) &&
             isActiveAccount() &&
-            request.resource.data.keys().hasOnly(['platform', 'updatedAt']) &&
+            request.resource.data.keys().hasOnly([
+              'platform',
+              'directVideoProtocol',
+              'updatedAt'
+            ]) &&
             request.resource.data.keys().hasAll(['platform', 'updatedAt']) &&
             request.resource.data.platform in ['ios', 'android', 'web', 'other'] &&
+            // Optional during the rolling migration so legacy app versions can
+            // still refresh push delivery. Only the new client writes the
+            // marker; the call backend requires it before starting video.
+            (!('directVideoProtocol' in request.resource.data) ||
+              (request.resource.data.directVideoProtocol is int &&
+                request.resource.data.directVideoProtocol == 1)) &&
             request.resource.data.updatedAt == request.time;
         allow delete: if isOwner(userId);
       }
     }
 
-    // Private 1:1 voice signaling. Every state transition (ring, accept,
-    // decline, cancel, end, expiry) is performed by a callable that rechecks
-    // active accounts, restrictions, bilateral blocks and canonical
-    // friendship. Participants may point-read their own call for realtime UI;
-    // no client may author or mutate a session.
+    // Private 1:1 voice signaling. Start, acceptance and token issuance
+    // recheck active accounts, restrictions, bilateral blocks and canonical
+    // friendship. Participant-bound decline/cancel/end deliberately remain
+    // available after those relationships change so nobody can be trapped in
+    // a call; expiry is server scheduled. Participants may point-read their
+    // own call for realtime UI; no client may author or mutate a session.
     match /directCalls/{callId} {
       allow get, list: if isSignedIn() &&
           request.auth.uid in resource.data.participantIds;
@@ -2956,7 +3049,8 @@ service cloud.firestore {
                 request.resource.data.diff(resource.data).affectedKeys()
                   .hasOnly([
                     'displayName', 'photoUrl', 'isOnline', 'updatedAt'
-                  ])
+                  ]) &&
+                request.resource.data.get('photoUrl', null) == null
               ) ||
               (
                 clubRole(clubId) in ['owner', 'coOwner'] &&
@@ -2998,15 +3092,10 @@ service cloud.firestore {
 
         match /messages/{messageId} {
           allow read: if isClubMember(clubId);
-          allow create: if isVerified() &&
-              canCommunicate() &&
-              isClubMember(clubId) &&
-              request.resource.data.senderId == request.auth.uid &&
-              request.resource.data.clubId == clubId &&
-              request.resource.data.channelId == channelId &&
-              // Without this a member can mint a forged, permanent
-              // moderation tombstone. See the block above canManageClub().
-              clubMessageCreateShapeAllowed();
+          // Message creation is server-only. sendClubMessage performs
+          // canonical membership/role/channel checks, dual rate limits and
+          // idempotency in the same transaction as the message write.
+          allow create: if false;
           // SOFT REMOVAL ONLY, on two complete and independent
           // predicates — deliberately not one predicate with a role
           // check folded into it. Neither reads as a "selector" that a
@@ -3015,8 +3104,7 @@ service cloud.firestore {
           // touch, the field allowlist and every pinned value for
           // itself. See the block above canManageClub() for why this is
           // a rule at all, and for the owner-message boundary.
-          allow update: if clubMessageAuthorRemovalAllowed(clubId) ||
-              clubMessageModeratorRemovalAllowed(clubId);
+          allow update: if clubMessageAuthorRemovalAllowed(clubId);
           // Hard delete stays with the Admin SDK, so the record always
           // shows that something was removed rather than losing it.
           allow delete: if false;
@@ -3073,6 +3161,7 @@ service cloud.firestore {
             request.resource.data.status in [
               'home', 'onMyWay', 'allGood', 'callMe'
             ] &&
+            request.resource.data.photoUrl == null &&
             request.resource.data.createdAt == request.time &&
             !('latitude' in request.resource.data) &&
             !('longitude' in request.resource.data) &&
@@ -3186,6 +3275,21 @@ service cloud.firestore {
       }
     }
 
+    // Room-cover upload leases and reservations are server-issued authority
+    // consumed by Storage Rules/finalization. Exposing either document would
+    // let a modified client discover or mutate another upload capability.
+    match /roomCoverUploadReservations/{reservationId} {
+      allow read, write: if false;
+    }
+
+    match /roomCoverUploadLeases/{userId} {
+      allow read, write: if false;
+    }
+
+    match /roomCoverUploadBudgets/{budgetId} {
+      allow read, write: if false;
+    }
+
     match /rooms/{roomId} {
       // Public discovery remains queryable only when the query itself pins
       // visibility=public. Private room metadata is available solely to the
@@ -3195,9 +3299,19 @@ service cloud.firestore {
           (resource.data.visibility == 'public' ||
            resource.data.hostId == request.auth.uid);
 
+      // Ordinary Community/Broadcast roots are created only by the
+      // createRoom callable, which enforces idempotency, a global host quota,
+      // an active-room cap and the canonical roster row in one transaction.
+      // Keep the deterministic Family bootstrap working: it creates the
+      // Family Club graph and its private lounge atomically under the exact
+      // family_{uid} authority checked by roomCreateAuthorityAllowed().
       allow create: if isVerified() &&
           isActiveAccount() &&
           request.resource.data.hostId == request.auth.uid &&
+          request.resource.data.get('roomKind', '') == 'clubLounge' &&
+          request.resource.data.get('clubId', '') ==
+            'family_' + request.auth.uid &&
+          roomId == 'club_lounge_family_' + request.auth.uid &&
           roomCreateShapeAllowed(roomId) &&
           roomMetadataValid(request.resource.data) &&
           roomTypeFieldsScoped(request.resource.data) &&
@@ -3438,6 +3552,7 @@ service cloud.firestore {
               resource.data.get('joinedAt', null) &&
             request.resource.data.diff(resource.data).affectedKeys()
               .hasOnly(['displayName', 'photoUrl', 'updatedAt']) &&
+            request.resource.data.get('photoUrl', null) == null &&
             displayNameMatchesCanonical(
               memberId,
               request.resource.data.displayName
@@ -3507,15 +3622,10 @@ service cloud.firestore {
         // character-for-character copy of roomActivityTouchAllowed()'s, which
         // depends on that. roomMessageCreateShapeAllowed() constrains the
         // DOCUMENT, not the caller, so the two have not drifted.
-        allow create: if isVerified() &&
-            canCommunicate() &&
-            request.resource.data.senderId == request.auth.uid &&
-            roomMessageCreateShapeAllowed() &&
-            (
-              (isRoomParticipant(roomId) && canAccessRoom(roomId)) ||
-              isRoomMember(roomId) ||
-              isRoomHost(roomId)
-            );
+        // Message creation is server-only. sendRoomMessage performs the
+        // final canonical access check, slow mode, dual rate limits,
+        // idempotency and room-recency update atomically.
+        allow create: if false;
         // Room chat reactions (Rooms 2.0): people in the room may toggle
         // the reactions map and NOTHING else — sender, text and
         // timestamps stay immutable. Deletes are host moderation only.
@@ -3528,26 +3638,10 @@ service cloud.firestore {
         // what a host who was banned mid-session still holds. Reacting is
         // not an exit, so gating it traps nobody.
         //
-        // WHAT THE KEY CAP DOES AND, MORE IMPORTANTLY, DOES NOT DO.
-        // hasOnly(['reactions']) restricts WHICH field moves, never whether
-        // the new value is true (SECURITY.md principle 2), and the create
-        // rule's `reactions == {}` pin would be worth little if the update
-        // rule left the same map unbounded — the 60,000-character body would
-        // simply move house. room_chat_sheet.dart offers exactly five quick
-        // reactions, so a 32-key ceiling leaves six times the headroom the
-        // client can use and refuses nothing it sends. The `|| not growing`
-        // arm exists so a document that is already over the cap can still be
-        // shrunk: a cap with no exit would trap toggleRoomMessageReaction()
-        // on exactly the messages that most need clearing.
-        //
-        // STATED PLAINLY: this bounds the number of EMOJI KEYS and nothing
-        // else. The uid list under each key is still caller-authored,
-        // unbounded, and can name people who never reacted — Firestore rules
-        // cannot iterate a map's values, so no rule can validate it. The
-        // document's real ceiling remains Firestore's own 1 MiB. Fixing it
-        // properly means moving reactions to a `reactions/{uid}` subcollection
-        // where each row is self-attributed and self-sized, which is a schema
-        // change with a migration, not a rules edit.
+        // roomReactionUpdateAllowed additionally binds every list delta to
+        // the caller's own uid and caps the product's exact five emoji lists.
+        // Legacy unknown keys may be removed by rewriting to a canonical map,
+        // but they can never survive in or be added to the new value.
         allow update: if isActiveAccount() &&
             (
               (isRoomParticipant(roomId) && canAccessRoom(roomId)) ||
@@ -3556,12 +3650,7 @@ service cloud.firestore {
             ) &&
             request.resource.data.diff(resource.data).affectedKeys()
                 .hasOnly(['reactions']) &&
-            request.resource.data.reactions is map &&
-            (
-              request.resource.data.reactions.size() <= 32 ||
-              request.resource.data.reactions.size() <=
-                  resource.data.get('reactions', {}).size()
-            );
+            roomReactionUpdateAllowed();
         allow delete: if isRoomHost(roomId);
       }
 
@@ -3594,6 +3683,7 @@ service cloud.firestore {
               request.auth.uid,
               request.resource.data.displayName
             ) &&
+            request.resource.data.photoUrl == null &&
             get(
               /databases/$(database)/documents/rooms/$(roomId)
             ).data.experience == 'broadcast' &&

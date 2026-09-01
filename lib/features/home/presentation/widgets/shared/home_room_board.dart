@@ -1169,6 +1169,7 @@ class _FacePile extends StatelessWidget {
                           ),
                           child: UserAvatar(
                             radius: radius - 1.6,
+                            userId: shown[i].userId,
                             photoUrl: shown[i].photoUrl,
                             displayName: shown[i].displayName,
                           ),

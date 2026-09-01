@@ -41,12 +41,23 @@ This boundary is live in production; see ADR-115 and the retained rollout /
 recovery record in
 [DEPLOYMENT.md](DEPLOYMENT.md#released-2026-08-27-voice-moment-local-review-custom-availability-and-authoritative-capacity).
 
-**ADR-117 server-authoritative exception — deployed 2026-08-27.** A private 1:1
+**ADR-117 server-authoritative audio exception — deployed 2026-08-27.** A private 1:1
 call spans a bilateral permission check, atomic busy locks, ringing delivery,
 short-lived LiveKit authority and retryable external room teardown. Rules
 cannot make those effects atomic, so Cloud Functions own every status
 transition and token; clients receive participant-scoped snapshots and render
-the call state. This is intentionally separate from the room lifecycle.
+the call state. **The following 2026-08-31 video extension is source-only and
+not deployed.** It adds immutable `mediaType`
+(`audio` or `video`) and LiveKit grants scoped to declared track sources:
+microphone for audio, microphone plus camera for video, and no screen-share
+label. This constrains the standard SDK but is not proof of capture origin; a
+modified client can mislabel a track, so exact media enforcement needs trusted
+track inspection. Camera starts only after an explicit video answer, is revoked
+locally on backgrounding, and is not auto-restored. The current LiveKit/WebRTC
+path is encrypted in transit; it is not application-level E2EE. This is
+intentionally separate from the room lifecycle. See ADR-135 and the current
+security audit. A broad rollout remains blocked on an authoritative recipient
+capability/minimum-build gate and physical two-device testing.
 
 ## Two repos, one Firebase project
 

@@ -129,6 +129,7 @@ class _LatestMessage extends StatelessWidget {
           child: ExcludeSemantics(
             child: UserAvatar(
               radius: compact ? 9 : 11,
+              userId: message.senderId,
               photoUrl: message.senderPhotoUrl,
               displayName: message.senderName,
             ),

@@ -16,22 +16,27 @@ function fakeRuntime(calls = []) {
     return { serviceName, methodName, uid: request.auth.uid };
   };
   const direct = {};
+  const community = {};
   direct.expireAbandonedAttachmentReservations = async () => ({ expired: [] });
   const moments = {
     processCleanupOutbox: async () => ({ completed: true }),
     expireAbandonedMomentDrafts: async () => ({ expired: [] }),
     expireAbandonedVoiceCommentDrafts: async () => ({ expired: [] }),
   };
+  const roomCovers = {
+    expireRoomCoverUploadReservations: async () => ({ expired: [] }),
+  };
+  const roomCreation = {};
   for (const [, [serviceName, methodName]] of Object.entries(
     USER_CALLABLE_METHODS,
   )) {
-    (serviceName === "direct" ? direct : moments)[methodName] = service(
-      serviceName,
-      methodName,
-    );
+    ({ community, direct, moments, roomCovers, roomCreation })[serviceName][
+      methodName
+    ] = service(serviceName, methodName);
   }
   return {
     clock: () => 1_900_000_000_000,
+    community,
     db: {},
     direct,
     directMigration: {
@@ -43,6 +48,13 @@ function fakeRuntime(calls = []) {
     momentMigration: {
       migrateMoment: async () => ({}),
       scanMomentMigration: async () => ({}),
+    },
+    roomCovers,
+    roomCreation,
+    roomCoverMigration: {
+      migrateRoomCover: async () => ({}),
+      scanRoomCoverMigration: async () => ({}),
+      scanRoomCoverObjectInventory: async () => ({}),
     },
     storage: { getMetadata: async () => ({}) },
     Timestamp: { fromMillis: (value) => ({ toMillis: () => value }) },
@@ -116,30 +128,44 @@ test("Stage B export map registers every callable, schedule and trigger", () => 
     "migrateDirectIntegrityConversation",
     "scanMomentIntegrityMigration",
     "migrateIntegrityMoment",
+    "scanRoomCoverIntegrityMigration",
+    "migrateIntegrityRoomCover",
+    "scanRoomCoverObjectInventory",
   ];
   const scheduleNames = [
     "processPendingContentCleanupSchedule",
     "expireAbandonedMomentDraftsSchedule",
     "expireAbandonedVoiceCommentDraftsSchedule",
     "expireAbandonedDirectMessageAttachmentsSchedule",
+    "expireRoomCoverUploadReservationsSchedule",
   ];
-  const triggerNames = [
-    "onContentCleanupOutboxCreated",
-  ];
+  const triggerNames = ["onContentCleanupOutboxCreated"];
   assert.deepEqual(
     Object.keys(functions).sort(),
     [...callableNames, ...scheduleNames, ...triggerNames].sort(),
   );
-  assert.equal(registrations.filter((item) => item.kind === "callable").length, 23);
-  assert.equal(registrations.filter((item) => item.kind === "schedule").length, 4);
-  assert.equal(registrations.filter((item) => item.kind === "created").length, 1);
+  assert.equal(
+    registrations.filter((item) => item.kind === "callable").length,
+    callableNames.length,
+  );
+  assert.equal(
+    registrations.filter((item) => item.kind === "schedule").length,
+    5,
+  );
+  assert.equal(
+    registrations.filter((item) => item.kind === "created").length,
+    1,
+  );
 
   for (const name of callableNames) {
     assert.equal(functions[name].options.region, REGION);
     assert.equal(functions[name].options.enforceAppCheck, false);
   }
   assert.equal(functions.migrateIntegrityMoment.options.maxInstances, 1);
-  assert.equal(functions.processPendingContentCleanupSchedule.options.maxInstances, 1);
+  assert.equal(
+    functions.processPendingContentCleanupSchedule.options.maxInstances,
+    1,
+  );
   assert.equal(
     functions.onContentCleanupOutboxCreated.options.document,
     "contentCleanupOutbox/{outboxId}",
@@ -160,7 +186,10 @@ test("App Check can be enabled at registration without changing handlers", () =>
   });
   assert.equal(functions.sendDirectMessage.options.enforceAppCheck, true);
   assert.equal(functions.sendDirectMessage.options.consumeAppCheckToken, true);
-  assert.equal(functions.scanDirectIntegrityMigration.options.enforceAppCheck, true);
+  assert.equal(
+    functions.scanDirectIntegrityMigration.options.enforceAppCheck,
+    true,
+  );
   assert.equal(
     functions.scanDirectIntegrityMigration.options.consumeAppCheckToken,
     true,

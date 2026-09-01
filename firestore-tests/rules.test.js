@@ -221,15 +221,15 @@ async function main() {
   );
 
   await check(
-    "ROOMS: create accepts only this room's managed current or legacy cover",
+    "SECURITY ROOMS: create is pointerless until server cover finalization",
     async () => {
       const db = host.firestore();
-      await assertSucceeds(
+      await assertFails(
         createHostRoomBatch(db, "managed-cover-create", {
           imageUrl: managedRoomCover("managed-cover-create"),
         }).commit(),
       );
-      await assertSucceeds(
+      await assertFails(
         createHostRoomBatch(db, "legacy-cover-create", {
           imageUrl: managedRoomCover(
             "legacy-cover-create",
@@ -237,14 +237,35 @@ async function main() {
           ).replace(".jpg", ".png"),
         }).commit(),
       );
+      await assertFails(
+        createHostRoomBatch(db, "pointerless-cover-create", {
+          imageUrl: null,
+        }).commit(),
+      );
     },
   );
 
   await check(
-    "host can create a room + their own host participant doc in one batch",
+    "SECURITY ROOMS: upload reservations, leases and byte budgets are server-only",
     async () => {
       const db = host.firestore();
-      await assertSucceeds(createHostRoomBatch(db, "room1").commit());
+      for (const path of [
+        `roomCoverUploadReservations/${"a".repeat(40)}`,
+        "roomCoverUploadLeases/host-uid",
+        "roomCoverUploadBudgets/host-uid_2030-01-01",
+      ]) {
+        const reference = doc(db, path);
+        await assertFails(getDoc(reference));
+        await assertFails(setDoc(reference, { ownerId: "host-uid" }));
+      }
+    },
+  );
+
+  await check(
+    "SECURITY: ordinary room creation is callable-only, even with canonical roster",
+    async () => {
+      const db = host.firestore();
+      await assertFails(createHostRoomBatch(db, "room1").commit());
     },
   );
 
@@ -511,13 +532,19 @@ async function main() {
           updateDoc(ref, { imageUrl, updatedAt: serverTimestamp() }),
         );
       }
-      await assertSucceeds(
+      await assertFails(
         updateDoc(ref, {
           imageUrl: managedRoomCover("room1"),
           updatedAt: serverTimestamp(),
         }),
       );
-      await assertSucceeds(
+      await assertFails(
+        updateDoc(ref, {
+          visibility: "private",
+          updatedAt: serverTimestamp(),
+        }),
+      );
+      await assertFails(
         createHostRoomBatch(host.firestore(), "[a-z]+").commit(),
       );
       await assertFails(
@@ -530,7 +557,7 @@ async function main() {
   );
 
   await check(
-    "ROOMS: Club Lounge accepts only its live Club's managed avatar",
+    "ROOMS: Club Lounge rejects denormalized cover URLs",
     async () => {
       const clubId = "cover-club";
       const roomId = `club_lounge_${clubId}`;
@@ -573,7 +600,7 @@ async function main() {
       });
 
       const ref = doc(host.firestore(), `rooms/${roomId}`);
-      await assertSucceeds(
+      await assertFails(
         updateDoc(ref, { imageUrl: avatarUrl, updatedAt: serverTimestamp() }),
       );
       for (const imageUrl of [
@@ -2449,14 +2476,14 @@ async function main() {
     },
   );
 
-  // --- DEFECT 1: moderation was impossible ---
+  // --- DEFECT 1: moderation is callable-only ---
 
   await check(
-    "DEFECT 1 CLUB CHAT: a club MODERATOR can soft-remove another member's message",
+    "SECURITY CLUB CHAT: a club MODERATOR cannot bypass the audited moderation callable",
     async () => {
       await seedClubMessage("mod-removes");
       const db = clubChatMod.firestore();
-      await assertSucceeds(
+      await assertFails(
         updateDoc(doc(db, `${CLUB_CHAT_MESSAGES}/mod-removes`), {
           content: "",
           isDeleted: true,
@@ -2465,28 +2492,20 @@ async function main() {
           deletedAt: serverTimestamp(),
         }),
       );
-      await testEnv.withSecurityRulesDisabled(async (ctx) => {
-        const after = await getDoc(
-          doc(ctx.firestore(), `${CLUB_CHAT_MESSAGES}/mod-removes`),
-        );
-        const data = after.data();
-        assert.equal(data.isDeleted, true);
-        assert.equal(data.content, "");
-        assert.equal(data.deletedBy, "ccm-mod");
-        // The tombstone keeps authorship, so moderation history stays
-        // meaningful and the audit trigger can name whose message it was.
-        assert.equal(data.senderId, "ccm-author");
-        assert.equal(data.senderName, "ccm-author");
-      });
+      const after = await getDoc(
+        doc(db, `${CLUB_CHAT_MESSAGES}/mod-removes`),
+      );
+      assert.equal(after.data().isDeleted, false);
+      assert.equal(after.data().content, "something abusive");
     },
   );
 
   await check(
-    "DEFECT 1 CLUB CHAT: the club OWNER can soft-remove a member's message in their own club",
+    "SECURITY CLUB CHAT: the club OWNER also uses the audited moderation callable",
     async () => {
       await seedClubMessage("owner-removes");
       const db = clubChatOwner.firestore();
-      await assertSucceeds(
+      await assertFails(
         updateDoc(doc(db, `${CLUB_CHAT_MESSAGES}/owner-removes`), {
           content: "",
           isDeleted: true,
@@ -2499,11 +2518,11 @@ async function main() {
   );
 
   await check(
-    "DEFECT 1 CLUB CHAT: a club ADMIN can soft-remove a member's message",
+    "SECURITY CLUB CHAT: a club ADMIN also uses the audited moderation callable",
     async () => {
       await seedClubMessage("admin-removes");
       const db = clubChatAdmin.firestore();
-      await assertSucceeds(
+      await assertFails(
         updateDoc(doc(db, `${CLUB_CHAT_MESSAGES}/admin-removes`), {
           content: "",
           isDeleted: true,
@@ -3124,22 +3143,23 @@ async function main() {
   );
 
   await check(
-    "regression CLUB CHAT: sending and reading messages still works — the production watchMessages() query, ordered and limited",
+    "regression CLUB CHAT: callable-created messages remain readable through the production ordered query",
     async () => {
       const db = clubChatAuthor.firestore();
-      await assertSucceeds(
+      await assertFails(
         addDoc(collection(db, CLUB_CHAT_MESSAGES), {
           clubId: "chatmod-club",
           channelId: "general",
           senderId: "ccm-author",
           senderName: "ccm-author",
           senderPhotoUrl: null,
-          content: "hello club",
+          content: "direct bypass",
           sentAt: Timestamp.now(),
           editedAt: null,
           isDeleted: false,
         }),
       );
+      await seedClubMessage("callable-created", { content: "hello club" });
       const snapshot = await assertSucceeds(
         getDocs(
           query(
@@ -3173,194 +3193,10 @@ async function main() {
     },
   );
 
-  // --- The club-chat discriminators, run rather than asserted ---
-  //
-  // Several cases above are DENIALS, and a denial proves nothing about
-  // WHICH clause caused it — the emulator refusing something unrelated
-  // looks identical, and three of them were already denied by the
-  // author-only rule this change replaces. So the alternative rule is
-  // compiled and RUN, and the behaviour the shipped clause prevents is
-  // observed directly. Each substitution asserts its snippet is present
-  // first, so a reformatted rule fails loudly instead of quietly running
-  // a control that proves nothing (ADR-056).
-  async function clubChatUnderVariantRules(projectId, edits, uid, run) {
-    const source = fs.readFileSync(RULES_PATH, "utf8");
-    let variant = source;
-    for (const [find, replaceWith] of edits) {
-      if (!variant.includes(find)) {
-        throw new Error(
-          `rule text drifted — variant snippet not found:\n${find}`,
-        );
-      }
-      variant = variant.replace(find, replaceWith);
-    }
-    if (variant === source) {
-      throw new Error(
-        "rule text drifted — the variant transform matched nothing",
-      );
-    }
-    const variantEnv = await initializeTestEnvironment({
-      projectId,
-      firestore: { rules: variant, host: EMULATOR_HOST, port: EMULATOR_PORT },
-    });
-    try {
-      await variantEnv.clearFirestore();
-      await variantEnv.withSecurityRulesDisabled(async (ctx) => {
-        const db = ctx.firestore();
-        await Promise.all([
-          setDoc(doc(db, "users/ccm-mod"), {
-            displayName: "ccm-mod",
-            banned: false,
-          }),
-          setDoc(doc(db, CLUB_CHAT), {
-            ownerId: "ccm-owner",
-            type: "community",
-            status: "active",
-            deletionInProgress: false,
-          }),
-          setDoc(doc(db, `${CLUB_CHAT}/members/ccm-mod`), {
-            userId: "ccm-mod",
-            role: "moderator",
-            banned: false,
-          }),
-          setDoc(doc(db, `${CLUB_CHAT}/channels/general`), { name: "general" }),
-          // Authored by the club OWNER, and carrying a deletedBy planted
-          // at create time — the two situations the shipped clauses stop.
-          setDoc(doc(db, `${CLUB_CHAT_MESSAGES}/variant`), {
-            clubId: "chatmod-club",
-            channelId: "general",
-            senderId: "ccm-owner",
-            senderName: "ccm-owner",
-            senderPhotoUrl: null,
-            content: "the owner's announcement",
-            sentAt: CHAT_SENT_AT,
-            editedAt: null,
-            isDeleted: false,
-            deletedBy: "ccm-admin",
-          }),
-        ]);
-      });
-      return await run(
-        variantEnv
-          .authenticatedContext(uid, { email_verified: true })
-          .firestore(),
-      );
-    } finally {
-      await variantEnv.cleanup();
-    }
-  }
-
-  const CLUB_OWNER_MESSAGE_GUARD =
-    "          resource.data.get('senderId', null) != clubOwnerId(clubId) &&\n";
-
-  const CLUB_MODERATOR_ATTRIBUTION =
-    "          clubMessageRemovalShapeAllowed() &&\n" +
-    "          request.resource.data.get('deletedBy', '') == request.auth.uid &&\n" +
-    "          request.resource.data.get('deletedAt', null) == request.time;";
-
-  const CLUB_ATTRIBUTION_POST_WRITE =
-    "          request.resource.data.get('deletedBy', request.auth.uid) ==\n" +
-    "              request.auth.uid &&\n";
-
-  await check(
-    "PROOF CLUB CHAT: without the owner-message clause a moderator CAN wipe the club owner's announcement — so that one line, not something incidental, is what holds the boundary",
-    async () => {
-      await assertSucceeds(
-        clubChatUnderVariantRules(
-          "demo-yovoice-clubchat-a",
-          [[CLUB_OWNER_MESSAGE_GUARD, ""]],
-          "ccm-mod",
-          (db) =>
-            updateDoc(doc(db, `${CLUB_CHAT_MESSAGES}/variant`), {
-              content: "",
-              isDeleted: true,
-              editedAt: serverTimestamp(),
-              deletedBy: "ccm-mod",
-              deletedAt: serverTimestamp(),
-            }),
-        ),
-      );
-    },
-  );
-
-  await check(
-    "PROOF CLUB CHAT: without the moderator attribution clause an ANONYMOUS moderator removal lands — a removal with nobody's name on it, which is what the audit trail exists to prevent",
-    async () => {
-      await assertSucceeds(
-        clubChatUnderVariantRules(
-          "demo-yovoice-clubchat-b",
-          [
-            [CLUB_OWNER_MESSAGE_GUARD, ""],
-            [
-              CLUB_MODERATOR_ATTRIBUTION,
-              "          clubMessageRemovalShapeAllowed();",
-            ],
-            // The planted deletedBy would otherwise deny for the OTHER
-            // reason; this case is about attribution being optional.
-            [CLUB_ATTRIBUTION_POST_WRITE, ""],
-          ],
-          "ccm-mod",
-          async (db) => {
-            await updateDoc(doc(db, `${CLUB_CHAT_MESSAGES}/variant`), {
-              content: "",
-              isDeleted: true,
-              editedAt: serverTimestamp(),
-            });
-            const after = await getDoc(
-              doc(db, `${CLUB_CHAT_MESSAGES}/variant`),
-            );
-            if (after.data().deletedAt !== undefined) {
-              throw new Error("expected the removal to carry no deletedAt");
-            }
-          },
-        ),
-      );
-    },
-  );
-
-  await check(
-    "PROOF CLUB CHAT: gating attribution on affectedKeys().hasAny() instead of the post-write document lets a PLANTED deletedBy through untouched — SECURITY.md principle 6, run rather than quoted",
-    async () => {
-      await assertSucceeds(
-        clubChatUnderVariantRules(
-          "demo-yovoice-clubchat-c",
-          [
-            [CLUB_OWNER_MESSAGE_GUARD, ""],
-            [
-              CLUB_ATTRIBUTION_POST_WRITE,
-              "          (!request.resource.data.diff(resource.data)\n" +
-                "              .affectedKeys().hasAny(['deletedBy']) ||\n" +
-                "            request.resource.data.deletedBy ==" +
-                " request.auth.uid) &&\n",
-            ],
-            [
-              CLUB_MODERATOR_ATTRIBUTION,
-              "          clubMessageRemovalShapeAllowed();",
-            ],
-          ],
-          "ccm-mod",
-          // The moderator never sends deletedBy, so hasAny() never fires
-          // and the message ends up attributed to ccm-admin, who did
-          // nothing. The shipped rule reads the post-write document and
-          // refuses this.
-          async (db) => {
-            await updateDoc(doc(db, `${CLUB_CHAT_MESSAGES}/variant`), {
-              content: "",
-              isDeleted: true,
-              editedAt: serverTimestamp(),
-            });
-            const after = await getDoc(
-              doc(db, `${CLUB_CHAT_MESSAGES}/variant`),
-            );
-            // The whole point: the tombstone now names somebody who did
-            // not perform the removal.
-            assert.equal(after.data().isDeleted, true);
-            assert.equal(after.data().deletedBy, "ccm-admin");
-          },
-        ),
-      );
-    },
-  );
+  // Moderator/owner/admin writes intentionally have no client-side
+  // discriminator anymore: the entire branch is `false`. The callable tests
+  // cover rank, attribution, audit records and idempotency; the rule tests
+  // above prove that no crafted update can bypass that server authority.
 
   await check(
     "SECURITY CLUB CHAT: a removal that omits editedAt is refused — every field a removal may touch is pinned, so none of them is the caller's choice",
@@ -5310,6 +5146,12 @@ async function main() {
           reactions: { "🔥": ["guest-uid"] },
         }),
       );
+      // A participant cannot attribute a reaction to another uid.
+      await assertFails(
+        updateDoc(doc(guest.firestore(), "rooms/chat-room/messages/m1"), {
+          reactions: { "🔥": ["guest-uid", "forged-victim-uid"] },
+        }),
+      );
       // …but not rewrite the message body.
       await assertFails(
         updateDoc(doc(guest.firestore(), "rooms/chat-room/messages/m1"), {
@@ -5413,7 +5255,7 @@ async function main() {
   const roomMessage = (overrides = {}) => ({
     senderId: "shape-sender",
     senderName: "  Shape Sender  ",
-    senderPhotoUrl: "https://cdn.example/shape-sender.png",
+    senderPhotoUrl: null,
     text: "hello room",
     createdAt: serverTimestamp(),
     reactions: {},
@@ -5421,15 +5263,13 @@ async function main() {
   });
 
   await check(
-    "regression ROOM CHAT: the exact sendRoomMessage() payload still lands, and the _touchRoomActivity() bump after it still passes",
+    "SECURITY ROOM CHAT: the exact legacy sendRoomMessage() payload is " +
+      "callable-only while an authorized recency-only bump remains bounded",
     async () => {
       const db = shapeSender.firestore();
-      await assertSucceeds(
+      await assertFails(
         addDoc(collection(db, "rooms/shape-room/messages"), roomMessage()),
       );
-      // Not batched in the client and deliberately not batched here: the
-      // message has already committed by the time this runs, so a rule that
-      // broke the pair would break it in exactly this order.
       await assertSucceeds(
         updateDoc(doc(db, "rooms/shape-room"), {
           updatedAt: serverTimestamp(),
@@ -5439,15 +5279,15 @@ async function main() {
   );
 
   await check(
-    "regression ROOM CHAT: senderPhotoUrl may be the Firebase Auth fallback URL, which is why it is bounded and not pinned to users/{uid}.photoUrl",
+    "SECURITY ROOM CHAT: a Firebase Auth fallback URL is not denormalized",
     async () => {
       const db = shapeNoPhoto.firestore();
-      await assertSucceeds(
+      await assertFails(
         addDoc(collection(db, "rooms/shape-room/messages"), {
           senderId: "shape-nophoto",
           senderName: "Shape NoPhoto",
-          // The account's profile carries no photoUrl at all; this value
-          // comes from the Auth mirror. A canonical pin would refuse it.
+          // The account's profile carries no canonical first-party media.
+          // Falling back to Auth would publish an external tracking URL.
           senderPhotoUrl: "https://lh3.googleusercontent.com/auth-mirror",
           text: "sent with an Auth avatar",
           createdAt: serverTimestamp(),
@@ -5458,9 +5298,9 @@ async function main() {
   );
 
   await check(
-    "regression ROOM CHAT: a null senderPhotoUrl is accepted (accounts with no avatar anywhere)",
+    "SECURITY ROOM CHAT: a null-avatar legacy payload is also callable-only",
     async () => {
-      await assertSucceeds(
+      await assertFails(
         addDoc(
           collection(shapeSender.firestore(), "rooms/shape-room/messages"),
           roomMessage({ senderPhotoUrl: null }),
@@ -5470,7 +5310,7 @@ async function main() {
   );
 
   await check(
-    "regression ROOM CHAT: the length cap is measured in the SAME unit as the client's — 500 UTF-16 units of astral emoji lands, 501 ASCII does not",
+    "SECURITY ROOM CHAT: even previously valid bounded text is callable-only",
     async () => {
       const db = shapeSender.firestore();
       // RoomService rejects `normalized.length > 500`, and Dart's
@@ -5479,13 +5319,13 @@ async function main() {
       // the app can send. A rules cap counting BYTES would refuse it; one
       // counting CODE POINTS would be slacker than the client. It counts
       // UTF-16 units, so the two boundaries coincide exactly.
-      await assertSucceeds(
+      await assertFails(
         addDoc(
           collection(db, "rooms/shape-room/messages"),
           roomMessage({ text: "\u{1F600}".repeat(250) }),
         ),
       );
-      await assertSucceeds(
+      await assertFails(
         addDoc(
           collection(db, "rooms/shape-room/messages"),
           roomMessage({ text: "a".repeat(500) }),
@@ -5657,7 +5497,7 @@ async function main() {
   );
 
   await check(
-    "SECURITY ROOM CHAT: the reactions map cannot be grown without limit on update, but an already-oversized one can still be shrunk",
+    "SECURITY ROOM CHAT: reaction deltas are self-attributed, canonical and bounded",
     async () => {
       const db = shapeSender.firestore();
       await testEnv.withSecurityRulesDisabled(async (ctx) => {
@@ -5696,8 +5536,19 @@ async function main() {
           ),
         }),
       );
-      // A document that is ALREADY over the cap must stay clearable, or the
-      // cap would trap the toggle on exactly the messages that need it most.
+      await assertFails(
+        updateDoc(target, {
+          reactions: { "🔥": ["shape-sender", "forged-victim"] },
+        }),
+      );
+      await assertFails(
+        updateDoc(target, {
+          reactions: { "🔥": ["shape-sender", "shape-sender"] },
+        }),
+      );
+
+      // A legacy document with unknown keys can be rewritten only to the
+      // canonical map. Retaining even one unknown key stays denied.
       await testEnv.withSecurityRulesDisabled(async (ctx) => {
         await setDoc(
           doc(ctx.firestore(), "rooms/shape-room/messages/reaction-target"),
@@ -5713,11 +5564,39 @@ async function main() {
           },
         );
       });
-      await assertSucceeds(
+      await assertFails(
         updateDoc(target, {
           reactions: Object.fromEntries(
             Array.from({ length: 89 }, (_, i) => [`e${i}`, ["someone"]]),
           ),
+        }),
+      );
+      await assertSucceeds(updateDoc(target, { reactions: {} }));
+
+      // Even a purely self-attributed delta cannot cross the per-emoji cap.
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await setDoc(
+          doc(ctx.firestore(), "rooms/shape-room/messages/reaction-target"),
+          {
+            senderId: "shape-victim",
+            senderName: "Shape Victim",
+            senderPhotoUrl: null,
+            text: "a real message",
+            createdAt: serverTimestamp(),
+            reactions: {
+              "🔥": Array.from({ length: 500 }, (_, i) => `member-${i}`),
+            },
+          },
+        );
+      });
+      await assertFails(
+        updateDoc(target, {
+          reactions: {
+            "🔥": [
+              ...Array.from({ length: 500 }, (_, i) => `member-${i}`),
+              "shape-sender",
+            ],
+          },
         }),
       );
     },
@@ -5957,7 +5836,8 @@ async function main() {
   // refused, so a test that fused them would prove the wrong thing.
   // ------------------------------------------------------------------
   await check(
-    "room recency: a non-host PARTICIPANT's message lands AND the room-root updatedAt bump that follows it is allowed",
+    "room recency: a PARTICIPANT's legacy direct message is denied while the " +
+      "strict recency-only root transition remains bounded",
     async () => {
       await testEnv.withSecurityRulesDisabled(async (ctx) => {
         const db = ctx.firestore();
@@ -6045,7 +5925,7 @@ async function main() {
       // which the seed above sets to the uid — because the message create
       // rule now pins it there, exactly as RoomService._identity() reads it.
       // A name invented by the test would prove the rule is NOT pinned.
-      await assertSucceeds(
+      await assertFails(
         addDoc(collection(db, "rooms/recency-room/messages"), {
           senderId: "recency-speaker",
           senderName: "recency-speaker",
@@ -6067,13 +5947,14 @@ async function main() {
   );
 
   await check(
-    "room recency: a Community roomMember with no participant row may bump too — watchMyCommunities() orders on the same field",
+    "room recency: a Community member's legacy direct message is denied while " +
+      "their recency-only transition remains bounded",
     async () => {
       const member = testEnv.authenticatedContext("recency-member", {
         email_verified: true,
       });
       const db = member.firestore();
-      await assertSucceeds(
+      await assertFails(
         addDoc(collection(db, "rooms/recency-room/messages"), {
           senderId: "recency-member",
           senderName: "recency-member",
@@ -6322,7 +6203,8 @@ async function main() {
   );
 
   await check(
-    "room recency ANTI-REGRESSION: the join, leave and voice-start transitions still work with the new disjunct evaluated ahead of them",
+    "room recency ANTI-REGRESSION: join and leave still work while voice start " +
+      "is callable-only",
     async () => {
       await testEnv.withSecurityRulesDisabled(async (ctx) => {
         const db = ctx.firestore();
@@ -6378,14 +6260,24 @@ async function main() {
         }),
       );
 
-      // startCommunityVoice(): membersCanStartVoice lets a member flip isLive.
-      await assertSucceeds(
+      // Direct start is closed. Seed the exact state the callable commits so
+      // the remaining join/leave compatibility assertions still exercise
+      // their real rules branches.
+      await assertFails(
         updateDoc(doc(db, "rooms/recency-transitions"), {
           isLive: true,
           updatedAt: serverTimestamp(),
           endedAt: deleteField(),
         }),
       );
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await updateDoc(doc(ctx.firestore(), "rooms/recency-transitions"), {
+          isLive: true,
+          voiceSessionId: "recency-session-0001",
+          voiceStartedAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      });
 
       // joinRoom(): participant row + participantCount, one transaction.
       await assertSucceeds(
@@ -6427,7 +6319,8 @@ async function main() {
   );
 
   await check(
-    "room recency ADR-007: the whole watchMyCommunities() path — a real collectionGroup('roomMembers') query, then the rooms/{id} hydration get, then the bump — still works end to end after a member chats",
+    "room recency ADR-007: watchMyCommunities() hydrates and reorders after the " +
+      "server callable commits chat activity",
     async () => {
       // ADR-007: the rule touched here is the rooms/{id} ROOT update, which no
       // collectionGroup query authorizes — the top-level
@@ -6475,7 +6368,7 @@ async function main() {
       // 3. Chat, then the bump — and the ordering field must actually move,
       //    which is the whole user-visible point. A permitted write that did
       //    not advance updatedAt would leave the feed just as stale.
-      await assertSucceeds(
+      await assertFails(
         addDoc(collection(db, "rooms/recency-room/messages"), {
           senderId: "recency-member",
           senderName: "recency-member",
@@ -6485,11 +6378,20 @@ async function main() {
           reactions: {},
         }),
       );
-      await assertSucceeds(
-        updateDoc(doc(db, "rooms/recency-room"), {
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        const serverDb = ctx.firestore();
+        await addDoc(collection(serverDb, "rooms/recency-room/messages"), {
+          senderId: "recency-member",
+          senderName: "recency-member",
+          senderPhotoUrl: null,
+          text: "does this room look active yet",
+          createdAt: serverTimestamp(),
+          reactions: {},
+        });
+        await updateDoc(doc(serverDb, "rooms/recency-room"), {
           updatedAt: serverTimestamp(),
-        }),
-      );
+        });
+      });
 
       const after = await assertSucceeds(
         getDoc(doc(db, "rooms/recency-room")),
@@ -9567,44 +9469,64 @@ async function main() {
     return batch.commit();
   }
 
-  await check("ROOM META: a community room persists its own metadata", () =>
-    assertSucceeds(
-      createMetadataRoom(
-        "meta-community",
-        {
-          targetAudience: "newcomers",
-          topicTags: ["flutter", "dart"],
-          roomGuidelines: "Be kind.",
-          conversationStyle: "supportive",
-          newcomerFriendly: true,
-        },
-      ),
-    ),
-  );
+  async function seedMetadataRoom(roomId, overrides = {}) {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      const db = ctx.firestore();
+      await setDoc(doc(db, `rooms/${roomId}`), roomDoc(overrides));
+      await setDoc(doc(db, `rooms/${roomId}/participants/host-uid`), {
+        userId: "host-uid",
+        displayName: "Host",
+        photoUrl: null,
+        role: "host",
+        isMuted: false,
+        isSpeaker: true,
+        isHandRaised: false,
+        joinedAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+    });
+  }
 
-  await check("ROOM META: a podcast room persists its own metadata", () =>
-    assertSucceeds(
-      createMetadataRoom(
-        "meta-podcast",
-        {
-          experience: "broadcast",
-          topic: "Episode one",
-          audienceCanSpeak: false,
-          handRaisingEnabled: true,
-          stageLimit: 8,
-          targetAudience: "professionals",
-          topicTags: ["interview"],
-          showFormat: "panel",
-        },
-      ),
-    ),
-  );
+  await check("ROOM META: a server-created community room persists metadata", async () => {
+    await seedMetadataRoom("meta-community", {
+      targetAudience: "newcomers",
+      topicTags: ["flutter", "dart"],
+      roomGuidelines: "Be kind.",
+      conversationStyle: "supportive",
+      newcomerFriendly: true,
+    });
+    const snapshot = await assertSucceeds(
+      getDoc(doc(host.firestore(), "rooms/meta-community")),
+    );
+    if (snapshot.data().targetAudience !== "newcomers") {
+      throw new Error("server-created Community metadata did not persist");
+    }
+  });
+
+  await check("ROOM META: a server-created podcast room persists metadata", async () => {
+    await seedMetadataRoom("meta-podcast", {
+      experience: "broadcast",
+      topic: "Episode one",
+      audienceCanSpeak: false,
+      handRaisingEnabled: true,
+      stageLimit: 8,
+      targetAudience: "professionals",
+      topicTags: ["interview"],
+      showFormat: "panel",
+    });
+    const snapshot = await assertSucceeds(
+      getDoc(doc(host.firestore(), "rooms/meta-podcast")),
+    );
+    if (snapshot.data().showFormat !== "panel") {
+      throw new Error("server-created Podcast metadata did not persist");
+    }
+  });
 
   await check(
     "ROOM META SECURITY: experience is immutable after atomic creation",
     async () => {
       const db = host.firestore();
-      await createMetadataRoom("meta-immutable-community");
+      await seedMetadataRoom("meta-immutable-community");
       await assertFails(
         updateDoc(doc(db, "rooms/meta-immutable-community"), {
           experience: "broadcast",
@@ -9617,7 +9539,7 @@ async function main() {
         }),
       );
 
-      await createMetadataRoom("meta-immutable-broadcast", {
+      await seedMetadataRoom("meta-immutable-broadcast", {
         experience: "broadcast",
         topic: "Original episode",
         audienceCanSpeak: false,
@@ -9642,9 +9564,17 @@ async function main() {
   );
 
   await check(
-    "ROOM META regression: a legacy room with NO metadata still writes",
-    () =>
-      assertSucceeds(createMetadataRoom("meta-legacy")),
+    "ROOM META regression: a server-created legacy room with NO optional " +
+      "metadata remains readable and editable",
+    async () => {
+      await seedMetadataRoom("meta-legacy");
+      await assertSucceeds(
+        updateDoc(doc(host.firestore(), "rooms/meta-legacy"), {
+          description: "Legacy edit",
+          updatedAt: serverTimestamp(),
+        }),
+      );
+    },
   );
 
   await check(
@@ -9985,7 +9915,7 @@ async function main() {
   );
 
   await check(
-    "MUTE: an active mute closes every public communication path",
+    "MUTE: room chat stays callable-only before and during an active mute",
     async () => {
       await testEnv.withSecurityRulesDisabled(async (ctx) => {
         await setDoc(doc(ctx.firestore(), "users/muted-uid"), {
@@ -10010,10 +9940,9 @@ async function main() {
           isHandRaised: false,
         });
       });
-      // Baseline FIRST on a current direct-write communication surface.
-      // Voice Moment engagement is callable-only, so Room chat is the
-      // correct place to exercise canCommunicate() in Security Rules.
-      await assertSucceeds(sendMuteRoomMessage(
+      // Room chat admission, including restriction expiry, is enforced in
+      // sendRoomMessage. Security Rules keep every legacy direct write closed.
+      await assertFails(sendMuteRoomMessage(
         mutedUser.firestore(),
         "mute-c0",
         "baseline",
@@ -10031,7 +9960,7 @@ async function main() {
       await assertFails(
         sendGlobal(mutedDb, "muted-uid", "Muted", "mute-legacy"),
       );
-      // Public Room chat is a current client-direct communication surface.
+      // Public Room chat is callable-only regardless of the restriction.
       await assertFails(sendMuteRoomMessage(mutedDb, "mute-c1", "muted"));
       // The holder can still READ their restriction and see the why.
       await assertSucceeds(
@@ -10045,7 +9974,7 @@ async function main() {
   );
 
   await check(
-    "MUTE: an EXPIRED mute stops applying with no sweeper involved",
+    "MUTE: an expired restriction does not reopen legacy direct room chat",
     async () => {
       await testEnv.withSecurityRulesDisabled(async (ctx) => {
         await setDoc(doc(ctx.firestore(), "restrictions/muted-uid"), {
@@ -10053,7 +9982,7 @@ async function main() {
           expiresAt: Timestamp.fromMillis(Date.now() - 60_000),
         });
       });
-      await assertSucceeds(sendMuteRoomMessage(
+      await assertFails(sendMuteRoomMessage(
         mutedUser.firestore(),
         "mute-c2",
         "expired restriction",
@@ -10062,8 +9991,7 @@ async function main() {
   );
 
   await check(
-    "MUTE ISOLATION: a personal block is not a staff mute — a blocked "
-      + "user still writes to public paths",
+    "MUTE ISOLATION: a personal block cannot reopen callable-only room chat",
     async () => {
       await testEnv.withSecurityRulesDisabled(async (ctx) => {
         await deleteDoc(doc(ctx.firestore(), "restrictions/muted-uid"));
@@ -10073,7 +10001,7 @@ async function main() {
           { blockedAt: serverTimestamp() },
         );
       });
-      await assertSucceeds(sendMuteRoomMessage(
+      await assertFails(sendMuteRoomMessage(
         mutedUser.firestore(),
         "mute-c3",
         "personal block is not a sanction",
@@ -10998,24 +10926,19 @@ async function main() {
   );
 
   await check(
-    "regression: a member can read the roster and start voice in their own " +
-      "private Community room",
+    "regression: a member can read their private Community roster while " +
+      "voice start remains callable-only",
     async () => {
       const db = communityMember.firestore();
       await assertSucceeds(
         getDocs(collection(db, "rooms/cr-private/roomMembers")),
       );
-      await assertSucceeds(
+      await assertFails(
         updateDoc(doc(db, "rooms/cr-private"), {
           isLive: true,
           updatedAt: serverTimestamp(),
         }),
       );
-      await testEnv.withSecurityRulesDisabled(async (ctx) => {
-        await updateDoc(doc(ctx.firestore(), "rooms/cr-private"), {
-          isLive: false,
-        });
-      });
     },
   );
 
@@ -11435,13 +11358,14 @@ async function main() {
       await assertSucceeds(
         updateDoc(doc(host, "rooms/rm-attack-room/roomMembers/rm-attacker-uid"), {
           displayName: "Canonical renamed host",
-          photoUrl: "https://example.invalid/a.jpg",
+          photoUrl: null,
           updatedAt: serverTimestamp(),
         }),
       );
       await assertSucceeds(
         updateDoc(doc(member, "rooms/cr-private/roomMembers/cr-member-uid"), {
           displayName: "Canonical renamed member",
+          photoUrl: null,
           updatedAt: serverTimestamp(),
         }),
       );
@@ -12145,8 +12069,8 @@ async function main() {
 
   // --- The same guard must not bite an ACTIVE host -------------------
   await check(
-    "regression: an ACTIVE host still edits metadata, flips visibility, " +
-      "starts voice and reacts in their own room",
+    "regression: an ACTIVE host still edits metadata and reacts while " +
+      "visibility changes and voice start remain callable-only",
     async () => {
       const db = activeHost.firestore();
       await assertSucceeds(
@@ -12158,13 +12082,13 @@ async function main() {
           updatedAt: serverTimestamp(),
         }),
       );
-      await assertSucceeds(
+      await assertFails(
         updateDoc(doc(db, "rooms/hb-active-room"), {
           visibility: "private",
           updatedAt: serverTimestamp(),
         }),
       );
-      await assertSucceeds(
+      await assertFails(
         updateDoc(doc(db, "rooms/hb-active-room"), {
           isLive: true,
           updatedAt: serverTimestamp(),
@@ -12314,25 +12238,20 @@ async function main() {
 
   await check(
     "regression ANTI-TRAP: a suspended host does not freeze their room for " +
-      "everyone else — a member still reads it, still starts voice where " +
-      "membersCanStartVoice allows it, and still leaves with the counter",
+      "everyone else — a member still reads it and leaves with the counter, " +
+      "while voice start remains callable-only",
     async () => {
       const db = hostRoomMember.firestore();
       await assertSucceeds(getDoc(doc(db, "rooms/hb-banned-room")));
       await assertSucceeds(
         getDocs(collection(db, "rooms/hb-banned-room/roomMembers")),
       );
-      await assertSucceeds(
+      await assertFails(
         updateDoc(doc(db, "rooms/hb-banned-room"), {
           isLive: true,
           updatedAt: serverTimestamp(),
         }),
       );
-      await testEnv.withSecurityRulesDisabled(async (ctx) => {
-        await updateDoc(doc(ctx.firestore(), "rooms/hb-banned-room"), {
-          isLive: false,
-        });
-      });
       const before = await memberCountOf("hb-banned-room");
       const batch = writeBatch(db);
       batch.delete(doc(db, "rooms/hb-banned-room/roomMembers/hb-member-uid"));
@@ -12430,6 +12349,10 @@ async function main() {
   // --- consent-backed public marketing showcase ---
 
   const showcaseStranger = testEnv.unauthenticatedContext();
+  const inactiveConsentUser = testEnv.authenticatedContext(
+    "inactive-consent-uid",
+    { email_verified: true },
+  );
   const accountConsentRef = doc(
     host.firestore(),
     "marketingConsents/host-uid",
@@ -12446,6 +12369,36 @@ async function main() {
       }));
       const snapshot = await assertSucceeds(getDoc(accountConsentRef));
       assert.equal(snapshot.data()?.showProfileOnWebsite, true);
+    },
+  );
+
+  await check(
+    "SECURITY MARKETING CONSENT: unverified and inactive accounts cannot opt in",
+    async () => {
+      await testEnv.withSecurityRulesDisabled(async (context) => {
+        await setDoc(doc(context.firestore(), "users/inactive-consent-uid"), {
+          displayName: "Inactive consent",
+          banned: false,
+          disabled: true,
+        });
+      });
+      const payload = {
+        schemaVersion: 1,
+        showProfileOnWebsite: true,
+        showActivityOnWebsite: false,
+        updatedAt: serverTimestamp(),
+      };
+      await assertFails(setDoc(
+        doc(unverified.firestore(), "marketingConsents/unverified-uid"),
+        payload,
+      ));
+      await assertFails(setDoc(
+        doc(
+          inactiveConsentUser.firestore(),
+          "marketingConsents/inactive-consent-uid",
+        ),
+        payload,
+      ));
     },
   );
 
@@ -13171,21 +13124,18 @@ async function main() {
   });
 
   await check(
-    "SECURITY VOICE START: a roomMembers holder cannot reanimate a LEGACY " +
-      "room whose deletion already committed — and the identical legacy " +
-      "document without the flag still starts, so the deny is the flag and " +
-      "not the missing roomType/experience/status",
+    "SECURITY VOICE START: a roomMembers holder cannot start either a " +
+      "deleting or healthy LEGACY room directly; both use the callable",
     async () => {
       const db = legacyRoomMember.firestore();
       await assertFails(startVoice(db, "vsd-deleting-member"));
-      await assertSucceeds(startVoice(db, "vsd-live-member"));
+      await assertFails(startVoice(db, "vsd-live-member"));
     },
   );
 
   await check(
-    "SECURITY VOICE START: the HOST cannot reanimate a deleting room " +
-      "either — hostRoomUpdateAllowed()'s start branch now reads the flag " +
-      "its own metadata branch has always read",
+    "SECURITY VOICE START: the HOST cannot directly start either a deleting " +
+      "or healthy room; the callable owns both paths",
     async () => {
       const db = legacyRoomHost.firestore();
       // The metadata branch already refused this; the two branches now agree
@@ -13197,115 +13147,17 @@ async function main() {
         }),
       );
       await assertFails(startVoice(db, "vsd-deleting-host"));
-      await assertSucceeds(startVoice(db, "vsd-live-host"));
+      await assertFails(startVoice(db, "vsd-live-host"));
     },
   );
 
   await check(
-    "SECURITY VOICE START: a Club lounge being torn down refuses its own " +
-      "active canonical member's start, and an identical lounge without " +
-      "the flag still starts",
+    "SECURITY VOICE START: a Club member cannot directly start either a " +
+      "deleting or healthy lounge; callable Club authorization is preserved",
     async () => {
       const db = legacyClubMember.firestore();
       await assertFails(startVoice(db, "vsd-deleting-lounge"));
-      await assertSucceeds(startVoice(db, "vsd-live-lounge"));
-    },
-  );
-
-  // The `.get(field, default)` form is not stylistic. This builds the bare
-  // read a reviewer might "simplify" it into and measures what it does to a
-  // room that predates the field — the majority shape in production.
-  async function legacyVoiceStartUnderVariantRules(projectId, edits) {
-    const source = fs.readFileSync(RULES_PATH, "utf8");
-    let variant = source;
-    for (const [find, replaceWith] of edits) {
-      if (!variant.includes(find)) {
-        throw new Error(
-          `rule text drifted — variant snippet not found:\n${find}`,
-        );
-      }
-      variant = variant.replace(find, replaceWith);
-    }
-    if (variant === source) {
-      throw new Error(
-        "rule text drifted — the variant transform matched nothing",
-      );
-    }
-    const variantEnv = await initializeTestEnvironment({
-      projectId,
-      firestore: { rules: variant, host: EMULATOR_HOST, port: EMULATOR_PORT },
-    });
-    try {
-      await variantEnv.clearFirestore();
-      await variantEnv.withSecurityRulesDisabled(async (ctx) => {
-        const db = ctx.firestore();
-        await setDoc(doc(db, "users/vsd-probe-uid"), {
-          displayName: "Legacy probe",
-          banned: false,
-        });
-        await setDoc(doc(db, "rooms/vsd-probe-room"), {
-          ...LEGACY_ROOM,
-          hostId: "vsd-probe-host",
-          membersCanStartVoice: true,
-        });
-        await setDoc(
-          doc(db, "rooms/vsd-probe-room/roomMembers/vsd-probe-uid"),
-          { userId: "vsd-probe-uid", role: "member" },
-        );
-      });
-      const db = variantEnv
-        .authenticatedContext("vsd-probe-uid", { email_verified: true })
-        .firestore();
-      return await startVoice(db, "vsd-probe-room");
-    } finally {
-      await variantEnv.cleanup();
-    }
-  }
-
-  const VOICE_START_GUARD =
-    "      return resource.data.get('status', 'active') == 'active' &&\n" +
-    "          resource.data.get('deletionInProgress', false) != true &&\n" +
-    "          resource.data.get('isLive', false) == false &&\n" +
-    "          request.resource.data.isLive == true &&\n" +
-    "          request.resource.data.updatedAt == request.time &&\n" +
-    "          changed.hasOnly(['isLive', 'endedAt', 'updatedAt']) &&";
-
-  await check(
-    "PROOF: the same legacy room starts voice under the shipped rules — " +
-      "the `.get(…, false)` default is what keeps a document that predates " +
-      "`deletionInProgress` startable",
-    async () => {
-      await assertSucceeds(
-        legacyVoiceStartUnderVariantRules("demo-yovoice-vsd-a", [
-          // A no-op edit elsewhere: this run must differ from the source only
-          // so the drift guard above stays honest, while the guard under test
-          // is left exactly as shipped.
-          [
-            "    function roomVoiceStartAllowed(roomId) {",
-            "    // variant marker (behaviourally identical)\n" +
-              "    function roomVoiceStartAllowed(roomId) {",
-          ],
-        ]),
-      );
-    },
-  );
-
-  await check(
-    "PROOF: rewriting that guard as a bare `resource.data.deletionInProgress " +
-      "!= true` DENIES the very same legacy room — the bare form fails on " +
-      "the majority production shape, which is why it is not used",
-    async () => {
-      await assertFails(
-        legacyVoiceStartUnderVariantRules("demo-yovoice-vsd-b", [
-          [
-            VOICE_START_GUARD,
-            VOICE_START_GUARD.replace(
-              "resource.data.get('deletionInProgress', false) != true",
-              "resource.data.deletionInProgress != true",
-            ),
-          ],
-        ]),
-      );
+      await assertFails(startVoice(db, "vsd-live-lounge"));
     },
   );
 
@@ -13490,6 +13342,44 @@ async function main() {
       await assertFails(
         getDoc(doc(calleeDb, "directCallStartLimits/call-callee-limit")),
       );
+    },
+  );
+
+  await check(
+    "SOCIAL DISCOVERY SECURITY: private caches, quotas and capacity ledgers " +
+      "are opaque and server-only",
+    async () => {
+      const db = host.firestore();
+      for (const path of [
+        "privateFriendDiscoveryCaches/cache-probe",
+        "privateSocialGraphCapacities/capacity-probe",
+        "privateRateLimits/discovery-probe",
+      ]) {
+        const reference = doc(db, path);
+        await assertFails(getDoc(reference));
+        await assertFails(setDoc(reference, { count: 0 }));
+        await assertFails(deleteDoc(reference));
+      }
+    },
+  );
+
+  await check(
+    "ROOM INTEGRITY SECURITY: creation, voice-start and live-fanout control " +
+      "documents are opaque and server-only",
+    async () => {
+      const db = host.firestore();
+      for (const path of [
+        "privateRoomHostGuards/host-uid",
+        "privateRoomCreationAttempts/create-probe",
+        "privateRoomVoiceStartGuards/start-guard-probe",
+        "privateRoomVoiceStartAttempts/start-attempt-probe",
+        "roomLiveFanoutOutbox/fanout-probe",
+      ]) {
+        const reference = doc(db, path);
+        await assertFails(getDoc(reference));
+        await assertFails(setDoc(reference, { count: 0 }));
+        await assertFails(deleteDoc(reference));
+      }
     },
   );
 

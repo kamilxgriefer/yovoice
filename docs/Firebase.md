@@ -310,16 +310,27 @@ size/content-type limited:
 
 | Path | Purpose | Read |
 |---|---|---|
-| `users/{userId}/profile/{fileName}` | Profile photos | Public |
-| `room_images/{roomId}/{uid}_{ts}.ext` | Room cover images | Public |
+| `users/{userId}/profile/{kind}_{uploadId}.ext` | Profile photos | Direct reads denied; server-authorized, generation-bound V4 grant only |
+| `room_images/{roomId}/{uid}_{revision}.ext` | Room cover images | Direct get/list denied; server-authorized, generation-bound V4 grant only |
 | `clubs/{userId}/{clubId}/{kind}_{ts}.ext` | Club images | Public |
 | `voice_moments/{userId}/{fileName}` | Voice Moment root audio | Draft/expired/deleting: author through the authenticated SDK; published: signed-in users |
 | `voice_replies/{userId}/{momentId}/{fileName}` | Voice Moment reply audio | Signed-in only |
 | `message_attachments/{ownerId}/{conversationId}/{messageId}.{ext}` | Private DM photos and voice messages | Active conversation participants only |
 
-Uploads tied to content shown to other users require `email_verified`
-(profile photos are deliberately exempt — setting one during onboarding,
-before verification completes, is normal).
+Profile and room-cover uploads require a verified account plus an exact,
+server-issued reservation binding owner, object path, MIME type, byte length
+and a ten-minute expiry. Only one active lease per media kind is permitted and
+daily byte budgets bound abandoned uploads. Finalization atomically rechecks
+the active account, restriction state, authority and previous pointer before
+publishing the canonical path and object generation. Expired reservations are
+deleted by scheduled cleanup.
+
+`getRoomCoverMediaAccess` rechecks current room visibility, account status,
+both block directions and private membership/admission, then issues an HTTPS
+`storage.googleapis.com` V4 URL for at most 90 seconds. Public covers use the
+same callable because a public Storage prefix would otherwise expose pending,
+superseded and orphaned objects. Durable Firebase download tokens are revoked
+by the room migration and paginated object-inventory pass before rollout.
 
 ADR-115's deployed root-audio contract accepts creation only for a
 server-reserved schema-v2 `uploading` draft with a lowercase 20-hex Moment id,

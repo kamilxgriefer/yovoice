@@ -66,6 +66,7 @@ class _AppLanguageScreenState extends State<AppLanguageScreen> {
                 code: 'A',
                 selected: selected == AppLanguagePreference.system,
                 saving: _saving == AppLanguagePreference.system,
+                disabled: _saving != null,
                 onTap: () => _select(AppLanguagePreference.system),
               ),
               const SizedBox(height: 12),
@@ -75,6 +76,7 @@ class _AppLanguageScreenState extends State<AppLanguageScreen> {
                 code: 'EN',
                 selected: selected == AppLanguagePreference.english,
                 saving: _saving == AppLanguagePreference.english,
+                disabled: _saving != null,
                 onTap: () => _select(AppLanguagePreference.english),
               ),
               const SizedBox(height: 12),
@@ -84,6 +86,7 @@ class _AppLanguageScreenState extends State<AppLanguageScreen> {
                 code: 'PL',
                 selected: selected == AppLanguagePreference.polish,
                 saving: _saving == AppLanguagePreference.polish,
+                disabled: _saving != null,
                 onTap: () => _select(AppLanguagePreference.polish),
               ),
               const SizedBox(height: 20),
@@ -142,6 +145,7 @@ class _LanguageChoice extends StatelessWidget {
     required this.code,
     required this.selected,
     required this.saving,
+    required this.disabled,
     required this.onTap,
   });
 
@@ -150,14 +154,22 @@ class _LanguageChoice extends StatelessWidget {
   final String code;
   final bool selected;
   final bool saving;
+  final bool disabled;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
+    final copy = AppLocalizations.of(context);
     return Semantics(
       selected: selected,
       button: true,
+      enabled: !disabled,
+      label: '$title. $subtitle',
+      value: saving ? copy.text('Saving', 'Zapisywanie') : null,
+      liveRegion: saving,
+      onTap: disabled ? null : onTap,
+      excludeSemantics: true,
       child: Material(
         color: selected ? colors.primary.withValues(alpha: .1) : colors.surface,
         shape: RoundedRectangleBorder(
@@ -169,7 +181,7 @@ class _LanguageChoice extends StatelessWidget {
         ),
         clipBehavior: Clip.antiAlias,
         child: InkWell(
-          onTap: saving ? null : onTap,
+          onTap: disabled ? null : onTap,
           child: ConstrainedBox(
             constraints: const BoxConstraints(minHeight: 80),
             child: Padding(

@@ -454,7 +454,9 @@ class _StaffRolesSectionState extends State<StaffRolesSection> {
                           else
                             for (final change in _changes!)
                               Padding(
-                                padding: const EdgeInsets.symmetric(vertical: 3),
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 3,
+                                ),
                                 child: Row(
                                   children: [
                                     const Icon(
@@ -497,11 +499,7 @@ class _StaffRolesSectionState extends State<StaffRolesSection> {
 /// Audit Log — the owner's full browser over adminAuditLogs, filterable
 /// by action and paginated on the server's cursor.
 class StaffAuditSection extends StatefulWidget {
-  const StaffAuditSection({
-    this.initialAction,
-    this.auditService,
-    super.key,
-  });
+  const StaffAuditSection({this.initialAction, this.auditService, super.key});
 
   final String? initialAction;
   final StaffAuditService? auditService;
@@ -621,9 +619,7 @@ class _StaffAuditSectionState extends State<StaffAuditSection> {
                     if (index >= _entries.length) {
                       return Center(
                         child: OutlinedButton(
-                          onPressed: _loading
-                              ? null
-                              : () => _load(more: true),
+                          onPressed: _loading ? null : () => _load(more: true),
                           style: OutlinedButton.styleFrom(
                             foregroundColor: Colors.white,
                             side: const BorderSide(

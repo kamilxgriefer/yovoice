@@ -60,7 +60,8 @@ class StaffAuditService {
   final FirebaseFunctions? _functionsOverride;
 
   FirebaseFunctions get _functions =>
-      _functionsOverride ?? FirebaseFunctions.instanceFor(region: 'europe-west1');
+      _functionsOverride ??
+      FirebaseFunctions.instanceFor(region: 'europe-west1');
 
   Future<StaffAuditPage> list({
     String? action,

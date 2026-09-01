@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/features/profile/data/services/profile_media_service.dart';
 import 'package:yovoice/shared/widgets/profile/premium_avatar_frame.dart';
+import 'package:yovoice/shared/widgets/profile/profile_media_image.dart';
 
 /// The one way to render a user's avatar.
 ///
@@ -12,7 +14,10 @@ import 'package:yovoice/shared/widgets/profile/premium_avatar_frame.dart';
 class UserAvatar extends StatelessWidget {
   const UserAvatar({
     required this.radius,
+    this.userId,
     this.photoUrl,
+    this.mediaRevision,
+    this.mediaService,
     this.displayName,
     this.backgroundColor = const Color(0xFF64258E),
     this.fallbackIcon,
@@ -21,7 +26,16 @@ class UserAvatar extends StatelessWidget {
   });
 
   final double radius;
+
+  /// Canonical identity used by the viewer-authorized media resolver.
+  final String? userId;
+
+  /// Legacy display hint retained for source compatibility. It is never
+  /// dereferenced: durable/external URLs copied into denormalized snapshots
+  /// must not bypass live profile visibility or block checks.
   final String? photoUrl;
+  final Object? mediaRevision;
+  final ProfileMediaService? mediaService;
   final String? displayName;
   final Color backgroundColor;
 
@@ -41,7 +55,6 @@ class UserAvatar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final url = photoUrl?.trim();
     final diameter = radius * 2;
 
     Widget fallback() {
@@ -64,34 +77,14 @@ class UserAvatar extends StatelessWidget {
         height: diameter,
         color: backgroundColor,
         alignment: Alignment.center,
-        child: url == null || url.isEmpty
-            ? fallback()
-            : SizedBox.expand(
-                child: Image.network(
-                  url,
-                  fit: BoxFit.cover,
-                  frameBuilder:
-                      (context, child, frame, wasSynchronouslyLoaded) {
-                        if (wasSynchronouslyLoaded) return child;
-                        return AnimatedOpacity(
-                          opacity: frame == null ? 0 : 1,
-                          duration: const Duration(milliseconds: 180),
-                          child: child,
-                        );
-                      },
-                  errorBuilder: (context, error, stackTrace) {
-                    // The graceful fallback must never be a silent one:
-                    // production debugging showed Firestore holding a valid
-                    // URL while the avatar "wasn't there" — the load was
-                    // failing and this branch hid it. Path only, no token.
-                    debugPrint(
-                      '[IMAGE] avatar load failed '
-                      '${Uri.tryParse(url)?.path}: $error',
-                    );
-                    return fallback();
-                  },
-                ),
-              ),
+        child: ProfileMediaImage(
+          userId: userId,
+          kind: ProfileMediaKind.avatar,
+          fit: BoxFit.cover,
+          fallback: fallback(),
+          service: mediaService,
+          revision: mediaRevision,
+        ),
       ),
     );
 

@@ -39,6 +39,7 @@ class CommunityVoiceRoomScreen extends StatefulWidget {
     this.muteCoordinator,
     this.clubService,
     this.playInitialJoinSound = true,
+    this.startMuted = false,
     super.key,
   });
 
@@ -61,6 +62,9 @@ class CommunityVoiceRoomScreen extends StatefulWidget {
   /// Room creation already has its own confirmation; all other entry points
   /// keep the normal connected cue.
   final bool playInitialJoinSound;
+
+  /// External/deep-link entry may connect as a listener until a mic gesture.
+  final bool startMuted;
 
   @override
   State<CommunityVoiceRoomScreen> createState() =>
@@ -298,6 +302,7 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
           roomName: widget.room.name,
           participantName: name,
           playSound: playSound,
+          startMuted: widget.startMuted,
         );
       }
     } catch (_) {
@@ -946,6 +951,7 @@ class _ParticipantsSheetState extends State<_ParticipantsSheet> {
                         ),
                         leading: UserAvatar(
                           radius: 23,
+                          userId: participant.userId,
                           photoUrl: participant.photoUrl,
                           displayName: participant.displayName,
                           backgroundColor: const Color(0xFF7135A5),

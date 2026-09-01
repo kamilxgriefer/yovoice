@@ -13,6 +13,7 @@ class VoiceMoment {
     required this.commentCount,
     required this.isPublished,
     required this.createdAt,
+    this.mediaGeneration,
     this.expiresAt,
     this.schemaVersion = 0,
     this.status = 'legacy',
@@ -30,6 +31,7 @@ class VoiceMoment {
   final int commentCount;
   final bool isPublished;
   final DateTime? createdAt;
+  final String? mediaGeneration;
 
   /// When this Moment stops being publicly alive. Written by
   /// `finalizeMomentDraft` as `createdAt + availabilityHours` (24 by
@@ -51,6 +53,13 @@ class VoiceMoment {
 
   bool get isCanonicalPublished =>
       schemaVersion == 2 && status == 'published' && isPublished && !isDeleted;
+
+  /// A server-verifiable object exists. [audioUrl] is accepted only on
+  /// in-memory legacy/test fixtures; Firestore parsing never retains the
+  /// durable bearer URL itself.
+  bool get hasMediaReference =>
+      (mediaGeneration?.trim().isNotEmpty ?? false) ||
+      (audioUrl?.trim().isNotEmpty ?? false);
 
   /// True when this Moment never expires: the author chose
   /// "Keep until deleted", so `finalizeMomentDraft` wrote no `expiresAt`.
@@ -85,9 +94,17 @@ class VoiceMoment {
       id: document.id,
       authorId: data['authorId'] as String? ?? '',
       authorName: data['authorName'] as String? ?? 'YO Voice user',
-      authorPhotoUrl: data['authorPhotoUrl'] as String?,
+      authorPhotoUrl: null,
       caption: data['caption'] as String? ?? '',
-      audioUrl: data['audioUrl'] as String?,
+      // Never hydrate a Firebase download-token URL into application state.
+      // Legacy documents still count as media-bearing so the secure callable
+      // can migrate/authorize them by id, but the token is discarded here.
+      audioUrl: null,
+      mediaGeneration:
+          (data['mediaGeneration'] as String?) ??
+          (((data['audioUrl'] as String?)?.trim().isNotEmpty ?? false)
+              ? 'legacy'
+              : null),
       durationSeconds: (data['durationSeconds'] as num?)?.toInt() ?? 0,
       likeCount: (data['likeCount'] as num?)?.toInt() ?? 0,
       commentCount: (data['commentCount'] as num?)?.toInt() ?? 0,
@@ -115,6 +132,7 @@ class VoiceMoment {
     int? commentCount,
     bool? isPublished,
     DateTime? createdAt,
+    String? mediaGeneration,
     DateTime? expiresAt,
     int? schemaVersion,
     String? status,
@@ -132,6 +150,7 @@ class VoiceMoment {
       commentCount: commentCount ?? this.commentCount,
       isPublished: isPublished ?? this.isPublished,
       createdAt: createdAt ?? this.createdAt,
+      mediaGeneration: mediaGeneration ?? this.mediaGeneration,
       expiresAt: expiresAt ?? this.expiresAt,
       schemaVersion: schemaVersion ?? this.schemaVersion,
       status: status ?? this.status,

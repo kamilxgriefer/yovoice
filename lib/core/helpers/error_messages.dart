@@ -1,3 +1,5 @@
+import 'package:cloud_functions/cloud_functions.dart';
+
 /// Maps a raw exception to copy that's safe and useful to show a user.
 ///
 /// Screens should never interpolate `error.toString()` directly into UI —
@@ -5,6 +7,16 @@
 /// what to do next. This centralizes the mapping so every error state in
 /// the app reads consistently instead of each screen re-guessing.
 String friendlyErrorMessage(Object error, {String? fallback}) {
+  if (error is FirebaseFunctionsException) {
+    final details = error.details;
+    final reason = details is Map ? details['reason'] : null;
+    if (reason == 'recent-authentication-required') {
+      return 'For security, sign in again before this sensitive action.';
+    }
+    if (reason == 'multi-factor-authentication-required') {
+      return 'Sign in with two-factor authentication before this sensitive action.';
+    }
+  }
   final String raw = error.toString().toLowerCase();
 
   if (raw.contains('permission-denied') || raw.contains('permission_denied')) {

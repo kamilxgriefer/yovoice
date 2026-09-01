@@ -8,6 +8,8 @@ import 'package:yovoice/features/clubs/data/services/club_service.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
 
+import 'helpers/room_creation_test_double.dart';
+
 void main() {
   const uid = 'snapshot-user';
   late FakeFirebaseFirestore firestore;
@@ -72,7 +74,15 @@ void main() {
   test(
     'room bootstrap uses canonical name, never modified Auth metadata',
     () async {
-      final service = RoomService(firestore: firestore, auth: auth);
+      final service = RoomService(
+        firestore: firestore,
+        auth: auth,
+        roomCreateInvoker: (request) => createRoomForTest(
+          firestore: firestore,
+          userId: uid,
+          request: request,
+        ),
+      );
 
       final room = await service.createRoom(
         name: 'Canonical room',

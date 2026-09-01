@@ -17,6 +17,28 @@ import 'package:yovoice/features/moments/data/services/audio_capture/audio_captu
 import 'package:yovoice/features/moments/data/services/moment_service.dart';
 import 'package:yovoice/features/moments/data/services/recorded_audio.dart';
 
+/// Valid short-lived private-media grant used by playback widget tests.
+///
+/// Canonical Moment fixtures deliberately carry no bearer `audioUrl`; this
+/// seam mirrors the callable response that production resolves per viewer.
+MomentMediaAccessInvoker fakeMomentMediaAccessInvoker({
+  List<Map<String, Object?>>? requests,
+}) => (request) async {
+  requests?.add(Map<String, Object?>.from(request));
+  return <Object?, Object?>{
+    'schemaVersion': 1,
+    'url':
+        'https://storage.googleapis.com/yovoice-test/'
+        '${request['momentId']}.m4a?X-Goog-Signature=test',
+    'expiresAtMillis': DateTime.now()
+        .add(const Duration(minutes: 1))
+        .millisecondsSinceEpoch,
+    'mediaGeneration': '1001',
+    'mediaContentType': 'audio/mp4',
+    'mediaSize': 4096,
+  };
+};
+
 /// A finished recording that records what it was asked to upload.
 class FakeRecordedAudio extends RecordedAudio {
   FakeRecordedAudio({
@@ -334,6 +356,7 @@ class StubMomentService extends MomentService {
           mockUser: MockUser(uid: 'stub-uid'),
         ),
         storage: MockFirebaseStorage(),
+        mediaAccessInvoker: fakeMomentMediaAccessInvoker(),
       );
 
   /// When set, `publishRecordedMoment` waits on it — the uploading state.

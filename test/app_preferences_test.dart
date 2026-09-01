@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -133,6 +135,53 @@ void main() {
       );
     });
 
+    testWidgets(
+      'preference choices expose one named state and lock during persistence',
+      (tester) async {
+        final store = _DelayedStore();
+        final controller = AppPreferencesController(store: store);
+        final semantics = tester.ensureSemantics();
+        bool isAppearanceChoice(Widget widget) =>
+            widget is Semantics &&
+            (widget.properties.label?.contains('Follows your device') == true ||
+                widget.properties.label?.contains('original cosmic') == true ||
+                widget.properties.label?.contains('Pearl surfaces') == true);
+        await tester.pumpWidget(
+          _PreferencesTestApp(
+            controller: controller,
+            home: const AppearanceSettingsScreen(),
+          ),
+        );
+
+        await tester.tap(find.textContaining('Light').last);
+        await tester.pump();
+
+        final choices = tester.widgetList<Semantics>(
+          find.byWidgetPredicate(isAppearanceChoice),
+        );
+        expect(choices, hasLength(3));
+        expect(
+          choices.every((choice) => choice.properties.enabled == false),
+          isTrue,
+        );
+        expect(
+          choices.where((choice) => choice.properties.value == 'Saving'),
+          hasLength(1),
+        );
+
+        store.completeWrite();
+        await tester.pumpAndSettle();
+        final settledChoices = tester.widgetList<Semantics>(
+          find.byWidgetPredicate(isAppearanceChoice),
+        );
+        expect(
+          settledChoices.any((choice) => choice.properties.enabled == true),
+          isTrue,
+        );
+        semantics.dispose();
+      },
+    );
+
     for (final width in <double>[320, 768, 1440]) {
       testWidgets(
         'preference screens render at ${width.toInt()}px and 2x text',
@@ -231,4 +280,18 @@ class _FailingStore implements AppPreferencesStore {
   Future<void> write(String key, String value) {
     throw StateError('storage unavailable');
   }
+}
+
+class _DelayedStore implements AppPreferencesStore {
+  final Completer<void> _write = Completer<void>();
+
+  void completeWrite() {
+    if (!_write.isCompleted) _write.complete();
+  }
+
+  @override
+  Future<String?> read(String key) async => null;
+
+  @override
+  Future<void> write(String key, String value) => _write.future;
 }

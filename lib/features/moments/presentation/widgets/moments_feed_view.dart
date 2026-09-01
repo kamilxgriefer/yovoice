@@ -397,8 +397,8 @@ class _MomentsFeedViewState extends State<MomentsFeedView> {
   }
 
   Future<void> _togglePanelPlay(VoiceMoment moment) async {
-    final url = moment.audioUrl?.trim() ?? '';
-    if (url.isEmpty) return;
+    final moments = _moments;
+    if (moments == null || !moment.hasMediaReference) return;
     final player = _ensurePlayer();
 
     if (_playingId == moment.id && _isPlaying) {
@@ -432,7 +432,9 @@ class _MomentsFeedViewState extends State<MomentsFeedView> {
       if (resuming) {
         await player.resume();
       } else {
-        await player.play(UrlSource(url));
+        final uri = await moments.resolveMediaUri(momentId: moment.id);
+        if (!mounted || _playingId != moment.id) return;
+        await player.play(UrlSource(uri.toString()));
       }
     } catch (error) {
       if (!mounted) return;
@@ -1467,6 +1469,7 @@ class _ChainCircle extends StatelessWidget {
                         opacity: unviewed ? 1 : .6,
                         child: UserAvatar(
                           radius: 27,
+                          userId: chain.authorId,
                           photoUrl: chain.authorPhotoUrl,
                           displayName: chain.authorName,
                         ),
@@ -1823,6 +1826,7 @@ class _MomentRow extends StatelessWidget {
                 children: [
                   UserAvatar(
                     radius: 21,
+                    userId: moment.authorId,
                     photoUrl: moment.authorPhotoUrl,
                     displayName: moment.authorName,
                   ),
@@ -2310,6 +2314,7 @@ class _MomentDetailPanelState extends State<MomentDetailPanel> {
                         circular: true,
                         child: UserAvatar(
                           radius: 22,
+                          userId: moment.authorId,
                           photoUrl: moment.authorPhotoUrl,
                           displayName: moment.authorName,
                         ),
@@ -2824,6 +2829,7 @@ class MomentCommentsInline extends StatelessWidget {
                   children: [
                     UserAvatar(
                       radius: 14,
+                      userId: comment.authorId,
                       photoUrl: comment.authorPhotoUrl,
                       displayName: comment.authorName,
                     ),

@@ -2202,6 +2202,15 @@ flutter build web --release --dart-define=YOVOICE_WEB_PUSH_VAPID_KEY=THE_PUBLIC_
   one line saying why. The in-app activity feed, badge, iOS and Android
   push are all unaffected.
 
+Web App Check has a separate release prerequisite. Register the production
+web app with reCAPTCHA v3 in Firebase Console, then define the public site key
+as the repository variable `YOVOICE_WEB_RECAPTCHA_SITE_KEY`. Hosting CI passes
+it as `--dart-define=YOVOICE_WEB_RECAPTCHA_SITE_KEY=...`. A missing value keeps
+the application usable but leaves App Check disabled, so Functions enforcement
+must remain off until a verified build sends valid tokens and telemetry shows
+that the tester cohort is attested. Debug web builds use Firebase's debug App
+Check provider and its emitted token must be registered in Firebase Console.
+
 Android's default notification channel is declared in
 `AndroidManifest.xml`. The production iOS app is registered as
 `app.yovoice` under Apple Team `C3R59P53KB`, and its Firebase app ID is

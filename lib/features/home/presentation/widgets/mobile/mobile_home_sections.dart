@@ -149,7 +149,7 @@ class MobileMomentsStrip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final playable = moments
-        .where((moment) => moment.audioUrl?.trim().isNotEmpty == true)
+        .where((moment) => moment.hasMediaReference)
         .toList(growable: false);
     final chains = buildMomentChains(playable);
     MomentChain? mineChain;
@@ -188,9 +188,11 @@ class MobileMomentsStrip extends StatelessWidget {
           key: const ValueKey('home-your-moment'),
           focusNode: mine == null ? null : tileFocusNode(mine.id),
           label: 'Your Moment',
+          userId: profile?.uid ?? currentUserId,
           // The profile is authoritative. A Moment's denormalized photo can
           // be older than a newly saved avatar.
           photoUrl: profile?.photoUrl,
+          mediaRevision: profile?.profileUpdatedAt,
           displayName: profile?.displayName,
           showAdd: true,
           // A real count of YOUR live Moments — the chain badge.
@@ -235,6 +237,7 @@ class MobileMomentsStrip extends StatelessWidget {
                       key: ValueKey('home-moment-${chain.moments.last.id}'),
                       focusNode: tileFocusNode(chain.moments.last.id),
                       label: chain.authorName,
+                      userId: chain.authorId,
                       photoUrl: chain.authorPhotoUrl,
                       displayName: chain.authorName,
                       semanticLabel: chain.length == 1
@@ -259,7 +262,9 @@ class _MomentBubble extends StatelessWidget {
   const _MomentBubble({
     required this.label,
     required this.onTap,
+    this.userId,
     this.photoUrl,
+    this.mediaRevision,
     this.displayName,
     this.showAdd = false,
     this.count,
@@ -271,7 +276,9 @@ class _MomentBubble extends StatelessWidget {
 
   final String label;
   final VoidCallback onTap;
+  final String? userId;
   final String? photoUrl;
+  final Object? mediaRevision;
   final String? displayName;
   final bool showAdd;
 
@@ -335,7 +342,9 @@ class _MomentBubble extends StatelessWidget {
                           ),
                           child: UserAvatar(
                             radius: MobileMomentsStrip._tile / 2 - 9,
+                            userId: userId,
                             photoUrl: photoUrl,
+                            mediaRevision: mediaRevision,
                             displayName: displayName,
                             fallbackIcon: Icons.person_rounded,
                           ),
@@ -688,6 +697,7 @@ class MobileVoiceTrending extends StatelessWidget {
                     : '@${person.username}',
                 leading: UserAvatar(
                   radius: 17,
+                  userId: person.uid,
                   photoUrl: person.photoUrl,
                   displayName: person.displayName,
                 ),
@@ -996,6 +1006,7 @@ class MobileTopCreators extends StatelessWidget {
                     : '@${creator.username}',
                 leading: UserAvatar(
                   radius: 17,
+                  userId: creator.uid,
                   photoUrl: creator.photoUrl,
                   displayName: creator.displayName,
                 ),

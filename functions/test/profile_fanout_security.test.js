@@ -254,7 +254,7 @@ describe("profile identity Club fan-out authorization", () => {
     assert.equal(redirectedTarget.exists, false);
   });
 
-  test("a real membership still receives identity updates", async () => {
+  test("a real membership receives identity updates without a bearer URL", async () => {
     await Promise.all([
       setCanonical({
         displayName: "After",
@@ -288,7 +288,7 @@ describe("profile identity Club fan-out authorization", () => {
       .doc(uid)
       .get();
     assert.equal(member.data().displayName, "After");
-    assert.equal(member.data().photoUrl, "https://example.com/avatar.jpg");
+    assert.equal(member.data().photoUrl, null);
   });
 
   test("clearing a display name converges on the canonical fallback", async () => {
@@ -367,7 +367,7 @@ describe("profile identity Club fan-out authorization", () => {
     assert.equal(ownMoment.data().authorName, "After");
     assert.equal(
       ownMoment.data().authorPhotoUrl,
-      "https://example.com/avatar.jpg",
+      null,
     );
     assert.equal(otherMoment.data().authorName, "Other");
     assert.equal(otherMoment.data().authorPhotoUrl, null);
@@ -375,7 +375,7 @@ describe("profile identity Club fan-out authorization", () => {
     assert.equal(legacyMoment.data().authorPhotoUrl, null);
   });
 
-  test("an out-of-order event cannot restore an obsolete chat avatar", async () => {
+  test("an out-of-order event cannot restore any bearer chat avatar", async () => {
     await Promise.all([
       setCanonical({
         displayName: "Newest name",
@@ -408,7 +408,7 @@ describe("profile identity Club fan-out authorization", () => {
     assert.equal(conversation.data().participantNames[uid], "Newest name");
     assert.equal(
       conversation.data().participantPhotoUrls[uid],
-      "https://example.com/newest.jpg",
+      "",
     );
     assert.equal(
       conversation.data().participantNames["pf-security-friend"],
@@ -476,7 +476,7 @@ describe("profile identity Club fan-out authorization", () => {
     ].sort());
     assert.equal(
       repaired.participantPhotoUrls[uid],
-      "https://example.com/canonical.jpg",
+      "",
     );
     assert.equal(
       repaired.participantPhotoUrls[friendUid],
@@ -699,7 +699,7 @@ describe("profile identity Club fan-out authorization", () => {
       );
       assert.equal(
         repaired.participantPhotoUrls[constructorUid],
-        "https://example.com/constructor-after.jpg",
+        "",
       );
       assert.equal(
         Object.prototype.hasOwnProperty.call(
@@ -774,11 +774,11 @@ describe("profile identity Club fan-out authorization", () => {
     assert.equal(repaired.participantNames[friendUid], "Friend after");
     assert.equal(
       repaired.participantPhotoUrls[uid],
-      "https://example.com/owner-after.jpg",
+      "",
     );
     assert.equal(
       repaired.participantPhotoUrls[friendUid],
-      "https://example.com/friend-after.jpg",
+      "",
     );
   });
 
@@ -999,7 +999,7 @@ describe("profile identity Club fan-out authorization", () => {
       assert.equal(last.data().participantNames[uid], "Paged identity");
       assert.equal(
         last.data().participantPhotoUrls[uid],
-        "https://example.com/paged.jpg",
+        "",
       );
     } finally {
       for (let offset = 0; offset < references.length; offset += 200) {

@@ -6,7 +6,7 @@ exist; know which one you're relying on before trusting it.
 
 ## Current counts
 
-**As of 2026-08-31.** One table, so there is a single place to correct when
+**As of 2026-09-01.** One table, so there is a single place to correct when
 these move. Every figure is a suite run, not an estimate; file counts are
 `find`. *(The date used to live in the heading; it moved into the body on
 2026-08-20 because three other docs deep-link to this section and every
@@ -14,33 +14,31 @@ correction silently broke all three anchors.)*
 
 | Suite | Command | Count |
 |---|---|---|
-| Firestore rules | `npm --prefix firestore-tests test` | **523** checks |
+| Firestore rules | `npm --prefix firestore-tests test` | **522** checks |
 | Storage rules | `npm --prefix firestore-tests run test:storage` | **60** checks |
 | Family media (combined) | `npm --prefix firestore-tests run test:family-media` | **11** checks |
-| Cloud Functions | `npm --prefix functions test` | **938** tests (71 `*.test.js` files) |
-| Flutter VM | `flutter test` | **1867** tests (162 VM-compatible files) |
+| Cloud Functions | `npm --prefix functions test` | **1098** tests (118 suites) |
+| Flutter VM | `flutter test` | **1925** tests |
 | Flutter browser | `flutter test --platform chrome test/web_audio_capture_browser_test.dart test/image_crop_test.dart test/room_cover_editor_test.dart` | **18** tests (3 files) |
 
 **Where these numbers came from.** Every current row was re-measured on
-2026-08-31 against the coordinated tester-release candidate, not inferred from
-an older release. Flutter VM passed **1867/1867** in one invocation and
+2026-09-01 against the coordinated build-16 release candidate, not inferred
+from an older release. Flutter VM passed **1925/1925** in one invocation and
 `flutter analyze --no-pub` reported no issues. Cloud Functions passed
-**938/938** under Node 22 on fresh Auth/Firestore emulators. Firestore Rules
-passed **523/523**; isolated Storage and combined Family-media gates passed
-**60/60** and **11/11**. The three real-Chrome media/crop files passed
-**18/18**. Functions smoke separately passed all three product flows (global
-chat, moderation/audit and social graph). There are 71 Functions test files
-and 163 Flutter test files in total (162 VM-compatible plus the browser-only
-audio lifecycle file). Historical count movement remains below.
+**1098/1098** across 118 suites under Node 22 on fresh Auth/Firestore
+emulators. Firestore Rules passed **522/522**; isolated Storage and combined
+Family-media gates passed **60/60** and **11/11**. The three real-Chrome
+media/crop files remain **18/18**. Syntax validation passed for all **95**
+changed/new JavaScript files and the Functions production-dependency audit
+reported **0 vulnerabilities**. Historical count movement remains below.
 
-The Functions production-dependency audit reports no high or critical
-findings. Eight moderate advisories resolve to transitive `uuid@9.0.1` through
-`firebase-admin`; the affected v3/v5/v6 buffer API is not imported by YO Voice
-and the resolved dependency call sites use only `v4()`. This is an accepted,
-non-blocking exception for this candidate because the automated fix requires a
-breaking `firebase-admin` major upgrade. Re-review is required when the
-upstream dependency removes the advisory or before any direct UUID use is
-introduced.
+> **Movement, 2026-09-01 (build-16 final release gate).** Flutter VM
+> **1867 → 1925** includes the integrated private-media, direct-call,
+> room-cover, profile/avatar, Voice Moment and release regressions. Functions
+> **938 → 1098** adds the committed RTC/Club/room-control quotas,
+> idempotency, bounded cleanup and authorization contracts. The exact final
+> rules gates are Firestore **522/522**, Storage **60/60** and Family media
+> **11/11**. All emulators were fresh and shut down cleanly after the run.
 
 > **Movement, 2026-08-31 (coordinated tester release candidate).** Flutter VM
 > **1672 → 1867** covers the responsive auth Voice Relay/curtain, the Dark and
@@ -780,7 +778,7 @@ pattern throughout: fake the Firebase backends
 - **`identity_badges_test.dart`** — the authoritative identity-badge
   system (ADR-045): exact role labels and hex colors, role×VIP
   coexistence and ordering, owner wire-value mapping, USER fallback,
-  repository batching (one request per flush window, 50-uid chunking,
+  repository batching (one request per flush window, 20-uid chunking,
   in-flight dedup), cache invalidation and account-switch clearing,
   overflow at 120px, and achievement cosmetics being unable to replace
   official badges. `global_chat_test.dart` additionally proves message

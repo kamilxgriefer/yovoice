@@ -124,7 +124,7 @@ void main() {
     ).readAsStringSync();
     expect(pushPayload, contains('"$channel"'));
     expect(pushPayload, contains('"yovoice_calls_v1"'));
-    expect(pushPayload, contains('channelId: isCall'));
+    expect(pushPayload, contains('channelId: isIncomingCall'));
   });
 
   test(

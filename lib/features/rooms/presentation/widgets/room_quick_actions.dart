@@ -27,7 +27,9 @@ class RoomQuickActions extends StatelessWidget {
       child: Row(
         children: [
           for (final item in items)
-            Expanded(child: _QuickAction(item: item, identity: identity)),
+            Expanded(
+              child: _QuickAction(item: item, identity: identity),
+            ),
         ],
       ),
     );

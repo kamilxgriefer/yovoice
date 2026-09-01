@@ -66,6 +66,17 @@ class ClubChatAuthority {
 
   bool get canModerate => (role?.power ?? 0) >= ClubRole.moderator.power;
 
+  /// Whether this live authority may publish to a channel. Announcements are
+  /// intentionally restricted to moderator power and above; ordinary chat is
+  /// available to every non-guest member. The callable enforces the same
+  /// boundary, so this only controls the affordance and never grants access.
+  bool canSendToChannel({required bool announcement}) {
+    if (!viewerEmailVerified || viewerIsCommunicationMuted) return false;
+    final currentRole = role;
+    if (currentRole == null || !currentRole.canWriteChat) return false;
+    return !announcement || canModerate;
+  }
+
   bool isAuthorOf(ClubMessage message) =>
       viewerId.isNotEmpty && message.senderId == viewerId;
 

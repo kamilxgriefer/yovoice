@@ -42,9 +42,9 @@
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>NSCameraUsageDescription</key>
-	<string>YO Voice uses camera access so you can take photos to share in chats and use as profile, room, or club images.</string>
+	<string>YO Voice uses the camera for private video calls, chat photos, and profile, room, or club images you choose to create.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>YoVoice uses your microphone so you can talk in voice rooms.</string>
+	<string>YO Voice uses your microphone when you choose to speak in voice rooms, record audio, or make private calls.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>
@@ -91,6 +91,6 @@
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>YoVoice needs access to your photo library to choose club avatars and banners.</string>
+	<string>YO Voice uses photos you choose for chats and for your profile, room, or club images.</string>
 </dict>
 </plist>

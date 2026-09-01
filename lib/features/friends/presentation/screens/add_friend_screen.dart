@@ -9,6 +9,7 @@ import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/friends/data/services/social_graph_service.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
+import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
 class AddFriendScreen extends StatefulWidget {
   const AddFriendScreen({
@@ -596,7 +597,6 @@ class _SuggestionCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
-    final hasPhoto = suggestion.photoUrl?.trim().isNotEmpty == true;
     final isFriend = relationshipStatus == FriendRelationshipStatus.friends;
     final isSent = relationshipStatus == FriendRelationshipStatus.requestSent;
     final isComplete = isFriend || isSent;
@@ -622,17 +622,11 @@ class _SuggestionCard extends StatelessWidget {
               ),
             ),
             child: ClipOval(
-              child: Container(
-                color: palette.surfaceSunken,
-                alignment: Alignment.center,
-                child: hasPhoto
-                    ? Image.network(
-                        suggestion.photoUrl!,
-                        fit: BoxFit.cover,
-                        errorBuilder: (_, __, ___) =>
-                            _AvatarInitial(initial: suggestion.initial),
-                      )
-                    : _AvatarInitial(initial: suggestion.initial),
+              child: UserAvatar(
+                radius: 24,
+                userId: suggestion.uid,
+                displayName: suggestion.displayName,
+                backgroundColor: palette.surfaceSunken,
               ),
             ),
           ),
@@ -983,7 +977,6 @@ class _UserAvatar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final photoUrl = user.photoUrl;
     final palette = context.appPalette;
 
     return Container(
@@ -996,40 +989,11 @@ class _UserAvatar extends StatelessWidget {
           colors: [Color(0xFFC32BFF), Color(0xFF6D25FF)],
         ),
       ),
-      child: ClipOval(
-        child: Container(
-          color: palette.surfaceSunken,
-          child: photoUrl != null && photoUrl.isNotEmpty
-              ? Image.network(
-                  photoUrl,
-                  fit: BoxFit.cover,
-                  errorBuilder: (_, __, ___) {
-                    return _AvatarInitial(initial: user.initial);
-                  },
-                )
-              : _AvatarInitial(initial: user.initial),
-        ),
-      ),
-    );
-  }
-}
-
-class _AvatarInitial extends StatelessWidget {
-  const _AvatarInitial({required this.initial});
-
-  final String initial;
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = context.appPalette;
-    return Center(
-      child: Text(
-        initial,
-        style: TextStyle(
-          color: palette.textPrimary,
-          fontSize: 19,
-          fontWeight: FontWeight.w800,
-        ),
+      child: UserAvatar(
+        radius: 24,
+        userId: user.id,
+        displayName: user.displayName,
+        backgroundColor: palette.surfaceSunken,
       ),
     );
   }

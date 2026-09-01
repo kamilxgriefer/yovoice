@@ -18,7 +18,16 @@ const OWNER = "migration owner-Ż";
 let nowMs = 1_920_000_000_000;
 
 function request(data, uid = OWNER) {
-  return { auth: { uid, token: { role: "superAdmin" } }, data };
+  return {
+    auth: {
+      uid,
+      token: {
+        role: "superAdmin",
+        auth_time: Math.floor(Date.now() / 1000),
+      },
+    },
+    data,
+  };
 }
 
 async function deleteQuery(query) {
@@ -37,12 +46,19 @@ async function reset() {
   ]);
 }
 
-function control({ direct = {}, moments = {}, authorize, limits } = {}) {
+function control({
+  direct = {},
+  moments = {},
+  authorize,
+  stepUp,
+  limits,
+} = {}) {
   return createMigrationControl({
     db,
     Timestamp,
     clock: () => nowMs,
     authorize: authorize ?? (async (input) => ({ uid: input.auth?.uid })),
+    stepUp: stepUp ?? (() => {}),
     limits,
     directMigration: {
       migrateDirectConversation: async (input) => ({ ...input, status: "migrated" }),
@@ -53,6 +69,14 @@ function control({ direct = {}, moments = {}, authorize, limits } = {}) {
       migrateMoment: async (input) => ({ ...input, status: "migrated" }),
       scanMomentMigration: async (input) => ({ ...input, results: [] }),
       ...moments,
+    },
+    roomCoverMigration: {
+      migrateRoomCover: async (input) => ({ ...input, status: "migrated" }),
+      scanRoomCoverMigration: async (input) => ({ ...input, rooms: [] }),
+      scanRoomCoverObjectInventory: async (input) => ({
+        ...input,
+        entries: [],
+      }),
     },
   });
 }
@@ -199,4 +223,66 @@ test("migration endpoints authenticate before exposing input validation", async 
     handlers.migrateMoment({ auth: null, data: { unexpected: true } }),
     (error) => error.code === "permission-denied",
   );
+});
+
+test("only applying a migration requires privileged step-up", async () => {
+  const actors = [];
+  const handlers = control({
+    stepUp: async (actor) => actors.push(actor.uid),
+  });
+
+  await handlers.scanDirectMigration(request({
+    requestId: "migration-scan-stepup",
+  }));
+  await handlers.migrateDirectConversation(request({
+    conversationId: "dm_dry_run",
+    dryRun: true,
+    requestId: "migration-dry-stepup",
+  }));
+  assert.deepEqual(actors, []);
+
+  await handlers.migrateDirectConversation(request({
+    conversationId: "dm_apply_stepup",
+    dryRun: false,
+    requestId: "migration-apply-stepup",
+  }));
+  await handlers.migrateMoment(request({
+    momentId: "0123456789abcdefghij",
+    dryRun: false,
+    requestId: "moment-apply-stepup",
+  }));
+  assert.deepEqual(actors, [OWNER, OWNER]);
+});
+
+test("a failed migration step-up creates no ledger and runs no work", async () => {
+  let calls = 0;
+  const handlers = control({
+    stepUp: () => {
+      const error = new Error("reauthenticate");
+      error.code = "failed-precondition";
+      throw error;
+    },
+    direct: {
+      async migrateDirectConversation() {
+        calls += 1;
+        return { status: "migrated" };
+      },
+    },
+  });
+
+  await assert.rejects(
+    handlers.migrateDirectConversation(request({
+      conversationId: "dm_denied_stepup",
+      dryRun: false,
+      requestId: "migration-denied-stepup",
+    })),
+    (error) => error.code === "failed-precondition",
+  );
+
+  assert.equal(calls, 0);
+  const operations = await db
+    .collection("integrityMigrationOperations")
+    .where("ownerId", "==", OWNER)
+    .get();
+  assert.equal(operations.size, 0);
 });

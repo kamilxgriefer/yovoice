@@ -168,6 +168,7 @@ class _FamilyCheckInPanelState extends State<FamilyCheckInPanel> {
                         children: [
                           UserAvatar(
                             radius: 14,
+                            userId: checkIn.userId,
                             photoUrl: checkIn.photoUrl,
                             displayName: checkIn.displayName,
                           ),

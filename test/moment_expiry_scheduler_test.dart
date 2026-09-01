@@ -29,6 +29,8 @@ import 'package:yovoice/features/moments/presentation/widgets/moment_sheet.dart'
 import 'package:yovoice/features/moments/presentation/widgets/moment_story_viewer.dart';
 import 'package:yovoice/shared/identity/public_identity_repository.dart';
 
+import 'voice_moment_test_doubles.dart';
+
 final _anchor = DateTime.utc(2026, 8, 27, 12);
 
 VoiceMoment _moment(
@@ -42,7 +44,8 @@ VoiceMoment _moment(
   authorName: 'Author $author',
   authorPhotoUrl: null,
   caption: 'caption $id',
-  audioUrl: 'https://cdn.example/$id.m4a',
+  audioUrl: null,
+  mediaGeneration: '1700000000000001',
   durationSeconds: 12,
   likeCount: 0,
   commentCount: 0,
@@ -59,7 +62,9 @@ Map<String, dynamic> _doc(VoiceMoment moment) => <String, dynamic>{
   'authorName': moment.authorName,
   'authorPhotoUrl': null,
   'caption': moment.caption,
-  'audioUrl': moment.audioUrl,
+  'mediaGeneration': moment.mediaGeneration,
+  'mediaContentType': 'audio/mp4',
+  'mediaSize': 4096,
   'durationSeconds': moment.durationSeconds,
   'likeCount': moment.likeCount,
   'commentCount': moment.commentCount,
@@ -71,6 +76,16 @@ Map<String, dynamic> _doc(VoiceMoment moment) => <String, dynamic>{
   'status': 'published',
   'isDeleted': false,
 };
+
+MomentService _privateMomentService({
+  required MockFirebaseAuth auth,
+  FakeFirebaseFirestore? firestore,
+}) => MomentService(
+  firestore: firestore ?? FakeFirebaseFirestore(),
+  auth: auth,
+  storage: MockFirebaseStorage(),
+  mediaAccessInvoker: fakeMomentMediaAccessInvoker(),
+);
 
 List<Map<Object?, Object?>> _captureAnnouncements(WidgetTester tester) {
   final captured = <Map<Object?, Object?>>[];
@@ -581,11 +596,7 @@ void main() {
     );
     final db = FakeFirebaseFirestore();
     await db.collection('voiceMoments').doc(moment.id).set(_doc(moment));
-    final moments = MomentService(
-      firestore: db,
-      auth: auth,
-      storage: MockFirebaseStorage(),
-    );
+    final moments = _privateMomentService(auth: auth, firestore: db);
     await tester.pumpWidget(
       MaterialApp(
         home: MediaQuery(
@@ -667,6 +678,7 @@ void main() {
           body: MomentStoryViewer(
             chain: chain,
             auth: auth,
+            momentService: _privateMomentService(auth: auth),
             playerFactory: () => player,
             expiryClock: () => clock.now,
             expiryTimerFactory: clock.create,
@@ -743,6 +755,7 @@ void main() {
             chain: chain,
             initialIndex: 1,
             auth: auth,
+            momentService: _privateMomentService(auth: auth),
             playerFactory: () => player,
             expiryClock: () => clock.now,
             expiryTimerFactory: clock.create,
@@ -804,6 +817,7 @@ void main() {
             initialIndex: 1,
             autoPlay: false,
             auth: auth,
+            momentService: _privateMomentService(auth: auth),
             expiryClock: () => clock.now,
             expiryTimerFactory: clock.create,
           ),
@@ -851,6 +865,7 @@ void main() {
                     context,
                     chain: chain,
                     auth: auth,
+                    momentService: _privateMomentService(auth: auth),
                     playerFactory: () => player,
                     expiryClock: () => clock.now,
                     expiryTimerFactory: clock.create,
@@ -908,6 +923,7 @@ void main() {
                   context,
                   chain: chain,
                   auth: auth,
+                  momentService: _privateMomentService(auth: auth),
                   playerFactory: _FakeAudioPlayer.new,
                   expiryClock: () => clock.now,
                   expiryTimerFactory: clock.create,
@@ -972,6 +988,7 @@ void main() {
                   context,
                   moment: moment,
                   feedService: _QuietFeed(auth),
+                  momentService: _privateMomentService(auth: auth),
                   playerFactory: () => player,
                   expiryClock: () => clock.now,
                   expiryTimerFactory: clock.create,
@@ -1069,11 +1086,7 @@ void main() {
       expiresAt: _anchor.add(const Duration(seconds: 10)),
     );
     await db.collection('voiceMoments').doc(moment.id).set(_doc(moment));
-    final moments = MomentService(
-      firestore: db,
-      auth: auth,
-      storage: MockFirebaseStorage(),
-    );
+    final moments = _privateMomentService(auth: auth, firestore: db);
     final pins = CreatorPinnedPostService(
       firestore: db,
       auth: auth,
@@ -1150,6 +1163,7 @@ void main() {
           body: CreatorPinnedMomentCard(
             creatorId: 'me',
             service: pins,
+            momentService: _privateMomentService(auth: auth, firestore: db),
             playerFactory: () => player,
             expiryClock: () => clock.now,
             expiryTimerFactory: clock.create,
@@ -1189,11 +1203,7 @@ void main() {
     );
     final db = FakeFirebaseFirestore();
     await db.collection('voiceMoments').doc(expiring.id).set(_doc(expiring));
-    final moments = MomentService(
-      firestore: db,
-      auth: auth,
-      storage: MockFirebaseStorage(),
-    );
+    final moments = _privateMomentService(auth: auth, firestore: db);
 
     await tester.pumpWidget(
       MaterialApp(

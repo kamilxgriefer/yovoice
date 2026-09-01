@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/theme/app_motion.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_radius.dart';
+import 'package:yovoice/core/theme/app_sizing.dart';
 import 'package:yovoice/core/theme/app_typography.dart';
 
 enum YoButtonVariant { primary, secondary, ghost, danger }
@@ -46,11 +48,16 @@ class _YoButtonState extends State<YoButton> {
     final colors = Theme.of(context).colorScheme;
     final foreground = _foregroundColor(palette, colors);
     final textScale = MediaQuery.textScalerOf(context).scale(1);
+    final controlHeight = widget.height < AppSizing.minimumTouchTarget
+        ? AppSizing.minimumTouchTarget
+        : widget.height;
+    final quickDuration = AppMotion.resolve(context, AppMotion.quick);
+    final standardDuration = AppMotion.resolve(context, AppMotion.standard);
 
     Widget button = ConstrainedBox(
-      constraints: BoxConstraints(minHeight: widget.height),
+      constraints: BoxConstraints(minHeight: controlHeight),
       child: AnimatedContainer(
-        duration: const Duration(milliseconds: 140),
+        duration: quickDuration,
         curve: Curves.easeOut,
         decoration: _decoration(palette, colors),
         child: ElevatedButton(
@@ -81,13 +88,15 @@ class _YoButtonState extends State<YoButton> {
             padding: const WidgetStatePropertyAll(
               EdgeInsets.symmetric(horizontal: 24, vertical: 14),
             ),
-            minimumSize: WidgetStatePropertyAll(Size(44, widget.height)),
+            minimumSize: WidgetStatePropertyAll(
+              Size(AppSizing.minimumTouchTarget, controlHeight),
+            ),
             shape: const WidgetStatePropertyAll(
               RoundedRectangleBorder(borderRadius: AppRadius.lg),
             ),
           ),
           child: AnimatedSwitcher(
-            duration: const Duration(milliseconds: 180),
+            duration: standardDuration,
             child: widget.isLoading
                 ? SizedBox(
                     key: const ValueKey<String>('loading'),

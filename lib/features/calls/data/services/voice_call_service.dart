@@ -12,6 +12,18 @@ import '../models/voice_connection_info.dart';
 import 'direct_call_service.dart';
 import 'voice_token_service.dart';
 
+Future<bool> _waitForCaptureDisable(
+  Future<void> pendingDisable,
+  Duration timeout,
+) async {
+  try {
+    await pendingDisable.timeout(timeout);
+    return true;
+  } on TimeoutException {
+    return false;
+  }
+}
+
 enum VoiceCallStatus {
   disconnected,
   connecting,
@@ -45,7 +57,9 @@ enum MicState {
 }
 
 class VoiceCallService extends ChangeNotifier {
-  VoiceCallService._();
+  VoiceCallService._()
+    : _microphoneTeardownTimeout = const Duration(seconds: 3),
+      _captureDisableWaiter = _waitForCaptureDisable;
 
   /// Test seam. The production service is a singleton behind a private
   /// constructor, which left no way for a widget test to observe whether a
@@ -54,9 +68,19 @@ class VoiceCallService extends ChangeNotifier {
   /// is the failure this whole path exists to prevent. A subclass may now
   /// stand in for it and record the calls.
   @visibleForTesting
-  VoiceCallService.forTesting();
+  VoiceCallService.forTesting({
+    Duration microphoneTeardownTimeout = const Duration(seconds: 3),
+    Future<bool> Function(Future<void> pendingDisable, Duration timeout)
+        microphoneTeardownWaiter =
+        _waitForCaptureDisable,
+  }) : _microphoneTeardownTimeout = microphoneTeardownTimeout,
+       _captureDisableWaiter = microphoneTeardownWaiter;
 
   static final VoiceCallService instance = VoiceCallService._();
+
+  final Duration _microphoneTeardownTimeout;
+  final Future<bool> Function(Future<void> pendingDisable, Duration timeout)
+  _captureDisableWaiter;
 
   // Lazy: VoiceTokenService touches FirebaseFunctions at construction,
   // and this singleton is now reachable from always-mounted UI (the
@@ -78,6 +102,21 @@ class VoiceCallService extends ChangeNotifier {
   String? _directCallId;
   bool _isMuted = false;
   bool _muteChangeInProgress = false;
+  bool _videoRequested = false;
+  bool _cameraChangeInProgress = false;
+  bool _cameraPermissionDenied = false;
+  String? _cameraIssue;
+  CameraPosition _cameraPosition = CameraPosition.front;
+  int _sessionEpoch = 0;
+  int _microphoneOperationEpoch = 0;
+  bool _desiredMicrophoneEnabled = false;
+  int _cameraOperationEpoch = 0;
+  bool _desiredCameraEnabled = false;
+  int _speakerOperationEpoch = 0;
+  bool _desiredSpeakerPreferred = false;
+  Future<void> _speakerRouteTail = Future<void>.value();
+  bool _speakerChangeInProgress = false;
+  bool _appIsForeground = true;
 
   VoiceCallStatus get status => _status;
   String? get roomId => _roomId;
@@ -138,6 +177,48 @@ class VoiceCallService extends ChangeNotifier {
   bool get isBusy =>
       _status == VoiceCallStatus.connecting ||
       _status == VoiceCallStatus.reconnecting;
+  bool get isVideoCall => isDirectCall && _videoRequested;
+  bool get cameraChangeInProgress => _cameraChangeInProgress;
+  bool get cameraPermissionDenied => _cameraPermissionDenied;
+  String? get cameraIssue => _cameraIssue;
+  bool get shouldMirrorLocalCamera => _cameraPosition == CameraPosition.front;
+  bool get canSwitchSpeakerphone => AudioManager.instance.canSwitchSpeakerphone;
+  bool get speakerChangeInProgress => _speakerChangeInProgress;
+  bool get isSpeakerPreferred => AudioManager.instance.isSpeakerOutputPreferred;
+
+  bool get isCameraEnabled {
+    final local = _room?.localParticipant;
+    return isConnected && local != null && local.isCameraEnabled();
+  }
+
+  VideoTrack? get localCameraTrack {
+    final local = _room?.localParticipant;
+    if (local == null) return null;
+    for (final publication in local.videoTrackPublications) {
+      if (publication.source == TrackSource.camera &&
+          !publication.muted &&
+          publication.track != null) {
+        return publication.track;
+      }
+    }
+    return null;
+  }
+
+  VideoTrack? get remoteCameraTrack {
+    final room = _room;
+    if (room == null) return null;
+    for (final participant in room.remoteParticipants.values) {
+      for (final publication in participant.videoTrackPublications) {
+        if (publication.source == TrackSource.camera &&
+            publication.subscribed &&
+            !publication.muted &&
+            publication.track != null) {
+          return publication.track;
+        }
+      }
+    }
+    return null;
+  }
 
   double get roomEnergy {
     final values = participants
@@ -210,11 +291,13 @@ class VoiceCallService extends ChangeNotifier {
     required String roomName,
     required String participantName,
     bool playSound = true,
+    bool startMuted = false,
   }) async {
     return _joinWithToken(
       sessionRoomId: roomId,
       roomName: roomName,
       kind: VoiceSessionKind.room,
+      startMuted: startMuted,
       tokenLoader: () => _tokenService.createJoinToken(
         roomId: roomId,
         participantName: participantName,
@@ -227,6 +310,7 @@ class VoiceCallService extends ChangeNotifier {
     required String callId,
     required String contactName,
     required String participantName,
+    bool enableCamera = false,
     bool playSound = true,
   }) {
     return _joinWithToken(
@@ -234,6 +318,7 @@ class VoiceCallService extends ChangeNotifier {
       roomName: contactName,
       kind: VoiceSessionKind.directCall,
       directCallId: callId,
+      enableCamera: enableCamera,
       tokenLoader: () => _directCallService.createJoinToken(callId),
       playSound: playSound,
     );
@@ -245,45 +330,119 @@ class VoiceCallService extends ChangeNotifier {
     required VoiceSessionKind kind,
     required Future<VoiceConnectionInfo> Function() tokenLoader,
     String? directCallId,
+    bool enableCamera = false,
+    bool startMuted = false,
     bool playSound = true,
   }) async {
-    if (_roomId == sessionRoomId && isConnected) return;
-
-    if (_room != null) {
-      await disconnect();
+    if (_roomId == sessionRoomId && isConnected) {
+      if (startMuted && !isMuted) {
+        await _muteCurrentRoomForSafeReentry(sessionRoomId);
+      }
+      return;
     }
+
+    // Reserve this attempt before waiting for the previous room to tear down.
+    // A second join that starts while teardown is in flight must win; the
+    // older Future must not resume later and replace the newer session.
+    final joinEpoch = ++_sessionEpoch;
+    final initialMicrophoneEpoch = ++_microphoneOperationEpoch;
+    final initialCameraEpoch = ++_cameraOperationEpoch;
+    final initialSpeakerEpoch = ++_speakerOperationEpoch;
+    if (_roomId != null ||
+        _room != null ||
+        _status != VoiceCallStatus.disconnected) {
+      await _disconnectCurrentSession(
+        playSound: false,
+        invalidateOperations: false,
+      );
+      if (_sessionEpoch != joinEpoch ||
+          _microphoneOperationEpoch != initialMicrophoneEpoch ||
+          _cameraOperationEpoch != initialCameraEpoch ||
+          _speakerOperationEpoch != initialSpeakerEpoch) {
+        return;
+      }
+    }
+
+    Room? joiningRoom;
+    EventsListener<RoomEvent>? joiningEvents;
+    final cameraRequestedNow = enableCamera && _appIsForeground;
 
     _roomId = sessionRoomId;
     _roomName = roomName;
     _sessionKind = kind;
     _directCallId = directCallId;
     _errorMessage = null;
-    _isMuted = false;
+    _isMuted = startMuted;
+    _desiredMicrophoneEnabled = !startMuted;
+    _videoRequested = enableCamera;
+    _desiredCameraEnabled = cameraRequestedNow;
+    // Private audio starts on the earpiece. Video calls and social rooms use
+    // speakerphone by default, without forcing over a wired/Bluetooth route.
+    _desiredSpeakerPreferred = kind == VoiceSessionKind.room || enableCamera;
+    _cameraChangeInProgress = cameraRequestedNow;
+    _cameraPermissionDenied = false;
+    _cameraIssue = null;
+    _cameraPosition = CameraPosition.front;
     _setStatus(VoiceCallStatus.connecting);
 
     try {
-      await _requestPermissions();
-
       final connectionInfo = await tokenLoader();
+      if (!_isJoinCurrent(joinEpoch, sessionRoomId)) return;
+
+      // The server grant is known before prompting. Broadcast/podcast audience
+      // can listen without granting a microphone they are not allowed to use.
+      final cameraAvailable = await _requestPermissions(
+        requestMicrophone:
+            kind == VoiceSessionKind.directCall || connectionInfo.canPublish,
+        requestCamera: cameraRequestedNow,
+      );
+      if (!_isJoinCurrent(joinEpoch, sessionRoomId)) return;
+
+      if (canSwitchSpeakerphone) {
+        try {
+          await _enqueueSpeakerPreference(
+            operationEpoch: initialSpeakerEpoch,
+            preferred: _desiredSpeakerPreferred,
+          );
+        } catch (_) {
+          // Routing failure is recoverable from the in-call output control.
+        }
+      }
+      if (!_isJoinCurrent(joinEpoch, sessionRoomId) ||
+          _speakerOperationEpoch != initialSpeakerEpoch) {
+        return;
+      }
 
       final room = Room(
         roomOptions: const RoomOptions(adaptiveStream: true, dynacast: true),
       );
+      joiningRoom = room;
 
       _room = room;
       room.addListener(_handleRoomChanged);
 
-      _events = room.createListener()
+      joiningEvents = room.createListener()
         ..on<RoomReconnectingEvent>((_) {
-          _setStatus(VoiceCallStatus.reconnecting);
+          if (_isJoinCurrent(joinEpoch, sessionRoomId)) {
+            _setStatus(VoiceCallStatus.reconnecting);
+          }
         })
         ..on<RoomReconnectedEvent>((_) {
-          _setStatus(VoiceCallStatus.connected);
+          if (_isJoinCurrent(joinEpoch, sessionRoomId)) {
+            _setStatus(VoiceCallStatus.connected);
+          }
         })
         ..on<RoomDisconnectedEvent>((_) {
-          _status = VoiceCallStatus.disconnected;
-          _isMuted = false;
-          notifyListeners();
+          if (_isJoinCurrent(joinEpoch, sessionRoomId)) {
+            // A terminal SDK disconnect is also a local capture boundary. Do
+            // not merely repaint the status while retaining native tracks.
+            unawaited(
+              _disconnectCurrentSession(
+                playSound: false,
+                invalidateOperations: true,
+              ),
+            );
+          }
         })
         ..on<ParticipantConnectedEvent>((_) {
           unawaited(_sounds.play(UiSound.participantJoined));
@@ -291,11 +450,17 @@ class VoiceCallService extends ChangeNotifier {
         ..on<ParticipantDisconnectedEvent>((_) {
           unawaited(_sounds.play(UiSound.participantLeft));
         });
+      _events = joiningEvents;
 
       await room.connect(
         connectionInfo.serverUrl,
         connectionInfo.participantToken,
       );
+      if (!_isJoinCurrent(joinEpoch, sessionRoomId) ||
+          !identical(_room, room)) {
+        await _disposeRoomInstance(room, joiningEvents);
+        return;
+      }
 
       final localParticipant = room.localParticipant;
       if (localParticipant == null) {
@@ -303,8 +468,24 @@ class VoiceCallService extends ChangeNotifier {
       }
 
       try {
-        await localParticipant.setMicrophoneEnabled(true);
-        _isMuted = false;
+        if (connectionInfo.canPublish) {
+          await localParticipant.setMicrophoneEnabled(!startMuted);
+        } else {
+          _desiredMicrophoneEnabled = false;
+          _isMuted = true;
+        }
+        if (!_isMicrophoneOperationCurrent(
+          initialMicrophoneEpoch,
+          room,
+          desiredEnabled: connectionInfo.canPublish && !startMuted,
+        )) {
+          if (connectionInfo.canPublish && !startMuted) {
+            await _disableStaleMicrophone(localParticipant, room);
+          }
+          await _disposeRoomInstance(room, joiningEvents);
+          return;
+        }
+        _isMuted = !connectionInfo.canPublish || startMuted;
       } catch (_) {
         // Listen-only token: broadcast audience members can't publish
         // (canPublish is computed server-side from their role). That's
@@ -312,12 +493,83 @@ class VoiceCallService extends ChangeNotifier {
         // a later promotion re-grants the mic via a fresh token.
         _isMuted = true;
       }
-      _startAudioMeter();
+      if (!_isJoinCurrent(joinEpoch, sessionRoomId) ||
+          !identical(_room, room)) {
+        await _disposeRoomInstance(room, joiningEvents);
+        return;
+      }
+      if (cameraRequestedNow &&
+          cameraAvailable &&
+          _isCameraOperationCurrent(
+            initialCameraEpoch,
+            room,
+            desiredEnabled: true,
+          )) {
+        try {
+          await _enableCameraSafely(
+            localParticipant: localParticipant,
+            room: room,
+            operationEpoch: initialCameraEpoch,
+            position: CameraPosition.front,
+          );
+          if (!_isJoinCurrent(joinEpoch, sessionRoomId) ||
+              !identical(_room, room)) {
+            await _disposeRoomInstance(room, joiningEvents);
+            return;
+          }
+          if (!_isCameraOperationCurrent(
+                initialCameraEpoch,
+                room,
+                desiredEnabled: true,
+              ) &&
+              !_desiredCameraEnabled) {
+            await _disableCameraOrCloseSession(
+              localParticipant,
+              room,
+              joiningEvents,
+            );
+          }
+        } catch (_) {
+          // Camera failure must not tear down a healthy private audio path.
+          // The user can continue safely with camera off and retry in place.
+          if (_cameraOperationEpoch == initialCameraEpoch) {
+            _cameraIssue =
+                'Camera could not be started. Continue with audio or retry.';
+          }
+        } finally {
+          if (_cameraOperationEpoch == initialCameraEpoch) {
+            _cameraChangeInProgress = false;
+          }
+        }
+      } else if (_cameraOperationEpoch == initialCameraEpoch) {
+        _cameraChangeInProgress = false;
+      }
+      // The room UI needs rapid speaking-level updates. A direct video call
+      // does not: rebuilding a full-screen renderer every 50 ms wastes both
+      // CPU and battery and can cause visible jank.
+      if (kind == VoiceSessionKind.room) _startAudioMeter();
+      if (!_isJoinCurrent(joinEpoch, sessionRoomId)) {
+        await _disposeRoomInstance(room, joiningEvents);
+        return;
+      }
       _setStatus(VoiceCallStatus.connected);
       if (playSound) {
         unawaited(_sounds.play(UiSound.roomJoined));
       }
     } catch (error) {
+      if (!_isJoinCurrent(joinEpoch, sessionRoomId)) {
+        final room = joiningRoom;
+        if (room != null) {
+          await _disposeRoomInstance(room, joiningEvents);
+        }
+        return;
+      }
+      _cameraOperationEpoch++;
+      _desiredCameraEnabled = false;
+      _microphoneOperationEpoch++;
+      _desiredMicrophoneEnabled = false;
+      _speakerOperationEpoch++;
+      _cameraChangeInProgress = false;
       _errorMessage = _friendlyError(error);
       _setStatus(VoiceCallStatus.failed);
       await _disposeRoom();
@@ -326,7 +578,8 @@ class VoiceCallService extends ChangeNotifier {
   }
 
   Future<void> setMuted(bool muted) async {
-    final localParticipant = _room?.localParticipant;
+    final operationRoom = _room;
+    final localParticipant = operationRoom?.localParticipant;
     if (localParticipant == null || !isConnected || _muteChangeInProgress) {
       return;
     }
@@ -336,33 +589,94 @@ class VoiceCallService extends ChangeNotifier {
     if (isMuted == muted) return;
 
     final previous = isMuted;
+    final operationEpoch = ++_microphoneOperationEpoch;
+    _desiredMicrophoneEnabled = !muted;
     _muteChangeInProgress = true;
     _isMuted = muted;
     notifyListeners();
     try {
       await localParticipant.setMicrophoneEnabled(!muted);
+      if (!_isMicrophoneOperationCurrent(
+        operationEpoch,
+        operationRoom,
+        desiredEnabled: !muted,
+      )) {
+        if (!muted && operationRoom != null) {
+          await _disableStaleMicrophone(localParticipant, operationRoom);
+        }
+        return;
+      }
       unawaited(
         _sounds.play(
           muted ? UiSound.microphoneMuted : UiSound.microphoneUnmuted,
         ),
       );
     } catch (_) {
-      _isMuted = previous;
+      if (_microphoneOperationEpoch == operationEpoch &&
+          identical(_room, operationRoom)) {
+        _desiredMicrophoneEnabled = !previous;
+        _isMuted = previous;
+      }
       rethrow;
     } finally {
-      _muteChangeInProgress = false;
-      notifyListeners();
+      if (_microphoneOperationEpoch == operationEpoch &&
+          identical(_room, operationRoom)) {
+        _muteChangeInProgress = false;
+        notifyListeners();
+      }
+    }
+  }
+
+  Future<void> _muteCurrentRoomForSafeReentry(String sessionRoomId) async {
+    final operationRoom = _room;
+    final localParticipant = operationRoom?.localParticipant;
+    final operationEpoch = _sessionEpoch;
+    if (operationRoom == null || localParticipant == null) {
+      await disconnect(playSound: false);
+      throw StateError('The current microphone session could not be secured.');
+    }
+
+    final microphoneEpoch = ++_microphoneOperationEpoch;
+    _desiredMicrophoneEnabled = false;
+    _muteChangeInProgress = true;
+    _isMuted = true;
+    notifyListeners();
+    try {
+      await localParticipant.setMicrophoneEnabled(false);
+      if (_sessionEpoch != operationEpoch ||
+          _microphoneOperationEpoch != microphoneEpoch ||
+          _roomId != sessionRoomId ||
+          !identical(_room, operationRoom)) {
+        return;
+      }
+    } catch (_) {
+      if (_sessionEpoch == operationEpoch &&
+          _microphoneOperationEpoch == microphoneEpoch &&
+          identical(_room, operationRoom)) {
+        await disconnect(playSound: false);
+      }
+      rethrow;
+    } finally {
+      if (_sessionEpoch == operationEpoch &&
+          _microphoneOperationEpoch == microphoneEpoch &&
+          identical(_room, operationRoom)) {
+        _muteChangeInProgress = false;
+        notifyListeners();
+      }
     }
   }
 
   Future<void> toggleMute() async {
-    final localParticipant = _room?.localParticipant;
+    final operationRoom = _room;
+    final localParticipant = operationRoom?.localParticipant;
     if (localParticipant == null || !isConnected || _muteChangeInProgress) {
       return;
     }
 
     final previous = isMuted;
     final next = !previous;
+    final operationEpoch = ++_microphoneOperationEpoch;
+    _desiredMicrophoneEnabled = !next;
 
     _muteChangeInProgress = true;
     _isMuted = next;
@@ -370,21 +684,264 @@ class VoiceCallService extends ChangeNotifier {
 
     try {
       await localParticipant.setMicrophoneEnabled(!next);
+      if (!_isMicrophoneOperationCurrent(
+        operationEpoch,
+        operationRoom,
+        desiredEnabled: !next,
+      )) {
+        if (!next && operationRoom != null) {
+          await _disableStaleMicrophone(localParticipant, operationRoom);
+        }
+        return;
+      }
       unawaited(
         _sounds.play(
           next ? UiSound.microphoneMuted : UiSound.microphoneUnmuted,
         ),
       );
     } catch (_) {
-      _isMuted = previous;
+      if (_microphoneOperationEpoch == operationEpoch &&
+          identical(_room, operationRoom)) {
+        _desiredMicrophoneEnabled = !previous;
+        _isMuted = previous;
+      }
       rethrow;
     } finally {
-      _muteChangeInProgress = false;
+      if (_microphoneOperationEpoch == operationEpoch &&
+          identical(_room, operationRoom)) {
+        _muteChangeInProgress = false;
+        notifyListeners();
+      }
+    }
+  }
+
+  Future<void> setCameraEnabled(bool enabled) async {
+    final localParticipant = _room?.localParticipant;
+    final operationRoom = _room;
+    if (!isVideoCall ||
+        localParticipant == null ||
+        !isConnected ||
+        _cameraChangeInProgress ||
+        isCameraEnabled == enabled) {
+      return;
+    }
+    if (enabled && !_appIsForeground) {
+      _cameraIssue = 'Return to the app before turning on the camera.';
+      notifyListeners();
+      return;
+    }
+
+    final operationEpoch = ++_cameraOperationEpoch;
+    _desiredCameraEnabled = enabled;
+    _cameraChangeInProgress = true;
+    _cameraIssue = null;
+    notifyListeners();
+    try {
+      if (enabled && !await _requestCameraPermission()) {
+        _cameraPermissionDenied = true;
+        throw StateError('Camera permission is required to turn on video.');
+      }
+      if (!_isCameraOperationCurrent(
+        operationEpoch,
+        operationRoom,
+        desiredEnabled: enabled,
+      )) {
+        return;
+      }
+      if (enabled) {
+        await _enableCameraSafely(
+          localParticipant: localParticipant,
+          room: operationRoom!,
+          operationEpoch: operationEpoch,
+          position: _cameraPosition,
+        );
+      } else {
+        await localParticipant.setCameraEnabled(false);
+      }
+      if (!_isCameraOperationCurrent(
+        operationEpoch,
+        operationRoom,
+        desiredEnabled: enabled,
+      )) {
+        if (enabled && !_desiredCameraEnabled) {
+          await _disableCameraOrCloseSession(
+            localParticipant,
+            operationRoom!,
+            identical(_room, operationRoom) ? _events : null,
+          );
+        }
+        return;
+      }
+      _cameraPermissionDenied = false;
+    } catch (error) {
+      // A camera API may fail after partially changing capture state. Force a
+      // known-off state; if that also fails, the helper disposes the room.
+      if (operationRoom != null) {
+        await _disableCameraOrCloseSession(
+          localParticipant,
+          operationRoom,
+          identical(_room, operationRoom) ? _events : null,
+        );
+      }
+      if (_cameraOperationEpoch != operationEpoch) return;
+      _cameraIssue = enabled
+          ? 'Camera could not be started. Continue with audio or retry.'
+          : 'Camera could not be turned off. Try again.';
+      rethrow;
+    } finally {
+      if (_cameraOperationEpoch == operationEpoch) {
+        _cameraChangeInProgress = false;
+      }
+      notifyListeners();
+    }
+  }
+
+  /// Cancels every in-flight camera-on operation when the app leaves the
+  /// foreground. The camera remains off after resume until the user turns it
+  /// on again.
+  Future<void> pauseCameraForBackground() async {
+    // This flag is set even if a video join has not populated its local state
+    // yet. A lifecycle event that races the first permission request must
+    // still prevent the late Future from starting capture in the background.
+    _appIsForeground = false;
+    final operationEpoch = ++_cameraOperationEpoch;
+    _desiredCameraEnabled = false;
+    if (!isVideoCall) return;
+    final operationRoom = _room;
+    final localParticipant = operationRoom?.localParticipant;
+    _cameraChangeInProgress = true;
+    notifyListeners();
+    try {
+      if (localParticipant != null) {
+        await _disableCameraOrCloseSession(
+          localParticipant,
+          operationRoom!,
+          identical(_room, operationRoom) ? _events : null,
+        );
+      }
+    } finally {
+      if (_cameraOperationEpoch == operationEpoch) {
+        _cameraChangeInProgress = false;
+      }
+      notifyListeners();
+    }
+  }
+
+  /// Marks the app visible again without restoring capture. Camera restart is
+  /// always a fresh, explicit user action after returning to the foreground.
+  void resumeAfterBackground() {
+    _appIsForeground = true;
+  }
+
+  Future<void> toggleCamera() => setCameraEnabled(!isCameraEnabled);
+
+  Future<void> toggleSpeaker() async {
+    if (!isDirectCall ||
+        !isConnected ||
+        !canSwitchSpeakerphone ||
+        _speakerChangeInProgress) {
+      return;
+    }
+    final operationEpoch = ++_speakerOperationEpoch;
+    final preferred = !isSpeakerPreferred;
+    _desiredSpeakerPreferred = preferred;
+    _speakerChangeInProgress = true;
+    notifyListeners();
+    try {
+      await _enqueueSpeakerPreference(
+        operationEpoch: operationEpoch,
+        preferred: preferred,
+      );
+    } finally {
+      if (_speakerOperationEpoch == operationEpoch) {
+        _speakerChangeInProgress = false;
+        notifyListeners();
+      }
+    }
+  }
+
+  Future<void> flipCamera() async {
+    final operationRoom = _room;
+    final localParticipant = operationRoom?.localParticipant;
+    if (!isVideoCall ||
+        !_appIsForeground ||
+        !isConnected ||
+        localCameraTrack is! LocalVideoTrack ||
+        operationRoom == null ||
+        localParticipant == null ||
+        _cameraChangeInProgress) {
+      return;
+    }
+    final operationEpoch = ++_cameraOperationEpoch;
+    _cameraChangeInProgress = true;
+    _cameraIssue = null;
+    notifyListeners();
+    try {
+      final nextPosition = _cameraPosition.switched();
+      await _enableCameraSafely(
+        localParticipant: localParticipant,
+        room: operationRoom,
+        operationEpoch: operationEpoch,
+        position: nextPosition,
+      );
+      if (!_isCameraOperationCurrent(
+        operationEpoch,
+        operationRoom,
+        desiredEnabled: true,
+      )) {
+        await _disableCameraOrCloseSession(
+          localParticipant,
+          operationRoom,
+          identical(_room, operationRoom) ? _events : null,
+        );
+        return;
+      }
+      _cameraPosition = nextPosition;
+    } catch (_) {
+      if (_cameraOperationEpoch == operationEpoch) {
+        _cameraIssue = 'Camera could not be switched. Try again.';
+      }
+      rethrow;
+    } finally {
+      if (_cameraOperationEpoch == operationEpoch) {
+        _cameraChangeInProgress = false;
+      }
       notifyListeners();
     }
   }
 
   Future<void> disconnect({bool playSound = true}) async {
+    await _disconnectCurrentSession(
+      playSound: playSound,
+      invalidateOperations: true,
+    );
+  }
+
+  Future<void> _disconnectCurrentSession({
+    required bool playSound,
+    required bool invalidateOperations,
+  }) async {
+    // Invalidate permission, token and media awaits before clearing any local
+    // state. A late Future must never reconnect or republish after logout,
+    // hang-up, account switch or a newer join.
+    if (invalidateOperations) {
+      _sessionEpoch++;
+      _microphoneOperationEpoch++;
+      _cameraOperationEpoch++;
+      _speakerOperationEpoch++;
+    }
+    _desiredMicrophoneEnabled = false;
+    _desiredSpeakerPreferred = false;
+    if (canSwitchSpeakerphone) {
+      // Do not let an older session's delayed speaker toggle become the last
+      // process-global route write after hang-up or replacement join.
+      unawaited(
+        _enqueueSpeakerPreference(
+          operationEpoch: _speakerOperationEpoch,
+          preferred: false,
+        ).catchError((_) {}),
+      );
+    }
     final wasConnected = isConnected;
     _status = VoiceCallStatus.disconnected;
     _errorMessage = null;
@@ -394,6 +951,13 @@ class VoiceCallService extends ChangeNotifier {
     _roomName = null;
     _sessionKind = null;
     _directCallId = null;
+    _videoRequested = false;
+    _desiredCameraEnabled = false;
+    _speakerChangeInProgress = false;
+    _cameraChangeInProgress = false;
+    _cameraPermissionDenied = false;
+    _cameraIssue = null;
+    _cameraPosition = CameraPosition.front;
     notifyListeners();
 
     await _disposeRoom();
@@ -416,27 +980,305 @@ class VoiceCallService extends ChangeNotifier {
     final room = _room;
     _room = null;
 
-    _events?.dispose();
+    final events = _events;
+    events?.dispose();
     _events = null;
 
     if (room != null) {
-      room.removeListener(_handleRoomChanged);
-      await room.disconnect();
-      await room.dispose();
+      await _disposeRoomInstance(room, events, listenerDisposed: true);
     }
   }
 
-  Future<void> _requestPermissions() async {
-    if (kIsWeb) return;
+  bool _isJoinCurrent(int epoch, String sessionRoomId) =>
+      _sessionEpoch == epoch && _roomId == sessionRoomId;
 
-    final microphone = await Permission.microphone.request();
-    if (!microphone.isGranted) {
-      throw StateError('Microphone permission is required to join voice chat.');
-    }
+  bool _isCameraOperationCurrent(
+    int epoch,
+    Room? room, {
+    required bool desiredEnabled,
+  }) =>
+      _cameraOperationEpoch == epoch &&
+      _desiredCameraEnabled == desiredEnabled &&
+      (!desiredEnabled || _appIsForeground) &&
+      room != null &&
+      identical(_room, room);
 
-    if (defaultTargetPlatform == TargetPlatform.android) {
-      await Permission.bluetoothConnect.request();
+  bool _isMicrophoneOperationCurrent(
+    int epoch,
+    Room? room, {
+    required bool desiredEnabled,
+  }) =>
+      _microphoneOperationEpoch == epoch &&
+      _desiredMicrophoneEnabled == desiredEnabled &&
+      room != null &&
+      identical(_room, room);
+
+  Future<void> _disableStaleMicrophone(
+    LocalParticipant localParticipant,
+    Room room,
+  ) async {
+    try {
+      // LiveKit serializes source changes. This disable is therefore queued
+      // behind a late unmute/restartTrack and wins after any newly-created
+      // getUserMedia track appears.
+      await localParticipant.setMicrophoneEnabled(false);
+    } catch (_) {
+      // Fall through to hard-stop every track visible after the failed SDK
+      // reconciliation. The owning room is also disposed by the caller.
     }
+    await _stopLocalCaptureImmediately(room);
+  }
+
+  Future<void> _enqueueSpeakerPreference({
+    required int operationEpoch,
+    required bool preferred,
+  }) {
+    final previous = _speakerRouteTail;
+    final operation = () async {
+      try {
+        await previous;
+      } catch (_) {
+        // A failed route write must not poison the process-global queue.
+      }
+      if (_speakerOperationEpoch != operationEpoch ||
+          _desiredSpeakerPreferred != preferred) {
+        return;
+      }
+      await AudioManager.instance.setSpeakerOutputPreferred(preferred);
+    }();
+    _speakerRouteTail = operation;
+    return operation;
+  }
+
+  /// Publishes camera capture with explicit ownership of the candidate track.
+  /// LiveKit 2.10 does not stop a newly-created video track when signaling or
+  /// negotiation fails before a publication is registered, so using
+  /// `setCameraEnabled(true)` directly can leave an invisible orphan capture.
+  Future<void> _enableCameraSafely({
+    required LocalParticipant localParticipant,
+    required Room room,
+    required int operationEpoch,
+    required CameraPosition position,
+  }) async {
+    LocalVideoTrack? candidate;
+    try {
+      final existing = localParticipant.getTrackPublicationBySource(
+        TrackSource.camera,
+      );
+      if (existing != null) {
+        await localParticipant.removePublishedTrack(existing.sid);
+      }
+      if (!_isCameraOperationCurrent(
+        operationEpoch,
+        room,
+        desiredEnabled: true,
+      )) {
+        return;
+      }
+
+      candidate = await LocalVideoTrack.createCameraTrack(
+        CameraCaptureOptions(cameraPosition: position),
+      );
+      if (!_isCameraOperationCurrent(
+        operationEpoch,
+        room,
+        desiredEnabled: true,
+      )) {
+        await _stopLocalTrack(candidate);
+        return;
+      }
+
+      await localParticipant.publishVideoTrack(candidate);
+      if (_isCameraOperationCurrent(
+        operationEpoch,
+        room,
+        desiredEnabled: true,
+      )) {
+        // Ownership transferred to the participant publication.
+        candidate = null;
+      }
+    } catch (_) {
+      if (candidate != null) await _stopLocalTrack(candidate);
+      rethrow;
+    }
+  }
+
+  Future<void> _stopLocalTrack(LocalTrack track) async {
+    try {
+      track.mediaStreamTrack.enabled = false;
+    } catch (_) {
+      // The awaited hard stop below is authoritative.
+    }
+    try {
+      await track.stop();
+    } catch (_) {
+      try {
+        await track.mediaStreamTrack.stop();
+      } catch (_) {
+        // The owning Room disposal remains the final native cleanup.
+      }
+    }
+  }
+
+  /// Camera shutdown is fail-closed. If LiveKit cannot mute the video track,
+  /// dispose the entire affected room so capture cannot continue invisibly.
+  Future<void> _disableCameraOrCloseSession(
+    LocalParticipant localParticipant,
+    Room room,
+    EventsListener<RoomEvent>? events,
+  ) async {
+    try {
+      await localParticipant.setCameraEnabled(false);
+    } catch (_) {
+      if (identical(_room, room)) {
+        await disconnect(playSound: false);
+      } else {
+        await _disposeRoomInstance(room, events);
+      }
+    }
+  }
+
+  Future<void> _disposeRoomInstance(
+    Room room,
+    EventsListener<RoomEvent>? events, {
+    bool listenerDisposed = false,
+  }) async {
+    // `Room.disconnect()` can wait up to ten seconds for a signaling event.
+    // Stop physical capture first so End/logout/background is local-first in
+    // fact, not only in UI state.
+    // Keep the actual LocalTrack objects, not only their publications. A
+    // delayed LiveKit `restartTrack()` mutates the same object after
+    // getUserMedia returns. Room cleanup can remove its publication while that
+    // Future is pending, so a later scan of the participant alone would miss
+    // the restarted native microphone.
+    final localParticipant = room.localParticipant;
+    final capturedTracks = _snapshotLocalTracks(localParticipant);
+    await _stopLocalCaptureImmediately(room);
+    if (localParticipant != null) {
+      // Queue a final mic-off behind any in-flight LiveKit unmute. Attach a
+      // late hard stop even if the bounded wait expires, so a delayed
+      // getUserMedia result can never become a detached live track.
+      final microphoneOff = localParticipant
+          .setMicrophoneEnabled(false)
+          .catchError((_) => null);
+      await _guardDeferredCaptureTeardown<LocalTrack>(
+        pendingDisable: microphoneOff,
+        capturedTracks: capturedTracks,
+        stopCapturedTrack: _stopLocalTrack,
+        stopCurrentCapture: () => _stopLocalCaptureImmediately(room),
+      );
+    }
+    if (identical(_room, room)) {
+      _room = null;
+      if (identical(_events, events)) _events = null;
+    }
+    if (!listenerDisposed) events?.dispose();
+    room.removeListener(_handleRoomChanged);
+    try {
+      await room.disconnect();
+    } catch (_) {
+      // Cleanup is best-effort; dispose still needs to run.
+    }
+    await room.dispose();
+  }
+
+  Future<void> _stopLocalCaptureImmediately(Room room) async {
+    final tracks = _snapshotLocalTracks(room.localParticipant);
+
+    // Disable synchronously before awaiting any SDK/network operation.
+    for (final track in tracks) {
+      try {
+        track.mediaStreamTrack.enabled = false;
+      } catch (_) {
+        // The hard stop below is the fallback.
+      }
+    }
+    await Future.wait(tracks.map(_stopLocalTrack));
+  }
+
+  List<LocalTrack> _snapshotLocalTracks(LocalParticipant? localParticipant) {
+    if (localParticipant == null) return const <LocalTrack>[];
+    return <LocalTrack>[
+      ...localParticipant.audioTrackPublications
+          .map((publication) => publication.track)
+          .whereType<LocalTrack>(),
+      ...localParticipant.videoTrackPublications
+          .map((publication) => publication.track)
+          .whereType<LocalTrack>(),
+    ];
+  }
+
+  Future<void> _guardDeferredCaptureTeardown<T>({
+    required Future<void> pendingDisable,
+    required List<T> capturedTracks,
+    required Future<void> Function(T track) stopCapturedTrack,
+    required Future<void> Function() stopCurrentCapture,
+  }) async {
+    final guardedDisable = pendingDisable.whenComplete(() async {
+      // These references remain valid even if Room._cleanUp has already
+      // removed every publication. LiveKit restartTrack replaces the native
+      // media on the same LocalTrack instance, so stopping it here also catches
+      // a getUserMedia result that arrives after room disposal.
+      await Future.wait(capturedTracks.map(stopCapturedTrack));
+      await stopCurrentCapture();
+    });
+    final completedBeforeTimeout = await _captureDisableWaiter(
+      guardedDisable,
+      _microphoneTeardownTimeout,
+    );
+    if (!completedBeforeTimeout) {
+      // Future.timeout does not cancel its source. Keep the captured-reference
+      // guard attached and consume any late cleanup error.
+      unawaited(guardedDisable.catchError((_) {}));
+    }
+    await stopCurrentCapture();
+  }
+
+  @visibleForTesting
+  Future<void> guardDeferredCaptureTeardownForTesting<T>({
+    required Future<void> pendingDisable,
+    required List<T> capturedTracks,
+    required Future<void> Function(T track) stopCapturedTrack,
+    required Future<void> Function() stopCurrentCapture,
+  }) => _guardDeferredCaptureTeardown<T>(
+    pendingDisable: pendingDisable,
+    capturedTracks: capturedTracks,
+    stopCapturedTrack: stopCapturedTrack,
+    stopCurrentCapture: stopCurrentCapture,
+  );
+
+  Future<bool> _requestPermissions({
+    required bool requestMicrophone,
+    required bool requestCamera,
+  }) async {
+    if (kIsWeb) return true;
+
+    if (requestMicrophone) {
+      final microphone = await Permission.microphone.request();
+      if (!microphone.isGranted) {
+        throw StateError(
+          'Microphone permission is required to join voice chat.',
+        );
+      }
+
+      if (defaultTargetPlatform == TargetPlatform.android) {
+        await Permission.bluetoothConnect.request();
+      }
+    }
+    if (!requestCamera) return true;
+    return _requestCameraPermission();
+  }
+
+  Future<bool> _requestCameraPermission() async {
+    if (kIsWeb) return true;
+    final camera = await Permission.camera.request();
+    final granted = camera.isGranted;
+    _cameraPermissionDenied = !granted;
+    if (!granted) {
+      _cameraIssue =
+          'Camera access is off. The call will continue with audio only.';
+    }
+    return granted;
   }
 
   void _handleRoomChanged() {

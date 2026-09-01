@@ -512,6 +512,35 @@ void main() {
       expect(PushNotificationService.webPushConfigured, isTrue);
     });
   });
+
+  group('device capability registration', () {
+    test(
+      'each current push device advertises direct-video protocol v1',
+      () async {
+        await service.registerFcmToken(
+          'device-token',
+          platform: 'ios',
+          expectedUserId: me,
+        );
+
+        final device = await db
+            .collection('users')
+            .doc(me)
+            .collection('fcmTokens')
+            .doc('device-token')
+            .get();
+        expect(device.data(), containsPair('platform', 'ios'));
+        expect(
+          device.data(),
+          containsPair(
+            'directVideoProtocol',
+            NotificationService.currentDirectVideoProtocol,
+          ),
+        );
+        expect(device.data()!['updatedAt'], isA<Timestamp>());
+      },
+    );
+  });
 }
 
 /// The screen-level guarantee: the activity feed renders on its own

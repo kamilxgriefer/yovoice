@@ -87,18 +87,19 @@ const REPORT_STAFF_ROLES = new Set([
 /// removed moderator's ID token happens to expire. Exact equality plus the
 /// full active-account check rejects crossed staff tiers, bans, disablement
 /// and both soft-deletion representations.
-async function requireActiveStaff(request) {
+async function requireActiveStaff(request, { privileged = false } = {}) {
   return requireVerifiedStaff(
     request,
     REPORT_STAFF_ROLES,
     "You do not have permission to moderate reports.",
+    { privileged },
   );
 }
 
 const moderateReport = onCall(
   { region: REGION, enforceAppCheck: false },
   async (request) => {
-    const caller = await requireActiveStaff(request);
+    const caller = await requireActiveStaff(request, { privileged: true });
 
     const reportId = normalizeText(request.data?.reportId, 256);
     const action = normalizeText(request.data?.action, 32);

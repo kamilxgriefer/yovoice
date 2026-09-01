@@ -50,8 +50,38 @@ void main() {
     mockUser: MockUser(uid: uid, email: '$uid@yovoice.app', displayName: uid),
   );
 
-  ClubChatService serviceAs(String uid) =>
-      ClubChatService(firestore: db, auth: authAs(uid));
+  ClubChatService serviceAs(String uid) => ClubChatService(
+    firestore: db,
+    auth: authAs(uid),
+    moderationInvoker: (request) async {
+      final club = request['clubId']! as String;
+      final channel = request['channelId']! as String;
+      final message = request['messageId']! as String;
+      final member = await db
+          .collection('clubs')
+          .doc(club)
+          .collection('members')
+          .doc(uid)
+          .get();
+      await db
+          .collection('clubs')
+          .doc(club)
+          .collection('channels')
+          .doc(channel)
+          .collection('messages')
+          .doc(message)
+          .update({
+            'content': '',
+            'isDeleted': true,
+            'editedAt': Timestamp.now(),
+            'deletedBy': uid,
+            'deletedByRole': member.data()?['role'],
+            'deletedAt': Timestamp.now(),
+            'moderationRemoved': true,
+          });
+      return <Object?, Object?>{'outcome': 'redacted', 'redacted': true};
+    },
+  );
 
   Future<void> seedClub({
     String ownerId = ownerUid,
@@ -335,18 +365,14 @@ void main() {
       final stale = await loadMessage('m1');
 
       // Somebody else gets there first.
-      await serviceAs(ownerUid).deleteMessage(
-        clubId: clubId,
-        channelId: channelId,
-        message: stale,
-      );
+      await serviceAs(
+        ownerUid,
+      ).deleteMessage(clubId: clubId, channelId: channelId, message: stale);
 
       await expectLater(
-        serviceAs(modUid).deleteMessage(
-          clubId: clubId,
-          channelId: channelId,
-          message: stale,
-        ),
+        serviceAs(
+          modUid,
+        ).deleteMessage(clubId: clubId, channelId: channelId, message: stale),
         throwsA(
           isA<StateError>().having(
             (error) => error.message,
@@ -374,11 +400,9 @@ void main() {
           .delete();
 
       await expectLater(
-        serviceAs(modUid).deleteMessage(
-          clubId: clubId,
-          channelId: channelId,
-          message: stale,
-        ),
+        serviceAs(
+          modUid,
+        ).deleteMessage(clubId: clubId, channelId: channelId, message: stale),
         throwsA(
           isA<StateError>().having(
             (error) => error.message,
@@ -409,11 +433,9 @@ void main() {
       );
 
       await expectLater(
-        serviceAs(modUid).deleteMessage(
-          clubId: clubId,
-          channelId: channelId,
-          message: spoofed,
-        ),
+        serviceAs(
+          modUid,
+        ).deleteMessage(clubId: clubId, channelId: channelId, message: spoofed),
         throwsA(
           isA<StateError>().having(
             (error) => error.message,
@@ -559,6 +581,47 @@ void main() {
       );
     });
 
+    test('only moderator power and above can publish announcements', () {
+      const moderator = ClubChatAuthority(
+        viewerId: modUid,
+        role: ClubRole.moderator,
+        clubOwnerId: ownerUid,
+        viewerEmailVerified: true,
+      );
+      const member = ClubChatAuthority(
+        viewerId: memberUid,
+        role: ClubRole.member,
+        clubOwnerId: ownerUid,
+        viewerEmailVerified: true,
+      );
+
+      expect(moderator.canSendToChannel(announcement: true), isTrue);
+      expect(member.canSendToChannel(announcement: false), isTrue);
+      expect(member.canSendToChannel(announcement: true), isFalse);
+    });
+
+    test('guests, muted members and unverified members cannot publish', () {
+      const guest = ClubChatAuthority(
+        viewerId: memberUid,
+        role: ClubRole.guest,
+        viewerEmailVerified: true,
+      );
+      const muted = ClubChatAuthority(
+        viewerId: memberUid,
+        role: ClubRole.member,
+        viewerEmailVerified: true,
+        viewerIsCommunicationMuted: true,
+      );
+      const unverified = ClubChatAuthority(
+        viewerId: memberUid,
+        role: ClubRole.member,
+      );
+
+      expect(guest.canSendToChannel(announcement: false), isFalse);
+      expect(muted.canSendToChannel(announcement: false), isFalse);
+      expect(unverified.canSendToChannel(announcement: false), isFalse);
+    });
+
     test('a removed message is refused for everyone', () {
       const authority = ClubChatAuthority(
         viewerId: ownerUid,
@@ -639,6 +702,7 @@ void main() {
         channel: channel,
         firestore: db,
         auth: authAs(uid),
+        chatService: serviceAs(uid),
       ),
     );
 
@@ -704,7 +768,12 @@ void main() {
       useSurface(tester, const Size(390, 844));
       await seedClub();
       await seedMessage(id: 'm1', senderId: otherUid, content: 'theirs');
-      await seedMessage(id: 'm2', senderId: memberUid, content: 'ours', minute: 1);
+      await seedMessage(
+        id: 'm2',
+        senderId: memberUid,
+        content: 'ours',
+        minute: 1,
+      );
 
       await tester.pumpWidget(host(memberUid));
       await settle(tester);
@@ -713,8 +782,9 @@ void main() {
       expect(offeredOn(tester, 'ours'), isTrue);
     });
 
-    testWidgets('the club owner is offered removal on a moderator\'s message',
-        (tester) async {
+    testWidgets('the club owner is offered removal on a moderator\'s message', (
+      tester,
+    ) async {
       useSurface(tester, const Size(390, 844));
       await seedClub();
       await seedMessage(id: 'm1', senderId: modUid, content: 'mod said this');
@@ -1111,7 +1181,10 @@ void main() {
       await tester.tap(find.widgetWithText(TextButton, 'Remove'));
       await settle(tester);
 
-      expect(find.text("You don't have permission to do that."), findsOneWidget);
+      expect(
+        find.text("You don't have permission to do that."),
+        findsOneWidget,
+      );
       expect(find.textContaining('cloud_firestore'), findsNothing);
       expect(find.textContaining('Bad state'), findsNothing);
     });

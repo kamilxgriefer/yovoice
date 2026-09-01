@@ -206,6 +206,127 @@ test("openDirectConversation binds one canonical pair and canonical identity", a
     })),
     (error) => error.code === "invalid-argument",
   );
+
+  const attemptRate = await db.collection("privateRateLimits")
+    .where("ownerId", "==", A)
+    .where("scope", "==", "direct.attempt.open")
+    .get();
+  assert.equal(attemptRate.size, 1);
+  assert.equal(attemptRate.docs[0].data().count, 1);
+});
+
+test("every caller-selected direct target consumes a committed attempt budget", async () => {
+  const oneAttempt = { maxEvents: 1, windowMs: 60_000 };
+  const service = directService({
+    open: oneAttempt,
+    send: oneAttempt,
+    uploadReserve: oneAttempt,
+    finalize: oneAttempt,
+    edit: oneAttempt,
+    delete: oneAttempt,
+    preference: oneAttempt,
+    read: oneAttempt,
+    reaction: oneAttempt,
+    typing: oneAttempt,
+  });
+  const messageId = `m_${"a".repeat(40)}`;
+  const invalidCalls = [
+    ["open", (suffix) => service.openDirectConversation(request(A, {
+      requestId: `cost-open-${suffix}`,
+      targetUserId: `missing-open-${suffix}`,
+    }))],
+    ["send", (suffix) => service.sendDirectMessage(request(A, {
+      conversationId: `missing-send-${suffix}`,
+      requestId: `cost-send-${suffix}`,
+      text: "bounded",
+    }))],
+    ["uploadReserve", (suffix) => service.reserveDirectMessageAttachment(request(A, {
+      contentType: "image/jpeg",
+      conversationId: `missing-reserve-${suffix}`,
+      requestId: `cost-reserve-${suffix}`,
+      type: "image",
+    }))],
+    ["finalize", (suffix) => service.finalizeDirectMessageAttachment(request(A, {
+      conversationId: `missing-finalize-${suffix}`,
+      messageId,
+      objectGeneration: "1",
+      requestId: `cost-finalize-${suffix}`,
+    }))],
+    ["edit", (suffix) => service.editDirectMessage(request(A, {
+      conversationId: `missing-edit-${suffix}`,
+      messageId,
+      requestId: `cost-edit-${suffix}`,
+      text: "bounded",
+    }))],
+    ["delete", (suffix) => service.deleteDirectMessage(request(A, {
+      conversationId: `missing-delete-${suffix}`,
+      messageId,
+      requestId: `cost-delete-${suffix}`,
+    }))],
+    ["preference", (suffix) => service.setDirectConversationPreference(request(A, {
+      conversationId: `missing-preference-${suffix}`,
+      enabled: true,
+      preference: "muted",
+      requestId: `cost-preference-${suffix}`,
+    }))],
+    ["read", (suffix) => service.markDirectConversationRead(request(A, {
+      conversationId: `missing-read-${suffix}`,
+      requestId: `cost-read-${suffix}`,
+    }))],
+    ["reaction", (suffix) => service.setDirectMessageReaction(request(A, {
+      conversationId: `missing-reaction-${suffix}`,
+      emoji: "👍",
+      messageId,
+      requestId: `cost-reaction-${suffix}`,
+    }))],
+    ["typing", (suffix) => service.setDirectTyping(request(A, {
+      conversationId: `missing-typing-${suffix}`,
+      isTyping: true,
+      requestId: `cost-typing-${suffix}`,
+    }))],
+  ];
+
+  for (const [scope, invoke] of invalidCalls) {
+    await assert.rejects(
+      invoke("first"),
+      (error) => error.code !== "resource-exhausted",
+      `${scope} first denial should consume rather than exhaust`,
+    );
+    await assert.rejects(
+      invoke("second"),
+      (error) => error.code === "resource-exhausted",
+      `${scope} N+1 must stop before another target lookup`,
+    );
+  }
+
+  const attempts = await db.collection("privateRateLimits")
+    .where("ownerId", "==", A)
+    .get();
+  const attemptScopes = new Set(
+    attempts.docs.map((document) => document.data().scope)
+      .filter((scope) => scope.startsWith("direct.attempt.")),
+  );
+  assert.deepEqual(
+    attemptScopes,
+    new Set(invalidCalls.map(([scope]) => `direct.attempt.${scope}`)),
+  );
+});
+
+test("a denied direct retry pays the attempt budget before rereading its target", async () => {
+  const service = directService({ send: { maxEvents: 1, windowMs: 60_000 } });
+  const denied = request(A, {
+    conversationId: "missing-retry-conversation",
+    requestId: "cost-send-retry",
+    text: "bounded",
+  });
+  await assert.rejects(
+    service.sendDirectMessage(denied),
+    (error) => error.code !== "resource-exhausted",
+  );
+  await assert.rejects(
+    service.sendDirectMessage(denied),
+    (error) => error.code === "resource-exhausted",
+  );
 });
 
 test("concurrent opens cannot create duplicate conversations", async () => {

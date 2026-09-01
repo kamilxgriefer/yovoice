@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/core/theme/app_motion.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_radius.dart';
 import 'package:yovoice/core/theme/app_typography.dart';
@@ -226,6 +227,7 @@ class _YoTextFieldState extends State<YoTextField> {
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
+    final standardDuration = AppMotion.resolve(context, AppMotion.standard);
     final bool hasExternalError =
         widget.errorText != null && widget.errorText!.trim().isNotEmpty;
 
@@ -256,7 +258,7 @@ class _YoTextFieldState extends State<YoTextField> {
               const SizedBox(height: 8),
             ],
             AnimatedContainer(
-              duration: const Duration(milliseconds: 180),
+              duration: standardDuration,
               curve: Curves.easeOut,
               decoration: BoxDecoration(
                 color: widget.enabled
@@ -318,6 +320,10 @@ class _YoTextFieldState extends State<YoTextField> {
                   filled: false,
                   counterText: '',
                   hintText: widget.hint,
+                  // Keep validation attached to the editable semantics node.
+                  // The zero-height theme below prevents a second visual copy;
+                  // `_YoSupportingText` remains the single visible message.
+                  errorText: hasError ? visibleError : null,
                   hintStyle: AppTypography.bodyMedium.copyWith(
                     color: palette.textTertiary,
                   ),
@@ -439,23 +445,32 @@ class _YoSupportingText extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: <Widget>[
-        if (icon != null) ...[
-          Padding(
-            padding: const EdgeInsets.only(top: 1),
-            child: Icon(icon, size: 14, color: color),
+    return Semantics(
+      container: icon != null,
+      liveRegion: icon != null,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          if (icon != null) ...[
+            ExcludeSemantics(
+              child: Padding(
+                padding: const EdgeInsets.only(top: 1),
+                child: Icon(icon, size: 14, color: color),
+              ),
+            ),
+            const SizedBox(width: 5),
+          ],
+          Expanded(
+            child: Text(
+              text,
+              style: AppTypography.bodySmall.copyWith(
+                color: color,
+                height: 1.35,
+              ),
+            ),
           ),
-          const SizedBox(width: 5),
         ],
-        Expanded(
-          child: Text(
-            text,
-            style: AppTypography.bodySmall.copyWith(color: color, height: 1.35),
-          ),
-        ),
-      ],
+      ),
     );
   }
 }

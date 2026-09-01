@@ -59,13 +59,10 @@ class FamilyCheckIn {
     return FamilyCheckIn(
       id: document.id,
       userId: data['userId'] as String? ?? '',
-      displayName:
-          (data['displayName'] as String?)?.trim().isNotEmpty == true
+      displayName: (data['displayName'] as String?)?.trim().isNotEmpty == true
           ? (data['displayName'] as String).trim()
           : 'YO Voice user',
-      photoUrl: (data['photoUrl'] as String?)?.trim().isNotEmpty == true
-          ? (data['photoUrl'] as String).trim()
-          : null,
+      photoUrl: null,
       status: FamilyCheckInStatus.fromValue(data['status']),
       createdAt: (data['createdAt'] as Timestamp?)?.toDate(),
     );

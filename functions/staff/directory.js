@@ -42,7 +42,12 @@ const { STAFF_ROLES, USER_ROLES } = require("../utils/roles");
 const { derivePublicRole } = require("../badges/public_badges");
 const { effectiveVip, VIP_SOURCES } = require("../utils/entitlements");
 const { requireProtectedOwner } = require("../utils/auth");
-const { db, normalizeText, positiveInteger, timestampToIso } = require("../utils/firestore");
+const {
+  db,
+  normalizeText,
+  positiveInteger,
+  timestampToIso,
+} = require("../utils/firestore");
 
 const DIRECTORY_SCHEMA_VERSION = 1;
 const MAX_PAGE_SIZE = 20;
@@ -81,7 +86,9 @@ function restrictionIsActive(restriction, now = new Date()) {
   const expires = restriction.expiresAt;
   if (expires === null || expires === undefined) return true;
   const expiry =
-    typeof expires?.toDate === "function" ? expires.toDate() : new Date(expires);
+    typeof expires?.toDate === "function"
+      ? expires.toDate()
+      : new Date(expires);
   if (Number.isNaN(expiry.getTime())) return false;
   return expiry.getTime() > now.getTime();
 }
@@ -116,12 +123,8 @@ function deriveDirectoryEntry({
   // Staff authority lives in signed Auth claims, with the Firestore mirror
   // acting as a consistency tripwire. A mismatch fails to ordinary `user`
   // rather than publishing either stale/spoofed side as a staff identity.
-  const claimedRoleRaw = String(
-    authUser.customClaims?.role ?? USER_ROLES.USER,
-  );
-  const mirroredRoleRaw = String(
-    profile.role ?? USER_ROLES.USER,
-  );
+  const claimedRoleRaw = String(authUser.customClaims?.role ?? USER_ROLES.USER);
+  const mirroredRoleRaw = String(profile.role ?? USER_ROLES.USER);
   const claimedRole = STAFF_ROLES.has(claimedRoleRaw)
     ? claimedRoleRaw
     : USER_ROLES.USER;
@@ -150,7 +153,7 @@ function deriveDirectoryEntry({
     displayName,
     username,
     email,
-    photoUrl: profile.photoUrl ?? authUser.photoURL ?? null,
+    photoUrl: null,
     displayNameLower: normalizeSearchText(displayName),
     usernameLower: normalizeSearchText(username),
     emailLower: normalizeSearchText(email ?? ""),
@@ -180,7 +183,10 @@ async function fetchAuthUserOrNull(uid) {
 /// Synchronises userDirectory/{uid} with authoritative state. Idempotent
 /// and convergent for the same reason the badge sync is: state is
 /// re-read on every run, never taken from an event payload.
-async function syncUserDirectoryForUser(uid, { fetchAuthUser = fetchAuthUserOrNull } = {}) {
+async function syncUserDirectoryForUser(
+  uid,
+  { fetchAuthUser = fetchAuthUserOrNull } = {},
+) {
   const cleanUid = String(uid ?? "").trim();
   if (!cleanUid || cleanUid.includes("/")) return { outcome: "invalidUid" };
 
@@ -343,7 +349,11 @@ const searchUserDirectory = onCall(
     if (!FILTERS.includes(filter)) {
       throw new HttpsError("invalid-argument", "Unknown filter.");
     }
-    const limit = positiveInteger(request.data?.limit, MAX_PAGE_SIZE, MAX_PAGE_SIZE);
+    const limit = positiveInteger(
+      request.data?.limit,
+      MAX_PAGE_SIZE,
+      MAX_PAGE_SIZE,
+    );
     const cursor = decodeCursor(normalizeText(request.data?.cursor, 2048));
 
     // ------------------------------------------------ browse (no query)
@@ -351,7 +361,8 @@ const searchUserDirectory = onCall(
       let query = db.collection("userDirectory");
       if (filter === "staff") query = query.where("isStaff", "==", true);
       else if (filter === "vip") query = query.where("isVip", "==", true);
-      else if (filter === "restricted") query = query.where("restricted", "==", true);
+      else if (filter === "restricted")
+        query = query.where("restricted", "==", true);
       else if (filter === "banned") query = query.where("banned", "==", true);
       // "all" and "recent" browse the same way: newest accounts first.
       // Ties resolve on the implicit __name__ ordering, which the
@@ -365,7 +376,9 @@ const searchUserDirectory = onCall(
         if (cursorSnapshot.exists) query = query.startAfter(cursorSnapshot);
       }
       const snapshot = await query.get();
-      const users = snapshot.docs.map((doc) => mapDirectoryRow(doc.id, doc.data()));
+      const users = snapshot.docs.map((doc) =>
+        mapDirectoryRow(doc.id, doc.data()),
+      );
       return {
         mode: "browse",
         users,
@@ -483,11 +496,13 @@ const searchUserDirectory = onCall(
     // an offset cursor pages it stably.
     rows.sort((a, b) => {
       const aExact =
-        a.data.usernameLower === nameQuery || a.data.displayNameLower === nameQuery
+        a.data.usernameLower === nameQuery ||
+        a.data.displayNameLower === nameQuery
           ? 0
           : 1;
       const bExact =
-        b.data.usernameLower === nameQuery || b.data.displayNameLower === nameQuery
+        b.data.usernameLower === nameQuery ||
+        b.data.displayNameLower === nameQuery
           ? 0
           : 1;
       if (aExact !== bExact) return aExact - bExact;
@@ -500,9 +515,8 @@ const searchUserDirectory = onCall(
     // slices further in. Honest about its bound — a prefix matching
     // more than NAME_BRANCH_LIMIT accounts per branch needs more typed
     // characters, which the UI's result count makes obvious.
-    const offset = Number.isInteger(cursor?.offset) && cursor.offset > 0
-      ? cursor.offset
-      : 0;
+    const offset =
+      Number.isInteger(cursor?.offset) && cursor.offset > 0 ? cursor.offset : 0;
     const page = rows.slice(offset, offset + limit);
     const nextCursor =
       offset + limit < rows.length

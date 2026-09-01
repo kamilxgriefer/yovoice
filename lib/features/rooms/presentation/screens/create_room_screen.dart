@@ -85,6 +85,7 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
   String? _coverError;
   bool _busy = false;
   double? _uploadProgress;
+  String? _roomCreationRequestId;
 
   bool get _isBroadcast => widget.experience == RoomExperience.broadcast;
 
@@ -208,6 +209,8 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
     });
 
     try {
+      final requestId = _roomCreationRequestId ??= _roomService
+          .newRoomCreationRequestId();
       final room = await _roomService.createRoom(
         name: _name.text,
         description: _description.text,
@@ -228,7 +231,12 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
         topic: _isBroadcast ? _topic.text : '',
         audienceCanSpeak: !_isBroadcast,
         handRaisingEnabled: _isBroadcast && _handRaisingEnabled,
+        requestId: requestId,
       );
+      // The server acknowledged this exact idempotent operation. Cover
+      // upload retries are a separate reservation flow and must never reuse
+      // the room-create key.
+      _roomCreationRequestId = null;
 
       // The cover is uploaded AFTER the room exists, because the Storage
       // path is keyed by room id and rules authorise it against the room's
@@ -240,12 +248,17 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
       if (_coverBytes != null) {
         setState(() => _uploadProgress = 0);
         try {
-          final url = await _imageService.uploadRoomCover(
+          final upload = await _imageService.uploadRoomCover(
             roomId: room.id,
             bytes: _coverBytes!,
           );
           try {
-            await _roomService.updateImageUrl(roomId: room.id, imageUrl: url);
+            await _roomService.finalizeRoomCoverUpload(
+              roomId: room.id,
+              storagePath: upload.storagePath,
+              objectGeneration: upload.objectGeneration,
+              reservationId: upload.reservationId,
+            );
           } catch (error, stackTrace) {
             // The Firestore SDK can lose an acknowledgement after committing.
             // Only delete the new object when a successful re-read proves the
@@ -255,16 +268,18 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
             try {
               final canonical = await _roomService.getRoomFromServer(room.id);
               pointerRead = true;
-              committed = canonical.imageUrl == url;
+              committed =
+                  canonical.coverStoragePath == upload.storagePath &&
+                  canonical.coverGeneration == upload.objectGeneration;
               if (committed) roomForEntry = canonical;
             } catch (_) {
               // Preserve the original write failure and uploaded object.
             }
             if (!committed) {
               if (pointerRead) {
-                await _imageService.deleteManagedRoomCover(
+                await _imageService.deleteManagedRoomCoverPath(
                   roomId: room.id,
-                  url: url,
+                  storagePath: upload.storagePath,
                 );
               }
               Error.throwWithStackTrace(error, stackTrace);

@@ -47,8 +47,18 @@ const CHANNEL = "adm-del-channel";
 const CONVERSATION = "adm-del-conv-1";
 const OTHER_CONVERSATION = "adm-del-conv-2";
 
-function request(uid, role, data) {
-  return { auth: { uid, token: { role } }, data };
+function request(uid, role, data, token = {}) {
+  return {
+    auth: {
+      uid,
+      token: {
+        role,
+        auth_time: Math.floor(Date.now() / 1000),
+        ...token,
+      },
+    },
+    data,
+  };
 }
 
 // `node --test` runs suites in PARALLEL against one emulator, and

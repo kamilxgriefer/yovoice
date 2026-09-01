@@ -78,32 +78,42 @@ function opaqueUid(value) {
 }
 
 function timestampDate(value) {
-  const date = value instanceof Date
-    ? value
-    : typeof value?.toDate === "function"
-      ? value.toDate()
-      : null;
+  const date =
+    value instanceof Date
+      ? value
+      : typeof value?.toDate === "function"
+        ? value.toDate()
+        : null;
   return date instanceof Date && Number.isFinite(date.getTime()) ? date : null;
 }
 
 function isPlainObject(value) {
-  return value !== null && typeof value === "object" &&
-    !Array.isArray(value) && Object.getPrototypeOf(value) === Object.prototype;
+  return (
+    value !== null &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    Object.getPrototypeOf(value) === Object.prototype
+  );
 }
 
 function hasExactKeys(value, expected) {
   if (!isPlainObject(value)) return false;
   const keys = Object.keys(value).sort();
-  return keys.length === expected.length &&
-    keys.every((key, index) => key === expected[index]);
+  return (
+    keys.length === expected.length &&
+    keys.every((key, index) => key === expected[index])
+  );
 }
 
 function canonicalWriteTime(embeddedTimestamp, sourceCreatedAt) {
   const embedded = timestampDate(embeddedTimestamp);
   const source = timestampDate(sourceCreatedAt);
-  if (!embedded || !source ||
-      Math.abs(embedded.getTime() - source.getTime()) >
-        CANONICAL_WRITE_CLOCK_SKEW_MS) {
+  if (
+    !embedded ||
+    !source ||
+    Math.abs(embedded.getTime() - source.getTime()) >
+      CANONICAL_WRITE_CLOCK_SKEW_MS
+  ) {
     return null;
   }
   // Firestore snapshot createTime is server evidence and therefore wins over
@@ -112,8 +122,9 @@ function canonicalWriteTime(embeddedTimestamp, sourceCreatedAt) {
 }
 
 function validOptionalText(value, maximum) {
-  return value === null ||
-    (typeof value === "string" && value.length <= maximum);
+  return (
+    value === null || (typeof value === "string" && value.length <= maximum)
+  );
 }
 
 function safeStorageInteger(value) {
@@ -124,12 +135,21 @@ function safeStorageInteger(value) {
 }
 
 function nonEmptyText(value, maximum) {
-  return typeof value === "string" &&
+  return (
+    typeof value === "string" &&
     value.trim().length > 0 &&
-    value.trim().length <= maximum;
+    value.trim().length <= maximum
+  );
 }
 
-function incrementEvent({ sourceType, sourceKey, beneficiaryId, actorId, metric, occurredAt }) {
+function incrementEvent({
+  sourceType,
+  sourceKey,
+  beneficiaryId,
+  actorId,
+  metric,
+  occurredAt,
+}) {
   return {
     sourceType,
     sourceKey,
@@ -156,31 +176,41 @@ function adaptDirectMessageCreated({
   const occurredAt = canonicalWriteTime(message?.sentAt, sourceCreatedAt);
   const replyMessageId = message?.replyToMessageId;
   const replySenderId = message?.replyToSenderId;
-  if (!safeConversationId || !safeMessageId || !senderId || !occurredAt ||
-      !hasExactKeys(message, DIRECT_MESSAGE_KEYS) ||
-      message.schemaVersion !== 2 ||
-      message.conversationId !== safeConversationId ||
-      !Number.isSafeInteger(message.sequence) || message.sequence < 1 ||
-      !Array.isArray(participants) || participants.length !== 2 ||
-      new Set(participants).size !== 2 ||
-      !participants.every((id) => opaqueUid(id)) ||
-      !participants.includes(senderId) ||
-      conversation?.schemaVersion !== 2 ||
-      message.type !== "text" || message.isDeleted !== false ||
-      message.editedAt !== null || message.mediaUrl !== null ||
-      message.durationSeconds !== null ||
-      !nonEmptyText(message.content, 2000) ||
-      message.content !== message.content.trim() ||
-      !isPlainObject(message.reactions) ||
-      Object.keys(message.reactions).length !== 0 ||
-      !Array.isArray(message.readBy) || message.readBy.length !== 1 ||
-      message.readBy[0] !== senderId ||
-      (replyMessageId !== null && !safeSegment(replyMessageId)) ||
-      (replySenderId !== null &&
-        (!opaqueUid(replySenderId) || !participants.includes(replySenderId))) ||
-      !validOptionalText(message.replyToContent, 240) ||
-      ((replyMessageId === null) !== (replySenderId === null)) ||
-      ((replyMessageId === null) !== (message.replyToContent === null))) {
+  if (
+    !safeConversationId ||
+    !safeMessageId ||
+    !senderId ||
+    !occurredAt ||
+    !hasExactKeys(message, DIRECT_MESSAGE_KEYS) ||
+    message.schemaVersion !== 2 ||
+    message.conversationId !== safeConversationId ||
+    !Number.isSafeInteger(message.sequence) ||
+    message.sequence < 1 ||
+    !Array.isArray(participants) ||
+    participants.length !== 2 ||
+    new Set(participants).size !== 2 ||
+    !participants.every((id) => opaqueUid(id)) ||
+    !participants.includes(senderId) ||
+    conversation?.schemaVersion !== 2 ||
+    message.type !== "text" ||
+    message.isDeleted !== false ||
+    message.editedAt !== null ||
+    message.mediaUrl !== null ||
+    message.durationSeconds !== null ||
+    !nonEmptyText(message.content, 2000) ||
+    message.content !== message.content.trim() ||
+    !isPlainObject(message.reactions) ||
+    Object.keys(message.reactions).length !== 0 ||
+    !Array.isArray(message.readBy) ||
+    message.readBy.length !== 1 ||
+    message.readBy[0] !== senderId ||
+    (replyMessageId !== null && !safeSegment(replyMessageId)) ||
+    (replySenderId !== null &&
+      (!opaqueUid(replySenderId) || !participants.includes(replySenderId))) ||
+    !validOptionalText(message.replyToContent, 240) ||
+    (replyMessageId === null) !== (replySenderId === null) ||
+    (replyMessageId === null) !== (message.replyToContent === null)
+  ) {
     return null;
   }
   return incrementEvent({
@@ -206,18 +236,25 @@ function adaptClubMessageCreated({
   const ids = [clubId, channelId, messageId].map(safeSegment);
   const senderId = opaqueUid(message?.senderId);
   const occurredAt = canonicalWriteTime(message?.sentAt, sourceCreatedAt);
-  if (ids.some((id) => !id) || !senderId || !occurredAt ||
-      !hasExactKeys(message, CLUB_MESSAGE_KEYS) ||
-      message?.clubId !== clubId || message?.channelId !== channelId ||
-      message?.isDeleted !== false || message?.editedAt !== null ||
-      !nonEmptyText(message?.content, 2000) ||
-      message.content !== message.content.trim() ||
-      !nonEmptyText(message?.senderName, 120) ||
-      !validOptionalText(message?.senderPhotoUrl, 2048) ||
-      club?.status !== "active" ||
-      !["chat", "announcement"].includes(channel?.type) ||
-      member?.userId !== senderId || member?.banned === true ||
-      !CLUB_WRITER_ROLES.has(member?.role)) {
+  if (
+    ids.some((id) => !id) ||
+    !senderId ||
+    !occurredAt ||
+    !hasExactKeys(message, CLUB_MESSAGE_KEYS) ||
+    message?.clubId !== clubId ||
+    message?.channelId !== channelId ||
+    message?.isDeleted !== false ||
+    message?.editedAt !== null ||
+    !nonEmptyText(message?.content, 2000) ||
+    message.content !== message.content.trim() ||
+    !nonEmptyText(message?.senderName, 120) ||
+    !validOptionalText(message?.senderPhotoUrl, 2048) ||
+    club?.status !== "active" ||
+    !["chat", "announcement"].includes(channel?.type) ||
+    member?.userId !== senderId ||
+    member?.banned === true ||
+    !CLUB_WRITER_ROLES.has(member?.role)
+  ) {
     return null;
   }
   return incrementEvent({
@@ -242,14 +279,21 @@ function adaptRoomMessageCreated({
   const safeMessageId = safeSegment(messageId);
   const senderId = opaqueUid(message?.senderId);
   const occurredAt = canonicalWriteTime(message?.createdAt, sourceCreatedAt);
-  if (!safeRoomId || !safeMessageId || !senderId || senderAuthorized !== true ||
-      !occurredAt || !hasExactKeys(message, ROOM_MESSAGE_KEYS) ||
-      room?.status !== "active" ||
-      !nonEmptyText(message?.text, 500) || message.text !== message.text.trim() ||
-      !nonEmptyText(message?.senderName, 120) ||
-      !validOptionalText(message?.senderPhotoUrl, 2048) ||
-      !isPlainObject(message?.reactions) ||
-      Object.keys(message.reactions).length !== 0) {
+  if (
+    !safeRoomId ||
+    !safeMessageId ||
+    !senderId ||
+    senderAuthorized !== true ||
+    !occurredAt ||
+    !hasExactKeys(message, ROOM_MESSAGE_KEYS) ||
+    room?.status !== "active" ||
+    !nonEmptyText(message?.text, 500) ||
+    message.text !== message.text.trim() ||
+    !nonEmptyText(message?.senderName, 120) ||
+    !validOptionalText(message?.senderPhotoUrl, 2048) ||
+    !isPlainObject(message?.reactions) ||
+    Object.keys(message.reactions).length !== 0
+  ) {
     return null;
   }
   return incrementEvent({
@@ -265,8 +309,13 @@ function adaptRoomMessageCreated({
 function adaptRoomCreated({ roomId, room, sourceCreatedAt = null }) {
   const safeRoomId = safeSegment(roomId);
   const hostId = opaqueUid(room?.hostId);
-  if (!safeRoomId || !hostId || room?.roomKind === "clubLounge" || room?.clubId ||
-      !["community", "temporary"].includes(room?.roomType)) {
+  if (
+    !safeRoomId ||
+    !hostId ||
+    room?.roomKind === "clubLounge" ||
+    room?.clubId ||
+    !["community", "temporary"].includes(room?.roomType)
+  ) {
     return null;
   }
   return incrementEvent({
@@ -288,13 +337,18 @@ function adaptCommunityJoined({
 }) {
   const safeCommunityId = safeSegment(communityId);
   const safeUserId = opaqueUid(userId);
-  if (!safeCommunityId || !safeUserId || !["club", "room"].includes(kind) ||
-      (kind === "room" && roomKind === "clubLounge")) {
+  if (
+    !safeCommunityId ||
+    !safeUserId ||
+    !["club", "room"].includes(kind) ||
+    (kind === "room" && roomKind === "clubLounge")
+  ) {
     return null;
   }
-  const sourceKey = kind === "club"
-    ? `clubs/${safeCommunityId}/members/${safeUserId}`
-    : `rooms/${safeCommunityId}/roomMembers/${safeUserId}`;
+  const sourceKey =
+    kind === "club"
+      ? `clubs/${safeCommunityId}/members/${safeUserId}`
+      : `rooms/${safeCommunityId}/roomMembers/${safeUserId}`;
   return incrementEvent({
     sourceType: "communityJoined",
     sourceKey,
@@ -315,55 +369,76 @@ function adaptMomentPublished({
   const safeMomentId = safeSegment(momentId);
   const authorId = opaqueUid(after?.authorId);
   const mediaSize = safeStorageInteger(storageObject?.size);
-  const mediaGeneration = typeof storageObject?.generation === "string"
-    ? storageObject.generation
-    : Number.isSafeInteger(storageObject?.generation)
-      ? String(storageObject.generation)
-      : null;
+  const mediaGeneration =
+    typeof storageObject?.generation === "string"
+      ? storageObject.generation
+      : Number.isSafeInteger(storageObject?.generation)
+        ? String(storageObject.generation)
+        : null;
   const occurredAt = canonicalWriteTime(after?.updatedAt, sourceUpdatedAt);
   const customMetadata = storageObject?.metadata;
   const customMetadataKeys = isPlainObject(customMetadata)
     ? Object.keys(customMetadata)
     : [];
-  const expectedStoragePath = authorId && safeMomentId
-    ? `voice_moments/${authorId}/${safeMomentId}.m4a`
-    : null;
-  if (!safeMomentId || !/^[a-f0-9]{20}$/u.test(safeMomentId) || !authorId ||
-      !occurredAt || !hasExactKeys(before, MOMENT_KEYS) ||
-      !hasExactKeys(after, MOMENT_KEYS) ||
-      before.schemaVersion !== 2 || after.schemaVersion !== 2 ||
-      before?.isPublished !== false || before?.status !== "uploading" ||
-      before?.isDeleted !== false ||
-      after?.isPublished !== true || before?.authorId !== after?.authorId ||
-      after?.status !== "published" || after?.isDeleted !== false ||
-      !Number.isSafeInteger(after?.durationSeconds) ||
-      after.durationSeconds < 1 || after.durationSeconds > 60 ||
-      !nonEmptyText(after?.authorName, 120) ||
-      !validOptionalText(after?.authorPhotoUrl, 2048) ||
-      typeof after?.caption !== "string" || after.caption.length > 280 ||
-      !Number.isSafeInteger(after?.likeCount) || after.likeCount < 0 ||
-      !Number.isSafeInteger(after?.commentCount) || after.commentCount < 0 ||
-      after?.replyToMomentId !== null ||
-      !timestampDate(after?.createdAt) || !timestampDate(after?.publishedAt) ||
-      after?.storagePath !== expectedStoragePath ||
-      typeof after?.audioUrl !== "string" ||
-      !after.audioUrl.startsWith("https://") ||
-      storageObject?.name !== expectedStoragePath ||
-      !["audio/mp4", "audio/m4a", "audio/x-m4a"].includes(
-        storageObject?.contentType,
-      ) ||
-      mediaSize === null || mediaSize < 512 || mediaSize > 12 * 1024 * 1024 ||
-      !mediaGeneration || after?.mediaGeneration !== mediaGeneration ||
-      after?.mediaSize !== mediaSize ||
-      after?.mediaContentType !== storageObject?.contentType ||
-      !isPlainObject(customMetadata) ||
-      customMetadataKeys.some((key) => ![
-        "authorId",
-        "firebaseStorageDownloadTokens",
-        "momentId",
-      ].includes(key)) ||
-      customMetadata.authorId !== authorId ||
-      customMetadata.momentId !== safeMomentId) {
+  const expectedStoragePath =
+    authorId && safeMomentId
+      ? `voice_moments/${authorId}/${safeMomentId}.m4a`
+      : null;
+  if (
+    !safeMomentId ||
+    !/^[a-f0-9]{20}$/u.test(safeMomentId) ||
+    !authorId ||
+    !occurredAt ||
+    !hasExactKeys(before, MOMENT_KEYS) ||
+    !hasExactKeys(after, MOMENT_KEYS) ||
+    before.schemaVersion !== 2 ||
+    after.schemaVersion !== 2 ||
+    before?.isPublished !== false ||
+    before?.status !== "uploading" ||
+    before?.isDeleted !== false ||
+    after?.isPublished !== true ||
+    before?.authorId !== after?.authorId ||
+    after?.status !== "published" ||
+    after?.isDeleted !== false ||
+    !Number.isSafeInteger(after?.durationSeconds) ||
+    after.durationSeconds < 1 ||
+    after.durationSeconds > 60 ||
+    !nonEmptyText(after?.authorName, 120) ||
+    !validOptionalText(after?.authorPhotoUrl, 2048) ||
+    typeof after?.caption !== "string" ||
+    after.caption.length > 280 ||
+    !Number.isSafeInteger(after?.likeCount) ||
+    after.likeCount < 0 ||
+    !Number.isSafeInteger(after?.commentCount) ||
+    after.commentCount < 0 ||
+    after?.replyToMomentId !== null ||
+    !timestampDate(after?.createdAt) ||
+    !timestampDate(after?.publishedAt) ||
+    after?.storagePath !== expectedStoragePath ||
+    (after?.audioUrl !== null &&
+      (typeof after.audioUrl !== "string" ||
+        !after.audioUrl.startsWith("https://"))) ||
+    storageObject?.name !== expectedStoragePath ||
+    !["audio/mp4", "audio/m4a", "audio/x-m4a"].includes(
+      storageObject?.contentType,
+    ) ||
+    mediaSize === null ||
+    mediaSize < 512 ||
+    mediaSize > 12 * 1024 * 1024 ||
+    !mediaGeneration ||
+    after?.mediaGeneration !== mediaGeneration ||
+    after?.mediaSize !== mediaSize ||
+    after?.mediaContentType !== storageObject?.contentType ||
+    !isPlainObject(customMetadata) ||
+    customMetadataKeys.some(
+      (key) =>
+        !["authorId", "firebaseStorageDownloadTokens", "momentId"].includes(
+          key,
+        ),
+    ) ||
+    customMetadata.authorId !== authorId ||
+    customMetadata.momentId !== safeMomentId
+  ) {
     return null;
   }
   return incrementEvent({
@@ -386,10 +461,16 @@ function adaptReactionReceived({
 }) {
   const safeReactorId = opaqueUid(reactorId);
   const safeAuthorId = opaqueUid(authorId);
-  if (!safeReactorId || !safeAuthorId || safeReactorId === safeAuthorId ||
-      contentDeleted || typeof contentKey !== "string" || !contentKey.trim() ||
-      contentKey.length > 700 ||
-      !["directMessage", "roomMessage", "momentLike"].includes(kind)) {
+  if (
+    !safeReactorId ||
+    !safeAuthorId ||
+    safeReactorId === safeAuthorId ||
+    contentDeleted ||
+    typeof contentKey !== "string" ||
+    !contentKey.trim() ||
+    contentKey.length > 700 ||
+    !["directMessage", "roomMessage", "momentLike"].includes(kind)
+  ) {
     return null;
   }
   return incrementEvent({
@@ -404,13 +485,24 @@ function adaptReactionReceived({
   });
 }
 
-function adaptSocialMetricSnapshot({ uid, metric, value, version, actorId = null }) {
+function adaptSocialMetricSnapshot({
+  uid,
+  metric,
+  value,
+  version,
+  actorId = null,
+}) {
   const safeUid = opaqueUid(uid);
   const safeActorId = actorId === null ? null : opaqueUid(actorId);
-  if (!safeUid || (safeActorId === null && actorId !== null) ||
-      !["friends", "followers"].includes(metric) ||
-      !Number.isSafeInteger(value) || value < 0 ||
-      !Number.isSafeInteger(version) || version < 0) {
+  if (
+    !safeUid ||
+    (safeActorId === null && actorId !== null) ||
+    !["friends", "followers"].includes(metric) ||
+    !Number.isSafeInteger(value) ||
+    value < 0 ||
+    !Number.isSafeInteger(version) ||
+    version < 0
+  ) {
     return null;
   }
   return {

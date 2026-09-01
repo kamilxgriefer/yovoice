@@ -6,6 +6,7 @@ import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:yovoice/features/calls/data/models/direct_call.dart';
 import 'package:yovoice/features/calls/data/services/direct_call_service.dart';
 
 void main() {
@@ -42,8 +43,39 @@ void main() {
         functions.payloads.map((payload) => payload['calleeId']).toSet(),
         <Object?>{'callee'},
       );
+      expect(
+        functions.payloads.map((payload) => payload['mediaType']).toSet(),
+        <Object?>{'audio'},
+      );
     },
   );
+
+  test('video start is durably bound to the video media type', () async {
+    final functions = _LostStartResponseFunctions();
+    final service = DirectCallService(
+      firestore: FakeFirebaseFirestore(),
+      functions: functions,
+      auth: MockFirebaseAuth(signedIn: true, mockUser: MockUser(uid: 'caller')),
+      requestIdFactory: () => 'video-request_1',
+    );
+
+    expect(
+      await service.startCall(
+        calleeId: 'callee',
+        conversationId: 'caller_callee',
+        mediaType: DirectCallMediaType.video,
+      ),
+      'canonical-call-1',
+    );
+    expect(
+      functions.payloads.map((payload) => payload['mediaType']).toSet(),
+      <Object?>{'video'},
+    );
+    expect(
+      functions.payloads.map((payload) => payload['requestId']).toSet(),
+      <Object?>{'video-request_1'},
+    );
+  });
 
   test('an explicit start refusal is never retried', () async {
     final functions = _RejectStartFunctions();

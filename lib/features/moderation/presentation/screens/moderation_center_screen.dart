@@ -1994,6 +1994,7 @@ class _ReportedAccount extends StatelessWidget {
             children: [
               UserAvatar(
                 radius: 18,
+                userId: userId,
                 photoUrl: profile?.photoUrl,
                 displayName: profile?.displayName,
               ),

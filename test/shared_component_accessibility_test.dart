@@ -9,6 +9,9 @@ import 'package:yovoice/shared/widgets/buttons/yo_button.dart';
 import 'package:yovoice/shared/widgets/buttons/yo_social_button.dart';
 import 'package:yovoice/shared/widgets/cards/yo_card.dart';
 import 'package:yovoice/shared/widgets/inputs/yo_text_field.dart';
+import 'package:yovoice/shared/widgets/states/yo_empty_state.dart';
+import 'package:yovoice/shared/widgets/states/yo_error_state.dart';
+import 'package:yovoice/shared/widgets/states/yo_loading_indicator.dart';
 
 void main() {
   for (final themeCase in <({String name, ThemeData theme})>[
@@ -191,6 +194,140 @@ void main() {
       greaterThanOrEqualTo(3),
     );
   });
+
+  testWidgets(
+    'shared controls clamp targets, honor Reduce Motion and announce states',
+    (tester) async {
+      final semantics = tester.ensureSemantics();
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AppTheme.darkTheme,
+          home: MediaQuery(
+            data: const MediaQueryData(disableAnimations: true),
+            child: Scaffold(
+              body: ListView(
+                children: [
+                  YoButton(
+                    key: const ValueKey('small-button'),
+                    label: 'Small visual request',
+                    height: 20,
+                    onPressed: () {},
+                  ),
+                  YoSocialButton(
+                    label: 'Provider',
+                    icon: Icons.login_rounded,
+                    onPressed: () {},
+                  ),
+                  const YoTextField(
+                    label: 'Display name',
+                    errorText: 'A display name is required',
+                  ),
+                  const YoEmptyState(
+                    compact: true,
+                    icon: Icons.inbox_outlined,
+                    title: 'Nothing here yet',
+                  ),
+                  const YoErrorState(
+                    compact: true,
+                    message: 'Please retry later',
+                  ),
+                  const YoLoadingIndicator(message: 'Loading your profile'),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      expect(
+        tester.getSize(find.byKey(const ValueKey('small-button'))).height,
+        greaterThanOrEqualTo(44),
+      );
+      expect(
+        tester
+            .widget<AnimatedContainer>(
+              find
+                  .descendant(
+                    of: find.byType(YoButton),
+                    matching: find.byType(AnimatedContainer),
+                  )
+                  .first,
+            )
+            .duration,
+        Duration.zero,
+      );
+      expect(
+        tester
+            .widget<AnimatedSwitcher>(
+              find
+                  .descendant(
+                    of: find.byType(YoSocialButton),
+                    matching: find.byType(AnimatedSwitcher),
+                  )
+                  .first,
+            )
+            .duration,
+        Duration.zero,
+      );
+      expect(
+        tester
+            .widget<AnimatedContainer>(
+              find
+                  .descendant(
+                    of: find.byType(YoTextField),
+                    matching: find.byType(AnimatedContainer),
+                  )
+                  .first,
+            )
+            .duration,
+        Duration.zero,
+      );
+      for (final type in <Type>[
+        YoEmptyState,
+        YoErrorState,
+        YoLoadingIndicator,
+      ]) {
+        expect(
+          tester
+              .widget<TweenAnimationBuilder<double>>(
+                find
+                    .descendant(
+                      of: find.byType(type),
+                      matching: find.byType(TweenAnimationBuilder<double>),
+                    )
+                    .first,
+              )
+              .duration,
+          Duration.zero,
+        );
+      }
+
+      final input = tester.widget<InputDecorator>(find.byType(InputDecorator));
+      expect(input.decoration.errorText, 'A display name is required');
+      expect(
+        find.byWidgetPredicate(
+          (widget) =>
+              widget is Semantics &&
+              widget.properties.liveRegion == true &&
+              widget.properties.label ==
+                  'Something went wrong. Please retry later',
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.byWidgetPredicate(
+          (widget) =>
+              widget is Semantics &&
+              widget.properties.liveRegion == true &&
+              widget.properties.label == 'Loading your profile',
+        ),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+      semantics.dispose();
+    },
+  );
 
   for (final themeCase
       in <({String name, ThemeData theme, AppPalette palette})>[

@@ -185,17 +185,6 @@ function canonicalConversationIdentityMaps(data, uid, identity, binding) {
   };
 }
 
-function safePhotoUrl(value) {
-  if (typeof value !== "string") return null;
-  const candidate = value.trim();
-  if (candidate.length === 0 || candidate.length > 2048) return null;
-  try {
-    return new URL(candidate).protocol === "https:" ? candidate : null;
-  } catch {
-    return null;
-  }
-}
-
 function canonicalIdentity(data) {
   const nameCandidate = [data.displayName, data.username].find(
     (value) => typeof value === "string" && value.trim().length > 0,
@@ -204,9 +193,9 @@ function canonicalIdentity(data) {
     // All denormalized contracts (DMs and Moments in particular) cap names
     // at 80 even though the owner profile permits 120.
     displayName: (nameCandidate ?? "YO Voice user").trim().slice(0, 80),
-    // Never let an owner-controlled malformed URL poison server-validated
-    // conversation/Moment documents. Invalid values converge to no avatar.
-    photoUrl: safePhotoUrl(data.photoUrl),
+    // Profile media is resolved per viewer from the uid. Denormalized bearer
+    // or external URLs converge to null everywhere this fan-out reaches.
+    photoUrl: null,
   };
 }
 

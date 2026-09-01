@@ -32,7 +32,7 @@ class RoomParticipant {
     return RoomParticipant(
       userId: data['userId'] as String? ?? document.id,
       displayName: data['displayName'] as String? ?? 'YO Voice user',
-      photoUrl: data['photoUrl'] as String?,
+      photoUrl: null,
       role: data['role'] as String? ?? 'listener',
       // All three flags mean the visible microphone is off. Keeping only the
       // self flag made moderator/staff mutes look unmuted in the roster and

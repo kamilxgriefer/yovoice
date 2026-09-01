@@ -2909,13 +2909,19 @@ forged row).
 
 **Client.** `PublicIdentityRepository` is the only way a client learns
 anyone's role/VIP: it wraps `getPublicBadges` with flush-window batching
-(one request per screenful, chunked to the 50-uid bound), in-memory
+(one request per screenful, chunked to the 20-uid bound), in-memory
 caching, in-flight dedup, cache clearing on account switch, a
 `revision` notifier so a Staff Center role change refreshes every
 mounted badge, and `PublicIdentity.fallback` (USER, no VIP) on any
 failure. Absence of a badge document is the DESIGNED answer for an
 ordinary account, and caches as USER. No surface reads role or VIP from
 message documents or other client-written fields anymore.
+
+**Cost boundary.** The callable commits target-independent per-account
+attempt quotas (30/minute and 200/hour) before reading any badge document,
+uses a bounded 30-second server cache for both hits and misses, and caps the
+Cloud Function at 20 instances. A caller therefore cannot evade throttling by
+rotating target UIDs or repeatedly requesting absent badges.
 
 **Presentation.** One family of widgets in `shared/widgets/identity/` —
 `OfficialRoleBadge`, `VipBadge`, `UserIdentityBadges`,
@@ -8387,3 +8393,67 @@ cross-account change fails closed before a write.
 - Deterministic tests cover no-write pending, Firestore completion during
   reload, Auth-name completion during reload and loading release after the
   registration form has been disposed.
+
+## ADR-135: Direct video reuses the server-authoritative call lifecycle and grants camera as an explicit media capability
+
+**Status**: Implemented and source-verified; tester release pending
+**Date**: 2026-08-31
+
+### Context
+
+ADR-117 made direct audio calls a server-authoritative state machine. Adding
+video as a second ad-hoc room path would duplicate busy locks, friendship and
+block checks, ringing delivery, terminal transitions and teardown, while a
+generic `canPublish` grant would also permit media sources the product never
+offered. Async camera permission introduces a second boundary: an enable
+operation may finish after hang-up, logout or backgrounding.
+
+### Decision
+
+The existing call record gains immutable `mediaType: audio|video`, validated
+and authored by Cloud Functions. Missing legacy data means audio. The value is
+included in signaling and idempotency while preserving replay compatibility
+for legacy audio requests. Token issuance re-reads the active call and grants
+declared microphone for audio, declared microphone plus camera for video, and
+omits screen-share labels. Normal rooms use the declared microphone boundary.
+Because LiveKit trusts `TrackSource` supplied by the client, this is not proof
+of the bytes' real capture origin.
+
+Video is published only after the callee explicitly chooses `Answer video` and
+the call is active. Client session, microphone and camera epochs invalidate
+late async results. Teardown snapshots direct references to published local
+tracks and stops those objects again after any delayed SDK publication
+operation, even when the Room has already removed its publication records; a
+not-yet-published camera candidate is owned and stopped by its camera operation.
+Moving to the background forces camera off and never auto-restores it. The UI offers remote
+video, front-camera-mirrored local PiP, flip, camera, microphone, output and
+hang-up controls, with audio fallback when camera permission or hardware is
+unavailable. Rear-camera preview is not mirrored. Direct audio defaults to the
+earpiece while video defaults to speakerphone. External room deep links now
+require confirmation and start muted.
+
+### Reasoning
+
+Media intent is authorization input, not decoration. Binding it to canonical
+call state lets every participant and standard client derive the same product
+capability. Source-specific grants reduce accidental and stock-client
+overreach, but a compromised client can relabel a track; strict media-type
+enforcement requires trusted server-side track inspection. Separate epochs
+make privacy invariant across slow permission and network futures rather than
+depending on widget lifecycle timing.
+
+### Consequences
+
+- Audio-only clients and legacy call records keep working.
+- Video has FaceTime-like in-app interaction, but not native CallKit/
+  ConnectionService lock-screen presentation.
+- LiveKit/WebRTC encrypts media in transit. Application-level E2EE is not
+  implemented, so no UI or marketing copy may claim FaceTime-equivalent E2EE.
+- Physical two-device camera, Bluetooth, background/foreground, APNs/FCM and
+  poor-network tests remain mandatory before a tester or production release.
+- A mixed-version recipient capability is not yet authoritative. Video must be
+  limited to a cohort on the compatible build until a server-checked device or
+  minimum-build handshake is added.
+- Release order is backward-compatible Functions, authoritative capability
+  registration/gate, compatible clients, then video enablement.
+- This decision authorizes source work only; it does not authorize deployment.

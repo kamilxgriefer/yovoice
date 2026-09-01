@@ -34,6 +34,8 @@ const {
   derivePublicRole,
   syncPublicBadgeForUser: syncPublicBadgeForUserRaw,
   getPublicBadges,
+  BADGE_RATE_LIMITS,
+  clearPublicBadgeCacheForTests,
   MAX_BATCH_UIDS,
 } = require("../badges/public_badges");
 
@@ -97,13 +99,18 @@ function backfill(options) {
 }
 
 async function wipeOwn() {
-  await Promise.all(
-    FIXTURES.flatMap((uid) => [
+  const rateLimits = await db.collection("privateRateLimits").get();
+  await Promise.all([
+    ...FIXTURES.flatMap((uid) => [
       db.collection("users").doc(uid).delete(),
       db.collection("vipGrants").doc(uid).delete(),
       db.collection("publicBadges").doc(uid).delete(),
     ]),
-  );
+    ...rateLimits.docs
+      .filter((document) =>
+        String(document.data().ownerId ?? "").startsWith(P))
+      .map((document) => document.ref.delete()),
+  ]);
 }
 
 function caller(uid = `${P}reader`) {
@@ -112,6 +119,7 @@ function caller(uid = `${P}reader`) {
 
 beforeEach(() => {
   setProtectedOwnerUidForTests(OWNER_UID);
+  clearPublicBadgeCacheForTests();
   return wipeOwn();
 });
 
@@ -517,6 +525,39 @@ describe("getPublicBadges", () => {
     const serialised = JSON.stringify(result);
     assert.equal(serialised.includes("leak@example.invalid"), false);
     assert.equal(serialised.includes("warned twice"), false);
+  });
+
+  test("repeated badge reads are cached but every request is durably throttled", async () => {
+    const reader = `${P}rate-reader`;
+    const uid = `${P}cached`;
+    await db.collection("publicBadges").doc(uid).set({
+      staffRole: "moderator",
+      isVip: true,
+      schemaVersion: 1,
+    });
+
+    const first = await runBatch({ ...caller(reader), data: { uids: [uid] } });
+    assert.equal(first.badges[uid].staffRole, "moderator");
+    // A direct delete does not affect the warm, short-lived display cache.
+    // This proves a replay does not issue another badge-document read.
+    await db.collection("publicBadges").doc(uid).delete();
+    const cached = await runBatch({ ...caller(reader), data: { uids: [uid] } });
+    assert.equal(cached.badges[uid].staffRole, "moderator");
+
+    for (let index = 2; index < BADGE_RATE_LIMITS.minute.maxEvents; index += 1) {
+      await runBatch({ ...caller(reader), data: { uids: [uid] } });
+    }
+    await assert.rejects(
+      runBatch({ ...caller(reader), data: { uids: [uid] } }),
+      (error) => error.code === "resource-exhausted",
+    );
+
+    const quota = await db.collection("privateRateLimits")
+      .where("ownerId", "==", reader)
+      .where("scope", "==", "public.badges.read.minute")
+      .get();
+    assert.equal(quota.size, 1);
+    assert.equal(quota.docs[0].data().count, BADGE_RATE_LIMITS.minute.maxEvents);
   });
 });
 

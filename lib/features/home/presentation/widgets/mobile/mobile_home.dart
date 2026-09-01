@@ -20,6 +20,7 @@ import 'package:yovoice/features/profile/data/models/follow_user.dart';
 import 'package:yovoice/features/profile/data/models/user_profile.dart';
 import 'package:yovoice/features/profile/data/services/follow_service.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
+import 'package:yovoice/features/profile/data/services/profile_media_service.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
 import 'package:yovoice/features/staff/data/staff_capabilities.dart';
@@ -60,6 +61,7 @@ class MobileHome extends StatefulWidget {
     this.friendService,
     this.followService,
     this.profileService,
+    this.profileMediaService,
     this.feedService,
     this.messageService,
     this.capabilityService,
@@ -97,6 +99,7 @@ class MobileHome extends StatefulWidget {
   final FriendService? friendService;
   final FollowService? followService;
   final ProfileService? profileService;
+  final ProfileMediaService? profileMediaService;
   final HomeFeedService? feedService;
 
   /// Injected in tests for the same reason the others are: production
@@ -185,7 +188,11 @@ class _MobileHomeState extends State<MobileHome> {
       userId,
       () => profiles
           .watchProfile(userId)
-          .map((profile) => profile.photoUrl?.trim() ?? '')
+          .map(
+            (profile) =>
+                profile.profileUpdatedAt?.toUtc().toIso8601String() ??
+                'legacy:${profile.uid}',
+          )
           .distinct(),
     );
   }
@@ -349,6 +356,7 @@ class _MobileHomeState extends State<MobileHome> {
                 photoStreamForUser: _profiles == null
                     ? null
                     : _recentChatPhotoStream,
+                profileMediaService: widget.profileMediaService,
               ),
             ),
           ],
@@ -429,7 +437,9 @@ class _MobileHeader extends StatelessWidget {
             ),
             child: UserAvatar(
               radius: 21,
+              userId: data?.uid,
               photoUrl: data?.photoUrl,
+              mediaRevision: data?.profileUpdatedAt,
               displayName: data?.displayName,
               fallbackIcon: Icons.person_rounded,
             ),

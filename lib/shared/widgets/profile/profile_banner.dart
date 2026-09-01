@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/features/profile/data/services/profile_media_service.dart';
+import 'package:yovoice/shared/widgets/profile/profile_media_image.dart';
+
 /// The cosmic gradient every banner surface falls back to. Public so the
 /// profile header and edit-profile preview stay on the same fallback
 /// instead of drifting.
@@ -18,9 +21,21 @@ const LinearGradient kProfileBannerFallbackGradient = LinearGradient(
 /// deliberately (never an empty rectangle), and the caller decides the
 /// shape — the widget always fills whatever constraints it's given.
 class ProfileBanner extends StatelessWidget {
-  const ProfileBanner({this.bannerUrl, this.overlay, super.key});
+  const ProfileBanner({
+    this.userId,
+    this.bannerUrl,
+    this.mediaRevision,
+    this.mediaService,
+    this.overlay,
+    super.key,
+  });
 
+  final String? userId;
+
+  /// Legacy source compatibility only; never dereferenced directly.
   final String? bannerUrl;
+  final Object? mediaRevision;
+  final ProfileMediaService? mediaService;
 
   /// Optional gradient painted over the image (e.g. the profile header's
   /// darkening scrim). Painted over the fallback too, so the two states
@@ -29,37 +44,20 @@ class ProfileBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final url = bannerUrl?.trim();
-
     return Stack(
       fit: StackFit.expand,
       children: [
         const DecoratedBox(
           decoration: BoxDecoration(gradient: kProfileBannerFallbackGradient),
         ),
-        if (url != null && url.isNotEmpty)
-          Image.network(
-            url,
-            fit: BoxFit.cover,
-            frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
-              if (wasSynchronouslyLoaded) return child;
-              return AnimatedOpacity(
-                opacity: frame == null ? 0 : 1,
-                duration: const Duration(milliseconds: 220),
-                child: child,
-              );
-            },
-            // Fall through to the gradient underneath — but never
-            // silently (see UserAvatar: a hidden load failure is
-            // indistinguishable from "no banner set").
-            errorBuilder: (context, error, stackTrace) {
-              debugPrint(
-                '[IMAGE] banner load failed '
-                '${Uri.tryParse(url)?.path}: $error',
-              );
-              return const SizedBox.shrink();
-            },
-          ),
+        ProfileMediaImage(
+          userId: userId,
+          kind: ProfileMediaKind.banner,
+          fallback: const SizedBox.shrink(),
+          fit: BoxFit.cover,
+          revision: mediaRevision,
+          service: mediaService,
+        ),
         if (overlay != null)
           DecoratedBox(decoration: BoxDecoration(gradient: overlay)),
       ],

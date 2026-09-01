@@ -70,24 +70,39 @@ function createMigrationControl({
   Timestamp,
   directMigration,
   momentMigration,
+  roomCoverMigration,
   authorize = null,
+  stepUp = null,
   clock = () => Date.now(),
   limits = DEFAULT_MIGRATION_LIMITS,
   leaseMs = 5 * 60_000,
 }) {
-  if (!db || !Timestamp?.fromMillis || !directMigration || !momentMigration) {
+  if (
+    !db ||
+    !Timestamp?.fromMillis ||
+    !directMigration ||
+    !momentMigration ||
+    !roomCoverMigration
+  ) {
     throw new TypeError(
-      "db, Timestamp, directMigration and momentMigration are required.",
+      "db, Timestamp and every migration service are required.",
     );
   }
   if (authorize !== null && typeof authorize !== "function") {
     throw new TypeError("authorize must be a function.");
+  }
+  if (stepUp !== null && typeof stepUp !== "function") {
+    throw new TypeError("stepUp must be a function.");
   }
   requireSafeInteger(leaseMs, "leaseMs", { min: 30_000, max: 30 * 60_000 });
 
   const authorizeRequest = authorize ?? (async (request) => {
     const { requireProtectedOwner } = require("../utils/auth");
     return requireProtectedOwner(request);
+  });
+  const requireApplyStepUp = stepUp ?? ((actor) => {
+    const { requirePrivilegedAuthentication } = require("../utils/auth");
+    return requirePrivilegedAuthentication(actor);
   });
 
   function time() {
@@ -257,6 +272,10 @@ function createMigrationControl({
           { min: 1, max: 400 },
         ),
     };
+    // Dry-runs remain available under the owner role gate. Applying a
+    // migration can rewrite canonical data, so require the shared five-minute
+    // reauthentication/MFA policy before the operation ledger or data changes.
+    if (!input.dryRun) await requireApplyStepUp(actor);
     return execute(request, {
       kind: input.dryRun
         ? "migration.direct.dryRun"
@@ -312,6 +331,7 @@ function createMigrationControl({
           { min: 1, max: 200 },
         ),
     };
+    if (!input.dryRun) await requireApplyStepUp(actor);
     return execute(request, {
       kind: input.dryRun
         ? "migration.moment.dryRun"
@@ -323,11 +343,105 @@ function createMigrationControl({
     });
   }
 
+  async function scanRoomCoverMigration(request) {
+    const actor = await authorizedActor(request);
+    const data = requireExactInput(
+      request.data,
+      ["cursor", "limit", "requestId"],
+      ["requestId"],
+    );
+    const input = {
+      cursor: data.cursor === undefined || data.cursor === null
+        ? null
+        : requireId(data.cursor, "cursor"),
+      limit: data.limit === undefined
+        ? 25
+        : requireSafeInteger(data.limit, "limit", { min: 1, max: 100 }),
+    };
+    return execute(request, {
+      kind: "migration.roomCover.scan",
+      actor,
+      scope: "scan",
+      input,
+      work: () => roomCoverMigration.scanRoomCoverMigration(input),
+    });
+  }
+
+  async function migrateRoomCover(request) {
+    const actor = await authorizedActor(request);
+    const data = requireExactInput(
+      request.data,
+      ["dryRun", "maxObjects", "requestId", "roomId"],
+      ["dryRun", "requestId", "roomId"],
+    );
+    const input = {
+      roomId: requireId(data.roomId, "roomId"),
+      dryRun: requireBoolean(data.dryRun, "dryRun"),
+      maxObjects: data.maxObjects === undefined
+        ? 10_000
+        : requireSafeInteger(data.maxObjects, "maxObjects", {
+          min: 1,
+          max: 10_000,
+        }),
+    };
+    if (!input.dryRun) await requireApplyStepUp(actor);
+    return execute(request, {
+      kind: input.dryRun
+        ? "migration.roomCover.dryRun"
+        : "migration.roomCover.apply",
+      actor,
+      scope: input.dryRun ? "scan" : "apply",
+      input,
+      work: () => roomCoverMigration.migrateRoomCover(input),
+    });
+  }
+
+  async function scanRoomCoverObjectInventory(request) {
+    const actor = await authorizedActor(request);
+    const data = requireExactInput(
+      request.data,
+      ["dryRun", "maxResults", "pageToken", "requestId"],
+      ["dryRun", "requestId"],
+    );
+    const pageToken = data.pageToken === undefined || data.pageToken === null
+      ? null
+      : data.pageToken;
+    if (
+      pageToken !== null &&
+      (typeof pageToken !== "string" || pageToken.length > 4096)
+    ) {
+      fail("invalid-argument", "pageToken is invalid.");
+    }
+    const input = {
+      dryRun: requireBoolean(data.dryRun, "dryRun"),
+      maxResults: data.maxResults === undefined
+        ? 200
+        : requireSafeInteger(data.maxResults, "maxResults", {
+          min: 1,
+          max: 1000,
+        }),
+      pageToken,
+    };
+    if (!input.dryRun) await requireApplyStepUp(actor);
+    return execute(request, {
+      kind: input.dryRun
+        ? "migration.roomCoverInventory.dryRun"
+        : "migration.roomCoverInventory.apply",
+      actor,
+      scope: input.dryRun ? "scan" : "apply",
+      input,
+      work: () => roomCoverMigration.scanRoomCoverObjectInventory(input),
+    });
+  }
+
   return Object.freeze({
     migrateDirectConversation,
     migrateMoment,
+    migrateRoomCover,
     scanDirectMigration,
     scanMomentMigration,
+    scanRoomCoverMigration,
+    scanRoomCoverObjectInventory,
   });
 }
 

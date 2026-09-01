@@ -65,6 +65,49 @@ String? _readManagedRoomCover(
   return normalized;
 }
 
+({String path, String generation, String contentType, int size})?
+_readCanonicalRoomCover(Map<String, dynamic> data, String roomId) {
+  final hostId = data['hostId'];
+  final path = data['coverStoragePath'];
+  final generation = data['coverGeneration'];
+  final contentType = data['coverContentType'];
+  final size = data['coverSize'];
+  final allAbsent =
+      path == null && generation == null && contentType == null && size == null;
+  if (allAbsent) return null;
+  if (hostId is! String ||
+      hostId.isEmpty ||
+      path is! String ||
+      generation is! String ||
+      contentType is! String ||
+      size is! int ||
+      !RegExp(r'^[0-9]{1,30}$').hasMatch(generation) ||
+      !const <String>{'image/jpeg', 'image/png'}.contains(contentType) ||
+      size < 128 ||
+      size > 8 * 1024 * 1024) {
+    return null;
+  }
+  final segments = path.split('/');
+  if (segments.length != 3 ||
+      segments[0] != 'room_images' ||
+      segments[1] != roomId ||
+      !segments[2].startsWith('${hostId}_')) {
+    return null;
+  }
+  final revision = segments[2].substring(hostId.length + 1);
+  if (!RegExp(
+    r'^(?:[0-9]{1,20}|[a-f0-9]{32})\.(?:jpg|png)$',
+  ).hasMatch(revision)) {
+    return null;
+  }
+  return (
+    path: path,
+    generation: generation,
+    contentType: contentType,
+    size: size,
+  );
+}
+
 enum RoomType {
   temporary,
   community;
@@ -131,6 +174,10 @@ class VoiceRoom {
     this.handRaisingEnabled = true,
     this.stageLimit = 8,
     this.deletionInProgress = false,
+    this.coverStoragePath,
+    this.coverGeneration,
+    this.coverContentType,
+    this.coverSize,
   });
 
   final String id;
@@ -184,6 +231,16 @@ class VoiceRoom {
   /// awaits retry). Such a room must never be presented as joinable or
   /// restartable.
   final bool deletionInProgress;
+  final String? coverStoragePath;
+  final String? coverGeneration;
+  final String? coverContentType;
+  final int? coverSize;
+
+  bool get hasCanonicalCover =>
+      coverStoragePath != null &&
+      coverGeneration != null &&
+      coverContentType != null &&
+      coverSize != null;
 
   /// Set on club-lounge rooms (written by ensureClubLounge). Older lounge
   /// documents may predate the field, so fromFirestore falls back to the
@@ -267,6 +324,58 @@ class VoiceRoom {
       handRaisingEnabled: handRaisingEnabled,
       stageLimit: stageLimit,
       deletionInProgress: deletionInProgress,
+      coverStoragePath: coverStoragePath,
+      coverGeneration: coverGeneration,
+      coverContentType: coverContentType,
+      coverSize: coverSize,
+    );
+  }
+
+  /// Supplies a short-lived URL returned by the server without changing the
+  /// canonical Storage identity parsed from Firestore. A null URL is the
+  /// intentional fail-closed/gradient state.
+  VoiceRoom withResolvedImageUrl(String? value) {
+    return VoiceRoom(
+      id: id,
+      hostId: hostId,
+      hostName: hostName,
+      hostPhotoUrl: hostPhotoUrl,
+      name: name,
+      description: description,
+      category: category,
+      visibility: visibility,
+      language: language,
+      maxParticipants: maxParticipants,
+      participantCount: participantCount,
+      memberCount: memberCount,
+      isLive: isLive,
+      roomType: roomType,
+      status: status,
+      imageUrl: value,
+      approvalRequired: approvalRequired,
+      slowModeSeconds: slowModeSeconds,
+      autoMuteNewUsers: autoMuteNewUsers,
+      membersCanStartVoice: membersCanStartVoice,
+      createdAt: createdAt,
+      updatedAt: updatedAt,
+      experience: experience,
+      clubId: clubId,
+      storedClubId: storedClubId,
+      targetAudience: targetAudience,
+      topicTags: topicTags,
+      roomGuidelines: roomGuidelines,
+      conversationStyle: conversationStyle,
+      newcomerFriendly: newcomerFriendly,
+      showFormat: showFormat,
+      topic: topic,
+      audienceCanSpeak: audienceCanSpeak,
+      handRaisingEnabled: handRaisingEnabled,
+      stageLimit: stageLimit,
+      deletionInProgress: deletionInProgress,
+      coverStoragePath: coverStoragePath,
+      coverGeneration: coverGeneration,
+      coverContentType: coverContentType,
+      coverSize: coverSize,
     );
   }
 
@@ -290,16 +399,18 @@ class VoiceRoom {
               ? document.id.substring('club_lounge_'.length)
               : null);
     final isClubLounge = data['roomKind'] == 'clubLounge';
+    final visibility = data['visibility'] as String? ?? 'public';
+    final canonicalCover = _readCanonicalRoomCover(data, document.id);
 
     return VoiceRoom(
       id: document.id,
       hostId: data['hostId'] as String? ?? '',
       hostName: data['hostName'] as String? ?? 'YO Voice user',
-      hostPhotoUrl: data['hostPhotoUrl'] as String?,
+      hostPhotoUrl: null,
       name: data['name'] as String? ?? 'Untitled room',
       description: data['description'] as String? ?? '',
       category: data['category'] as String? ?? 'talk',
-      visibility: data['visibility'] as String? ?? 'public',
+      visibility: visibility,
       language: data['language'] as String? ?? 'English',
       maxParticipants: (data['maxParticipants'] as num?)?.toInt(),
       participantCount: (data['participantCount'] as num?)?.toInt() ?? 0,
@@ -307,12 +418,14 @@ class VoiceRoom {
       isLive: data['isLive'] as bool? ?? false,
       roomType: RoomType.fromValue(data['roomType']),
       status: RoomStatus.fromValue(data['status']),
-      imageUrl: _readManagedRoomCover(
-        data['imageUrl'],
-        document.id,
-        clubId: clubId,
-        isClubLounge: isClubLounge,
-      ),
+      imageUrl: visibility == 'public' && canonicalCover == null
+          ? _readManagedRoomCover(
+              data['imageUrl'],
+              document.id,
+              clubId: clubId,
+              isClubLounge: isClubLounge,
+            )
+          : null,
       approvalRequired: data['approvalRequired'] as bool? ?? false,
       slowModeSeconds: (data['slowModeSeconds'] as num?)?.toInt() ?? 0,
       autoMuteNewUsers: data['autoMuteNewUsers'] as bool? ?? true,
@@ -340,6 +453,10 @@ class VoiceRoom {
       clubId: clubId,
       // The literal field, for authority. Deliberately NOT prefix-derived.
       storedClubId: storedClubId?.isNotEmpty == true ? storedClubId : null,
+      coverStoragePath: canonicalCover?.path,
+      coverGeneration: canonicalCover?.generation,
+      coverContentType: canonicalCover?.contentType,
+      coverSize: canonicalCover?.size,
     );
   }
 
@@ -360,6 +477,12 @@ class VoiceRoom {
       'roomType': roomType.name,
       'status': status.name,
       'imageUrl': imageUrl,
+      if (hasCanonicalCover) ...{
+        'coverStoragePath': coverStoragePath,
+        'coverGeneration': coverGeneration,
+        'coverContentType': coverContentType,
+        'coverSize': coverSize,
+      },
       'approvalRequired': approvalRequired,
       'slowModeSeconds': slowModeSeconds,
       'autoMuteNewUsers': autoMuteNewUsers,

@@ -109,6 +109,7 @@ const {
 } = require("./clubs/creation");
 const { removeClubMemberSelf } = require("./clubs/members");
 const { transferClubOwnershipSelf } = require("./clubs/ownership");
+const { moderateClubMessage } = require("./clubs/message_moderation");
 // Owner-initiated permanent Club deletion — the "Club lifecycle" that
 // deleteRoomSelf's lounge refusal routes to. Tears down the club document
 // tree, its lounge room, LiveKit state, projections and Storage media.
@@ -140,6 +141,7 @@ const {
 const { onNotificationCreated } = require("./notifications/push");
 const {
   onDirectMessageCreated,
+  onRoomLiveFanoutOutboxWritten,
   onRoomLiveChanged,
 } = require("./notifications/activity");
 const {
@@ -237,6 +239,7 @@ exports.cancelFriendRequest = cancelFriendRequest;
 exports.removeFriend = removeFriend;
 exports.setFollow = setFollow;
 exports.setUserBlock = setUserBlock;
+exports.moderateClubMessage = moderateClubMessage;
 
 /*
 |--------------------------------------------------------------------------
@@ -269,6 +272,7 @@ exports.sweepStrandedLiveRoomsSchedule = sweepStrandedLiveRoomsSchedule;
 
 exports.onNotificationCreated = onNotificationCreated;
 exports.onDirectMessageCreated = onDirectMessageCreated;
+exports.onRoomLiveFanoutOutboxWritten = onRoomLiveFanoutOutboxWritten;
 exports.onRoomLiveChanged = onRoomLiveChanged;
 exports.sendClubInvite = sendClubInvite;
 exports.onClubInviteCreated = onClubInviteCreated;
@@ -307,6 +311,13 @@ exports.setMyProfileVisibility = setMyProfileVisibility;
 exports.onAuthUserDeleted = onAuthUserDeleted;
 exports.onUserPrivacySourceChanged = onUserPrivacySourceChanged;
 exports.searchPublicProfiles = searchPublicProfiles;
+
+// Private avatar/banner media. New uploads are reservation-bound and never
+// persist a Firebase download-token URL; readers receive a generation-bound
+// V4 grant only after the profile visibility, bilateral friendship (when
+// required), blocks and both account states are rechecked server-side.
+const { createProfileMediaFunctions } = require("./profile/media_runtime");
+Object.assign(exports, createProfileMediaFunctions());
 
 /*
 |--------------------------------------------------------------------------
@@ -493,7 +504,25 @@ const { expireVoiceMomentsSchedule } = require("./moments/expiry");
 
 exports.expireVoiceMomentsSchedule = expireVoiceMomentsSchedule;
 
-const stageBFunctions = createStageBFunctions();
+function strictBooleanEnvironment(name) {
+  const value = String(process.env[name] ?? "").trim().toLowerCase();
+  if (value === "" || value === "false") return false;
+  if (value === "true") return true;
+  throw new Error(`${name} must be exactly true or false.`);
+}
+
+const stageBFunctions = createStageBFunctions({
+  // Rollout switch: clients already attach App Check tokens, but production
+  // enforcement must only flip after Android/iOS/Web attestation telemetry
+  // is healthy. Invalid configuration fails the deployment instead of
+  // silently weakening enforcement.
+  enforceUserAppCheck: strictBooleanEnvironment(
+    "YOVOICE_ENFORCE_STAGE_B_APP_CHECK",
+  ),
+  enforceMigrationAppCheck: strictBooleanEnvironment(
+    "YOVOICE_ENFORCE_MIGRATION_APP_CHECK",
+  ),
+});
 Object.assign(exports, stageBFunctions);
 
 exports.selectMyAchievementTitle = selectMyAchievementTitle;

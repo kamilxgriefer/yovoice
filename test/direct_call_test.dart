@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:ui' as ui;
 
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
@@ -44,6 +45,39 @@ void main() {
     PublicIdentityRepository.instance = originalIdentityRepository;
   });
 
+  test(
+    'direct-call media type is server-compatible and defaults to audio',
+    () async {
+      final firestore = FakeFirebaseFirestore();
+      final legacy = firestore.collection('directCalls').doc('legacy');
+      final video = firestore.collection('directCalls').doc('video');
+      final base = <String, Object?>{
+        'callerId': 'caller',
+        'calleeId': 'callee',
+        'caller': <String, Object?>{
+          'userId': 'caller',
+          'displayName': 'Caller',
+        },
+        'callee': <String, Object?>{
+          'userId': 'callee',
+          'displayName': 'Callee',
+        },
+        'status': 'ringing',
+      };
+      await legacy.set(base);
+      await video.set(<String, Object?>{...base, 'mediaType': 'video'});
+
+      expect(
+        DirectCall.fromFirestore(await legacy.get()).mediaType,
+        DirectCallMediaType.audio,
+      );
+      expect(
+        DirectCall.fromFirestore(await video.get()).mediaType,
+        DirectCallMediaType.video,
+      );
+    },
+  );
+
   testWidgets('incoming call can be answered, muted and ended', (tester) async {
     final gateway = _FakeDirectCallGateway(
       _call(status: DirectCallStatus.ringing),
@@ -87,6 +121,124 @@ void main() {
     expect(gateway.endCalls, 1);
     expect(voice.disconnectCalls, 1);
   });
+
+  testWidgets('active audio call starts private and exposes output routing', (
+    tester,
+  ) async {
+    final gateway = _FakeDirectCallGateway(
+      _call(status: DirectCallStatus.active),
+    );
+    final voice = _FakeVoiceCallService(supportsSpeakerSwitch: true);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: DirectCallScreen(
+          callId: 'call-1',
+          callService: gateway,
+          voiceService: voice,
+          currentUserId: 'caller',
+          participantName: 'Caller',
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    expect(voice.isSpeakerPreferred, isFalse);
+    expect(find.byTooltip('Speaker'), findsOneWidget);
+    await tester.tap(find.byTooltip('Speaker'));
+    await tester.pump();
+    expect(voice.isSpeakerPreferred, isTrue);
+    expect(find.byTooltip('Earpiece'), findsOneWidget);
+  });
+
+  testWidgets('End stops local media before a slow backend transition', (
+    tester,
+  ) async {
+    final events = <String>[];
+    final gateway = _FakeDirectCallGateway(
+      _call(status: DirectCallStatus.active),
+      events: events,
+    );
+    final endGate = Completer<void>();
+    gateway.endGate = endGate;
+    final voice = _FakeVoiceCallService(events: events);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: DirectCallScreen(
+          callId: 'call-1',
+          callService: gateway,
+          voiceService: voice,
+          currentUserId: 'caller',
+          participantName: 'Caller',
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+    expect(voice.isConnected, isTrue);
+
+    await tester.tap(find.byTooltip('End'));
+    await tester.pump();
+
+    expect(events.take(2).toList(), <String>['disconnect', 'end']);
+    expect(voice.isConnected, isFalse);
+    expect(gateway.endCalls, 1);
+
+    endGate.complete();
+    await tester.pump();
+    await tester.pump();
+  });
+
+  testWidgets(
+    'incoming video call is explicit and enables camera after answer',
+    (tester) async {
+      final gateway = _FakeDirectCallGateway(
+        _call(
+          status: DirectCallStatus.ringing,
+          mediaType: DirectCallMediaType.video,
+        ),
+      );
+      final voice = _FakeVoiceCallService();
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData.dark(useMaterial3: true),
+          home: DirectCallScreen(
+            callId: 'call-1',
+            callService: gateway,
+            voiceService: voice,
+            currentUserId: 'callee',
+            participantName: 'Callee',
+          ),
+        ),
+      );
+      await tester.pump();
+
+      expect(find.text('Incoming video call'), findsOneWidget);
+      expect(find.byIcon(Icons.videocam_rounded), findsOneWidget);
+
+      await tester.tap(find.byTooltip('Answer video'));
+      await tester.pump();
+      await tester.pump();
+
+      expect(gateway.acceptCalls, 1);
+      expect(voice.lastEnableCamera, isTrue);
+      expect(
+        find.byKey(const ValueKey('active-video-call-stage')),
+        findsOneWidget,
+      );
+
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+      await tester.pump();
+      expect(voice.pauseCameraCalls, 1);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pump();
+    },
+  );
 
   testWidgets('outgoing ringing call exposes a real cancel action', (
     tester,
@@ -152,6 +304,108 @@ void main() {
     });
   });
 
+  testWidgets('active video call fits an iPhone landscape surface', (
+    tester,
+  ) async {
+    const size = Size(844, 390);
+    tester.view.physicalSize = size;
+    tester.view.devicePixelRatio = 1;
+    addTearDown(() {
+      tester.view.resetPhysicalSize();
+      tester.view.resetDevicePixelRatio();
+    });
+    final gateway = _FakeDirectCallGateway(
+      _call(
+        status: DirectCallStatus.active,
+        mediaType: DirectCallMediaType.video,
+      ),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: MediaQuery(
+          data: const MediaQueryData(
+            size: size,
+            textScaler: TextScaler.linear(2),
+          ),
+          child: DirectCallScreen(
+            callId: 'call-1',
+            callService: gateway,
+            voiceService: _FakeVoiceCallService(),
+            currentUserId: 'caller',
+            participantName: 'Caller',
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    expect(
+      find.byKey(const ValueKey('active-video-call-stage')),
+      findsOneWidget,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('video controls announce actual media state and next action', (
+    tester,
+  ) async {
+    final semantics = tester.ensureSemantics();
+    final gateway = _FakeDirectCallGateway(
+      _call(
+        status: DirectCallStatus.active,
+        mediaType: DirectCallMediaType.video,
+      ),
+    );
+    final voice = _FakeVoiceCallService(supportsSpeakerSwitch: true);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: DirectCallScreen(
+          callId: 'call-1',
+          callService: gateway,
+          voiceService: voice,
+          currentUserId: 'caller',
+          participantName: 'Caller',
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    ui.SemanticsFlags flags(String label) => tester
+        .getSemantics(find.bySemanticsLabel(label))
+        .getSemanticsData()
+        .flagsCollection;
+    String hint(String label) => tester
+        .getSemantics(find.bySemanticsLabel(label))
+        .getSemanticsData()
+        .hint;
+
+    expect(flags('Microphone').isToggled, ui.Tristate.isTrue);
+    expect(hint('Microphone'), 'Double tap to mute');
+    expect(flags('Camera').isToggled, ui.Tristate.isTrue);
+    expect(hint('Camera'), 'Double tap to turn camera off');
+    expect(flags('Speakerphone').isToggled, ui.Tristate.isTrue);
+    expect(hint('Speakerphone'), 'Double tap to use earpiece');
+
+    await tester.tap(find.byTooltip('Mute'));
+    await tester.tap(find.byTooltip('Camera off'));
+    await tester.tap(find.byTooltip('Use earpiece'));
+    await tester.pump();
+
+    expect(flags('Microphone').isToggled, ui.Tristate.isFalse);
+    expect(hint('Microphone'), 'Double tap to unmute');
+    expect(flags('Camera').isToggled, ui.Tristate.isFalse);
+    expect(hint('Camera'), 'Double tap to turn camera on');
+    expect(flags('Speakerphone').isToggled, ui.Tristate.isFalse);
+    expect(hint('Speakerphone'), 'Double tap to use speaker');
+    semantics.dispose();
+  });
+
   testWidgets('chat phone button starts signaling and opens ringing screen', (
     tester,
   ) async {
@@ -188,8 +442,45 @@ void main() {
     expect(calls.startCalls, 1);
     expect(calls.lastCalleeId, 'callee');
     expect(calls.lastConversationId, 'conversation-1');
+    expect(calls.lastMediaType, DirectCallMediaType.audio);
     expect(find.text('Calling…'), findsOneWidget);
     expect(find.text('Cancel'), findsOneWidget);
+  });
+
+  testWidgets('chat video button requests a video call', (tester) async {
+    final calls = _FakeDirectCallGateway(
+      _call(status: DirectCallStatus.ringing),
+    );
+    final messages = _StubMessageService();
+    final auth = MockFirebaseAuth(
+      signedIn: true,
+      mockUser: MockUser(uid: 'caller', displayName: 'Caller'),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: ChatScreen(
+          conversationId: 'conversation-1',
+          otherUserId: 'callee',
+          otherDisplayName: 'Callee',
+          otherEmail: '',
+          otherPhotoUrl: '',
+          messageService: messages,
+          directCallService: calls,
+          auth: auth,
+        ),
+      ),
+    );
+    messages.emit(const []);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Start video call'));
+    await tester.pump();
+    await tester.pump();
+
+    expect(calls.startCalls, 1);
+    expect(calls.lastMediaType, DirectCallMediaType.video);
+    expect(find.text('Video calling…'), findsOneWidget);
   });
 
   testWidgets('a fullscreen direct call makes the covered chat notification '
@@ -431,7 +722,10 @@ void main() {
   });
 }
 
-DirectCall _call({required DirectCallStatus status}) {
+DirectCall _call({
+  required DirectCallStatus status,
+  DirectCallMediaType mediaType = DirectCallMediaType.audio,
+}) {
   return DirectCall(
     id: 'call-1',
     callerId: 'caller',
@@ -453,13 +747,15 @@ DirectCall _call({required DirectCallStatus status}) {
         ? DateTime.now().subtract(const Duration(seconds: 5))
         : null,
     conversationId: 'conversation-1',
+    mediaType: mediaType,
   );
 }
 
 class _FakeDirectCallGateway implements DirectCallGateway {
-  _FakeDirectCallGateway(this.current);
+  _FakeDirectCallGateway(this.current, {this.events});
 
   DirectCall current;
+  final List<String>? events;
   final StreamController<DirectCall> _changes =
       StreamController<DirectCall>.broadcast();
   int startCalls = 0;
@@ -469,9 +765,11 @@ class _FakeDirectCallGateway implements DirectCallGateway {
   int endCalls = 0;
   String? lastCalleeId;
   String? lastConversationId;
+  DirectCallMediaType? lastMediaType;
+  Completer<void>? endGate;
 
   void _emit(DirectCallStatus status) {
-    current = _call(status: status);
+    current = _call(status: status, mediaType: current.mediaType);
     _changes.add(current);
   }
 
@@ -492,10 +790,13 @@ class _FakeDirectCallGateway implements DirectCallGateway {
   Future<String> startCall({
     required String calleeId,
     required String conversationId,
+    DirectCallMediaType mediaType = DirectCallMediaType.audio,
   }) async {
     startCalls++;
     lastCalleeId = calleeId;
     lastConversationId = conversationId;
+    lastMediaType = mediaType;
+    current = _call(status: DirectCallStatus.ringing, mediaType: mediaType);
     return current.id;
   }
 
@@ -520,6 +821,8 @@ class _FakeDirectCallGateway implements DirectCallGateway {
   @override
   Future<void> end(String callId) async {
     endCalls++;
+    events?.add('end');
+    await endGate?.future;
     _emit(DirectCallStatus.ended);
   }
 
@@ -556,6 +859,7 @@ class _RetryingIncomingGateway implements DirectCallGateway {
   Future<String> startCall({
     required String calleeId,
     required String conversationId,
+    DirectCallMediaType mediaType = DirectCallMediaType.audio,
   }) {
     throw UnimplementedError();
   }
@@ -579,14 +883,22 @@ class _RetryingIncomingGateway implements DirectCallGateway {
 }
 
 class _FakeVoiceCallService extends VoiceCallService {
-  _FakeVoiceCallService() : super.forTesting();
+  _FakeVoiceCallService({this.events, this.supportsSpeakerSwitch = false})
+    : super.forTesting();
 
+  final List<String>? events;
+  final bool supportsSpeakerSwitch;
   VoiceCallStatus _testStatus = VoiceCallStatus.disconnected;
   String? _testDirectCallId;
   bool _testMuted = false;
+  bool _testVideoCall = false;
+  bool _testCameraEnabled = false;
+  bool _testSpeakerPreferred = false;
   int joinCalls = 0;
   int disconnectCalls = 0;
+  int pauseCameraCalls = 0;
   String? lastContactName;
+  bool? lastEnableCamera;
 
   @override
   VoiceCallStatus get status => _testStatus;
@@ -598,6 +910,18 @@ class _FakeVoiceCallService extends VoiceCallService {
   bool get isDirectCall => _testDirectCallId != null;
 
   @override
+  bool get isVideoCall => _testVideoCall;
+
+  @override
+  bool get isCameraEnabled => _testCameraEnabled;
+
+  @override
+  bool get cameraChangeInProgress => false;
+
+  @override
+  String? get cameraIssue => null;
+
+  @override
   bool get isConnected => _testStatus == VoiceCallStatus.connected;
 
   @override
@@ -607,6 +931,15 @@ class _FakeVoiceCallService extends VoiceCallService {
   bool get muteChangeInProgress => false;
 
   @override
+  bool get canSwitchSpeakerphone => supportsSpeakerSwitch;
+
+  @override
+  bool get isSpeakerPreferred => _testSpeakerPreferred;
+
+  @override
+  bool get speakerChangeInProgress => false;
+
+  @override
   String? get errorMessage => null;
 
   @override
@@ -614,10 +947,15 @@ class _FakeVoiceCallService extends VoiceCallService {
     required String callId,
     required String contactName,
     required String participantName,
+    bool enableCamera = false,
     bool playSound = true,
   }) async {
     joinCalls++;
     lastContactName = contactName;
+    lastEnableCamera = enableCamera;
+    _testVideoCall = enableCamera;
+    _testCameraEnabled = enableCamera;
+    _testSpeakerPreferred = enableCamera;
     _testDirectCallId = callId;
     _testStatus = VoiceCallStatus.connected;
     notifyListeners();
@@ -630,10 +968,31 @@ class _FakeVoiceCallService extends VoiceCallService {
   }
 
   @override
+  Future<void> toggleSpeaker() async {
+    _testSpeakerPreferred = !_testSpeakerPreferred;
+    notifyListeners();
+  }
+
+  @override
+  Future<void> toggleCamera() async {
+    _testCameraEnabled = !_testCameraEnabled;
+    notifyListeners();
+  }
+
+  @override
+  Future<void> pauseCameraForBackground() async {
+    pauseCameraCalls++;
+  }
+
+  @override
   Future<void> disconnect({bool playSound = true}) async {
     disconnectCalls++;
+    events?.add('disconnect');
     _testStatus = VoiceCallStatus.disconnected;
     _testDirectCallId = null;
+    _testVideoCall = false;
+    _testCameraEnabled = false;
+    _testSpeakerPreferred = false;
     notifyListeners();
   }
 }

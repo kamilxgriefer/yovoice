@@ -412,6 +412,7 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                         children: [
                           UserAvatar(
                             radius: 22,
+                            userId: user.uid,
                             photoUrl: user.photoUrl,
                             displayName: user.displayName,
                           ),

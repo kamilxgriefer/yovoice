@@ -1,3 +1,4 @@
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -65,5 +66,32 @@ void main() {
     );
     expect(message, 'Something went wrong. Please try again.');
     expect(message.toLowerCase(), isNot(contains('error')));
+  });
+
+  test('privileged authentication failures explain the safe next step', () {
+    expect(
+      friendlyErrorMessage(
+        FirebaseFunctionsException(
+          code: 'failed-precondition',
+          message: 'private backend detail',
+          details: const <String, Object?>{
+            'reason': 'recent-authentication-required',
+          },
+        ),
+      ),
+      'For security, sign in again before this sensitive action.',
+    );
+    expect(
+      friendlyErrorMessage(
+        FirebaseFunctionsException(
+          code: 'failed-precondition',
+          message: 'private backend detail',
+          details: const <String, Object?>{
+            'reason': 'multi-factor-authentication-required',
+          },
+        ),
+      ),
+      'Sign in with two-factor authentication before this sensitive action.',
+    );
   });
 }

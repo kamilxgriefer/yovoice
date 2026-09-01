@@ -270,6 +270,7 @@ class _SpeakerTileState extends State<SpeakerTile>
                       ),
                       child: UserAvatar(
                         radius: widget.avatarRadius,
+                        userId: speaker.userId,
                         photoUrl: speaker.photoUrl,
                         displayName: speaker.displayName,
                         // The initial-letter fallback follows the ROOM, not
@@ -589,6 +590,7 @@ class AudienceStrip extends StatelessWidget {
     required this.onTap,
     this.previewPhotoUrls = const [],
     this.previewNames = const [],
+    this.previewUserIds = const [],
     super.key,
   });
 
@@ -599,6 +601,7 @@ class AudienceStrip extends StatelessWidget {
   /// REAL participant data from the roster stream — up to six are shown.
   final List<String?> previewPhotoUrls;
   final List<String> previewNames;
+  final List<String> previewUserIds;
 
   @override
   Widget build(BuildContext context) {
@@ -660,6 +663,9 @@ class AudienceStrip extends StatelessWidget {
                                   ),
                                   child: UserAvatar(
                                     radius: 11,
+                                    userId: i < previewUserIds.length
+                                        ? previewUserIds[i]
+                                        : null,
                                     photoUrl: previews[i],
                                     displayName: i < previewNames.length
                                         ? previewNames[i]

@@ -40,6 +40,7 @@ class BroadcastRoomScreen extends StatefulWidget {
     this.entryCoordinator,
     this.muteCoordinator,
     this.playInitialJoinSound = true,
+    this.startMuted = false,
     super.key,
   });
 
@@ -58,6 +59,9 @@ class BroadcastRoomScreen extends StatefulWidget {
   /// Room creation already has its own confirmation; all other entry points
   /// keep the normal connected cue.
   final bool playInitialJoinSound;
+
+  /// External/deep-link entry may connect as a listener until a mic gesture.
+  final bool startMuted;
 
   @override
   State<BroadcastRoomScreen> createState() => _BroadcastRoomScreenState();
@@ -295,6 +299,7 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
           roomName: _room.name,
           participantName: name,
           playSound: playSound,
+          startMuted: widget.startMuted,
         );
       }
     } catch (_) {
@@ -1222,6 +1227,10 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
                               previewNames: [
                                 for (final listener in listeners.take(6))
                                   listener.displayName,
+                              ],
+                              previewUserIds: [
+                                for (final listener in listeners.take(6))
+                                  listener.userId,
                               ],
                             ),
                           ],

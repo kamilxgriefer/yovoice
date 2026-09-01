@@ -10,6 +10,7 @@ import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 
 import 'package:yovoice/features/calls/data/services/direct_call_service.dart';
+import 'package:yovoice/features/calls/data/models/direct_call.dart';
 import 'package:yovoice/features/calls/data/services/voice_call_service.dart';
 import 'package:yovoice/features/calls/presentation/screens/direct_call_screen.dart';
 import 'package:yovoice/features/messages/data/models/message.dart';
@@ -431,7 +432,9 @@ class _ChatScreenState extends State<ChatScreen> {
     });
   }
 
-  Future<void> _startDirectCall() async {
+  Future<void> _startDirectCall({
+    DirectCallMediaType mediaType = DirectCallMediaType.audio,
+  }) async {
     if (_startingCall) return;
     final voice = VoiceCallService.instance;
     if (voice.status != VoiceCallStatus.disconnected &&
@@ -445,6 +448,7 @@ class _ChatScreenState extends State<ChatScreen> {
       callId = await _calls.startCall(
         calleeId: widget.otherUserId,
         conversationId: widget.conversationId,
+        mediaType: mediaType,
       );
       if (!mounted) {
         await _calls.cancel(callId);
@@ -481,7 +485,9 @@ class _ChatScreenState extends State<ChatScreen> {
       _showMessage(
         friendlyErrorMessage(
           error,
-          fallback: 'Could not start this private voice call.',
+          fallback: mediaType == DirectCallMediaType.video
+              ? 'Could not start this private video call.'
+              : 'Could not start this private voice call.',
         ),
       );
     } finally {
@@ -929,7 +935,9 @@ class _ChatScreenState extends State<ChatScreen> {
                     displayName: _otherDisplayName,
                     photoUrl: _otherPhotoUrl,
                   ),
-                  onCall: _startDirectCall,
+                  onCall: () => _startDirectCall(),
+                  onVideoCall: () =>
+                      _startDirectCall(mediaType: DirectCallMediaType.video),
                 ),
                 Expanded(
                   child: StreamBuilder<List<Message>>(
@@ -967,6 +975,7 @@ class _ChatScreenState extends State<ChatScreen> {
                           queuedMessages.isEmpty &&
                           queuedMedia.isEmpty) {
                         return _EmptyConversation(
+                          userId: widget.otherUserId,
                           name: _otherDisplayName,
                           photoUrl: _otherPhotoUrl,
                         );
@@ -1101,6 +1110,7 @@ class _ChatHeader extends StatelessWidget {
     required this.onArchive,
     required this.onProfileTap,
     required this.onCall,
+    required this.onVideoCall,
   });
 
   final String userId;
@@ -1117,6 +1127,7 @@ class _ChatHeader extends StatelessWidget {
   /// profile preview.
   final VoidCallback onProfileTap;
   final VoidCallback onCall;
+  final VoidCallback onVideoCall;
 
   @override
   Widget build(BuildContext context) {
@@ -1152,7 +1163,12 @@ class _ChatHeader extends StatelessWidget {
                   padding: const EdgeInsets.symmetric(vertical: 2),
                   child: Row(
                     children: [
-                      _Avatar(name: displayName, url: photoUrl, radius: 20),
+                      _Avatar(
+                        userId: userId,
+                        name: displayName,
+                        url: photoUrl,
+                        radius: 20,
+                      ),
                       const SizedBox(width: 11),
                       Expanded(
                         child: StreamBuilder<ChatPresence>(
@@ -1213,6 +1229,14 @@ class _ChatHeader extends StatelessWidget {
                     ),
                   )
                 : Icon(Icons.call_rounded, color: palette.textPrimary),
+          ),
+          IconButton(
+            onPressed: callBusy ? null : onVideoCall,
+            tooltip: callBusy ? 'Starting call' : 'Start video call',
+            icon: Icon(
+              Icons.videocam_rounded,
+              color: callBusy ? palette.textTertiary : palette.textPrimary,
+            ),
           ),
           PopupMenuButton<String>(
             tooltip: 'Conversation options',
@@ -1294,8 +1318,13 @@ class _ChatHeader extends StatelessWidget {
 }
 
 class _EmptyConversation extends StatelessWidget {
-  const _EmptyConversation({required this.name, required this.photoUrl});
+  const _EmptyConversation({
+    required this.userId,
+    required this.name,
+    required this.photoUrl,
+  });
 
+  final String userId;
   final String name;
   final String photoUrl;
 
@@ -1316,7 +1345,12 @@ class _EmptyConversation extends StatelessWidget {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  _Avatar(name: name, url: photoUrl, radius: 43),
+                  _Avatar(
+                    userId: userId,
+                    name: name,
+                    url: photoUrl,
+                    radius: 43,
+                  ),
                   const SizedBox(height: 17),
                   Text(
                     name,
@@ -2483,8 +2517,14 @@ class _MessageActionsSheet extends StatelessWidget {
 }
 
 class _Avatar extends StatelessWidget {
-  const _Avatar({required this.name, required this.url, required this.radius});
+  const _Avatar({
+    required this.userId,
+    required this.name,
+    required this.url,
+    required this.radius,
+  });
 
+  final String userId;
   final String name;
   final String url;
   final double radius;
@@ -2493,6 +2533,7 @@ class _Avatar extends StatelessWidget {
   Widget build(BuildContext context) {
     return UserAvatar(
       radius: radius,
+      userId: userId,
       backgroundColor: const Color(0xFF7B25E8),
       photoUrl: url,
       displayName: name,

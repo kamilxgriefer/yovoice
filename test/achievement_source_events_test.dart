@@ -7,6 +7,8 @@ import 'package:yovoice/features/achievements/data/services/achievement_service.
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
 
+import 'helpers/room_creation_test_double.dart';
+
 /// Achievements could only ever progress from ONE source event (chat
 /// messages): `incrementMetric` had a single caller, and the other
 /// counters — momentCount, roomCount, … — were never written by the
@@ -39,7 +41,16 @@ void main() {
 
   test('creating a room increments roomCount — the rooms metric now has '
       'a real source event', () async {
-    final rooms = RoomService(firestore: db, auth: auth());
+    final rooms = RoomService(
+      firestore: db,
+      auth: auth(),
+      roomCreateInvoker: (request) => createRoomForTest(
+        firestore: db,
+        userId: uid,
+        request: request,
+        incrementRoomCount: true,
+      ),
+    );
 
     await rooms.createRoom(
       name: 'First room',

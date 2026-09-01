@@ -70,6 +70,7 @@ const applySanction = onCall(
         USER_ROLES.SUPER_ADMIN,
       ]),
       "You do not have permission to sanction users.",
+      { privileged: true },
     );
     const caps = deriveCapabilities({ uid: caller.uid, user: caller.profile });
 

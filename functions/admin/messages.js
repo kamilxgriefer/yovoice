@@ -298,7 +298,7 @@ const adminDeleteMessage = onCall(
   async (request) => {
     // Claim AND server-written role AND the protected-owner uid match.
     // A superAdmin that is not the owner is refused and audited.
-    const actor = await requireProtectedOwner(request);
+    const actor = await requireProtectedOwner(request, { privileged: true });
 
     const data = request.data ?? {};
     const messageType = String(data.messageType ?? "");

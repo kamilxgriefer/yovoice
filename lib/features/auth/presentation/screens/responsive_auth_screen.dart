@@ -1242,6 +1242,10 @@ class _ModeRailButton extends StatelessWidget {
     return Semantics(
       button: true,
       selected: selected,
+      enabled: onTap != null,
+      label: label,
+      onTap: onTap,
+      excludeSemantics: true,
       child: Material(
         color: Colors.transparent,
         child: InkWell(

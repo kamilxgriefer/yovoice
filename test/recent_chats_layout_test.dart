@@ -4,12 +4,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:image/image.dart' as img;
 
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/features/home/presentation/widgets/shared/recent_chats.dart';
 import 'package:yovoice/features/messages/data/models/conversation.dart';
 import 'package:yovoice/features/messages/data/models/message.dart';
+import 'package:yovoice/features/profile/data/services/profile_media_service.dart';
 import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
@@ -51,12 +53,56 @@ MemoryImage _solidWhiteImage() {
   return MemoryImage(Uint8List.fromList(img.encodePng(raster)));
 }
 
+ProfileMediaService _profileMediaService({
+  String grantUrl =
+      'https://storage.googleapis.com/yovoice-private/avatar.jpg?sig=test',
+  bool available = true,
+  void Function(int call, Map<String, Object?> request)? onCall,
+}) {
+  var calls = 0;
+  return ProfileMediaService(
+    auth: MockFirebaseAuth(
+      signedIn: true,
+      mockUser: MockUser(uid: 'me', email: 'me@example.invalid'),
+    ),
+    invoker: (name, request) async {
+      calls += 1;
+      onCall?.call(calls, request);
+      expect(name, 'getProfileMediaAccess');
+      return {
+        'schemaVersion': 1,
+        'available': available,
+        'expiresAtMillis': DateTime.now()
+            .toUtc()
+            .add(const Duration(seconds: 80))
+            .millisecondsSinceEpoch,
+        if (available) ...{
+          'url': grantUrl,
+          'generation': '$calls',
+          'contentType': 'image/jpeg',
+          'size': 4096,
+        },
+      };
+    },
+  );
+}
+
 void main() {
+  setUp(ProfileMediaService.clearAllMediaAccessCaches);
+
   testWidgets('standard recent chat uses the live profile avatar', (
     tester,
   ) async {
     final profilePhotos = StreamController<String>();
     addTearDown(profilePhotos.close);
+    var mediaCalls = 0;
+    final media = _profileMediaService(
+      available: false,
+      onCall: (call, request) {
+        mediaCalls = call;
+        expect(request['userId'], 'friend-0');
+      },
+    );
 
     await tester.pumpWidget(
       MaterialApp(
@@ -71,20 +117,25 @@ void main() {
               onOpenConversation: (_) {},
               onFindFriends: () {},
               photoStreamForUser: (_) => profilePhotos.stream,
+              profileMediaService: media,
             ),
           ),
         ),
       ),
     );
+    await tester.pump();
 
     UserAvatar avatar() => tester.widget<UserAvatar>(
       find.byKey(const ValueKey('recent-chat-avatar-friend-0')),
     );
-    expect(avatar().photoUrl, 'fixture://stale-photo');
+    expect(avatar().photoUrl, isEmpty);
+    expect(mediaCalls, 1);
 
-    profilePhotos.add('fixture://fresh-photo');
-    await tester.pump();
-    expect(avatar().photoUrl, 'fixture://fresh-photo');
+    profilePhotos.add('revision-2');
+    await tester.pumpAndSettle();
+    expect(avatar().photoUrl, isEmpty);
+    expect(avatar().mediaRevision, 'revision-2');
+    expect(mediaCalls, 2);
   });
 
   for (final width in [320.0, 390.0, 768.0, 1440.0]) {
@@ -167,6 +218,7 @@ void main() {
     const decodedProfilePhoto = AssetImage(
       'assets/images/home page assets.jpg',
     );
+    final media = _profileMediaService();
 
     var opened = 0;
     await tester.pumpWidget(
@@ -183,6 +235,7 @@ void main() {
               onFindFriends: () {},
               style: RecentChatsStyle.desktopBackdrop,
               backdropImageProvider: (_) => decodedProfilePhoto,
+              profileMediaService: media,
             ),
           ),
         ),
@@ -283,6 +336,13 @@ void main() {
       );
       String? requestedUserId;
       String? resolvedUrl;
+      var mediaCalls = 0;
+      final media = _profileMediaService(
+        onCall: (call, request) {
+          mediaCalls = call;
+          expect(request['userId'], 'friend-0');
+        },
+      );
 
       await tester.pumpWidget(
         MaterialApp(
@@ -303,6 +363,7 @@ void main() {
                 resolvedUrl = url;
                 return decodedProfilePhoto;
               },
+              profileMediaService: media,
             ),
           ),
         ),
@@ -323,10 +384,14 @@ void main() {
           tester.element(find.byType(RecentChats)),
         ),
       );
-      profilePhotos.add('fixture://fresh-public-profile-photo');
+      profilePhotos.add('revision-2');
       await tester.pumpAndSettle();
 
-      expect(resolvedUrl, 'fixture://fresh-public-profile-photo');
+      expect(
+        resolvedUrl,
+        'https://storage.googleapis.com/yovoice-private/avatar.jpg?sig=test',
+      );
+      expect(mediaCalls, 2);
       expect(
         find.byKey(const ValueKey('recent-chat-photo-conversation-0')),
         findsOneWidget,
@@ -393,6 +458,7 @@ void main() {
             style: RecentChatsStyle.desktopBackdrop,
             backdropImageProvider: (_) =>
                 MemoryImage(Uint8List.fromList(const [0, 1, 2, 3])),
+            profileMediaService: _profileMediaService(),
           ),
         ),
       ),
@@ -509,6 +575,7 @@ void main() {
       tester.view.devicePixelRatio = 1;
       addTearDown(tester.view.reset);
       final whitePixel = _solidWhiteImage();
+      final media = _profileMediaService();
 
       await tester.pumpWidget(
         MaterialApp(
@@ -524,6 +591,7 @@ void main() {
                 onFindFriends: () {},
                 style: RecentChatsStyle.desktopBackdrop,
                 backdropImageProvider: (_) => whitePixel,
+                profileMediaService: media,
               ),
             ),
           ),

@@ -81,6 +81,10 @@ Future<bool> evaluateGuidedOnboardingAfterReadiness({
   return evaluate();
 }
 
+@visibleForTesting
+bool isSafeInitialRoomLinkId(String value) =>
+    RegExp(r'^[A-Za-z0-9_-]{1,128}$').hasMatch(value);
+
 /// Serializes presentation of the More menu without blocking the destination
 /// subsequently opened from it.
 ///
@@ -677,7 +681,7 @@ class _MainShellState extends State<MainShell>
     _handledInitialRoomLink = true;
 
     final roomId = Uri.base.queryParameters['room']?.trim();
-    if (roomId == null || roomId.isEmpty) {
+    if (roomId == null || !isSafeInitialRoomLinkId(roomId)) {
       return;
     }
 
@@ -686,12 +690,52 @@ class _MainShellState extends State<MainShell>
       if (!mounted || !room.isLive || !room.isActive) {
         return;
       }
-      final joined = await _roomService.joinRoom(roomId);
+
+      final shouldJoin = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) {
+          final palette = dialogContext.appPalette;
+          return AlertDialog(
+            backgroundColor: palette.surfaceRaised,
+            title: Text(
+              'Join ${room.name}?',
+              style: TextStyle(
+                color: palette.textPrimary,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            content: Text(
+              'This opens a live voice room. You will join muted and can '
+              'turn on your microphone when you are ready.',
+              style: TextStyle(color: palette.textSecondary, height: 1.4),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(false),
+                style: TextButton.styleFrom(foregroundColor: palette.focus),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                key: const ValueKey('initial-room-link-confirm'),
+                onPressed: () => Navigator.of(dialogContext).pop(true),
+                child: const Text('Join voice room'),
+              ),
+            ],
+          );
+        },
+      );
+      if (!mounted || shouldJoin != true) {
+        return;
+      }
+
+      final joined = await _roomService.joinRoom(roomId, startMuted: true);
       if (!mounted) {
         return;
       }
       await Navigator.of(context).push<void>(
-        MaterialPageRoute<void>(builder: (_) => RoomEntryScreen(room: joined)),
+        MaterialPageRoute<void>(
+          builder: (_) => RoomEntryScreen(room: joined, startMuted: true),
+        ),
       );
     } catch (error) {
       if (!mounted) {

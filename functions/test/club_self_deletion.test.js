@@ -32,6 +32,10 @@ if (getApps().length === 0) {
 }
 
 const { executeDeleteClubSelf } = require("../clubs/deletion");
+const {
+  CLUB_ACTION_RATE_LIMITS,
+  clubActionRateReferences,
+} = require("../clubs/quota");
 
 const db = getFirestore();
 const P = "csd-";
@@ -91,6 +95,10 @@ function fakeBucket({ failPrefixes = false } = {}) {
 }
 
 async function wipeOwn() {
+  const rateDeletes = [OWNER, MODERATOR, MEMBER, PREVIOUS].flatMap((uid) => {
+    const references = clubActionRateReferences(db, uid, "deleteClub");
+    return [references.minute.delete(), references.hour.delete()];
+  });
   await Promise.all([
     db.recursiveDelete(db.collection("clubs").doc(CLUB)),
     db.recursiveDelete(db.collection("rooms").doc(LOUNGE)),
@@ -103,6 +111,7 @@ async function wipeOwn() {
     db.collection("clubMarketingConsents").doc(CLUB).delete(),
     db.collection("clubOwnershipGuards").doc(OWNER).delete(),
     db.collection("adminAuditLogs").doc(`delete_club_self_${CLUB}`).delete(),
+    ...rateDeletes,
   ]);
 }
 
@@ -416,6 +425,44 @@ describe("club self deletion", () => {
     assert.deepEqual(control.calls, []);
   });
 
+  test("a missing target commits the deletion budget before a later valid target", async () => {
+    const references = clubActionRateReferences(db, OWNER, "deleteClub");
+    const now = Timestamp.now();
+    await references.minute.set({
+      schemaVersion: 1,
+      ownerId: OWNER,
+      scope: references.minuteScope,
+      windowStartedAt: now,
+      count: CLUB_ACTION_RATE_LIMITS.deleteClub.minute.maxEvents - 1,
+      updatedAt: now,
+    });
+
+    await assert.rejects(
+      () => executeDeleteClubSelf(
+        request(OWNER, { clubId: `${P}missing-budget` }),
+        fakeControl(),
+        fakeBucket(),
+      ),
+      (error) => error?.code === "not-found",
+    );
+    assert.equal(
+      (await references.minute.get()).data().count,
+      CLUB_ACTION_RATE_LIMITS.deleteClub.minute.maxEvents,
+    );
+
+    await seedClub();
+    await seedLounge();
+    await assert.rejects(
+      () => executeDeleteClubSelf(
+        request(OWNER, { clubId: CLUB }),
+        fakeControl(),
+        fakeBucket(),
+      ),
+      (error) => error?.code === "resource-exhausted",
+    );
+    assert.equal((await db.collection("clubs").doc(CLUB).get()).exists, true);
+  });
+
   test("a club whose lounge was never created (lazy ensureClubLounge) deletes cleanly", async () => {
     const control = fakeControl();
     const bucket = fakeBucket();
@@ -517,6 +564,71 @@ describe("club self deletion", () => {
         false,
       );
     }
+  });
+
+  test("large teardown work is page-bounded and resumes to one complete graph deletion", async () => {
+    const control = fakeControl();
+    const bucket = fakeBucket();
+    const secondRoom = `${P}second-room`;
+    await seedClub();
+    await seedLounge({ isLive: true, participantCount: 2 });
+    await db.collection("rooms").doc(secondRoom).set({
+      hostId: OWNER,
+      clubId: CLUB,
+      roomKind: "clubRoom",
+      status: "active",
+      isLive: true,
+      participantCount: 0,
+    });
+    await Promise.all([
+      seedSession(OWNER),
+      seedSession(MEMBER),
+      db.collection("users").doc(PREVIOUS).collection("clubs").doc(CLUB).set({
+        clubId: CLUB,
+        role: "member",
+      }),
+    ]);
+
+    let completed = false;
+    let attempts = 0;
+    while (!completed && attempts < 10) {
+      attempts += 1;
+      try {
+        const result = await executeDeleteClubSelf(
+          request(OWNER, { clubId: CLUB }),
+          control,
+          bucket,
+          { roomsPerRun: 1, sessionsPerPage: 1, projectionsPerPage: 1 },
+        );
+        assert.deepEqual(result, { success: true, clubId: CLUB });
+        completed = true;
+      } catch (error) {
+        assert.equal(error?.code, "unavailable");
+        const club = await db.collection("clubs").doc(CLUB).get();
+        assert.equal(club.exists, true);
+        assert.equal(club.data().deletionInProgress, true);
+      }
+    }
+
+    assert.equal(completed, true);
+    assert.ok(attempts >= 4, "multiple bounded lifecycle pages must be visible");
+    assert.equal(await clubGraphIsGone(), true);
+    assert.equal((await db.collection("rooms").doc(secondRoom).get()).exists, false);
+    assert.equal(
+      (await db.collection("users").doc(PREVIOUS)
+        .collection("clubs").doc(CLUB).get()).exists,
+      false,
+    );
+    assert.equal(
+      (await db.collection("activeVoiceSessions").doc(OWNER)
+        .collection("rooms").doc(LOUNGE).get()).exists,
+      false,
+    );
+    assert.equal(
+      (await db.collection("activeVoiceSessions").doc(MEMBER)
+        .collection("rooms").doc(LOUNGE).get()).exists,
+      false,
+    );
   });
 
   test("a moderated (suspended) club cannot be deleted by its owner", async () => {

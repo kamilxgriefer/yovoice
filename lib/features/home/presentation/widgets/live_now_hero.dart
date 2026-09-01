@@ -291,6 +291,7 @@ class _OrbitingParticipant extends StatelessWidget {
           ),
           child: UserAvatar(
             radius: 21,
+            userId: participant.userId,
             photoUrl: participant.photoUrl,
             displayName: participant.displayName,
           ),

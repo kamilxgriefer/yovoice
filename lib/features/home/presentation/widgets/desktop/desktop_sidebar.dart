@@ -911,7 +911,9 @@ class _ProfileCard extends StatelessWidget {
                     children: [
                       UserAvatar(
                         radius: 18,
+                        userId: profile?.uid,
                         photoUrl: profile?.photoUrl,
+                        mediaRevision: profile?.profileUpdatedAt,
                         displayName: profile?.displayName,
                         premium: profile?.premiumIdentity ?? false,
                         fallbackIcon: Icons.person_rounded,

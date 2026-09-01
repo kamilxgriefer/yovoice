@@ -9,7 +9,7 @@
 //  3. The owner badge maps only from the wire value the server publishes
 //     for the confirmed owner; unknown wire values fail to USER.
 //  4. The repository batches, dedups, caches, clears on account switch,
-//     falls back to USER on failure, and honors the 50-uid bound.
+//     falls back to USER on failure, and honors the server batch bound.
 //  5. Achievement cosmetics can accompany, but never replace or
 //     restyle, the official badges.
 //  6. Long labels in narrow width wrap instead of overflowing.
@@ -424,7 +424,12 @@ void main() {
         for (var i = 0; i < 120; i++) repository.resolve('user-$i'),
       ]);
 
-      expect(requestSizes.every((size) => size <= 50), isTrue);
+      expect(
+        requestSizes.every(
+          (size) => size <= PublicIdentityRepository.maxBatchSize,
+        ),
+        isTrue,
+      );
       expect(requestSizes.fold<int>(0, (sum, size) => sum + size), 120);
     });
 

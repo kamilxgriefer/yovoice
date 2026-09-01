@@ -91,7 +91,9 @@ class ModerationAuditEvent {
           (map['removedContent'] as String?)?.trim().isNotEmpty == true
           ? (map['removedContent'] as String).trim()
           : null,
-      createdAt: DateTime.tryParse(map['createdAt'] as String? ?? '')?.toLocal(),
+      createdAt: DateTime.tryParse(
+        map['createdAt'] as String? ?? '',
+      )?.toLocal(),
     );
   }
 }

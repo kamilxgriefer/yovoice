@@ -32,6 +32,8 @@ import 'package:yovoice/features/settings/presentation/widgets/appearance_langua
 import 'package:yovoice/features/settings/presentation/widgets/message_privacy_settings_tile.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
+import 'package:yovoice/shared/widgets/states/yo_error_state.dart';
+import 'package:yovoice/shared/widgets/states/yo_loading_indicator.dart';
 
 Color _successForeground(BuildContext context) =>
     context.appPalette.successForeground;
@@ -364,7 +366,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
-    final colors = Theme.of(context).colorScheme;
     return Scaffold(
       backgroundColor: palette.background,
       body: SafeArea(
@@ -405,14 +406,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   stream: _profileService.watchCurrentProfile(),
                   builder: (context, snapshot) {
                     if (snapshot.hasError) {
-                      return _ErrorBody(
+                      return YoErrorState(
                         message: friendlyErrorMessage(snapshot.error!),
+                        compact: true,
                       );
                     }
                     final profile = snapshot.data;
                     if (profile == null) {
-                      return Center(
-                        child: CircularProgressIndicator(color: colors.primary),
+                      return const YoLoadingIndicator.fullscreen(
+                        message: 'Loading settings…',
                       );
                     }
                     return _buildContent(context, profile);
@@ -638,7 +640,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
               title: 'Reset password',
               subtitle: 'Send a reset link to ${profile.email}',
               trailing: _sendingReset
-                  ? const _MiniSpinner()
+                  ? const _MiniSpinner(
+                      semanticLabel: 'Sending password reset email',
+                    )
                   : Icon(
                       Icons.chevron_right_rounded,
                       color: palette.textTertiary,
@@ -658,7 +662,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
               trailing: emailVerified
                   ? Icon(Icons.check_circle_rounded, color: success)
                   : (_resendingVerification || _refreshingVerification)
-                  ? const _MiniSpinner()
+                  ? const _MiniSpinner(
+                      semanticLabel: 'Updating email verification',
+                    )
                   : Icon(
                       Icons.chevron_right_rounded,
                       color: palette.textTertiary,
@@ -751,7 +757,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 PaintingBinding.instance.imageCache.currentSizeBytes,
               ),
               trailing: _clearingCache
-                  ? const _MiniSpinner()
+                  ? const _MiniSpinner(semanticLabel: 'Clearing image cache')
                   : Icon(
                       Icons.chevron_right_rounded,
                       color: palette.textTertiary,
@@ -954,7 +960,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       padding: const EdgeInsets.symmetric(vertical: 14),
                     ),
                     child: _resendingVerification
-                        ? const _MiniSpinner()
+                        ? const _MiniSpinner(
+                            semanticLabel: 'Resending verification email',
+                          )
                         : const Text('Resend email'),
                   );
                   final verified = FilledButton(
@@ -970,7 +978,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       padding: const EdgeInsets.symmetric(vertical: 14),
                     ),
                     child: _refreshingVerification
-                        ? _MiniSpinner(color: colors.onPrimary)
+                        ? _MiniSpinner(
+                            color: colors.onPrimary,
+                            semanticLabel: 'Checking email verification',
+                          )
                         : const Text('I\'ve verified'),
                   );
                   if (vertical) {
@@ -1044,76 +1055,100 @@ class _ProfileHeroCard extends StatelessWidget {
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
     final avatar = profile.photoUrl?.trim();
-    return Material(
-      color: palette.surface,
-      borderRadius: BorderRadius.circular(24),
-      child: InkWell(
-        onTap: onTap,
+    final expanded = MediaQuery.textScalerOf(context).scale(1) >= 1.6;
+    return Semantics(
+      button: true,
+      label:
+          'Open profile for ${profile.displayName}. Edit profile details and photos.',
+      onTap: onTap,
+      excludeSemantics: true,
+      child: Material(
+        color: palette.surface,
         borderRadius: BorderRadius.circular(24),
-        child: Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(24),
-            border: Border.all(color: palette.border),
-          ),
-          child: Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(3),
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  gradient: LinearGradient(
-                    colors: [colors.primary, colors.secondary],
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(24),
+          child: Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(24),
+              border: Border.all(color: palette.border),
+            ),
+            child: Row(
+              crossAxisAlignment: expanded
+                  ? CrossAxisAlignment.start
+                  : CrossAxisAlignment.center,
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(3),
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: LinearGradient(
+                      colors: [colors.primary, colors.secondary],
+                    ),
+                  ),
+                  child: CircleAvatar(
+                    radius: 30,
+                    backgroundColor: colors.primary,
+                    backgroundImage: avatar?.isNotEmpty == true
+                        ? NetworkImage(avatar!)
+                        : null,
+                    child: avatar?.isNotEmpty == true
+                        ? null
+                        : Text(
+                            profile.displayName.isEmpty
+                                ? '?'
+                                : profile.displayName[0].toUpperCase(),
+                            style: TextStyle(
+                              color: colors.onPrimary,
+                              fontSize: 24,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
                   ),
                 ),
-                child: CircleAvatar(
-                  radius: 30,
-                  backgroundColor: colors.primary,
-                  backgroundImage: avatar?.isNotEmpty == true
-                      ? NetworkImage(avatar!)
-                      : null,
-                  child: avatar?.isNotEmpty == true
-                      ? null
-                      : Text(
-                          profile.displayName.isEmpty
-                              ? '?'
-                              : profile.displayName[0].toUpperCase(),
-                          style: TextStyle(
-                            color: colors.onPrimary,
-                            fontSize: 24,
-                            fontWeight: FontWeight.w900,
-                          ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        profile.displayName,
+                        maxLines: expanded ? 3 : 1,
+                        overflow: expanded
+                            ? TextOverflow.visible
+                            : TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: palette.textPrimary,
+                          fontSize: 18,
+                          fontWeight: FontWeight.w900,
                         ),
-                ),
-              ),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      profile.displayName,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: palette.textPrimary,
-                        fontSize: 18,
-                        fontWeight: FontWeight.w900,
                       ),
-                    ),
-                    const SizedBox(height: 3),
-                    Text(
-                      'Edit profile details and photos',
-                      style: TextStyle(
-                        color: palette.textSecondary,
-                        fontSize: 12.5,
+                      const SizedBox(height: 3),
+                      Text(
+                        'Edit profile details and photos',
+                        maxLines: expanded ? null : 2,
+                        overflow: expanded
+                            ? TextOverflow.visible
+                            : TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: palette.textSecondary,
+                          fontSize: 12.5,
+                        ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
-              ),
-              Icon(Icons.chevron_right_rounded, color: palette.textTertiary),
-            ],
+                const SizedBox(width: 8),
+                Padding(
+                  padding: EdgeInsets.only(top: expanded ? 8 : 0),
+                  child: Icon(
+                    Icons.chevron_right_rounded,
+                    color: palette.textTertiary,
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -1129,17 +1164,20 @@ class _GroupLabel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(4, 0, 4, 8),
-      child: Text(
-        text.toUpperCase(),
-        style: TextStyle(
-          color: danger
-              ? Theme.of(context).colorScheme.error
-              : palette.textSecondary,
-          fontSize: 11.5,
-          fontWeight: FontWeight.w800,
-          letterSpacing: 1,
+    return Semantics(
+      header: true,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(4, 0, 4, 8),
+        child: Text(
+          text.toUpperCase(),
+          style: TextStyle(
+            color: danger
+                ? Theme.of(context).colorScheme.error
+                : palette.textSecondary,
+            fontSize: 11.5,
+            fontWeight: FontWeight.w800,
+            letterSpacing: 1,
+          ),
         ),
       ),
     );
@@ -1204,42 +1242,66 @@ class _SettingsTile extends StatelessWidget {
     final colors = Theme.of(context).colorScheme;
     final iconColor = danger ? colors.error : colors.primary;
     final titleColor = danger ? colors.error : palette.textPrimary;
+    final textScale = MediaQuery.textScalerOf(context).scale(1);
+    final expanded = textScale >= 1.6;
+    final effectiveTrailing =
+        trailing ??
+        (onTap != null
+            ? Icon(Icons.chevron_right_rounded, color: palette.textTertiary)
+            : null);
+    final stackTrailing =
+        expanded && effectiveTrailing != null && effectiveTrailing is! Icon;
+    final subtitleWidget = subtitle == null
+        ? null
+        : Text(
+            subtitle!,
+            maxLines: expanded ? null : 3,
+            overflow: expanded ? TextOverflow.visible : TextOverflow.ellipsis,
+            style: TextStyle(color: palette.textSecondary, fontSize: 12),
+          );
 
-    return ListTile(
-      onTap: onTap,
-      leading: Container(
-        width: 38,
-        height: 38,
-        alignment: Alignment.center,
-        decoration: BoxDecoration(
-          color: iconColor.withValues(alpha: .14),
-          borderRadius: BorderRadius.circular(12),
+    return MergeSemantics(
+      child: ListTile(
+        minTileHeight: 64,
+        titleAlignment: expanded
+            ? ListTileTitleAlignment.top
+            : ListTileTitleAlignment.center,
+        onTap: onTap,
+        leading: Container(
+          width: 38,
+          height: 38,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: iconColor.withValues(alpha: .14),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Icon(icon, color: iconColor, size: 20),
         ),
-        child: Icon(icon, color: iconColor, size: 20),
-      ),
-      title: Text(
-        title,
-        maxLines: 2,
-        overflow: TextOverflow.ellipsis,
-        style: TextStyle(
-          color: titleColor,
-          fontWeight: FontWeight.w700,
-          fontSize: 14.5,
+        title: Text(
+          title,
+          maxLines: expanded ? null : 2,
+          overflow: expanded ? TextOverflow.visible : TextOverflow.ellipsis,
+          style: TextStyle(
+            color: titleColor,
+            fontWeight: FontWeight.w700,
+            fontSize: 14.5,
+          ),
         ),
+        subtitle: !stackTrailing
+            ? subtitleWidget
+            : Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  ?subtitleWidget,
+                  const SizedBox(height: 8),
+                  Align(
+                    alignment: AlignmentDirectional.centerEnd,
+                    child: effectiveTrailing,
+                  ),
+                ],
+              ),
+        trailing: stackTrailing ? null : effectiveTrailing,
       ),
-      subtitle: subtitle == null
-          ? null
-          : Text(
-              subtitle!,
-              maxLines: 3,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(color: palette.textSecondary, fontSize: 12),
-            ),
-      trailing:
-          trailing ??
-          (onTap != null
-              ? Icon(Icons.chevron_right_rounded, color: palette.textTertiary)
-              : null),
     );
   }
 }
@@ -1321,37 +1383,24 @@ class _PermissionTile extends StatelessWidget {
 }
 
 class _MiniSpinner extends StatelessWidget {
-  const _MiniSpinner({this.color});
+  const _MiniSpinner({this.color, required this.semanticLabel});
 
   final Color? color;
+  final String semanticLabel;
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      width: 18,
-      height: 18,
-      child: CircularProgressIndicator(
-        strokeWidth: 2,
-        color: color ?? Theme.of(context).colorScheme.primary,
-      ),
-    );
-  }
-}
-
-class _ErrorBody extends StatelessWidget {
-  const _ErrorBody({required this.message});
-  final String message;
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = context.appPalette;
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Text(
-          message,
-          textAlign: TextAlign.center,
-          style: TextStyle(color: palette.textPrimary),
+    return Semantics(
+      liveRegion: true,
+      label: semanticLabel,
+      child: ExcludeSemantics(
+        child: SizedBox(
+          width: 18,
+          height: 18,
+          child: CircularProgressIndicator(
+            strokeWidth: 2,
+            color: color ?? Theme.of(context).colorScheme.primary,
+          ),
         ),
       ),
     );

@@ -14,6 +14,12 @@ class NotificationService {
   final FirebaseFirestore _firestore;
   final FirebaseAuth _auth;
 
+  /// Protocol advertised per registered device. The call backend refuses to
+  /// start video when any active device is missing this marker, preventing an
+  /// older audio-only client from accepting a call while the caller publishes
+  /// camera video.
+  static const int currentDirectVideoProtocol = 1;
+
   CollectionReference<Map<String, dynamic>> get _users =>
       _firestore.collection('users');
 
@@ -262,7 +268,9 @@ class NotificationService {
         : actor.displayName?.trim().isNotEmpty == true
         ? actor.displayName!.trim()
         : 'YO Voice user';
-    final actorPhotoUrl = (actorData['photoUrl'] as String?) ?? actor.photoURL;
+    // The actor uid is the stable identity. UI resolves its avatar through a
+    // short-lived grant instead of persisting an Auth/download URL here.
+    const String? actorPhotoUrl = null;
 
     final payload = {
       'type': type.name,
@@ -348,6 +356,7 @@ class NotificationService {
     }
     await _users.doc(expectedUserId).collection('fcmTokens').doc(token).set({
       'platform': platform,
+      'directVideoProtocol': currentDirectVideoProtocol,
       'updatedAt': FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));
   }

@@ -288,7 +288,9 @@ class _PremiumHero extends StatelessWidget {
                   gap: ringGap,
                   child: UserAvatar(
                     radius: avatarRadius,
+                    userId: profile?.uid,
                     photoUrl: profile?.photoUrl,
+                    mediaRevision: profile?.profileUpdatedAt,
                     displayName: profile?.displayName,
                     fallbackIcon: Icons.graphic_eq_rounded,
                   ),

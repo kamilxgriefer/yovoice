@@ -17,7 +17,7 @@ import 'package:yovoice/shared/identity/public_identity.dart';
 /// requests, not a hundred:
 ///
 ///  * every lookup within one flush window (a few frames) coalesces into
-///    a single batched call, chunked to the callable's 50-uid bound;
+///    a single batched call, chunked to the callable's 20-uid bound;
 ///  * results are cached in memory for the session;
 ///  * a uid already being fetched is never requested twice (in-flight
 ///    dedup);
@@ -46,7 +46,7 @@ class PublicIdentityRepository {
   static PublicIdentityRepository instance = PublicIdentityRepository();
 
   /// The callable's hard request bound; larger sets are chunked.
-  static const int maxBatchSize = 50;
+  static const int maxBatchSize = 20;
 
   final FirebaseFunctions? _functionsOverride;
   final FirebaseAuth? _auth;

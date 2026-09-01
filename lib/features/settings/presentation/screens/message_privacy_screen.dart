@@ -5,6 +5,8 @@ import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/settings/data/models/message_privacy.dart';
 import 'package:yovoice/features/settings/data/services/message_privacy_service.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
+import 'package:yovoice/shared/widgets/states/yo_error_state.dart';
+import 'package:yovoice/shared/widgets/states/yo_loading_indicator.dart';
 
 class MessagePrivacyScreen extends StatefulWidget {
   const MessagePrivacyScreen({this.service, super.key});
@@ -80,14 +82,15 @@ class _MessagePrivacyScreenState extends State<MessagePrivacyScreen> {
             stream: _service.watchCurrent(),
             builder: (context, snapshot) {
               if (snapshot.hasError) {
-                return _MessagePrivacyError(
+                return YoErrorState(
                   message: friendlyErrorMessage(snapshot.error!),
+                  compact: true,
                 );
               }
               final selected = snapshot.data;
               if (selected == null) {
-                return Center(
-                  child: CircularProgressIndicator(color: colors.primary),
+                return const YoLoadingIndicator.fullscreen(
+                  message: 'Loading message privacy…',
                 );
               }
               return LayoutBuilder(
@@ -230,7 +233,12 @@ class _PrivacyOptionCard extends StatelessWidget {
     return Semantics(
       button: true,
       selected: selected,
+      enabled: !disabled,
       label: '${option.label}. ${option.description}',
+      value: saving ? 'Saving' : null,
+      liveRegion: saving,
+      onTap: disabled ? null : onTap,
+      excludeSemantics: true,
       child: Material(
         color: selected ? colors.primaryContainer : palette.surface,
         borderRadius: BorderRadius.circular(20),
@@ -303,35 +311,6 @@ class _PrivacyOptionCard extends StatelessWidget {
               ],
             ),
           ),
-        ),
-      ),
-    );
-  }
-}
-
-class _MessagePrivacyError extends StatelessWidget {
-  const _MessagePrivacyError({required this.message});
-
-  final String message;
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = context.appPalette;
-    final colors = Theme.of(context).colorScheme;
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.error_outline_rounded, color: colors.error),
-            const SizedBox(height: 10),
-            Text(
-              message,
-              textAlign: TextAlign.center,
-              style: TextStyle(color: palette.textSecondary),
-            ),
-          ],
         ),
       ),
     );

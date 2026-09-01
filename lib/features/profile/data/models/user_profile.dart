@@ -56,6 +56,7 @@ class UserProfile {
     required this.unlockedTitleTimestamps,
     required this.createdAt,
     this.displayNameChangedAt,
+    this.profileUpdatedAt,
     this.profileVisibility = ProfileVisibility.public,
   });
 
@@ -109,6 +110,11 @@ class UserProfile {
   /// transaction for every actual change.
   final DateTime? displayNameChangedAt;
 
+  /// Changes whenever the owner profile projection changes. Media URLs stay
+  /// private, but this non-sensitive revision signal lets avatar/banner
+  /// widgets invalidate a short-lived grant after a new upload.
+  final DateTime? profileUpdatedAt;
+
   /// Who may read the server-owned full public-profile projection.
   ///
   /// Missing legacy values intentionally decode as [ProfileVisibility.public]
@@ -143,8 +149,10 @@ class UserProfile {
       nativeLanguage: data['nativeLanguage'] as String? ?? '',
       spokenLanguages: readStrings('spokenLanguages'),
       learningLanguages: readStrings('learningLanguages'),
-      photoUrl: data['photoUrl'] as String?,
-      bannerUrl: data['bannerUrl'] as String?,
+      // Legacy URL snapshots are untrusted bearer/external locations. The
+      // UI resolves both media kinds from uid via ProfileMediaService.
+      photoUrl: null,
+      bannerUrl: null,
       premiumIdentity: data['premiumIdentity'] as bool? ?? false,
       statusMessage: data['statusMessage'] as String? ?? '',
       isOnline: data['isOnline'] as bool? ?? false,
@@ -178,6 +186,10 @@ class UserProfile {
       displayNameChangedAt: data['displayNameChangedAt'] is Timestamp
           ? (data['displayNameChangedAt'] as Timestamp).toDate()
           : null,
+      profileUpdatedAt: switch (data['profileUpdatedAt'] ?? data['updatedAt']) {
+        final Timestamp value => value.toDate(),
+        _ => null,
+      },
       profileVisibility: ProfileVisibility.fromValue(data['profileVisibility']),
     );
   }

@@ -217,6 +217,35 @@ needs to connect (equivalent to a hostname, not a credential). No other
 Cloud Function in this project currently holds a secret — see
 [Backend.md](Backend.md) for the full function inventory.
 
+Direct calls use a server-authored `mediaType`. Audio-call JWTs allow the
+declared microphone source; video-call JWTs allow declared microphone and
+camera sources; screen-share labels are omitted. This limits normal clients,
+but LiveKit does not authenticate capture origin: a modified client can relabel
+a track, so this grant alone is not a hard boundary between camera, screen and
+audio bytes. The client accepts only the exact production
+`wss://yovoice-3f7j9fb7.livekit.cloud` origin with no credentials, custom port,
+path, query or fragment. A session epoch rejects late token/permission/connect
+results after logout, hang-up or account switch, while independent microphone
+and camera epochs prevent in-flight capture changes from winning after a
+privacy boundary. Teardown snapshots published local track objects and stops
+them again after delayed SDK operations, instead of relying on publication
+records that Room cleanup may already have removed; camera candidates that have
+not published yet are owned and stopped by the enable operation. External room links require
+an explicit confirmation and connect muted in both LiveKit and the Firestore
+roster. WebRTC/LiveKit encrypts media in transit, but YO Voice does not yet add
+application-level E2EE; product copy must not claim FaceTime-equivalent E2EE.
+
+> **Source-only security design (not deployed):** deploy the backward-compatible
+> Functions first, add authoritative recipient capability/minimum-build
+> registration and enforcement, ship compatible clients, then enable video.
+> A mixed-version public rollout is blocked because a legacy recipient can
+> otherwise interpret a video request as audio.
+
+The current 2026-09-01 review, remaining release gates and verification limits
+are recorded in
+[SECURITY_AUDIT_2026-09-01.md](SECURITY_AUDIT_2026-09-01.md). The
+[2026-08-31 audit](SECURITY_AUDIT_2026-08-31.md) remains a historical snapshot.
+
 ## Firebase App Check
 
 Integrated client-side; **enforcement is deliberately off** on every Cloud
@@ -893,6 +922,30 @@ consent cannot override non-public app visibility, and a private Admin-only
 generation prevents a stale publisher transaction from restoring removed data.
 Existing conversation access is intentionally independent and reveals only the
 participant label already stored on that authorised conversation.
+
+## Private media rollout gate (source only; not deployed)
+
+Room covers, profile media and Voice Moments no longer treat Firebase
+download-token URLs as durable application data. Firestore stores only a
+first-party object path, generation, MIME type and size; direct Storage reads
+are denied and an authenticated callable returns a generation-bound V4 grant
+for no more than 90 seconds after rechecking the live visibility, account,
+restriction, block and membership state.
+
+This change requires a coordinated rollout:
+
+1. deploy the new callables and ensure the Functions runtime identity can use
+   `iam.serviceAccounts.signBlob`;
+2. ship a client that understands canonical media references and clears every
+   grant cache on logout;
+3. run the dry-run and apply migrations plus the paginated object inventories
+   until no Firebase download token remains, including conflicts and orphans;
+4. only then deploy the restrictive Storage/Firestore rules.
+
+Old clients cannot upload or render newly canonicalized media after the final
+rules step. An already-issued V4 URL remains a bearer capability until its
+maximum 90-second expiry; a visibility or block change prevents the next grant
+but cannot revoke bytes already retrieved by a viewer.
 
 ## Checklist for new privileged write paths
 

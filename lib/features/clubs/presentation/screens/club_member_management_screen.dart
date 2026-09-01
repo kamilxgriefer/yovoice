@@ -4,6 +4,7 @@ import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/clubs/data/models/club_member.dart';
 import 'package:yovoice/features/clubs/data/services/club_service.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
+import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
 class ClubMemberManagementScreen extends StatefulWidget {
   const ClubMemberManagementScreen({
@@ -289,7 +290,6 @@ class _MemberHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
-    final hasPhoto = member.photoUrl?.isNotEmpty ?? false;
     return Container(
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
@@ -299,20 +299,11 @@ class _MemberHeader extends StatelessWidget {
       ),
       child: Row(
         children: [
-          CircleAvatar(
+          UserAvatar(
             radius: 31,
+            userId: member.userId,
+            displayName: member.displayName,
             backgroundColor: colors.primary,
-            backgroundImage: hasPhoto ? NetworkImage(member.photoUrl!) : null,
-            child: hasPhoto
-                ? null
-                : Text(
-                    member.initial,
-                    style: TextStyle(
-                      color: colors.onPrimary,
-                      fontSize: 24,
-                      fontWeight: FontWeight.w900,
-                    ),
-                  ),
           ),
           const SizedBox(width: 14),
           Expanded(

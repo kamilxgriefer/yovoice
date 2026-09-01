@@ -16,17 +16,23 @@ void main() {
         signedIn: true,
         mockUser: MockUser(uid: 'host'),
       );
-      final service = RoomImageService(storage: storage, auth: auth);
       final cropped = Uint8List.fromList(
         img.encodeJpg(img.Image(width: 8, height: 4)),
       );
 
-      final url = await service.uploadRoomCover(
+      final serviceWithLease = RoomImageService(
+        storage: storage,
+        auth: auth,
+        reservationInvoker: _reservationFor,
+        generationReader: (reference, snapshot) async => '1',
+      );
+      final upload = await serviceWithLease.uploadRoomCover(
         roomId: 'room-1',
         bytes: cropped,
       );
 
-      expect(url, isNotEmpty);
+      expect(upload.storagePath, isNotEmpty);
+      expect(upload.objectGeneration, matches(RegExp(r'^[0-9]+$')));
       final listing = await storage.ref('room_images/room-1').listAll();
       expect(listing.items, hasLength(1));
       final uploaded = listing.items.single;
@@ -35,7 +41,7 @@ void main() {
       expect((await uploaded.getMetadata()).contentType, 'image/jpeg');
       expect(await uploaded.getData(), cropped);
 
-      await service.deleteManagedRoomCover(
+      await serviceWithLease.deleteManagedRoomCover(
         roomId: 'room-1',
         url: 'https://example.invalid/clubs/club-1/banner.jpg',
       );
@@ -44,19 +50,24 @@ void main() {
         hasLength(1),
         reason: 'a Club/external image must never be deleted as room media',
       );
-      await service.deleteManagedRoomCover(roomId: 'room-1', url: url);
+      await serviceWithLease.deleteManagedRoomCoverPath(
+        roomId: 'room-1',
+        storagePath: upload.storagePath,
+      );
       expect(
         (await storage.ref('room_images/room-1').listAll()).items,
         isEmpty,
       );
 
-      final siblingUrl = await service.uploadRoomCover(
+      final siblingUpload = await serviceWithLease.uploadRoomCover(
         roomId: 'room-2',
         bytes: cropped,
       );
-      await service.deleteManagedRoomCover(
+      await serviceWithLease.deleteManagedRoomCover(
         roomId: 'room-1',
-        url: '$siblingUrl&note=room_images/room-1/forged.jpg',
+        url:
+            'https://example.invalid/${siblingUpload.storagePath}'
+            '?note=room_images/room-1/forged.jpg',
       );
       expect(
         (await storage.ref('room_images/room-2').listAll()).items,
@@ -147,4 +158,20 @@ void main() {
       );
     }
   });
+}
+
+Future<Map<Object?, Object?>> _reservationFor(
+  Map<String, Object> request,
+) async {
+  final roomId = request['roomId']! as String;
+  final contentType = request['contentType']! as String;
+  final size = request['size']! as int;
+  return <Object?, Object?>{
+    'schemaVersion': 1,
+    'reservationId': 'b' * 40,
+    'storagePath': 'room_images/$roomId/host_${'a' * 32}.jpg',
+    'contentType': contentType,
+    'size': size,
+    'expiresAtMillis': DateTime.now().millisecondsSinceEpoch + 60000,
+  };
 }

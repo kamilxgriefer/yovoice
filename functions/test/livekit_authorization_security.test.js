@@ -16,10 +16,14 @@ const {
   authorizeRoomVoiceAccess,
   buildParticipantMetadata,
   buildParticipantName,
+  createLiveKitTokenHandler,
   deriveVoiceGrant,
   recordAuthorizedVoiceSession,
   restrictionIsActive,
+  VOICE_TOKEN_ATTEMPT_LIMIT,
+  VOICE_TOKEN_RATE_LIMIT,
   VOICE_TOKEN_TTL,
+  voiceTokenAttemptRateReference,
 } = require("../livekit/token");
 
 const db = getFirestore();
@@ -32,6 +36,39 @@ function auth(uid = UID) {
   return { uid, token: {} };
 }
 
+function callable(data, uid = UID) {
+  return { auth: auth(uid), data };
+}
+
+function tokenHarness() {
+  const state = { constructed: 0, signed: 0, grants: [] };
+  class FakeAccessToken {
+    constructor() {
+      state.constructed += 1;
+    }
+
+    addGrant(grant) {
+      state.grants.push(grant);
+    }
+
+    async toJwt() {
+      state.signed += 1;
+      return `room-test-jwt-${state.signed}`;
+    }
+  }
+  return { state, AccessTokenClass: FakeAccessToken };
+}
+
+function tokenOptions(harness, nowMs = Date.UTC(2026, 8, 1, 10, 0, 0)) {
+  return {
+    AccessTokenClass: harness.AccessTokenClass,
+    apiKey: () => "test-key",
+    apiSecret: () => "test-secret-long-enough",
+    serverUrl: () => "wss://rtc.example.test",
+    clock: () => nowMs,
+  };
+}
+
 async function recursiveDelete(reference) {
   if (typeof db.recursiveDelete === "function") {
     await db.recursiveDelete(reference);
@@ -41,9 +78,11 @@ async function recursiveDelete(reference) {
 }
 
 async function wipeOwn() {
-  const [rooms, clubs] = await Promise.all([
+  const [rooms, clubs, operationLedgers, rateLimits] = await Promise.all([
     db.collection("rooms").get(),
     db.collection("clubs").get(),
+    db.collection("integrityOperationLedgers").where("ownerId", "==", UID).get(),
+    db.collection("privateRateLimits").where("ownerId", "==", UID).get(),
   ]);
   await Promise.all([
     ...rooms.docs
@@ -56,6 +95,8 @@ async function wipeOwn() {
     db.collection("users").doc(HOST).delete(),
     db.collection("restrictions").doc(UID).delete(),
     recursiveDelete(db.collection("activeVoiceSessions").doc(UID)),
+    ...operationLedgers.docs.map((document) => document.ref.delete()),
+    ...rateLimits.docs.map((document) => document.ref.delete()),
   ]);
 }
 
@@ -150,6 +191,24 @@ describe("authorizeRoomVoiceAccess", () => {
     assert.equal(result.room.clubId, CLUB);
   });
 
+  test("a Club guest cannot enter voice even with a participant row", async () => {
+    const roomId = `${P}club-guest`;
+    await seedRoom(roomId, { visibility: "private", clubId: CLUB });
+    await Promise.all([
+      db.collection("clubs").doc(CLUB).set({ status: "active" }),
+      db.collection("clubs").doc(CLUB).collection("members").doc(UID).set({
+        userId: UID,
+        role: "guest",
+        banned: false,
+      }),
+      seedParticipant(roomId),
+    ]);
+    await assert.rejects(
+      () => authorizeRoomVoiceAccess(roomId, auth()),
+      (error) => error?.code === "permission-denied",
+    );
+  });
+
   test("suspended Club, banned member, and banned account all fail closed", async () => {
     const roomId = `${P}club-blocked`;
     await seedRoom(roomId, { visibility: "private", clubId: CLUB });
@@ -242,6 +301,145 @@ describe("authorizeRoomVoiceAccess", () => {
     );
   });
 
+  test("100 random missing-room token retries stop at N before JWT", async () => {
+    const roomId = `${P}missing-cost-target`;
+    const harness = tokenHarness();
+    const options = tokenOptions(harness);
+    const limit = VOICE_TOKEN_ATTEMPT_LIMIT.maxEvents;
+    for (let index = 0; index < 100; index += 1) {
+      await assert.rejects(
+        createLiveKitTokenHandler(callable({ roomId }), options),
+        (error) => index < limit
+          ? error?.code === "not-found"
+          : error?.code === "resource-exhausted",
+      );
+    }
+    assert.equal(harness.state.constructed, 0);
+    assert.equal(harness.state.signed, 0);
+    assert.equal(
+      (await voiceTokenAttemptRateReference(UID).get()).data().count,
+      limit,
+    );
+
+    // Even after the target becomes valid, the next attempt is refused by
+    // the committed actor bucket and cannot reach participant/profile reads
+    // or the injected JWT constructor.
+    await seedRoom(roomId);
+    await seedParticipant(roomId);
+    await assert.rejects(
+      createLiveKitTokenHandler(callable({ roomId }), options),
+      (error) => error?.code === "resource-exhausted",
+    );
+    assert.equal(harness.state.constructed, 0);
+  });
+
+  test("private-room denials consume the same actor-wide token budget", async () => {
+    const roomId = `${P}private-cost-target`;
+    await seedRoom(roomId, { visibility: "private" });
+    await seedParticipant(roomId);
+    const harness = tokenHarness();
+    const options = tokenOptions(harness);
+    const limit = VOICE_TOKEN_ATTEMPT_LIMIT.maxEvents;
+    for (let index = 0; index < limit; index += 1) {
+      await assert.rejects(
+        createLiveKitTokenHandler(callable({ roomId }), options),
+        (error) => error?.code === "permission-denied",
+      );
+    }
+    await db.doc(`rooms/${roomId}/participants/${UID}`).update({
+      admittedBy: HOST,
+    });
+    for (let index = limit; index < 100; index += 1) {
+      await assert.rejects(
+        createLiveKitTokenHandler(callable({ roomId }), options),
+        (error) => error?.code === "resource-exhausted",
+      );
+    }
+    assert.equal(harness.state.constructed, 0);
+    assert.equal(harness.state.signed, 0);
+  });
+
+  test("completed room-token requestId replay is free and signs once", async () => {
+    const roomId = `${P}token-replay`;
+    await seedRoom(roomId);
+    await seedParticipant(roomId);
+    const harness = tokenHarness();
+    const options = tokenOptions(harness);
+    const tokenRequest = callable({
+      roomId,
+      requestId: "room-token-replay-0001",
+    });
+    const first = await createLiveKitTokenHandler(tokenRequest, options);
+    const replay = await createLiveKitTokenHandler(tokenRequest, options);
+    assert.deepEqual(replay, first);
+    assert.equal(harness.state.constructed, 1);
+    assert.equal(harness.state.signed, 1);
+    assert.equal(
+      (await voiceTokenAttemptRateReference(UID).get()).data().count,
+      1,
+    );
+    const conflictingToken = () => createLiveKitTokenHandler(callable({
+        roomId: `${P}different-room`,
+        requestId: "room-token-replay-0001",
+      }), options);
+    await assert.rejects(
+      conflictingToken,
+      (error) => error?.code === "already-exists",
+    );
+    const limit = VOICE_TOKEN_ATTEMPT_LIMIT.maxEvents;
+    assert.equal(
+      (await voiceTokenAttemptRateReference(UID).get()).data().count,
+      2,
+    );
+    for (let charged = 2; charged < limit; charged += 1) {
+      await assert.rejects(
+        conflictingToken,
+        (error) => error?.code === "already-exists",
+      );
+      assert.equal(
+        (await voiceTokenAttemptRateReference(UID).get()).data().count,
+        charged + 1,
+      );
+    }
+    await assert.rejects(
+      conflictingToken,
+      (error) => error?.code === "resource-exhausted",
+    );
+    assert.equal(
+      (await voiceTokenAttemptRateReference(UID).get()).data().count,
+      limit,
+    );
+    assert.equal(harness.state.signed, 1);
+    const session = await db.doc(
+      `activeVoiceSessions/${UID}/rooms/${roomId}`,
+    ).get();
+    assert.equal(session.data().tokenIssueCount, 1);
+  });
+
+  test("concurrent room-token retries converge on one ledger result", async () => {
+    const roomId = `${P}token-race`;
+    await seedRoom(roomId);
+    await seedParticipant(roomId);
+    const harness = tokenHarness();
+    const options = tokenOptions(harness);
+    const tokenRequest = callable({
+      roomId,
+      requestId: "room-token-race-0001",
+    });
+    const responses = await Promise.all([
+      createLiveKitTokenHandler(tokenRequest, options),
+      createLiveKitTokenHandler(tokenRequest, options),
+    ]);
+    assert.deepEqual(responses[1], responses[0]);
+    assert.ok(harness.state.signed >= 1 && harness.state.signed <= 2);
+    const charged = (await voiceTokenAttemptRateReference(UID).get()).data().count;
+    assert.ok(charged >= 1 && charged <= 2);
+    const session = await db.doc(
+      `activeVoiceSessions/${UID}/rooms/${roomId}`,
+    ).get();
+    assert.equal(session.data().tokenIssueCount, 1);
+  });
+
   test("communication mute is derived from live server restriction state", async () => {
     const roomId = `${P}muted`;
     await seedRoom(roomId);
@@ -289,7 +487,7 @@ describe("authorizeRoomVoiceAccess", () => {
         uid: UID,
         role: "speaker",
         username: "Canonical profile",
-        photoUrl: "https://example.com/canonical.png",
+        photoUrl: null,
       },
     );
   });
@@ -344,6 +542,40 @@ describe("authorizeRoomVoiceAccess", () => {
         .collection("rooms").doc(roomId).get()).exists,
       false,
     );
+  });
+
+  test("voice token issuance is transactionally rate limited per room and user", async () => {
+    const roomId = `${P}token-rate-limit`;
+    await seedRoom(roomId);
+    await seedParticipant(roomId);
+    const expectedGrant = deriveVoiceGrant(
+      await authorizeRoomVoiceAccess(roomId, auth()),
+      auth(),
+    );
+    const nowMs = Date.UTC(2026, 7, 31, 12, 0, 0);
+    for (let index = 0; index < VOICE_TOKEN_RATE_LIMIT; index += 1) {
+      await recordAuthorizedVoiceSession({
+        roomId,
+        authenticatedUser: auth(),
+        expectedGrant,
+        expiresAt: Timestamp.fromMillis(nowMs + 300_000),
+        nowMs,
+      });
+    }
+    await assert.rejects(
+      recordAuthorizedVoiceSession({
+        roomId,
+        authenticatedUser: auth(),
+        expectedGrant,
+        expiresAt: Timestamp.fromMillis(nowMs + 300_000),
+        nowMs,
+      }),
+      (error) => error?.code === "resource-exhausted",
+    );
+
+    const session = await db.collection("activeVoiceSessions").doc(UID)
+      .collection("rooms").doc(roomId).get();
+    assert.equal(session.data().tokenIssueCount, VOICE_TOKEN_RATE_LIMIT);
   });
 });
 

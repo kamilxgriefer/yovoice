@@ -20,8 +20,7 @@ function publicIdentity(uid, profile = {}) {
   return {
     actorId: uid,
     actorName: displayName || "YO Voice user",
-    actorPhotoUrl:
-      typeof profile.photoUrl === "string" ? profile.photoUrl : null,
+    actorPhotoUrl: null,
   };
 }
 

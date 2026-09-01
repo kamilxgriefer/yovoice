@@ -1,4 +1,5 @@
 import 'package:cloud_functions/cloud_functions.dart';
+import 'package:flutter/foundation.dart' show visibleForTesting;
 
 import 'package:yovoice/features/premium/data/models/premium_billing_context.dart';
 import 'package:yovoice/features/premium/data/models/subscription_entitlements.dart';
@@ -37,7 +38,10 @@ class PremiumBillingService implements PremiumBillingGateway {
     final result = await _functions
         .httpsCallable('createPremiumCheckoutSession')
         .call<Object?>({'plan': plan.name});
-    return _parseUrl(result.data);
+    return parsePremiumHostedUrl(
+      result.data,
+      expectedHost: 'checkout.stripe.com',
+    );
   }
 
   @override
@@ -45,17 +49,25 @@ class PremiumBillingService implements PremiumBillingGateway {
     final result = await _functions
         .httpsCallable('createPremiumPortalSession')
         .call<Object?>(<String, Object?>{});
-    return _parseUrl(result.data);
+    return parsePremiumHostedUrl(
+      result.data,
+      expectedHost: 'billing.stripe.com',
+    );
   }
+}
 
-  Uri _parseUrl(Object? value) {
-    if (value is! Map || value.length != 1 || value['url'] is! String) {
-      throw const FormatException('Invalid billing link response.');
-    }
-    final uri = Uri.tryParse(value['url'] as String);
-    if (uri == null || uri.scheme != 'https' || uri.host.isEmpty) {
-      throw const FormatException('Invalid billing link.');
-    }
-    return uri;
+@visibleForTesting
+Uri parsePremiumHostedUrl(Object? value, {required String expectedHost}) {
+  if (value is! Map || value.length != 1 || value['url'] is! String) {
+    throw const FormatException('Invalid billing link response.');
   }
+  final uri = Uri.tryParse(value['url'] as String);
+  if (uri == null ||
+      uri.scheme != 'https' ||
+      uri.host != expectedHost ||
+      uri.hasPort ||
+      uri.userInfo.isNotEmpty) {
+    throw const FormatException('Invalid billing link.');
+  }
+  return uri;
 }

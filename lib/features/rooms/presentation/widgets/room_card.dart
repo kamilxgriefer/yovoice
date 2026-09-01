@@ -88,9 +88,7 @@ class RoomCard extends StatelessWidget {
                 end: Alignment.bottomRight,
                 colors: identity.fallbackGradient,
               ),
-              border: Border.all(
-                color: identity.accent.withValues(alpha: .38),
-              ),
+              border: Border.all(color: identity.accent.withValues(alpha: .38)),
               borderRadius: BorderRadius.circular(22),
             ),
             child: Stack(
@@ -158,6 +156,7 @@ class RoomCard extends StatelessWidget {
                         children: [
                           UserAvatar(
                             radius: 10,
+                            userId: room.hostId,
                             photoUrl: room.hostPhotoUrl,
                             displayName: room.hostName,
                           ),

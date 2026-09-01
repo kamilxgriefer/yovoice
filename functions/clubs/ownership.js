@@ -11,6 +11,7 @@ const {
 } = require("../livekit/control");
 const { finishClubOwnershipVoiceReset } = require("./voice");
 const {
+  consumeClubActionAttempt,
   lockOwnershipGuards,
   requireCommunityClubCapacity,
   touchOwnershipGuards,
@@ -29,8 +30,7 @@ async function finishPendingReset(clubId, club, newOwnerId) {
     clubId,
     loungeRoomId: club.loungeRoomId ?? `club_lounge_${clubId}`,
     newOwnerId,
-    control:
-      ownershipLiveKitControlForTests ?? getProductionLiveKitControl(),
+    control: ownershipLiveKitControlForTests ?? getProductionLiveKitControl(),
   });
 }
 
@@ -71,6 +71,7 @@ const transferClubOwnershipSelf = onCall(
         "You are already the owner of this club.",
       );
     }
+    await consumeClubActionAttempt(auth.uid, "transferClubOwnership");
 
     const clubReference = db.collection("clubs").doc(clubId);
     const preflightSnapshot = await clubReference.get();
@@ -230,9 +231,9 @@ const transferClubOwnershipSelf = onCall(
       }
 
       await requireCommunityClubCapacity(transaction, newOwnerId);
-      const loungeReference = db.collection("rooms").doc(
-        club.loungeRoomId ?? `club_lounge_${clubId}`,
-      );
+      const loungeReference = db
+        .collection("rooms")
+        .doc(club.loungeRoomId ?? `club_lounge_${clubId}`);
       const loungeSnapshot = await transaction.get(loungeReference);
 
       transaction.set(
@@ -246,26 +247,17 @@ const transferClubOwnershipSelf = onCall(
         { merge: true },
       );
       transaction.set(
-        db
-          .collection("users")
-          .doc(auth.uid)
-          .collection("clubs")
-          .doc(clubId),
+        db.collection("users").doc(auth.uid).collection("clubs").doc(clubId),
         {
           clubId,
           name: club.name ?? "Untitled club",
           avatarUrl: club.avatarUrl ?? null,
           role: "coOwner",
-          joinedAt:
-            currentOwner.joinedAt ?? FieldValue.serverTimestamp(),
+          joinedAt: currentOwner.joinedAt ?? FieldValue.serverTimestamp(),
         },
       );
       transaction.set(
-        db
-          .collection("users")
-          .doc(newOwnerId)
-          .collection("clubs")
-          .doc(clubId),
+        db.collection("users").doc(newOwnerId).collection("clubs").doc(clubId),
         {
           clubId,
           name: club.name ?? "Untitled club",
@@ -278,8 +270,7 @@ const transferClubOwnershipSelf = onCall(
         clubReference,
         {
           ownerId: newOwnerId,
-          ownerName:
-            newOwner.displayName ?? newOwner.name ?? "YO Voice user",
+          ownerName: newOwner.displayName ?? newOwner.name ?? "YO Voice user",
           ownershipTransferredBy: auth.uid,
           ownershipTransferredFrom: auth.uid,
           ownershipTransferredAt: FieldValue.serverTimestamp(),
@@ -292,9 +283,8 @@ const transferClubOwnershipSelf = onCall(
       if (loungeSnapshot.exists) {
         transaction.update(loungeReference, {
           hostId: newOwnerId,
-          hostName:
-            newOwner.displayName ?? newOwner.name ?? "YO Voice user",
-          hostPhotoUrl: newOwner.photoUrl ?? null,
+          hostName: newOwner.displayName ?? newOwner.name ?? "YO Voice user",
+          hostPhotoUrl: null,
           isLive: false,
           participantCount: 0,
           endedAt: FieldValue.serverTimestamp(),
@@ -303,9 +293,7 @@ const transferClubOwnershipSelf = onCall(
       }
       // Website publication consent belongs to the owner who granted it.
       // A transfer must never let the recipient inherit that public opt-in.
-      transaction.delete(
-        db.collection("clubMarketingConsents").doc(clubId),
-      );
+      transaction.delete(db.collection("clubMarketingConsents").doc(clubId));
       touchOwnershipGuards(transaction, guardReferences);
     });
 
@@ -321,11 +309,15 @@ const transferClubOwnershipSelf = onCall(
       };
     }
 
-    await finishPendingReset(clubId, {
-      ...club,
-      ownershipVoiceResetPending: true,
-      loungeRoomId: club?.loungeRoomId,
-    }, newOwnerId);
+    await finishPendingReset(
+      clubId,
+      {
+        ...club,
+        ownershipVoiceResetPending: true,
+        loungeRoomId: club?.loungeRoomId,
+      },
+      newOwnerId,
+    );
 
     await writeClubAuditLog({
       caller: { uid: auth.uid, role: "owner" },

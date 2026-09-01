@@ -53,8 +53,9 @@ class VoiceCore extends StatelessWidget {
               ),
               boxShadow: [
                 BoxShadow(
-                  color: const Color(0xFF9D20FF)
-                      .withValues(alpha: .45 + .30 * clamped),
+                  color: const Color(
+                    0xFF9D20FF,
+                  ).withValues(alpha: .45 + .30 * clamped),
                   blurRadius: 34 + 18 * clamped,
                   spreadRadius: 2 + 4 * clamped,
                 ),

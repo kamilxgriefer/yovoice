@@ -319,6 +319,8 @@ class _HomeScreenState extends State<HomeScreen> {
                       return _header(
                         name,
                         profile?.photoUrl,
+                        userId: profile?.uid,
+                        mediaRevision: profile?.profileUpdatedAt,
                         premium: profile?.premiumIdentity ?? false,
                       );
                     },
@@ -367,7 +369,13 @@ class _HomeScreenState extends State<HomeScreen> {
     return 'Good evening,';
   }
 
-  Widget _header(String name, String? photoUrl, {bool premium = false}) {
+  Widget _header(
+    String name,
+    String? photoUrl, {
+    String? userId,
+    Object? mediaRevision,
+    bool premium = false,
+  }) {
     final palette = context.appPalette;
     return Padding(
       padding: const EdgeInsets.fromLTRB(18, 18, 18, 14),
@@ -469,7 +477,9 @@ class _HomeScreenState extends State<HomeScreen> {
                 radius: 28,
                 child: UserAvatar(
                   radius: 24,
+                  userId: userId,
                   photoUrl: photoUrl,
+                  mediaRevision: mediaRevision,
                   fallbackIcon: Icons.person_rounded,
                   premium: premium,
                 ),
@@ -714,6 +724,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     final friend = friends[index];
                     return PeopleStatusAvatar(
                       displayName: friend.displayName,
+                      userId: friend.id,
                       photoUrl: friend.photoUrl,
                       status: friend.isOnline
                           ? PeopleStatus.online

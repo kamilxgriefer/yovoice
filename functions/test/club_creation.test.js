@@ -16,6 +16,10 @@ const {
   createCommunityClub,
   createFinalizeClubMediaHandler,
 } = require("../clubs/creation");
+const {
+  CLUB_ACTION_RATE_LIMITS,
+  clubActionRateReferences,
+} = require("../clubs/quota");
 
 const db = getFirestore();
 const run = createCommunityClub.run ?? createCommunityClub;
@@ -91,12 +95,15 @@ function mediaRequest(uid, clubId, overrides = {}) {
   };
 }
 
-function fakeMediaBucket(objects = {}) {
-  return {
+function fakeMediaBucket(objects = {}, { onMetadata = null } = {}) {
+  const bucket = {
     name: "yovoice-test.firebasestorage.app",
+    metadataCalls: [],
     file(path) {
       return {
         async getMetadata() {
+          bucket.metadataCalls.push(path);
+          onMetadata?.(path);
           const metadata = objects[path];
           if (!metadata) {
             const error = new Error("missing");
@@ -108,6 +115,7 @@ function fakeMediaBucket(objects = {}) {
       };
     },
   };
+  return bucket;
 }
 
 function validMedia(generation = "1001", overrides = {}) {
@@ -138,6 +146,10 @@ async function wipeOwn() {
       deleteClub(db.collection("users").doc(owner)),
       db.collection("entitlements").doc(owner).delete(),
       db.collection("clubOwnershipGuards").doc(owner).delete(),
+      ...["createCommunityClub", "finalizeClubMedia"].flatMap((action) => {
+        const references = clubActionRateReferences(db, owner, action);
+        return [references.minute.delete(), references.hour.delete()];
+      }),
     ]);
   }
 }
@@ -188,7 +200,7 @@ describe("createCommunityClub", () => {
     assert.equal(guard.data().revision, 1);
   });
 
-  test("same idempotency key recovers one Club without consuming quota twice", async () => {
+  test("same Club id recovers one canonical graph without consuming capacity twice", async () => {
     const uid = `${P}owner`;
     const clubId = `${P}idempotent`;
     await seedOwner(uid);
@@ -253,6 +265,62 @@ describe("createCommunityClub", () => {
     await run(request(uid, `${P}legacy-third`));
     await assert.rejects(
       () => run(request(uid, `${P}legacy-fourth`)),
+      (error) => error?.code === "resource-exhausted",
+    );
+  });
+
+  test("a Family-root flood cannot turn capacity checking into an unbounded scan", async () => {
+    const uid = `${P}legacy`;
+    await seedOwner(uid);
+    await Promise.all(
+      [0, 1, 2, 3].map((index) =>
+        db.collection("clubs").doc(`${P}family-flood-${index}`).set({
+          ownerId: uid,
+          type: "family",
+        }),
+      ),
+    );
+
+    await assert.rejects(
+      () => run(request(uid, `${P}flood-refused`)),
+      (error) => error?.code === "resource-exhausted",
+    );
+  });
+
+  test("a denied target commits the create budget before a later valid target", async () => {
+    const uid = `${P}owner`;
+    const references = clubActionRateReferences(
+      db,
+      uid,
+      "createCommunityClub",
+    );
+    const now = Timestamp.now();
+    await seedOwner(uid);
+    await references.minute.set({
+      schemaVersion: 1,
+      ownerId: uid,
+      scope: references.minuteScope,
+      windowStartedAt: now,
+      count:
+        CLUB_ACTION_RATE_LIMITS.createCommunityClub.minute.maxEvents - 1,
+      updatedAt: now,
+    });
+    await db.collection("clubs").doc(`${P}occupied`).set({
+      ownerId: `${P}someone-else`,
+      type: "community",
+      status: "active",
+    });
+
+    await assert.rejects(
+      () => run(request(uid, `${P}occupied`)),
+      (error) => error?.code === "already-exists",
+    );
+    assert.equal(
+      (await references.minute.get()).data().count,
+      CLUB_ACTION_RATE_LIMITS.createCommunityClub.minute.maxEvents,
+    );
+    await assert.rejects(
+      () => run(request(uid, `${P}valid-after-denial`)),
       (error) => error?.code === "resource-exhausted",
     );
   });
@@ -420,6 +488,69 @@ describe("finalizeClubMedia", () => {
     assert.equal(club.data().avatarGeneration, "1001");
     assert.equal(projection.data().avatarUrl, first.avatarUrl);
     assert.equal(lounge.data().imageUrl, first.avatarUrl);
+  });
+
+  test("Storage metadata is read once and never inside a retryable transaction", async () => {
+    await seedMediaClub();
+    const path = `clubs/${uid}/${clubId}/avatar`;
+    let transactionDepth = 0;
+    const firestore = {
+      collection: (...args) => db.collection(...args),
+      doc: (...args) => db.doc(...args),
+      runTransaction: (callback) =>
+        db.runTransaction(async (transaction) => {
+          transactionDepth += 1;
+          try {
+            return await callback(transaction);
+          } finally {
+            transactionDepth -= 1;
+          }
+        }),
+    };
+    const bucket = fakeMediaBucket(
+      { [path]: validMedia() },
+      {
+        onMetadata() {
+          assert.equal(transactionDepth, 0);
+        },
+      },
+    );
+    const finalize = createFinalizeClubMediaHandler({ firestore, bucket });
+
+    await finalize(mediaRequest(uid, clubId));
+    assert.deepEqual(bucket.metadataCalls, [path]);
+  });
+
+  test("a denied media target commits quota and cannot probe Storage", async () => {
+    await seedMediaClub();
+    const references = clubActionRateReferences(db, attacker, "finalizeClubMedia");
+    const now = Timestamp.now();
+    await references.minute.set({
+      schemaVersion: 1,
+      ownerId: attacker,
+      scope: references.minuteScope,
+      windowStartedAt: now,
+      count: CLUB_ACTION_RATE_LIMITS.finalizeClubMedia.minute.maxEvents - 1,
+      updatedAt: now,
+    });
+    const attackerPath = `clubs/${attacker}/${clubId}/avatar`;
+    const bucket = fakeMediaBucket({ [attackerPath]: validMedia() });
+    const finalize = createFinalizeClubMediaHandler({ firestore: db, bucket });
+
+    await assert.rejects(
+      () => finalize(mediaRequest(attacker, clubId)),
+      (error) => error?.code === "permission-denied",
+    );
+    assert.equal(bucket.metadataCalls.length, 0);
+    assert.equal(
+      (await references.minute.get()).data().count,
+      CLUB_ACTION_RATE_LIMITS.finalizeClubMedia.minute.maxEvents,
+    );
+    await assert.rejects(
+      () => finalize(mediaRequest(attacker, clubId)),
+      (error) => error?.code === "resource-exhausted",
+    );
+    assert.equal(bucket.metadataCalls.length, 0);
   });
 
   test("rejects forged descriptors, URLs, generation and missing objects", async () => {

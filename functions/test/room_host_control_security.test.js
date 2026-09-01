@@ -18,6 +18,7 @@ const {
 if (getApps().length === 0) initializeApp();
 
 const {
+  ROOM_CONTROL_ATTEMPT_POLICY,
   executeDeleteRoom,
   executeEndRoomVoice,
   executeLeaveRoom,
@@ -40,18 +41,28 @@ function request(uid, data) {
   return { auth: { uid, token: {} }, data };
 }
 
-function fakeControl() {
+function fakeControl({ failOnceOperation = null } = {}) {
   const calls = [];
+  let failurePending = failOnceOperation !== null;
+  function maybeFail(operation) {
+    if (failurePending && operation === failOnceOperation) {
+      failurePending = false;
+      throw new Error(`Injected ${operation} failure`);
+    }
+  }
   return {
     calls,
     async endRoom(roomId) {
       calls.push(["endRoom", roomId]);
+      maybeFail("endRoom");
     },
     async revokeParticipant(roomId, uid) {
       calls.push(["revokeParticipant", roomId, uid]);
+      maybeFail("revokeParticipant");
     },
     async setParticipantPermissions(roomId, uid, permissions) {
       calls.push(["setParticipantPermissions", roomId, uid, permissions]);
+      maybeFail("setParticipantPermissions");
     },
   };
 }
@@ -74,8 +85,22 @@ function fakeBucket({ fail = false } = {}) {
 
 async function wipeOwn() {
   const rooms = await db.collection("rooms").get();
+  const rateLimits = await db.collection("privateRateLimits").get();
+  const sessionRoots = await db.collection("activeVoiceSessions").get();
   await Promise.all(
     rooms.docs
+      .filter((document) => document.id.startsWith(P))
+      .map((document) => db.recursiveDelete(document.ref)),
+  );
+  await Promise.all(
+    rateLimits.docs
+      .filter((document) =>
+        [HOST, GUEST, OTHER].includes(document.data()?.ownerId),
+      )
+      .map((document) => document.ref.delete()),
+  );
+  await Promise.all(
+    sessionRoots.docs
       .filter((document) => document.id.startsWith(P))
       .map((document) => db.recursiveDelete(document.ref)),
   );
@@ -176,6 +201,58 @@ describe("host room control", () => {
     assert.deepEqual(control.calls, [["revokeParticipant", roomId, GUEST]]);
   });
 
+  test("removing an absent identity is a control-plane no-op", async () => {
+    const roomId = `${P}remove-absent`;
+    const control = fakeControl();
+    await seedRoom(roomId, { participantCount: 0 });
+
+    const result = await executeRemoveRoomParticipant(
+      request(HOST, { roomId, participantId: GUEST }),
+      control,
+    );
+
+    assert.equal(result.removed, false);
+    assert.deepEqual(control.calls, []);
+  });
+
+  test("failed removal revocation is durably retried, then becomes a no-op", async () => {
+    const roomId = `${P}remove-retry`;
+    const control = fakeControl({ failOnceOperation: "revokeParticipant" });
+    await seedRoom(roomId);
+    await seedParticipant(roomId);
+    await seedSession(roomId);
+
+    await assert.rejects(
+      executeRemoveRoomParticipant(
+        request(HOST, { roomId, participantId: GUEST }),
+        control,
+      ),
+      /Injected revokeParticipant failure/u,
+    );
+    const pendingSession = await db.collection("activeVoiceSessions")
+      .doc(GUEST).collection("rooms").doc(roomId).get();
+    assert.equal(pendingSession.exists, true);
+    assert.equal(
+      pendingSession.data().roomControlRevocation.action,
+      "revokeParticipant",
+    );
+
+    await executeRemoveRoomParticipant(
+      request(HOST, { roomId, participantId: GUEST }),
+      control,
+    );
+    await executeRemoveRoomParticipant(
+      request(HOST, { roomId, participantId: GUEST }),
+      control,
+    );
+
+    assert.equal((await pendingSession.ref.get()).exists, false);
+    assert.deepEqual(control.calls, [
+      ["revokeParticipant", roomId, GUEST],
+      ["revokeParticipant", roomId, GUEST],
+    ]);
+  });
+
   test("self leave atomically clears roster, count and session before revocation", async () => {
     const roomId = `${P}self-leave`;
     const control = fakeControl();
@@ -194,6 +271,17 @@ describe("host room control", () => {
     assert.equal(participant.exists, false);
     assert.equal(session.exists, false);
     assert.deepEqual(control.calls, [["revokeParticipant", roomId, GUEST]]);
+  });
+
+  test("leaving without roster or session evidence skips LiveKit", async () => {
+    const roomId = `${P}leave-absent`;
+    const control = fakeControl();
+    await seedRoom(roomId, { participantCount: 0 });
+
+    await executeLeaveRoom(request(GUEST, { roomId }), control);
+    await executeLeaveRoom(request(GUEST, { roomId }), control);
+
+    assert.deepEqual(control.calls, []);
   });
 
   test("temporary host cannot abandon a live room through self leave", async () => {
@@ -227,6 +315,10 @@ describe("host room control", () => {
       (error) => error?.code === "permission-denied",
     );
     assert.deepEqual(control.calls, []);
+    const rateLimits = await db.collection("privateRateLimits")
+      .where("ownerId", "==", GUEST).get();
+    assert.equal(rateLimits.size, 1);
+    assert.equal(rateLimits.docs[0].data().count, 1);
   });
 
   test("host cannot restore a suspended room with a stale client", async () => {
@@ -264,6 +356,29 @@ describe("host room control", () => {
       false,
     );
     assert.deepEqual(control.calls, [["endRoom", roomId]]);
+  });
+
+  test("a completed close replay does not call LiveKit again", async () => {
+    const roomId = `${P}close-replay`;
+    const control = fakeControl();
+    await seedRoom(roomId, { voiceSessionId: "close-session-0001" });
+
+    await executeSetRoomStatus(
+      request(HOST, { roomId, status: "closed" }),
+      control,
+    );
+    await executeSetRoomStatus(
+      request(HOST, { roomId, status: "closed" }),
+      control,
+    );
+
+    assert.deepEqual(control.calls, [["endRoom", roomId]]);
+    const room = await db.collection("rooms").doc(roomId).get();
+    assert.equal(room.data().liveKitTeardownPending, undefined);
+    assert.equal(
+      room.data().liveKitTeardownCompletedSessionId,
+      "close-session-0001",
+    );
   });
 
   test("host unmute or promotion never clears staff serverMuted", async () => {
@@ -324,6 +439,43 @@ describe("host room control", () => {
     assert.deepEqual(control.calls, []);
   });
 
+  test("failed permission sync is retried once and completed replays are no-ops", async () => {
+    const roomId = `${P}moderate-retry`;
+    const control = fakeControl({
+      failOnceOperation: "setParticipantPermissions",
+    });
+    await seedRoom(roomId);
+    await seedParticipant(roomId, GUEST, {
+      hostMuted: false,
+    });
+
+    const action = request(HOST, {
+      roomId,
+      participantId: GUEST,
+      isMuted: true,
+    });
+    await assert.rejects(
+      executeModerateRoomParticipant(action, control),
+      /Injected setParticipantPermissions failure/u,
+    );
+    const participantReference = db.collection("rooms").doc(roomId)
+      .collection("participants").doc(GUEST);
+    assert.equal(
+      (await participantReference.get()).data().liveKitPermissionPending
+        .canPublish,
+      false,
+    );
+
+    await executeModerateRoomParticipant(action, control);
+    await executeModerateRoomParticipant(action, control);
+
+    const participant = await participantReference.get();
+    assert.equal(participant.data().liveKitPermissionPending, undefined);
+    assert.equal(control.calls.length, 2);
+    assert.equal(control.calls[0][0], "setParticipantPermissions");
+    assert.equal(control.calls[1][0], "setParticipantPermissions");
+  });
+
   test("delete is recursive, but Club Lounges require the Club lifecycle", async () => {
     const control = fakeControl();
     const bucket = fakeBucket();
@@ -380,6 +532,7 @@ describe("host room control", () => {
       fakeBucket(),
     );
     assert.equal((await tombstone.ref.get()).exists, false);
+    assert.deepEqual(control.calls, [["endRoom", roomId]]);
   });
 
   test("ending voice fails closed for moderated rooms", async () => {
@@ -390,6 +543,44 @@ describe("host room control", () => {
       executeEndRoomVoice(request(HOST, { roomId }), control),
       (error) => error?.code === "failed-precondition",
     );
+  });
+
+  test("failed endRoom keeps retry evidence and a completed replay is inert", async () => {
+    const roomId = `${P}end-retry`;
+    const control = fakeControl({ failOnceOperation: "endRoom" });
+    await seedRoom(roomId, { voiceSessionId: "end-session-0001" });
+    await seedParticipant(roomId, GUEST);
+    await seedSession(roomId, GUEST);
+
+    await assert.rejects(
+      executeEndRoomVoice(request(HOST, { roomId }), control),
+      /Injected endRoom failure/u,
+    );
+    const roomReference = db.collection("rooms").doc(roomId);
+    const pending = await roomReference.get();
+    assert.equal(pending.data().isLive, false);
+    assert.equal(
+      pending.data().liveKitTeardownPending.sessionId,
+      "end-session-0001",
+    );
+
+    await executeEndRoomVoice(request(HOST, { roomId }), control);
+    const replay = await executeEndRoomVoice(
+      request(HOST, { roomId }),
+      control,
+    );
+
+    const completed = await roomReference.get();
+    assert.equal(completed.data().liveKitTeardownPending, undefined);
+    assert.equal(
+      completed.data().liveKitTeardownCompletedSessionId,
+      "end-session-0001",
+    );
+    assert.equal(replay.ended, false);
+    assert.deepEqual(control.calls, [
+      ["endRoom", roomId],
+      ["endRoom", roomId],
+    ]);
   });
 
   // --- The last person out ends the session, in EVERY room ------------
@@ -697,5 +888,78 @@ describe("host room control", () => {
     assert.equal(room.data().participantCount, 0);
     assert.equal((await room.ref.collection("participants").get()).empty, true);
     assert.deepEqual(control.calls, [["endRoom", roomId]]);
+  });
+
+  test("the committed preflight quota caps repeated no-op control attempts", async () => {
+    const roomId = `${P}attempt-cap`;
+    const control = fakeControl();
+    await seedRoom(roomId, { participantCount: 0 });
+    const attempt = request(HOST, { roomId, participantId: GUEST });
+
+    for (let index = 0;
+      index < ROOM_CONTROL_ATTEMPT_POLICY.maxEvents;
+      index += 1) {
+      await executeRemoveRoomParticipant(attempt, control);
+    }
+    await assert.rejects(
+      executeRemoveRoomParticipant(attempt, control),
+      (error) => error?.code === "resource-exhausted",
+    );
+
+    const rateLimits = await db.collection("privateRateLimits")
+      .where("ownerId", "==", HOST).get();
+    assert.equal(rateLimits.size, 1);
+    assert.equal(
+      rateLimits.docs[0].data().count,
+      ROOM_CONTROL_ATTEMPT_POLICY.maxEvents,
+    );
+    assert.deepEqual(control.calls, []);
+  });
+
+  test("voice-session cleanup refuses a graph above its fixed bound", async () => {
+    const roomId = `${P}cleanup-bound`;
+    const control = fakeControl();
+    const userIds = Array.from(
+      { length: 501 },
+      (_, index) => `${P}bounded-${String(index).padStart(3, "0")}`,
+    );
+    await seedRoom(roomId, {
+      participantCount: 0,
+      voiceSessionId: "bounded-session-0001",
+    });
+    for (let offset = 0; offset < userIds.length; offset += 200) {
+      const batch = db.batch();
+      for (const uid of userIds.slice(offset, offset + 200)) {
+        const root = db.collection("activeVoiceSessions").doc(uid);
+        batch.set(root, { testPrefix: P });
+        batch.set(root.collection("rooms").doc(roomId), {
+          userId: uid,
+          roomId,
+          participantIdentity: uid,
+          expiresAt: Timestamp.fromMillis(Date.now() + 300_000),
+        });
+      }
+      await batch.commit();
+    }
+
+    try {
+      await assert.rejects(
+        executeEndRoomVoice(request(HOST, { roomId }), control),
+        (error) => error?.code === "resource-exhausted",
+      );
+      const room = await db.collection("rooms").doc(roomId).get();
+      assert.equal(room.data().liveKitTeardownPending !== undefined, true);
+      assert.deepEqual(control.calls, []);
+    } finally {
+      for (let offset = 0; offset < userIds.length; offset += 225) {
+        const batch = db.batch();
+        for (const uid of userIds.slice(offset, offset + 225)) {
+          const root = db.collection("activeVoiceSessions").doc(uid);
+          batch.delete(root.collection("rooms").doc(roomId));
+          batch.delete(root);
+        }
+        await batch.commit();
+      }
+    }
   });
 });

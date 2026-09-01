@@ -331,7 +331,10 @@ describe("stranded live room sweep", () => {
     const control = fakeControl({ failOn: roomId });
     await seedStrandedRoom(roomId);
 
-    const { logger } = require("firebase-functions");
+    // Spy on the exact logger module used by liveness_sweeper. Newer
+    // firebase-functions releases no longer guarantee that the compatibility
+    // re-export shares the same mutable object identity.
+    const logger = require("firebase-functions/logger");
     const original = logger.error;
     const entries = [];
     logger.error = (...args) => entries.push(args);

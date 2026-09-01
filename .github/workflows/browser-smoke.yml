@@ -47,6 +47,7 @@ jobs:
         run: >-
           flutter build web --release
           --dart-define=YOVOICE_WEB_PUSH_VAPID_KEY=BGa6os6npm6shnDdNP4rbqFS8wC5brGTY0RVzt59mZvpOhX3EeaCUpOaZRw2TmQeXK5gpZ1whEKvJEhmSD0mikU
+          --dart-define=YOVOICE_WEB_RECAPTCHA_SITE_KEY=${{ vars.YOVOICE_WEB_RECAPTCHA_SITE_KEY }}
           --dart-define=YOVOICE_APPLE_SIGN_IN_ENABLED=true
 
       - name: Set up Node.js

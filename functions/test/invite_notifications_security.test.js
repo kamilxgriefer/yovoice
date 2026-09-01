@@ -8,7 +8,10 @@ const { initializeApp, getApps } = require("firebase-admin/app");
 if (getApps().length === 0) initializeApp();
 
 const { db } = require("../utils/firestore");
-const { sendClubInvite } = require("../notifications/invites");
+const {
+  CLUB_INVITE_ATTEMPT_LIMITS,
+  sendClubInvite,
+} = require("../notifications/invites");
 const { createNotificationForEvent } = require("../notifications/canonical");
 
 const runSendClubInvite = sendClubInvite.run ?? sendClubInvite;
@@ -25,12 +28,16 @@ function request(data, verified = true) {
 }
 
 async function reset() {
+  const rateLimits = await db.collection("privateRateLimits")
+    .where("ownerId", "==", OWNER)
+    .get();
   await Promise.all([
     db.recursiveDelete(db.doc(`users/${OWNER}`)),
     db.recursiveDelete(db.doc(`users/${INVITEE}`)),
     db.recursiveDelete(db.doc(`clubs/${CLUB}`)),
     db.doc(`restrictions/${OWNER}`).delete(),
     db.doc(`restrictions/${INVITEE}`).delete(),
+    ...rateLimits.docs.map((document) => document.ref.delete()),
   ]);
   const ledgers = await db.collection("notificationDeliveryEvents").get();
   await Promise.all(
@@ -95,6 +102,33 @@ test("Club invite source is canonical and callable replay is idempotent", async 
   assert.equal(invite.data().inviterName, "Canonical Owner");
   assert.equal(invite.data().inviterId, OWNER);
   assert.ok(invite.data().createdAt);
+});
+
+test("replay hammer is bounded by a committed actor-wide attempt quota", async () => {
+  const payload = request({ clubId: CLUB, inviteeId: INVITEE });
+  const first = await runSendClubInvite(payload);
+  assert.equal(first.changed, true);
+  for (
+    let index = 1;
+    index < CLUB_INVITE_ATTEMPT_LIMITS.minute.maxEvents;
+    index += 1
+  ) {
+    assert.equal((await runSendClubInvite(payload)).changed, false);
+  }
+  await assert.rejects(
+    runSendClubInvite(payload),
+    (error) => error.code === "resource-exhausted",
+  );
+
+  const quota = await db.collection("privateRateLimits")
+    .where("ownerId", "==", OWNER)
+    .where("scope", "==", "club.invite.send.minute")
+    .get();
+  assert.equal(quota.size, 1);
+  assert.equal(
+    quota.docs[0].data().count,
+    CLUB_INVITE_ATTEMPT_LIMITS.minute.maxEvents,
+  );
 });
 
 test("Club invite rejects non-friends, blocks and active sanctions", async () => {

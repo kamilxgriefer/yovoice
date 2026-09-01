@@ -32,7 +32,7 @@ class FriendRequest {
       // Historical requests can contain a private email snapshot. Keep the
       // compatibility property empty so no screen can accidentally render it.
       senderEmail: '',
-      senderPhotoUrl: _normalizeNullableString(data['senderPhotoUrl']),
+      senderPhotoUrl: null,
       createdAt: _readDateTime(data['createdAt']),
     );
   }
@@ -56,20 +56,6 @@ class FriendRequest {
     }
 
     return 'YO Voice user';
-  }
-
-  static String? _normalizeNullableString(Object? value) {
-    if (value is! String) {
-      return null;
-    }
-
-    final normalized = value.trim();
-
-    if (normalized.isEmpty) {
-      return null;
-    }
-
-    return normalized;
   }
 
   static DateTime? _readDateTime(Object? value) {

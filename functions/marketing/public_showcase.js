@@ -81,12 +81,12 @@ function boundedConsentDocuments(snapshot, maximum, label) {
   if (!snapshot || !Array.isArray(snapshot.docs)) {
     throw new PublicShowcaseError(`${label} consent query returned no documents.`);
   }
-  if (snapshot.docs.length > maximum) {
-    throw new PublicShowcaseError(
-      `${label} consent scan exceeded its safe bound; refusing a partial rotation.`,
-    );
-  }
-  return snapshot.docs;
+  // The query intentionally asks for maximum + 1 so an operator can observe
+  // saturation, but a 201st valid opt-in must never take the entire public
+  // showcase offline. Publishing a bounded subset cannot leak a non-consenting
+  // account; it only defers selection fairness beyond the current scan cap.
+  // Availability therefore wins over aborting every future scheduler run.
+  return snapshot.docs.slice(0, maximum);
 }
 
 function validMarketingConsent(value) {

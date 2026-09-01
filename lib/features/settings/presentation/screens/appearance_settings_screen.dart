@@ -67,6 +67,7 @@ class _AppearanceSettingsScreenState extends State<AppearanceSettingsScreen> {
                 ),
                 selected: selected == AppThemePreference.system,
                 saving: _saving == AppThemePreference.system,
+                disabled: _saving != null,
                 onTap: () => _select(AppThemePreference.system),
               ),
               const SizedBox(height: 12),
@@ -79,6 +80,7 @@ class _AppearanceSettingsScreenState extends State<AppearanceSettingsScreen> {
                 ),
                 selected: selected == AppThemePreference.dark,
                 saving: _saving == AppThemePreference.dark,
+                disabled: _saving != null,
                 onTap: () => _select(AppThemePreference.dark),
               ),
               const SizedBox(height: 12),
@@ -91,6 +93,7 @@ class _AppearanceSettingsScreenState extends State<AppearanceSettingsScreen> {
                 ),
                 selected: selected == AppThemePreference.light,
                 saving: _saving == AppThemePreference.light,
+                disabled: _saving != null,
                 onTap: () => _select(AppThemePreference.light),
               ),
               const SizedBox(height: 20),
@@ -110,6 +113,7 @@ class _PreferenceChoice extends StatelessWidget {
     required this.subtitle,
     required this.selected,
     required this.saving,
+    required this.disabled,
     required this.onTap,
   });
 
@@ -118,14 +122,22 @@ class _PreferenceChoice extends StatelessWidget {
   final String subtitle;
   final bool selected;
   final bool saving;
+  final bool disabled;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
+    final copy = AppLocalizations.of(context);
     return Semantics(
       selected: selected,
       button: true,
+      enabled: !disabled,
+      label: '$title. $subtitle',
+      value: saving ? copy.text('Saving', 'Zapisywanie') : null,
+      liveRegion: saving,
+      onTap: disabled ? null : onTap,
+      excludeSemantics: true,
       child: Material(
         color: selected
             ? colors.primaryContainer.withValues(alpha: .72)
@@ -139,7 +151,7 @@ class _PreferenceChoice extends StatelessWidget {
         ),
         clipBehavior: Clip.antiAlias,
         child: InkWell(
-          onTap: saving ? null : onTap,
+          onTap: disabled ? null : onTap,
           child: ConstrainedBox(
             constraints: const BoxConstraints(minHeight: 88),
             child: Padding(

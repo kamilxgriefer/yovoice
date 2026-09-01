@@ -17,6 +17,7 @@ import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/clubs/presentation/screens/club_settings_screen.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
+import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
 class ClubOverviewScreen extends StatefulWidget {
   const ClubOverviewScreen({required this.clubId, super.key});
@@ -699,11 +700,6 @@ class _MemberTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
-    final hasPhoto = member.photoUrl?.isNotEmpty ?? false;
-    final initial = member.displayName.trim().isEmpty
-        ? '?'
-        : member.displayName.trim()[0].toUpperCase();
-
     return ListTile(
       onTap: () {
         Navigator.of(context).push(
@@ -721,19 +717,11 @@ class _MemberTile extends StatelessWidget {
       leading: Stack(
         clipBehavior: Clip.none,
         children: [
-          CircleAvatar(
+          UserAvatar(
             radius: 22,
+            userId: member.userId,
+            displayName: member.displayName,
             backgroundColor: colors.primary,
-            backgroundImage: hasPhoto ? NetworkImage(member.photoUrl!) : null,
-            child: hasPhoto
-                ? null
-                : Text(
-                    initial,
-                    style: TextStyle(
-                      color: colors.onPrimary,
-                      fontWeight: FontWeight.w900,
-                    ),
-                  ),
           ),
           Positioned(
             right: -1,
@@ -1063,14 +1051,10 @@ class _InviteFriendsSheetState extends State<_InviteFriendsSheet> {
                           final invited = invitedIds.contains(friend.id);
                           return ListTile(
                             contentPadding: EdgeInsets.zero,
-                            leading: CircleAvatar(
-                              backgroundImage:
-                                  friend.photoUrl?.isNotEmpty == true
-                                  ? NetworkImage(friend.photoUrl!)
-                                  : null,
-                              child: friend.photoUrl?.isNotEmpty == true
-                                  ? null
-                                  : Text(friend.initial),
+                            leading: UserAvatar(
+                              radius: 20,
+                              userId: friend.id,
+                              displayName: friend.displayName,
                             ),
                             title: Text(
                               friend.displayName,

@@ -507,6 +507,10 @@ function createDirectMessagingService({
     return rateLimitReference(db, `direct.${scope}`, uid);
   }
 
+  function attemptLimitReference(scope, uid) {
+    return rateLimitReference(db, `direct.attempt.${scope}`, uid);
+  }
+
   function consume(transaction, snapshot, reference, scope, uid, timing) {
     const config = limits[scope];
     if (!config) throw new TypeError(`Missing direct.${scope} rate limit.`);
@@ -519,11 +523,22 @@ function createDirectMessagingService({
     });
   }
 
-  async function beginStoragePreflight({ identity, kind, uid, requestId, timing }) {
+  // This transaction is intentionally target-independent and commits before
+  // any caller-selected uid, conversation, message or Storage object is read.
+  // A denied target transaction would otherwise roll its rate-limit write
+  // back, letting random IDs turn every request into free database reads.
+  async function beginAttemptPreflight({
+    identity,
+    kind,
+    uid,
+    requestId,
+    scope,
+    timing,
+  }) {
     return db.runTransaction(async (transaction) => {
       const ledgerRef = ledgerReference(identity);
       const preflightRef = db.doc(`integrityPreflightLedgers/${identity.id}`);
-      const rateRef = limitReference("finalize", uid);
+      const rateRef = attemptLimitReference(scope, uid);
       const [ledger, preflight, rate] = await transactionGetAll(
         transaction,
         ledgerRef,
@@ -539,20 +554,31 @@ function createDirectMessagingService({
       if (preflight.exists) {
         const existing = preflight.data() ?? {};
         if (existing.kind !== kind || existing.ownerId !== uid ||
-            existing.inputHash !== identity.inputHash) {
-          fail("already-exists", "requestId was reused for another upload.");
+            existing.inputHash !== identity.inputHash ||
+            existing.scope !== scope) {
+          fail("already-exists", "requestId was reused for another operation.");
         }
-        return { replay: null };
       }
-      consume(transaction, rate, rateRef, "finalize", uid, timing);
-      transaction.create(preflightRef, {
-        schemaVersion: 1,
-        kind,
-        ownerId: uid,
-        requestId,
-        inputHash: identity.inputHash,
-        createdAt: timing.now,
+      const config = limits[scope];
+      if (!config) throw new TypeError(`Missing direct.${scope} rate limit.`);
+      consumeRateLimit(transaction, rate, {
+        reference: rateRef,
+        scope: `direct.attempt.${scope}`,
+        uid,
+        ...timing,
+        ...config,
       });
+      if (!preflight.exists) {
+        transaction.create(preflightRef, {
+          schemaVersion: 1,
+          kind,
+          ownerId: uid,
+          requestId,
+          scope,
+          inputHash: identity.inputHash,
+          createdAt: timing.now,
+        });
+      }
       return { replay: null };
     });
   }
@@ -572,6 +598,15 @@ function createDirectMessagingService({
     const input = { targetUserId };
     const identity = operationIdentity("direct.open", auth.uid, requestId, input);
     const timing = time();
+    const preflight = await beginAttemptPreflight({
+      identity,
+      kind: "direct.open",
+      uid: auth.uid,
+      requestId,
+      scope: "open",
+      timing,
+    });
+    if (preflight.replay) return preflight.replay;
 
     return db.runTransaction(async (transaction) => {
       const ledgerRef = ledgerReference(identity);
@@ -735,6 +770,15 @@ function createDirectMessagingService({
       requestId,
     ).slice(0, 40)}`;
     const timing = time();
+    const preflight = await beginAttemptPreflight({
+      identity,
+      kind: "direct.send",
+      uid: auth.uid,
+      requestId,
+      scope: "send",
+      timing,
+    });
+    if (preflight.replay) return preflight.replay;
 
     return db.runTransaction(async (transaction) => {
       const ledgerRef = ledgerReference(identity);
@@ -914,6 +958,15 @@ function createDirectMessagingService({
       input,
     );
     const timing = time();
+    const preflight = await beginAttemptPreflight({
+      identity,
+      kind: "direct.attachment.reserve",
+      uid: auth.uid,
+      requestId,
+      scope: "uploadReserve",
+      timing,
+    });
+    if (preflight.replay) return preflight.replay;
 
     return db.runTransaction(async (transaction) => {
       const ledgerRef = ledgerReference(identity);
@@ -1023,11 +1076,12 @@ function createDirectMessagingService({
       input,
     );
     const timing = time();
-    const preflight = await beginStoragePreflight({
+    const preflight = await beginAttemptPreflight({
       identity,
       kind: "direct.attachment.finalize",
       uid: auth.uid,
       requestId,
+      scope: "finalize",
       timing,
     });
     if (preflight.replay) return preflight.replay;
@@ -1222,6 +1276,15 @@ function createDirectMessagingService({
     const input = { conversationId, messageId, ...(isEdit ? { text } : {}) };
     const identity = operationIdentity(kind, auth.uid, requestId, input);
     const timing = time();
+    const preflight = await beginAttemptPreflight({
+      identity,
+      kind,
+      uid: auth.uid,
+      requestId,
+      scope: action,
+      timing,
+    });
+    if (preflight.replay) return preflight.replay;
 
     return db.runTransaction(async (transaction) => {
       const ledgerRef = ledgerReference(identity);
@@ -1369,6 +1432,15 @@ function createDirectMessagingService({
       input,
     );
     const timing = time();
+    const preflight = await beginAttemptPreflight({
+      identity,
+      kind: "direct.preference",
+      uid: auth.uid,
+      requestId,
+      scope: "preference",
+      timing,
+    });
+    if (preflight.replay) return preflight.replay;
 
     return db.runTransaction(async (transaction) => {
       const ledgerRef = ledgerReference(identity);
@@ -1432,6 +1504,15 @@ function createDirectMessagingService({
     const input = { conversationId };
     const identity = operationIdentity("direct.read", auth.uid, requestId, input);
     const timing = time();
+    const preflight = await beginAttemptPreflight({
+      identity,
+      kind: "direct.read",
+      uid: auth.uid,
+      requestId,
+      scope: "read",
+      timing,
+    });
+    if (preflight.replay) return preflight.replay;
     return db.runTransaction(async (transaction) => {
       const ledgerRef = ledgerReference(identity);
       const rateRef = limitReference("read", auth.uid);
@@ -1557,6 +1638,15 @@ function createDirectMessagingService({
       input,
     );
     const timing = time();
+    const preflight = await beginAttemptPreflight({
+      identity,
+      kind: "direct.reaction",
+      uid: auth.uid,
+      requestId,
+      scope: "reaction",
+      timing,
+    });
+    if (preflight.replay) return preflight.replay;
     return db.runTransaction(async (transaction) => {
       const ledgerRef = ledgerReference(identity);
       const rateRef = limitReference("reaction", auth.uid);
@@ -1659,6 +1749,15 @@ function createDirectMessagingService({
     const input = { conversationId, isTyping };
     const identity = operationIdentity("direct.typing", auth.uid, requestId, input);
     const timing = time();
+    const preflight = await beginAttemptPreflight({
+      identity,
+      kind: "direct.typing",
+      uid: auth.uid,
+      requestId,
+      scope: "typing",
+      timing,
+    });
+    if (preflight.replay) return preflight.replay;
     return db.runTransaction(async (transaction) => {
       const ledgerRef = ledgerReference(identity);
       const rateRef = limitReference("typing", auth.uid);

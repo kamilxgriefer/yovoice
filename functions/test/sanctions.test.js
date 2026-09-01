@@ -45,8 +45,18 @@ const TARGET = `${P}target`;
 const STAFF_TARGET = `${P}staff-target`;
 const CLAIM_STAFF_TARGET = `${P}claim-staff-target`;
 
-function request(uid, role, data) {
-  return { auth: { uid, token: { role } }, data };
+function request(uid, role, data, token = {}) {
+  return {
+    auth: {
+      uid,
+      token: {
+        role,
+        auth_time: Math.floor(Date.now() / 1000),
+        ...token,
+      },
+    },
+    data,
+  };
 }
 
 const args = (action, extra = {}) => ({

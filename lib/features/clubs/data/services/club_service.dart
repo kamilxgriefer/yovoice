@@ -275,7 +275,7 @@ class ClubService {
       batch.set(memberRef, {
         'userId': user.uid,
         'displayName': ownerName,
-        'photoUrl': user.photoURL,
+        'photoUrl': null,
         'role': ClubRole.owner.name,
         'isOnline': true,
         'joinedAt': FieldValue.serverTimestamp(),
@@ -316,7 +316,7 @@ class ClubService {
       batch.set(loungeRoomRef, {
         'hostId': user.uid,
         'hostName': ownerName,
-        'hostPhotoUrl': user.photoURL,
+        'hostPhotoUrl': null,
         'name': '$normalizedName Lounge',
         'description': normalizedDescription.isEmpty
             ? 'Private voice lounge for $normalizedName members.'
@@ -841,7 +841,7 @@ class ClubService {
         .get();
     final userData = userSnapshot.data() ?? const <String, dynamic>{};
     final displayName = userData['displayName'];
-    final photoUrl = userData['photoUrl'] as String? ?? _user.photoURL;
+    const String? photoUrl = null;
     if (displayName is! String || displayName.trim().isEmpty) {
       throw StateError('Your profile does not have a display name.');
     }
@@ -985,7 +985,7 @@ class ClubService {
       'userId': user.uid,
       'clubId': clubId,
       'displayName': displayName,
-      'photoUrl': user.photoURL,
+      'photoUrl': null,
       'status': status.value,
       'createdAt': FieldValue.serverTimestamp(),
     });

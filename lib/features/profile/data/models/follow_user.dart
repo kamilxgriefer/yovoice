@@ -48,10 +48,8 @@ class FollowUser {
         : edge.id;
     final displayName = (profileData['displayName'] as String?)?.trim();
     final username = (profileData['username'] as String?)?.trim();
-    final photoUrl = (profileData['photoUrl'] as String?)?.trim();
     final fallbackName = (edgeData['displayName'] as String?)?.trim();
     final fallbackUsername = (edgeData['username'] as String?)?.trim();
-    final fallbackPhoto = (edgeData['photoUrl'] as String?)?.trim();
     return FollowUser(
       uid: uid,
       displayName: displayName?.isNotEmpty == true
@@ -64,11 +62,7 @@ class FollowUser {
           : fallbackUsername?.isNotEmpty == true
           ? fallbackUsername!
           : '',
-      photoUrl: photoUrl?.isNotEmpty == true
-          ? photoUrl
-          : fallbackPhoto?.isNotEmpty == true
-          ? fallbackPhoto
-          : null,
+      photoUrl: null,
       followedAt: edgeData['followedAt'] is Timestamp
           ? (edgeData['followedAt'] as Timestamp).toDate()
           : null,

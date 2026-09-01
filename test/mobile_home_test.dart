@@ -134,18 +134,23 @@ void main() {
     required String id,
     required String authorId,
     required String authorName,
-    String? audioUrl,
+    bool withMedia = true,
     Duration age = const Duration(minutes: 5),
   }) async {
     final createdAt = DateTime.now().subtract(age);
     await db.collection('voiceMoments').doc(id).set({
       'authorId': authorId,
       'authorName': authorName,
-      'audioUrl': audioUrl ?? 'https://example.invalid/$id.m4a',
+      if (withMedia) 'mediaGeneration': '1700000000000001',
+      if (withMedia) 'mediaContentType': 'audio/mp4',
+      if (withMedia) 'mediaSize': 4096,
       'durationSeconds': 8,
       'likeCount': 0,
       'commentCount': 0,
       'isPublished': true,
+      'schemaVersion': 2,
+      'status': 'published',
+      'isDeleted': false,
       'createdAt': Timestamp.fromDate(createdAt),
       'expiresAt': Timestamp.fromDate(createdAt.add(const Duration(hours: 24))),
     });
@@ -393,57 +398,62 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets(
-    'Moments rail is self plus followed authors with playable audio',
-    (tester) async {
-      usePhone(tester, const Size(390, 1000));
-      await seedFriend('friend-only', 'Friend only');
-      await seedMoment(
-        id: 'friend-moment',
-        authorId: 'friend-only',
-        authorName: 'Friend only',
-      );
-      await seedFollowing('followed', 'Followed voice');
-      await seedMoment(
-        id: 'followed-older',
-        authorId: 'followed',
-        authorName: 'Followed voice',
-        age: const Duration(minutes: 10),
-      );
-      await seedMoment(
-        id: 'followed-newer',
-        authorId: 'followed',
-        authorName: 'Followed voice',
-      );
-      await seedFollowing('silent', 'Silent profile');
-      await seedMoment(
-        id: 'silent-document',
-        authorId: 'silent',
-        authorName: 'Silent profile',
-        audioUrl: '',
-      );
+  testWidgets('Moments rail is self plus followed authors with private media', (
+    tester,
+  ) async {
+    usePhone(tester, const Size(390, 1000));
+    await seedFriend('friend-only', 'Friend only');
+    await seedMoment(
+      id: 'friend-moment',
+      authorId: 'friend-only',
+      authorName: 'Friend only',
+    );
+    await seedFollowing('followed', 'Followed voice');
+    await seedMoment(
+      id: 'followed-older',
+      authorId: 'followed',
+      authorName: 'Followed voice',
+      age: const Duration(minutes: 10),
+    );
+    await seedMoment(
+      id: 'followed-newer',
+      authorId: 'followed',
+      authorName: 'Followed voice',
+    );
+    await seedFollowing('silent', 'Silent profile');
+    await seedMoment(
+      id: 'silent-document',
+      authorId: 'silent',
+      authorName: 'Silent profile',
+      withMedia: false,
+    );
 
-      List<VoiceMoment>? openedChain;
-      await tester.pumpWidget(
-        host(buildHome(onOpenChain: (moments) => openedChain = moments)),
-      );
-      for (var i = 0; i < 8; i++) {
-        await tester.pump(const Duration(milliseconds: 60));
-      }
+    List<VoiceMoment>? openedChain;
+    await tester.pumpWidget(
+      host(buildHome(onOpenChain: (moments) => openedChain = moments)),
+    );
+    for (var i = 0; i < 8; i++) {
+      await tester.pump(const Duration(milliseconds: 60));
+    }
 
-      expect(find.byKey(const ValueKey('home-your-moment')), findsOneWidget);
-      expect(find.text('Followed voice'), findsOneWidget);
-      expect(find.text('Friend only'), findsNothing);
-      expect(find.text('Silent profile'), findsNothing);
+    expect(find.byKey(const ValueKey('home-your-moment')), findsOneWidget);
+    expect(find.text('Followed voice'), findsOneWidget);
+    expect(find.text('Friend only'), findsNothing);
+    expect(find.text('Silent profile'), findsNothing);
 
-      await tester.tap(find.text('Followed voice'));
-      await tester.pump();
-      expect(openedChain?.map((moment) => moment.id), [
-        'followed-older',
-        'followed-newer',
-      ]);
-    },
-  );
+    await tester.tap(find.text('Followed voice'));
+    await tester.pump();
+    expect(openedChain?.map((moment) => moment.id), [
+      'followed-older',
+      'followed-newer',
+    ]);
+    expect(openedChain, isNotNull);
+    expect(openedChain!.every((moment) => moment.audioUrl == null), isTrue);
+    expect(
+      openedChain!.every((moment) => moment.mediaGeneration != null),
+      isTrue,
+    );
+  });
 
   testWidgets('initial following stream failure fails closed to the own tile', (
     tester,

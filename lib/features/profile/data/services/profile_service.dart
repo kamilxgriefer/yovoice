@@ -1,7 +1,9 @@
 import 'dart:async';
+import 'dart:math';
 import 'dart:typed_data';
 
-import 'package:flutter/foundation.dart' show debugPrint, visibleForTesting;
+import 'package:flutter/foundation.dart'
+    show debugPrint, kDebugMode, visibleForTesting;
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
@@ -11,6 +13,8 @@ import 'package:image_picker/image_picker.dart';
 
 import 'package:yovoice/features/profile/data/models/user_profile.dart';
 import 'package:yovoice/features/profile/data/services/profile_image_rules.dart';
+import 'package:yovoice/features/profile/data/services/profile_media_service.dart'
+    as secure_media;
 import 'package:yovoice/features/auth/data/auth_profile_identity.dart';
 
 export 'package:yovoice/features/profile/data/services/profile_image_rules.dart'
@@ -22,6 +26,8 @@ export 'package:yovoice/features/profile/data/services/profile_image_rules.dart'
 
 typedef DisplayNameMutationInvoker =
     Future<DisplayNameChangeResult> Function(String displayName);
+typedef ProfileMediaGenerationResolver =
+    FutureOr<String?> Function(TaskSnapshot snapshot);
 
 class ProfileUnavailableException implements Exception {
   const ProfileUnavailableException();
@@ -101,12 +107,17 @@ class ProfileService {
     ImagePicker? picker,
     FirebaseFunctions? functions,
     DisplayNameMutationInvoker? displayNameMutationInvoker,
+    secure_media.ProfileMediaService? profileMediaService,
+    @visibleForTesting
+    ProfileMediaGenerationResolver? profileMediaGenerationResolver,
   }) : _firestore = firestore ?? FirebaseFirestore.instance,
        _auth = auth ?? FirebaseAuth.instance,
        _storageOverride = storage,
        _picker = picker ?? ImagePicker(),
        _functionsOverride = functions,
-       _displayNameMutationInvoker = displayNameMutationInvoker;
+       _displayNameMutationInvoker = displayNameMutationInvoker,
+       _profileMediaServiceOverride = profileMediaService,
+       _profileMediaGenerationResolver = profileMediaGenerationResolver;
 
   final FirebaseFirestore _firestore;
   final FirebaseAuth _auth;
@@ -114,10 +125,16 @@ class ProfileService {
   final ImagePicker _picker;
   final FirebaseFunctions? _functionsOverride;
   final DisplayNameMutationInvoker? _displayNameMutationInvoker;
+  final secure_media.ProfileMediaService? _profileMediaServiceOverride;
+  final ProfileMediaGenerationResolver? _profileMediaGenerationResolver;
 
   FirebaseFunctions get _functions =>
       _functionsOverride ??
       FirebaseFunctions.instanceFor(region: 'europe-west1');
+
+  secure_media.ProfileMediaService get _profileMediaService =>
+      _profileMediaServiceOverride ??
+      secure_media.ProfileMediaService(auth: _auth, functions: _functions);
 
   // Resolved lazily rather than in the constructor: FirebaseStorage.instance
   // throws without an initialised Firebase app, which would make every
@@ -281,15 +298,6 @@ class ProfileService {
       'username': displayName,
       'profileUpdatedAt': FieldValue.serverTimestamp(),
     };
-
-    // Seed the avatar from the Auth account (Google sign-in supplies one)
-    // ONLY when the profile has none. photoUrl belongs to this service
-    // once set, and FirebaseAuth's copy is a separate, staler source.
-    final hasProfilePhoto =
-        (data?['photoUrl'] as String?)?.trim().isNotEmpty == true;
-    if (!hasProfilePhoto && identityUser.photoURL?.trim().isNotEmpty == true) {
-      seed['photoUrl'] = identityUser.photoURL;
-    }
 
     // Counters are only safe to write on true first creation — rewriting
     // them would stomp progress friend_service/follow_service already
@@ -664,12 +672,12 @@ class ProfileService {
   ///
   /// Throws [ProfileImageException] with a user-facing message when the file
   /// is too large or is not a format every supported platform can decode.
-  /// Structured diagnostics for the save pipeline. Deliberately plain
-  /// debugPrint so the stages are visible in a production web console
-  /// while the persistence bug is being chased in the field. Logs paths,
-  /// sizes and MIME types — never tokens, credentials or full download
-  /// URLs.
+  /// Structured diagnostics for the save pipeline. Release builds keep the
+  /// selected filename, Storage path and media metadata out of the browser or
+  /// device console; production failures belong in redacted Crashlytics
+  /// events instead of a user-readable log.
   static void _logStage(String stage, [Map<String, Object?>? data]) {
+    if (!kDebugMode) return;
     debugPrint('[PROFILE] $stage${data == null ? '' : ' $data'}');
   }
 
@@ -708,21 +716,10 @@ class ProfileService {
     return PickedProfileImage(kind: kind, bytes: bytes, format: format);
   }
 
-  /// Uploads an already-validated image and persists its URL.
-  Future<String> uploadProfileImage(PickedProfileImage image) {
-    final kind = image.kind;
-    final filename =
-        '${kind.name}_${DateTime.now().millisecondsSinceEpoch}'
-        '.${image.format.extension}';
-
-    return _uploadBytes(
-      bytes: image.bytes,
-      path: 'users/$_uid/profile/$filename',
-      contentType: image.format.mimeType,
-      field: kind == ProfileImageKind.avatar ? 'photoUrl' : 'bannerUrl',
-      updateAuthPhoto: kind == ProfileImageKind.avatar,
-    );
-  }
+  /// Uploads an already-validated image through a short-lived reservation.
+  /// No Firebase download URL is created or persisted in Auth/Firestore.
+  Future<String> uploadProfileImage(PickedProfileImage image) =>
+      _uploadBytes(image);
 
   /// Kept for callers that still want the old one-shot behaviour.
   Future<String?> pickAndUploadImage(ProfileImageKind kind) async {
@@ -731,35 +728,43 @@ class ProfileService {
     return uploadProfileImage(picked);
   }
 
-  Future<String> _uploadBytes({
-    required Uint8List bytes,
-    required String path,
-    required String contentType,
-    required String field,
-    required bool updateAuthPhoto,
-  }) async {
-    // Read the outgoing URL before anything changes so the replaced
-    // object can be cleaned up afterwards.
-    final previousUrl = (await _document.get()).data()?[field] as String?;
-
-    _logStage('${field.toUpperCase()}_UPLOAD_STARTED', {
-      'path': path,
-      'bytes': bytes.lengthInBytes,
-      'contentType': contentType,
+  Future<String> _uploadBytes(PickedProfileImage image) async {
+    final ownerId = _uid;
+    final uploadId = _newUploadId();
+    final kind = image.kind == ProfileImageKind.avatar
+        ? secure_media.ProfileMediaKind.avatar
+        : secure_media.ProfileMediaKind.banner;
+    final reservation = await _profileMediaService.reserveUpload(
+      kind: kind,
+      uploadId: uploadId,
+      contentType: image.format.mimeType,
+      size: image.bytes.lengthInBytes,
+    );
+    if (_auth.currentUser?.uid != ownerId) {
+      throw StateError('Authenticated account changed during image upload.');
+    }
+    _logStage('${kind.name.toUpperCase()}_UPLOAD_STARTED', {
+      'bytes': image.bytes.lengthInBytes,
+      'contentType': image.format.mimeType,
     });
 
-    final reference = _storage.ref().child(path);
+    final reference = _storage.ref().child(reservation.storagePath);
     final uploadTask = reference.putData(
-      bytes,
+      image.bytes,
       SettableMetadata(
-        contentType: contentType,
-        cacheControl: 'public,max-age=3600',
+        contentType: image.format.mimeType,
+        cacheControl: 'private,no-store,max-age=0',
+        customMetadata: {
+          'ownerId': ownerId,
+          'profileKind': kind.name,
+          'uploadId': uploadId,
+        },
       ),
     );
     final snapshot = await uploadTask;
 
     if (snapshot.state != TaskState.success) {
-      _logStage('${field.toUpperCase()}_UPLOAD_FAILED', {
+      _logStage('${kind.name.toUpperCase()}_UPLOAD_FAILED', {
         'state': snapshot.state.name,
       });
       throw FirebaseException(
@@ -769,73 +774,44 @@ class ProfileService {
       );
     }
 
-    _logStage('${field.toUpperCase()}_UPLOAD_COMPLETE', {
-      'path': snapshot.ref.fullPath,
-    });
-
-    // Use the exact reference returned by the completed upload task. This
-    // avoids asking Storage for a stale or differently-normalized path.
-    final url = await snapshot.ref.getDownloadURL();
-    _logStage('${field.toUpperCase()}_URL_RECEIVED', {
-      'host': Uri.tryParse(url)?.host,
-    });
-
-    // Consistency contract (Storage and Firestore cannot share a real
-    // transaction): the Firestore field is the source of truth, so the
-    // upload happens FIRST and the pointer flips second. If the pointer
-    // write fails, the just-uploaded object is deleted again (best
-    // effort) and the error propagates — the profile keeps pointing at
-    // the old image and nothing is orphaned. Only after the pointer has
-    // flipped is the OLD object deleted, also best effort: a leaked file
-    // is preferable to a profile pointing at nothing.
-    _logStage('PROFILE_FIRESTORE_UPDATE_STARTED', {'field': field});
-    try {
-      await _document.set({
-        field: url,
-        'profileUpdatedAt': FieldValue.serverTimestamp(),
-      }, SetOptions(merge: true));
-    } catch (error) {
-      _logStage('PROFILE_FIRESTORE_UPDATE_FAILED', {
-        'field': field,
-        'error': error.runtimeType.toString(),
-      });
-      await snapshot.ref.delete().then((_) {}, onError: (_) {});
-      rethrow;
+    var generation = (await _profileMediaGenerationResolver?.call(
+      snapshot,
+    ))?.trim();
+    generation ??= snapshot.metadata?.generation?.trim();
+    if (generation == null || generation.isEmpty) {
+      generation = (await snapshot.ref.getMetadata()).generation?.trim();
     }
-    _logStage('PROFILE_FIRESTORE_UPDATE_COMPLETE', {'field': field});
-
-    if (updateAuthPhoto) {
-      await _auth.currentUser?.updatePhotoURL(url);
+    if (generation == null || !RegExp(r'^[0-9]{1,30}$').hasMatch(generation)) {
+      throw const FormatException(
+        'Storage did not return an object generation.',
+      );
     }
-
-    await _deleteReplacedImage(previousUrl, replacedBy: url);
-    _logStage('PROFILE_STATE_REFRESHED', {'field': field});
-
-    return url;
+    await _profileMediaService.finalizeUpload(
+      uploadId: uploadId,
+      objectGeneration: generation,
+    );
+    if (_auth.currentUser?.uid != ownerId) {
+      throw StateError('Authenticated account changed during image upload.');
+    }
+    if (kind == secure_media.ProfileMediaKind.avatar) {
+      // Firebase Auth is not an authorization-aware image store. Remove any
+      // historical provider/download URL instead of repopulating it.
+      await _auth.currentUser?.updatePhotoURL(null);
+    }
+    final grant = await _profileMediaService.resolve(
+      userId: ownerId,
+      kind: kind,
+    );
+    if (grant == null) {
+      throw StateError('The saved profile image could not be resolved.');
+    }
+    return grant.toString();
   }
 
-  /// Best-effort removal of the object a profile image field used to
-  /// point at. Every upload uses a fresh timestamped filename (that's the
-  /// cache-busting strategy — a genuinely new URL, not a query-string
-  /// hack), so without this each change would leave the prior file behind
-  /// forever. Only deletes objects inside this user's own profile folder;
-  /// anything else (external seed URLs, a Google avatar) is left alone.
-  Future<void> _deleteReplacedImage(
-    String? previousUrl, {
-    required String replacedBy,
-  }) async {
-    final url = previousUrl?.trim();
-    if (url == null || url.isEmpty || url == replacedBy) return;
-    if (!url.contains('/users%2F$_uid%2Fprofile%2F') &&
-        !url.contains('/users/$_uid/profile/')) {
-      return;
-    }
-    try {
-      await _storage.refFromURL(url).delete();
-    } catch (_) {
-      // Missing object, revoked token, offline — none of these should
-      // fail the save that already succeeded.
-    }
+  static String _newUploadId() {
+    final random = Random.secure();
+    final bytes = List<int>.generate(16, (_) => random.nextInt(256));
+    return bytes.map((value) => value.toRadixString(16).padLeft(2, '0')).join();
   }
 }
 

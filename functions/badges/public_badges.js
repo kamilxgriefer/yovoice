@@ -24,7 +24,7 @@
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { onDocumentWritten } = require("firebase-functions/v2/firestore");
 const { getAuth } = require("firebase-admin/auth");
-const { FieldValue } = require("firebase-admin/firestore");
+const { FieldValue, Timestamp } = require("firebase-admin/firestore");
 
 const { STAFF_ROLES, USER_ROLES } = require("../utils/roles");
 const { isConfirmedOwner } = require("../utils/capabilities");
@@ -33,9 +33,89 @@ const { isActiveAccountProfile } = require("../utils/premium_access");
 const { requireAuthentication } = require("../utils/auth");
 const { writeAuditLog } = require("../utils/audit");
 const { db, normalizeText } = require("../utils/firestore");
+const {
+  consumeRateLimit,
+  rateLimitReference,
+  transactionGetAll,
+} = require("../integrity/guards");
 
 const BADGE_SCHEMA_VERSION = 1;
-const MAX_BATCH_UIDS = 50;
+const MAX_BATCH_UIDS = 20;
+const BADGE_CACHE_TTL_MS = 30_000;
+const BADGE_CACHE_MAX_ENTRIES = 2_000;
+const BADGE_RATE_LIMITS = Object.freeze({
+  minute: Object.freeze({ maxEvents: 30, windowMs: 60_000 }),
+  hour: Object.freeze({ maxEvents: 200, windowMs: 60 * 60_000 }),
+});
+const publicBadgeCache = new Map();
+
+function clearPublicBadgeCacheForTests() {
+  publicBadgeCache.clear();
+}
+
+function cacheBadge(uid, value, nowMs) {
+  if (publicBadgeCache.size >= BADGE_CACHE_MAX_ENTRIES) {
+    const oldestKey = publicBadgeCache.keys().next().value;
+    if (oldestKey !== undefined) publicBadgeCache.delete(oldestKey);
+  }
+  publicBadgeCache.set(uid, { expiresAt: nowMs + BADGE_CACHE_TTL_MS, value });
+}
+
+async function consumeBadgeReadAttempt(uid, nowMs = Date.now()) {
+  const now = Timestamp.fromMillis(nowMs);
+  const minuteScope = "public.badges.read.minute";
+  const hourScope = "public.badges.read.hour";
+  const minuteRef = rateLimitReference(db, minuteScope, uid);
+  const hourRef = rateLimitReference(db, hourScope, uid);
+  await db.runTransaction(async (transaction) => {
+    const [minute, hour] = await transactionGetAll(
+      transaction,
+      minuteRef,
+      hourRef,
+    );
+    consumeRateLimit(transaction, minute, {
+      reference: minuteRef,
+      scope: minuteScope,
+      uid,
+      nowMs,
+      now,
+      ...BADGE_RATE_LIMITS.minute,
+    });
+    consumeRateLimit(transaction, hour, {
+      reference: hourRef,
+      scope: hourScope,
+      uid,
+      nowMs,
+      now,
+      ...BADGE_RATE_LIMITS.hour,
+    });
+  });
+}
+
+async function readBadgeDocuments(uids, nowMs = Date.now()) {
+  const values = new Map();
+  const misses = [];
+  for (const uid of uids) {
+    const cached = publicBadgeCache.get(uid);
+    if (cached && cached.expiresAt > nowMs) {
+      values.set(uid, cached.value);
+    } else {
+      if (cached) publicBadgeCache.delete(uid);
+      misses.push(uid);
+    }
+  }
+  if (misses.length > 0) {
+    const snapshots = await db.getAll(
+      ...misses.map((uid) => db.collection("publicBadges").doc(uid)),
+    );
+    for (const snapshot of snapshots) {
+      const value = snapshot.exists ? (snapshot.data() ?? {}) : null;
+      values.set(snapshot.id, value);
+      cacheBadge(snapshot.id, value, nowMs);
+    }
+  }
+  return values;
+}
 
 /// The role the mirror may PUBLISH for this account — which is not always
 /// the role the user document claims. `superAdmin` is the owner's badge,
@@ -152,6 +232,7 @@ async function syncPublicBadgeForUser(
   });
 
   const ref = database.collection("publicBadges").doc(cleanUid);
+  publicBadgeCache.delete(cleanUid);
 
   if (badge === null) {
     // Delete is idempotent: removing an absent document is a no-op, so a
@@ -218,6 +299,7 @@ const onVipGrantChanged = onDocumentWritten(
 const getPublicBadges = onCall(
   {
     region: "europe-west1",
+    maxInstances: 20,
     // Defense in depth: a STORED superAdmin row that predates the owner
     // guard (or was planted by anything that slips past the rules) is
     // demoted in the response until a sync or backfill heals the
@@ -225,7 +307,7 @@ const getPublicBadges = onCall(
     secrets: ["YOVOICE_PROTECTED_OWNER_UID"],
   },
   async (request) => {
-  requireAuthentication(request);
+  const auth = requireAuthentication(request);
 
   const rawUids = request.data?.uids;
   if (!Array.isArray(rawUids)) {
@@ -256,22 +338,23 @@ const getPublicBadges = onCall(
     uids.push(uid);
   }
 
-  const snapshots = await db.getAll(
-    ...uids.map((uid) => db.collection("publicBadges").doc(uid)),
-  );
+  // This quota commits before any target document reads. A rejected or
+  // cache-miss-heavy request therefore cannot roll its own throttle back.
+  await consumeBadgeReadAttempt(auth.uid);
+  const badgeDocuments = await readBadgeDocuments(uids);
 
   const badges = {};
-  for (const snapshot of snapshots) {
-    if (!snapshot.exists) continue;
-    const data = snapshot.data() ?? {};
+  for (const uid of uids) {
+    const data = badgeDocuments.get(uid);
+    if (data === null || data === undefined) continue;
     // Explicit field picking: whatever the stored document holds, the
     // response carries exactly the public schema and nothing else. The
     // stored role passes through the same owner confirmation as the
     // derivation, so a stale superAdmin row cannot badge a non-owner.
-    const { staffRole } = derivePublicRole(snapshot.id, {
+    const { staffRole } = derivePublicRole(uid, {
       role: data.staffRole,
     });
-    badges[snapshot.id] = {
+    badges[uid] = {
       staffRole,
       isVip: data.isVip === true,
       schemaVersion: Number(data.schemaVersion ?? BADGE_SCHEMA_VERSION),
@@ -288,7 +371,10 @@ const getPublicBadges = onCall(
 
 module.exports = {
   BADGE_SCHEMA_VERSION,
+  BADGE_CACHE_TTL_MS,
+  BADGE_RATE_LIMITS,
   MAX_BATCH_UIDS,
+  clearPublicBadgeCacheForTests,
   deriveBadge,
   derivePublicRole,
   fetchAuthUserOrNull,

@@ -43,6 +43,7 @@ enum PeopleStatus {
 class PeopleStatusAvatar extends StatelessWidget {
   const PeopleStatusAvatar({
     required this.displayName,
+    this.userId,
     required this.status,
     required this.onTap,
     this.photoUrl,
@@ -51,6 +52,7 @@ class PeopleStatusAvatar extends StatelessWidget {
   });
 
   final String displayName;
+  final String? userId;
   final PeopleStatus status;
   final VoidCallback onTap;
   final String? photoUrl;
@@ -103,6 +105,7 @@ class PeopleStatusAvatar extends StatelessWidget {
                 ),
                 child: UserAvatar(
                   radius: radius,
+                  userId: userId,
                   photoUrl: photoUrl,
                   displayName: displayName,
                 ),

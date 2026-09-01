@@ -24,6 +24,10 @@
 	<string>$(MACOSX_DEPLOYMENT_TARGET)</string>
 	<key>NSHumanReadableCopyright</key>
 	<string>$(PRODUCT_COPYRIGHT)</string>
+	<key>NSCameraUsageDescription</key>
+	<string>YO Voice uses the camera when you choose to make a private video call.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>YO Voice uses your microphone when you choose to speak, record audio, or make a private call.</string>
 	<key>NSMainNibFile</key>
 	<string>MainMenu</string>
 	<key>NSPrincipalClass</key>

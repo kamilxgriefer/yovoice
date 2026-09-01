@@ -28,9 +28,7 @@ class RoomLeaveCoordinator {
     }
 
     navigateAway();
-    unawaited(
-      _cleanup(cleanupParticipant, onCleanupError),
-    );
+    unawaited(_cleanup(cleanupParticipant, onCleanupError));
     return true;
   }
 

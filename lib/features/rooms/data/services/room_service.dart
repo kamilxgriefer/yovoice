@@ -1,9 +1,11 @@
+import 'dart:math';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/foundation.dart' show debugPrint;
 
+import 'package:yovoice/core/security/ephemeral_media_access_registry.dart';
 import 'package:yovoice/features/rooms/data/models/room_message.dart';
 import 'package:yovoice/features/rooms/data/models/room_participant.dart';
 import 'package:yovoice/features/rooms/data/models/room_experience.dart';
@@ -11,26 +13,69 @@ import 'package:yovoice/features/rooms/data/models/room_metadata.dart';
 import 'package:yovoice/features/rooms/data/models/room_voice_access.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 
+typedef RoomCoverAccessInvoker =
+    Future<Map<Object?, Object?>> Function(Map<String, Object?> request);
+typedef RoomCoverFinalizeInvoker =
+    Future<Map<Object?, Object?>> Function(Map<String, Object?> request);
+typedef RoomMessageSendInvoker =
+    Future<Map<Object?, Object?>> Function(Map<String, Object?> request);
+typedef RoomCreateInvoker =
+    Future<Map<Object?, Object?>> Function(Map<String, Object?> request);
+typedef RoomVoiceStartInvoker =
+    Future<Map<Object?, Object?>> Function(Map<String, Object?> request);
+
 class RoomService {
   RoomService({
     FirebaseFirestore? firestore,
     FirebaseAuth? auth,
     FirebaseFunctions? functions,
+    RoomCoverAccessInvoker? coverAccessInvoker,
+    RoomCoverFinalizeInvoker? coverFinalizeInvoker,
+    RoomMessageSendInvoker? roomMessageSendInvoker,
+    RoomCreateInvoker? roomCreateInvoker,
+    RoomVoiceStartInvoker? roomVoiceStartInvoker,
+    String Function()? requestIdFactory,
   }) : _firestore = firestore ?? FirebaseFirestore.instance,
        _auth = auth ?? FirebaseAuth.instance,
-       _functionsOverride = functions;
+       _functionsOverride = functions,
+       _coverAccessInvoker = coverAccessInvoker,
+       _coverFinalizeInvoker = coverFinalizeInvoker,
+       _roomMessageSendInvoker = roomMessageSendInvoker,
+       _roomCreateInvoker = roomCreateInvoker,
+       _roomVoiceStartInvoker = roomVoiceStartInvoker,
+       _requestIdFactory = requestIdFactory ?? _newRequestId {
+    EphemeralMediaAccessRegistry.register(
+      'room-cover',
+      clearAllCoverAccessCaches,
+    );
+  }
 
   final FirebaseFirestore _firestore;
   final FirebaseAuth _auth;
   final FirebaseFunctions? _functionsOverride;
+  final RoomCoverAccessInvoker? _coverAccessInvoker;
+  final RoomCoverFinalizeInvoker? _coverFinalizeInvoker;
+  final RoomMessageSendInvoker? _roomMessageSendInvoker;
+  final RoomCreateInvoker? _roomCreateInvoker;
+  final RoomVoiceStartInvoker? _roomVoiceStartInvoker;
+  final String Function() _requestIdFactory;
+  static final Map<String, _CachedRoomCoverAccess> _coverAccessCache = {};
+  static int _coverAccessCacheEpoch = 0;
+  final Map<String, Future<Uri>> _pendingCoverAccess = {};
+  final Map<String, _PendingRoomVoiceStart> _pendingRoomVoiceStarts = {};
 
   FirebaseFunctions get _functions =>
       _functionsOverride ??
       FirebaseFunctions.instanceFor(region: 'europe-west1');
 
-  bool get _shouldIncrementLegacyRoomCount {
-    final users = Firebase.apps;
-    return users.isEmpty;
+  static String _newRequestId() {
+    final random = Random.secure();
+    final randomPart = List<int>.generate(
+      16,
+      (_) => random.nextInt(256),
+    ).map((value) => value.toRadixString(16).padLeft(2, '0')).join();
+    return '${DateTime.now().microsecondsSinceEpoch.toRadixString(16)}-'
+        '$randomPart';
   }
 
   CollectionReference<Map<String, dynamic>> get _rooms =>
@@ -51,6 +96,100 @@ class RoomService {
   /// makes "did this screen ask for a token?" an answerable question.
   String get currentUserId => _auth.currentUser?.uid ?? '';
 
+  Future<Uri> resolveCoverUri(VoiceRoom room) {
+    final uid = _auth.currentUser?.uid ?? '';
+    if (uid.isEmpty) {
+      throw StateError('You must be signed in to view this room cover.');
+    }
+    final path = room.coverStoragePath;
+    final generation = room.coverGeneration;
+    if (!room.hasCanonicalCover ||
+        path == null ||
+        generation == null ||
+        room.id.isEmpty ||
+        room.id.contains('/')) {
+      throw const FormatException('The room cover identity is invalid.');
+    }
+    final epoch = _coverAccessCacheEpoch;
+    final cacheKey = '$uid:${room.id}:$generation';
+    final now = DateTime.now().toUtc();
+    final cached = _coverAccessCache[cacheKey];
+    if (cached != null &&
+        cached.expiresAt.isAfter(now.add(const Duration(seconds: 15)))) {
+      return Future<Uri>.value(cached.uri);
+    }
+    return _pendingCoverAccess.putIfAbsent(cacheKey, () async {
+      try {
+        final payload = <String, Object?>{'roomId': room.id};
+        final response = _coverAccessInvoker != null
+            ? await _coverAccessInvoker(payload)
+            : (await _functions
+                      .httpsCallable('getRoomCoverMediaAccess')
+                      .call<Map<Object?, Object?>>(payload))
+                  .data;
+        if (_auth.currentUser?.uid != uid || epoch != _coverAccessCacheEpoch) {
+          throw StateError('Room cover access was cleared. Try again.');
+        }
+        final rawUrl = response['url'];
+        final rawExpiry = response['expiresAtMillis'];
+        final responseGeneration = response['coverGeneration'];
+        final responseType = response['coverContentType'];
+        final responseSize = response['coverSize'];
+        if (response['schemaVersion'] != 1 ||
+            rawUrl is! String ||
+            rawUrl.length > 4096 ||
+            rawExpiry is! int ||
+            responseGeneration != generation ||
+            responseType != room.coverContentType ||
+            responseSize != room.coverSize) {
+          throw const FormatException('Malformed room-cover grant.');
+        }
+        final uri = Uri.tryParse(rawUrl);
+        final expiresAt = DateTime.fromMillisecondsSinceEpoch(
+          rawExpiry,
+          isUtc: true,
+        );
+        final objectPath = uri == null || uri.pathSegments.length < 2
+            ? ''
+            : uri.pathSegments.skip(1).join('/');
+        if (uri == null ||
+            uri.scheme != 'https' ||
+            uri.host != 'storage.googleapis.com' ||
+            uri.hasPort ||
+            uri.userInfo.isNotEmpty ||
+            objectPath != path ||
+            uri.queryParameters['generation'] != generation ||
+            !expiresAt.isAfter(DateTime.now().toUtc())) {
+          throw const FormatException('Unsafe room-cover grant.');
+        }
+        _coverAccessCache[cacheKey] = _CachedRoomCoverAccess(
+          uri: uri,
+          expiresAt: expiresAt,
+        );
+        return uri;
+      } finally {
+        _pendingCoverAccess.remove(cacheKey);
+      }
+    });
+  }
+
+  Future<VoiceRoom> _resolveRoomCoverSafely(VoiceRoom room) async {
+    if (!room.hasCanonicalCover) return room;
+    try {
+      return room.withResolvedImageUrl(
+        (await resolveCoverUri(room)).toString(),
+      );
+    } catch (error) {
+      debugPrint('Room cover unavailable for ${room.id}: $error');
+      return room.withResolvedImageUrl(null);
+    }
+  }
+
+  static void clearAllCoverAccessCaches() {
+    _coverAccessCacheEpoch += 1;
+    _coverAccessCache.clear();
+  }
+
   /// A display label for the live-audio session. The LiveKit participant name
   /// is re-derived server-side from the canonical profile
   /// (`buildParticipantName` in functions/livekit/token.js), so this is a
@@ -68,8 +207,8 @@ class RoomService {
   /// Canonical identity for everything this service writes (rosters,
   /// members, messages): the private profile document. Display name never
   /// falls back to Firebase Auth because Auth is a retryable mirror and may
-  /// be stale after a rename. The avatar keeps its legacy fallback because
-  /// this security boundary concerns the canonical display name.
+  /// be stale after a rename. Avatar renderers resolve the uid through the
+  /// viewer-authorized profile-media service instead of copying Auth URLs.
   Future<({String displayName, String? photoUrl})> _identity() async {
     final user = _user;
     final snapshot = await _firestore.collection('users').doc(user.uid).get();
@@ -78,11 +217,10 @@ class RoomService {
     if (name is! String || name.trim().isEmpty) {
       throw StateError('Your profile does not have a display name.');
     }
-    final photo = (data?['photoUrl'] as String?)?.trim();
     return (
       // Preserve exact stored bytes for the byte-for-byte Rules binding.
       displayName: name,
-      photoUrl: photo?.isNotEmpty == true ? photo : user.photoURL,
+      photoUrl: null,
     );
   }
 
@@ -94,7 +232,6 @@ class RoomService {
     required String language,
     required int? maxParticipants,
     required RoomType roomType,
-    String? imageUrl,
     TargetAudience targetAudience = TargetAudience.everyone,
     List<String> topicTags = const <String>[],
     String roomGuidelines = '',
@@ -105,103 +242,77 @@ class RoomService {
     String topic = '',
     bool audienceCanSpeak = true,
     bool handRaisingEnabled = false,
+    String? requestId,
   }) async {
     final user = _user;
     final normalizedName = name.trim();
     if (normalizedName.length < 3) {
       throw ArgumentError('Room name must contain at least 3 characters.');
     }
+    if (normalizedName.length > 100) {
+      throw ArgumentError('Room name cannot exceed 100 characters.');
+    }
+    final normalizedDescription = description.trim();
+    if (normalizedDescription.length > 1000) {
+      throw ArgumentError('Room description cannot exceed 1000 characters.');
+    }
+    final normalizedGuidelines = roomGuidelines.trim();
+    if (normalizedGuidelines.length > RoomMetadataLimits.maxGuidelinesLength) {
+      throw ArgumentError(
+        'Room guidelines cannot exceed '
+        '${RoomMetadataLimits.maxGuidelinesLength} characters.',
+      );
+    }
+    final normalizedTopic = topic.trim();
+    final creationRequestId = requestId ?? _requestIdFactory();
+    if (!RegExp(r'^[A-Za-z0-9_-]{8,128}$').hasMatch(creationRequestId)) {
+      throw ArgumentError('The room creation request id is invalid.');
+    }
 
-    final room = _rooms.doc();
-    final identity = await _identity();
-    final hostName = identity.displayName;
-    final batch = _firestore.batch();
-    final isCommunity = roomType == RoomType.community;
-
-    batch.set(room, {
-      'hostId': user.uid,
-      'hostName': hostName,
-      'hostPhotoUrl': identity.photoUrl,
+    final payload = <String, Object?>{
+      'requestId': creationRequestId,
       'name': normalizedName,
-      'description': description.trim(),
+      'description': normalizedDescription,
       'category': category,
       'visibility': visibility,
       'language': language,
       'maxParticipants': maxParticipants,
-      'participantCount': isCommunity ? 0 : 1,
-      'memberCount': isCommunity ? 1 : 0,
-      'isLive': !isCommunity,
       'roomType': roomType.name,
-      'status': RoomStatus.active.name,
-      'imageUrl': imageUrl,
-      // Descriptive metadata. Written type-scoped on purpose: a community
-      // room never carries showFormat and a broadcast room never carries
-      // conversationStyle, so neither can present itself as the other.
-      // firestore.rules refuses the cross-type write independently.
       'targetAudience': targetAudience.value,
       'topicTags': RoomMetadataLimits.normalizeTags(topicTags),
-      'roomGuidelines': roomGuidelines.trim().substring(
-        0,
-        roomGuidelines.trim().length > RoomMetadataLimits.maxGuidelinesLength
-            ? RoomMetadataLimits.maxGuidelinesLength
-            : roomGuidelines.trim().length,
-      ),
-      if (conversationStyle != null)
-        'conversationStyle': conversationStyle.value,
-      if (newcomerFriendly) 'newcomerFriendly': true,
-      if (showFormat != null) 'showFormat': showFormat.value,
-      // The room type is authorization-relevant while metadata is being
-      // validated. Persist it in the SAME atomic create as showFormat or
-      // conversationStyle; a later configure update is too late for rules to
-      // decide which type-scoped fields the initial document may contain.
+      'roomGuidelines': normalizedGuidelines,
+      'conversationStyle': conversationStyle?.value,
+      'newcomerFriendly': newcomerFriendly,
+      'showFormat': showFormat?.value,
       'experience': experience.firestoreValue,
-      'topic': topic.trim(),
+      'topic': normalizedTopic,
       'audienceCanSpeak': audienceCanSpeak,
       'handRaisingEnabled': handRaisingEnabled,
-      'stageLimit': experience == RoomExperience.broadcast ? 8 : null,
-      'approvalRequired': false,
-      'slowModeSeconds': 0,
-      // Community is a Discord-like open conversation: joining it grants a
-      // normal microphone immediately. Broadcast keeps its audience muted
-      // until the host promotes somebody.
-      'autoMuteNewUsers': experience == RoomExperience.broadcast,
-      'membersCanStartVoice': false,
-      'createdAt': FieldValue.serverTimestamp(),
-      'updatedAt': FieldValue.serverTimestamp(),
-    });
-
-    if (isCommunity) {
-      batch.set(room.collection('roomMembers').doc(user.uid), {
-        'userId': user.uid,
-        'displayName': hostName,
-        'photoUrl': identity.photoUrl,
-        'role': 'owner',
-        'joinedAt': FieldValue.serverTimestamp(),
-      });
+    };
+    final response = _roomCreateInvoker != null
+        ? await _roomCreateInvoker(payload)
+        : (await _functions
+                  .httpsCallable('createRoom')
+                  .call<Map<Object?, Object?>>(payload))
+              .data;
+    final roomId = response['roomId'];
+    if (response['schemaVersion'] != 1 ||
+        roomId is! String ||
+        !RegExp(r'^r_[a-f0-9]{40}$').hasMatch(roomId)) {
+      throw const FormatException('The room creation response is malformed.');
     } else {
-      batch.set(room.collection('participants').doc(user.uid), {
-        'userId': user.uid,
-        'displayName': hostName,
-        'photoUrl': identity.photoUrl,
-        'role': 'host',
-        'isMuted': false,
-        'isSpeaker': true,
-        'isHandRaised': false,
-        'joinedAt': FieldValue.serverTimestamp(),
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
+      final room = await getRoom(roomId);
+      if (room.hostId != user.uid || room.clubId != null) {
+        throw const FormatException('The created room identity is invalid.');
+      }
+      return room;
     }
-
-    await batch.commit();
-
-    if (_shouldIncrementLegacyRoomCount && isCommunity) {
-      await _firestore.collection('users').doc(user.uid).set({
-        'roomCount': FieldValue.increment(1),
-      }, SetOptions(merge: true));
-    }
-
-    return VoiceRoom.fromFirestore(await room.get());
   }
+
+  /// Generates one retry-safe key for a creation flow. The screen retains it
+  /// after an inconclusive callable failure, so another tap recovers the same
+  /// server transaction rather than creating a second room.
+  String newRoomCreationRequestId() => _requestIdFactory();
 
   Stream<List<VoiceRoom>> watchLivePublicRooms() {
     return _rooms
@@ -209,36 +320,40 @@ class RoomService {
         .where('visibility', isEqualTo: 'public')
         .orderBy('createdAt', descending: true)
         .snapshots()
-        .map(
-          (snapshot) => snapshot.docs
+        .asyncMap((snapshot) async {
+          final rooms = snapshot.docs
               .map(VoiceRoom.fromFirestore)
-              .where((room) => room.isActive)
-              .toList(growable: false),
-        );
+              .where((room) => room.isActive);
+          return Future.wait(rooms.map(_resolveRoomCoverSafely));
+        });
   }
 
   Stream<List<VoiceRoom>> watchPublicRooms() {
-    return _rooms.where('visibility', isEqualTo: 'public').snapshots().map((
-      snapshot,
-    ) {
-      final rooms = snapshot.docs
-          .map(VoiceRoom.fromFirestore)
-          .where((room) => room.isActive)
-          .toList();
-      rooms.sort(
-        (a, b) => (b.updatedAt ?? b.createdAt ?? DateTime(1970)).compareTo(
-          a.updatedAt ?? a.createdAt ?? DateTime(1970),
-        ),
-      );
-      return rooms;
-    });
+    return _rooms.where('visibility', isEqualTo: 'public').snapshots().asyncMap(
+      (snapshot) async {
+        final rooms = await Future.wait(
+          snapshot.docs
+              .map(VoiceRoom.fromFirestore)
+              .where((room) => room.isActive)
+              .map(_resolveRoomCoverSafely),
+        );
+        rooms.sort(
+          (a, b) => (b.updatedAt ?? b.createdAt ?? DateTime(1970)).compareTo(
+            a.updatedAt ?? a.createdAt ?? DateTime(1970),
+          ),
+        );
+        return rooms;
+      },
+    );
   }
 
   Stream<List<VoiceRoom>> watchOwnedRooms() {
-    return _rooms.where('hostId', isEqualTo: _user.uid).snapshots().map((
+    return _rooms.where('hostId', isEqualTo: _user.uid).snapshots().asyncMap((
       snapshot,
-    ) {
-      final rooms = snapshot.docs.map(VoiceRoom.fromFirestore).toList();
+    ) async {
+      final rooms = await Future.wait(
+        snapshot.docs.map(VoiceRoom.fromFirestore).map(_resolveRoomCoverSafely),
+      );
       rooms.sort(
         (a, b) => (b.updatedAt ?? b.createdAt ?? DateTime(1970)).compareTo(
           a.updatedAt ?? a.createdAt ?? DateTime(1970),
@@ -265,13 +380,15 @@ class RoomService {
             roomIds.map((roomId) => _rooms.doc(roomId).get()),
           );
 
-          final rooms = documents
+          final parsedRooms = documents
               .where((document) => document.exists)
               .map(VoiceRoom.fromFirestore)
               .where(
                 (room) => room.roomType == RoomType.community && room.isActive,
-              )
-              .toList();
+              );
+          final rooms = await Future.wait(
+            parsedRooms.map(_resolveRoomCoverSafely),
+          );
 
           rooms.sort(
             (a, b) => (b.updatedAt ?? b.createdAt ?? DateTime(1970)).compareTo(
@@ -283,9 +400,9 @@ class RoomService {
   }
 
   Stream<VoiceRoom> watchRoom(String roomId) {
-    return _rooms.doc(roomId).snapshots().map((document) {
+    return _rooms.doc(roomId).snapshots().asyncMap((document) async {
       if (!document.exists) throw StateError('The room no longer exists.');
-      return VoiceRoom.fromFirestore(document);
+      return _resolveRoomCoverSafely(VoiceRoom.fromFirestore(document));
     });
   }
 
@@ -294,7 +411,7 @@ class RoomService {
     if (!document.exists) {
       throw StateError('The room no longer exists.');
     }
-    return VoiceRoom.fromFirestore(document);
+    return _resolveRoomCoverSafely(VoiceRoom.fromFirestore(document));
   }
 
   /// Authoritative read for destructive recovery decisions. A normal get may
@@ -311,7 +428,7 @@ class RoomService {
     if (!document.exists) {
       throw StateError('The room no longer exists.');
     }
-    return VoiceRoom.fromFirestore(document);
+    return _resolveRoomCoverSafely(VoiceRoom.fromFirestore(document));
   }
 
   Stream<bool> watchIsParticipant(String roomId) {
@@ -421,16 +538,21 @@ class RoomService {
     String? roomGuidelines,
     bool? handRaisingEnabled,
   }) async {
-    await _requireHost(roomId);
+    final currentRoom = await _requireHost(roomId);
     final normalizedName = name.trim();
     if (normalizedName.length < 3) {
       throw ArgumentError('Room name must contain at least 3 characters.');
+    }
+    if (currentRoom['visibility'] != visibility) {
+      await _functions.httpsCallable('setRoomVisibilitySelf').call<void>({
+        'roomId': roomId,
+        'visibility': visibility,
+      });
     }
     await _rooms.doc(roomId).update({
       'name': normalizedName,
       'description': description.trim(),
       'category': category,
-      'visibility': visibility,
       'language': language,
       'maxParticipants': maxParticipants,
       'approvalRequired': approvalRequired,
@@ -451,15 +573,39 @@ class RoomService {
     });
   }
 
+  Future<void> finalizeRoomCoverUpload({
+    required String roomId,
+    required String objectGeneration,
+    required String reservationId,
+    required String storagePath,
+  }) async {
+    final request = <String, Object?>{
+      'roomId': roomId,
+      'objectGeneration': objectGeneration,
+      'reservationId': reservationId,
+    };
+    final response = _coverFinalizeInvoker != null
+        ? await _coverFinalizeInvoker(request)
+        : (await _functions
+                  .httpsCallable('finalizeRoomCoverUpload')
+                  .call<Map<Object?, Object?>>(request))
+              .data;
+    if (response['updated'] != true ||
+        response['coverStoragePath'] != storagePath ||
+        response['coverGeneration'] != objectGeneration) {
+      throw StateError('The room cover service returned an invalid result.');
+    }
+    clearAllCoverAccessCaches();
+  }
+
+  @Deprecated('Use finalizeRoomCoverUpload with canonical Storage identity.')
   Future<void> updateImageUrl({
     required String roomId,
     required String imageUrl,
-  }) async {
-    await _requireHost(roomId);
-    await _rooms.doc(roomId).update({
-      'imageUrl': imageUrl,
-      'updatedAt': FieldValue.serverTimestamp(),
-    });
+  }) {
+    throw UnsupportedError(
+      'Durable room-cover download URLs are no longer accepted.',
+    );
   }
 
   Future<void> setRoomStatus(String roomId, RoomStatus status) async {
@@ -470,7 +616,7 @@ class RoomService {
     });
   }
 
-  Future<VoiceRoom> joinRoom(String roomId) async {
+  Future<VoiceRoom> joinRoom(String roomId, {bool startMuted = false}) async {
     final user = _user;
     final identity = await _identity();
     final room = _rooms.doc(roomId);
@@ -495,20 +641,18 @@ class RoomService {
         // and any leave that did not complete, so this is the ordinary path
         // back into a room — not an edge case.
         //
-        // The stored self-mute must not outlive the session it belonged to.
-        // `VoiceCallService.join()` opens the microphone on connect, so a row
-        // still carrying `isMuted: true` from a previous visit would describe
-        // a person as muted while they are audibly speaking, and every other
-        // participant would render a mute badge on their avatar that nothing
-        // could clear.
+        // The roster and LiveKit join must agree on the initial microphone
+        // state. Normal entry starts open; a confirmed external deep link
+        // starts muted. Never leave a previous session's value behind.
         //
         // Only the caller's OWN flag is touched. `hostMuted` and `serverMuted`
         // are left exactly as they are — the rules pin both on this update,
         // and the token honours them independently, so a moderator mute
         // survives re-entry the way it must.
-        if ((existing.data() ?? const <String, dynamic>{})['isMuted'] == true) {
+        if ((existing.data() ?? const <String, dynamic>{})['isMuted'] !=
+            startMuted) {
           transaction.update(participant, {
-            'isMuted': false,
+            'isMuted': startMuted,
             'updatedAt': FieldValue.serverTimestamp(),
           });
         }
@@ -530,7 +674,9 @@ class RoomService {
             : everyoneSpeaks
             ? 'speaker'
             : 'listener',
-        'isMuted': data['hostId'] == user.uid
+        'isMuted': startMuted
+            ? true
+            : data['hostId'] == user.uid
             ? false
             : everyoneSpeaks
             ? false
@@ -545,7 +691,7 @@ class RoomService {
         'updatedAt': FieldValue.serverTimestamp(),
       });
     });
-    return VoiceRoom.fromFirestore(await room.get());
+    return _resolveRoomCoverSafely(VoiceRoom.fromFirestore(await room.get()));
   }
 
   Future<void> joinCommunity(String roomId) async {
@@ -660,27 +806,40 @@ class RoomService {
     return RoomVoiceStartAuthority.none;
   }
 
-  /// Performs the liveness transition and nothing else.
+  /// Starts one server-authorized voice session.
   ///
-  /// The write shape is load-bearing: both `roomVoiceStartAllowed()` and
-  /// `hostRoomUpdateAllowed()`'s start branch require
-  /// `affectedKeys().hasOnly(['isLive', 'endedAt', 'updatedAt'])` and
-  /// `updatedAt == request.time`. Anything else riding along — a counter, a
-  /// visibility flip, a denormalized name — turns an authorized start into a
-  /// permission-denied.
-  ///
-  /// Both rules also require `resource.data.isLive == false`, so a room that
-  /// is ALREADY live must not be written at all; re-asserting `isLive: true`
-  /// is refused by the server. Callers must check first, which
-  /// [RoomVoiceEntryCoordinator] does.
+  /// The request and session ids remain stable after an ambiguous network
+  /// failure. Retrying therefore recovers the original atomic transition;
+  /// it cannot create another follower-notification fanout. Firestore Rules
+  /// deliberately reject every direct false -> true write.
   Future<void> startRoomVoice(String roomId) async {
-    await _rooms.doc(roomId).update({
-      'isLive': true,
-      'updatedAt': FieldValue.serverTimestamp(),
-      // Clearing the closing marker is part of the same permitted key set.
-      // On a room that never ended this is a no-op and contributes no key.
-      'endedAt': FieldValue.delete(),
-    });
+    final pending = _pendingRoomVoiceStarts.putIfAbsent(
+      roomId,
+      () => _PendingRoomVoiceStart(
+        requestId: _requestIdFactory(),
+        sessionId: _requestIdFactory(),
+      ),
+    );
+    final payload = <String, Object?>{
+      'requestId': pending.requestId,
+      'roomId': roomId,
+      'sessionId': pending.sessionId,
+    };
+    final response = _roomVoiceStartInvoker != null
+        ? await _roomVoiceStartInvoker(payload)
+        : (await _functions
+                  .httpsCallable('startRoomVoice')
+                  .call<Map<Object?, Object?>>(payload))
+              .data;
+    if (response['schemaVersion'] != 1 ||
+        response['started'] != true ||
+        response['roomId'] != roomId ||
+        response['sessionId'] != pending.sessionId) {
+      throw const FormatException(
+        'The room voice-start response is malformed.',
+      );
+    }
+    _pendingRoomVoiceStarts.remove(roomId);
   }
 
   /// Turns a dormant room live and puts the caller on its roster.
@@ -740,9 +899,9 @@ class RoomService {
   }
 
   Stream<VoiceRoom?> watchClubLounge(String clubId) {
-    return clubLoungeReference(clubId).snapshots().map((document) {
+    return clubLoungeReference(clubId).snapshots().asyncMap((document) async {
       if (!document.exists) return null;
-      return VoiceRoom.fromFirestore(document);
+      return _resolveRoomCoverSafely(VoiceRoom.fromFirestore(document));
     });
   }
 
@@ -765,7 +924,7 @@ class RoomService {
       transaction.set(reference, {
         'hostId': ownerId,
         'hostName': ownerName,
-        'hostPhotoUrl': ownerPhotoUrl,
+        'hostPhotoUrl': null,
         'name': '$clubName Lounge',
         'description': clubDescription.trim().isEmpty
             ? 'Private voice lounge for $clubName members.'
@@ -885,57 +1044,21 @@ class RoomService {
     required String roomId,
     required String text,
   }) async {
-    final user = _user;
     final normalized = text.trim();
     if (normalized.isEmpty) return;
     if (normalized.length > 500) {
       throw ArgumentError('A room message can contain up to 500 characters.');
     }
-    final identity = await _identity();
-    await _rooms.doc(roomId).collection('messages').add({
-      'senderId': user.uid,
-      'senderName': identity.displayName,
-      'senderPhotoUrl': identity.photoUrl,
+    final payload = <String, Object?>{
+      'requestId': _requestIdFactory(),
+      'roomId': roomId,
       'text': normalized,
-      'createdAt': FieldValue.serverTimestamp(),
-      'reactions': <String, List<String>>{},
-    });
-    await _touchRoomActivity(roomId);
-  }
-
-  /// Advances the room root's `updatedAt`, which is the field
-  /// [watchPublicRooms] and [watchMyCommunities] sort the Home feeds on.
-  ///
-  /// This is a DENORMALIZED ORDERING HINT, not part of sending. By the time
-  /// it runs the message has already committed, so its failure must never be
-  /// reported as "your message didn't send" — that was the live defect: the
-  /// non-host branch of the room-root update rule accepted no bare
-  /// `updatedAt`, so every non-host message landed and then raised
-  /// permission-denied, which the chat sheet surfaced as a send failure and
-  /// which left the composer uncleared, inviting a duplicate send.
-  ///
-  /// Deliberately NOT batched with the message. Fusing them would make chat
-  /// hostage to a recency rule: a refused bump would roll the message back,
-  /// turning a cosmetic ordering defect into message loss. Separate writes
-  /// mean the worst case is a room that sorts stale.
-  ///
-  /// firestore.rules now permits this for anyone the message create rule
-  /// permits to post, so the swallow below should no longer fire in normal
-  /// use. It stays because the conditions that can still refuse it — a room
-  /// frozen or torn down between the two writes, a suspension landing
-  /// mid-send — are all cases where the message is already sent and the user
-  /// has nothing to act on.
-  Future<void> _touchRoomActivity(String roomId) async {
-    try {
-      await _rooms.doc(roomId).update({
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
-    } on FirebaseException catch (error) {
-      debugPrint(
-        'Room recency bump skipped for $roomId: ${error.code}. '
-        'The message itself was already committed.',
-      );
+    };
+    if (_roomMessageSendInvoker != null) {
+      await _roomMessageSendInvoker(payload);
+      return;
     }
+    await _functions.httpsCallable('sendRoomMessage').call(payload);
   }
 
   Future<void> setMuted({required String roomId, required bool isMuted}) async {
@@ -1200,10 +1323,29 @@ class RoomService {
     return memberData['banned'] != true;
   }
 
-  Future<void> _requireHost(String roomId) async {
+  Future<Map<String, dynamic>> _requireHost(String roomId) async {
     final room = await _rooms.doc(roomId).get();
-    if (!room.exists || room.data()?['hostId'] != _user.uid) {
+    final data = room.data();
+    if (!room.exists || data?['hostId'] != _user.uid) {
       throw StateError('Only the room owner can do this.');
     }
+    return data!;
   }
+}
+
+class _CachedRoomCoverAccess {
+  const _CachedRoomCoverAccess({required this.uri, required this.expiresAt});
+
+  final Uri uri;
+  final DateTime expiresAt;
+}
+
+class _PendingRoomVoiceStart {
+  const _PendingRoomVoiceStart({
+    required this.requestId,
+    required this.sessionId,
+  });
+
+  final String requestId;
+  final String sessionId;
 }

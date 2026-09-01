@@ -1,10 +1,15 @@
 const { onDocumentCreated } = require("firebase-functions/v2/firestore");
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { logger } = require("firebase-functions/v2");
-const { FieldValue } = require("firebase-admin/firestore");
+const { FieldValue, Timestamp } = require("firebase-admin/firestore");
 
 const { requireAuthentication } = require("../utils/auth");
 const { db, normalizeText } = require("../utils/firestore");
+const {
+  consumeRateLimit,
+  rateLimitReference,
+  transactionGetAll,
+} = require("../integrity/guards");
 const {
   createNotificationForEvent,
   restrictionIsActive,
@@ -13,9 +18,44 @@ const {
 const REGION = "europe-west1";
 const INVITER_ROLES = new Set(["owner", "coOwner", "admin", "moderator"]);
 const SAFE_ID = /^[A-Za-z0-9_-]{1,128}$/u;
+const CLUB_INVITE_ATTEMPT_LIMITS = Object.freeze({
+  minute: Object.freeze({ maxEvents: 30, windowMs: 60_000 }),
+  hour: Object.freeze({ maxEvents: 200, windowMs: 60 * 60_000 }),
+});
+
+async function consumeClubInviteAttempt(uid, nowMs = Date.now()) {
+  const now = Timestamp.fromMillis(nowMs);
+  const minuteScope = "club.invite.send.minute";
+  const hourScope = "club.invite.send.hour";
+  const minuteRef = rateLimitReference(db, minuteScope, uid);
+  const hourRef = rateLimitReference(db, hourScope, uid);
+  await db.runTransaction(async (transaction) => {
+    const [minute, hour] = await transactionGetAll(
+      transaction,
+      minuteRef,
+      hourRef,
+    );
+    consumeRateLimit(transaction, minute, {
+      reference: minuteRef,
+      scope: minuteScope,
+      uid,
+      nowMs,
+      now,
+      ...CLUB_INVITE_ATTEMPT_LIMITS.minute,
+    });
+    consumeRateLimit(transaction, hour, {
+      reference: hourRef,
+      scope: hourScope,
+      uid,
+      nowMs,
+      now,
+      ...CLUB_INVITE_ATTEMPT_LIMITS.hour,
+    });
+  });
+}
 
 const sendClubInvite = onCall(
-  { region: REGION, enforceAppCheck: false },
+  { region: REGION, enforceAppCheck: false, maxInstances: 20 },
   async (request) => {
     const auth = requireAuthentication(request);
     if (auth.token?.email_verified !== true) {
@@ -33,6 +73,11 @@ const sendClubInvite = onCall(
     ) {
       throw new HttpsError("invalid-argument", "A valid Club and invitee are required.");
     }
+
+    // Commit the actor-wide attempt quota before any target/member graph
+    // reads. Denials and deterministic invite replays must not roll the
+    // throttle back and become a 12-read denial-of-wallet loop.
+    await consumeClubInviteAttempt(auth.uid);
 
     const clubReference = db.doc(`clubs/${clubId}`);
     const inviterReference = db.doc(`users/${auth.uid}`);
@@ -254,6 +299,8 @@ const onClubMemberCreated = onDocumentCreated(
 );
 
 module.exports = {
+  CLUB_INVITE_ATTEMPT_LIMITS,
+  consumeClubInviteAttempt,
   sendClubInvite,
   onClubInviteCreated,
   onClubMemberCreated,

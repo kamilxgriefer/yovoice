@@ -57,7 +57,7 @@ class Conversation {
   }
 
   String photoUrlFor(String userId) {
-    return participantPhotoUrls[userId] ?? '';
+    return '';
   }
 
   int unreadCountFor(String userId) {
@@ -84,7 +84,7 @@ class Conversation {
         userId: displayName.trim().isEmpty ? 'YO Voice user' : displayName,
       },
       participantEmails: participantEmails,
-      participantPhotoUrls: {...participantPhotoUrls, userId: photoUrl},
+      participantPhotoUrls: participantPhotoUrls,
       unreadCounts: unreadCounts,
       lastMessage: lastMessage,
       lastMessageType: lastMessageType,
@@ -125,7 +125,7 @@ class Conversation {
       ),
       participantNames: _stringMap(data['participantNames']),
       participantEmails: _stringMap(data['participantEmails']),
-      participantPhotoUrls: _stringMap(data['participantPhotoUrls']),
+      participantPhotoUrls: const <String, String>{},
       unreadCounts: _intMap(data['unreadCounts']),
       lastMessage: data['lastMessage'] as String? ?? '',
       lastMessageType: _messageTypeFromString(

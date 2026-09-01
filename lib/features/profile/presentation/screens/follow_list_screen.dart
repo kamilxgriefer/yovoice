@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
+import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
 import '../../data/models/follow_user.dart';
 import '../../data/services/follow_service.dart';
@@ -84,21 +85,11 @@ class FollowListScreen extends StatelessWidget {
                   ),
                   child: Row(
                     children: [
-                      CircleAvatar(
+                      UserAvatar(
                         radius: 24,
+                        userId: user.uid,
+                        displayName: user.displayName,
                         backgroundColor: colors.primary,
-                        backgroundImage: user.photoUrl == null
-                            ? null
-                            : NetworkImage(user.photoUrl!),
-                        child: user.photoUrl == null
-                            ? Text(
-                                user.initial,
-                                style: TextStyle(
-                                  color: colors.onPrimary,
-                                  fontWeight: FontWeight.w900,
-                                ),
-                              )
-                            : null,
                       ),
                       const SizedBox(width: 12),
                       Expanded(

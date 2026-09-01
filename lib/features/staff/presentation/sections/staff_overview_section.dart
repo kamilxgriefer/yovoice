@@ -181,7 +181,11 @@ class _StaffOverviewSectionState extends State<StaffOverviewSection> {
                   'Active rooms',
                   widget.onOpenRooms,
                   overview.activeRooms.isEmpty
-                      ? [const StaffEmptyState(message: 'Nothing live right now.')]
+                      ? [
+                          const StaffEmptyState(
+                            message: 'Nothing live right now.',
+                          ),
+                        ]
                       : [
                           for (final room in overview.activeRooms)
                             _line(
@@ -211,7 +215,11 @@ class _StaffOverviewSectionState extends State<StaffOverviewSection> {
                   'Recent role changes',
                   widget.onOpenStaffRoles,
                   overview.recentRoleChanges.isEmpty
-                      ? [const StaffEmptyState(message: 'No recent role changes.')]
+                      ? [
+                          const StaffEmptyState(
+                            message: 'No recent role changes.',
+                          ),
+                        ]
                       : [
                           for (final entry in overview.recentRoleChanges)
                             _line(

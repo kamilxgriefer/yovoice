@@ -180,6 +180,20 @@ class MessageService {
 
   FirebaseStorage get _storage => _storageOverride ?? FirebaseStorage.instance;
 
+  /// Clears plaintext retry state at the account boundary. Sign-out calls this
+  /// before Firebase Auth is cleared so no active delivery loop can retain a
+  /// reference to another account's pending text, image or voice payload.
+  Future<void> clearLocalSensitiveStateForUser(String userId) async {
+    if (_auth.currentUser?.uid != userId) {
+      throw StateError('The local message owner changed before cleanup.');
+    }
+    final textQueue = outbox;
+    final mediaQueue = attachmentOutbox;
+    _drainTimers.remove(textQueue)?.cancel();
+    _attachmentDrainTimers.remove(mediaQueue)?.cancel();
+    await Future.wait<void>([textQueue.clear(), mediaQueue.clear()]);
+  }
+
   FirebaseFunctions? get _functions {
     if (_functionsOverride != null) {
       return _functionsOverride;
@@ -485,10 +499,7 @@ class MessageService {
               ? 'YO Voice user'
               : otherDisplayName.trim(),
         },
-        'participantPhotoUrls': {
-          currentUser.uid: currentUser.photoURL ?? '',
-          otherUserId: otherPhotoUrl,
-        },
+        'participantPhotoUrls': {currentUser.uid: '', otherUserId: ''},
         'unreadCounts': {currentUser.uid: 0, otherUserId: 0},
         'typing': <String, dynamic>{},
         'archivedBy': <String>[],

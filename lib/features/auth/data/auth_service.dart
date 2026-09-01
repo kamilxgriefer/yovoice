@@ -13,6 +13,9 @@ import 'package:yovoice/features/auth/data/auth_profile_identity.dart';
 import 'package:yovoice/features/auth/data/totp_mfa_service.dart';
 import 'package:yovoice/features/calls/data/services/direct_call_service.dart';
 import 'package:yovoice/features/calls/data/services/voice_call_service.dart';
+import 'package:yovoice/features/messages/data/services/message_service.dart';
+import 'package:yovoice/features/moments/data/services/moment_service.dart';
+import 'package:yovoice/features/moments/data/services/offline_voice_moment_service.dart';
 import 'package:yovoice/features/notifications/data/services/push_notification_service.dart';
 import 'package:yovoice/features/premium/data/services/entitlement_service.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
@@ -38,6 +41,8 @@ typedef ActiveVoiceSessionReader =
 typedef ActiveVoiceDisconnect = Future<void> Function();
 typedef ActiveRoomLeave = Future<void> Function(String roomId);
 typedef ActiveDirectCallEnd = Future<void> Function(String callId);
+typedef LocalSensitiveDataClear = Future<void> Function(String userId);
+typedef EphemeralMediaAccessClear = void Function();
 
 class AuthService {
   AuthService({
@@ -52,6 +57,8 @@ class AuthService {
     @visibleForTesting ActiveVoiceDisconnect? disconnectActiveVoice,
     @visibleForTesting ActiveRoomLeave? leaveActiveRoom,
     @visibleForTesting ActiveDirectCallEnd? endActiveDirectCall,
+    @visibleForTesting LocalSensitiveDataClear? clearLocalSensitiveData,
+    @visibleForTesting EphemeralMediaAccessClear? clearEphemeralMediaAccess,
     @visibleForTesting
     Duration bestEffortCleanupTimeout = const Duration(seconds: 10),
   }) : _firebaseAuth = firebaseAuth ?? FirebaseAuth.instance,
@@ -62,6 +69,8 @@ class AuthService {
        _injectedDisconnectActiveVoice = disconnectActiveVoice,
        _injectedLeaveActiveRoom = leaveActiveRoom,
        _injectedEndActiveDirectCall = endActiveDirectCall,
+       _injectedClearLocalSensitiveData = clearLocalSensitiveData,
+       _injectedClearEphemeralMediaAccess = clearEphemeralMediaAccess,
        _bestEffortCleanupTimeout = bestEffortCleanupTimeout,
        _appleSignInFeatureEnabled =
            appleSignInFeatureEnabled ??
@@ -89,6 +98,8 @@ class AuthService {
   final ActiveVoiceDisconnect? _injectedDisconnectActiveVoice;
   final ActiveRoomLeave? _injectedLeaveActiveRoom;
   final ActiveDirectCallEnd? _injectedEndActiveDirectCall;
+  final LocalSensitiveDataClear? _injectedClearLocalSensitiveData;
+  final EphemeralMediaAccessClear? _injectedClearEphemeralMediaAccess;
   final Duration _bestEffortCleanupTimeout;
 
   final GoogleSignIn _googleSignIn = GoogleSignIn.instance;
@@ -396,6 +407,10 @@ class AuthService {
   ///    disconnects it centrally and, for a room session, leaves the server
   ///    roster while Auth can still authorize that mutation.
   ///
+  ///  * **Local pending messages.** Text drafts and photo/voice payloads are
+  ///    durable for offline retry, but must be purged before another account
+  ///    can use the same device.
+  ///
   /// All are best-effort. A cleanup failure is reported and swallowed — it
   /// must never trap someone in a session they asked to leave.
   ///
@@ -420,6 +435,19 @@ class AuthService {
   Future<void> _performSignOut() async {
     final userId = _firebaseAuth.currentUser?.uid;
 
+    // Signed Voice Moment URLs are short-lived bearer grants. Invalidate the
+    // process-wide cache (including in-flight resolutions) before any async
+    // cleanup yields so an account switch cannot retain a usable grant.
+    try {
+      (_injectedClearEphemeralMediaAccess ??
+          MomentService.clearAllMediaAccessCaches)();
+    } catch (error) {
+      debugPrint(
+        'AuthService.signOut: ephemeral media-grant cleanup failed '
+        '(${error.runtimeType}). Sign-out will continue.',
+      );
+    }
+
     final cleanup = <Future<void>>[
       _clearActiveVoiceSessionBestEffort(canLeaveRoom: userId != null),
     ];
@@ -427,6 +455,7 @@ class AuthService {
       cleanup.addAll([
         _unregisterDeviceTokenBestEffort(),
         _setOfflineBestEffort(userId),
+        _clearLocalSensitiveDataBestEffort(userId),
       ]);
     }
     await Future.wait<void>(cleanup);
@@ -551,6 +580,28 @@ class AuthService {
       );
     }
   }
+
+  Future<void> _clearLocalSensitiveDataBestEffort(String userId) async {
+    try {
+      final clear = _injectedClearLocalSensitiveData ?? _clearLocalUserData;
+      await clear(userId).timeout(_bestEffortCleanupTimeout);
+    } on TimeoutException {
+      debugPrint(
+        'AuthService.signOut: local private-data cleanup exceeded the '
+        'bounded window. Sign-out will continue.',
+      );
+    } catch (error) {
+      debugPrint(
+        'AuthService.signOut: local private-data cleanup failed '
+        '(${error.runtimeType}). Sign-out will continue.',
+      );
+    }
+  }
+
+  Future<void> _clearLocalUserData(String userId) => Future.wait<void>([
+    MessageService.live.clearLocalSensitiveStateForUser(userId),
+    OfflineVoiceMomentService.instance.clearForUser(userId),
+  ]);
 
   Future<void> _initializeGoogleSignIn() async {
     final existingInitialization = _googleSignInInitialization;

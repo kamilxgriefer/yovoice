@@ -531,7 +531,9 @@ class _Body extends StatelessWidget {
               ),
               child: UserAvatar(
                 radius: 34,
+                userId: userId,
                 photoUrl: photo,
+                mediaRevision: profile?.profileUpdatedAt,
                 displayName: name,
                 premium: profile?.premiumIdentity ?? false,
               ),

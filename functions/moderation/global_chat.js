@@ -64,7 +64,10 @@ async function handleGlobalMessageModerated(event) {
   } catch (error) {
     // An audit write must never resurrect a message that has already
     // been removed for the community.
-    logger.error("Failed to audit a Global Chat moderation action", error);
+    logger.error("Failed to audit a Global Chat moderation action", {
+      errorName: error?.name ?? null,
+      errorCode: error?.code ?? null,
+    });
   }
 }
 

@@ -151,10 +151,7 @@ class _DesktopMomentsStripState extends State<DesktopMomentsStrip> {
                   builder: (context, snapshot) {
                     final all = snapshot.data ?? const <VoiceMoment>[];
                     final playable = all
-                        .where(
-                          (moment) =>
-                              moment.audioUrl?.trim().isNotEmpty == true,
-                        )
+                        .where((moment) => moment.hasMediaReference)
                         .toList(growable: false);
                     final chains = buildMomentChains(playable);
                     final explicitUserId = widget.currentUserId?.trim();
@@ -461,6 +458,7 @@ class _MomentTile extends StatelessWidget {
                   highlighted: fresh,
                   child: UserAvatar(
                     radius: 25,
+                    userId: moment.authorId,
                     photoUrl: moment.authorPhotoUrl,
                     displayName: moment.authorName,
                   ),
@@ -644,7 +642,9 @@ class _YourMomentTile extends StatelessWidget {
                         highlighted: fresh,
                         child: UserAvatar(
                           radius: 25,
+                          userId: profile?.uid,
                           photoUrl: profile?.photoUrl,
+                          mediaRevision: profile?.profileUpdatedAt,
                           displayName: profile?.displayName,
                           fallbackIcon: Icons.person_rounded,
                         ),

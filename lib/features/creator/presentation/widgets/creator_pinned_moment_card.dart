@@ -7,6 +7,7 @@ import 'package:yovoice/features/creator/data/models/creator_pinned_post.dart';
 import 'package:yovoice/features/creator/data/services/creator_pinned_post_service.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
 import 'package:yovoice/features/moments/data/services/moment_expiry_scheduler.dart';
+import 'package:yovoice/features/moments/data/services/moment_service.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_expiry_accessibility.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_expiry_boundary.dart';
 
@@ -21,6 +22,7 @@ class CreatorPinnedMomentCard extends StatefulWidget {
   const CreatorPinnedMomentCard({
     required this.creatorId,
     this.service,
+    this.momentService,
     this.onOpen,
     this.compact = false,
     this.outerPadding = EdgeInsets.zero,
@@ -32,6 +34,7 @@ class CreatorPinnedMomentCard extends StatefulWidget {
 
   final String creatorId;
   final CreatorPinnedPostService? service;
+  final MomentService? momentService;
   final ValueChanged<VoiceMoment>? onOpen;
   final bool compact;
   final EdgeInsetsGeometry outerPadding;
@@ -129,6 +132,7 @@ class _CreatorPinnedMomentCardState extends State<CreatorPinnedMomentCard> {
               _PinnedMomentPlayButton(
                 key: _playButtonKey,
                 moment: moment,
+                momentService: widget.momentService,
                 playerFactory: widget.playerFactory,
               ),
               const SizedBox(width: 13),
@@ -216,11 +220,13 @@ class _CreatorPinnedMomentCardState extends State<CreatorPinnedMomentCard> {
 class _PinnedMomentPlayButton extends StatefulWidget {
   const _PinnedMomentPlayButton({
     required this.moment,
+    this.momentService,
     this.playerFactory,
     super.key,
   });
 
   final VoiceMoment moment;
+  final MomentService? momentService;
   final AudioPlayer Function()? playerFactory;
 
   @override
@@ -230,6 +236,7 @@ class _PinnedMomentPlayButton extends StatefulWidget {
 
 class _PinnedMomentPlayButtonState extends State<_PinnedMomentPlayButton> {
   late final AudioPlayer _player = (widget.playerFactory ?? AudioPlayer.new)();
+  MomentService? _moments;
   late final StreamSubscription<void> _completeSubscription;
   bool _playing = false;
   bool _changingPlayback = false;
@@ -237,6 +244,9 @@ class _PinnedMomentPlayButtonState extends State<_PinnedMomentPlayButton> {
   @override
   void initState() {
     super.initState();
+    // Keep the Firebase-backed resolver lazy: rendering a public pin must not
+    // require Firebase/Storage until the listener actually presses Play.
+    _moments = widget.momentService;
     _completeSubscription = _player.onPlayerComplete.listen((_) {
       if (mounted) setState(() => _playing = false);
     });
@@ -245,8 +255,11 @@ class _PinnedMomentPlayButtonState extends State<_PinnedMomentPlayButton> {
   @override
   void didUpdateWidget(_PinnedMomentPlayButton oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.momentService != widget.momentService) {
+      _moments = widget.momentService;
+    }
     if (oldWidget.moment.id != widget.moment.id ||
-        oldWidget.moment.audioUrl != widget.moment.audioUrl) {
+        oldWidget.moment.mediaGeneration != widget.moment.mediaGeneration) {
       unawaited(stopPlayback());
     }
   }
@@ -272,14 +285,15 @@ class _PinnedMomentPlayButtonState extends State<_PinnedMomentPlayButton> {
   }
 
   Future<void> _togglePlayback() async {
-    final audioUrl = widget.moment.audioUrl;
-    if (_changingPlayback || audioUrl == null || audioUrl.isEmpty) return;
+    if (_changingPlayback || !widget.moment.hasMediaReference) return;
     setState(() => _changingPlayback = true);
     try {
       if (_playing) {
         await _player.pause();
       } else {
-        await _player.play(UrlSource(audioUrl));
+        final moments = _moments ??= MomentService();
+        final uri = await moments.resolveMediaUri(momentId: widget.moment.id);
+        await _player.play(UrlSource(uri.toString()));
       }
       if (mounted) setState(() => _playing = !_playing);
     } catch (_) {

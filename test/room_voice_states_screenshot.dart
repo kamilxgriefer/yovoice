@@ -102,6 +102,7 @@ class _StubVoice extends VoiceCallService {
     required String roomName,
     required String participantName,
     bool playSound = true,
+    bool startMuted = false,
   }) async {}
 
   @override

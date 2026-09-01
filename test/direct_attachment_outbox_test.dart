@@ -245,6 +245,43 @@ void main() {
     expect(payloadStore.keysCalls, 2);
     expect(queue.entries, isEmpty);
   });
+
+  test(
+    'sign-out clear removes both private metadata and payload bytes',
+    () async {
+      final queue = DirectAttachmentOutbox(
+        ownerId: 'account-a',
+        preferences: preferences,
+        payloadStore: payloadStore,
+        idFactory: () => 'attachment_logout_1',
+      );
+      final saved = await queue.enqueue(
+        fingerprint: List<String>.filled(64, '9').join(),
+        conversationId: 'private-conversation',
+        type: MessageType.voice,
+        contentType: 'audio/mp4',
+        durationSeconds: 12,
+        bytes: Uint8List(2048),
+        reserveRequestId: 'reserve-logout',
+        finalizeRequestId: 'finalize-logout',
+      );
+      expect(
+        await payloadStore.exists(queue.accountNamespace, saved.id),
+        isTrue,
+      );
+
+      await queue.clear();
+
+      expect(queue.entries, isEmpty);
+      expect(await payloadStore.keys(queue.accountNamespace), isEmpty);
+      expect(
+        preferences.getString(
+          'messages.attachment_outbox.v1.${queue.accountNamespace}',
+        ),
+        isNull,
+      );
+    },
+  );
 }
 
 class _MemoryPayloadStore implements DirectAttachmentPayloadStore {

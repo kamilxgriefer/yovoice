@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/theme/app_motion.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_spacing.dart';
 import 'package:yovoice/core/theme/app_typography.dart';
@@ -32,10 +33,11 @@ class YoEmptyState extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
+    final duration = AppMotion.resolve(context, AppMotion.entrance);
     return TweenAnimationBuilder<double>(
       tween: Tween<double>(begin: 0, end: 1),
-      duration: const Duration(milliseconds: 320),
-      curve: Curves.easeOutCubic,
+      duration: duration,
+      curve: AppMotion.entranceCurve,
       builder: (context, value, child) {
         return Opacity(
           opacity: value,
@@ -70,11 +72,14 @@ class YoEmptyState extends StatelessWidget {
               child: Icon(icon, size: 34, color: palette.interactiveForeground),
             ),
             const SizedBox(height: AppSpacing.lg),
-            Text(
-              title,
-              textAlign: TextAlign.center,
-              style: AppTypography.titleLarge.copyWith(
-                color: palette.textPrimary,
+            Semantics(
+              header: true,
+              child: Text(
+                title,
+                textAlign: TextAlign.center,
+                style: AppTypography.titleLarge.copyWith(
+                  color: palette.textPrimary,
+                ),
               ),
             ),
             if (subtitle != null) ...<Widget>[

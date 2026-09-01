@@ -1,4 +1,5 @@
 const {
+  FieldValue,
   FieldPath,
   getFirestore,
   Timestamp,
@@ -9,6 +10,9 @@ const {
   createDirectMessagingService,
 } = require("../messaging/direct_integrity");
 const {
+  createCommunityMessagingService,
+} = require("../messaging/community_integrity");
+const {
   createDirectMigrationService,
 } = require("../messaging/direct_migration");
 const {
@@ -18,6 +22,11 @@ const {
 const {
   createMomentMigrationService,
 } = require("../moments/migration");
+const { createRoomCoverService } = require("../rooms/covers");
+const { createRoomCreationService } = require("../rooms/creation");
+const {
+  createRoomCoverMigrationService,
+} = require("../rooms/cover_migration");
 
 /**
  * Creates one dependency graph for the Stage B bindings.
@@ -34,9 +43,13 @@ function createStageBIntegrityRuntime({
   TimestampImpl = Timestamp,
   clock = () => Date.now(),
   directOptions = {},
+  communityOptions = {},
   momentOptions = {},
   directMigrationOptions = {},
   momentMigrationOptions = {},
+  roomCoverOptions = {},
+  roomCreationOptions = {},
+  roomCoverMigrationOptions = {},
 } = {}) {
   const database = db ?? getFirestore();
   const objectStorage = storage ?? createBucketStorageAdapter(
@@ -49,6 +62,12 @@ function createStageBIntegrityRuntime({
     storage: objectStorage,
     clock,
     ...directOptions,
+  });
+  const community = createCommunityMessagingService({
+    db: database,
+    Timestamp: TimestampImpl,
+    clock,
+    ...communityOptions,
   });
   const moments = createMomentIntegrityService({
     db: database,
@@ -73,15 +92,41 @@ function createStageBIntegrityRuntime({
     clock,
     ...momentMigrationOptions,
   });
+  const roomCovers = createRoomCoverService({
+    db: database,
+    Timestamp: TimestampImpl,
+    storage: objectStorage,
+    clock,
+    ...roomCoverOptions,
+  });
+  const roomCreation = createRoomCreationService({
+    db: database,
+    FieldValue,
+    Timestamp: TimestampImpl,
+    clock,
+    ...roomCreationOptions,
+  });
+  const roomCoverMigration = createRoomCoverMigrationService({
+    db: database,
+    FieldPath: FieldPathImpl,
+    Timestamp: TimestampImpl,
+    storage: objectStorage,
+    clock,
+    ...roomCoverMigrationOptions,
+  });
 
   return Object.freeze({
     clock,
+    community,
     db: database,
     direct,
     directMigration,
     FieldPath: FieldPathImpl,
     moments,
     momentMigration,
+    roomCovers,
+    roomCreation,
+    roomCoverMigration,
     storage: objectStorage,
     Timestamp: TimestampImpl,
   });

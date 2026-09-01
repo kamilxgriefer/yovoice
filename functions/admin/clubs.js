@@ -5,7 +5,6 @@ const { getStorage } = require("firebase-admin/storage");
 const { ROOM_MANAGEMENT_ROLES } = require("../utils/roles");
 
 const {
-  requireActiveSuperAdmin,
   requireVerifiedStaff,
   requireProtectedOwner,
 } = require("../utils/auth");
@@ -135,7 +134,7 @@ function mapClubMember(document) {
 
     username: data.username ?? "",
 
-    photoUrl: data.photoUrl ?? null,
+    photoUrl: null,
 
     role: data.role ?? "member",
 
@@ -279,6 +278,7 @@ const setClubModerationStatus = onCall(
       request,
       ROOM_MANAGEMENT_ROLES,
       "Only active moderation staff can moderate Clubs.",
+      { privileged: true },
     );
 
     const clubId = normalizeText(request.data?.clubId, 128);
@@ -413,6 +413,7 @@ const removeClubMember = onCall(
       request,
       ROOM_MANAGEMENT_ROLES,
       "Only active moderation staff can remove Club members.",
+      { privileged: true },
     );
 
     const clubId = normalizeText(request.data?.clubId, 128);
@@ -526,6 +527,7 @@ const setClubMemberBan = onCall(
       request,
       ROOM_MANAGEMENT_ROLES,
       "Only active moderation staff can ban Club members.",
+      { privileged: true },
     );
 
     const clubId = normalizeText(request.data?.clubId, 128);
@@ -621,14 +623,14 @@ const transferClubOwnership = onCall(
   {
     region: REGION,
     enforceAppCheck: false,
-    secrets: LIVEKIT_SECRETS,
+    secrets: ["YOVOICE_PROTECTED_OWNER_UID", ...LIVEKIT_SECRETS],
     timeoutSeconds: 120,
   },
   async (request) => {
-    // Ownership transfer is stronger than ordinary moderation. Check both
-    // the signed claim and the live server role record so a revoked or banned
-    // super admin cannot keep using a stale ID token for this operation.
-    const caller = await requireActiveSuperAdmin(request);
+    // Ownership transfer is an owner-only mutation. A mirrored superAdmin
+    // role is not enough: the immutable protected-owner uid, current role
+    // pair and step-up authentication must all agree.
+    const caller = await requireProtectedOwner(request, { privileged: true });
 
     const clubId = normalizeText(request.data?.clubId, 128);
 
@@ -846,7 +848,7 @@ const transferClubOwnership = onCall(
           hostId: newOwnerId,
           hostName:
             newOwner.displayName ?? newOwner.name ?? "YO Voice user",
-          hostPhotoUrl: newOwner.photoUrl ?? null,
+          hostPhotoUrl: null,
           isLive: false,
           participantCount: 0,
           endedAt: FieldValue.serverTimestamp(),
@@ -927,7 +929,7 @@ const adminDeleteClub = onCall(
     secrets: ["YOVOICE_PROTECTED_OWNER_UID", ...LIVEKIT_SECRETS],
   },
   async (request) => {
-    const caller = await requireProtectedOwner(request);
+    const caller = await requireProtectedOwner(request, { privileged: true });
 
     const clubId = normalizeText(request.data?.clubId, 128);
 

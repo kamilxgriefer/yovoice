@@ -13,12 +13,14 @@ import 'package:yovoice/features/auth/data/auth_service.dart';
 import 'package:yovoice/features/auth/providers/auth_provider.dart';
 import 'package:yovoice/services/firestore_service.dart';
 
-/// Signing out has two pieces of cleanup that the SERVER only permits while
-/// the session is still live:
+/// Signing out owns the server-side cleanup that requires a live session and
+/// the local privacy cleanup that must complete before another account starts:
 ///
 ///  * `users/{uid}` presence — `firestore.rules` gates the update on
 ///    `isSignedIn() && isOwner(uid)`.
 ///  * `fcmTokens/{token}` — deleting it needs `isOwner(uid)`.
+///  * persisted pending texts and attachment payloads — removing them keeps a
+///    shared device from exposing one account's unsent private content.
 ///
 /// Both used to be written on the wrong side of that boundary (presence) or
 /// skipped entirely (the token, on three of five sign-out entry points).
@@ -72,6 +74,37 @@ class _RecordingDeviceUnregister {
     final thrown = failure;
     if (thrown != null) throw thrown;
     if (neverCompletes) await Completer<void>().future;
+  }
+}
+
+class _RecordingLocalSensitiveDataClear {
+  _RecordingLocalSensitiveDataClear(this._auth);
+
+  final FirebaseAuth _auth;
+  final List<String> owners = <String>[];
+  final List<bool> sessionAliveAtCall = <bool>[];
+  Object? failure;
+  bool neverCompletes = false;
+
+  Future<void> call(String userId) async {
+    owners.add(userId);
+    sessionAliveAtCall.add(_auth.currentUser != null);
+    final thrown = failure;
+    if (thrown != null) throw thrown;
+    if (neverCompletes) await Completer<void>().future;
+  }
+}
+
+class _RecordingEphemeralMediaAccessClear {
+  _RecordingEphemeralMediaAccessClear(this._auth);
+
+  final FirebaseAuth _auth;
+  int calls = 0;
+  final List<bool> sessionAliveAtCall = <bool>[];
+
+  void call() {
+    calls += 1;
+    sessionAliveAtCall.add(_auth.currentUser != null);
   }
 }
 
@@ -136,12 +169,16 @@ class _Harness {
        firestore = FakeFirebaseFirestore() {
     presence = _RecordingPresenceService(auth, firestore);
     unregister = _RecordingDeviceUnregister(auth);
+    localData = _RecordingLocalSensitiveDataClear(auth);
+    mediaGrants = _RecordingEphemeralMediaAccessClear(auth);
     voice = _RecordingVoiceCleanup(auth, active: activeVoiceSession);
     service = AuthService(
       firebaseAuth: auth,
       firestoreService: FirestoreService(firestore: firestore),
       presenceService: presence,
       unregisterDeviceToken: unregister.call,
+      clearLocalSensitiveData: localData.call,
+      clearEphemeralMediaAccess: mediaGrants.call,
       activeVoiceSessionReader: voice.read,
       disconnectActiveVoice: voice.disconnect,
       leaveActiveRoom: voice.leave,
@@ -154,6 +191,8 @@ class _Harness {
   final FakeFirebaseFirestore firestore;
   late final _RecordingPresenceService presence;
   late final _RecordingDeviceUnregister unregister;
+  late final _RecordingLocalSensitiveDataClear localData;
+  late final _RecordingEphemeralMediaAccessClear mediaGrants;
   late final _RecordingVoiceCleanup voice;
   late final AuthService service;
 }
@@ -218,6 +257,33 @@ void main() {
       },
     );
 
+    test(
+      'purges pending private local data before the account changes',
+      () async {
+        final harness = _Harness();
+
+        await harness.service.signOut();
+
+        expect(harness.localData.owners, <String>['user-1']);
+        expect(harness.localData.sessionAliveAtCall, <bool>[true]);
+        expect(harness.auth.currentUser, isNull);
+      },
+    );
+
+    test(
+      'invalidates ephemeral media grants immediately while the session is live',
+      () async {
+        final harness = _Harness();
+
+        final signOut = harness.service.signOut();
+        expect(harness.mediaGrants.calls, 1);
+        expect(harness.mediaGrants.sessionAliveAtCall, <bool>[true]);
+
+        await signOut;
+        expect(harness.auth.currentUser, isNull);
+      },
+    );
+
     test('does no cleanup when nobody is signed in', () async {
       final harness = _Harness();
       await harness.auth.signOut();
@@ -226,6 +292,7 @@ void main() {
 
       expect(harness.presence.offlineWrites, isEmpty);
       expect(harness.unregister.calls, 0);
+      expect(harness.localData.owners, isEmpty);
     });
   });
 
@@ -282,6 +349,7 @@ void main() {
         firestoreService: FirestoreService(firestore: harness.firestore),
         presenceService: harness.presence,
         unregisterDeviceToken: harness.unregister.call,
+        clearLocalSensitiveData: harness.localData.call,
         activeVoiceSessionReader: harness.voice.read,
         disconnectActiveVoice: harness.voice.disconnect,
         leaveActiveRoom: harness.voice.leave,

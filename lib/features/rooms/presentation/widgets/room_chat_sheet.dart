@@ -583,6 +583,7 @@ class _MessageRow extends StatelessWidget {
                 radius: 22,
                 child: UserAvatar(
                   radius: 18,
+                  userId: message.senderId,
                   photoUrl: message.senderPhotoUrl,
                   displayName: message.senderName,
                 ),

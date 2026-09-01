@@ -263,7 +263,16 @@ describe("getMyStaffCapabilities", () => {
 
 describe("setUserBan tiers (caller-side boundaries)", () => {
   function banRequest(uid, role, data) {
-    return { auth: { uid, token: { role } }, data };
+    return {
+      auth: {
+        uid,
+        token: {
+          role,
+          auth_time: Math.floor(Date.now() / 1000),
+        },
+      },
+      data,
+    };
   }
 
   test("a moderator may not exceed 24 hours, ban permanently, or unban", async () => {

@@ -62,6 +62,7 @@ function createStageBFunctions({
     Timestamp: resolvedRuntime.Timestamp,
     directMigration: resolvedRuntime.directMigration,
     momentMigration: resolvedRuntime.momentMigration,
+    roomCoverMigration: resolvedRuntime.roomCoverMigration,
     authorize: authorizeMigration,
     clock: resolvedRuntime.clock,
   });
@@ -70,6 +71,7 @@ function createStageBFunctions({
     direct: resolvedRuntime.direct,
     FieldPath: resolvedRuntime.FieldPath,
     moments: resolvedRuntime.moments,
+    roomCovers: resolvedRuntime.roomCovers,
     logger: log,
     cleanupBatchSize,
     expiryBatchSize,
@@ -99,6 +101,18 @@ function createStageBFunctions({
     privilegedOptions,
     migrationHandlers.migrateMoment,
   );
+  exportsMap.scanRoomCoverIntegrityMigration = registrars.onCall(
+    privilegedOptions,
+    migrationHandlers.scanRoomCoverMigration,
+  );
+  exportsMap.migrateIntegrityRoomCover = registrars.onCall(
+    privilegedOptions,
+    migrationHandlers.migrateRoomCover,
+  );
+  exportsMap.scanRoomCoverObjectInventory = registrars.onCall(
+    privilegedOptions,
+    migrationHandlers.scanRoomCoverObjectInventory,
+  );
 
   const scheduleBase = {
     region: REGION,
@@ -123,6 +137,11 @@ function createStageBFunctions({
     registrars.onSchedule(
       { ...scheduleBase, schedule: "every 10 minutes" },
       maintenanceHandlers.expireAbandonedDirectMessageAttachments,
+    );
+  exportsMap.expireRoomCoverUploadReservationsSchedule =
+    registrars.onSchedule(
+      { ...scheduleBase, schedule: "every 10 minutes" },
+      maintenanceHandlers.expireRoomCoverUploadReservations,
     );
 
   const eventBase = {

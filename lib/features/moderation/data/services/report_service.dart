@@ -123,8 +123,9 @@ class ReportService {
 
     final now = DateTime.now().toUtc();
     final lastAt = (data['lastReportAt'] as Timestamp?)?.toDate().toUtc();
-    final windowStartAt =
-        (data['windowStartAt'] as Timestamp?)?.toDate().toUtc();
+    final windowStartAt = (data['windowStartAt'] as Timestamp?)
+        ?.toDate()
+        .toUtc();
     final windowCount = (data['windowCount'] as num?)?.toInt() ?? 0;
 
     if (windowStartAt != null &&

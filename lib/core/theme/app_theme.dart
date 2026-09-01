@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'app_colors.dart';
 import 'app_palette.dart';
 import 'app_radius.dart';
+import 'app_sizing.dart';
 import 'app_spacing.dart';
 import 'app_typography.dart';
 
@@ -102,6 +103,8 @@ class AppTheme {
       useMaterial3: true,
       brightness: brightness,
       fontFamily: AppTypography.fontFamily,
+      materialTapTargetSize: MaterialTapTargetSize.padded,
+      visualDensity: VisualDensity.standard,
       scaffoldBackgroundColor: palette.background,
       colorScheme: colorScheme,
       textTheme: baseTextTheme,
@@ -124,6 +127,9 @@ class AppTheme {
       ),
       elevatedButtonTheme: ElevatedButtonThemeData(
         style: ButtonStyle(
+          minimumSize: const WidgetStatePropertyAll(
+            Size(AppSizing.minimumTouchTarget, AppSizing.standardControlHeight),
+          ),
           overlayColor: _overlayColor(primary, palette),
           foregroundColor: WidgetStateProperty.resolveWith((states) {
             return states.contains(WidgetState.disabled)
@@ -148,6 +154,9 @@ class AppTheme {
       ),
       filledButtonTheme: FilledButtonThemeData(
         style: ButtonStyle(
+          minimumSize: const WidgetStatePropertyAll(
+            Size(AppSizing.minimumTouchTarget, AppSizing.standardControlHeight),
+          ),
           overlayColor: _overlayColor(primary, palette),
           foregroundColor: WidgetStateProperty.resolveWith((states) {
             return states.contains(WidgetState.disabled)
@@ -172,6 +181,9 @@ class AppTheme {
       ),
       outlinedButtonTheme: OutlinedButtonThemeData(
         style: ButtonStyle(
+          minimumSize: const WidgetStatePropertyAll(
+            Size(AppSizing.minimumTouchTarget, AppSizing.standardControlHeight),
+          ),
           overlayColor: _overlayColor(primary, palette),
           foregroundColor: WidgetStateProperty.resolveWith((states) {
             return states.contains(WidgetState.disabled)
@@ -192,22 +204,46 @@ class AppTheme {
       ),
       textButtonTheme: TextButtonThemeData(
         style: ButtonStyle(
+          minimumSize: const WidgetStatePropertyAll(
+            Size(AppSizing.minimumTouchTarget, AppSizing.standardControlHeight),
+          ),
           overlayColor: _overlayColor(primary, palette),
           foregroundColor: WidgetStateProperty.resolveWith((states) {
             return states.contains(WidgetState.disabled)
                 ? palette.textTertiary
                 : palette.interactiveForeground;
           }),
+          side: WidgetStateProperty.resolveWith((states) {
+            if (states.contains(WidgetState.focused)) {
+              return BorderSide(color: palette.focus, width: 2);
+            }
+            return BorderSide.none;
+          }),
+          shape: const WidgetStatePropertyAll(
+            RoundedRectangleBorder(borderRadius: AppRadius.md),
+          ),
         ),
       ),
       iconButtonTheme: IconButtonThemeData(
         style: ButtonStyle(
+          minimumSize: const WidgetStatePropertyAll(
+            Size.square(AppSizing.minimumTouchTarget),
+          ),
           overlayColor: _overlayColor(primary, palette),
           foregroundColor: WidgetStateProperty.resolveWith((states) {
             return states.contains(WidgetState.disabled)
                 ? palette.textTertiary
                 : palette.textPrimary;
           }),
+          side: WidgetStateProperty.resolveWith((states) {
+            if (states.contains(WidgetState.focused)) {
+              return BorderSide(color: palette.focus, width: 2);
+            }
+            return BorderSide.none;
+          }),
+          shape: const WidgetStatePropertyAll(
+            RoundedRectangleBorder(borderRadius: AppRadius.md),
+          ),
         ),
       ),
       dialogTheme: DialogThemeData(

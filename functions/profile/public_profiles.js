@@ -141,12 +141,13 @@ function derivePublicProfile(uid, source) {
   const staffPreviewIdentity =
     source.roleTransitionInProgress !== true &&
     hasStaffPreviewAccess({ user: source });
-  const accountType = rawAccountType === "official"
-    ? "official"
-    : rawAccountType === "creator" &&
-        (paidPremiumIdentity || staffPreviewIdentity)
-      ? "creator"
-      : "personal";
+  const accountType =
+    rawAccountType === "official"
+      ? "official"
+      : rawAccountType === "creator" &&
+          (paidPremiumIdentity || staffPreviewIdentity)
+        ? "creator"
+        : "personal";
 
   return {
     uid,
@@ -154,8 +155,10 @@ function derivePublicProfile(uid, source) {
     username,
     displayNameSearch: normalizeSearchText(displayName),
     usernameSearch: normalizeSearchText(username),
-    photoUrl: safeNullableUrl(source.photoUrl),
-    bannerUrl: safeNullableUrl(source.bannerUrl),
+    // Artwork is private capability media. Nullable compatibility fields stay
+    // in the projection schema, but no bearer or external URL is published.
+    photoUrl: null,
+    bannerUrl: null,
     bio: safeString(source.bio, 220),
     country: safeString(source.country, 64),
     nativeLanguage: safeString(source.nativeLanguage, 64),
@@ -370,7 +373,7 @@ function searchResult(snapshot, authority = {}) {
     uid: snapshot.id,
     displayName: safeString(data.displayName, 120) || "YO Voice user",
     username: safeString(data.username, 80),
-    photoUrl: safeNullableUrl(data.photoUrl),
+    photoUrl: null,
     bio: safeString(data.bio, 220),
     statusMessage: safeString(data.statusMessage, 120),
     accountType,
@@ -383,19 +386,16 @@ function exactFriendshipGuard(snapshot, ownerId, friendId) {
   if (!snapshot?.exists) return false;
   const data = snapshot.data() ?? {};
   const keys = Object.keys(data).sort();
-  const expected = [
-    "establishedAt",
-    "friendId",
-    "ownerId",
-    "schemaVersion",
-  ];
-  return keys.length === expected.length &&
+  const expected = ["establishedAt", "friendId", "ownerId", "schemaVersion"];
+  return (
+    keys.length === expected.length &&
     keys.every((key, index) => key === expected[index]) &&
     data.ownerId === ownerId &&
     data.friendId === friendId &&
     data.schemaVersion === 1 &&
     data.establishedAt &&
-    typeof data.establishedAt.toMillis === "function";
+    typeof data.establishedAt.toMillis === "function"
+  );
 }
 
 function sourceProfileVisibleToCaller({
@@ -408,8 +408,10 @@ function sourceProfileVisibleToCaller({
   const visibility = normalizeProfileVisibility(source?.profileVisibility);
   if (visibility === "public") return true;
   if (visibility === "private") return false;
-  return exactFriendshipGuard(forwardGuard, callerId, targetId) &&
-    exactFriendshipGuard(reverseGuard, targetId, callerId);
+  return (
+    exactFriendshipGuard(forwardGuard, callerId, targetId) &&
+    exactFriendshipGuard(reverseGuard, targetId, callerId)
+  );
 }
 
 async function requireActiveCaller(uid) {
@@ -663,13 +665,15 @@ const searchPublicProfiles = onCall(
         hidden.add(snapshot.id);
         continue;
       }
-      if (!sourceProfileVisibleToCaller({
-        callerId: auth.uid,
-        targetId: snapshot.id,
-        source,
-        forwardGuard: forwardFriendships[index],
-        reverseGuard: reverseFriendships[index],
-      })) {
+      if (
+        !sourceProfileVisibleToCaller({
+          callerId: auth.uid,
+          targetId: snapshot.id,
+          source,
+          forwardGuard: forwardFriendships[index],
+          reverseGuard: reverseFriendships[index],
+        })
+      ) {
         hidden.add(snapshot.id);
         continue;
       }
@@ -680,18 +684,14 @@ const searchPublicProfiles = onCall(
         now: nowMillis,
       });
       const creatorActive =
-        source.accountType === "creator" &&
-        access.creatorEnabled;
+        source.accountType === "creator" && access.creatorEnabled;
       const canonicalAccountType =
         source.accountType === "official"
           ? "official"
           : creatorActive
             ? "creator"
             : "personal";
-      if (
-        accountTypes !== null &&
-        !accountTypes.has(canonicalAccountType)
-      ) {
+      if (accountTypes !== null && !accountTypes.has(canonicalAccountType)) {
         hidden.add(snapshot.id);
         continue;
       }

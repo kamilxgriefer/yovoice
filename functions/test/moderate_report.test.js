@@ -46,8 +46,18 @@ const REPORTER = "reporter-uid";
 const REPORT_ID = `${REPORTER}_globalMessage_msg-1`;
 const MESSAGE = "globalChat/main/messages/msg-1";
 
-function request(uid, role, data) {
-  return { auth: { uid, token: { role } }, data };
+function request(uid, role, data, token = {}) {
+  return {
+    auth: {
+      uid,
+      token: {
+        role,
+        auth_time: Math.floor(Date.now() / 1000),
+        ...token,
+      },
+    },
+    data,
+  };
 }
 
 async function seedAccounts() {
@@ -188,6 +198,31 @@ describe("moderateReport", () => {
         })),
         "permission-denied",
       );
+    });
+
+    test("a stale moderator sign-in cannot mutate report workflow", async () => {
+      await assert.rejects(
+        run(request(MOD, "moderator", {
+          reportId: REPORT_ID,
+          action: "claim",
+          requestId: "req-stale-auth-1",
+        }, {
+          auth_time: Math.floor(Date.now() / 1000) - (5 * 60) - 1,
+        })),
+        (error) => {
+          assert.equal(error.code, "failed-precondition");
+          assert.equal(
+            error.details?.reason,
+            "recent-authentication-required",
+          );
+          return true;
+        },
+      );
+
+      const report = (await db.doc(`reports/${REPORT_ID}`).get()).data();
+      assert.equal(report.status, "open");
+      assert.equal(report.assignedTo, undefined);
+      assert.equal((await auditsForReport()).size, 0);
     });
 
     test("a BANNED moderator is denied", async () => {

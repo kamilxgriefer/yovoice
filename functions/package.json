@@ -8,7 +8,7 @@
   "scripts": {
     "deploy": "firebase deploy --only functions",
     "serve": "firebase emulators:start --only functions",
-    "test": "node --test test/*.test.js",
+    "test": "node --test --test-concurrency=1 test/*.test.js",
     "test:smoke": "node test/global_chat_trigger.smoke.js && node test/moderation_trigger.smoke.js && node test/social_graph_binding.smoke.js",
     "backfill:public-profiles": "node scripts/backfill_public_profiles.js",
     "backfill:profile-identity": "node scripts/backfill_profile_identity.js",
@@ -16,9 +16,17 @@
     "scrub:retired-social-notifications": "node scripts/scrub_retired_social_notifications.js"
   },
   "dependencies": {
-    "firebase-admin": "^13.4.0",
-    "firebase-functions": "^6.4.0",
-    "livekit-server-sdk": "^2.13.3",
-    "stripe": "22.5.0"
+    "firebase-admin": "14.3.0",
+    "firebase-functions": "7.3.2",
+    "livekit-server-sdk": "2.18.0",
+    "stripe": "22.6.0"
+  },
+  "overrides": {
+    "gaxios": {
+      "uuid": "11.1.1"
+    },
+    "teeny-request": {
+      "uuid": "11.1.1"
+    }
   }
 }

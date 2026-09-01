@@ -1,19 +1,54 @@
 import 'dart:async';
+import 'dart:math';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
 import 'package:yovoice/features/clubs/data/models/club_chat_authority.dart';
 import 'package:yovoice/features/clubs/data/models/club_member.dart';
 import 'package:yovoice/features/clubs/data/models/club_message.dart';
 
+typedef ClubMessageModerationInvoker =
+    Future<Map<Object?, Object?>> Function(Map<String, Object?> request);
+typedef ClubMessageSendInvoker =
+    Future<Map<Object?, Object?>> Function(Map<String, Object?> request);
+
 class ClubChatService {
-  ClubChatService({FirebaseFirestore? firestore, FirebaseAuth? auth})
-    : _firestore = firestore ?? FirebaseFirestore.instance,
-      _auth = auth ?? FirebaseAuth.instance;
+  ClubChatService({
+    FirebaseFirestore? firestore,
+    FirebaseAuth? auth,
+    FirebaseFunctions? functions,
+    ClubMessageModerationInvoker? moderationInvoker,
+    ClubMessageSendInvoker? messageSendInvoker,
+    String Function()? requestIdFactory,
+  }) : _firestore = firestore ?? FirebaseFirestore.instance,
+       _auth = auth ?? FirebaseAuth.instance,
+       _functionsOverride = functions,
+       _moderationInvoker = moderationInvoker,
+       _messageSendInvoker = messageSendInvoker,
+       _requestIdFactory = requestIdFactory ?? _newRequestId;
 
   final FirebaseFirestore _firestore;
   final FirebaseAuth _auth;
+  final FirebaseFunctions? _functionsOverride;
+  final ClubMessageModerationInvoker? _moderationInvoker;
+  final ClubMessageSendInvoker? _messageSendInvoker;
+  final String Function() _requestIdFactory;
+
+  FirebaseFunctions get _functions =>
+      _functionsOverride ??
+      FirebaseFunctions.instanceFor(region: 'europe-west1');
+
+  static String _newRequestId() {
+    final random = Random.secure();
+    final randomPart = List<int>.generate(
+      16,
+      (_) => random.nextInt(256),
+    ).map((value) => value.toRadixString(16).padLeft(2, '0')).join();
+    return '${DateTime.now().microsecondsSinceEpoch.toRadixString(16)}-'
+        '$randomPart';
+  }
 
   User get _user {
     final user = _auth.currentUser;
@@ -77,18 +112,17 @@ class ClubChatService {
     required String clubId,
     required String channelId,
   }) {
-    return _messages(clubId: clubId, channelId: channelId)
-        .orderBy('sentAt', descending: true)
-        .limit(1)
-        .snapshots()
-        .map((snapshot) {
-          if (snapshot.docs.isEmpty) return null;
-          return ClubMessage.fromFirestore(
-            clubId: clubId,
-            channelId: channelId,
-            document: snapshot.docs.first,
-          );
-        });
+    return _messages(
+      clubId: clubId,
+      channelId: channelId,
+    ).orderBy('sentAt', descending: true).limit(1).snapshots().map((snapshot) {
+      if (snapshot.docs.isEmpty) return null;
+      return ClubMessage.fromFirestore(
+        clubId: clubId,
+        channelId: channelId,
+        document: snapshot.docs.first,
+      );
+    });
   }
 
   Future<void> sendTextMessage({
@@ -96,46 +130,23 @@ class ClubChatService {
     required String channelId,
     required String text,
   }) async {
-    final user = _user;
     final normalized = text.trim();
     if (normalized.isEmpty) return;
     if (normalized.length > 2000) {
       throw ArgumentError('A club message cannot exceed 2000 characters.');
     }
 
-    final member = await _firestore
-        .collection('clubs')
-        .doc(clubId)
-        .collection('members')
-        .doc(user.uid)
-        .get();
-    if (!member.exists) throw StateError('You are not a member of this club.');
-
-    final memberData = member.data() ?? const <String, dynamic>{};
-    final role = ClubRole.fromValue(memberData['role']);
-    if (!role.canWriteChat) {
-      throw StateError('Guests cannot send messages in club chat.');
-    }
-    final displayName = (memberData['displayName'] as String?)?.trim();
-    final photoUrl = memberData['photoUrl'] as String?;
-    final messageRef = _messages(clubId: clubId, channelId: channelId).doc();
-    final now = Timestamp.now();
-
-    await messageRef.set({
+    final payload = <String, Object?>{
       'clubId': clubId,
       'channelId': channelId,
-      'senderId': user.uid,
-      'senderName': displayName?.isNotEmpty == true
-          ? displayName
-          : _resolveUserName(user),
-      'senderPhotoUrl': photoUrl?.trim().isNotEmpty == true
-          ? photoUrl!.trim()
-          : user.photoURL,
-      'content': normalized,
-      'sentAt': now,
-      'editedAt': null,
-      'isDeleted': false,
-    });
+      'requestId': _requestIdFactory(),
+      'text': normalized,
+    };
+    if (_messageSendInvoker != null) {
+      await _messageSendInvoker(payload);
+      return;
+    }
+    await _functions.httpsCallable('sendClubMessage').call(payload);
   }
 
   /// The viewer's removal authority in [clubId], kept live.
@@ -323,6 +334,24 @@ class ClubChatService {
     final refusal = authority.removalRefusal(live);
     if (refusal != null) throw StateError(refusal);
 
+    if (!isAuthor) {
+      final payload = <String, Object?>{
+        'clubId': clubId,
+        'channelId': channelId,
+        'messageId': live.id,
+      };
+      final response = _moderationInvoker != null
+          ? await _moderationInvoker(payload)
+          : (await _functions
+                    .httpsCallable('moderateClubMessage')
+                    .call<Map<Object?, Object?>>(payload))
+                .data;
+      if (response['outcome'] != 'redacted' || response['redacted'] != true) {
+        throw StateError('The server did not confirm message removal.');
+      }
+      return;
+    }
+
     await messageRef.update({
       'content': '',
       'isDeleted': true,
@@ -362,13 +391,5 @@ class ClubChatService {
   static String? _readOwnerId(Map<String, dynamic>? data) {
     final value = data?['ownerId'];
     return value is String && value.isNotEmpty ? value : null;
-  }
-
-  static String _resolveUserName(User user) {
-    final displayName = user.displayName?.trim();
-    if (displayName != null && displayName.isNotEmpty) return displayName;
-    final email = user.email?.trim();
-    if (email != null && email.isNotEmpty) return email.split('@').first;
-    return 'YO Voice user';
   }
 }

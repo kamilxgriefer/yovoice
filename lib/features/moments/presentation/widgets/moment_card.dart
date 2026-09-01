@@ -9,6 +9,7 @@ import 'package:yovoice/features/home/data/services/home_feed_service.dart';
 import 'package:yovoice/features/moderation/data/services/content_report_service.dart';
 import 'package:yovoice/features/moderation/presentation/report_content_flow.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
+import 'package:yovoice/features/moments/data/services/moment_service.dart';
 import 'package:yovoice/features/moments/data/services/offline_voice_moment_service.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
@@ -27,6 +28,8 @@ class MomentCard extends StatefulWidget {
     this.isOwn = false,
     this.canReport = false,
     this.offlineService,
+    this.momentService,
+    this.mediaUriResolver,
     this.feedService,
     this.contentReportService,
     this.playerFactory,
@@ -43,6 +46,10 @@ class MomentCard extends StatefulWidget {
   /// only ever fail.
   final bool canReport;
   final OfflineVoiceMomentService? offlineService;
+  final MomentService? momentService;
+
+  @visibleForTesting
+  final Future<Uri> Function(String momentId)? mediaUriResolver;
 
   /// Injection seam for the report action, matching [offlineService] and
   /// [feedService]: production passes nothing, tests pass a fake so the
@@ -73,6 +80,7 @@ class _MomentCardState extends State<MomentCard> {
       _created ??= (widget.playerFactory ?? AudioPlayer.new)();
   late final OfflineVoiceMomentService _offline =
       widget.offlineService ?? OfflineVoiceMomentService.instance;
+  MomentService? _moments;
   bool _playing = false;
   bool _downloaded = false;
   bool _downloading = false;
@@ -81,6 +89,13 @@ class _MomentCardState extends State<MomentCard> {
   @override
   void initState() {
     super.initState();
+    if (widget.mediaUriResolver == null) {
+      try {
+        _moments = widget.momentService ?? MomentService();
+      } catch (_) {
+        _moments = null;
+      }
+    }
     _refreshDownloadState();
   }
 
@@ -116,25 +131,55 @@ class _MomentCardState extends State<MomentCard> {
   }
 
   Future<void> _toggle() async {
-    final url = widget.moment.audioUrl?.trim() ?? '';
-    if (url.isEmpty) return;
-    if (_playing) {
-      await _player.pause();
-    } else {
-      final offline = _downloaded
-          ? await _offline.readPlayback(widget.moment.id)
-          : null;
-      if (_downloaded && offline == null && mounted) {
-        setState(() => _downloaded = false);
+    try {
+      if (_playing) {
+        await _player.pause();
+      } else {
+        final offline = _downloaded
+            ? await _offline.readPlayback(widget.moment.id)
+            : null;
+        if (_downloaded && offline == null && mounted) {
+          setState(() => _downloaded = false);
+        }
+        final source = offline?.deviceFilePath != null
+            ? DeviceFileSource(offline!.deviceFilePath!)
+            : offline?.bytes != null
+            ? BytesSource(offline!.bytes!)
+            : await _remoteSource();
+        if (source == null) return;
+        await _player.play(source);
       }
-      final source = offline?.deviceFilePath != null
-          ? DeviceFileSource(offline!.deviceFilePath!)
-          : offline?.bytes != null
-          ? BytesSource(offline!.bytes!)
-          : UrlSource(url);
-      await _player.play(source);
+      if (mounted) setState(() => _playing = !_playing);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _playing = false);
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(
+            behavior: SnackBarBehavior.floating,
+            content: Text('This Voice Moment is unavailable right now.'),
+          ),
+        );
     }
-    if (mounted) setState(() => _playing = !_playing);
+  }
+
+  Future<Source?> _remoteSource() async {
+    if (!widget.moment.hasMediaReference) return null;
+    final momentId = widget.moment.id;
+    final uri = await _remoteUri(momentId);
+    if (!mounted || widget.moment.id != momentId) return null;
+    return UrlSource(uri.toString());
+  }
+
+  Future<Uri> _remoteUri(String momentId) {
+    final resolver = widget.mediaUriResolver;
+    if (resolver != null) return resolver(momentId);
+    final moments = _moments;
+    if (moments == null) {
+      throw StateError('The YO Voice media service is unavailable.');
+    }
+    return moments.resolveMediaUri(momentId: momentId);
   }
 
   Future<void> _toggleDownload() async {
@@ -146,7 +191,8 @@ class _MomentCardState extends State<MomentCard> {
       if (removing) {
         await _offline.delete(momentId);
       } else {
-        await _offline.download(widget.moment);
+        final uri = await _remoteUri(momentId);
+        await _offline.download(widget.moment, authorizedUri: uri);
       }
       if (!mounted || widget.moment.id != momentId) return;
       setState(() => _downloaded = !removing);
@@ -234,7 +280,7 @@ class _MomentCardState extends State<MomentCard> {
   @override
   Widget build(BuildContext context) {
     final moment = widget.moment;
-    final playable = (moment.audioUrl?.trim().isNotEmpty ?? false);
+    final playable = moment.hasMediaReference;
     final palette = context.appPalette;
 
     return Container(
@@ -263,6 +309,7 @@ class _MomentCardState extends State<MomentCard> {
                 circular: true,
                 child: UserAvatar(
                   radius: 18,
+                  userId: moment.authorId,
                   photoUrl: moment.authorPhotoUrl,
                   displayName: moment.authorName,
                 ),

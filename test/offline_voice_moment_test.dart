@@ -41,13 +41,21 @@ OfflineVoiceMomentService _service(
   fetcher: fetcher ?? (_) async => Uint8List(2048),
 );
 
+Uri _authorizedUri(String id) => Uri.parse(
+  'https://storage.googleapis.com/yovoice-test/${Uri.encodeComponent(id)}'
+  '?X-Goog-Signature=test',
+);
+
 void main() {
   test('downloads are account-scoped and removable', () async {
     final storage = _MemoryOfflineStorage();
     var uid = 'opaque użytkownik';
     final service = _service(storage, currentUid: () => uid);
 
-    await service.download(_moment('moment-ą'));
+    await service.download(
+      _moment('moment-ą'),
+      authorizedUri: _authorizedUri('moment-ą'),
+    );
     expect(await service.isDownloaded('moment-ą'), isTrue);
     expect((await service.list()).single.caption, 'A useful thought');
 
@@ -60,13 +68,65 @@ void main() {
     expect(await service.list(), isEmpty);
   });
 
+  test('logout cleanup removes captured account after auth is gone', () async {
+    final storage = _MemoryOfflineStorage();
+    String? uid = 'account-a';
+    final service = _service(storage, currentUid: () => uid);
+    await service.download(
+      _moment('private-after-logout'),
+      authorizedUri: _authorizedUri('private-after-logout'),
+    );
+    final accountKey = storage.lastAccountKey!;
+    expect(storage.manifests.containsKey(accountKey), isTrue);
+
+    uid = null;
+    await service.clearForUser('account-a');
+
+    expect(storage.manifests.containsKey(accountKey), isFalse);
+    expect(
+      storage.audio.keys.any((key) => key.startsWith('$accountKey/')),
+      isFalse,
+    );
+  });
+
+  test('logout cleanup preserves the exact opaque uid', () async {
+    final storage = _MemoryOfflineStorage();
+    String? uid = ' account-a ';
+    final service = _service(storage, currentUid: () => uid);
+    await service.download(
+      _moment('opaque-account-cleanup'),
+      authorizedUri: _authorizedUri('opaque-account-cleanup'),
+    );
+    final accountKey = storage.lastAccountKey!;
+
+    uid = null;
+    await service.clearForUser(' account-a ');
+
+    expect(storage.manifests.containsKey(accountKey), isFalse);
+    expect(
+      storage.audio.keys.any((key) => key.startsWith('$accountKey/')),
+      isFalse,
+    );
+  });
+
+  test('logout cleanup rejects an empty captured uid', () async {
+    final service = _service(_MemoryOfflineStorage());
+    await expectLater(
+      service.clearForUser('   '),
+      throwsA(isA<OfflineAudioException>()),
+    );
+  });
+
   test(
     'account changes fail closed while local inventory is loading',
     () async {
       final storage = _MemoryOfflineStorage();
       var uid = 'account-a';
       final seed = _service(storage, currentUid: () => uid);
-      await seed.download(_moment('private-audio'));
+      await seed.download(
+        _moment('private-audio'),
+        authorizedUri: _authorizedUri('private-audio'),
+      );
 
       final inventoryStarted = Completer<void>();
       final releaseInventory = Completer<void>();
@@ -99,7 +159,10 @@ void main() {
         },
       );
 
-      final pending = service.download(_moment('switching-account'));
+      final pending = service.download(
+        _moment('switching-account'),
+        authorizedUri: _authorizedUri('switching-account'),
+      );
       await fetchStarted.future;
       uid = 'account-b';
       releaseFetch.complete();
@@ -115,7 +178,10 @@ void main() {
     () async {
       final storage = _MemoryOfflineStorage();
       final service = _service(storage);
-      await service.download(_moment('evicted'));
+      await service.download(
+        _moment('evicted'),
+        authorizedUri: _authorizedUri('evicted'),
+      );
       final accountKey = storage.lastAccountKey!;
       storage.audio.remove('$accountKey/${_objectKey('evicted')}');
 
@@ -159,7 +225,10 @@ void main() {
   test('catalog removes truncated and oversized physical audio', () async {
     final storage = _MemoryOfflineStorage();
     final service = _service(storage);
-    await service.download(_moment('valid'));
+    await service.download(
+      _moment('valid'),
+      authorizedUri: _authorizedUri('valid'),
+    );
     final accountKey = storage.lastAccountKey!;
     final manifest = storage.manifests[accountKey]!;
     final objectKey = _objectKey('valid');
@@ -201,8 +270,14 @@ void main() {
       },
     );
 
-    final one = service.download(_moment('one'));
-    final two = service.download(_moment('two'));
+    final one = service.download(
+      _moment('one'),
+      authorizedUri: _authorizedUri('one'),
+    );
+    final two = service.download(
+      _moment('two'),
+      authorizedUri: _authorizedUri('two'),
+    );
     await Future<void>.delayed(Duration.zero);
     first.complete();
     await Future.wait([one, two]);
@@ -216,7 +291,10 @@ void main() {
     final service = _service(storage);
     // Discover the hashed account namespace without exposing the UID in local
     // storage keys, then seed a valid manifest close to the quota.
-    await service.download(_moment('seed'));
+    await service.download(
+      _moment('seed'),
+      authorizedUri: _authorizedUri('seed'),
+    );
     final accountKey = storage.lastAccountKey!;
     final entries = <Map<String, Object>>[
       for (var index = 0; index < 21; index++)
@@ -240,7 +318,10 @@ void main() {
           const OfflineAudioPlayback.deviceFile('/fake');
     }
     await expectLater(
-      service.download(_moment('over-limit')),
+      service.download(
+        _moment('over-limit'),
+        authorizedUri: _authorizedUri('over-limit'),
+      ),
       throwsA(
         isA<OfflineAudioException>().having(
           (error) => error.message,
@@ -266,6 +347,7 @@ void main() {
             moment: _moment('card-download'),
             onComments: () {},
             offlineService: service,
+            mediaUriResolver: (id) async => _authorizedUri(id),
           ),
         ),
       ),
@@ -313,7 +395,10 @@ void main() {
       tester,
     ) async {
       final service = _service(_MemoryOfflineStorage());
-      await service.download(_moment('screen-$width'));
+      await service.download(
+        _moment('screen-$width'),
+        authorizedUri: _authorizedUri('screen-$width'),
+      );
       await tester.binding.setSurfaceSize(Size(width, 844));
       addTearDown(() => tester.binding.setSurfaceSize(null));
       await tester.pumpWidget(

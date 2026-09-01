@@ -49,7 +49,7 @@ class RoomMessage {
       id: document.id,
       senderId: data['senderId'] as String? ?? '',
       senderName: data['senderName'] as String? ?? 'YO Voice user',
-      senderPhotoUrl: data['senderPhotoUrl'] as String?,
+      senderPhotoUrl: null,
       text: data['text'] as String? ?? '',
       createdAt: (data['createdAt'] as Timestamp?)?.toDate(),
       reactions: reactions,

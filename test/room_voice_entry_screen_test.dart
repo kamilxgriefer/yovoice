@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
@@ -36,6 +37,7 @@ class _RecordingVoice extends VoiceCallService {
   final List<VoiceParticipantViewData> cast;
   final List<String> joins = [];
   final List<bool> joinSoundFlags = [];
+  final List<bool> joinMutedFlags = [];
   final List<String> disconnects = [];
   bool _connected = false;
   String? _joinedRoom;
@@ -46,9 +48,11 @@ class _RecordingVoice extends VoiceCallService {
     required String roomName,
     required String participantName,
     bool playSound = true,
+    bool startMuted = false,
   }) async {
     joins.add(roomId);
     joinSoundFlags.add(playSound);
+    joinMutedFlags.add(startMuted);
     _joinedRoom = roomId;
     _connected = true;
     notifyListeners();
@@ -100,6 +104,20 @@ void main() {
       signedIn: true,
       mockUser: MockUser(uid: uid, email: '$uid@yovoice.app', displayName: uid),
     ),
+    roomVoiceStartInvoker: (request) async {
+      final targetRoomId = request['roomId']! as String;
+      await db.collection('rooms').doc(targetRoomId).update({
+        'isLive': true,
+        'voiceSessionId': request['sessionId'],
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+      return <Object?, Object?>{
+        'schemaVersion': 1,
+        'started': true,
+        'roomId': targetRoomId,
+        'sessionId': request['sessionId'],
+      };
+    },
   );
 
   /// A coordinator that records rather than writing, so a screen-level test
@@ -200,6 +218,7 @@ void main() {
     RoomMuteCoordinator? muteCoordinator,
     ClubService? clubService,
     bool playInitialJoinSound = true,
+    bool startMuted = false,
     Size size = const Size(420, 900),
   }) async {
     tester.view.devicePixelRatio = 1;
@@ -217,6 +236,7 @@ void main() {
           muteCoordinator: muteCoordinator,
           clubService: clubService,
           playInitialJoinSound: playInitialJoinSound,
+          startMuted: startMuted,
         ),
       ),
     );
@@ -381,6 +401,30 @@ void main() {
       expect(find.text('Mute'), findsOneWidget);
       expect(find.text('Not live'), findsNothing);
       expect(find.text('Start voice'), findsNothing);
+    });
+
+    testWidgets('a security-sensitive room entry requests a muted join', (
+      tester,
+    ) async {
+      await seedRoom(isLive: true);
+      final voice = _RecordingVoice(muted: true);
+
+      await pumpCommunity(
+        tester,
+        uid: 'relative',
+        voice: voice,
+        startMuted: true,
+        entry: RoomVoiceEntry(
+          outcome: RoomVoiceEntryOutcome.live,
+          room: roomModel(isLive: true),
+          authority: RoomVoiceStartAuthority.none,
+        ),
+      );
+      await tester.pump();
+
+      expect(voice.joins, [roomId]);
+      expect(voice.joinMutedFlags, [isTrue]);
+      expect(find.text('Unmute'), findsOneWidget);
     });
 
     testWidgets(
@@ -838,6 +882,7 @@ void main() {
       Size size = const Size(420, 900),
       String uid = 'relative',
       RoomMuteCoordinator? muteCoordinator,
+      bool startMuted = false,
     }) async {
       tester.view.devicePixelRatio = 1;
       tester.view.physicalSize = size;
@@ -851,6 +896,7 @@ void main() {
             roomService: serviceFor(uid),
             voiceService: voice,
             muteCoordinator: muteCoordinator,
+            startMuted: startMuted,
           ),
         ),
       );
@@ -929,6 +975,28 @@ void main() {
       expect(find.text('The future of independent audio'), findsOneWidget);
       expect(find.textContaining('On stage', findRichText: true), findsWidgets);
       expect(find.textContaining('Audience', findRichText: true), findsWidgets);
+    });
+
+    testWidgets('a security-sensitive broadcast entry requests a muted join', (
+      tester,
+    ) async {
+      await seedRoom(isLive: true, experience: 'broadcast');
+      final voice = _RecordingVoice(muted: true);
+
+      await pumpBroadcast(
+        tester,
+        voice: voice,
+        startMuted: true,
+        entry: RoomVoiceEntry(
+          outcome: RoomVoiceEntryOutcome.live,
+          room: roomModel(isLive: true, experience: 'broadcast'),
+          authority: RoomVoiceStartAuthority.none,
+        ),
+      );
+      await tester.pump();
+
+      expect(voice.joins, [roomId]);
+      expect(voice.joinMutedFlags, [isTrue]);
     });
 
     testWidgets(

@@ -37,6 +37,22 @@ void main() {
       signedIn: true,
       mockUser: MockUser(uid: uid, email: '$uid@yovoice.app'),
     ),
+    roomVoiceStartInvoker: (request) async {
+      final roomId = request['roomId']! as String;
+      await db.collection('rooms').doc(roomId).update({
+        'isLive': true,
+        'endedAt': FieldValue.delete(),
+        'voiceSessionId': request['sessionId'],
+        'voiceStartedAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+      return <Object?, Object?>{
+        'schemaVersion': 1,
+        'started': true,
+        'roomId': roomId,
+        'sessionId': request['sessionId'],
+      };
+    },
   );
 
   /// The 45-room production reality: 25 documents carry no

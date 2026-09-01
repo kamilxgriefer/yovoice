@@ -192,7 +192,12 @@ class ProfileHeader extends StatelessWidget {
           height: bannerHeight,
           child: ClipRRect(
             borderRadius: BorderRadius.circular(22),
-            child: ProfileBanner(bannerUrl: profile.bannerUrl, overlay: scrim),
+            child: ProfileBanner(
+              userId: profile.uid,
+              bannerUrl: profile.bannerUrl,
+              mediaRevision: profile.profileUpdatedAt,
+              overlay: scrim,
+            ),
           ),
         ),
         Column(
@@ -241,7 +246,9 @@ class ProfileHeader extends StatelessWidget {
               ),
               child: UserAvatar(
                 radius: avatarRadius,
+                userId: profile.uid,
                 photoUrl: profile.photoUrl,
+                mediaRevision: profile.profileUpdatedAt,
                 displayName: profile.displayName,
                 backgroundColor: colors.primary,
                 premium: profile.premiumIdentity,

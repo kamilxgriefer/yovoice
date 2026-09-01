@@ -56,6 +56,7 @@ class OfflineVoiceMomentService {
   Future<void> _mutation = Future<void>.value();
   final Map<String, Set<String>> _downloadIndex = {};
   final Map<String, Future<Set<String>>> _indexLoads = {};
+  final Set<String> _clearingAccountKeys = {};
 
   String _requireUid() {
     final uid = _currentUserId() ?? '';
@@ -153,6 +154,9 @@ class OfflineVoiceMomentService {
   }
 
   Future<Set<String>> _indexFor(String accountKey) {
+    if (_clearingAccountKeys.contains(accountKey)) {
+      return Future<Set<String>>.value(const <String>{});
+    }
     final cached = _downloadIndex[accountKey];
     if (cached != null) return Future.value(cached);
     return _indexLoads.putIfAbsent(accountKey, () async {
@@ -165,6 +169,9 @@ class OfflineVoiceMomentService {
           } else {
             await _storage.deleteAudio(accountKey, entry.key);
           }
+        }
+        if (_clearingAccountKeys.contains(accountKey)) {
+          return const <String>{};
         }
         _downloadIndex[accountKey] = index;
         return index;
@@ -197,13 +204,15 @@ class OfflineVoiceMomentService {
     return playback;
   }
 
-  Future<void> download(VoiceMoment moment) => _serial(() async {
+  Future<void> download(
+    VoiceMoment moment, {
+    required Uri authorizedUri,
+  }) => _serial(() async {
     final uid = _requireUid();
     final momentId = _validateMomentId(moment.id);
     final authorId = moment.authorId;
     final authorName = moment.authorName.trim();
     final caption = moment.caption;
-    final url = Uri.tryParse(moment.audioUrl?.trim() ?? '');
     if (!moment.isPublished ||
         moment.isDeleted ||
         authorId.trim().isEmpty ||
@@ -213,14 +222,15 @@ class OfflineVoiceMomentService {
         caption.length > 500 ||
         moment.durationSeconds < 1 ||
         moment.durationSeconds > 60 ||
-        url == null ||
-        url.scheme != 'https' ||
-        url.host.isEmpty) {
+        authorizedUri.scheme != 'https' ||
+        authorizedUri.host != 'storage.googleapis.com' ||
+        authorizedUri.hasPort ||
+        authorizedUri.userInfo.isNotEmpty) {
       throw const OfflineAudioException(
         'This Voice Moment is not available for offline download.',
       );
     }
-    final bytes = await _fetcher(url);
+    final bytes = await _fetcher(authorizedUri);
     if (bytes.length < minimumBytes || bytes.length > maximumBytes) {
       throw const OfflineAudioException(
         'The audio file has an unsupported size.',
@@ -305,6 +315,42 @@ class OfflineVoiceMomentService {
     _downloadIndex.remove(key);
     _indexLoads.remove(key);
     _requireSameUid(uid);
+  });
+
+  /// Clears one account's offline media even after Firebase Auth has already
+  /// removed the active user. Logout coordination must capture the uid before
+  /// signing out and pass that exact value here; the hashed account key means
+  /// no raw uid is used as a path segment.
+  Future<void> clearForUser(String expectedUid) => _serial(() async {
+    // Firebase UIDs are opaque and case/whitespace sensitive. Validate the
+    // captured value, but never trim or normalize it before deriving the same
+    // account key that was used when the file was downloaded.
+    final uid = expectedUid;
+    if (uid.trim().isEmpty ||
+        utf8.encode(uid).length > 1500 ||
+        uid.contains('/') ||
+        RegExp(r'[\u0000-\u001F\u007F]').hasMatch(uid)) {
+      throw const OfflineAudioException(
+        'Invalid account identifier for offline media cleanup.',
+      );
+    }
+    final key = _accountKey(uid);
+    _clearingAccountKeys.add(key);
+    try {
+      // Let an inventory read already in flight finish before deleting the
+      // directory/database. While the key is marked clearing, it cannot
+      // repopulate the cache or start another inventory load.
+      try {
+        await _indexLoads[key];
+      } catch (_) {
+        // A failed lookup must never prevent privacy cleanup.
+      }
+      await _storage.clear(key);
+      _downloadIndex.remove(key);
+      _indexLoads.remove(key);
+    } finally {
+      _clearingAccountKeys.remove(key);
+    }
   });
 
   String _validateMomentId(String value) {

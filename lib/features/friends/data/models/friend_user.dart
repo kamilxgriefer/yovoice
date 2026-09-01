@@ -79,7 +79,7 @@ class FriendUser {
       // contains either. FriendService joins the separately authorised
       // socialPresence document after loading identity.
       email: '',
-      photoUrl: _normalizeNullableString(data['photoUrl']),
+      photoUrl: null,
       isOnline: false,
       lastSeen: null,
       premiumIdentity: data['premiumIdentity'] as bool? ?? false,
@@ -95,7 +95,7 @@ class FriendUser {
       displayName: _resolveDisplayName(data),
       username: _normalizeString(data['username']),
       email: '',
-      photoUrl: _normalizeNullableString(data['photoUrl']),
+      photoUrl: null,
       isOnline: false,
       lastSeen: null,
       premiumIdentity: data['premiumIdentity'] as bool? ?? false,

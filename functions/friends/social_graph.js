@@ -13,25 +13,59 @@ const {
   notificationReference,
   restrictionIsActive,
 } = require("../notifications/canonical");
+const {
+  sourceProfileVisibleToCaller,
+} = require("../profile/public_profiles");
 
 const REGION = "europe-west1";
 const SAFE_ID = /^[A-Za-z0-9_-]{1,128}$/u;
 const FRIENDSHIP_GUARD_SCHEMA_VERSION = 1;
+const SOCIAL_CAPACITY_SCHEMA_VERSION = 1;
 const MAX_FRIENDS = 500;
 const MAX_FOLLOWING = 1000;
 const MAX_PENDING_REQUESTS = 200;
 const MAX_BLOCKED_USERS = 1000;
-const MAX_FRIENDS_EXPANDED = 40;
-const MAX_EXPANDED_FRIENDS_PER_SOURCE = 100;
-const MAX_SUGGESTION_CANDIDATES = 125;
+const MAX_FRIENDS_EXPANDED = 10;
+const MAX_FRIENDS_SCANNED_FOR_DISCOVERY = 50;
+const MAX_EXPANDED_FRIENDS_PER_SOURCE = 50;
+const MAX_SUGGESTION_CANDIDATES = 40;
+const MAX_MUTUAL_FRIENDS_SCANNED = 50;
 const DEFAULT_SUGGESTION_LIMIT = 10;
 const MAX_SUGGESTION_LIMIT = 25;
+const FRIEND_DISCOVERY_MINUTE_LIMIT = 2;
+const FRIEND_DISCOVERY_HOUR_LIMIT = 20;
+const FRIEND_DISCOVERY_CACHE_TTL_MS = 30 * 1000;
+// Quota and cache reads happen before these budgets. Every subsequent
+// Firestore graph/profile read must reserve its worst-case document count.
+const SUGGESTION_GRAPH_READ_BUDGET = 900;
+const MUTUAL_GRAPH_READ_BUDGET = 420;
+const FRIEND_DISCOVERY_MAX_INSTANCES = 20;
 const SOCIAL_READ_MINUTE_LIMIT = 30;
 const SOCIAL_READ_HOUR_LIMIT = 300;
 const SOCIAL_MUTATION_MINUTE_LIMIT = 60;
 const SOCIAL_MUTATION_HOUR_LIMIT = 600;
 const QUOTA_MINUTE_MS = 60 * 1000;
 const QUOTA_HOUR_MS = 60 * 60 * 1000;
+const SOCIAL_CAPACITY_FIELDS = Object.freeze({
+  blocked: {
+    countField: "blockedCount",
+    overflowField: "blockedOverflowed",
+    collection: "blocked",
+    maximum: MAX_BLOCKED_USERS,
+  },
+  pendingOutgoing: {
+    countField: "pendingOutgoingCount",
+    overflowField: "pendingOutgoingOverflowed",
+    collection: "sentFriendRequests",
+    maximum: MAX_PENDING_REQUESTS,
+  },
+  pendingIncoming: {
+    countField: "pendingIncomingCount",
+    overflowField: "pendingIncomingOverflowed",
+    collection: "friendRequests",
+    maximum: MAX_PENDING_REQUESTS,
+  },
+});
 
 function newSocialNotificationId(type, actorId) {
   return `${type}_${actorId}_${randomUUID().replaceAll("-", "")}`;
@@ -139,6 +173,241 @@ function socialRateLimitReference(uid, kind) {
   return db.doc(`privateRateLimits/socialGraph_${kind}_${digest}`);
 }
 
+function friendDiscoveryDigest(...parts) {
+  return createHash("sha256")
+    .update(parts.join("\u0000"))
+    .digest("hex");
+}
+
+function friendDiscoveryRateLimitReference(uid, kind) {
+  return db.doc(
+    `privateRateLimits/friendDiscovery_${kind}_${friendDiscoveryDigest(uid)}`,
+  );
+}
+
+function friendDiscoveryCacheReference(uid, kind) {
+  // One deterministic document per uid and endpoint keeps cache storage
+  // bounded. Mutual lookups store/validate the current target inside that
+  // document instead of creating an attacker-controlled document per pair.
+  return db.doc(
+    `privateFriendDiscoveryCaches/${friendDiscoveryDigest(kind, uid)}`,
+  );
+}
+
+function socialCapacityReference(uid) {
+  return db.doc(
+    `privateSocialGraphCapacities/${friendDiscoveryDigest(uid)}`,
+  );
+}
+
+function socialCapacityState(uid, snapshot) {
+  const data = snapshot.exists ? (snapshot.data() ?? {}) : {};
+  if (
+    snapshot.exists &&
+    (data.kind !== "socialGraphCapacity" ||
+      data.schemaVersion !== SOCIAL_CAPACITY_SCHEMA_VERSION)
+  ) {
+    throw new HttpsError(
+      "data-loss",
+      "The private social capacity ledger is not canonical.",
+    );
+  }
+  return {
+    uid,
+    reference: socialCapacityReference(uid),
+    data: { ...data },
+    patch: {},
+  };
+}
+
+function canonicalCapacityValue(state, kind) {
+  const config = SOCIAL_CAPACITY_FIELDS[kind];
+  if (!config) throw new TypeError("Unknown social capacity kind.");
+  const count = state.data[config.countField];
+  const overflowed = state.data[config.overflowField];
+  if (count === undefined && overflowed === undefined) return null;
+  if (
+    !Number.isSafeInteger(count) ||
+    count < 0 ||
+    count > config.maximum + 1 ||
+    typeof overflowed !== "boolean" ||
+    (overflowed && count !== config.maximum + 1) ||
+    (!overflowed && count > config.maximum)
+  ) {
+    throw new HttpsError(
+      "data-loss",
+      "The private social capacity value is invalid.",
+    );
+  }
+  return { count, overflowed, config };
+}
+
+async function ensureSocialCapacity(transaction, state, kind) {
+  const existing = canonicalCapacityValue(state, kind);
+  if (existing) return existing;
+  const config = SOCIAL_CAPACITY_FIELDS[kind];
+  const snapshot = await transaction.get(
+    db
+      .doc(`users/${state.uid}`)
+      .collection(config.collection)
+      .limit(config.maximum + 1),
+  );
+  const overflowed = snapshot.size > config.maximum;
+  const count = overflowed ? config.maximum + 1 : snapshot.size;
+  Object.assign(state.data, {
+    [config.countField]: count,
+    [config.overflowField]: overflowed,
+  });
+  Object.assign(state.patch, {
+    [config.countField]: count,
+    [config.overflowField]: overflowed,
+    [`${kind}MigratedAt`]: FieldValue.serverTimestamp(),
+  });
+  return { count, overflowed, config };
+}
+
+function adjustSocialCapacity(state, kind, delta) {
+  const current = canonicalCapacityValue(state, kind);
+  if (!current) {
+    throw new TypeError("Social capacity must be initialized before use.");
+  }
+  if (delta > 0 && (current.overflowed || current.count >= current.config.maximum)) {
+    return false;
+  }
+  if (delta < 0 && current.count <= 0) {
+    throw new HttpsError(
+      "data-loss",
+      "The private social capacity ledger has drifted.",
+    );
+  }
+  if (delta < 0 && current.overflowed) {
+    // The bounded bootstrap only proves "more than max". Decrementing that
+    // lower bound would pretend we know the exact legacy size, so it remains
+    // fail-closed until an audited offline recount repairs the ledger.
+    return true;
+  }
+  const count = current.count + delta;
+  // An overflow flag deliberately never clears on a client operation. A
+  // legacy graph beyond the bounded migration window needs an audited repair;
+  // guessing that enough rows were removed could reopen an over-cap account.
+  const overflowed = false;
+  Object.assign(state.data, {
+    [current.config.countField]: count,
+    [current.config.overflowField]: overflowed,
+  });
+  Object.assign(state.patch, {
+    [current.config.countField]: count,
+    [current.config.overflowField]: overflowed,
+  });
+  return true;
+}
+
+function socialCapacityHasRoom(state, kind) {
+  const current = canonicalCapacityValue(state, kind);
+  if (!current) {
+    throw new TypeError("Social capacity must be initialized before use.");
+  }
+  return !current.overflowed && current.count < current.config.maximum;
+}
+
+function persistSocialCapacity(transaction, state) {
+  if (Object.keys(state.patch).length === 0) return;
+  transaction.set(
+    state.reference,
+    {
+      kind: "socialGraphCapacity",
+      schemaVersion: SOCIAL_CAPACITY_SCHEMA_VERSION,
+      ...state.patch,
+      updatedAt: FieldValue.serverTimestamp(),
+    },
+    { merge: true },
+  );
+}
+
+class GraphReadBudget {
+  constructor(limit) {
+    this.limit = limit;
+    this.reserved = 0;
+  }
+
+  reserve(count) {
+    if (!Number.isSafeInteger(count) || count < 0) {
+      throw new TypeError("The graph read reservation is invalid.");
+    }
+    if (this.reserved + count > this.limit) {
+      throw new HttpsError(
+        "resource-exhausted",
+        "This social graph is too large to inspect safely.",
+      );
+    }
+    this.reserved += count;
+  }
+}
+
+/**
+ * A dedicated low budget for the two graph-amplifying discovery callables.
+ * It is intentionally separate from cheap social reads: otherwise an attacker
+ * could spend the broad generic allowance on thousands of downstream reads.
+ */
+async function consumeFriendDiscoveryRateLimit(
+  uid,
+  kind,
+  {
+    now = Timestamp.now(),
+    minuteLimit = FRIEND_DISCOVERY_MINUTE_LIMIT,
+    hourLimit = FRIEND_DISCOVERY_HOUR_LIMIT,
+  } = {},
+) {
+  if (!["suggestions", "mutuals"].includes(kind)) {
+    throw new TypeError("Unknown friend-discovery quota kind.");
+  }
+  const reference = friendDiscoveryRateLimitReference(uid, kind);
+  return db.runTransaction(async (transaction) => {
+    const snapshot = await transaction.get(reference);
+    const current = snapshot.exists ? (snapshot.data() ?? {}) : {};
+    const nowMs = now.toMillis();
+
+    const minuteStartedMs = timestampMillis(current.minuteStartedAt, nowMs);
+    const minuteExpired =
+      !current.minuteStartedAt ||
+      typeof current.minuteStartedAt.toMillis !== "function" ||
+      nowMs - minuteStartedMs >= QUOTA_MINUTE_MS;
+    const minuteCount = minuteExpired
+      ? 1
+      : Number.isSafeInteger(current.minuteCount)
+        ? current.minuteCount + 1
+        : 1;
+
+    const hourStartedMs = timestampMillis(current.hourStartedAt, nowMs);
+    const hourExpired =
+      !current.hourStartedAt ||
+      typeof current.hourStartedAt.toMillis !== "function" ||
+      nowMs - hourStartedMs >= QUOTA_HOUR_MS;
+    const hourCount = hourExpired
+      ? 1
+      : Number.isSafeInteger(current.hourCount)
+        ? current.hourCount + 1
+        : 1;
+
+    if (minuteCount > minuteLimit || hourCount > hourLimit) {
+      throw new HttpsError(
+        "resource-exhausted",
+        "Friend discovery is temporarily limited. Please wait and try again.",
+      );
+    }
+
+    transaction.set(reference, {
+      kind: `friendDiscovery.${kind}`,
+      minuteStartedAt: minuteExpired ? now : current.minuteStartedAt,
+      minuteCount,
+      hourStartedAt: hourExpired ? now : current.hourStartedAt,
+      hourCount,
+      updatedAt: now,
+    });
+    return { minuteCount, hourCount };
+  });
+}
+
 /**
  * Consumes a private, transactional budget before a social operation reaches
  * any attacker-amplifiable graph query. The document id never contains a raw
@@ -209,7 +478,12 @@ async function consumeSocialRateLimit(
   });
 }
 
-async function requireActiveProfile(uid, label = "The account") {
+async function requireActiveProfile(
+  uid,
+  label = "The account",
+  readBudget = null,
+) {
+  readBudget?.reserve(1);
   const snapshot = await db.doc(`users/${uid}`).get();
   return profileData(snapshot, label);
 }
@@ -222,6 +496,44 @@ async function requireVisiblePair(firstId, secondId) {
   ensureNotBlocked(firstBlock, secondBlock);
 }
 
+async function requireTargetProfileVisibleToCaller(
+  callerId,
+  targetId,
+  readBudget = null,
+) {
+  readBudget?.reserve(6);
+  const [source, projection, forwardGuard, reverseGuard, firstBlock, secondBlock] =
+    await Promise.all([
+      db.doc(`users/${targetId}`).get(),
+      db.doc(`publicProfiles/${targetId}`).get(),
+      friendshipGuardReference(callerId, targetId).get(),
+      friendshipGuardReference(targetId, callerId).get(),
+      db.doc(`users/${callerId}/blocked/${targetId}`).get(),
+      db.doc(`users/${targetId}/blocked/${callerId}`).get(),
+    ]);
+
+  const sourceData = profileData(source, "The selected");
+  ensureNotBlocked(firstBlock, secondBlock);
+  if (
+    !projection.exists ||
+    !sourceProfileVisibleToCaller({
+      callerId,
+      targetId,
+      source: sourceData,
+      forwardGuard,
+      reverseGuard,
+    })
+  ) {
+    // Do not expose whether the denial came from privacy settings or a stale
+    // projection. Both mean the target graph is outside the caller's view.
+    throw new HttpsError(
+      "permission-denied",
+      "The selected profile is not available to this account.",
+    );
+  }
+  return sourceData;
+}
+
 function canonicalName(profile) {
   return (
     normalizeText(profile.displayName || profile.username, 80) ||
@@ -230,7 +542,7 @@ function canonicalName(profile) {
 }
 
 function canonicalPhoto(profile) {
-  return typeof profile.photoUrl === "string" ? profile.photoUrl : null;
+  return null;
 }
 
 function friendReference(ownerId, friendId) {
@@ -273,7 +585,13 @@ function followerReference(targetId, followerId) {
 // client. Neither callable exposes anyone's friend list directly — only
 // aggregate counts and the resulting candidate profiles.
 
-async function boundedIds(query, maximum, label, { failOnOverflow = true } = {}) {
+async function boundedIds(
+  query,
+  maximum,
+  label,
+  { failOnOverflow = true, readBudget = null } = {},
+) {
+  readBudget?.reserve(maximum + (failOnOverflow ? 1 : 0));
   const snapshot = await query.limit(maximum + (failOnOverflow ? 1 : 0)).get();
   if (failOnOverflow && snapshot.size > maximum) {
     throw new HttpsError(
@@ -290,6 +608,7 @@ async function friendIdsOf(
     maximum = MAX_FRIENDS,
     failOnOverflow = true,
     label = "The friend graph",
+    readBudget = null,
   } = {},
 ) {
   // Server-only friendship guards, not legacy user-readable mirrors, are the
@@ -303,17 +622,29 @@ async function friendIdsOf(
       .orderBy(FieldPath.documentId()),
     maximum,
     label,
-    { failOnOverflow },
+    { failOnOverflow, readBudget },
   );
 }
 
-async function profileSummaries(userIds) {
+async function profileSummaries(userIds, callerId, readBudget = null) {
   if (userIds.length === 0) return new Map();
-  const [snapshots, sources] = await Promise.all([
+  readBudget?.reserve(userIds.length * 6);
+  const [
+    snapshots,
+    sources,
+    forwardGuards,
+    reverseGuards,
+    forwardBlocks,
+    reverseBlocks,
+  ] = await Promise.all([
     db.getAll(...userIds.map((id) => db.collection("publicProfiles").doc(id))),
     // A retrying projection can be briefly stale. Re-check the private
     // authority so a deleted, banned or disabled account is never disclosed.
     db.getAll(...userIds.map((id) => db.collection("users").doc(id))),
+    db.getAll(...userIds.map((id) => friendshipGuardReference(callerId, id))),
+    db.getAll(...userIds.map((id) => friendshipGuardReference(id, callerId))),
+    db.getAll(...userIds.map((id) => db.doc(`users/${callerId}/blocked/${id}`))),
+    db.getAll(...userIds.map((id) => db.doc(`users/${id}/blocked/${callerId}`))),
   ]);
   const result = new Map();
   for (let index = 0; index < snapshots.length; index += 1) {
@@ -324,7 +655,16 @@ async function profileSummaries(userIds) {
       !snapshot.exists ||
       !sourceData ||
       sourceData.banned === true ||
-      sourceData.disabled === true
+      sourceData.disabled === true ||
+      forwardBlocks[index]?.exists ||
+      reverseBlocks[index]?.exists ||
+      !sourceProfileVisibleToCaller({
+        callerId,
+        targetId: snapshot.id,
+        source: sourceData,
+        forwardGuard: forwardGuards[index],
+        reverseGuard: reverseGuards[index],
+      })
     ) {
       continue;
     }
@@ -335,17 +675,156 @@ async function profileSummaries(userIds) {
         data.displayName || data.username || "YO Voice user",
         120,
       ),
-      photoUrl: data.photoUrl ?? null,
+      // Media is resolved by uid through the private media grant service.
+      // Never turn a stale projection URL into a caller-controlled fetch.
+      photoUrl: null,
     });
   }
   return result;
 }
 
+async function safeSuggestionSummaries(entries, callerId, readBudget) {
+  if (entries.length === 0) return [];
+  const ids = entries.map((entry) => entry.uid);
+  readBudget.reserve(ids.length * 8);
+  const [
+    projections,
+    sources,
+    forwardGuards,
+    reverseGuards,
+    forwardBlocks,
+    reverseBlocks,
+    incomingRequests,
+    outgoingRequests,
+  ] = await Promise.all([
+    db.getAll(...ids.map((id) => db.doc(`publicProfiles/${id}`))),
+    db.getAll(...ids.map((id) => db.doc(`users/${id}`))),
+    db.getAll(...ids.map((id) => friendshipGuardReference(callerId, id))),
+    db.getAll(...ids.map((id) => friendshipGuardReference(id, callerId))),
+    db.getAll(...ids.map((id) => db.doc(`users/${callerId}/blocked/${id}`))),
+    db.getAll(...ids.map((id) => db.doc(`users/${id}/blocked/${callerId}`))),
+    db.getAll(
+      ...ids.map((id) => incomingRequestReference(callerId, id)),
+    ),
+    db.getAll(...ids.map((id) => sentRequestReference(callerId, id))),
+  ]);
+
+  const visible = [];
+  for (let index = 0; index < ids.length; index += 1) {
+    const uid = ids[index];
+    const source = sources[index];
+    const projection = projections[index];
+    const sourceData = source.exists ? (source.data() ?? {}) : null;
+    if (
+      !projection.exists ||
+      !sourceData ||
+      sourceData.banned === true ||
+      sourceData.disabled === true ||
+      forwardGuards[index]?.exists ||
+      reverseGuards[index]?.exists ||
+      forwardBlocks[index]?.exists ||
+      reverseBlocks[index]?.exists ||
+      incomingRequests[index]?.exists ||
+      outgoingRequests[index]?.exists ||
+      !sourceProfileVisibleToCaller({
+        callerId,
+        targetId: uid,
+        source: sourceData,
+        forwardGuard: forwardGuards[index],
+        reverseGuard: reverseGuards[index],
+      })
+    ) {
+      continue;
+    }
+    const projectionData = projection.data() ?? {};
+    visible.push({
+      uid,
+      displayName: normalizeText(
+        projectionData.displayName ||
+          projectionData.username ||
+          "YO Voice user",
+        120,
+      ),
+      photoUrl: null,
+      mutualCount: entries[index].mutualCount,
+    });
+  }
+  return visible;
+}
+
+function freshCacheData(
+  snapshot,
+  now,
+  expectedKind,
+  expectedTargetId = null,
+) {
+  if (!snapshot.exists) return null;
+  const data = snapshot.data() ?? {};
+  if (data.kind !== expectedKind) return null;
+  if (expectedTargetId !== null && data.targetId !== expectedTargetId) {
+    return null;
+  }
+  const expiresAt = data.expiresAt;
+  if (
+    !expiresAt ||
+    typeof expiresAt.toMillis !== "function" ||
+    expiresAt.toMillis() <= now.toMillis()
+  ) {
+    return null;
+  }
+  return data;
+}
+
+function validSuggestionCacheEntries(data) {
+  if (!Array.isArray(data?.entries)) return null;
+  const entries = data.entries
+    .slice(0, MAX_SUGGESTION_CANDIDATES)
+    .map((entry) => ({
+      uid: normalizeText(entry?.uid, 128),
+      mutualCount: entry?.mutualCount,
+    }));
+  if (
+    entries.some(
+      (entry) =>
+        !SAFE_ID.test(entry.uid) ||
+        !Number.isSafeInteger(entry.mutualCount) ||
+        entry.mutualCount < 1 ||
+        entry.mutualCount > MAX_FRIENDS_EXPANDED,
+    )
+  ) {
+    return null;
+  }
+  return entries;
+}
+
+function validMutualCacheIds(data) {
+  if (!Array.isArray(data?.ids)) return null;
+  const ids = data.ids
+    .slice(0, MAX_MUTUAL_FRIENDS_SCANNED)
+    .map((value) => normalizeText(value, 128));
+  return ids.every((uid) => SAFE_ID.test(uid)) ? ids : null;
+}
+
+function discoveryCacheData(kind, now, values, graphReadUpperBound) {
+  return {
+    kind,
+    ...values,
+    computedAt: now,
+    expiresAt: Timestamp.fromMillis(
+      now.toMillis() + FRIEND_DISCOVERY_CACHE_TTL_MS,
+    ),
+    graphReadUpperBound,
+  };
+}
+
 const getMutualFriends = onCall(
-  { region: REGION, enforceAppCheck: false },
+  {
+    region: REGION,
+    enforceAppCheck: false,
+    maxInstances: FRIEND_DISCOVERY_MAX_INSTANCES,
+  },
   async (request) => {
     const auth = requireAuthentication(request);
-    await consumeSocialRateLimit(auth.uid, "read");
     const targetUserId = normalizeText(request.data?.targetUserId, 128);
 
     if (!SAFE_ID.test(targetUserId)) {
@@ -355,22 +834,69 @@ const getMutualFriends = onCall(
       return { count: 0, sample: [] };
     }
 
+    // This atomic one-document transaction must finish before any profile or
+    // graph read. N+1 therefore costs one denied quota read, not hundreds of
+    // downstream reads.
+    await consumeFriendDiscoveryRateLimit(auth.uid, "mutuals");
+    const now = Timestamp.now();
+    const readBudget = new GraphReadBudget(MUTUAL_GRAPH_READ_BUDGET);
+
     await Promise.all([
-      requireActiveProfile(auth.uid, "Your"),
-      requireActiveProfile(targetUserId, "The selected"),
-      requireVisiblePair(auth.uid, targetUserId),
+      requireActiveProfile(auth.uid, "Your", readBudget),
+      requireTargetProfileVisibleToCaller(
+        auth.uid,
+        targetUserId,
+        readBudget,
+      ),
     ]);
 
-    const [mine, theirs] = await Promise.all([
-      friendIdsOf(auth.uid),
-      friendIdsOf(targetUserId),
-    ]);
-    const theirSet = new Set(theirs);
-    const mutualIds = mine.filter((id) => theirSet.has(id));
+    const cacheRef = friendDiscoveryCacheReference(auth.uid, "mutuals");
+    const cacheSnapshot = await cacheRef.get();
+    const cache = freshCacheData(
+      cacheSnapshot,
+      now,
+      "mutuals",
+      targetUserId,
+    );
+    let mutualIds = validMutualCacheIds(cache);
+    const cacheMiss = mutualIds === null;
+    if (cacheMiss) {
+      const [mine, theirs] = await Promise.all([
+        friendIdsOf(auth.uid, {
+          maximum: MAX_MUTUAL_FRIENDS_SCANNED,
+          failOnOverflow: false,
+          label: "Your mutual-friend scan",
+          readBudget,
+        }),
+        friendIdsOf(targetUserId, {
+          maximum: MAX_MUTUAL_FRIENDS_SCANNED,
+          failOnOverflow: false,
+          label: "The selected mutual-friend scan",
+          readBudget,
+        }),
+      ]);
+      const theirSet = new Set(theirs);
+      mutualIds = mine.filter((id) => theirSet.has(id));
+    }
 
-    const profiles = await profileSummaries(mutualIds);
+    // Cache contains only raw intersection ids. Active state, privacy and
+    // bilateral blocks are revalidated on every response, including hits.
+    const profiles = await profileSummaries(mutualIds, auth.uid, readBudget);
     const visibleMutualIds = mutualIds.filter((id) => profiles.has(id));
     const sampleIds = visibleMutualIds.slice(0, 6);
+
+    if (cacheMiss) {
+      await cacheRef
+        .set(
+          discoveryCacheData(
+            "mutuals",
+            now,
+            { targetId: targetUserId, ids: mutualIds },
+            readBudget.reserved,
+          ),
+        )
+        .catch(() => undefined);
+    }
 
     return {
       count: visibleMutualIds.length,
@@ -380,10 +906,17 @@ const getMutualFriends = onCall(
 );
 
 const getFriendSuggestions = onCall(
-  { region: REGION, enforceAppCheck: false },
+  {
+    region: REGION,
+    enforceAppCheck: false,
+    maxInstances: FRIEND_DISCOVERY_MAX_INSTANCES,
+  },
   async (request) => {
     const auth = requireAuthentication(request);
-    await consumeSocialRateLimit(auth.uid, "read");
+    // Keep App Check in telemetry/rollout mode until every shipped client has
+    // a configured provider. Auth + this server-side atomic quota remain the
+    // enforcement boundary during that rollout.
+    await consumeFriendDiscoveryRateLimit(auth.uid, "suggestions");
     const limit = Math.min(
       Math.max(
         Number.parseInt(request.data?.limit, 10) || DEFAULT_SUGGESTION_LIMIT,
@@ -391,95 +924,82 @@ const getFriendSuggestions = onCall(
       ),
       MAX_SUGGESTION_LIMIT,
     );
+    const now = Timestamp.now();
+    const readBudget = new GraphReadBudget(SUGGESTION_GRAPH_READ_BUDGET);
 
-    await requireActiveProfile(auth.uid, "Your");
+    await requireActiveProfile(auth.uid, "Your", readBudget);
 
-    const userRef = db.collection("users").doc(auth.uid);
-    const [myFriendIds, blockedIds, incomingIds, outgoingIds] =
-      await Promise.all([
-        friendIdsOf(auth.uid),
-        boundedIds(
-          userRef.collection("blocked").orderBy(FieldPath.documentId()),
-          MAX_BLOCKED_USERS,
-          "The block list",
+    const cacheRef = friendDiscoveryCacheReference(auth.uid, "suggestions");
+    const cacheSnapshot = await cacheRef.get();
+    const cache = freshCacheData(cacheSnapshot, now, "suggestions");
+    let ranked = validSuggestionCacheEntries(cache);
+    const cacheMiss = ranked === null;
+    if (cacheMiss) {
+      const myFriendIds = await friendIdsOf(auth.uid, {
+        maximum: MAX_FRIENDS_SCANNED_FOR_DISCOVERY,
+        failOnOverflow: false,
+        label: "The suggestion source graph",
+        readBudget,
+      });
+      const exclude = new Set([auth.uid, ...myFriendIds]);
+      const expandIds = myFriendIds.slice(0, MAX_FRIENDS_EXPANDED);
+      const theirFriendLists = await Promise.all(
+        expandIds.map((userId) =>
+          friendIdsOf(userId, {
+            maximum: MAX_EXPANDED_FRIENDS_PER_SOURCE,
+            failOnOverflow: false,
+            label: "A suggestion expansion graph",
+            readBudget,
+          }),
         ),
-        boundedIds(
-          userRef.collection("friendRequests").orderBy(FieldPath.documentId()),
-          MAX_PENDING_REQUESTS,
-          "The incoming request list",
-        ),
-        boundedIds(
-          userRef
-            .collection("sentFriendRequests")
-            .orderBy(FieldPath.documentId()),
-          MAX_PENDING_REQUESTS,
-          "The outgoing request list",
-        ),
-      ]);
-    const exclude = new Set([
-      auth.uid,
-      ...myFriendIds,
-      ...blockedIds,
-      ...incomingIds,
-      ...outgoingIds,
-    ]);
+      );
 
-    if (myFriendIds.length === 0) {
-      return { suggestions: [] };
-    }
-
-    const expandIds = myFriendIds.slice(0, MAX_FRIENDS_EXPANDED);
-    const theirFriendLists = await Promise.all(
-      expandIds.map((userId) =>
-        friendIdsOf(userId, {
-          maximum: MAX_EXPANDED_FRIENDS_PER_SOURCE,
-          failOnOverflow: false,
-        }),
-      ),
-    );
-
-    const mutualCounts = new Map();
-    for (const list of theirFriendLists) {
-      for (const candidateId of list) {
-        if (exclude.has(candidateId)) continue;
-        if (
-          mutualCounts.has(candidateId) ||
-          mutualCounts.size < MAX_SUGGESTION_CANDIDATES
-        ) {
-          mutualCounts.set(
-            candidateId,
-            (mutualCounts.get(candidateId) ?? 0) + 1,
-          );
+      const mutualCounts = new Map();
+      for (const list of theirFriendLists) {
+        for (const candidateId of list) {
+          if (exclude.has(candidateId)) continue;
+          if (
+            mutualCounts.has(candidateId) ||
+            mutualCounts.size < MAX_SUGGESTION_CANDIDATES
+          ) {
+            mutualCounts.set(
+              candidateId,
+              (mutualCounts.get(candidateId) ?? 0) + 1,
+            );
+          }
         }
       }
+
+      ranked = [...mutualCounts.entries()]
+        .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+        .slice(0, MAX_SUGGESTION_CANDIDATES)
+        .map(([uid, mutualCount]) => ({ uid, mutualCount }));
     }
 
-    const ranked = [...mutualCounts.entries()]
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, Math.min(mutualCounts.size, limit * 5));
-
-    const profiles = await profileSummaries(ranked.map(([id]) => id));
-    const reverseBlocks =
-      ranked.length === 0
-        ? []
-        : await db.getAll(
-            ...ranked.map(([id]) => db.doc(`users/${id}/blocked/${auth.uid}`)),
-          );
-    const hidden = new Set(
-      reverseBlocks
-        .filter((snapshot) => snapshot.exists)
-        .map((snapshot) => snapshot.ref.parent.parent.id),
+    // Unlike the old implementation, no complete block/request collection is
+    // scanned. The bounded candidate set is checked by exact document ids,
+    // and all sensitive visibility state is revalidated even on cache hits.
+    const suggestions = await safeSuggestionSummaries(
+      ranked,
+      auth.uid,
+      readBudget,
     );
 
+    if (cacheMiss) {
+      await cacheRef
+        .set(
+          discoveryCacheData(
+            "suggestions",
+            now,
+            { entries: ranked },
+            readBudget.reserved,
+          ),
+        )
+        .catch(() => undefined);
+    }
+
     return {
-      suggestions: ranked
-        .map(([id, mutualCount]) => {
-          const profile = profiles.get(id);
-          if (!profile || hidden.has(id)) return null;
-          return { ...profile, mutualCount };
-        })
-        .filter(Boolean)
-        .slice(0, limit),
+      suggestions: suggestions.slice(0, limit),
     };
   },
 );
@@ -514,6 +1034,8 @@ const sendFriendRequest = onCall(
     const outgoingMirrorRef = sentRequestReference(auth.uid, targetUserId);
     const incomingRef = incomingRequestReference(auth.uid, targetUserId);
     const incomingMirrorRef = sentRequestReference(targetUserId, auth.uid);
+    const actorCapacityRef = socialCapacityReference(auth.uid);
+    const targetCapacityRef = socialCapacityReference(targetUserId);
     const requestNotificationId = newSocialNotificationId(
       "friendRequest",
       auth.uid,
@@ -543,7 +1065,7 @@ const sendFriendRequest = onCall(
       `friendRequest_${targetUserId}`,
     );
 
-    return db.runTransaction(async (transaction) => {
+    const result = await db.runTransaction(async (transaction) => {
       const [
         actorSnapshot,
         targetSnapshot,
@@ -558,6 +1080,9 @@ const sendFriendRequest = onCall(
         outgoing,
         outgoingMirror,
         incoming,
+        incomingMirror,
+        actorCapacitySnapshot,
+        targetCapacitySnapshot,
       ] = await transaction.getAll(
         actorRef,
         targetRef,
@@ -572,6 +1097,17 @@ const sendFriendRequest = onCall(
         outgoingRef,
         outgoingMirrorRef,
         incomingRef,
+        incomingMirrorRef,
+        actorCapacityRef,
+        targetCapacityRef,
+      );
+      const actorCapacity = socialCapacityState(
+        auth.uid,
+        actorCapacitySnapshot,
+      );
+      const targetCapacity = socialCapacityState(
+        targetUserId,
+        targetCapacitySnapshot,
       );
       const actor = profileData(actorSnapshot, "Your");
       const target = profileData(targetSnapshot, "The selected");
@@ -606,6 +1142,17 @@ const sendFriendRequest = onCall(
         // Heal a legacy missing private mirror without replaying the event or
         // resurrecting a notification the recipient intentionally deleted.
         if (!outgoingMirror.exists) {
+          await ensureSocialCapacity(
+            transaction,
+            actorCapacity,
+            "pendingOutgoing",
+          );
+          if (!socialCapacityHasRoom(actorCapacity, "pendingOutgoing")) {
+            persistSocialCapacity(transaction, actorCapacity);
+            return { capacityExceeded: true };
+          }
+          adjustSocialCapacity(actorCapacity, "pendingOutgoing", 1);
+          persistSocialCapacity(transaction, actorCapacity);
           const existingNotificationId = storedNotificationId(
             outgoing.data(),
             `friendRequest_${auth.uid}`,
@@ -642,6 +1189,24 @@ const sendFriendRequest = onCall(
           MAX_FRIENDS,
           "The selected account has reached the friend limit.",
         );
+        await ensureSocialCapacity(
+          transaction,
+          actorCapacity,
+          "pendingIncoming",
+        );
+        if (incomingMirror.exists) {
+          await ensureSocialCapacity(
+            transaction,
+            targetCapacity,
+            "pendingOutgoing",
+          );
+        }
+        adjustSocialCapacity(actorCapacity, "pendingIncoming", -1);
+        if (incomingMirror.exists) {
+          adjustSocialCapacity(targetCapacity, "pendingOutgoing", -1);
+        }
+        persistSocialCapacity(transaction, actorCapacity);
+        persistSocialCapacity(transaction, targetCapacity);
         transaction.create(myFriendRef, {
           userId: targetUserId,
           acceptanceNotificationId: acceptedNotificationId,
@@ -696,28 +1261,31 @@ const sendFriendRequest = onCall(
         return { outcome: "accepted", changed: true };
       }
 
-      // Keep transaction reads ordered. The Firestore emulator and the
-      // production client can invalidate one of two concurrent query streams
-      // when reciprocal requests force the transaction to retry.
-      const actorOutgoing = await transaction.get(
-        actorRef
-          .collection("sentFriendRequests")
-          .limit(MAX_PENDING_REQUESTS + 1),
+      await ensureSocialCapacity(
+        transaction,
+        actorCapacity,
+        "pendingOutgoing",
       );
-      const targetIncoming = await transaction.get(
-        targetRef
-          .collection("friendRequests")
-          .limit(MAX_PENDING_REQUESTS + 1),
+      await ensureSocialCapacity(
+        transaction,
+        targetCapacity,
+        "pendingIncoming",
       );
       if (
-        actorOutgoing.size >= MAX_PENDING_REQUESTS ||
-        targetIncoming.size >= MAX_PENDING_REQUESTS
+        !socialCapacityHasRoom(actorCapacity, "pendingOutgoing") ||
+        !socialCapacityHasRoom(targetCapacity, "pendingIncoming")
       ) {
-        throw new HttpsError(
-          "resource-exhausted",
-          "The pending friend-request limit has been reached.",
-        );
+        // Persist a one-time bounded legacy migration even when it discovers
+        // a full collection. Throwing inside the transaction would roll this
+        // state back and let an attacker force the 201-read scan repeatedly.
+        persistSocialCapacity(transaction, actorCapacity);
+        persistSocialCapacity(transaction, targetCapacity);
+        return { capacityExceeded: true };
       }
+      adjustSocialCapacity(actorCapacity, "pendingOutgoing", 1);
+      adjustSocialCapacity(targetCapacity, "pendingIncoming", 1);
+      persistSocialCapacity(transaction, actorCapacity);
+      persistSocialCapacity(transaction, targetCapacity);
       const timestamp = FieldValue.serverTimestamp();
       transaction.create(outgoingRef, {
         senderId: auth.uid,
@@ -746,6 +1314,13 @@ const sendFriendRequest = onCall(
       );
       return { outcome: "requested", changed: true };
     });
+    if (result.capacityExceeded === true) {
+      throw new HttpsError(
+        "resource-exhausted",
+        "The pending friend-request limit has been reached.",
+      );
+    }
+    return result;
   },
 );
 
@@ -774,6 +1349,8 @@ const respondToFriendRequest = onCall(
     const senderBlockRef = db.doc(`users/${senderId}/blocked/${auth.uid}`);
     const requestRef = incomingRequestReference(auth.uid, senderId);
     const sentRef = sentRequestReference(senderId, auth.uid);
+    const actorCapacityRef = socialCapacityReference(auth.uid);
+    const senderCapacityRef = socialCapacityReference(senderId);
     const myFriendRef = friendReference(auth.uid, senderId);
     const senderFriendRef = friendReference(senderId, auth.uid);
     const myGuardRef = friendshipGuardReference(auth.uid, senderId);
@@ -804,10 +1381,13 @@ const respondToFriendRequest = onCall(
         actorBlock,
         senderBlock,
         pending,
+        sent,
         myFriend,
         senderFriend,
         myGuard,
         senderGuard,
+        actorCapacitySnapshot,
+        senderCapacitySnapshot,
       ] = await transaction.getAll(
         actorRef,
         senderRef,
@@ -816,10 +1396,21 @@ const respondToFriendRequest = onCall(
         actorBlockRef,
         senderBlockRef,
         requestRef,
+        sentRef,
         myFriendRef,
         senderFriendRef,
         myGuardRef,
         senderGuardRef,
+        actorCapacityRef,
+        senderCapacityRef,
+      );
+      const actorCapacity = socialCapacityState(
+        auth.uid,
+        actorCapacitySnapshot,
+      );
+      const senderCapacity = socialCapacityState(
+        senderId,
+        senderCapacitySnapshot,
       );
       const actor = profileData(actorSnapshot, "Your");
 
@@ -851,6 +1442,24 @@ const respondToFriendRequest = onCall(
       }
 
       const timestamp = FieldValue.serverTimestamp();
+      await ensureSocialCapacity(
+        transaction,
+        actorCapacity,
+        "pendingIncoming",
+      );
+      if (sent.exists) {
+        await ensureSocialCapacity(
+          transaction,
+          senderCapacity,
+          "pendingOutgoing",
+        );
+      }
+      adjustSocialCapacity(actorCapacity, "pendingIncoming", -1);
+      if (sent.exists) {
+        adjustSocialCapacity(senderCapacity, "pendingOutgoing", -1);
+      }
+      persistSocialCapacity(transaction, actorCapacity);
+      persistSocialCapacity(transaction, senderCapacity);
       if (!accept) {
         transaction.delete(requestRef);
         transaction.delete(sentRef);
@@ -971,14 +1580,19 @@ const cancelFriendRequest = onCall(
     }
     const requestRef = incomingRequestReference(targetUserId, auth.uid);
     const sentRef = sentRequestReference(auth.uid, targetUserId);
+    const actorCapacityRef = socialCapacityReference(auth.uid);
+    const targetCapacityRef = socialCapacityReference(targetUserId);
     const legacyRequestNotificationRef = notificationReference(
       targetUserId,
       `friendRequest_${auth.uid}`,
     );
     return db.runTransaction(async (transaction) => {
-      const [pending, sent] = await transaction.getAll(
+      const [pending, sent, actorCapacitySnapshot, targetCapacitySnapshot] =
+        await transaction.getAll(
         requestRef,
         sentRef,
+        actorCapacityRef,
+        targetCapacityRef,
       );
       if (!pending.exists && !sent.exists) {
         // A previous partial rollout may have left only the alert behind.
@@ -997,6 +1611,32 @@ const cancelFriendRequest = onCall(
         pending.exists ? pending.data() : sent.data(),
         `friendRequest_${auth.uid}`,
       );
+      const actorCapacity = socialCapacityState(
+        auth.uid,
+        actorCapacitySnapshot,
+      );
+      const targetCapacity = socialCapacityState(
+        targetUserId,
+        targetCapacitySnapshot,
+      );
+      if (sent.exists) {
+        await ensureSocialCapacity(
+          transaction,
+          actorCapacity,
+          "pendingOutgoing",
+        );
+        adjustSocialCapacity(actorCapacity, "pendingOutgoing", -1);
+      }
+      if (pending.exists) {
+        await ensureSocialCapacity(
+          transaction,
+          targetCapacity,
+          "pendingIncoming",
+        );
+        adjustSocialCapacity(targetCapacity, "pendingIncoming", -1);
+      }
+      persistSocialCapacity(transaction, actorCapacity);
+      persistSocialCapacity(transaction, targetCapacity);
       transaction.delete(requestRef);
       transaction.delete(sentRef);
       if (requestNotificationId) {
@@ -1269,12 +1909,29 @@ const setUserBlock = onCall(
     const actorRef = db.doc(`users/${auth.uid}`);
     const targetRef = db.doc(`users/${targetUserId}`);
     const blockRef = db.doc(`users/${auth.uid}/blocked/${targetUserId}`);
+    const actorCapacityRef = socialCapacityReference(auth.uid);
+    const targetCapacityRef = socialCapacityReference(targetUserId);
     if (!blocked) {
-      const actor = await actorRef.get();
-      profileData(actor, "Your");
-      const existed = (await blockRef.get()).exists;
-      if (existed) await blockRef.delete();
-      return { changed: existed, blocked: false };
+      return db.runTransaction(async (transaction) => {
+        const [actor, existingBlock, actorCapacitySnapshot] =
+          await transaction.getAll(actorRef, blockRef, actorCapacityRef);
+        profileData(actor, "Your");
+        const actorCapacity = socialCapacityState(
+          auth.uid,
+          actorCapacitySnapshot,
+        );
+        await ensureSocialCapacity(
+          transaction,
+          actorCapacity,
+          "blocked",
+        );
+        if (existingBlock.exists) {
+          adjustSocialCapacity(actorCapacity, "blocked", -1);
+          transaction.delete(blockRef);
+        }
+        persistSocialCapacity(transaction, actorCapacity);
+        return { changed: existingBlock.exists, blocked: false };
+      });
     }
 
     const refs = {
@@ -1291,12 +1948,14 @@ const setUserBlock = onCall(
       myGuard: friendshipGuardReference(auth.uid, targetUserId),
       theirGuard: friendshipGuardReference(targetUserId, auth.uid),
     };
-    return db.runTransaction(async (transaction) => {
+    const result = await db.runTransaction(async (transaction) => {
       const snapshots = await transaction.getAll(
         actorRef,
         targetRef,
         blockRef,
         ...Object.values(refs),
+        actorCapacityRef,
+        targetCapacityRef,
       );
       const actor = profileData(snapshots[0], "Your");
       const targetSnapshot = snapshots[1];
@@ -1304,6 +1963,14 @@ const setUserBlock = onCall(
       const existingBlock = snapshots[2];
       const edgeSnapshots = Object.fromEntries(
         Object.keys(refs).map((key, index) => [key, snapshots[index + 3]]),
+      );
+      const actorCapacity = socialCapacityState(
+        auth.uid,
+        snapshots[3 + Object.keys(refs).length],
+      );
+      const targetCapacity = socialCapacityState(
+        targetUserId,
+        snapshots[4 + Object.keys(refs).length],
       );
       const {
         myFriend,
@@ -1313,21 +1980,54 @@ const setUserBlock = onCall(
         theirFollowing,
         myFollower,
         outgoing,
+        outgoingMirror,
         incoming,
+        incomingMirror,
       } = edgeSnapshots;
       const target = targetSnapshot.data() ?? {};
 
+      await ensureSocialCapacity(transaction, actorCapacity, "blocked");
       if (!existingBlock.exists) {
-        const blockList = await transaction.get(
-          actorRef.collection("blocked").limit(MAX_BLOCKED_USERS + 1),
-        );
-        if (blockList.size >= MAX_BLOCKED_USERS) {
-          throw new HttpsError(
-            "resource-exhausted",
-            "You have reached the block-list safety limit.",
-          );
+        if (!socialCapacityHasRoom(actorCapacity, "blocked")) {
+          persistSocialCapacity(transaction, actorCapacity);
+          return { capacityExceeded: true };
         }
+        adjustSocialCapacity(actorCapacity, "blocked", 1);
       }
+      if (outgoingMirror.exists) {
+        await ensureSocialCapacity(
+          transaction,
+          actorCapacity,
+          "pendingOutgoing",
+        );
+        adjustSocialCapacity(actorCapacity, "pendingOutgoing", -1);
+      }
+      if (incoming.exists) {
+        await ensureSocialCapacity(
+          transaction,
+          actorCapacity,
+          "pendingIncoming",
+        );
+        adjustSocialCapacity(actorCapacity, "pendingIncoming", -1);
+      }
+      if (outgoing.exists) {
+        await ensureSocialCapacity(
+          transaction,
+          targetCapacity,
+          "pendingIncoming",
+        );
+        adjustSocialCapacity(targetCapacity, "pendingIncoming", -1);
+      }
+      if (incomingMirror.exists) {
+        await ensureSocialCapacity(
+          transaction,
+          targetCapacity,
+          "pendingOutgoing",
+        );
+        adjustSocialCapacity(targetCapacity, "pendingOutgoing", -1);
+      }
+      persistSocialCapacity(transaction, actorCapacity);
+      persistSocialCapacity(transaction, targetCapacity);
 
       const dynamicNotifications = [
         {
@@ -1435,19 +2135,40 @@ const setUserBlock = onCall(
       }
       return { changed: !existingBlock.exists, blocked: true };
     });
+    if (result.capacityExceeded === true) {
+      throw new HttpsError(
+        "resource-exhausted",
+        "You have reached the block-list safety limit.",
+      );
+    }
+    return result;
   },
 );
 
 module.exports = {
   FRIENDSHIP_GUARD_SCHEMA_VERSION,
+  SOCIAL_CAPACITY_SCHEMA_VERSION,
   MAX_FRIENDS,
   MAX_FOLLOWING,
   MAX_PENDING_REQUESTS,
   MAX_BLOCKED_USERS,
+  MAX_FRIENDS_EXPANDED,
+  MAX_FRIENDS_SCANNED_FOR_DISCOVERY,
+  MAX_EXPANDED_FRIENDS_PER_SOURCE,
+  MAX_SUGGESTION_CANDIDATES,
+  MAX_MUTUAL_FRIENDS_SCANNED,
+  FRIEND_DISCOVERY_MINUTE_LIMIT,
+  FRIEND_DISCOVERY_HOUR_LIMIT,
+  FRIEND_DISCOVERY_CACHE_TTL_MS,
+  SUGGESTION_GRAPH_READ_BUDGET,
+  MUTUAL_GRAPH_READ_BUDGET,
   QUOTA_MINUTE_MS,
   QUOTA_HOUR_MS,
   friendshipGuardReference,
   consumeSocialRateLimit,
+  consumeFriendDiscoveryRateLimit,
+  friendDiscoveryCacheReference,
+  socialCapacityReference,
   getMutualFriends,
   getFriendSuggestions,
   sendFriendRequest,

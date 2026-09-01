@@ -636,6 +636,7 @@ class _CreatorResultCardState extends State<_CreatorResultCard> {
               children: [
                 UserAvatar(
                   radius: compact ? 25 : 29,
+                  userId: creator.uid,
                   photoUrl: creator.photoUrl,
                   displayName: creator.displayName,
                   premium: creator.premiumIdentity,

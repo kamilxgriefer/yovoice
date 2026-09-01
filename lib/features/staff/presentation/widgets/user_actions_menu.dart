@@ -180,64 +180,82 @@ class UserActionsMenu extends StatelessWidget {
               : await service.blockUser(targetUid);
         }, isBlocked ? 'Unblocked $targetName.' : 'Blocked $targetName.');
       case _UserAction.togglePersonalMute:
-        await _personal(context, () async {
-          final db = firestore ?? FirebaseFirestore.instance;
-          final ref = db
-              .collection('users')
-              .doc(currentUid)
-              .collection('muted')
-              .doc(targetUid);
+        await _personal(
+          context,
+          () async {
+            final db = firestore ?? FirebaseFirestore.instance;
+            final ref = db
+                .collection('users')
+                .doc(currentUid)
+                .collection('muted')
+                .doc(targetUid);
+            isPersonallyMuted
+                ? await ref.delete()
+                : await ref.set({'mutedAt': FieldValue.serverTimestamp()});
+          },
           isPersonallyMuted
-              ? await ref.delete()
-              : await ref.set({'mutedAt': FieldValue.serverTimestamp()});
-        }, isPersonallyMuted
-            ? 'Unmuted $targetName for you.'
-            : 'Muted $targetName for you only.');
+              ? 'Unmuted $targetName for you.'
+              : 'Muted $targetName for you only.',
+        );
       case _UserAction.warn:
-        await _sanction(context,
-            title: 'Warn $targetName',
-            confirmLabel: 'Send warning',
-            durations: null,
-            onConfirm: (reason, _) => _applySanction('warn', reason));
+        await _sanction(
+          context,
+          title: 'Warn $targetName',
+          confirmLabel: 'Send warning',
+          durations: null,
+          onConfirm: (reason, _) => _applySanction('warn', reason),
+        );
       case _UserAction.communicationMute:
-        await _sanction(context,
-            title: 'Mute communication — $targetName',
-            confirmLabel: 'Apply mute',
-            durations: _durations(),
-            scopeNote: 'Scope: platform-wide public communication.',
-            onConfirm: (reason, hours) =>
-                _applySanction('communicationMute', reason, hours));
+        await _sanction(
+          context,
+          title: 'Mute communication — $targetName',
+          confirmLabel: 'Apply mute',
+          durations: _durations(),
+          scopeNote: 'Scope: platform-wide public communication.',
+          onConfirm: (reason, hours) =>
+              _applySanction('communicationMute', reason, hours),
+        );
       case _UserAction.liftMute:
-        await _sanction(context,
-            title: 'Lift communication mute — $targetName',
-            confirmLabel: 'Lift mute',
-            durations: null,
-            onConfirm: (reason, _) => _applySanction('liftMute', reason));
+        await _sanction(
+          context,
+          title: 'Lift communication mute — $targetName',
+          confirmLabel: 'Lift mute',
+          durations: null,
+          onConfirm: (reason, _) => _applySanction('liftMute', reason),
+        );
       case _UserAction.suspend:
-        await _sanction(context,
-            title: 'Suspend $targetName',
-            confirmLabel: 'Suspend account',
-            durations: _durations(forSuspension: true),
-            onConfirm: (reason, hours) => _setBan(true, reason, hours));
+        await _sanction(
+          context,
+          title: 'Suspend $targetName',
+          confirmLabel: 'Suspend account',
+          durations: _durations(forSuspension: true),
+          onConfirm: (reason, hours) => _setBan(true, reason, hours),
+        );
       case _UserAction.liftSuspension:
-        await _sanction(context,
-            title: 'Lift suspension — $targetName',
-            confirmLabel: 'Lift suspension',
-            durations: null,
-            onConfirm: (reason, _) => _setBan(false, reason, 0));
+        await _sanction(
+          context,
+          title: 'Lift suspension — $targetName',
+          confirmLabel: 'Lift suspension',
+          durations: null,
+          onConfirm: (reason, _) => _setBan(false, reason, 0),
+        );
       case _UserAction.permanentBan:
-        await _sanction(context,
-            title: 'Ban $targetName permanently',
-            confirmLabel: 'Ban permanently',
-            durations: null,
-            destructive: true,
-            onConfirm: (reason, _) => _setBan(true, reason, 0));
+        await _sanction(
+          context,
+          title: 'Ban $targetName permanently',
+          confirmLabel: 'Ban permanently',
+          durations: null,
+          destructive: true,
+          onConfirm: (reason, _) => _setBan(true, reason, 0),
+        );
       case _UserAction.unban:
-        await _sanction(context,
-            title: 'Unban $targetName',
-            confirmLabel: 'Unban account',
-            durations: null,
-            onConfirm: (reason, _) => _setBan(false, reason, 0));
+        await _sanction(
+          context,
+          title: 'Unban $targetName',
+          confirmLabel: 'Unban account',
+          durations: null,
+          onConfirm: (reason, _) => _setBan(false, reason, 0),
+        );
     }
   }
 
@@ -255,8 +273,11 @@ class UserActionsMenu extends StatelessWidget {
     return limit == null && !forSuspension ? [...within, 0] : within;
   }
 
-  Future<void> _applySanction(String action, String reason,
-      [int? hours]) async {
+  Future<void> _applySanction(
+    String action,
+    String reason, [
+    int? hours,
+  ]) async {
     await _functions.httpsCallable('applySanction').call<Map<String, dynamic>>({
       'action': action,
       'uid': targetUid,
@@ -406,7 +427,8 @@ class _Row extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final tint =
-        color ?? (staff ? RoleIdentity.moderatorColor : const Color(0xFFE4DEED));
+        color ??
+        (staff ? RoleIdentity.moderatorColor : const Color(0xFFE4DEED));
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -576,8 +598,10 @@ class _SanctionDialogState extends State<SanctionDialog> {
               const SizedBox(height: 8),
               Text(
                 _error!,
-                style:
-                    const TextStyle(color: Color(0xFFFF9BB0), fontSize: 12.5),
+                style: const TextStyle(
+                  color: Color(0xFFFF9BB0),
+                  fontSize: 12.5,
+                ),
               ),
             ],
           ],

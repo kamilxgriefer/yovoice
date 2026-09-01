@@ -9,7 +9,10 @@ const USER_CALLABLE_METHODS = Object.freeze({
   openDirectConversation: ["direct", "openDirectConversation"],
   sendDirectMessage: ["direct", "sendDirectMessage"],
   reserveDirectMessageAttachment: ["direct", "reserveDirectMessageAttachment"],
-  finalizeDirectMessageAttachment: ["direct", "finalizeDirectMessageAttachment"],
+  finalizeDirectMessageAttachment: [
+    "direct",
+    "finalizeDirectMessageAttachment",
+  ],
   editDirectMessage: ["direct", "editDirectMessage"],
   deleteDirectMessage: ["direct", "deleteDirectMessage"],
   setDirectConversationPreference: [
@@ -19,8 +22,13 @@ const USER_CALLABLE_METHODS = Object.freeze({
   markDirectConversationRead: ["direct", "markDirectConversationRead"],
   setDirectMessageReaction: ["direct", "setDirectMessageReaction"],
   setDirectTyping: ["direct", "setDirectTyping"],
+  sendRoomMessage: ["community", "sendRoomMessage"],
+  sendClubMessage: ["community", "sendClubMessage"],
+  createRoom: ["roomCreation", "createRoom"],
+  startRoomVoice: ["roomCreation", "startRoomVoice"],
   reserveMomentDraft: ["moments", "reserveMomentDraft"],
   finalizeMomentDraft: ["moments", "finalizeMomentDraft"],
+  getVoiceMomentMediaAccess: ["moments", "getVoiceMomentMediaAccess"],
   setMomentLike: ["moments", "setMomentLike"],
   createMomentComment: ["moments", "createMomentComment"],
   reserveVoiceCommentDraft: ["moments", "reserveVoiceCommentDraft"],
@@ -28,6 +36,10 @@ const USER_CALLABLE_METHODS = Object.freeze({
   deleteMomentComment: ["moments", "deleteMomentComment"],
   deleteMoment: ["moments", "deleteMoment"],
   createContentReport: ["moments", "createContentReport"],
+  finalizeRoomCoverUpload: ["roomCovers", "finalizeRoomCoverUpload"],
+  getRoomCoverMediaAccess: ["roomCovers", "getRoomCoverMediaAccess"],
+  reserveRoomCoverUpload: ["roomCovers", "reserveRoomCoverUpload"],
+  setRoomVisibilitySelf: ["roomCovers", "setRoomVisibilitySelf"],
 });
 
 function authBoundRequest(request) {
@@ -46,7 +58,13 @@ function authBoundRequest(request) {
 }
 
 function createUserCallableHandlers(runtime) {
-  if (!runtime?.direct || !runtime?.moments) {
+  if (
+    !runtime?.community ||
+    !runtime?.direct ||
+    !runtime?.moments ||
+    !runtime?.roomCovers ||
+    !runtime?.roomCreation
+  ) {
     throw new TypeError("A Stage B integrity runtime is required.");
   }
   const handlers = {};
@@ -55,7 +73,9 @@ function createUserCallableHandlers(runtime) {
   )) {
     const method = runtime[serviceName]?.[methodName];
     if (typeof method !== "function") {
-      throw new TypeError(`Missing runtime method ${serviceName}.${methodName}.`);
+      throw new TypeError(
+        `Missing runtime method ${serviceName}.${methodName}.`,
+      );
     }
     handlers[name] = async (request) => method(authBoundRequest(request));
   }
@@ -67,12 +87,15 @@ function createMaintenanceHandlers({
   direct,
   FieldPath,
   moments,
+  roomCovers,
   logger = console,
   cleanupBatchSize = 12,
   expiryBatchSize = 100,
 } = {}) {
-  if (!db || !FieldPath?.documentId || !direct || !moments) {
-    throw new TypeError("db, direct, FieldPath and moments are required.");
+  if (!db || !FieldPath?.documentId || !direct || !moments || !roomCovers) {
+    throw new TypeError(
+      "db, direct, FieldPath, moments and roomCovers are required.",
+    );
   }
   requireSafeInteger(cleanupBatchSize, "cleanupBatchSize", { min: 1, max: 25 });
   requireSafeInteger(expiryBatchSize, "expiryBatchSize", { min: 1, max: 100 });
@@ -96,13 +119,15 @@ function createMaintenanceHandlers({
   }
 
   async function processPendingContentCleanup() {
-    const snapshot = await db.collection("contentCleanupOutbox")
+    const snapshot = await db
+      .collection("contentCleanupOutbox")
       .where("status", "==", "pending")
       .orderBy(FieldPath.documentId())
       .limit(cleanupBatchSize)
       .get();
-    const results = await Promise.all(snapshot.docs.map((document) =>
-      processOne(document.id)));
+    const results = await Promise.all(
+      snapshot.docs.map((document) => processOne(document.id)),
+    );
     return {
       processed: results.length,
       completed: results.filter((result) => result.completed === true).length,
@@ -117,7 +142,9 @@ function createMaintenanceHandlers({
   }
 
   async function expireAbandonedVoiceCommentDrafts() {
-    return moments.expireAbandonedVoiceCommentDrafts({ limit: expiryBatchSize });
+    return moments.expireAbandonedVoiceCommentDrafts({
+      limit: expiryBatchSize,
+    });
   }
 
   async function expireAbandonedDirectMessageAttachments() {
@@ -126,14 +153,24 @@ function createMaintenanceHandlers({
     });
   }
 
+  async function expireRoomCoverUploadReservations() {
+    return roomCovers.expireRoomCoverUploadReservations({
+      limit: expiryBatchSize,
+    });
+  }
+
   async function rejectExternalMaintenanceInvocation() {
-    fail("permission-denied", "Maintenance handlers are not callable endpoints.");
+    fail(
+      "permission-denied",
+      "Maintenance handlers are not callable endpoints.",
+    );
   }
 
   return Object.freeze({
     expireAbandonedMomentDrafts,
     expireAbandonedDirectMessageAttachments,
     expireAbandonedVoiceCommentDrafts,
+    expireRoomCoverUploadReservations,
     onContentCleanupOutboxCreated,
     processPendingContentCleanup,
     // Exported only so binding tests can prove these handlers are registered

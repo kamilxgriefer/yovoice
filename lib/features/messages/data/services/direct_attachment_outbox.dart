@@ -670,6 +670,40 @@ class DirectAttachmentOutbox {
 
   Future<void> discard(String id) => _remove(id, requireFailed: true);
 
+  /// Privacy boundary used during sign-out. Pending attachment bytes and their
+  /// conversation metadata must not survive for the next account on a shared
+  /// device. Both stores are attempted even if one fails so cleanup converges
+  /// as far as the platform allows.
+  Future<void> clear() => _serialize(() async {
+    Object? firstFailure;
+    StackTrace? firstStackTrace;
+
+    _entries.clear();
+    _loaded = true;
+    _notify();
+
+    try {
+      final removed = await (await _prefs()).remove(_storageKey);
+      if (!removed) {
+        throw StateError('Pending attachment metadata could not be removed.');
+      }
+    } catch (error, stackTrace) {
+      firstFailure = error;
+      firstStackTrace = stackTrace;
+    }
+
+    try {
+      await payloadStore.clear(accountNamespace);
+    } catch (error, stackTrace) {
+      firstFailure ??= error;
+      firstStackTrace ??= stackTrace;
+    }
+
+    if (firstFailure != null) {
+      Error.throwWithStackTrace(firstFailure, firstStackTrace!);
+    }
+  });
+
   Future<void> _remove(String id, {required bool requireFailed}) =>
       _serialize(() async {
         await _ensureLoaded();

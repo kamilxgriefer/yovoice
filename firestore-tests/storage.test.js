@@ -12,7 +12,11 @@ const {
 } = require("@firebase/rules-unit-testing");
 const { deleteDoc, doc, setDoc } = require("firebase/firestore");
 const {
-  ref, uploadBytes, getBytes, deleteObject, listAll,
+  ref,
+  uploadBytes,
+  getBytes,
+  deleteObject,
+  listAll,
 } = require("firebase/storage");
 
 const FIRESTORE_RULES = path.resolve(__dirname, "../firestore.rules");
@@ -21,10 +25,16 @@ const STORAGE_RULES = path.resolve(__dirname, "../storage.rules");
 // Emulator ports are test-harness state, not product behavior. Firebase CLI
 // injects the combined *_EMULATOR_HOST variables; the split variables remain
 // useful for an explicitly managed emulator in CI or a parallel local run.
-function emulatorEndpoint(combinedValue, explicitHost, explicitPort, fallbackPort) {
+function emulatorEndpoint(
+  combinedValue,
+  explicitHost,
+  explicitPort,
+  fallbackPort,
+) {
   const separator = combinedValue?.lastIndexOf(":") ?? -1;
   const combinedHost = separator > 0 ? combinedValue.slice(0, separator) : null;
-  const combinedPort = separator > 0 ? combinedValue.slice(separator + 1) : null;
+  const combinedPort =
+    separator > 0 ? combinedValue.slice(separator + 1) : null;
   return {
     host: explicitHost ?? combinedHost ?? "127.0.0.1",
     port: Number(explicitPort ?? combinedPort ?? fallbackPort),
@@ -179,15 +189,17 @@ async function clearStorage(testEnv) {
     }
 
     const root = ref(ctx.storage());
-    await Promise.all((await objectsUnder(root)).map((item) => deleteObject(item)));
+    await Promise.all(
+      (await objectsUnder(root)).map((item) => deleteObject(item)),
+    );
 
     const remaining = await objectsUnder(root);
     if (remaining.length > 0) {
       throw new Error(
         `Storage emulator still holds ${remaining.length} object(s) after ` +
-        `clearing: ${remaining.map((item) => item.fullPath).join(", ")}. ` +
-        "The create-only paths below would deny re-uploading them and report " +
-        "a rules regression that is not one.",
+          `clearing: ${remaining.map((item) => item.fullPath).join(", ")}. ` +
+          "The create-only paths below would deny re-uploading them and report " +
+          "a rules regression that is not one.",
       );
     }
   });
@@ -197,10 +209,17 @@ async function seed(testEnv) {
   await testEnv.withSecurityRulesDisabled(async (ctx) => {
     const db = ctx.firestore();
     for (const uid of [ALICE, BOB, MALLORY, NEWBIE]) {
-      await setDoc(doc(db, `users/${uid}`), { uid, banned: false, disabled: false });
+      await setDoc(doc(db, `users/${uid}`), {
+        uid,
+        banned: false,
+        disabled: false,
+      });
     }
     await setDoc(doc(db, `users/${BANNED}`), { uid: BANNED, banned: true });
-    await setDoc(doc(db, `users/${DISABLED}`), { uid: DISABLED, disabled: true });
+    await setDoc(doc(db, `users/${DISABLED}`), {
+      uid: DISABLED,
+      disabled: true,
+    });
 
     await setDoc(doc(db, "rooms/active-room"), {
       hostId: ALICE,
@@ -299,8 +318,7 @@ async function seed(testEnv) {
       schemaVersion: 2,
       authorId: ALICE,
       audioUrl: null,
-      storagePath:
-        `voice_moments/${ALICE}/${LEGACY_MIXED_MOMENT}.m4a`,
+      storagePath: `voice_moments/${ALICE}/${LEGACY_MIXED_MOMENT}.m4a`,
       durationSeconds: 30,
       isPublished: false,
       isDeleted: false,
@@ -314,8 +332,10 @@ async function seed(testEnv) {
       authorId: BOB,
       isPublished: true,
     });
-    await setDoc(doc(db, `voiceMomentUploadReservations/${COMMENT}`),
-      voiceReplyReservation(ALICE, PARENT, COMMENT));
+    await setDoc(
+      doc(db, `voiceMomentUploadReservations/${COMMENT}`),
+      voiceReplyReservation(ALICE, PARENT, COMMENT),
+    );
     await setDoc(doc(db, "voiceMoments/UnpublishedParent01"), {
       authorId: BOB,
       isPublished: false,
@@ -324,82 +344,178 @@ async function seed(testEnv) {
       schemaVersion: 2,
       participantIds: [ALICE, BOB],
     });
-    await setDoc(doc(db, `directMessageUploadReservations/${DIRECT_IMAGE_MESSAGE}`), {
-      schemaVersion: 1,
-      ownerId: ALICE,
-      conversationId: DIRECT_CONVERSATION,
-      messageId: DIRECT_IMAGE_MESSAGE,
-      recipientId: BOB,
-      type: "image",
-      contentType: "image/jpeg",
-      durationSeconds: null,
-      storagePath:
-        `message_attachments/${ALICE}/${DIRECT_CONVERSATION}/${DIRECT_IMAGE_MESSAGE}.jpg`,
-      status: "uploading",
-      createdAt: new Date(),
-      expiresAt: new Date(Date.now() + 10 * 60 * 1000),
-    });
-    await setDoc(doc(db, `directMessageUploadReservations/${DIRECT_CONTRACT_IMAGE}`), {
-      schemaVersion: 1,
-      ownerId: ALICE,
-      conversationId: DIRECT_CONVERSATION,
-      messageId: DIRECT_CONTRACT_IMAGE,
-      recipientId: BOB,
-      type: "image",
-      contentType: "image/jpeg",
-      durationSeconds: null,
-      storagePath:
-        `message_attachments/${ALICE}/${DIRECT_CONVERSATION}/${DIRECT_CONTRACT_IMAGE}.jpg`,
-      status: "uploading",
-      createdAt: new Date(),
-      expiresAt: new Date(Date.now() + 10 * 60 * 1000),
-    });
-    await setDoc(doc(db, `directMessageUploadReservations/${DIRECT_VOICE_MESSAGE}`), {
-      schemaVersion: 1,
-      ownerId: ALICE,
-      conversationId: DIRECT_CONVERSATION,
-      messageId: DIRECT_VOICE_MESSAGE,
-      recipientId: BOB,
-      type: "voice",
-      contentType: "audio/mp4",
-      durationSeconds: 7,
-      storagePath:
-        `message_attachments/${ALICE}/${DIRECT_CONVERSATION}/${DIRECT_VOICE_MESSAGE}.m4a`,
-      status: "uploading",
-      createdAt: new Date(),
-      expiresAt: new Date(Date.now() + 10 * 60 * 1000),
-    });
-    await setDoc(doc(db, `directMessageUploadReservations/${DIRECT_UNVERIFIED_MESSAGE}`), {
-      schemaVersion: 1,
-      ownerId: NEWBIE,
-      conversationId: DIRECT_CONVERSATION,
-      messageId: DIRECT_UNVERIFIED_MESSAGE,
-      recipientId: BOB,
-      type: "voice",
-      contentType: "audio/mp4",
-      durationSeconds: 7,
-      storagePath:
-        `message_attachments/${NEWBIE}/${DIRECT_CONVERSATION}/${DIRECT_UNVERIFIED_MESSAGE}.m4a`,
-      status: "uploading",
-      createdAt: new Date(),
-      expiresAt: new Date(Date.now() + 10 * 60 * 1000),
-    });
-    await setDoc(doc(db, `directMessageUploadReservations/${DIRECT_EXPIRED_MESSAGE}`), {
-      schemaVersion: 1,
-      ownerId: ALICE,
-      conversationId: DIRECT_CONVERSATION,
-      messageId: DIRECT_EXPIRED_MESSAGE,
-      recipientId: BOB,
-      type: "voice",
-      contentType: "audio/mp4",
-      durationSeconds: 7,
-      storagePath:
-        `message_attachments/${ALICE}/${DIRECT_CONVERSATION}/${DIRECT_EXPIRED_MESSAGE}.m4a`,
-      status: "uploading",
-      createdAt: new Date(Date.now() - 20 * 60 * 1000),
-      expiresAt: new Date(Date.now() - 10 * 60 * 1000),
-    });
+    await setDoc(
+      doc(db, `directMessageUploadReservations/${DIRECT_IMAGE_MESSAGE}`),
+      {
+        schemaVersion: 1,
+        ownerId: ALICE,
+        conversationId: DIRECT_CONVERSATION,
+        messageId: DIRECT_IMAGE_MESSAGE,
+        recipientId: BOB,
+        type: "image",
+        contentType: "image/jpeg",
+        durationSeconds: null,
+        storagePath: `message_attachments/${ALICE}/${DIRECT_CONVERSATION}/${DIRECT_IMAGE_MESSAGE}.jpg`,
+        status: "uploading",
+        createdAt: new Date(),
+        expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+      },
+    );
+    await setDoc(
+      doc(db, `directMessageUploadReservations/${DIRECT_CONTRACT_IMAGE}`),
+      {
+        schemaVersion: 1,
+        ownerId: ALICE,
+        conversationId: DIRECT_CONVERSATION,
+        messageId: DIRECT_CONTRACT_IMAGE,
+        recipientId: BOB,
+        type: "image",
+        contentType: "image/jpeg",
+        durationSeconds: null,
+        storagePath: `message_attachments/${ALICE}/${DIRECT_CONVERSATION}/${DIRECT_CONTRACT_IMAGE}.jpg`,
+        status: "uploading",
+        createdAt: new Date(),
+        expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+      },
+    );
+    await setDoc(
+      doc(db, `directMessageUploadReservations/${DIRECT_VOICE_MESSAGE}`),
+      {
+        schemaVersion: 1,
+        ownerId: ALICE,
+        conversationId: DIRECT_CONVERSATION,
+        messageId: DIRECT_VOICE_MESSAGE,
+        recipientId: BOB,
+        type: "voice",
+        contentType: "audio/mp4",
+        durationSeconds: 7,
+        storagePath: `message_attachments/${ALICE}/${DIRECT_CONVERSATION}/${DIRECT_VOICE_MESSAGE}.m4a`,
+        status: "uploading",
+        createdAt: new Date(),
+        expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+      },
+    );
+    await setDoc(
+      doc(db, `directMessageUploadReservations/${DIRECT_UNVERIFIED_MESSAGE}`),
+      {
+        schemaVersion: 1,
+        ownerId: NEWBIE,
+        conversationId: DIRECT_CONVERSATION,
+        messageId: DIRECT_UNVERIFIED_MESSAGE,
+        recipientId: BOB,
+        type: "voice",
+        contentType: "audio/mp4",
+        durationSeconds: 7,
+        storagePath: `message_attachments/${NEWBIE}/${DIRECT_CONVERSATION}/${DIRECT_UNVERIFIED_MESSAGE}.m4a`,
+        status: "uploading",
+        createdAt: new Date(),
+        expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+      },
+    );
+    await setDoc(
+      doc(db, `directMessageUploadReservations/${DIRECT_EXPIRED_MESSAGE}`),
+      {
+        schemaVersion: 1,
+        ownerId: ALICE,
+        conversationId: DIRECT_CONVERSATION,
+        messageId: DIRECT_EXPIRED_MESSAGE,
+        recipientId: BOB,
+        type: "voice",
+        contentType: "audio/mp4",
+        durationSeconds: 7,
+        storagePath: `message_attachments/${ALICE}/${DIRECT_CONVERSATION}/${DIRECT_EXPIRED_MESSAGE}.m4a`,
+        status: "uploading",
+        createdAt: new Date(Date.now() - 20 * 60 * 1000),
+        expiresAt: new Date(Date.now() - 10 * 60 * 1000),
+      },
+    );
   });
+}
+
+async function seedRoomCoverReservation(
+  testEnv,
+  {
+    reservationId,
+    ownerId = ALICE,
+    roomId = "active-room",
+    storagePath,
+    contentType = "image/jpeg",
+    size = smallImage.length,
+    expiresAt = new Date(Date.now() + 10 * 60 * 1000),
+  },
+) {
+  await testEnv.withSecurityRulesDisabled(async (ctx) => {
+    await setDoc(
+      doc(ctx.firestore(), `roomCoverUploadReservations/${reservationId}`),
+      {
+        schemaVersion: 1,
+        reservationId,
+        ownerId,
+        roomId,
+        requestId: `storage-test-${reservationId}`,
+        storagePath,
+        contentType,
+        size,
+        status: "uploading",
+        createdAt: new Date(),
+        expiresAt,
+      },
+    );
+  });
+}
+
+async function seedProfileMediaReservation(
+  testEnv,
+  {
+    ownerId = ALICE,
+    uploadId,
+    kind = "avatar",
+    contentType = "image/jpeg",
+    size = smallImage.length,
+    expiresAt = new Date(Date.now() + 10 * 60 * 1000),
+  },
+) {
+  const extension =
+    contentType === "image/png"
+      ? "png"
+      : contentType === "image/webp"
+        ? "webp"
+        : "jpg";
+  const storagePath = `users/${ownerId}/profile/${kind}_${uploadId}.${extension}`;
+  await testEnv.withSecurityRulesDisabled(async (ctx) => {
+    await setDoc(
+      doc(
+        ctx.firestore(),
+        `profileMediaUploadReservations/${ownerId}/uploads/${uploadId}`,
+      ),
+      {
+        schemaVersion: 1,
+        ownerId,
+        uploadId,
+        kind,
+        contentType,
+        size,
+        storagePath,
+        baseRevision: 0,
+        status: "uploading",
+        createdAt: new Date(),
+        expiresAt,
+      },
+    );
+  });
+  return storagePath;
+}
+
+function profileMetadata(
+  ownerId,
+  uploadId,
+  kind = "avatar",
+  contentType = "image/jpeg",
+) {
+  return {
+    contentType,
+    customMetadata: { ownerId, profileKind: kind, uploadId },
+  };
 }
 
 async function main() {
@@ -432,258 +548,583 @@ async function main() {
   const anon = testEnv.unauthenticatedContext().storage();
 
   // --- Direct messages: exact server reservation + participant-only reads. ---
-  const directImagePath =
-    `message_attachments/${ALICE}/${DIRECT_CONVERSATION}/${DIRECT_IMAGE_MESSAGE}.jpg`;
+  const directImagePath = `message_attachments/${ALICE}/${DIRECT_CONVERSATION}/${DIRECT_IMAGE_MESSAGE}.jpg`;
   await check("reserved direct image uploads with exact identity", () =>
-    assertSucceeds(uploadBytes(
-      ref(alice, directImagePath),
-      smallImage,
-      directMetadata(ALICE, DIRECT_CONVERSATION, DIRECT_IMAGE_MESSAGE, "image"),
-    )),
-  );
-  await check("only conversation participants can read private attachments", async () => {
-    await assertSucceeds(getBytes(ref(alice, directImagePath)));
-    await assertSucceeds(getBytes(ref(bob, directImagePath)));
-    await assertFails(getBytes(ref(mallory, directImagePath)));
-    await assertFails(getBytes(ref(anon, directImagePath)));
-  });
-  await check("direct attachment objects are immutable to clients", async () => {
-    await assertFails(uploadBytes(
-      ref(alice, directImagePath),
-      smallImage,
-      directMetadata(ALICE, DIRECT_CONVERSATION, DIRECT_IMAGE_MESSAGE, "image"),
-    ));
-    await assertFails(deleteObject(ref(alice, directImagePath)));
-  });
-  await check("forged or missing direct reservations fail closed", async () => {
-    const forgedMessage = `m_${"b".repeat(40)}`;
-    await assertFails(uploadBytes(
-      ref(alice,
-        `message_attachments/${ALICE}/${DIRECT_CONVERSATION}/${forgedMessage}.jpg`),
-      smallImage,
-      directMetadata(ALICE, DIRECT_CONVERSATION, forgedMessage, "image"),
-    ));
-    const wrongPathMessage = `m_${"c".repeat(40)}`;
-    await testEnv.withSecurityRulesDisabled(async (ctx) => {
-      await setDoc(doc(ctx.firestore(),
-        `directMessageUploadReservations/${wrongPathMessage}`), {
-        schemaVersion: 1,
-        ownerId: ALICE,
-        conversationId: DIRECT_CONVERSATION,
-        messageId: wrongPathMessage,
-        recipientId: BOB,
-        type: "image",
-        contentType: "image/jpeg",
-        durationSeconds: null,
-        storagePath: "message_attachments/forged/path.jpg",
-        status: "uploading",
-        createdAt: new Date(),
-        expiresAt: new Date(Date.now() + 10 * 60 * 1000),
-      });
-    });
-    await assertFails(uploadBytes(
-      ref(alice,
-        `message_attachments/${ALICE}/${DIRECT_CONVERSATION}/${wrongPathMessage}.jpg`),
-      smallImage,
-      directMetadata(ALICE, DIRECT_CONVERSATION, wrongPathMessage, "image"),
-    ));
-  });
-  await check("direct image MIME, extension and byte bounds cannot be spoofed", async () => {
-    const path =
-      `message_attachments/${ALICE}/${DIRECT_CONVERSATION}/${DIRECT_CONTRACT_IMAGE}.jpg`;
-    await assertFails(uploadBytes(
-      ref(alice, path),
-      smallImage,
-      {
-        ...directMetadata(
+    assertSucceeds(
+      uploadBytes(
+        ref(alice, directImagePath),
+        smallImage,
+        directMetadata(
           ALICE,
           DIRECT_CONVERSATION,
-          DIRECT_CONTRACT_IMAGE,
+          DIRECT_IMAGE_MESSAGE,
           "image",
         ),
-        contentType: "image/png",
-      },
-    ));
-    await assertFails(uploadBytes(
-      ref(alice, path),
-      oversizeAudio,
-      directMetadata(
-        ALICE,
-        DIRECT_CONVERSATION,
-        DIRECT_CONTRACT_IMAGE,
-        "image",
       ),
-    ));
-    await assertFails(uploadBytes(
-      ref(alice, path),
-      tooSmallImage,
-      directMetadata(
-        ALICE,
-        DIRECT_CONVERSATION,
-        DIRECT_CONTRACT_IMAGE,
-        "image",
+    ),
+  );
+  await check(
+    "only conversation participants can read private attachments",
+    async () => {
+      await assertSucceeds(getBytes(ref(alice, directImagePath)));
+      await assertSucceeds(getBytes(ref(bob, directImagePath)));
+      await assertFails(getBytes(ref(mallory, directImagePath)));
+      await assertFails(getBytes(ref(anon, directImagePath)));
+    },
+  );
+  await check(
+    "direct attachment objects are immutable to clients",
+    async () => {
+      await assertFails(
+        uploadBytes(
+          ref(alice, directImagePath),
+          smallImage,
+          directMetadata(
+            ALICE,
+            DIRECT_CONVERSATION,
+            DIRECT_IMAGE_MESSAGE,
+            "image",
+          ),
+        ),
+      );
+      await assertFails(deleteObject(ref(alice, directImagePath)));
+    },
+  );
+  await check("forged or missing direct reservations fail closed", async () => {
+    const forgedMessage = `m_${"b".repeat(40)}`;
+    await assertFails(
+      uploadBytes(
+        ref(
+          alice,
+          `message_attachments/${ALICE}/${DIRECT_CONVERSATION}/${forgedMessage}.jpg`,
+        ),
+        smallImage,
+        directMetadata(ALICE, DIRECT_CONVERSATION, forgedMessage, "image"),
       ),
-    ));
+    );
+    const wrongPathMessage = `m_${"c".repeat(40)}`;
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(
+        doc(
+          ctx.firestore(),
+          `directMessageUploadReservations/${wrongPathMessage}`,
+        ),
+        {
+          schemaVersion: 1,
+          ownerId: ALICE,
+          conversationId: DIRECT_CONVERSATION,
+          messageId: wrongPathMessage,
+          recipientId: BOB,
+          type: "image",
+          contentType: "image/jpeg",
+          durationSeconds: null,
+          storagePath: "message_attachments/forged/path.jpg",
+          status: "uploading",
+          createdAt: new Date(),
+          expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+        },
+      );
+    });
+    await assertFails(
+      uploadBytes(
+        ref(
+          alice,
+          `message_attachments/${ALICE}/${DIRECT_CONVERSATION}/${wrongPathMessage}.jpg`,
+        ),
+        smallImage,
+        directMetadata(ALICE, DIRECT_CONVERSATION, wrongPathMessage, "image"),
+      ),
+    );
   });
-  await check("reserved direct voice media is private and enforces the 12 MB cap", async () => {
-    const path =
-      `message_attachments/${ALICE}/${DIRECT_CONVERSATION}/${DIRECT_VOICE_MESSAGE}.m4a`;
-    await assertFails(uploadBytes(
-      ref(alice, path),
-      oversizeAudio,
-      directMetadata(
-        ALICE,
-        DIRECT_CONVERSATION,
-        DIRECT_VOICE_MESSAGE,
-        "voice",
-      ),
-    ));
-    await assertSucceeds(uploadBytes(
-      ref(alice, path),
-      smallAudio,
-      directMetadata(
-        ALICE,
-        DIRECT_CONVERSATION,
-        DIRECT_VOICE_MESSAGE,
-        "voice",
-      ),
-    ));
-    await assertSucceeds(getBytes(ref(alice, path)));
-    await assertSucceeds(getBytes(ref(bob, path)));
-    await assertFails(getBytes(ref(mallory, path)));
-  });
-  await check("unverified and expired direct upload sessions fail closed", async () => {
-    const unverifiedPath =
-      `message_attachments/${NEWBIE}/${DIRECT_CONVERSATION}/${DIRECT_UNVERIFIED_MESSAGE}.m4a`;
-    await assertFails(uploadBytes(
-      ref(newbie, unverifiedPath),
-      smallAudio,
-      directMetadata(
-        NEWBIE,
-        DIRECT_CONVERSATION,
-        DIRECT_UNVERIFIED_MESSAGE,
-        "voice",
-      ),
-    ));
-    const expiredPath =
-      `message_attachments/${ALICE}/${DIRECT_CONVERSATION}/${DIRECT_EXPIRED_MESSAGE}.m4a`;
-    await assertFails(uploadBytes(
-      ref(alice, expiredPath),
-      smallAudio,
-      directMetadata(
-        ALICE,
-        DIRECT_CONVERSATION,
-        DIRECT_EXPIRED_MESSAGE,
-        "voice",
-      ),
-    ));
-  });
+  await check(
+    "direct image MIME, extension and byte bounds cannot be spoofed",
+    async () => {
+      const path = `message_attachments/${ALICE}/${DIRECT_CONVERSATION}/${DIRECT_CONTRACT_IMAGE}.jpg`;
+      await assertFails(
+        uploadBytes(ref(alice, path), smallImage, {
+          ...directMetadata(
+            ALICE,
+            DIRECT_CONVERSATION,
+            DIRECT_CONTRACT_IMAGE,
+            "image",
+          ),
+          contentType: "image/png",
+        }),
+      );
+      await assertFails(
+        uploadBytes(
+          ref(alice, path),
+          oversizeAudio,
+          directMetadata(
+            ALICE,
+            DIRECT_CONVERSATION,
+            DIRECT_CONTRACT_IMAGE,
+            "image",
+          ),
+        ),
+      );
+      await assertFails(
+        uploadBytes(
+          ref(alice, path),
+          tooSmallImage,
+          directMetadata(
+            ALICE,
+            DIRECT_CONVERSATION,
+            DIRECT_CONTRACT_IMAGE,
+            "image",
+          ),
+        ),
+      );
+    },
+  );
+  await check(
+    "reserved direct voice media is private and enforces the 12 MB cap",
+    async () => {
+      const path = `message_attachments/${ALICE}/${DIRECT_CONVERSATION}/${DIRECT_VOICE_MESSAGE}.m4a`;
+      await assertFails(
+        uploadBytes(
+          ref(alice, path),
+          oversizeAudio,
+          directMetadata(
+            ALICE,
+            DIRECT_CONVERSATION,
+            DIRECT_VOICE_MESSAGE,
+            "voice",
+          ),
+        ),
+      );
+      await assertSucceeds(
+        uploadBytes(
+          ref(alice, path),
+          smallAudio,
+          directMetadata(
+            ALICE,
+            DIRECT_CONVERSATION,
+            DIRECT_VOICE_MESSAGE,
+            "voice",
+          ),
+        ),
+      );
+      await assertSucceeds(getBytes(ref(alice, path)));
+      await assertSucceeds(getBytes(ref(bob, path)));
+      await assertFails(getBytes(ref(mallory, path)));
+    },
+  );
+  await check(
+    "unverified and expired direct upload sessions fail closed",
+    async () => {
+      const unverifiedPath = `message_attachments/${NEWBIE}/${DIRECT_CONVERSATION}/${DIRECT_UNVERIFIED_MESSAGE}.m4a`;
+      await assertFails(
+        uploadBytes(
+          ref(newbie, unverifiedPath),
+          smallAudio,
+          directMetadata(
+            NEWBIE,
+            DIRECT_CONVERSATION,
+            DIRECT_UNVERIFIED_MESSAGE,
+            "voice",
+          ),
+        ),
+      );
+      const expiredPath = `message_attachments/${ALICE}/${DIRECT_CONVERSATION}/${DIRECT_EXPIRED_MESSAGE}.m4a`;
+      await assertFails(
+        uploadBytes(
+          ref(alice, expiredPath),
+          smallAudio,
+          directMetadata(
+            ALICE,
+            DIRECT_CONVERSATION,
+            DIRECT_EXPIRED_MESSAGE,
+            "voice",
+          ),
+        ),
+      );
+    },
+  );
 
-  // --- Profile: active owner, exact name/MIME, append-only. ---
-  await check("active owner can create a JPEG profile image", () =>
-    assertSucceeds(uploadBytes(
-      ref(alice, `users/${ALICE}/profile/avatar_1.jpg`), smallImage, jpeg,
-    )),
-  );
-  await check("unverified active owner can upload during onboarding", () =>
-    assertSucceeds(uploadBytes(
-      ref(newbie, `users/${NEWBIE}/profile/banner_2.png`), smallImage, png,
-    )),
-  );
-  await check("legacy WebP profile image remains compatible", () =>
-    assertSucceeds(uploadBytes(
-      ref(alice, `users/${ALICE}/profile/avatar_3.webp`), smallImage, webp,
-    )),
-  );
-  await check("profile overwrite is rejected", () =>
-    assertFails(uploadBytes(
-      ref(alice, `users/${ALICE}/profile/avatar_1.jpg`), smallImage, jpeg,
-    )),
-  );
-  await check("profile MIME/extension mismatch is rejected", () =>
-    assertFails(uploadBytes(
-      ref(alice, `users/${ALICE}/profile/avatar_4.png`), smallImage, jpeg,
-    )),
-  );
-  await check("unknown profile filename is rejected", () =>
-    assertFails(uploadBytes(
-      ref(alice, `users/${ALICE}/profile/takeover.jpg`), smallImage, jpeg,
-    )),
-  );
-  await check("too-small and oversized profile images are rejected", async () => {
-    await assertFails(uploadBytes(
-      ref(alice, `users/${ALICE}/profile/avatar_5.jpg`), tooSmallImage, jpeg,
-    ));
-    await assertFails(uploadBytes(
-      ref(alice, `users/${ALICE}/profile/avatar_6.jpg`), overProfileCap, jpeg,
-    ));
+  // --- Profile: verified owner + exact live reservation, private/immutable. ---
+  const profileUploadId = "1".repeat(32);
+  const profilePath = await seedProfileMediaReservation(testEnv, {
+    uploadId: profileUploadId,
   });
-  await check("non-image profile payload is rejected", () =>
-    assertFails(uploadBytes(
-      ref(alice, `users/${ALICE}/profile/avatar_7.jpg`), smallImage, pdf,
-    )),
+  await check(
+    "verified active owner can upload an exactly reserved image",
+    () =>
+      assertSucceeds(
+        uploadBytes(
+          ref(alice, profilePath),
+          smallImage,
+          profileMetadata(ALICE, profileUploadId),
+        ),
+      ),
   );
-  await check("other, banned, disabled and anonymous users cannot upload profile media", async () => {
-    await assertFails(uploadBytes(
-      ref(mallory, `users/${ALICE}/profile/avatar_8.jpg`), smallImage, jpeg,
-    ));
-    await assertFails(uploadBytes(
-      ref(banned, `users/${BANNED}/profile/avatar_8.jpg`), smallImage, jpeg,
-    ));
-    await assertFails(uploadBytes(
-      ref(disabled, `users/${DISABLED}/profile/avatar_8.jpg`), smallImage, jpeg,
-    ));
-    await assertFails(uploadBytes(
-      ref(anon, `users/${ALICE}/profile/avatar_8.jpg`), smallImage, jpeg,
-    ));
+  await check(
+    "profile object is owner-readable only while reservation is live",
+    async () => {
+      await assertSucceeds(getBytes(ref(alice, profilePath)));
+      await assertFails(getBytes(ref(bob, profilePath)));
+      await assertFails(getBytes(ref(anon, profilePath)));
+    },
+  );
+  await check(
+    "profile object is immutable and cannot be client-deleted",
+    async () => {
+      await assertFails(
+        uploadBytes(
+          ref(alice, profilePath),
+          smallImage,
+          profileMetadata(ALICE, profileUploadId),
+        ),
+      );
+      await assertFails(deleteObject(ref(alice, profilePath)));
+    },
+  );
+  await check(
+    "unreserved and malformed profile uploads fail closed",
+    async () => {
+      const missingId = "2".repeat(32);
+      await assertFails(
+        uploadBytes(
+          ref(alice, `users/${ALICE}/profile/avatar_${missingId}.jpg`),
+          smallImage,
+          profileMetadata(ALICE, missingId),
+        ),
+      );
+
+      const mismatchId = "3".repeat(32);
+      const mismatchPath = await seedProfileMediaReservation(testEnv, {
+        uploadId: mismatchId,
+      });
+      await assertFails(
+        uploadBytes(
+          ref(alice, mismatchPath),
+          smallImage,
+          profileMetadata(ALICE, mismatchId, "banner"),
+        ),
+      );
+      await assertFails(
+        uploadBytes(
+          ref(alice, mismatchPath),
+          smallImage,
+          profileMetadata(ALICE, mismatchId, "avatar", "image/png"),
+        ),
+      );
+
+      const wrongSizeId = "4".repeat(32);
+      const wrongSizePath = await seedProfileMediaReservation(testEnv, {
+        uploadId: wrongSizeId,
+        size: smallImage.length + 1,
+      });
+      await assertFails(
+        uploadBytes(
+          ref(alice, wrongSizePath),
+          smallImage,
+          profileMetadata(ALICE, wrongSizeId),
+        ),
+      );
+    },
+  );
+  await check(
+    "profile image bounds and content type are reservation-bound",
+    async () => {
+      const tinyId = "5".repeat(32);
+      const tinyPath = await seedProfileMediaReservation(testEnv, {
+        uploadId: tinyId,
+        size: tooSmallImage.length,
+      });
+      await assertFails(
+        uploadBytes(
+          ref(alice, tinyPath),
+          tooSmallImage,
+          profileMetadata(ALICE, tinyId),
+        ),
+      );
+
+      const largeId = "6".repeat(32);
+      const largePath = await seedProfileMediaReservation(testEnv, {
+        uploadId: largeId,
+        size: overProfileCap.length,
+      });
+      await assertFails(
+        uploadBytes(
+          ref(alice, largePath),
+          overProfileCap,
+          profileMetadata(ALICE, largeId),
+        ),
+      );
+
+      const pdfId = "7".repeat(32);
+      const pdfPath = await seedProfileMediaReservation(testEnv, {
+        uploadId: pdfId,
+        contentType: "application/pdf",
+      });
+      await assertFails(
+        uploadBytes(
+          ref(alice, pdfPath),
+          smallImage,
+          profileMetadata(ALICE, pdfId, "avatar", "application/pdf"),
+        ),
+      );
+    },
+  );
+  await check(
+    "unverified, other, banned, disabled and anonymous profile uploads fail",
+    async () => {
+      for (const [ownerId, uploadId] of [
+        [NEWBIE, "8".repeat(32)],
+        [BANNED, "9".repeat(32)],
+        [DISABLED, "a".repeat(32)],
+      ]) {
+        await seedProfileMediaReservation(testEnv, { ownerId, uploadId });
+      }
+      await assertFails(
+        uploadBytes(
+          ref(newbie, `users/${NEWBIE}/profile/avatar_${"8".repeat(32)}.jpg`),
+          smallImage,
+          profileMetadata(NEWBIE, "8".repeat(32)),
+        ),
+      );
+      await assertFails(
+        uploadBytes(
+          ref(mallory, profilePath),
+          smallImage,
+          profileMetadata(ALICE, profileUploadId),
+        ),
+      );
+      await assertFails(
+        uploadBytes(
+          ref(banned, `users/${BANNED}/profile/avatar_${"9".repeat(32)}.jpg`),
+          smallImage,
+          profileMetadata(BANNED, "9".repeat(32)),
+        ),
+      );
+      await assertFails(
+        uploadBytes(
+          ref(
+            disabled,
+            `users/${DISABLED}/profile/avatar_${"a".repeat(32)}.jpg`,
+          ),
+          smallImage,
+          profileMetadata(DISABLED, "a".repeat(32)),
+        ),
+      );
+      await assertFails(
+        uploadBytes(
+          ref(anon, profilePath),
+          smallImage,
+          profileMetadata(ALICE, profileUploadId),
+        ),
+      );
+    },
+  );
+  await check("profile reads fail after reservation retirement", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await deleteDoc(
+        doc(
+          ctx.firestore(),
+          `profileMediaUploadReservations/${ALICE}/uploads/${profileUploadId}`,
+        ),
+      );
+    });
+    await assertFails(getBytes(ref(alice, profilePath)));
   });
-  await check("profile images remain publicly readable", () =>
-    assertSucceeds(getBytes(ref(alice, `users/${ALICE}/profile/avatar_1.jpg`))),
-  );
-  await check("active owner can delete their old profile object", () =>
-    assertSucceeds(deleteObject(ref(alice, `users/${ALICE}/profile/avatar_3.webp`))),
-  );
 
   // --- Room: existing active Room, canonical host and no overwrite. ---
-  const roomImage = `room_images/active-room/${ALICE}_1.jpg`;
+  const roomReservationId = "1".repeat(40);
+  const roomImage = `room_images/active-room/${ALICE}_${"a".repeat(32)}.jpg`;
+  const roomJpeg = {
+    contentType: "image/jpeg",
+    customMetadata: {
+      ownerId: ALICE,
+      roomId: "active-room",
+      reservationId: roomReservationId,
+    },
+  };
+  await seedRoomCoverReservation(testEnv, {
+    reservationId: roomReservationId,
+    storagePath: roomImage,
+  });
   await check("verified active host can create a Room cover", () =>
-    assertSucceeds(uploadBytes(ref(alice, roomImage), smallImage, jpeg)),
+    assertSucceeds(uploadBytes(ref(alice, roomImage), smallImage, roomJpeg)),
   );
   await check("Room cover overwrite is rejected", () =>
-    assertFails(uploadBytes(ref(alice, roomImage), smallImage, jpeg)),
+    assertFails(uploadBytes(ref(alice, roomImage), smallImage, roomJpeg)),
+  );
+  await check(
+    "Room cover get and prefix list are denied even to host and anonymous",
+    async () => {
+      await assertFails(getBytes(ref(alice, roomImage)));
+      await assertFails(getBytes(ref(anon, roomImage)));
+      await assertFails(listAll(ref(alice, "room_images/active-room")));
+      await assertFails(listAll(ref(anon, "room_images/active-room")));
+    },
   );
   await check("non-host cannot create or delete a Room cover", async () => {
-    await assertFails(uploadBytes(
-      ref(bob, `room_images/active-room/${BOB}_1.jpg`), smallImage, jpeg,
-    ));
+    await assertFails(
+      uploadBytes(
+        ref(bob, `room_images/active-room/${BOB}_1.jpg`),
+        smallImage,
+        {
+          contentType: "image/jpeg",
+          customMetadata: {
+            ownerId: BOB,
+            roomId: "active-room",
+            reservationId: "2".repeat(40),
+          },
+        },
+      ),
+    );
     await assertFails(deleteObject(ref(bob, roomImage)));
   });
-  await check("missing, suspended and deleting Rooms reject covers", async () => {
-    await assertFails(uploadBytes(
-      ref(alice, `room_images/missing-room/${ALICE}_1.jpg`), smallImage, jpeg,
-    ));
-    await assertFails(uploadBytes(
-      ref(alice, `room_images/suspended-room/${ALICE}_1.jpg`), smallImage, jpeg,
-    ));
-    await assertFails(uploadBytes(
-      ref(alice, `room_images/deleting-room/${ALICE}_1.jpg`), smallImage, jpeg,
-    ));
-  });
-  await check("Room filename and MIME must match the current client format", async () => {
-    await assertFails(uploadBytes(
-      ref(alice, `room_images/active-room/${ALICE}_x.jpg`), smallImage, jpeg,
-    ));
-    await assertFails(uploadBytes(
-      ref(alice, `room_images/active-room/${ALICE}_2.png`), smallImage, jpeg,
-    ));
-  });
+  await check(
+    "missing, suspended and deleting Rooms reject covers",
+    async () => {
+      await assertFails(
+        uploadBytes(
+          ref(alice, `room_images/missing-room/${ALICE}_1.jpg`),
+          smallImage,
+          {
+            contentType: "image/jpeg",
+            customMetadata: { ownerId: ALICE, roomId: "missing-room" },
+          },
+        ),
+      );
+      await assertFails(
+        uploadBytes(
+          ref(alice, `room_images/suspended-room/${ALICE}_1.jpg`),
+          smallImage,
+          {
+            contentType: "image/jpeg",
+            customMetadata: { ownerId: ALICE, roomId: "suspended-room" },
+          },
+        ),
+      );
+      await assertFails(
+        uploadBytes(
+          ref(alice, `room_images/deleting-room/${ALICE}_1.jpg`),
+          smallImage,
+          {
+            contentType: "image/jpeg",
+            customMetadata: { ownerId: ALICE, roomId: "deleting-room" },
+          },
+        ),
+      );
+    },
+  );
+  await check(
+    "Room filename and MIME must match the current client format",
+    async () => {
+      await assertFails(
+        uploadBytes(
+          ref(alice, `room_images/active-room/${ALICE}_${"b".repeat(32)}.jpg`),
+          smallImage,
+          roomJpeg,
+        ),
+      );
+      await assertFails(
+        uploadBytes(
+          ref(alice, `room_images/active-room/${ALICE}_${"c".repeat(32)}.png`),
+          smallImage,
+          roomJpeg,
+        ),
+      );
+    },
+  );
+  await check(
+    "Room cover custom metadata is exact and host-bound",
+    async () => {
+      await assertFails(
+        uploadBytes(
+          ref(alice, `room_images/active-room/${ALICE}_${"d".repeat(32)}.jpg`),
+          smallImage,
+          {
+            contentType: "image/jpeg",
+            customMetadata: {
+              ownerId: BOB,
+              roomId: "active-room",
+              reservationId: roomReservationId,
+            },
+          },
+        ),
+      );
+      await assertFails(
+        uploadBytes(
+          ref(alice, `room_images/active-room/${ALICE}_${"e".repeat(32)}.jpg`),
+          smallImage,
+          {
+            contentType: "image/jpeg",
+            customMetadata: {
+              ownerId: ALICE,
+              roomId: "active-room",
+              reservationId: roomReservationId,
+              firebaseStorageDownloadTokens: "attacker-token",
+            },
+          },
+        ),
+      );
+    },
+  );
   await check("unverified Room host is rejected", () =>
-    assertFails(uploadBytes(
-      ref(testEnv.authenticatedContext(ALICE, { email_verified: false }).storage(),
-        `room_images/active-room/${ALICE}_3.jpg`),
-      smallImage,
-      jpeg,
-    )),
+    assertFails(
+      uploadBytes(
+        ref(
+          testEnv
+            .authenticatedContext(ALICE, { email_verified: false })
+            .storage(),
+          `room_images/active-room/${ALICE}_${"f".repeat(32)}.jpg`,
+        ),
+        smallImage,
+        roomJpeg,
+      ),
+    ),
+  );
+  const expiredReservationId = "3".repeat(40);
+  const expiredRoomImage = `room_images/active-room/${ALICE}_${"3".repeat(32)}.jpg`;
+  await seedRoomCoverReservation(testEnv, {
+    reservationId: expiredReservationId,
+    storagePath: expiredRoomImage,
+    expiresAt: new Date(Date.now() - 1000),
+  });
+  await check("expired Room upload reservation is rejected", () =>
+    assertFails(
+      uploadBytes(ref(alice, expiredRoomImage), smallImage, {
+        contentType: "image/jpeg",
+        customMetadata: {
+          ownerId: ALICE,
+          roomId: "active-room",
+          reservationId: expiredReservationId,
+        },
+      }),
+    ),
+  );
+  await check(
+    "Room reservation cannot authorize a second name or mismatched size",
+    async () => {
+      await assertFails(
+        uploadBytes(
+          ref(alice, `room_images/active-room/${ALICE}_${"9".repeat(32)}.jpg`),
+          smallImage,
+          roomJpeg,
+        ),
+      );
+      const sizeReservationId = "4".repeat(40);
+      const sizePath = `room_images/active-room/${ALICE}_${"4".repeat(32)}.jpg`;
+      await seedRoomCoverReservation(testEnv, {
+        reservationId: sizeReservationId,
+        storagePath: sizePath,
+        size: smallImage.length + 1,
+      });
+      await assertFails(
+        uploadBytes(ref(alice, sizePath), smallImage, {
+          contentType: "image/jpeg",
+          customMetadata: {
+            ownerId: ALICE,
+            roomId: "active-room",
+            reservationId: sizeReservationId,
+          },
+        }),
+      );
+    },
   );
   await check("active verified Room host can delete the cover", () =>
     assertSucceeds(deleteObject(ref(alice, roomImage))),
@@ -693,247 +1134,418 @@ async function main() {
   const preRootAvatar = `clubs/${ALICE}/new-club/avatar`;
   await check("pre-root Club media cannot create orphan objects", async () => {
     for (let attempt = 0; attempt < 12; attempt += 1) {
-      await assertFails(uploadBytes(
-        ref(alice, `clubs/${ALICE}/unreserved-${attempt}/avatar`),
-        smallImage,
-        jpeg,
-      ));
+      await assertFails(
+        uploadBytes(
+          ref(alice, `clubs/${ALICE}/unreserved-${attempt}/avatar`),
+          smallImage,
+          jpeg,
+        ),
+      );
     }
     await assertFails(uploadBytes(ref(alice, preRootAvatar), smallImage, jpeg));
     await assertFails(deleteObject(ref(alice, preRootAvatar)));
   });
-  await check("pre-root upload is limited to own path and avatar/banner names", async () => {
-    await assertFails(uploadBytes(
-      ref(mallory, `clubs/${ALICE}/other-new-club/avatar`), smallImage, jpeg,
-    ));
-    await assertFails(uploadBytes(
-      ref(alice, `clubs/${ALICE}/other-new-club/random`), smallImage, jpeg,
-    ));
-  });
+  await check(
+    "pre-root upload is limited to own path and avatar/banner names",
+    async () => {
+      await assertFails(
+        uploadBytes(
+          ref(mallory, `clubs/${ALICE}/other-new-club/avatar`),
+          smallImage,
+          jpeg,
+        ),
+      );
+      await assertFails(
+        uploadBytes(
+          ref(alice, `clubs/${ALICE}/other-new-club/random`),
+          smallImage,
+          jpeg,
+        ),
+      );
+    },
+  );
 
   const ownedAvatar = `clubs/${ALICE}/club-owned/avatar`;
   const transferredAvatar = `clubs/${ALICE}/transferred-club/avatar`;
-  await check("current owner can create and update canonical Club media", async () => {
-    await assertSucceeds(uploadBytes(ref(alice, ownedAvatar), smallImage, jpeg));
-    await assertSucceeds(getBytes(ref(anon, ownedAvatar)));
-    await assertSucceeds(uploadBytes(ref(alice, ownedAvatar), smallImage, png));
-  });
-  await check("current admin can update and delete existing Club media", async () => {
-    await assertSucceeds(uploadBytes(ref(bob, ownedAvatar), smallImage, webp));
-    await assertSucceeds(deleteObject(ref(bob, ownedAvatar)));
-  });
+  await check(
+    "current owner can create and update canonical Club media",
+    async () => {
+      await assertSucceeds(
+        uploadBytes(ref(alice, ownedAvatar), smallImage, jpeg),
+      );
+      await assertSucceeds(getBytes(ref(anon, ownedAvatar)));
+      await assertSucceeds(
+        uploadBytes(ref(alice, ownedAvatar), smallImage, png),
+      );
+    },
+  );
+  await check(
+    "current admin can update and delete existing Club media",
+    async () => {
+      await assertSucceeds(
+        uploadBytes(ref(bob, ownedAvatar), smallImage, webp),
+      );
+      await assertSucceeds(deleteObject(ref(bob, ownedAvatar)));
+    },
+  );
   await testEnv.withSecurityRulesDisabled(async (ctx) => {
     await uploadBytes(ref(ctx.storage(), transferredAvatar), smallImage, jpeg);
   });
-  await check("former owner cannot take over media through their historical path", async () => {
-    await assertFails(uploadBytes(ref(alice, transferredAvatar), smallImage, jpeg));
-    await assertFails(deleteObject(ref(alice, transferredAvatar)));
-  });
-  await check("canonical new owner can update/delete the historical object", async () => {
-    await assertSucceeds(uploadBytes(ref(bob, transferredAvatar), smallImage, jpeg));
-    await assertSucceeds(deleteObject(ref(bob, transferredAvatar)));
-  });
-  await check("ordinary or banned Club members cannot manage media", async () => {
-    await assertFails(uploadBytes(
-      ref(mallory, `clubs/${ALICE}/club-owned/banner`), smallImage, jpeg,
-    ));
-    await testEnv.withSecurityRulesDisabled(async (ctx) => {
-      await setDoc(doc(ctx.firestore(), `clubs/club-owned/members/${BOB}`), {
-        userId: BOB,
-        role: "admin",
-        banned: true,
-      });
-    });
-    await assertFails(uploadBytes(
-      ref(bob, `clubs/${ALICE}/club-owned/banner`), smallImage, jpeg,
-    ));
-  });
-  await check("inactive Club rejects owner media", () =>
-    assertFails(uploadBytes(
-      ref(alice, `clubs/${ALICE}/suspended-club/avatar`), smallImage, jpeg,
-    )),
+  await check(
+    "former owner cannot take over media through their historical path",
+    async () => {
+      await assertFails(
+        uploadBytes(ref(alice, transferredAvatar), smallImage, jpeg),
+      );
+      await assertFails(deleteObject(ref(alice, transferredAvatar)));
+    },
   );
-  await check("Club media accepts only exact names, exact MIME and bounded image bytes", async () => {
-    await assertFails(uploadBytes(
-      ref(alice, `clubs/${ALICE}/club-owned/avatar.jpg`), smallImage, jpeg,
-    ));
-    await assertFails(uploadBytes(
-      ref(alice, `clubs/${ALICE}/club-owned/avatar`), smallImage, pdf,
-    ));
-    await assertFails(uploadBytes(
-      ref(alice, `clubs/${ALICE}/club-owned/avatar`), tooSmallImage, jpeg,
-    ));
-  });
+  await check(
+    "canonical new owner can update/delete the historical object",
+    async () => {
+      await assertSucceeds(
+        uploadBytes(ref(bob, transferredAvatar), smallImage, jpeg),
+      );
+      await assertSucceeds(deleteObject(ref(bob, transferredAvatar)));
+    },
+  );
+  await check(
+    "ordinary or banned Club members cannot manage media",
+    async () => {
+      await assertFails(
+        uploadBytes(
+          ref(mallory, `clubs/${ALICE}/club-owned/banner`),
+          smallImage,
+          jpeg,
+        ),
+      );
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await setDoc(doc(ctx.firestore(), `clubs/club-owned/members/${BOB}`), {
+          userId: BOB,
+          role: "admin",
+          banned: true,
+        });
+      });
+      await assertFails(
+        uploadBytes(
+          ref(bob, `clubs/${ALICE}/club-owned/banner`),
+          smallImage,
+          jpeg,
+        ),
+      );
+    },
+  );
+  await check("inactive Club rejects owner media", () =>
+    assertFails(
+      uploadBytes(
+        ref(alice, `clubs/${ALICE}/suspended-club/avatar`),
+        smallImage,
+        jpeg,
+      ),
+    ),
+  );
+  await check(
+    "Club media accepts only exact names, exact MIME and bounded image bytes",
+    async () => {
+      await assertFails(
+        uploadBytes(
+          ref(alice, `clubs/${ALICE}/club-owned/avatar.jpg`),
+          smallImage,
+          jpeg,
+        ),
+      );
+      await assertFails(
+        uploadBytes(
+          ref(alice, `clubs/${ALICE}/club-owned/avatar`),
+          smallImage,
+          pdf,
+        ),
+      );
+      await assertFails(
+        uploadBytes(
+          ref(alice, `clubs/${ALICE}/club-owned/avatar`),
+          tooSmallImage,
+          jpeg,
+        ),
+      );
+    },
+  );
 
   // The client build live in production uploads Club media as
   // `{kind}_{millisecondsSinceEpoch}.{ext}`; the build in this tree uploads
   // the deterministic `{kind}`. The deploy sequence has a window where both
   // are talking to the same ruleset, so both names have to be accepted —
   // with the same name/MIME pairing the profile path already enforces.
-  await check("new timestamped Club objects are rejected to bound object count", async () => {
-    await assertFails(uploadBytes(
-      ref(alice, `clubs/${ALICE}/club-owned/avatar_1755300000000.jpg`),
-      smallImage, jpeg,
-    ));
-    await assertFails(uploadBytes(
-      ref(alice, `clubs/${ALICE}/club-owned/banner_1755300000001.png`),
-      smallImage, png,
-    ));
-    await assertFails(uploadBytes(
-      ref(alice, `clubs/${ALICE}/club-owned/avatar_1755300000002.webp`),
-      smallImage, webp,
-    ));
-    await assertFails(uploadBytes(
-      ref(alice, `clubs/${ALICE}/club-owned/banner_1755300000003.jpeg`),
-      smallImage, jpeg,
-    ));
-  });
+  await check(
+    "new timestamped Club objects are rejected to bound object count",
+    async () => {
+      await assertFails(
+        uploadBytes(
+          ref(alice, `clubs/${ALICE}/club-owned/avatar_1755300000000.jpg`),
+          smallImage,
+          jpeg,
+        ),
+      );
+      await assertFails(
+        uploadBytes(
+          ref(alice, `clubs/${ALICE}/club-owned/banner_1755300000001.png`),
+          smallImage,
+          png,
+        ),
+      );
+      await assertFails(
+        uploadBytes(
+          ref(alice, `clubs/${ALICE}/club-owned/avatar_1755300000002.webp`),
+          smallImage,
+          webp,
+        ),
+      );
+      await assertFails(
+        uploadBytes(
+          ref(alice, `clubs/${ALICE}/club-owned/banner_1755300000003.jpeg`),
+          smallImage,
+          jpeg,
+        ),
+      );
+    },
+  );
   await check("timestamped pre-root Club media is rejected", async () => {
     const preRootTimestamped = `clubs/${ALICE}/new-club-2/banner_1755300000004.jpg`;
-    await assertFails(uploadBytes(ref(alice, preRootTimestamped), smallImage, jpeg));
+    await assertFails(
+      uploadBytes(ref(alice, preRootTimestamped), smallImage, jpeg),
+    );
   });
   const familyAvatar = `clubs/${ALICE}/family_${ALICE}/avatar`;
   await testEnv.withSecurityRulesDisabled(async (ctx) => {
     await uploadBytes(ref(ctx.storage(), familyAvatar), smallImage, jpeg);
   });
-  await check("Family media is private-by-absence for every client", async () => {
-    for (const client of [anon, alice, bob, mallory]) {
-      await assertFails(getBytes(ref(client, familyAvatar)));
-    }
-    await assertFails(uploadBytes(ref(alice, familyAvatar), smallImage, jpeg));
-    await assertFails(uploadBytes(ref(bob, familyAvatar), smallImage, jpeg));
-    await assertFails(deleteObject(ref(alice, familyAvatar)));
-  });
-  await check("timestamped Club media keeps every other Club guarantee", async () => {
-    // Not a Club manager.
-    await assertFails(uploadBytes(
-      ref(mallory, `clubs/${ALICE}/club-owned/avatar_1755300000005.jpg`),
-      smallImage, jpeg,
-    ));
-    // Extension must agree with the declared MIME, as on the profile path.
-    await assertFails(uploadBytes(
-      ref(alice, `clubs/${ALICE}/club-owned/avatar_1755300000006.jpg`),
-      smallImage, png,
-    ));
-    // Only avatar/banner, only image extensions, only a numeric suffix.
-    await assertFails(uploadBytes(
-      ref(alice, `clubs/${ALICE}/club-owned/logo_1755300000007.jpg`),
-      smallImage, jpeg,
-    ));
-    await assertFails(uploadBytes(
-      ref(alice, `clubs/${ALICE}/club-owned/avatar_1755300000008.svg`),
-      smallImage, jpeg,
-    ));
-    await assertFails(uploadBytes(
-      ref(alice, `clubs/${ALICE}/club-owned/avatar_notatimestamp.jpg`),
-      smallImage, jpeg,
-    ));
-    // The pattern must match the WHOLE name, not appear inside it —
-    // otherwise any prefix or suffix rides in on a legitimate-looking core.
-    await assertFails(uploadBytes(
-      ref(alice, `clubs/${ALICE}/club-owned/not-an-avatar_1755300000011.jpg`),
-      smallImage, jpeg,
-    ));
-    await assertFails(uploadBytes(
-      ref(alice, `clubs/${ALICE}/club-owned/avatar_1755300000012.jpg.html`),
-      smallImage, jpeg,
-    ));
-    // Size bounds are unchanged.
-    await assertFails(uploadBytes(
-      ref(alice, `clubs/${ALICE}/club-owned/avatar_1755300000009.jpg`),
-      tooSmallImage, jpeg,
-    ));
-    // A suspended Club still refuses media under either name.
-    await assertFails(uploadBytes(
-      ref(alice, `clubs/${ALICE}/suspended-club/avatar_1755300000010.jpg`),
-      smallImage, jpeg,
-    ));
-  });
+  await check(
+    "Family media is private-by-absence for every client",
+    async () => {
+      for (const client of [anon, alice, bob, mallory]) {
+        await assertFails(getBytes(ref(client, familyAvatar)));
+      }
+      await assertFails(
+        uploadBytes(ref(alice, familyAvatar), smallImage, jpeg),
+      );
+      await assertFails(uploadBytes(ref(bob, familyAvatar), smallImage, jpeg));
+      await assertFails(deleteObject(ref(alice, familyAvatar)));
+    },
+  );
+  await check(
+    "timestamped Club media keeps every other Club guarantee",
+    async () => {
+      // Not a Club manager.
+      await assertFails(
+        uploadBytes(
+          ref(mallory, `clubs/${ALICE}/club-owned/avatar_1755300000005.jpg`),
+          smallImage,
+          jpeg,
+        ),
+      );
+      // Extension must agree with the declared MIME, as on the profile path.
+      await assertFails(
+        uploadBytes(
+          ref(alice, `clubs/${ALICE}/club-owned/avatar_1755300000006.jpg`),
+          smallImage,
+          png,
+        ),
+      );
+      // Only avatar/banner, only image extensions, only a numeric suffix.
+      await assertFails(
+        uploadBytes(
+          ref(alice, `clubs/${ALICE}/club-owned/logo_1755300000007.jpg`),
+          smallImage,
+          jpeg,
+        ),
+      );
+      await assertFails(
+        uploadBytes(
+          ref(alice, `clubs/${ALICE}/club-owned/avatar_1755300000008.svg`),
+          smallImage,
+          jpeg,
+        ),
+      );
+      await assertFails(
+        uploadBytes(
+          ref(alice, `clubs/${ALICE}/club-owned/avatar_notatimestamp.jpg`),
+          smallImage,
+          jpeg,
+        ),
+      );
+      // The pattern must match the WHOLE name, not appear inside it —
+      // otherwise any prefix or suffix rides in on a legitimate-looking core.
+      await assertFails(
+        uploadBytes(
+          ref(
+            alice,
+            `clubs/${ALICE}/club-owned/not-an-avatar_1755300000011.jpg`,
+          ),
+          smallImage,
+          jpeg,
+        ),
+      );
+      await assertFails(
+        uploadBytes(
+          ref(alice, `clubs/${ALICE}/club-owned/avatar_1755300000012.jpg.html`),
+          smallImage,
+          jpeg,
+        ),
+      );
+      // Size bounds are unchanged.
+      await assertFails(
+        uploadBytes(
+          ref(alice, `clubs/${ALICE}/club-owned/avatar_1755300000009.jpg`),
+          tooSmallImage,
+          jpeg,
+        ),
+      );
+      // A suspended Club still refuses media under either name.
+      await assertFails(
+        uploadBytes(
+          ref(alice, `clubs/${ALICE}/suspended-club/avatar_1755300000010.jpg`),
+          smallImage,
+          jpeg,
+        ),
+      );
+    },
+  );
 
   // --- Main Voice Moment: existing unpublished exact draft, create-only. ---
   const momentPath = `voice_moments/${ALICE}/${MOMENT}.m4a`;
-  await check("verified active author can upload their exact unpublished draft", () =>
-    assertSucceeds(uploadBytes(
-      ref(alice, momentPath), smallAudio, momentMetadata(ALICE, MOMENT),
-    )),
+  await check(
+    "verified active author can upload their exact unpublished draft",
+    () =>
+      assertSucceeds(
+        uploadBytes(
+          ref(alice, momentPath),
+          smallAudio,
+          momentMetadata(ALICE, MOMENT),
+        ),
+      ),
   );
   await check("Voice Moment overwrite is rejected", () =>
-    assertFails(uploadBytes(
-      ref(alice, momentPath), smallAudio, momentMetadata(ALICE, MOMENT),
-    )),
+    assertFails(
+      uploadBytes(
+        ref(alice, momentPath),
+        smallAudio,
+        momentMetadata(ALICE, MOMENT),
+      ),
+    ),
   );
   await check("missing draft cannot allocate an orphan Voice Moment", () =>
-    assertFails(uploadBytes(
-      ref(alice, `voice_moments/${ALICE}/${COMMENT}.m4a`),
-      smallAudio,
-      momentMetadata(ALICE, COMMENT),
-    )),
+    assertFails(
+      uploadBytes(
+        ref(alice, `voice_moments/${ALICE}/${COMMENT}.m4a`),
+        smallAudio,
+        momentMetadata(ALICE, COMMENT),
+      ),
+    ),
   );
-  await check("draft path, author and custom metadata must match exactly", async () => {
-    await assertFails(uploadBytes(
-      ref(bob, `voice_moments/${BOB}/${MOMENT}.m4a`),
-      smallAudio,
-      momentMetadata(BOB, MOMENT),
-    ));
-    await assertFails(uploadBytes(
-      ref(alice, `voice_moments/${ALICE}/${MOMENT}.m4a`),
-      smallAudio,
-      momentMetadata(ALICE, MOMENT, { extra: "x" }),
-    ));
-  });
-  await check("Voice Moment requires exact filename, audio MIME and size bounds", async () => {
-    await assertFails(uploadBytes(
-      ref(alice, `voice_moments/${ALICE}/${MOMENT}.wav`),
-      smallAudio,
-      momentMetadata(ALICE, MOMENT),
-    ));
-    await assertFails(uploadBytes(
-      ref(alice, `voice_moments/${ALICE}/${MOMENT}.m4a`),
-      smallImage,
-      { ...jpeg, customMetadata: { authorId: ALICE, momentId: MOMENT } },
-    ));
-    await assertFails(uploadBytes(
-      ref(alice, `voice_moments/${ALICE}/${MOMENT}.m4a`),
-      tooSmallAudio,
-      momentMetadata(ALICE, MOMENT),
-    ));
-    await assertFails(uploadBytes(
-      ref(alice, `voice_moments/${ALICE}/${MOMENT}.m4a`),
-      oversizeAudio,
-      momentMetadata(ALICE, MOMENT),
-    ));
-  });
-  await check("an unpublished Voice Moment object is private to its author", async () => {
-    await assertSucceeds(getBytes(ref(alice, momentPath)));
-    await assertFails(getBytes(ref(mallory, momentPath)));
-    await assertFails(getBytes(ref(anon, momentPath)));
-  });
-  await check("clients cannot delete a canonical uploading Voice Moment draft", async () => {
-    await assertFails(deleteObject(ref(mallory, momentPath)));
-    await assertFails(deleteObject(ref(alice, momentPath)));
-  });
-  await check("a published Voice Moment object is readable by signed-in users", async () => {
+  await check(
+    "draft path, author and custom metadata must match exactly",
+    async () => {
+      await assertFails(
+        uploadBytes(
+          ref(bob, `voice_moments/${BOB}/${MOMENT}.m4a`),
+          smallAudio,
+          momentMetadata(BOB, MOMENT),
+        ),
+      );
+      await assertFails(
+        uploadBytes(
+          ref(alice, `voice_moments/${ALICE}/${MOMENT}.m4a`),
+          smallAudio,
+          momentMetadata(ALICE, MOMENT, { extra: "x" }),
+        ),
+      );
+    },
+  );
+  await check(
+    "Voice Moment requires exact filename, audio MIME and size bounds",
+    async () => {
+      await assertFails(
+        uploadBytes(
+          ref(alice, `voice_moments/${ALICE}/${MOMENT}.wav`),
+          smallAudio,
+          momentMetadata(ALICE, MOMENT),
+        ),
+      );
+      await assertFails(
+        uploadBytes(
+          ref(alice, `voice_moments/${ALICE}/${MOMENT}.m4a`),
+          smallImage,
+          { ...jpeg, customMetadata: { authorId: ALICE, momentId: MOMENT } },
+        ),
+      );
+      await assertFails(
+        uploadBytes(
+          ref(alice, `voice_moments/${ALICE}/${MOMENT}.m4a`),
+          tooSmallAudio,
+          momentMetadata(ALICE, MOMENT),
+        ),
+      );
+      await assertFails(
+        uploadBytes(
+          ref(alice, `voice_moments/${ALICE}/${MOMENT}.m4a`),
+          oversizeAudio,
+          momentMetadata(ALICE, MOMENT),
+        ),
+      );
+    },
+  );
+  await check(
+    "an unpublished Voice Moment object is private to its author",
+    async () => {
+      await assertSucceeds(getBytes(ref(alice, momentPath)));
+      await assertFails(getBytes(ref(mallory, momentPath)));
+      await assertFails(getBytes(ref(anon, momentPath)));
+    },
+  );
+  await check(
+    "clients cannot delete a canonical uploading Voice Moment draft",
+    async () => {
+      await assertFails(deleteObject(ref(mallory, momentPath)));
+      await assertFails(deleteObject(ref(alice, momentPath)));
+    },
+  );
+  await check(
+    "published Voice Moment media denies every direct SDK read",
+    async () => {
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await setDoc(
+          doc(ctx.firestore(), `voiceMoments/${MOMENT}`),
+          {
+            isPublished: true,
+            status: "published",
+          },
+          { merge: true },
+        );
+      });
+      await assertFails(getBytes(ref(alice, momentPath)));
+      await assertFails(getBytes(ref(mallory, momentPath)));
+      await assertFails(getBytes(ref(anon, momentPath)));
+    },
+  );
+  await check(
+    "neither owner nor outsider can delete published Moment audio",
+    async () => {
+      await assertFails(deleteObject(ref(mallory, momentPath)));
+      await assertFails(deleteObject(ref(alice, momentPath)));
+    },
+  );
+  await check("expired Voice Moment media remains server-only", async () => {
     await testEnv.withSecurityRulesDisabled(async (ctx) => {
-      await setDoc(doc(ctx.firestore(), `voiceMoments/${MOMENT}`), {
-        isPublished: true,
-        status: "published",
-      }, { merge: true });
+      await setDoc(
+        doc(ctx.firestore(), `voiceMoments/${MOMENT}`),
+        {
+          isPublished: false,
+          status: "expired",
+        },
+        { merge: true },
+      );
     });
-    await assertSucceeds(getBytes(ref(mallory, momentPath)));
-    await assertFails(getBytes(ref(anon, momentPath)));
-  });
-  await check("neither owner nor outsider can delete published Moment audio", async () => {
-    await assertFails(deleteObject(ref(mallory, momentPath)));
-    await assertFails(deleteObject(ref(alice, momentPath)));
-  });
-  await check("an expired Voice Moment object becomes author-private again", async () => {
-    await testEnv.withSecurityRulesDisabled(async (ctx) => {
-      await setDoc(doc(ctx.firestore(), `voiceMoments/${MOMENT}`), {
-        isPublished: false,
-        status: "expired",
-      }, { merge: true });
-    });
-    await assertSucceeds(getBytes(ref(alice, momentPath)));
+    await assertFails(getBytes(ref(alice, momentPath)));
     await assertFails(getBytes(ref(mallory, momentPath)));
     await assertFails(
       deleteObject(ref(alice, momentPath)),
@@ -941,18 +1553,19 @@ async function main() {
     );
   });
 
-  const legacyMixedPath =
-    `voice_moments/${ALICE}/${LEGACY_MIXED_MOMENT}.m4a`;
+  const legacyMixedPath = `voice_moments/${ALICE}/${LEGACY_MIXED_MOMENT}.m4a`;
   await check(
     "legacy mixed-case Moment IDs remain readable and client-delete-proof",
     async () => {
       // New reservations are generated as lowercase hex and creation stays
       // pinned to that canonical namespace.
-      await assertFails(uploadBytes(
-        ref(alice, legacyMixedPath),
-        smallAudio,
-        momentMetadata(ALICE, LEGACY_MIXED_MOMENT),
-      ));
+      await assertFails(
+        uploadBytes(
+          ref(alice, legacyMixedPath),
+          smallAudio,
+          momentMetadata(ALICE, LEGACY_MIXED_MOMENT),
+        ),
+      );
 
       // Model an object produced by a legacy client before lowercase IDs
       // became canonical. Existing-object checks still bind its exact path,
@@ -1008,64 +1621,68 @@ async function main() {
           smallAudio,
           momentMetadata(ALICE, LEGACY_MIXED_MOMENT),
         );
-        await setDoc(doc(
-          ctx.firestore(),
-          `voiceMoments/${LEGACY_MIXED_MOMENT}`,
-        ), {
-          storagePath: `voice_moments/${ALICE}/different.m4a`,
-        }, { merge: true });
+        await setDoc(
+          doc(ctx.firestore(), `voiceMoments/${LEGACY_MIXED_MOMENT}`),
+          {
+            storagePath: `voice_moments/${ALICE}/different.m4a`,
+          },
+          { merge: true },
+        );
       });
       await assertFails(deleteObject(ref(alice, legacyMixedPath)));
 
       await testEnv.withSecurityRulesDisabled(async (ctx) => {
-        await setDoc(doc(
-          ctx.firestore(),
-          `voiceMoments/${LEGACY_MIXED_MOMENT}`,
-        ), {
-          authorId: BOB,
-          storagePath: legacyMixedPath,
-        }, { merge: true });
+        await setDoc(
+          doc(ctx.firestore(), `voiceMoments/${LEGACY_MIXED_MOMENT}`),
+          {
+            authorId: BOB,
+            storagePath: legacyMixedPath,
+          },
+          { merge: true },
+        );
       });
       await assertFails(deleteObject(ref(alice, legacyMixedPath)));
 
       // Even with `status: uploading`, a draft that already carries finalized
       // media state is not client-deletable.
       await testEnv.withSecurityRulesDisabled(async (ctx) => {
-        await setDoc(doc(
-          ctx.firestore(),
-          `voiceMoments/${LEGACY_MIXED_MOMENT}`,
-        ), {
-          schemaVersion: 2,
-          authorId: ALICE,
-          audioUrl: "https://attacker.invalid/already-finalized.m4a",
-          storagePath: legacyMixedPath,
-          durationSeconds: 30,
-          isPublished: false,
-          isDeleted: false,
-          status: "uploading",
-          publishedAt: null,
-          mediaGeneration: null,
-          mediaSize: null,
-          mediaContentType: null,
-        }, { merge: true });
+        await setDoc(
+          doc(ctx.firestore(), `voiceMoments/${LEGACY_MIXED_MOMENT}`),
+          {
+            schemaVersion: 2,
+            authorId: ALICE,
+            audioUrl: "https://attacker.invalid/already-finalized.m4a",
+            storagePath: legacyMixedPath,
+            durationSeconds: 30,
+            isPublished: false,
+            isDeleted: false,
+            status: "uploading",
+            publishedAt: null,
+            mediaGeneration: null,
+            mediaSize: null,
+            mediaContentType: null,
+          },
+          { merge: true },
+        );
       });
       await assertFails(deleteObject(ref(alice, legacyMixedPath)));
 
       await testEnv.withSecurityRulesDisabled(async (ctx) => {
         await deleteObject(ref(ctx.storage(), legacyMixedPath));
-        await setDoc(doc(
-          ctx.firestore(),
-          `voiceMoments/${LEGACY_MIXED_MOMENT}`,
-        ), {
-          authorId: ALICE,
-          audioUrl: null,
-          storagePath: legacyMixedPath,
-        }, { merge: true });
+        await setDoc(
+          doc(ctx.firestore(), `voiceMoments/${LEGACY_MIXED_MOMENT}`),
+          {
+            authorId: ALICE,
+            audioUrl: null,
+            storagePath: legacyMixedPath,
+          },
+          { merge: true },
+        );
       });
     },
   );
   await check(
-    "published mixed-case legacy audio is signed-in readable and server-delete-only",
+    "published mixed-case legacy audio is direct-read denied and server-delete-only",
     async () => {
       await testEnv.withSecurityRulesDisabled(async (ctx) => {
         await uploadBytes(
@@ -1073,15 +1690,17 @@ async function main() {
           smallAudio,
           momentMetadata(ALICE, LEGACY_MIXED_MOMENT),
         );
-        await setDoc(doc(
-          ctx.firestore(),
-          `voiceMoments/${LEGACY_MIXED_MOMENT}`,
-        ), {
-          isPublished: true,
-          status: "published",
-        }, { merge: true });
+        await setDoc(
+          doc(ctx.firestore(), `voiceMoments/${LEGACY_MIXED_MOMENT}`),
+          {
+            isPublished: true,
+            status: "published",
+          },
+          { merge: true },
+        );
       });
-      await assertSucceeds(getBytes(ref(mallory, legacyMixedPath)));
+      await assertFails(getBytes(ref(alice, legacyMixedPath)));
+      await assertFails(getBytes(ref(mallory, legacyMixedPath)));
       await assertFails(getBytes(ref(anon, legacyMixedPath)));
       await assertFails(deleteObject(ref(mallory, legacyMixedPath)));
       await assertFails(deleteObject(ref(alice, legacyMixedPath)));
@@ -1089,12 +1708,13 @@ async function main() {
       // The Firestore root must name this exact object; an author-matching
       // published root cannot act as a read token for a different path.
       await testEnv.withSecurityRulesDisabled(async (ctx) => {
-        await setDoc(doc(
-          ctx.firestore(),
-          `voiceMoments/${LEGACY_MIXED_MOMENT}`,
-        ), {
-          storagePath: `voice_moments/${ALICE}/different.m4a`,
-        }, { merge: true });
+        await setDoc(
+          doc(ctx.firestore(), `voiceMoments/${LEGACY_MIXED_MOMENT}`),
+          {
+            storagePath: `voice_moments/${ALICE}/different.m4a`,
+          },
+          { merge: true },
+        );
       });
       await assertFails(getBytes(ref(alice, legacyMixedPath)));
       await assertFails(getBytes(ref(mallory, legacyMixedPath)));
@@ -1103,19 +1723,25 @@ async function main() {
 
   // --- Voice replies: exact server reservation + immutable published media. ---
   const replyPath = `voice_replies/${ALICE}/${PARENT}/${COMMENT}.m4a`;
-  await check("verified active author can upload an exactly reserved reply", () =>
-    assertSucceeds(uploadBytes(
-      ref(alice, replyPath),
-      smallAudio,
-      replyMetadata(ALICE, PARENT, COMMENT),
-    )),
+  await check(
+    "verified active author can upload an exactly reserved reply",
+    () =>
+      assertSucceeds(
+        uploadBytes(
+          ref(alice, replyPath),
+          smallAudio,
+          replyMetadata(ALICE, PARENT, COMMENT),
+        ),
+      ),
   );
   await check("reply overwrite is rejected", () =>
-    assertFails(uploadBytes(
-      ref(alice, replyPath),
-      smallAudio,
-      replyMetadata(ALICE, PARENT, COMMENT),
-    )),
+    assertFails(
+      uploadBytes(
+        ref(alice, replyPath),
+        smallAudio,
+        replyMetadata(ALICE, PARENT, COMMENT),
+      ),
+    ),
   );
 
   await check("clients cannot delete a still-reserved reply", async () => {
@@ -1123,200 +1749,209 @@ async function main() {
     await assertFails(deleteObject(ref(alice, replyPath)));
   });
 
-  await check("a finalized reply is readable but client-delete-proof", async () => {
-    await testEnv.withSecurityRulesDisabled(async (ctx) => {
-      await setDoc(
-        doc(ctx.firestore(), `voiceMoments/${PARENT}/comments/${COMMENT}`),
-        {
-          schemaVersion: 2,
-          type: "voice",
-          authorId: ALICE,
-          storagePath: replyPath,
-        },
-      );
-      // finalizeVoiceCommentDraft removes this in the same transaction that
-      // creates the comment.
-      await deleteDoc(doc(
-        ctx.firestore(),
-        `voiceMomentUploadReservations/${COMMENT}`,
-      ));
-    });
-    await assertSucceeds(getBytes(ref(alice, replyPath)));
-    await assertSucceeds(getBytes(ref(bob, replyPath)));
-    await assertFails(getBytes(ref(anon, replyPath)));
-    await assertFails(deleteObject(ref(alice, replyPath)));
-    await assertFails(deleteObject(ref(bob, replyPath)));
-  });
-
-  await check("a missing reservation cannot be used as an orphan reply store", () =>
-    assertFails(uploadBytes(
-      ref(
-        alice,
-        `voice_replies/${ALICE}/${PARENT}/${REPLY_ORPHAN}.m4a`,
-      ),
-      smallAudio,
-      replyMetadata(ALICE, PARENT, REPLY_ORPHAN),
-    )),
+  await check(
+    "a finalized reply is direct-read denied and client-delete-proof",
+    async () => {
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await setDoc(
+          doc(ctx.firestore(), `voiceMoments/${PARENT}/comments/${COMMENT}`),
+          {
+            schemaVersion: 2,
+            type: "voice",
+            authorId: ALICE,
+            storagePath: replyPath,
+          },
+        );
+        // finalizeVoiceCommentDraft removes this in the same transaction that
+        // creates the comment.
+        await deleteDoc(
+          doc(ctx.firestore(), `voiceMomentUploadReservations/${COMMENT}`),
+        );
+      });
+      await assertFails(getBytes(ref(alice, replyPath)));
+      await assertFails(getBytes(ref(bob, replyPath)));
+      await assertFails(getBytes(ref(anon, replyPath)));
+      await assertFails(deleteObject(ref(alice, replyPath)));
+      await assertFails(deleteObject(ref(bob, replyPath)));
+    },
   );
 
-  const contractReplyPath =
-    `voice_replies/${ALICE}/${PARENT}/${REPLY_CONTRACT}.m4a`;
-  await check("reply reservation identity and lifecycle are exact", async () => {
-    const writeReservation = (overrides = {}) =>
-      testEnv.withSecurityRulesDisabled((ctx) => setDoc(
-        doc(
-          ctx.firestore(),
-          `voiceMomentUploadReservations/${REPLY_CONTRACT}`,
+  await check(
+    "a missing reservation cannot be used as an orphan reply store",
+    () =>
+      assertFails(
+        uploadBytes(
+          ref(alice, `voice_replies/${ALICE}/${PARENT}/${REPLY_ORPHAN}.m4a`),
+          smallAudio,
+          replyMetadata(ALICE, PARENT, REPLY_ORPHAN),
         ),
-        voiceReplyReservation(ALICE, PARENT, REPLY_CONTRACT, overrides),
-      ));
-    const canonicalUpload = () => uploadBytes(
-      ref(alice, contractReplyPath),
-      smallAudio,
-      replyMetadata(ALICE, PARENT, REPLY_CONTRACT),
-    );
-
-    for (const overrides of [
-      { schemaVersion: 2 },
-      { kind: "forgedKind" },
-      { status: "finalized" },
-      { ownerId: BOB },
-      { momentId: MOMENT },
-      { commentId: COMMENT },
-      { storagePath: `voice_replies/${ALICE}/${PARENT}/different.m4a` },
-      { durationSeconds: 0 },
-      { durationSeconds: 61 },
-      { durationSeconds: "7" },
-      { expiresAt: new Date(Date.now() - 60 * 1000) },
-    ]) {
-      await writeReservation(overrides);
-      await assertFails(canonicalUpload());
-    }
-
-    await writeReservation();
-    await assertFails(uploadBytes(
-      ref(alice, contractReplyPath),
-      smallAudio,
-      replyMetadata(ALICE, PARENT, REPLY_CONTRACT, { extra: "forged" }),
-    ));
-    await assertFails(uploadBytes(
-      ref(alice, contractReplyPath),
-      smallAudio,
-      replyMetadata(BOB, PARENT, REPLY_CONTRACT),
-    ));
-    await assertFails(uploadBytes(
-      ref(alice, contractReplyPath),
-      smallAudio,
-      replyMetadata(ALICE, MOMENT, REPLY_CONTRACT),
-    ));
-    await assertFails(uploadBytes(
-      ref(alice, contractReplyPath),
-      smallAudio,
-      { ...pdf, customMetadata: replyMetadata(
-        ALICE,
-        PARENT,
-        REPLY_CONTRACT,
-      ).customMetadata },
-    ));
-    await assertFails(uploadBytes(
-      ref(alice, contractReplyPath),
-      tooSmallAudio,
-      replyMetadata(ALICE, PARENT, REPLY_CONTRACT),
-    ));
-    await assertSucceeds(uploadBytes(
-      ref(alice, contractReplyPath),
-      smallAudio,
-      {
-        ...legacyAudio,
-        customMetadata: replyMetadata(
-          ALICE,
-          PARENT,
-          REPLY_CONTRACT,
-        ).customMetadata,
-      },
-    ));
-
-    // Delete remains denied regardless of reservation or finalize state.
-    await writeReservation({ ownerId: BOB });
-    await assertFails(deleteObject(ref(alice, contractReplyPath)));
-    await writeReservation({ storagePath: "voice_replies/wrong/path.m4a" });
-    await assertFails(deleteObject(ref(alice, contractReplyPath)));
-    await writeReservation();
-    await testEnv.withSecurityRulesDisabled(async (ctx) => {
-      await setDoc(
-        doc(
-          ctx.firestore(),
-          `voiceMoments/${PARENT}/comments/${REPLY_CONTRACT}`,
-        ),
-        { type: "voice", authorId: ALICE, storagePath: contractReplyPath },
-      );
-    });
-    await assertFails(deleteObject(ref(alice, contractReplyPath)));
-    await testEnv.withSecurityRulesDisabled(async (ctx) => {
-      await deleteDoc(doc(
-        ctx.firestore(),
-        `voiceMoments/${PARENT}/comments/${REPLY_CONTRACT}`,
-      ));
-    });
-    await assertFails(deleteObject(ref(alice, contractReplyPath)));
-  });
-
-  await check("legacy mixed-case reply objects are read-only", async () => {
-    const legacyPath =
-      `voice_replies/${ALICE}/${PARENT}/${LEGACY_REPLY}.m4a`;
-    const legacyM4aPath =
-      `voice_replies/${ALICE}/${PARENT}/${LEGACY_REPLY_M4A}.m4a`;
-    await testEnv.withSecurityRulesDisabled(async (ctx) => {
-      await uploadBytes(
-        ref(ctx.storage(), legacyPath),
-        smallAudio,
-        replyMetadata(ALICE, PARENT, LEGACY_REPLY),
-      );
-      await uploadBytes(
-        ref(ctx.storage(), legacyM4aPath),
-        smallAudio,
-        {
-          ...legacyAudio,
-          customMetadata: replyMetadata(
-            ALICE,
-            PARENT,
-            LEGACY_REPLY_M4A,
-          ).customMetadata,
-        },
-      );
-      await setDoc(
-        doc(
-          ctx.firestore(),
-          `voiceMomentUploadReservations/${LEGACY_REPLY}`,
-        ),
-        voiceReplyReservation(ALICE, PARENT, LEGACY_REPLY),
-      );
-      await setDoc(
-        doc(
-          ctx.firestore(),
-          `voiceMomentUploadReservations/${LEGACY_REPLY_NEW}`,
-        ),
-        voiceReplyReservation(ALICE, PARENT, LEGACY_REPLY_NEW),
-      );
-    });
-    await assertSucceeds(getBytes(ref(alice, legacyPath)));
-    await assertSucceeds(getBytes(ref(bob, legacyPath)));
-    await assertSucceeds(getBytes(ref(bob, legacyM4aPath)));
-    await assertFails(getBytes(ref(anon, legacyPath)));
-    await assertFails(deleteObject(ref(alice, legacyPath)));
-    await assertFails(deleteObject(ref(alice, legacyM4aPath)));
-    await assertFails(uploadBytes(
-      ref(
-        alice,
-        `voice_replies/${ALICE}/${PARENT}/${LEGACY_REPLY_NEW}.m4a`,
       ),
-      smallAudio,
-      replyMetadata(ALICE, PARENT, LEGACY_REPLY_NEW),
-    ));
-  });
+  );
+
+  const contractReplyPath = `voice_replies/${ALICE}/${PARENT}/${REPLY_CONTRACT}.m4a`;
+  await check(
+    "reply reservation identity and lifecycle are exact",
+    async () => {
+      const writeReservation = (overrides = {}) =>
+        testEnv.withSecurityRulesDisabled((ctx) =>
+          setDoc(
+            doc(
+              ctx.firestore(),
+              `voiceMomentUploadReservations/${REPLY_CONTRACT}`,
+            ),
+            voiceReplyReservation(ALICE, PARENT, REPLY_CONTRACT, overrides),
+          ),
+        );
+      const canonicalUpload = () =>
+        uploadBytes(
+          ref(alice, contractReplyPath),
+          smallAudio,
+          replyMetadata(ALICE, PARENT, REPLY_CONTRACT),
+        );
+
+      for (const overrides of [
+        { schemaVersion: 2 },
+        { kind: "forgedKind" },
+        { status: "finalized" },
+        { ownerId: BOB },
+        { momentId: MOMENT },
+        { commentId: COMMENT },
+        { storagePath: `voice_replies/${ALICE}/${PARENT}/different.m4a` },
+        { durationSeconds: 0 },
+        { durationSeconds: 61 },
+        { durationSeconds: "7" },
+        { expiresAt: new Date(Date.now() - 60 * 1000) },
+      ]) {
+        await writeReservation(overrides);
+        await assertFails(canonicalUpload());
+      }
+
+      await writeReservation();
+      await assertFails(
+        uploadBytes(
+          ref(alice, contractReplyPath),
+          smallAudio,
+          replyMetadata(ALICE, PARENT, REPLY_CONTRACT, { extra: "forged" }),
+        ),
+      );
+      await assertFails(
+        uploadBytes(
+          ref(alice, contractReplyPath),
+          smallAudio,
+          replyMetadata(BOB, PARENT, REPLY_CONTRACT),
+        ),
+      );
+      await assertFails(
+        uploadBytes(
+          ref(alice, contractReplyPath),
+          smallAudio,
+          replyMetadata(ALICE, MOMENT, REPLY_CONTRACT),
+        ),
+      );
+      await assertFails(
+        uploadBytes(ref(alice, contractReplyPath), smallAudio, {
+          ...pdf,
+          customMetadata: replyMetadata(ALICE, PARENT, REPLY_CONTRACT)
+            .customMetadata,
+        }),
+      );
+      await assertFails(
+        uploadBytes(
+          ref(alice, contractReplyPath),
+          tooSmallAudio,
+          replyMetadata(ALICE, PARENT, REPLY_CONTRACT),
+        ),
+      );
+      await assertSucceeds(
+        uploadBytes(ref(alice, contractReplyPath), smallAudio, {
+          ...legacyAudio,
+          customMetadata: replyMetadata(ALICE, PARENT, REPLY_CONTRACT)
+            .customMetadata,
+        }),
+      );
+      await assertSucceeds(getBytes(ref(alice, contractReplyPath)));
+      await assertFails(getBytes(ref(bob, contractReplyPath)));
+
+      // Delete remains denied regardless of reservation or finalize state.
+      await writeReservation({ ownerId: BOB });
+      await assertFails(deleteObject(ref(alice, contractReplyPath)));
+      await writeReservation({ storagePath: "voice_replies/wrong/path.m4a" });
+      await assertFails(deleteObject(ref(alice, contractReplyPath)));
+      await writeReservation();
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await setDoc(
+          doc(
+            ctx.firestore(),
+            `voiceMoments/${PARENT}/comments/${REPLY_CONTRACT}`,
+          ),
+          { type: "voice", authorId: ALICE, storagePath: contractReplyPath },
+        );
+      });
+      await assertFails(deleteObject(ref(alice, contractReplyPath)));
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await deleteDoc(
+          doc(
+            ctx.firestore(),
+            `voiceMoments/${PARENT}/comments/${REPLY_CONTRACT}`,
+          ),
+        );
+      });
+      await assertFails(deleteObject(ref(alice, contractReplyPath)));
+    },
+  );
+
+  await check(
+    "legacy mixed-case replies remain direct-read denied",
+    async () => {
+      const legacyPath = `voice_replies/${ALICE}/${PARENT}/${LEGACY_REPLY}.m4a`;
+      const legacyM4aPath = `voice_replies/${ALICE}/${PARENT}/${LEGACY_REPLY_M4A}.m4a`;
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await uploadBytes(
+          ref(ctx.storage(), legacyPath),
+          smallAudio,
+          replyMetadata(ALICE, PARENT, LEGACY_REPLY),
+        );
+        await uploadBytes(ref(ctx.storage(), legacyM4aPath), smallAudio, {
+          ...legacyAudio,
+          customMetadata: replyMetadata(ALICE, PARENT, LEGACY_REPLY_M4A)
+            .customMetadata,
+        });
+        await setDoc(
+          doc(ctx.firestore(), `voiceMomentUploadReservations/${LEGACY_REPLY}`),
+          voiceReplyReservation(ALICE, PARENT, LEGACY_REPLY),
+        );
+        await setDoc(
+          doc(
+            ctx.firestore(),
+            `voiceMomentUploadReservations/${LEGACY_REPLY_NEW}`,
+          ),
+          voiceReplyReservation(ALICE, PARENT, LEGACY_REPLY_NEW),
+        );
+      });
+      await assertFails(getBytes(ref(alice, legacyPath)));
+      await assertFails(getBytes(ref(bob, legacyPath)));
+      await assertFails(getBytes(ref(alice, legacyM4aPath)));
+      await assertFails(getBytes(ref(bob, legacyM4aPath)));
+      await assertFails(getBytes(ref(anon, legacyPath)));
+      await assertFails(deleteObject(ref(alice, legacyPath)));
+      await assertFails(deleteObject(ref(alice, legacyM4aPath)));
+      await assertFails(
+        uploadBytes(
+          ref(
+            alice,
+            `voice_replies/${ALICE}/${PARENT}/${LEGACY_REPLY_NEW}.m4a`,
+          ),
+          smallAudio,
+          replyMetadata(ALICE, PARENT, LEGACY_REPLY_NEW),
+        ),
+      );
+    },
+  );
 
   await check("writes outside every matched path are rejected", () =>
-    assertFails(uploadBytes(ref(alice, "random/whatever.jpg"), smallImage, jpeg)),
+    assertFails(
+      uploadBytes(ref(alice, "random/whatever.jpg"), smallImage, jpeg),
+    ),
   );
 
   console.log(`\n${passed} passed, ${failed} failed`);

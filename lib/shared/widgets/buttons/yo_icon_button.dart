@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/theme/app_motion.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_radius.dart';
+import 'package:yovoice/core/theme/app_sizing.dart';
 
 class YoIconButton extends StatefulWidget {
   const YoIconButton({
@@ -98,7 +100,11 @@ class _YoIconButtonState extends State<YoIconButton> {
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
-    final targetSize = widget.size < 44 ? 44.0 : widget.size;
+    final targetSize = widget.size < AppSizing.minimumTouchTarget
+        ? AppSizing.minimumTouchTarget
+        : widget.size;
+    final quickDuration = AppMotion.resolve(context, AppMotion.quick);
+    final standardDuration = AppMotion.resolve(context, AppMotion.standard);
     final effectiveLabel =
         widget.semanticLabel ?? widget.tooltip ?? _inferredLabel;
     final foreground = _enabled
@@ -144,7 +150,7 @@ class _YoIconButtonState extends State<YoIconButton> {
         width: widget.size,
         height: widget.size,
         child: AnimatedContainer(
-          duration: const Duration(milliseconds: 140),
+          duration: quickDuration,
           decoration: BoxDecoration(
             color: background,
             borderRadius: AppRadius.md,
@@ -152,7 +158,7 @@ class _YoIconButtonState extends State<YoIconButton> {
           ),
           child: Center(
             child: AnimatedSwitcher(
-              duration: const Duration(milliseconds: 180),
+              duration: standardDuration,
               child: widget.isLoading
                   ? SizedBox(
                       key: const ValueKey('loading'),

@@ -13,6 +13,7 @@ import 'package:yovoice/features/clubs/data/services/club_chat_service.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 import 'package:yovoice/shared/widgets/interactions/accessible_context_action.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
+import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
 class ClubChatScreen extends StatefulWidget {
   const ClubChatScreen({
@@ -272,29 +273,44 @@ class _ClubChatScreenState extends State<ClubChatScreen> {
         top: false,
         child: ResponsiveContentFrame(
           width: ResponsiveContentWidth.list,
-          child: Column(
-            children: [
-              Expanded(
-                child: StreamBuilder<ClubChatAuthority>(
-                  stream: _authorityStream,
-                  initialData: _initialAuthority,
-                  builder: (context, authoritySnapshot) {
-                    final authority =
-                        authoritySnapshot.data ?? _initialAuthority;
-                    return _buildMessages(authority);
-                  },
-                ),
-              ),
-              _Composer(
-                controller: _controller,
-                focusNode: _focusNode,
-                sending: _sending,
-                hint: _isAnnouncements
-                    ? 'Write an announcement…'
-                    : 'Message #${widget.channel.name}',
-                onSend: _send,
-              ),
-            ],
+          child: StreamBuilder<ClubChatAuthority>(
+            stream: _authorityStream,
+            initialData: _initialAuthority,
+            builder: (context, snapshot) {
+              final authority = snapshot.data ?? _initialAuthority;
+              return Column(
+                children: [
+                  Expanded(child: _buildMessages(authority)),
+                  if (!authority.canSendToChannel(
+                    announcement: _isAnnouncements,
+                  ))
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 12, 20, 18),
+                      child: Text(
+                        _isAnnouncements
+                            ? 'Announcements can be posted by club moderators.'
+                            : 'This channel is read-only for your current role.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    )
+                  else
+                    _Composer(
+                      controller: _controller,
+                      focusNode: _focusNode,
+                      sending: _sending,
+                      hint: _isAnnouncements
+                          ? 'Write an announcement…'
+                          : 'Message #${widget.channel.name}',
+                      onSend: _send,
+                    ),
+                ],
+              );
+            },
           ),
         ),
       ),
@@ -406,7 +422,6 @@ class _ClubMessageTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
-    final hasPhoto = message.senderPhotoUrl?.isNotEmpty ?? false;
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: AccessibleContextAction(
@@ -420,28 +435,11 @@ class _ClubMessageTile extends StatelessWidget {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            CircleAvatar(
+            UserAvatar(
               radius: 19,
+              userId: message.senderId,
+              displayName: message.senderName,
               backgroundColor: colors.primary,
-              backgroundImage: hasPhoto
-                  ? NetworkImage(message.senderPhotoUrl!)
-                  : null,
-              child: hasPhoto
-                  ? null
-                  // Decorative: the sender's name is right beside it, so
-                  // the initial only adds a stray letter before every
-                  // message a screen reader reads.
-                  : ExcludeSemantics(
-                      child: Text(
-                        message.senderName.isEmpty
-                            ? '?'
-                            : message.senderName[0].toUpperCase(),
-                        style: TextStyle(
-                          color: colors.onPrimary,
-                          fontWeight: FontWeight.w900,
-                        ),
-                      ),
-                    ),
             ),
             const SizedBox(width: 10),
             Expanded(

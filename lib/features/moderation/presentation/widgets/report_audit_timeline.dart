@@ -383,10 +383,7 @@ class _AuditRow extends StatelessWidget {
                 if (event.actorRole != null) '(${event.actorRole})',
                 stamp(event.createdAt),
               ].join(' · '),
-              style: const TextStyle(
-                color: Color(0xFF7E7895),
-                fontSize: 10.5,
-              ),
+              style: const TextStyle(color: Color(0xFF7E7895), fontSize: 10.5),
             ),
             if (event.previousStatus != null && event.newStatus != null) ...[
               const SizedBox(height: 4),
@@ -397,10 +394,7 @@ class _AuditRow extends StatelessWidget {
                 '${event.previousStatus} › ${event.newStatus}'
                 '${event.resolution == null ? '' : ' · ${event.resolution}'}'
                 '${event.contentRemoved ? ' · content removed' : ''}',
-                style: const TextStyle(
-                  color: Color(0xFFB3A8C4),
-                  fontSize: 11,
-                ),
+                style: const TextStyle(color: Color(0xFFB3A8C4), fontSize: 11),
               ),
             ],
             if (event.note != null) ...[

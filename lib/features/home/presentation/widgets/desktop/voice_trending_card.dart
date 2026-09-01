@@ -336,6 +336,7 @@ class _MomentRow extends StatelessWidget {
           children: [
             UserAvatar(
               radius: 20,
+              userId: moment.authorId,
               photoUrl: moment.authorPhotoUrl,
               displayName: moment.authorName,
             ),

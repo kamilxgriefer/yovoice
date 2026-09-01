@@ -15,6 +15,7 @@ abstract interface class DirectCallGateway {
   Future<String> startCall({
     required String calleeId,
     required String conversationId,
+    DirectCallMediaType mediaType = DirectCallMediaType.audio,
   });
   Future<void> accept(String callId);
   Future<void> decline(String callId);
@@ -118,12 +119,14 @@ class DirectCallService implements DirectCallGateway {
   Future<String> startCall({
     required String calleeId,
     required String conversationId,
+    DirectCallMediaType mediaType = DirectCallMediaType.audio,
   }) async {
     final callerId = _currentUserId;
     var request = await _acquireStartRequest(
       callerId: callerId,
       calleeId: calleeId,
       conversationId: conversationId,
+      mediaType: mediaType,
     );
     // At most one canonical-but-terminal replay is retired per user action.
     // This lets a tap recover an active lost-ACK call after a restart, or start
@@ -134,6 +137,7 @@ class DirectCallService implements DirectCallGateway {
         callerId: callerId,
         calleeId: calleeId,
         conversationId: conversationId,
+        mediaType: mediaType,
         requestId: request.requestId,
       );
       final callId = response['callId'] as String?;
@@ -172,6 +176,7 @@ class DirectCallService implements DirectCallGateway {
         callerId: callerId,
         calleeId: calleeId,
         conversationId: conversationId,
+        mediaType: mediaType,
         previousRequestId: request.requestId,
       );
     }
@@ -182,6 +187,7 @@ class DirectCallService implements DirectCallGateway {
     required String callerId,
     required String calleeId,
     required String conversationId,
+    required DirectCallMediaType mediaType,
     String? previousRequestId,
   }) async {
     var candidateId = _requestIdFactory();
@@ -201,6 +207,7 @@ class DirectCallService implements DirectCallGateway {
         callerId: callerId,
         calleeId: calleeId,
         conversationId: conversationId,
+        mediaType: mediaType,
         requestId: candidateId,
         createdAt: now,
       ),
@@ -213,6 +220,7 @@ class DirectCallService implements DirectCallGateway {
     required String callerId,
     required String calleeId,
     required String conversationId,
+    required DirectCallMediaType mediaType,
     required String requestId,
   }) async {
     for (var attempt = 0; attempt < 2; attempt++) {
@@ -222,6 +230,7 @@ class DirectCallService implements DirectCallGateway {
             .call<Map<String, dynamic>>({
               'calleeId': calleeId,
               'conversationId': conversationId,
+              'mediaType': mediaType.name,
               'requestId': requestId,
             });
         return response.data;

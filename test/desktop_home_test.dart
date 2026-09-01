@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
@@ -19,9 +21,34 @@ import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
 import 'package:yovoice/features/notifications/data/services/notification_service.dart';
 import 'package:yovoice/features/profile/data/services/follow_service.dart';
+import 'package:yovoice/features/profile/data/services/profile_media_service.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
+
+class _RoomStreams extends RoomService {
+  _RoomStreams({required List<VoiceRoom> live, required List<VoiceRoom> owned})
+    : _live = List<VoiceRoom>.unmodifiable(live),
+      _owned = List<VoiceRoom>.unmodifiable(owned),
+      super(
+        firestore: FakeFirebaseFirestore(),
+        auth: MockFirebaseAuth(
+          signedIn: true,
+          mockUser: MockUser(uid: 'me-uid'),
+        ),
+      );
+
+  final List<VoiceRoom> _live;
+  final List<VoiceRoom> _owned;
+
+  @override
+  Stream<List<VoiceRoom>> watchLivePublicRooms() =>
+      Stream.multi((controller) => controller.add(_live), isBroadcast: true);
+
+  @override
+  Stream<List<VoiceRoom>> watchOwnedRooms() =>
+      Stream.multi((controller) => controller.add(_owned), isBroadcast: true);
+}
 
 /// Pulse Home (desktop) coverage: every module must render REAL data,
 /// the section actions must delegate to the shell's fixed-slot
@@ -151,11 +178,16 @@ void main() {
       'authorId': authorId,
       'authorName': authorName,
       'caption': caption,
-      'audioUrl': 'https://example.invalid/$id.m4a',
+      'mediaGeneration': '1700000000000001',
+      'mediaContentType': 'audio/mp4',
+      'mediaSize': 4096,
       'durationSeconds': durationSeconds,
       'likeCount': 0,
       'commentCount': 0,
       'isPublished': true,
+      'schemaVersion': 2,
+      'status': 'published',
+      'isDeleted': false,
       'createdAt': Timestamp.fromDate(createdAt),
       if (!withoutExpiry)
         'expiresAt': Timestamp.fromDate(
@@ -215,6 +247,8 @@ void main() {
     void Function(Club)? onOpenClub,
     VoidCallback? onSeeAllChats,
     VoidCallback? onOpenClubs,
+    ProfileMediaService? profileMediaService,
+    RoomService? roomService,
   }) {
     final firebaseAuth = auth();
     final notifications = NotificationService(
@@ -235,10 +269,12 @@ void main() {
       onOpenClub: onOpenClub ?? (_) {},
       onSeeAllChats: onSeeAllChats ?? () {},
       onOpenClubs: onOpenClubs ?? () {},
-      roomService: RoomService(firestore: db, auth: firebaseAuth),
+      roomService:
+          roomService ?? RoomService(firestore: db, auth: firebaseAuth),
       friendService: FriendService(firestore: db, auth: firebaseAuth),
       followService: FollowService(firestore: db, auth: firebaseAuth),
       profileService: ProfileService(firestore: db, auth: firebaseAuth),
+      profileMediaService: profileMediaService,
       feedService: HomeFeedService(firestore: db, auth: firebaseAuth),
       messageService: MessageService(
         firestore: db,
@@ -263,7 +299,10 @@ void main() {
   }
 
   setUp(ProfileService.resetCurrentProfileCache);
-  tearDown(ProfileService.resetCurrentProfileCache);
+  tearDown(() {
+    ProfileService.resetCurrentProfileCache();
+    ProfileMediaService.clearAllMediaAccessCaches();
+  });
 
   testWidgets('answers its four questions in order, once each', (tester) async {
     useDesktop(tester, const Size(1440, 2600));
@@ -315,8 +354,9 @@ void main() {
     );
 
     await tester.pumpWidget(host(buildHome()));
-    for (var i = 0; i < 6; i++) {
+    for (var i = 0; i < 20; i++) {
       await tester.pump(const Duration(milliseconds: 60));
+      if (find.text('Enter').evaluate().isNotEmpty) break;
     }
 
     expect(find.byType(HomeRoomBanner), findsNWidgets(2));
@@ -426,14 +466,27 @@ void main() {
       hostId: 'other-uid',
     );
 
-    await tester.pumpWidget(host(buildHome()));
+    final mine = VoiceRoom.fromFirestore(
+      await db.collection('rooms').doc('mine').get(),
+    );
+    final theirs = VoiceRoom.fromFirestore(
+      await db.collection('rooms').doc('theirs').get(),
+    );
+
+    await tester.pumpWidget(
+      host(
+        buildHome(
+          roomService: _RoomStreams(live: [theirs, mine], owned: [mine]),
+        ),
+      ),
+    );
     for (var i = 0; i < 6; i++) {
       await tester.pump(const Duration(milliseconds: 60));
     }
 
-    // The owned room appears twice — board banner and active-rooms tile —
-    // and BOTH carry the owner-only manage menu (settings + delete);
-    // non-owned rooms never do.
+    // The owned room appears once on the board and once in the active-room
+    // strip; both surfaces expose the owner-only menu, while the non-owned
+    // room never receives it.
     expect(find.byTooltip('Manage your room'), findsNWidgets(2));
     expect(find.text('Enter'), findsOneWidget);
   });
@@ -525,7 +578,7 @@ void main() {
   });
 
   testWidgets(
-    'recent chats refreshes an empty conversation avatar from publicProfiles',
+    'recent chats refreshes an avatar through a viewer-aware private grant',
     (tester) async {
       useDesktop(tester, const Size(1440, 2600));
       await seedConversation(
@@ -538,11 +591,33 @@ void main() {
         'uid': 'friend-photo',
         'displayName': 'Fresh Portrait',
         'username': 'freshportrait',
-        'photoUrl': 'https://cdn.example.invalid/fresh-portrait.jpg',
+        'profileUpdatedAt': Timestamp.now(),
         'premiumIdentity': false,
       });
+      const grantUrl =
+          'https://storage.googleapis.com/yovoice-private/'
+          'fresh-portrait.jpg?X-Goog-Signature=test';
+      final media = ProfileMediaService(
+        auth: auth(),
+        invoker: (name, request) async {
+          expect(name, 'getProfileMediaAccess');
+          expect(request, {'userId': 'friend-photo', 'kind': 'avatar'});
+          return <Object?, Object?>{
+            'schemaVersion': 1,
+            'available': true,
+            'expiresAtMillis': DateTime.now()
+                .toUtc()
+                .add(const Duration(seconds: 80))
+                .millisecondsSinceEpoch,
+            'url': grantUrl,
+            'generation': '1700000000000001',
+            'contentType': 'image/jpeg',
+            'size': 4096,
+          };
+        },
+      );
 
-      await tester.pumpWidget(host(buildHome()));
+      await tester.pumpWidget(host(buildHome(profileMediaService: media)));
       for (var i = 0; i < 8; i++) {
         await tester.pump(const Duration(milliseconds: 60));
       }
@@ -551,10 +626,7 @@ void main() {
       expect(artwork, findsOneWidget);
       final image = tester.widget<Image>(artwork);
       expect(image.image, isA<NetworkImage>());
-      expect(
-        (image.image as NetworkImage).url,
-        'https://cdn.example.invalid/fresh-portrait.jpg',
-      );
+      expect((image.image as NetworkImage).url, grantUrl);
       expect(find.byType(ImageFiltered), findsNothing);
       expect(tester.takeException(), isNull);
     },
@@ -732,6 +804,8 @@ void main() {
       await tester.tap(find.text('Ola').first);
       await tester.pump();
       expect(opened?.id, 'm1');
+      expect(opened?.audioUrl, isNull);
+      expect(opened?.mediaGeneration, '1700000000000001');
 
       await tester.tap(find.byTooltip('Record a Voice Moment'));
       await tester.pump();

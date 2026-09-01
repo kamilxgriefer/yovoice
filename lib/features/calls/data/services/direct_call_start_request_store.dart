@@ -3,6 +3,8 @@ import 'dart:convert';
 
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../models/direct_call.dart';
+
 class PendingDirectCallStartRequest {
   const PendingDirectCallStartRequest({
     required this.callerId,
@@ -10,11 +12,13 @@ class PendingDirectCallStartRequest {
     required this.conversationId,
     required this.requestId,
     required this.createdAt,
+    this.mediaType = DirectCallMediaType.audio,
   });
 
   final String callerId;
   final String calleeId;
   final String conversationId;
+  final DirectCallMediaType mediaType;
   final String requestId;
   final DateTime createdAt;
 
@@ -22,6 +26,7 @@ class PendingDirectCallStartRequest {
     'callerId': callerId,
     'calleeId': calleeId,
     'conversationId': conversationId,
+    'mediaType': mediaType.name,
     'requestId': requestId,
     'createdAtMillis': createdAt.millisecondsSinceEpoch,
   };
@@ -48,6 +53,7 @@ class PendingDirectCallStartRequest {
       callerId: callerId,
       calleeId: calleeId,
       conversationId: conversationId,
+      mediaType: DirectCallMediaType.fromName(value['mediaType'] as String?),
       requestId: requestId,
       createdAt: DateTime.fromMillisecondsSinceEpoch(createdAtMillis),
     );
@@ -73,6 +79,7 @@ abstract interface class DirectCallStartRequestStore {
     required String conversationId,
     required DateTime now,
     required Duration ttl,
+    DirectCallMediaType mediaType = DirectCallMediaType.audio,
   });
 
   Future<void> save(PendingDirectCallStartRequest request);
@@ -134,6 +141,14 @@ class SharedPreferencesDirectCallStartRequestStore
           'Another pending call already exists for this conversation pair.',
         );
       }
+      if (current.mediaType != candidate.mediaType) {
+        // A lost response may already have created the earlier media type.
+        // Never rotate that operation into a different grant under the same
+        // pair-scoped idempotency record.
+        throw StateError(
+          'Another pending call already exists for this conversation pair.',
+        );
+      }
       if (changed) await _writeEntries(preferences, entries);
       return current;
     }
@@ -150,6 +165,7 @@ class SharedPreferencesDirectCallStartRequestStore
     required String conversationId,
     required DateTime now,
     required Duration ttl,
+    DirectCallMediaType mediaType = DirectCallMediaType.audio,
   }) => _serialize(() async {
     final preferences = await _preferences();
     final entries = _readEntries(preferences);
@@ -159,7 +175,8 @@ class SharedPreferencesDirectCallStartRequestStore
     if (request == null ||
         request.callerId != callerId ||
         request.calleeId != calleeId ||
-        request.conversationId != conversationId) {
+        request.conversationId != conversationId ||
+        request.mediaType != mediaType) {
       changed = entries.remove(scope) != null || changed;
       if (changed) await _writeEntries(preferences, entries);
       return null;

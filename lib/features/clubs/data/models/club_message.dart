@@ -70,7 +70,7 @@ class ClubMessage {
       senderName: (data['senderName'] as String?)?.trim().isNotEmpty == true
           ? (data['senderName'] as String).trim()
           : 'YO Voice user',
-      senderPhotoUrl: _nullableString(data['senderPhotoUrl']),
+      senderPhotoUrl: null,
       content: data['content'] as String? ?? '',
       sentAt:
           _readDate(data['sentAt']) ?? DateTime.fromMillisecondsSinceEpoch(0),

@@ -3,12 +3,112 @@ const { FieldValue, Timestamp } = require("firebase-admin/firestore");
 
 const { db } = require("../utils/firestore");
 const {
+  consumeRateLimit,
+  rateLimitReference,
+  transactionGetAll,
+} = require("../integrity/guards");
+const {
   DEFAULT_MAX_OWNED_CLUBS,
   boundedClubLimit,
   deriveEffectivePremiumAccess,
   isActiveAccountProfile,
   paidPremiumIsActive,
 } = require("../utils/premium_access");
+
+const MINUTE_MS = 60 * 1000;
+const HOUR_MS = 60 * MINUTE_MS;
+const CLUB_ACTION_RATE_LIMITS = Object.freeze({
+  createCommunityClub: Object.freeze({
+    minute: Object.freeze({ maxEvents: 10, windowMs: MINUTE_MS }),
+    hour: Object.freeze({ maxEvents: 60, windowMs: HOUR_MS }),
+  }),
+  deleteClub: Object.freeze({
+    minute: Object.freeze({ maxEvents: 20, windowMs: MINUTE_MS }),
+    hour: Object.freeze({ maxEvents: 200, windowMs: HOUR_MS }),
+  }),
+  finalizeClubMedia: Object.freeze({
+    minute: Object.freeze({ maxEvents: 20, windowMs: MINUTE_MS }),
+    hour: Object.freeze({ maxEvents: 200, windowMs: HOUR_MS }),
+  }),
+  moderateClubMessage: Object.freeze({
+    minute: Object.freeze({ maxEvents: 20, windowMs: MINUTE_MS }),
+    hour: Object.freeze({ maxEvents: 200, windowMs: HOUR_MS }),
+  }),
+  removeClubMember: Object.freeze({
+    minute: Object.freeze({ maxEvents: 20, windowMs: MINUTE_MS }),
+    hour: Object.freeze({ maxEvents: 200, windowMs: HOUR_MS }),
+  }),
+  transferClubOwnership: Object.freeze({
+    minute: Object.freeze({ maxEvents: 10, windowMs: MINUTE_MS }),
+    hour: Object.freeze({ maxEvents: 60, windowMs: HOUR_MS }),
+  }),
+});
+
+function clubActionRateReferences(
+  firestore,
+  uid,
+  action,
+) {
+  if (!CLUB_ACTION_RATE_LIMITS[action]) {
+    throw new TypeError(`Unknown Club action rate limit: ${action}.`);
+  }
+  const prefix = `club.${action}.attempt`;
+  return Object.freeze({
+    minute: rateLimitReference(firestore, `${prefix}.minute`, uid),
+    hour: rateLimitReference(firestore, `${prefix}.hour`, uid),
+    minuteScope: `${prefix}.minute`,
+    hourScope: `${prefix}.hour`,
+  });
+}
+
+/**
+ * Commits a target-independent attempt budget before any caller-selected
+ * Club/member/message or external Storage/LiveKit state is read. Keeping this
+ * in its own transaction is load-bearing: a later authorization, integrity or
+ * capacity refusal must not roll the throttle back and become a free
+ * denial-of-wallet loop.
+ */
+async function consumeClubActionAttempt(
+  uid,
+  action,
+  {
+    firestore = db,
+    nowMs = Date.now(),
+    limits = CLUB_ACTION_RATE_LIMITS[action],
+  } = {},
+) {
+  if (!Number.isSafeInteger(nowMs) || nowMs < 0) {
+    throw new TypeError("nowMs must be epoch milliseconds.");
+  }
+  if (!limits?.minute || !limits?.hour) {
+    throw new TypeError(`Missing Club action rate limit: ${action}.`);
+  }
+  const references = clubActionRateReferences(firestore, uid, action);
+  const now = Timestamp.fromMillis(nowMs);
+  await firestore.runTransaction(async (transaction) => {
+    const [minute, hour] = await transactionGetAll(
+      transaction,
+      references.minute,
+      references.hour,
+    );
+    consumeRateLimit(transaction, minute, {
+      reference: references.minute,
+      scope: references.minuteScope,
+      uid,
+      nowMs,
+      now,
+      ...limits.minute,
+    });
+    consumeRateLimit(transaction, hour, {
+      reference: references.hour,
+      scope: references.hourScope,
+      uid,
+      nowMs,
+      now,
+      ...limits.hour,
+    });
+  });
+}
 
 function ownershipGuardReference(uid) {
   return db.collection("clubOwnershipGuards").doc(uid);
@@ -96,15 +196,24 @@ async function requireCommunityClubCapacity(
     );
   }
 
+  // Read at most limit + 1 roots. A malformed legacy account with enough
+  // Family-shaped rows to obscure the community count fails closed rather
+  // than turning every creation/transfer attempt into an unbounded scan.
   const ownedSnapshot = await transaction.get(
-    db.collection("clubs").where("ownerId", "==", uid),
+    db
+      .collection("clubs")
+      .where("ownerId", "==", uid)
+      .limit(access.maxOwnedClubs + 1),
   );
   const ownedCommunityClubs = ownedSnapshot.docs.filter(
     (document) => document.data().type !== "family",
   ).length;
   const limit = access.maxOwnedClubs;
 
-  if (ownedCommunityClubs >= limit) {
+  if (
+    ownedCommunityClubs >= limit ||
+    (ownedSnapshot.size > limit && ownedCommunityClubs < limit)
+  ) {
     throw new HttpsError(
       "resource-exhausted",
       `Premium includes up to ${limit} owned Clubs.`,
@@ -115,8 +224,11 @@ async function requireCommunityClubCapacity(
 }
 
 module.exports = {
+  CLUB_ACTION_RATE_LIMITS,
   DEFAULT_MAX_OWNED_CLUBS,
   activeClubEntitlement,
+  clubActionRateReferences,
+  consumeClubActionAttempt,
   lockOwnershipGuards,
   maxOwnedClubs,
   ownershipGuardReference,

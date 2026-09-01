@@ -249,19 +249,16 @@ void main() {
       },
     );
 
-    test(
-      'ensureProfile seeds the Google avatar only when there is none',
-      () async {
-        final db = FakeFirebaseFirestore();
-        final auth = _auth(photoURL: 'https://lh3.googleusercontent.com/new');
+    test('ensureProfile never persists a provider avatar bearer URL', () async {
+      final db = FakeFirebaseFirestore();
+      final auth = _auth(photoURL: 'https://lh3.googleusercontent.com/new');
 
-        await ProfileService(firestore: db, auth: auth).ensureProfile();
+      await ProfileService(firestore: db, auth: auth).ensureProfile();
 
-        final data = await _readUser(db);
-        expect(data['photoUrl'], 'https://lh3.googleusercontent.com/new');
-        expect(data['followerCount'], 0);
-      },
-    );
+      final data = await _readUser(db);
+      expect(data.containsKey('photoUrl'), isFalse);
+      expect(data['followerCount'], 0);
+    });
 
     test(
       'ensureProfile does not reset counters on an existing profile',
@@ -316,7 +313,7 @@ void main() {
     );
 
     test(
-      'watchCurrentProfile emits the avatar and reacts to changes',
+      'watchCurrentProfile emits a media revision and reacts to changes',
       () async {
         final db = FakeFirebaseFirestore();
         final auth = _auth();
@@ -326,21 +323,26 @@ void main() {
           'uid': _uid,
           'displayName': 'Ada Lovelace',
           'photoUrl': _avatarUrl,
+          'profileUpdatedAt': Timestamp.fromMillisecondsSinceEpoch(1),
         });
 
         final first = await service.watchCurrentProfile().first;
-        expect(first.photoUrl, _avatarUrl);
+        expect(first.photoUrl, isNull);
+        expect(first.profileUpdatedAt, DateTime.fromMillisecondsSinceEpoch(1));
 
-        const nextUrl = '$_avatarUrl-v2';
         await db.collection('users').doc(_uid).set({
-          'photoUrl': nextUrl,
+          'photoUrl': '$_avatarUrl-v2',
+          'profileUpdatedAt': Timestamp.fromMillisecondsSinceEpoch(2),
         }, SetOptions(merge: true));
 
         final updated = await service
             .watchCurrentProfile()
-            .firstWhere((profile) => profile.photoUrl == nextUrl)
+            .firstWhere(
+              (profile) =>
+                  profile.profileUpdatedAt?.millisecondsSinceEpoch == 2,
+            )
             .timeout(const Duration(seconds: 5));
-        expect(updated.photoUrl, nextUrl);
+        expect(updated.photoUrl, isNull);
       },
     );
 
@@ -408,6 +410,7 @@ void main() {
           'uid': _uid,
           'displayName': 'Ada Lovelace',
           'photoUrl': _avatarUrl,
+          'profileUpdatedAt': Timestamp.fromMillisecondsSinceEpoch(1),
         });
 
         // Home and Profile each construct their own ProfileService.
@@ -422,10 +425,14 @@ void main() {
 
         // And a late subscriber gets the current value replayed rather
         // than waiting for the next Firestore change.
-        expect((await home.watchCurrentProfile().first).photoUrl, _avatarUrl);
+        final homeProfile = await home.watchCurrentProfile().first;
+        expect(homeProfile.photoUrl, isNull);
+        expect(homeProfile.profileUpdatedAt?.millisecondsSinceEpoch, 1);
         expect(
-          (await profile.watchCurrentProfile().first).photoUrl,
-          _avatarUrl,
+          (await profile.watchCurrentProfile().first)
+              .profileUpdatedAt
+              ?.millisecondsSinceEpoch,
+          1,
         );
       },
     );

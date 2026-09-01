@@ -262,7 +262,10 @@ class _StaffUsersSectionState extends State<StaffUsersSection> {
         helperText: _shortQueryHint
             ? 'Type at least 2 characters to search by name.'
             : null,
-        helperStyle: const TextStyle(color: StaffCenterStyle.warn, fontSize: 11.5),
+        helperStyle: const TextStyle(
+          color: StaffCenterStyle.warn,
+          fontSize: 11.5,
+        ),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(14),
           borderSide: const BorderSide(color: StaffCenterStyle.border),
@@ -368,10 +371,7 @@ class _StaffUsersSectionState extends State<StaffUsersSection> {
                 );
               }
               final user = _results[index];
-              return _UserRow(
-                user: user,
-                onView: () => _openDetail(user),
-              );
+              return _UserRow(user: user, onView: () => _openDetail(user));
             },
           ),
         ),
@@ -577,7 +577,8 @@ class UserDetailDrawer extends StatefulWidget {
 
 class _UserDetailDrawerState extends State<UserDetailDrawer> {
   late final StaffUserLookup _lookup = widget.lookup ?? StaffUserLookup();
-  late final StaffAuditService _audit = widget.auditService ?? StaffAuditService();
+  late final StaffAuditService _audit =
+      widget.auditService ?? StaffAuditService();
 
   FirebaseFunctions get _functions =>
       widget.functions ?? FirebaseFunctions.instanceFor(region: 'europe-west1');
@@ -658,7 +659,9 @@ class _UserDetailDrawerState extends State<UserDetailDrawer> {
       final refreshed = await StaffDirectoryService(
         functions: widget.functions,
       ).search(query: _user.uid);
-      final fresh = refreshed.users.where((u) => u.uid == _user.uid).firstOrNull;
+      final fresh = refreshed.users
+          .where((u) => u.uid == _user.uid)
+          .firstOrNull;
       if (fresh != null && mounted) setState(() => _user = fresh);
     } on DirectorySearchException {
       // Keep showing what we have; the section refresh already ran.
@@ -714,14 +717,16 @@ class _UserDetailDrawerState extends State<UserDetailDrawer> {
       _message = null;
     });
     try {
-      await _functions.httpsCallable('assignUserRole').call<Map<String, dynamic>>({
-        'uid': _user.uid,
-        'role': selected,
-        'reason': reason,
-        // The stale-result guard: the role this drawer BELIEVES the
-        // account holds; the server refuses if it moved.
-        'expectedRole': authoritative.role,
-      });
+      await _functions
+          .httpsCallable('assignUserRole')
+          .call<Map<String, dynamic>>({
+            'uid': _user.uid,
+            'role': selected,
+            'reason': reason,
+            // The stale-result guard: the role this drawer BELIEVES the
+            // account holds; the server refuses if it moved.
+            'expectedRole': authoritative.role,
+          });
       if (!mounted) return;
       await _afterChange('${_user.displayName} is now $roleLabel.');
     } catch (error) {
@@ -970,7 +975,10 @@ class _UserDetailDrawerState extends State<UserDetailDrawer> {
                   ? 'user (ordinary account)'
                   : authoritative.role,
             ),
-            _factRow('VIP entitlement', authoritative.isVip ? 'active' : 'none'),
+            _factRow(
+              'VIP entitlement',
+              authoritative.isVip ? 'active' : 'none',
+            ),
             _factRow(
               'Account',
               authoritative.banned ? 'BANNED' : 'in good standing',
@@ -1297,7 +1305,10 @@ class _ReasonDialogState extends State<_ReasonDialog> {
       backgroundColor: StaffCenterStyle.surface,
       title: Text(
         widget.title,
-        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900),
+        style: const TextStyle(
+          color: Colors.white,
+          fontWeight: FontWeight.w900,
+        ),
       ),
       content: SizedBox(
         width: 380,

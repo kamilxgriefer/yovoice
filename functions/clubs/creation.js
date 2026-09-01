@@ -5,6 +5,7 @@ const { getStorage } = require("firebase-admin/storage");
 const { requireAuthentication } = require("../utils/auth");
 const { db, normalizeText } = require("../utils/firestore");
 const {
+  consumeClubActionAttempt,
   lockOwnershipGuards,
   requireCommunityClubCapacity,
   touchOwnershipGuards,
@@ -60,8 +61,10 @@ function validatedCreationInput(data) {
   if (!CLUB_PRIVACY.has(privacy)) {
     throw new HttpsError("invalid-argument", "The Club privacy is invalid.");
   }
-  if (data?.avatarUrl !== null && data?.avatarUrl !== undefined ||
-      data?.bannerUrl !== null && data?.bannerUrl !== undefined) {
+  if (
+    (data?.avatarUrl !== null && data?.avatarUrl !== undefined) ||
+    (data?.bannerUrl !== null && data?.bannerUrl !== undefined)
+  ) {
     throw new HttpsError(
       "invalid-argument",
       "Club media must be finalized from verified Storage objects.",
@@ -104,6 +107,7 @@ const createCommunityClub = onCall(
       );
     }
     const input = validatedCreationInput(request.data);
+    await consumeClubActionAttempt(auth.uid, "createCommunityClub");
 
     const clubReference = db.collection("clubs").doc(input.clubId);
     const generalReference = clubReference.collection("channels").doc();
@@ -121,7 +125,9 @@ const createCommunityClub = onCall(
     const profileReference = db.collection("users").doc(auth.uid);
 
     const result = await db.runTransaction(async (transaction) => {
-      const guardReferences = await lockOwnershipGuards(transaction, [auth.uid]);
+      const guardReferences = await lockOwnershipGuards(transaction, [
+        auth.uid,
+      ]);
       const [existingClub, profileSnapshot] = await transaction.getAll(
         clubReference,
         profileReference,
@@ -164,8 +170,7 @@ const createCommunityClub = onCall(
         },
       );
       const ownerName = profileName(profile, auth);
-      const ownerPhotoUrl =
-        typeof profile.photoUrl === "string" ? profile.photoUrl : null;
+      const ownerPhotoUrl = null;
 
       transaction.create(clubReference, {
         name: input.name,
@@ -233,7 +238,8 @@ const createCommunityClub = onCall(
         hostName: ownerName,
         hostPhotoUrl: ownerPhotoUrl,
         name: `${input.name} Lounge`,
-        description: input.description ||
+        description:
+          input.description ||
           `Private voice lounge for ${input.name} members.`,
         category: "club",
         visibility: "private",
@@ -275,14 +281,18 @@ function plainObject(value) {
 
 function validatedMediaDescriptor(value, kind, uid, clubId) {
   if (value === null || value === undefined) return null;
-  if (!plainObject(value) ||
-      Object.keys(value).sort().join(",") !== "generation,path") {
+  if (
+    !plainObject(value) ||
+    Object.keys(value).sort().join(",") !== "generation,path"
+  ) {
     throw new HttpsError("invalid-argument", `${kind} upload is invalid.`);
   }
   const expectedPath = `clubs/${uid}/${clubId}/${kind}`;
-  if (value.path !== expectedPath ||
-      typeof value.generation !== "string" ||
-      !/^[1-9][0-9]*$/u.test(value.generation)) {
+  if (
+    value.path !== expectedPath ||
+    typeof value.generation !== "string" ||
+    !/^[1-9][0-9]*$/u.test(value.generation)
+  ) {
     throw new HttpsError("invalid-argument", `${kind} upload is invalid.`);
   }
   return { path: expectedPath, generation: value.generation };
@@ -306,20 +316,27 @@ async function verifiedClubMedia(bucket, descriptor, kind) {
   }
   const size = Number(metadata?.size);
   const generation = String(metadata?.generation ?? "");
-  if (!Number.isSafeInteger(size) ||
-      size < CLUB_MEDIA_MIN_BYTES ||
-      size > CLUB_MEDIA_MAX_BYTES ||
-      !CLUB_MEDIA_TYPES.has(metadata?.contentType) ||
-      generation !== descriptor.generation) {
+  if (
+    !Number.isSafeInteger(size) ||
+    size < CLUB_MEDIA_MIN_BYTES ||
+    size > CLUB_MEDIA_MAX_BYTES ||
+    !CLUB_MEDIA_TYPES.has(metadata?.contentType) ||
+    generation !== descriptor.generation
+  ) {
     throw new HttpsError(
       "failed-precondition",
       `${kind} upload could not be verified.`,
     );
   }
-  const tokenValue = metadataCustomFields(metadata).firebaseStorageDownloadTokens;
-  const token = typeof tokenValue === "string"
-    ? tokenValue.split(",").map((value) => value.trim()).find(Boolean)
-    : null;
+  const tokenValue =
+    metadataCustomFields(metadata).firebaseStorageDownloadTokens;
+  const token =
+    typeof tokenValue === "string"
+      ? tokenValue
+          .split(",")
+          .map((value) => value.trim())
+          .find(Boolean)
+      : null;
   if (!token || typeof bucket.name !== "string" || !bucket.name) {
     throw new HttpsError(
       "failed-precondition",
@@ -346,8 +363,10 @@ function createFinalizeClubMediaHandler({ firestore = db, bucket } = {}) {
         "Verify your email before adding Club media.",
       );
     }
-    if (!plainObject(request.data) ||
-        Object.keys(request.data).sort().join(",") !== "avatar,banner,clubId") {
+    if (
+      !plainObject(request.data) ||
+      Object.keys(request.data).sort().join(",") !== "avatar,banner,clubId"
+    ) {
       throw new HttpsError("invalid-argument", "Club media input is invalid.");
     }
     const clubId = normalizeText(request.data.clubId, 128);
@@ -369,11 +388,16 @@ function createFinalizeClubMediaHandler({ firestore = db, bucket } = {}) {
     if (avatarDescriptor === null && bannerDescriptor === null) {
       throw new HttpsError("invalid-argument", "No Club media was provided.");
     }
+    await consumeClubActionAttempt(auth.uid, "finalizeClubMedia", {
+      firestore,
+    });
 
     const clubReference = firestore.collection("clubs").doc(clubId);
     const memberReference = clubReference.collection("members").doc(auth.uid);
     const profileReference = firestore.collection("users").doc(auth.uid);
-    const projectionReference = profileReference.collection("clubs").doc(clubId);
+    const projectionReference = profileReference
+      .collection("clubs")
+      .doc(clubId);
 
     function requireCurrentAuthority(
       clubSnapshot,
@@ -383,18 +407,20 @@ function createFinalizeClubMediaHandler({ firestore = db, bucket } = {}) {
       const club = clubSnapshot.data() ?? {};
       const member = memberSnapshot.data() ?? {};
       const profile = profileSnapshot.data() ?? {};
-      if (!clubSnapshot.exists ||
-          club.ownerId !== auth.uid ||
-          club.type !== "community" ||
-          club.status !== "active" ||
-          club.deletionInProgress === true ||
-          !memberSnapshot.exists ||
-          member.userId !== auth.uid ||
-          member.role !== "owner" ||
-          member.banned === true ||
-          !profileSnapshot.exists ||
-          profile.banned === true ||
-          profile.disabled === true) {
+      if (
+        !clubSnapshot.exists ||
+        club.ownerId !== auth.uid ||
+        club.type !== "community" ||
+        club.status !== "active" ||
+        club.deletionInProgress === true ||
+        !memberSnapshot.exists ||
+        member.userId !== auth.uid ||
+        member.role !== "owner" ||
+        member.banned === true ||
+        !profileSnapshot.exists ||
+        profile.banned === true ||
+        profile.disabled === true
+      ) {
         throw new HttpsError(
           "permission-denied",
           "Only the active Club owner can finalize its media.",
@@ -405,40 +431,53 @@ function createFinalizeClubMediaHandler({ firestore = db, bucket } = {}) {
 
     // Authorize before touching Storage so arbitrary callers cannot use this
     // callable as an object-existence or metadata oracle.
-    const [preflightClub, preflightMember, preflightProfile] = await Promise.all([
-      clubReference.get(),
-      memberReference.get(),
-      profileReference.get(),
-    ]);
+    const [preflightClub, preflightMember, preflightProfile] =
+      await Promise.all([
+        clubReference.get(),
+        memberReference.get(),
+        profileReference.get(),
+      ]);
     requireCurrentAuthority(preflightClub, preflightMember, preflightProfile);
     const storageBucket = bucket ?? getStorage().bucket();
+    // Storage is an external system. Verify each immutable generation once,
+    // after authorization and outside the retryable Firestore callback.
+    // The transaction below rechecks the full authority/binding graph before
+    // it publishes these already-verified, generation-pinned URLs.
+    const [verifiedAvatar, verifiedBanner] = await Promise.all([
+      verifiedClubMedia(storageBucket, avatarDescriptor, "avatar"),
+      verifiedClubMedia(storageBucket, bannerDescriptor, "banner"),
+    ]);
 
     const finalized = await firestore.runTransaction(async (transaction) => {
-      const [clubSnapshot, memberSnapshot, profileSnapshot, projectionSnapshot] =
-        await transaction.getAll(
-          clubReference,
-          memberReference,
-          profileReference,
-          projectionReference,
-        );
+      const [
+        clubSnapshot,
+        memberSnapshot,
+        profileSnapshot,
+        projectionSnapshot,
+      ] = await transaction.getAll(
+        clubReference,
+        memberReference,
+        profileReference,
+        projectionReference,
+      );
       const club = requireCurrentAuthority(
         clubSnapshot,
         memberSnapshot,
         profileSnapshot,
       );
-      if (!projectionSnapshot.exists ||
-          projectionSnapshot.data()?.clubId !== clubId ||
-          projectionSnapshot.data()?.role !== "owner") {
-        throw new HttpsError("data-loss", "The Club owner projection is invalid.");
+      if (
+        !projectionSnapshot.exists ||
+        projectionSnapshot.data()?.clubId !== clubId ||
+        projectionSnapshot.data()?.role !== "owner"
+      ) {
+        throw new HttpsError(
+          "data-loss",
+          "The Club owner projection is invalid.",
+        );
       }
 
-      // Re-verify the exact generation within every Firestore transaction
-      // attempt. The canonical URL also pins that generation, so a concurrent
-      // overwrite cannot silently change the bytes behind the new pointer.
-      const [avatar, banner] = await Promise.all([
-        verifiedClubMedia(storageBucket, avatarDescriptor, "avatar"),
-        verifiedClubMedia(storageBucket, bannerDescriptor, "banner"),
-      ]);
+      const avatar = verifiedAvatar;
+      const banner = verifiedBanner;
 
       let loungeReference = null;
       if (avatar !== null) {
@@ -449,23 +488,29 @@ function createFinalizeClubMediaHandler({ firestore = db, bucket } = {}) {
         loungeReference = firestore.collection("rooms").doc(loungeRoomId);
         const loungeSnapshot = await transaction.get(loungeReference);
         const lounge = loungeSnapshot.data() ?? {};
-        if (!loungeSnapshot.exists ||
-            lounge.clubId !== clubId ||
-            lounge.hostId !== auth.uid ||
-            lounge.roomKind !== "clubLounge") {
+        if (
+          !loungeSnapshot.exists ||
+          lounge.clubId !== clubId ||
+          lounge.hostId !== auth.uid ||
+          lounge.roomKind !== "clubLounge"
+        ) {
           throw new HttpsError("data-loss", "The Club lounge is invalid.");
         }
       }
 
       transaction.update(clubReference, {
-        ...(avatar === null ? {} : {
-          avatarUrl: avatar.url,
-          avatarGeneration: avatar.generation,
-        }),
-        ...(banner === null ? {} : {
-          bannerUrl: banner.url,
-          bannerGeneration: banner.generation,
-        }),
+        ...(avatar === null
+          ? {}
+          : {
+              avatarUrl: avatar.url,
+              avatarGeneration: avatar.generation,
+            }),
+        ...(banner === null
+          ? {}
+          : {
+              bannerUrl: banner.url,
+              bannerGeneration: banner.generation,
+            }),
         updatedAt: FieldValue.serverTimestamp(),
       });
       if (avatar !== null) {

@@ -163,6 +163,7 @@ class PodcastEpisodeHero extends StatelessWidget {
                     children: [
                       UserAvatar(
                         radius: 15,
+                        userId: hostId,
                         photoUrl: hostPhotoUrl,
                         displayName: hostName,
                         backgroundColor: const Color(0xFF7A1E34),
@@ -543,6 +544,7 @@ class PodcastRequestQueue extends StatelessWidget {
                         children: [
                           UserAvatar(
                             radius: 19,
+                            userId: person.userId,
                             photoUrl: person.photoUrl,
                             displayName: person.displayName,
                             backgroundColor: const Color(0xFF76213A),

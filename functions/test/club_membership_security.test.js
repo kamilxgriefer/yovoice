@@ -13,6 +13,8 @@ const { getFirestore, Timestamp } = require("firebase-admin/firestore");
 if (getApps().length === 0) initializeApp();
 
 const {
+  MEMBER_REMOVAL_ROOM_PAGE_SIZE,
+  memberRemovalOperationReference,
   removeClubMemberSelf,
   setMemberLiveKitControlForTests,
 } = require("../clubs/members");
@@ -28,6 +30,10 @@ const {
   transferClubOwnership: transferClubOwnershipAdmin,
 } = require("../admin/clubs");
 const { setProtectedOwnerUidForTests } = require("../utils/roles");
+const {
+  CLUB_ACTION_RATE_LIMITS,
+  clubActionRateReferences,
+} = require("../clubs/quota");
 
 const db = getFirestore();
 const runRemove = removeClubMemberSelf.run ?? removeClubMemberSelf;
@@ -51,8 +57,18 @@ const IDS = {
   bannedMod: `${P}banned-mod`,
 };
 
-function callableRequest(uid, role, data) {
-  return { auth: { uid, token: { role } }, data };
+function callableRequest(uid, role, data, token = {}) {
+  return {
+    auth: {
+      uid,
+      token: {
+        role,
+        auth_time: Math.floor(Date.now() / 1000),
+        ...token,
+      },
+    },
+    data,
+  };
 }
 
 function activeEntitlement() {
@@ -75,9 +91,10 @@ async function recursiveDelete(reference) {
 }
 
 async function wipeOwn() {
-  const [clubs, rooms] = await Promise.all([
+  const [clubs, rooms, removalOperations] = await Promise.all([
     db.collection("clubs").get(),
     db.collection("rooms").get(),
+    db.collection("clubMemberRemovalOperations").get(),
   ]);
   await Promise.all(
     [
@@ -87,12 +104,21 @@ async function wipeOwn() {
       ),
     ].map((doc) => recursiveDelete(doc.ref)),
   );
+  await Promise.all(
+    removalOperations.docs
+      .filter((doc) => String(doc.data().clubId ?? "").startsWith(P))
+      .map((doc) => doc.ref.delete()),
+  );
   for (const uid of Object.values(IDS)) {
     await Promise.all([
       recursiveDelete(db.collection("users").doc(uid)),
       recursiveDelete(db.collection("activeVoiceSessions").doc(uid)),
       db.collection("entitlements").doc(uid).delete(),
       db.collection("clubOwnershipGuards").doc(uid).delete(),
+      ...["removeClubMember", "transferClubOwnership"].flatMap((action) => {
+        const references = clubActionRateReferences(db, uid, action);
+        return [references.minute.delete(), references.hour.delete()];
+      }),
     ]);
   }
   const logs = await db
@@ -214,9 +240,10 @@ describe("removeClubMemberSelf", () => {
         }),
     ]);
 
-    await runRemove(
+    const first = await runRemove(
       callableRequest(IDS.owner, "user", { clubId, memberId: IDS.target }),
     );
+    assert.equal(first.alreadyExisted, false);
 
     const [club, member, projection] = await Promise.all([
       db.collection("clubs").doc(clubId).get(),
@@ -232,6 +259,122 @@ describe("removeClubMemberSelf", () => {
       (await db.collection("activeVoiceSessions").doc(IDS.target)
         .collection("rooms").doc(roomId).get()).exists,
       false,
+    );
+
+    const retry = await runRemove(
+      callableRequest(IDS.owner, "user", { clubId, memberId: IDS.target }),
+    );
+    assert.equal(retry.alreadyExisted, true);
+    assert.deepEqual(memberControlCalls, [[roomId, IDS.target]]);
+  });
+
+  test("voice cleanup is bounded, durable and resumes without replay after completion", async () => {
+    const clubId = `${P}remove-paged`;
+    await db.collection("clubs").doc(clubId).set({
+      ownerId: IDS.owner,
+      type: "community",
+      status: "active",
+      memberCount: 2,
+      onlineCount: 2,
+    });
+    await seedMember(clubId, IDS.owner, "owner");
+    await seedMember(clubId, IDS.target, "member");
+    const roomIds = Array.from(
+      { length: MEMBER_REMOVAL_ROOM_PAGE_SIZE + 1 },
+      (_, index) => `${P}paged-${String(index).padStart(2, "0")}`,
+    );
+    await Promise.all(
+      roomIds.flatMap((roomId) => [
+        db.collection("rooms").doc(roomId).set({
+          clubId,
+          participantCount: 1,
+        }),
+        db.collection("rooms").doc(roomId).collection("participants")
+          .doc(IDS.target).set({ userId: IDS.target }),
+      ]),
+    );
+
+    await assert.rejects(
+      () => runRemove(callableRequest(IDS.owner, "user", {
+        clubId,
+        memberId: IDS.target,
+      })),
+      (error) => error?.code === "unavailable",
+    );
+    assert.equal(
+      (await db.collection("clubs").doc(clubId).collection("members")
+        .doc(IDS.target).get()).exists,
+      false,
+    );
+    assert.equal(memberControlCalls.length, MEMBER_REMOVAL_ROOM_PAGE_SIZE);
+
+    const resumed = await runRemove(callableRequest(IDS.owner, "user", {
+      clubId,
+      memberId: IDS.target,
+    }));
+    assert.equal(resumed.alreadyExisted, true);
+    assert.equal(memberControlCalls.length, roomIds.length);
+    assert.equal(
+      (await memberRemovalOperationReference(clubId, IDS.target).get())
+        .data().status,
+      "completed",
+    );
+
+    await runRemove(callableRequest(IDS.owner, "user", {
+      clubId,
+      memberId: IDS.target,
+    }));
+    assert.equal(memberControlCalls.length, roomIds.length);
+  });
+
+  test("a missing Club consumes the committed actor budget", async () => {
+    const references = clubActionRateReferences(
+      db,
+      IDS.owner,
+      "removeClubMember",
+    );
+    const now = Timestamp.now();
+    await references.minute.set({
+      schemaVersion: 1,
+      ownerId: IDS.owner,
+      scope: references.minuteScope,
+      windowStartedAt: now,
+      count: CLUB_ACTION_RATE_LIMITS.removeClubMember.minute.maxEvents - 1,
+      updatedAt: now,
+    });
+    await assert.rejects(
+      () => runRemove(callableRequest(IDS.owner, "user", {
+        clubId: `${P}missing-removal`,
+        memberId: IDS.target,
+      })),
+      (error) => error?.code === "not-found",
+    );
+    assert.equal(
+      (await references.minute.get()).data().count,
+      CLUB_ACTION_RATE_LIMITS.removeClubMember.minute.maxEvents,
+    );
+
+    const clubId = `${P}valid-removal`;
+    await db.collection("clubs").doc(clubId).set({
+      ownerId: IDS.owner,
+      type: "community",
+      status: "active",
+      memberCount: 2,
+      onlineCount: 2,
+    });
+    await seedMember(clubId, IDS.owner, "owner");
+    await seedMember(clubId, IDS.target, "member");
+    await assert.rejects(
+      () => runRemove(callableRequest(IDS.owner, "user", {
+        clubId,
+        memberId: IDS.target,
+      })),
+      (error) => error?.code === "resource-exhausted",
+    );
+    assert.equal(
+      (await db.collection("clubs").doc(clubId).collection("members")
+        .doc(IDS.target).get()).exists,
+      true,
     );
   });
 
@@ -426,6 +569,74 @@ describe("transferClubOwnershipSelf", () => {
     assert.equal(newMember.data().role, "member");
   });
 
+  test("recipient Family-root flooding fails closed at the bounded capacity read", async () => {
+    const clubId = `${P}transfer-family-flood`;
+    await seedTransfer(clubId);
+    await Promise.all(
+      [0, 1, 2, 3].map((index) =>
+        db.collection("clubs").doc(`${P}recipient-family-${index}`).set({
+          ownerId: IDS.next,
+          type: "family",
+        }),
+      ),
+    );
+
+    await assert.rejects(
+      () => runTransfer(callableRequest(IDS.owner, "user", {
+        clubId,
+        newOwnerId: IDS.next,
+      })),
+      (error) => error?.code === "resource-exhausted",
+    );
+    assert.equal(
+      (await db.collection("clubs").doc(clubId).get()).data().ownerId,
+      IDS.owner,
+    );
+  });
+
+  test("a missing transfer target commits the owner attempt budget", async () => {
+    const references = clubActionRateReferences(
+      db,
+      IDS.owner,
+      "transferClubOwnership",
+    );
+    const now = Timestamp.now();
+    await references.minute.set({
+      schemaVersion: 1,
+      ownerId: IDS.owner,
+      scope: references.minuteScope,
+      windowStartedAt: now,
+      count:
+        CLUB_ACTION_RATE_LIMITS.transferClubOwnership.minute.maxEvents - 1,
+      updatedAt: now,
+    });
+    await assert.rejects(
+      () => runTransfer(callableRequest(IDS.owner, "user", {
+        clubId: `${P}missing-transfer`,
+        newOwnerId: IDS.next,
+      })),
+      (error) => error?.code === "not-found",
+    );
+    assert.equal(
+      (await references.minute.get()).data().count,
+      CLUB_ACTION_RATE_LIMITS.transferClubOwnership.minute.maxEvents,
+    );
+
+    const clubId = `${P}valid-transfer-after-denial`;
+    await seedTransfer(clubId);
+    await assert.rejects(
+      () => runTransfer(callableRequest(IDS.owner, "user", {
+        clubId,
+        newOwnerId: IDS.next,
+      })),
+      (error) => error?.code === "resource-exhausted",
+    );
+    assert.equal(
+      (await db.collection("clubs").doc(clubId).get()).data().ownerId,
+      IDS.owner,
+    );
+  });
+
   test("Family ownership transfer is always refused", async () => {
     const clubId = `${P}family-transfer`;
     await seedTransfer(clubId, "family");
@@ -498,6 +709,7 @@ describe("transferClubOwnershipSelf", () => {
 
 describe("admin Club mutation authorization", () => {
   beforeEach(async () => {
+    setProtectedOwnerUidForTests(IDS.activeAdmin);
     await Promise.all([
       db.collection("users").doc(IDS.staleAdmin).set({ role: "moderator" }),
       db.collection("users").doc(IDS.bannedAdmin).set({
@@ -541,7 +753,7 @@ describe("admin Club mutation authorization", () => {
     }
   });
 
-  test("active superAdmin transfer preserves exact ownership graph", async () => {
+  test("protected owner transfer preserves exact ownership graph", async () => {
     const clubId = `${P}admin-transfer`;
     const roomId = `club_lounge_${clubId}`;
     await Promise.all([

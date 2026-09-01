@@ -455,8 +455,8 @@ class _MomentStoryViewerState extends State<MomentStoryViewer> {
   }
 
   Future<void> _play(VoiceMoment moment) async {
-    final url = moment.audioUrl?.trim() ?? '';
-    if (url.isEmpty) {
+    final moments = _moments;
+    if (moments == null || !moment.hasMediaReference) {
       setState(() {
         _isPlaying = false;
         _playbackError = 'This Moment has no audio to play.';
@@ -482,7 +482,11 @@ class _MomentStoryViewerState extends State<MomentStoryViewer> {
       );
     }
     try {
-      await player.play(UrlSource(url));
+      final uri = await moments.resolveMediaUri(momentId: moment.id);
+      if (!mounted || _chainMoments.isEmpty || _current.id != moment.id) {
+        return;
+      }
+      await player.play(UrlSource(uri.toString()));
     } catch (error) {
       if (!mounted) return;
       setState(() {
@@ -882,6 +886,7 @@ class _StoryHeader extends StatelessWidget {
         children: [
           UserAvatar(
             radius: 20,
+            userId: moment.authorId,
             photoUrl: moment.authorPhotoUrl,
             displayName: moment.authorName,
           ),

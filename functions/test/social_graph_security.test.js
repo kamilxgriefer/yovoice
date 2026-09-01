@@ -7,6 +7,7 @@ process.env.GCLOUD_PROJECT ||= "yovoice-fn-test";
 
 const { initializeApp, getApps } = require("firebase-admin/app");
 if (getApps().length === 0) initializeApp();
+const { Timestamp } = require("firebase-admin/firestore");
 
 const { db } = require("../utils/firestore");
 const {
@@ -19,6 +20,7 @@ const {
   getMutualFriends,
   getFriendSuggestions,
   consumeSocialRateLimit,
+  friendDiscoveryCacheReference,
   MAX_FRIENDS,
   MAX_FOLLOWING,
   QUOTA_MINUTE_MS,
@@ -40,6 +42,19 @@ const C = "sgs-charlie";
 function quotaId(uid, kind) {
   const digest = createHash("sha256").update(uid).digest("hex");
   return `socialGraph_${kind}_${digest}`;
+}
+
+function discoveryQuotaId(uid, kind) {
+  const digest = createHash("sha256").update(uid).digest("hex");
+  return `friendDiscovery_${kind}_${digest}`;
+}
+
+function socialCapacityId(uid) {
+  return createHash("sha256").update(uid).digest("hex");
+}
+
+async function resetDiscoveryQuota(uid, kind) {
+  await db.doc(`privateRateLimits/${discoveryQuotaId(uid, kind)}`).delete();
 }
 
 function request(uid, data, verified = true) {
@@ -74,6 +89,19 @@ async function reset() {
     ...[A, B, C].flatMap((uid) =>
       ["read", "mutation"].map((kind) =>
         db.doc(`privateRateLimits/${quotaId(uid, kind)}`).delete(),
+      ),
+    ),
+    ...[A, B, C].map((uid) =>
+      db.doc(`privateSocialGraphCapacities/${socialCapacityId(uid)}`).delete(),
+    ),
+    ...[A, B, C].flatMap((uid) =>
+      ["suggestions", "mutuals"].map((kind) =>
+        db.doc(`privateRateLimits/${discoveryQuotaId(uid, kind)}`).delete(),
+      ),
+    ),
+    ...[A, B, C].flatMap((uid) =>
+      ["suggestions", "mutuals"].map((kind) =>
+        friendDiscoveryCacheReference(uid, kind).delete(),
       ),
     ),
   ]);
@@ -538,6 +566,7 @@ test("mutuals and suggestions do not disclose inactive or blocking accounts", as
   mutual = await runMutual(request(A, { targetUserId: B }));
   assert.deepEqual(mutual, { count: 0, sample: [] });
   await db.doc(`users/${C}`).update({ banned: false, disabled: true });
+  await resetDiscoveryQuota(A, "mutuals");
   mutual = await runMutual(request(A, { targetUserId: B }));
   assert.deepEqual(mutual, { count: 0, sample: [] });
   await db.doc(`users/${C}`).delete();
@@ -546,6 +575,7 @@ test("mutuals and suggestions do not disclose inactive or blocking accounts", as
   await seed(C);
 
   await db.doc(`users/${B}/blocked/${A}`).set({ userId: A });
+  await resetDiscoveryQuota(A, "mutuals");
   await assert.rejects(
     runMutual(request(A, { targetUserId: B })),
     (error) => error.code === "failed-precondition",
@@ -569,6 +599,153 @@ test("mutuals and suggestions do not disclose inactive or blocking accounts", as
   await assert.rejects(
     runSuggestions(request(A, { limit: 10 })),
     (error) => error.code === "permission-denied",
+  );
+});
+
+test("mutuals and suggestions honor canonical profile visibility", async () => {
+  const establishedAt = Timestamp.fromMillis(1_770_000_000_000);
+  await Promise.all([
+    db.doc(`friendshipGuards/${A}/friends/${C}`).set({
+      ownerId: A,
+      friendId: C,
+      schemaVersion: 1,
+      establishedAt,
+    }),
+    db.doc(`friendshipGuards/${C}/friends/${A}`).set({
+      ownerId: C,
+      friendId: A,
+      schemaVersion: 1,
+      establishedAt,
+    }),
+    db.doc(`friendshipGuards/${B}/friends/${C}`).set({
+      ownerId: B,
+      friendId: C,
+      schemaVersion: 1,
+      establishedAt,
+    }),
+    db.doc(`friendshipGuards/${C}/friends/${B}`).set({
+      ownerId: C,
+      friendId: B,
+      schemaVersion: 1,
+      establishedAt,
+    }),
+    db.doc(`users/${C}`).update({ profileVisibility: "private" }),
+  ]);
+
+  let mutual = await runMutual(request(A, { targetUserId: B }));
+  assert.deepEqual(mutual, { count: 0, sample: [] });
+
+  await db.doc(`users/${C}`).update({ profileVisibility: "friends" });
+  mutual = await runMutual(request(A, { targetUserId: B }));
+  assert.equal(mutual.count, 1);
+  assert.equal(mutual.sample[0].uid, C);
+
+  // Turn B into A's direct friend and C into B's friend-of-friend candidate.
+  // A is not C's friend after the first pair is removed, so "friends" must
+  // not leak C through suggestions even though B can see C.
+  await Promise.all([
+    db.doc(`friendshipGuards/${A}/friends/${C}`).delete(),
+    db.doc(`friendshipGuards/${C}/friends/${A}`).delete(),
+    db.doc(`friendshipGuards/${A}/friends/${B}`).set({
+      ownerId: A,
+      friendId: B,
+      schemaVersion: 1,
+      establishedAt,
+    }),
+    db.doc(`friendshipGuards/${B}/friends/${A}`).set({
+      ownerId: B,
+      friendId: A,
+      schemaVersion: 1,
+      establishedAt,
+    }),
+  ]);
+  let suggestions = await runSuggestions(request(A, { limit: 10 }));
+  assert.equal(
+    suggestions.suggestions.some((item) => item.uid === C),
+    false,
+  );
+
+  await db.doc(`users/${C}`).update({ profileVisibility: "public" });
+  suggestions = await runSuggestions(request(A, { limit: 10 }));
+  assert.equal(
+    suggestions.suggestions.some((item) => item.uid === C),
+    true,
+  );
+});
+
+test("mutual lookup cannot disclose the graph of an invisible target", async () => {
+  const establishedAt = Timestamp.fromMillis(1_770_000_000_000);
+  await Promise.all([
+    db.doc(`friendshipGuards/${A}/friends/${C}`).set({
+      ownerId: A,
+      friendId: C,
+      schemaVersion: 1,
+      establishedAt,
+    }),
+    db.doc(`friendshipGuards/${C}/friends/${A}`).set({
+      ownerId: C,
+      friendId: A,
+      schemaVersion: 1,
+      establishedAt,
+    }),
+    db.doc(`friendshipGuards/${B}/friends/${C}`).set({
+      ownerId: B,
+      friendId: C,
+      schemaVersion: 1,
+      establishedAt,
+    }),
+    db.doc(`friendshipGuards/${C}/friends/${B}`).set({
+      ownerId: C,
+      friendId: B,
+      schemaVersion: 1,
+      establishedAt,
+    }),
+    db.doc(`users/${B}`).update({ profileVisibility: "private" }),
+  ]);
+
+  await assert.rejects(
+    runMutual(request(A, { targetUserId: B })),
+    (error) => error.code === "permission-denied",
+  );
+
+  await db.doc(`users/${B}`).update({ profileVisibility: "friends" });
+  await assert.rejects(
+    runMutual(request(A, { targetUserId: B })),
+    (error) => error.code === "permission-denied",
+  );
+
+  await Promise.all([
+    db.doc(`friendshipGuards/${A}/friends/${B}`).set({
+      ownerId: A,
+      friendId: B,
+      schemaVersion: 1,
+      establishedAt,
+    }),
+    db.doc(`friendshipGuards/${B}/friends/${A}`).set({
+      ownerId: B,
+      friendId: A,
+      schemaVersion: 1,
+      establishedAt,
+    }),
+  ]);
+  await resetDiscoveryQuota(A, "mutuals");
+  const friendsOnly = await runMutual(request(A, { targetUserId: B }));
+  assert.equal(friendsOnly.count, 1);
+  assert.equal(friendsOnly.sample[0].uid, C);
+
+  await db.doc(`users/${B}`).update({ profileVisibility: "public" });
+  await Promise.all([
+    db.doc(`friendshipGuards/${A}/friends/${B}`).delete(),
+    db.doc(`friendshipGuards/${B}/friends/${A}`).delete(),
+  ]);
+  const publicTarget = await runMutual(request(A, { targetUserId: B }));
+  assert.equal(publicTarget.count, 1);
+
+  await db.doc(`users/${B}/blocked/${A}`).set({ userId: A });
+  await resetDiscoveryQuota(A, "mutuals");
+  await assert.rejects(
+    runMutual(request(A, { targetUserId: B })),
+    (error) => error.code === "failed-precondition",
   );
 });
 
@@ -615,6 +792,7 @@ test("suggestions skip stale public projections for inactive candidates", async 
   );
 
   await db.doc(`users/${C}`).delete();
+  await resetDiscoveryQuota(A, "suggestions");
   suggestions = await runSuggestions(request(A, { limit: 10 }));
   assert.equal(
     suggestions.suggestions.some((item) => item.uid === C),

@@ -244,6 +244,28 @@ void main() {
           theme.textButtonTheme.style?.foregroundColor?.resolve({}),
           palette.interactiveForeground,
         );
+        for (final style in <ButtonStyle?>[
+          theme.elevatedButtonTheme.style,
+          theme.filledButtonTheme.style,
+          theme.outlinedButtonTheme.style,
+          theme.textButtonTheme.style,
+        ]) {
+          final minimum = style?.minimumSize?.resolve({});
+          expect(minimum?.width, greaterThanOrEqualTo(44));
+          expect(minimum?.height, greaterThanOrEqualTo(48));
+        }
+        expect(
+          theme.textButtonTheme.style?.side?.resolve(focused)?.color,
+          palette.focus,
+        );
+        expect(
+          theme.iconButtonTheme.style?.minimumSize?.resolve({}),
+          const Size.square(44),
+        );
+        expect(
+          theme.iconButtonTheme.style?.side?.resolve(focused)?.color,
+          palette.focus,
+        );
         expect(
           theme.inputDecorationTheme.focusedBorder?.borderSide.color,
           palette.focus,

@@ -92,8 +92,18 @@ const ALL_UIDS = [
   TARGET_CLAIM_STAFF,
 ];
 
-function request(uid, role, data = {}) {
-  return { auth: { uid, token: { role } }, data };
+function request(uid, role, data = {}, token = {}) {
+  return {
+    auth: {
+      uid,
+      token: {
+        role,
+        auth_time: Math.floor(Date.now() / 1000),
+        ...token,
+      },
+    },
+    data,
+  };
 }
 
 async function expectCode(promise, code) {
@@ -128,6 +138,7 @@ async function clearOwnedAuditRows() {
 async function resetFixtures() {
   await Promise.all([
     ...ALL_UIDS.map((uid) => db.collection("users").doc(uid).delete()),
+    db.collection("entitlements").doc(TARGET).delete(),
     db.collection("rooms").doc(PUBLIC_ROOM).delete(),
     db.collection("rooms").doc(PRIVATE_ROOM).delete(),
     clearOwnedAuditRows(),
@@ -252,6 +263,37 @@ describe("protected-owner callables", () => {
     assert.equal(entry.details.privateReason, "owner-only");
   });
 
+  test("a stale owner sign-in cannot grant Premium", async () => {
+    await assert.rejects(
+      run(adminSetPremiumEntitlements)(request(
+        OWNER,
+        "superAdmin",
+        { uid: TARGET, plan: "monthly", days: 30 },
+        {
+          auth_time: Math.floor(Date.now() / 1000) - (5 * 60) - 1,
+        },
+      )),
+      (error) => {
+        assert.equal(error.code, "failed-precondition");
+        assert.equal(
+          error.details?.reason,
+          "recent-authentication-required",
+        );
+        return true;
+      },
+    );
+
+    assert.equal(
+      (await db.collection("entitlements").doc(TARGET).get()).exists,
+      false,
+    );
+    assert.notEqual(
+      (await db.collection("users").doc(TARGET).get()).data()
+        .premiumIdentity,
+      true,
+    );
+  });
+
   test("a matching auditor still cannot read the unscoped full audit", async () => {
     await expectCode(
       run(listAdminAuditLogs)(request(AUDITOR, "auditor", { limit: 10 })),
@@ -358,7 +400,11 @@ describe("staff-target and bootstrap fail-closed behavior", () => {
       run(bootstrapSuperAdmin)({
         auth: {
           uid: OWNER,
-          token: { role: "user", email_verified: true },
+          token: {
+            role: "user",
+            email_verified: true,
+            auth_time: Math.floor(Date.now() / 1000),
+          },
         },
         data: {},
       }),

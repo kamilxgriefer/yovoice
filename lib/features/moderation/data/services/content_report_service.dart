@@ -351,8 +351,7 @@ class ContentReportException extends StateError {
           'Verify your email address to report content.',
         ContentReportFailure.signedOut =>
           'Please sign in again to report this.',
-        ContentReportFailure.offline =>
-          'Check your connection and try again.',
+        ContentReportFailure.offline => 'Check your connection and try again.',
         ContentReportFailure.unavailable =>
           'Reporting is unavailable right now. Please try again later.',
         ContentReportFailure.unknown =>

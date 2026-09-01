@@ -172,7 +172,7 @@ const adminSetPremiumEntitlements = onCall(
   async (request) => {
     // Paid capability grants are ownership-level writes. A stale or
     // separately assigned superAdmin claim must never mint Premium.
-    await requireProtectedOwner(request);
+    await requireProtectedOwner(request, { privileged: true });
 
     const uid = String(request.data?.uid ?? "").trim();
     const plan = String(request.data?.plan ?? "").trim();

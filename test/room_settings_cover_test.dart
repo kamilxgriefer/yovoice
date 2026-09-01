@@ -12,15 +12,40 @@ import 'package:yovoice/features/rooms/data/services/room_service.dart';
 import 'package:yovoice/features/rooms/presentation/room_cover_editor.dart';
 import 'package:yovoice/features/rooms/presentation/screens/room_settings_screen.dart';
 
-String _managedRoomCoverUrl(String roomId, {int revision = 100}) =>
-    'https://firebasestorage.googleapis.com/v0/b/'
-    'yovoice-ec54a.firebasestorage.app/o/'
-    'room_images%2F$roomId%2Fcover_$revision.jpg?alt=media';
-
 const _oldRoomCoverUrl =
     'https://firebasestorage.googleapis.com/v0/b/'
     'yovoice-ec54a.firebasestorage.app/o/'
     'room_images%2Froom-1%2Fcover_99.jpg?alt=media';
+
+String _managedRoomCoverPath(String roomId) =>
+    'room_images/$roomId/host_${'a' * 32}.jpg';
+
+RoomCoverUpload _managedRoomCoverUpload(String roomId) => RoomCoverUpload(
+  storagePath: _managedRoomCoverPath(roomId),
+  objectGeneration: '42',
+  reservationId: 'b' * 40,
+);
+
+Future<Map<Object?, Object?>> _finalizeCoverForTest(
+  FakeFirebaseFirestore firestore,
+  Map<String, Object?> request,
+) async {
+  final roomId = request['roomId']! as String;
+  final generation = request['objectGeneration']! as String;
+  final path = _managedRoomCoverPath(roomId);
+  await firestore.collection('rooms').doc(roomId).update({
+    'imageUrl': null,
+    'coverStoragePath': path,
+    'coverGeneration': generation,
+    'coverContentType': 'image/jpeg',
+    'coverSize': 128,
+  });
+  return <Object?, Object?>{
+    'updated': true,
+    'coverStoragePath': path,
+    'coverGeneration': generation,
+  };
+}
 
 class _RecordingImageService implements RoomImageService {
   _RecordingImageService({this.uploadFails = false});
@@ -32,7 +57,7 @@ class _RecordingImageService implements RoomImageService {
   final List<String?> deletedUrls = <String?>[];
 
   @override
-  Future<String> uploadRoomCover({
+  Future<RoomCoverUpload> uploadRoomCover({
     required String roomId,
     required Uint8List bytes,
   }) async {
@@ -40,7 +65,15 @@ class _RecordingImageService implements RoomImageService {
     uploadedRoomId = roomId;
     uploadedBytes = bytes;
     if (uploadFails) throw StateError('Storage rejected the upload.');
-    return _managedRoomCoverUrl(roomId);
+    return _managedRoomCoverUpload(roomId);
+  }
+
+  @override
+  Future<void> deleteManagedRoomCoverPath({
+    required String roomId,
+    required String? storagePath,
+  }) async {
+    deletedUrls.add(storagePath);
   }
 
   @override
@@ -56,10 +89,10 @@ class _RecordingImageService implements RoomImageService {
 }
 
 class _GatedImageService extends _RecordingImageService {
-  final Completer<String> uploadGate = Completer<String>();
+  final Completer<RoomCoverUpload> uploadGate = Completer<RoomCoverUpload>();
 
   @override
-  Future<String> uploadRoomCover({
+  Future<RoomCoverUpload> uploadRoomCover({
     required String roomId,
     required Uint8List bytes,
   }) {
@@ -85,13 +118,21 @@ class _LostAckRoomService extends RoomService {
   int serverReadCalls = 0;
 
   @override
-  Future<void> updateImageUrl({
+  Future<void> finalizeRoomCoverUpload({
     required String roomId,
-    required String imageUrl,
+    required String storagePath,
+    required String objectGeneration,
+    required String reservationId,
   }) async {
     updateCalls++;
     if (commitBeforeThrow) {
-      await super.updateImageUrl(roomId: roomId, imageUrl: imageUrl);
+      await firestore.collection('rooms').doc(roomId).update({
+        'imageUrl': null,
+        'coverStoragePath': storagePath,
+        'coverGeneration': objectGeneration,
+        'coverContentType': 'image/jpeg',
+        'coverSize': 128,
+      });
     }
     throw StateError('The write acknowledgement was lost.');
   }
@@ -103,29 +144,9 @@ class _LostAckRoomService extends RoomService {
       throw StateError('The authoritative read is unavailable.');
     }
     final data = (await firestore.collection('rooms').doc(roomId).get()).data();
-    return VoiceRoom(
-      id: _room.id,
-      hostId: _room.hostId,
-      hostName: _room.hostName,
-      hostPhotoUrl: _room.hostPhotoUrl,
-      name: _room.name,
-      description: _room.description,
-      category: _room.category,
-      visibility: _room.visibility,
-      language: _room.language,
-      maxParticipants: _room.maxParticipants,
-      participantCount: _room.participantCount,
-      memberCount: _room.memberCount,
-      isLive: _room.isLive,
-      roomType: _room.roomType,
-      status: _room.status,
-      imageUrl: data?['imageUrl'] as String?,
-      approvalRequired: _room.approvalRequired,
-      slowModeSeconds: _room.slowModeSeconds,
-      autoMuteNewUsers: _room.autoMuteNewUsers,
-      membersCanStartVoice: _room.membersCanStartVoice,
-      createdAt: _room.createdAt,
-      updatedAt: _room.updatedAt,
+    if (data == null) throw StateError('Room missing.');
+    return VoiceRoom.fromFirestore(
+      await firestore.collection('rooms').doc(roomId).get(),
     );
   }
 }
@@ -209,7 +230,13 @@ void main() {
       home: RoomSettingsScreen(
         room: room,
         roomService:
-            roomService ?? RoomService(firestore: firestore, auth: auth),
+            roomService ??
+            RoomService(
+              firestore: firestore,
+              auth: auth,
+              coverFinalizeInvoker: (request) =>
+                  _finalizeCoverForTest(firestore, request),
+            ),
         roomImageService: imageService ?? images,
         coverEditor: editor,
       ),
@@ -254,7 +281,7 @@ void main() {
   );
 
   testWidgets(
-    'confirmation uploads only canonical cropped JPEG and flips URL',
+    'confirmation uploads JPEG and publishes canonical cover identity',
     (tester) async {
       tester.view.physicalSize = const Size(430, 1200);
       tester.view.devicePixelRatio = 1;
@@ -275,11 +302,12 @@ void main() {
       expect(images.uploadCalls, 1);
       expect(images.uploadedRoomId, _room.id);
       expect(images.uploadedBytes, croppedBytes);
-      expect(images.deletedUrls, [_room.imageUrl]);
+      expect(images.deletedUrls, isEmpty);
       final data = (await firestore.collection('rooms').doc(_room.id).get())
           .data();
-      expect(data?['imageUrl'], _managedRoomCoverUrl(_room.id));
-      expect(find.text('Change cover'), findsOneWidget);
+      expect(data?['imageUrl'], isNull);
+      expect(data?['coverStoragePath'], _managedRoomCoverPath(_room.id));
+      expect(data?['coverGeneration'], '42');
     },
   );
 
@@ -335,13 +363,12 @@ void main() {
       await tester.tap(find.text('Change cover'));
       await tester.pumpAndSettle();
 
-      final newUrl = _managedRoomCoverUrl(_room.id);
-      expect(
-        (await firestore.collection('rooms').doc(_room.id).get())
-            .data()?['imageUrl'],
-        newUrl,
-      );
-      expect(images.deletedUrls, [_room.imageUrl]);
+      final data = (await firestore.collection('rooms').doc(_room.id).get())
+          .data();
+      expect(data?['imageUrl'], isNull);
+      expect(data?['coverStoragePath'], _managedRoomCoverPath(_room.id));
+      expect(data?['coverGeneration'], '42');
+      expect(images.deletedUrls, isEmpty);
       expect(service.updateCalls, 1);
       expect(service.serverReadCalls, 1);
       expect(find.textContaining('acknowledgement'), findsNothing);
@@ -371,8 +398,7 @@ void main() {
       await tester.tap(find.text('Change cover'));
       await tester.pumpAndSettle();
 
-      final newUrl = _managedRoomCoverUrl(_room.id);
-      expect(images.deletedUrls, [newUrl]);
+      expect(images.deletedUrls, [_managedRoomCoverPath(_room.id)]);
       expect(service.updateCalls, 1);
       expect(service.serverReadCalls, 1);
       expect(
@@ -420,40 +446,39 @@ void main() {
     },
   );
 
-  testWidgets(
-    'leaving during upload still cleans the superseded cover after commit',
-    (tester) async {
-      tester.view.physicalSize = const Size(430, 1200);
-      tester.view.devicePixelRatio = 1;
-      addTearDown(tester.view.reset);
-      final gatedImages = _GatedImageService();
+  testWidgets('leaving during upload still commits canonical cover identity', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(430, 1200);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final gatedImages = _GatedImageService();
 
-      await tester.pumpWidget(
-        screen(
-          (context, imageService) async =>
-              PickedRoomCover(bytes: Uint8List.fromList(List.filled(96, 9))),
-          imageService: gatedImages,
-        ),
-      );
-      await tester.pump();
-      await tester.tap(find.text('Change cover'));
-      await tester.pump();
-      expect(find.text('Updating cover…'), findsOneWidget);
+    await tester.pumpWidget(
+      screen(
+        (context, imageService) async =>
+            PickedRoomCover(bytes: Uint8List.fromList(List.filled(96, 9))),
+        imageService: gatedImages,
+      ),
+    );
+    await tester.pump();
+    await tester.tap(find.text('Change cover'));
+    await tester.pump();
+    expect(find.text('Updating cover…'), findsOneWidget);
 
-      await tester.pumpWidget(const MaterialApp(home: SizedBox()));
-      gatedImages.uploadGate.complete(_managedRoomCoverUrl(_room.id));
-      await tester.runAsync(
-        () => Future<void>.delayed(const Duration(milliseconds: 150)),
-      );
+    await tester.pumpWidget(const MaterialApp(home: SizedBox()));
+    gatedImages.uploadGate.complete(_managedRoomCoverUpload(_room.id));
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 150)),
+    );
 
-      expect(
-        (await firestore.collection('rooms').doc(_room.id).get())
-            .data()?['imageUrl'],
-        _managedRoomCoverUrl(_room.id),
-      );
-      expect(gatedImages.deletedUrls, [_room.imageUrl]);
-    },
-  );
+    final data = (await firestore.collection('rooms').doc(_room.id).get())
+        .data();
+    expect(data?['imageUrl'], isNull);
+    expect(data?['coverStoragePath'], _managedRoomCoverPath(_room.id));
+    expect(data?['coverGeneration'], '42');
+    expect(gatedImages.deletedUrls, isEmpty);
+  });
 
   testWidgets('status and delete actions disable while cover upload runs', (
     tester,
@@ -484,7 +509,7 @@ void main() {
       expect(tile.onTap, isNull, reason: '$label raced the cover upload');
     }
 
-    gatedImages.uploadGate.complete(_managedRoomCoverUrl(_room.id));
+    gatedImages.uploadGate.complete(_managedRoomCoverUpload(_room.id));
     await tester.pumpAndSettle();
   });
 

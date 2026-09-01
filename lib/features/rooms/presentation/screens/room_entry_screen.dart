@@ -29,6 +29,7 @@ class RoomEntryScreen extends StatefulWidget {
     required this.room,
     this.coordinator,
     this.playInitialJoinSound = true,
+    this.startMuted = false,
     super.key,
   });
 
@@ -38,6 +39,9 @@ class RoomEntryScreen extends StatefulWidget {
   /// Connecting LiveKit immediately afterwards must not turn one successful
   /// action into a two-cue jingle.
   final bool playInitialJoinSound;
+
+  /// Security-sensitive entry points such as external links start mic-muted.
+  final bool startMuted;
 
   /// Test seam. Production builds the Firebase-backed coordinator lazily, so
   /// this screen can be pumped without a Firebase app.
@@ -120,6 +124,7 @@ class _RoomEntryScreenState extends State<RoomEntryScreen> {
             room: entry.room,
             voiceEntry: entry,
             playInitialJoinSound: widget.playInitialJoinSound,
+            startMuted: widget.startMuted,
           );
         }
         // Straight into the room — the lobby detour is gone. The liveness
@@ -129,6 +134,7 @@ class _RoomEntryScreenState extends State<RoomEntryScreen> {
           room: entry.room,
           voiceEntry: entry,
           playInitialJoinSound: widget.playInitialJoinSound,
+          startMuted: widget.startMuted,
         );
       },
     );

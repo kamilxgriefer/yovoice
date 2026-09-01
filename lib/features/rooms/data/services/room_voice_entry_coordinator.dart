@@ -184,8 +184,7 @@ class RoomVoiceEntryCoordinator {
     // The caller does not have permission…". Map the code instead.
     if (error is FirebaseException) {
       return switch (error.code) {
-        'permission-denied' =>
-          'You do not have access to this room right now.',
+        'permission-denied' => 'You do not have access to this room right now.',
         'not-found' => 'This room no longer exists.',
         'unavailable' || 'deadline-exceeded' || 'network-request-failed' =>
           'You appear to be offline. Check your connection and try again.',

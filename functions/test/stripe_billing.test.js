@@ -15,6 +15,12 @@ const {
   parsePortalRequest,
   createStripeClient,
   cancelStripeBillingForDeletedUser,
+  isAllowedStripeHostedUrl,
+  STRIPE_CHECKOUT_HOST,
+  STRIPE_BILLING_PORTAL_HOST,
+  MAX_STRIPE_WEBHOOK_BODY_BYTES,
+  MAX_STRIPE_WEBHOOK_INSTANCES,
+  stripePremiumWebhook,
   mapStripeSubscription,
 } = require("../premium/stripe_billing");
 const {
@@ -237,6 +243,11 @@ function responseRecorder() {
   return {
     statusCode: null,
     body: null,
+    headers: {},
+    set(name, value) {
+      this.headers[name] = value;
+      return this;
+    },
     status(code) {
       this.statusCode = code;
       return this;
@@ -251,6 +262,70 @@ function responseRecorder() {
     },
   };
 }
+
+test("public Stripe webhook rejects cheap invalid traffic before Stripe SDK work", async () => {
+  let constructCalls = 0;
+  const fake = stripeFake();
+  fake.webhooks.constructEvent = () => {
+    constructCalls += 1;
+    throw new Error("invalid signature");
+  };
+  const service = handlers({ firestore: new FakeFirestore(), stripe: fake });
+
+  let response = responseRecorder();
+  await service.stripeWebhookHandler(
+    { method: "GET", rawBody: Buffer.from("x"), headers: {} },
+    response,
+    "whsec_test",
+  );
+  assert.equal(response.statusCode, 405);
+  assert.equal(response.headers.Allow, "POST");
+
+  response = responseRecorder();
+  await service.stripeWebhookHandler(
+    {
+      method: "POST",
+      rawBody: Buffer.alloc(MAX_STRIPE_WEBHOOK_BODY_BYTES + 1),
+      headers: { "stripe-signature": "sig" },
+    },
+    response,
+    "whsec_test",
+  );
+  assert.equal(response.statusCode, 413);
+
+  response = responseRecorder();
+  await service.stripeWebhookHandler(
+    {
+      method: "POST",
+      rawBody: Buffer.from("x"),
+      headers: { "stripe-signature": ["sig"] },
+    },
+    response,
+    "whsec_test",
+  );
+  assert.equal(response.statusCode, 400);
+  assert.equal(constructCalls, 0);
+
+  response = responseRecorder();
+  await service.stripeWebhookHandler(
+    {
+      method: "POST",
+      rawBody: Buffer.from("signed"),
+      headers: { "stripe-signature": "sig" },
+    },
+    response,
+    "whsec_test",
+  );
+  assert.equal(response.statusCode, 400);
+  assert.equal(response.body, "Invalid signature");
+  assert.equal(constructCalls, 1);
+});
+
+test("public Stripe webhook has a bounded runtime envelope", () => {
+  assert.equal(stripePremiumWebhook.__endpoint.maxInstances, MAX_STRIPE_WEBHOOK_INSTANCES);
+  assert.equal(stripePremiumWebhook.__endpoint.timeoutSeconds, 60);
+  assert.equal(stripePremiumWebhook.__endpoint.platform, "gcfv2");
+});
 
 function stripeFake(overrides = {}) {
   const prices = {
@@ -311,7 +386,7 @@ function stripeFake(overrides = {}) {
         create: async () => ({
           id: "cs_current",
           status: "open",
-          url: "https://checkout.stripe.test/session",
+          url: "https://checkout.stripe.com/c/pay/session",
         }),
         retrieve: async (id) =>
           id === "cs_prepaid" ? prepaidSession : { status: "expired", url: null },
@@ -398,7 +473,7 @@ function stripeFake(overrides = {}) {
         }),
       },
       sessions: {
-        create: async () => ({ url: "https://billing.stripe.test/session" }),
+        create: async () => ({ url: "https://billing.stripe.com/p/session" }),
       },
     },
     charges: {
@@ -639,6 +714,39 @@ test("checkout and portal reject unexpected client-controlled fields", () => {
   assert.throws(() => parsePortalRequest({ returnUrl: "https://evil.test" }));
 });
 
+test("Stripe hosted URL validation rejects lookalike and credential-smuggling URLs", () => {
+  assert.equal(
+    isAllowedStripeHostedUrl(
+      "https://checkout.stripe.com/c/pay/session?prefilled_email=user%40example.test",
+      STRIPE_CHECKOUT_HOST,
+    ),
+    true,
+  );
+  assert.equal(
+    isAllowedStripeHostedUrl(
+      "https://billing.stripe.com/p/session#manage",
+      STRIPE_BILLING_PORTAL_HOST,
+    ),
+    true,
+  );
+  for (const value of [
+    "http://checkout.stripe.com/c/pay/session",
+    "https://checkout.stripe.com.evil.test/c/pay/session",
+    "https://checkout.stripe.com@evil.test/c/pay/session",
+    "https://user:password@checkout.stripe.com/c/pay/session",
+    "https://checkout.stripe.com:444/c/pay/session",
+    "javascript:alert(1)",
+    "not a URL",
+    null,
+  ]) {
+    assert.equal(
+      isAllowedStripeHostedUrl(value, STRIPE_CHECKOUT_HOST),
+      false,
+      String(value),
+    );
+  }
+});
+
 test("checkout parsing rejects prototype-chain plan names", () => {
   for (const plan of ["toString", "constructor", "__proto__"]) {
     assert.throws(() => parseCheckoutRequest({ plan }), /monthly or yearly/);
@@ -759,7 +867,7 @@ test("suspended or unverified payer can still open their canonical Stripe portal
       auth: { uid: "suspended", token: { email_verified: false } },
       data: {},
     });
-  assert.equal(result.url, "https://billing.stripe.test/session");
+  assert.equal(result.url, "https://billing.stripe.com/p/session");
 });
 
 test("portal configuration retrieval expands subscription update products", async () => {
@@ -926,7 +1034,7 @@ test("portal configuration is revalidated after a Dashboard mutation", async () 
         data: {},
       })
     ).url,
-    "https://billing.stripe.test/session",
+    "https://billing.stripe.com/p/session",
   );
   quantityEnabled = true;
   await assert.rejects(
@@ -1064,7 +1172,7 @@ test("unpaid Checkout completion never provisions Premium", async () => {
   });
   const response = responseRecorder();
   await handlers({ firestore, stripe: fake }).stripeWebhookHandler(
-    { rawBody: Buffer.from("x"), headers: { "stripe-signature": "sig" } },
+    { method: "POST", rawBody: Buffer.from("x"), headers: { "stripe-signature": "sig" } },
     response,
     "whsec_test",
   );
@@ -1142,7 +1250,7 @@ test("Dahlia invoice.paid resolves its subscription through Invoice.parent", asy
   };
   const response = responseRecorder();
   await handlers({ firestore, stripe: stripeFake({ event }) }).stripeWebhookHandler(
-    { rawBody: Buffer.from("signed"), headers: { "stripe-signature": "sig" } },
+    { method: "POST", rawBody: Buffer.from("signed"), headers: { "stripe-signature": "sig" } },
     response,
     "whsec_test",
   );
@@ -1208,7 +1316,7 @@ test("async payment failure reprojects the canonical unpaid subscription", async
     subscription({ latestInvoice: { paid: false, status: "void" } });
   const response = responseRecorder();
   await handlers({ firestore, stripe: fake }).stripeWebhookHandler(
-    { rawBody: Buffer.from("x"), headers: { "stripe-signature": "sig" } },
+    { method: "POST", rawBody: Buffer.from("x"), headers: { "stripe-signature": "sig" } },
     response,
     "whsec_test",
   );
@@ -1238,7 +1346,7 @@ test("signed BLIK Checkout grants a non-renewing yearly prepaid entitlement", as
   const service = handlers({ firestore, stripe: stripeFake({ event }) });
   const response = responseRecorder();
   await service.stripeWebhookHandler(
-    { rawBody: Buffer.from("signed"), headers: { "stripe-signature": "sig" } },
+    { method: "POST", rawBody: Buffer.from("signed"), headers: { "stripe-signature": "sig" } },
     response,
     "whsec_test",
   );
@@ -1691,7 +1799,7 @@ test("Checkout cannot create a customer or session after an Auth deletion tombst
     return {
       id: "cs_should_not_exist",
       status: "open",
-      url: "https://checkout.stripe.test",
+      url: "https://checkout.stripe.com/c/pay/session",
     };
   };
   await assert.rejects(
@@ -2262,7 +2370,7 @@ test("signed full-refund webhook revokes only its subscription and replay cannot
   const service = handlers({ firestore, stripe: fake });
   let response = responseRecorder();
   await service.stripeWebhookHandler(
-    { rawBody: Buffer.from("signed"), headers: { "stripe-signature": "sig" } },
+    { method: "POST", rawBody: Buffer.from("signed"), headers: { "stripe-signature": "sig" } },
     response,
     "whsec_test",
   );
@@ -2296,7 +2404,11 @@ test("signed full-refund webhook revokes only its subscription and replay cannot
   });
   response = responseRecorder();
   await service.stripeWebhookHandler(
-    { rawBody: Buffer.from("signed replay"), headers: { "stripe-signature": "sig" } },
+    {
+      method: "POST",
+      rawBody: Buffer.from("signed replay"),
+      headers: { "stripe-signature": "sig" },
+    },
     response,
     "whsec_test",
   );
@@ -2894,7 +3006,7 @@ test("recurring Checkout allows only card and PayPal with server prices", async 
     return {
       id: "cs_current",
       status: "open",
-      url: "https://checkout.stripe.test/session",
+      url: "https://checkout.stripe.com/c/pay/session",
     };
   };
   await handlers({ firestore, stripe: fake }).createPremiumCheckoutSessionHandler({
@@ -2926,7 +3038,7 @@ test("BLIK Checkout is a non-renewing server-priced monthly or yearly pass", asy
       return {
         id: `cs_${plan}`,
         status: "open",
-        url: "https://checkout.stripe.test/blik",
+        url: "https://checkout.stripe.com/c/pay/blik",
       };
     };
     await handlers({ firestore, stripe: fake }).createPremiumCheckoutSessionHandler({
@@ -2971,14 +3083,14 @@ test("Checkout scans every subscription page before reusing a pending URL", asyn
   };
   fake.checkout.sessions.retrieve = async () => {
     pendingRetrievals += 1;
-    return { status: "open", url: "https://checkout.stripe.test/pending" };
+    return { status: "open", url: "https://checkout.stripe.com/c/pay/pending" };
   };
   fake.checkout.sessions.create = async () => {
     sessionCreates += 1;
     return {
       id: "cs_new",
       status: "open",
-      url: "https://checkout.stripe.test/new",
+      url: "https://checkout.stripe.com/c/pay/new",
     };
   };
   await assert.rejects(
@@ -3014,7 +3126,7 @@ test("checkout retry rotates idempotency after deliberately expiring an unpersis
     return {
       id: "cs_new",
       status: "open",
-      url: "https://checkout.stripe.test/new",
+      url: "https://checkout.stripe.com/c/pay/new",
     };
   };
   const service = handlers({ firestore, stripe: fake });
@@ -3027,7 +3139,7 @@ test("checkout retry rotates idempotency after deliberately expiring an unpersis
     /injected crash/,
   );
   const recovered = await service.createPremiumCheckoutSessionHandler(request);
-  assert.equal(recovered.url, "https://checkout.stripe.test/new");
+  assert.equal(recovered.url, "https://checkout.stripe.com/c/pay/new");
   assert.equal(keys.length, 2);
   assert.notEqual(keys[0], keys[1]);
 });

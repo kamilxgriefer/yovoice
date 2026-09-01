@@ -45,6 +45,13 @@ code. `LIVEKIT_URL` (`wss://yovoice-3f7j9fb7.livekit.cloud`) is a plain
 
 ## Direct 1:1 calls
 
+> **VIDEO STATUS: SOURCE ONLY / NOT DEPLOYED.** The deployed audio lifecycle is
+> backward compatible with the new schema, but video must not be broadly
+> enabled until the recipient has an authoritative compatible-build
+> capability and the physical device matrix passes. Safe rollout order is:
+> backward-compatible Functions first, then capability registration and
+> server gate, compatible clients, and only then video enablement.
+
 `functions/calls/direct_calls.js` owns the friend-call lifecycle:
 `startDirectCall`, `acceptDirectCall`, `declineDirectCall`,
 `cancelDirectCall`, `endDirectCall` and `createDirectCallToken`. Start and the
@@ -55,8 +62,16 @@ per account.
 
 Ringing lasts 60 seconds. `expireDirectCallsSchedule` converts an unanswered
 call to `missed`, frees both locks and creates the canonical missed-call
-notification. An accepted call gets an eight-hour ceiling and a five-minute
-LiveKit token scoped to `call_<callId>`. Ending an active call writes
+notification. Calls store an immutable server-validated `mediaType`; legacy
+documents without it remain audio. An accepted call gets an eight-hour ceiling
+and a five-minute LiveKit token scoped to `call_<callId>`. Audio receives a
+declared-microphone source grant. Video receives declared microphone and camera
+source grants; screen-share labels are omitted, and normal voice rooms use the
+same microphone label boundary. LiveKit trusts the client's `TrackSource`, so
+this is defense in depth for normal clients rather than proof of actual capture
+origin. Active calls that hit the ceiling are now ended by the same scheduler
+and queue durable room teardown instead of leaving a valid RTC room behind.
+Ending an active call writes
 `directCallControlOutbox/{callId}`; `onDirectCallControlCreated` retries the
 LiveKit room deletion/revocation and active-session cleanup.
 

@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
+import 'package:yovoice/core/theme/app_motion.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_radius.dart';
+import 'package:yovoice/core/theme/app_sizing.dart';
 import 'package:yovoice/core/theme/app_typography.dart';
 
 class YoSocialButton extends StatelessWidget {
@@ -33,10 +35,13 @@ class YoSocialButton extends StatelessWidget {
     final palette = context.appPalette;
     final foreground = _blocked ? palette.textTertiary : palette.textPrimary;
     final textScale = MediaQuery.textScalerOf(context).scale(1);
+    final standardDuration = AppMotion.resolve(context, AppMotion.standard);
     Widget button = SizedBox(
       width: double.infinity,
       child: ConstrainedBox(
-        constraints: const BoxConstraints(minHeight: 58),
+        constraints: const BoxConstraints(
+          minHeight: AppSizing.primaryControlHeight,
+        ),
         child: OutlinedButton(
           onPressed: _blocked ? null : onPressed,
           style: ButtonStyle(
@@ -78,13 +83,18 @@ class YoSocialButton extends StatelessWidget {
             shape: const WidgetStatePropertyAll(
               RoundedRectangleBorder(borderRadius: AppRadius.lg),
             ),
-            minimumSize: const WidgetStatePropertyAll(Size(44, 58)),
+            minimumSize: const WidgetStatePropertyAll(
+              Size(
+                AppSizing.minimumTouchTarget,
+                AppSizing.primaryControlHeight,
+              ),
+            ),
             padding: const WidgetStatePropertyAll(
               EdgeInsets.symmetric(horizontal: 20, vertical: 14),
             ),
           ),
           child: AnimatedSwitcher(
-            duration: const Duration(milliseconds: 180),
+            duration: standardDuration,
             child: isLoading
                 ? SizedBox(
                     key: ValueKey('loading'),

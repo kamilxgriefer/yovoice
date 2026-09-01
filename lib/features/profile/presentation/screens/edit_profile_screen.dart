@@ -744,7 +744,11 @@ class _ProfileImagePreview extends StatelessWidget {
             if (pendingBannerBytes != null)
               Image.memory(pendingBannerBytes, fit: BoxFit.cover)
             else
-              ProfileBanner(bannerUrl: profile.bannerUrl),
+              ProfileBanner(
+                userId: profile.uid,
+                bannerUrl: profile.bannerUrl,
+                mediaRevision: profile.profileUpdatedAt,
+              ),
             Positioned(
               left: 16,
               bottom: 16,
@@ -767,7 +771,9 @@ class _ProfileImagePreview extends StatelessWidget {
                       )
                     : UserAvatar(
                         radius: 34,
+                        userId: profile.uid,
                         photoUrl: profile.photoUrl,
+                        mediaRevision: profile.profileUpdatedAt,
                         displayName: profile.displayName,
                         backgroundColor: palette.surfaceSunken,
                       ),

@@ -16,10 +16,37 @@ import 'package:yovoice/features/rooms/data/services/room_service.dart';
 import 'package:yovoice/features/rooms/presentation/room_cover_editor.dart';
 import 'package:yovoice/features/rooms/presentation/screens/create_room_screen.dart';
 
-String _managedRoomCoverUrl(String roomId) =>
-    'https://firebasestorage.googleapis.com/v0/b/'
-    'yovoice-ec54a.firebasestorage.app/o/'
-    'room_images%2F$roomId%2Fcover_100.jpg?alt=media';
+import 'helpers/room_creation_test_double.dart';
+
+String _managedRoomCoverPath(String roomId) =>
+    'room_images/$roomId/host-uid_${'a' * 32}.jpg';
+
+RoomCoverUpload _managedRoomCoverUpload(String roomId) => RoomCoverUpload(
+  storagePath: _managedRoomCoverPath(roomId),
+  objectGeneration: '42',
+  reservationId: 'b' * 40,
+);
+
+Future<Map<Object?, Object?>> _finalizeCoverForTest(
+  FakeFirebaseFirestore firestore,
+  Map<String, Object?> request,
+) async {
+  final roomId = request['roomId']! as String;
+  final generation = request['objectGeneration']! as String;
+  final path = _managedRoomCoverPath(roomId);
+  await firestore.collection('rooms').doc(roomId).update({
+    'imageUrl': null,
+    'coverStoragePath': path,
+    'coverGeneration': generation,
+    'coverContentType': 'image/jpeg',
+    'coverSize': 128,
+  });
+  return <Object?, Object?>{
+    'updated': true,
+    'coverStoragePath': path,
+    'coverGeneration': generation,
+  };
+}
 
 /// A picker/uploader that never touches Storage.
 ///
@@ -44,7 +71,7 @@ class _FakeImageService implements RoomImageService {
   }
 
   @override
-  Future<String> uploadRoomCover({
+  Future<RoomCoverUpload> uploadRoomCover({
     required String roomId,
     required Uint8List bytes,
   }) async {
@@ -52,7 +79,15 @@ class _FakeImageService implements RoomImageService {
     uploadedForRoom = roomId;
     uploadedBytes = bytes;
     if (uploadFails) throw StateError('Storage rejected the upload.');
-    return _managedRoomCoverUrl(roomId);
+    return _managedRoomCoverUpload(roomId);
+  }
+
+  @override
+  Future<void> deleteManagedRoomCoverPath({
+    required String roomId,
+    required String? storagePath,
+  }) async {
+    deletedUrls.add(storagePath);
   }
 
   @override
@@ -69,22 +104,39 @@ class _FakeImageService implements RoomImageService {
 
 class _LostAckCreateRoomService extends RoomService {
   _LostAckCreateRoomService({
-    required FakeFirebaseFirestore firestore,
+    required this.firestore,
     required MockFirebaseAuth auth,
     required this.commitBeforeThrow,
     this.serverReadFails = false,
-  }) : super(firestore: firestore, auth: auth);
+  }) : super(
+         firestore: firestore,
+         auth: auth,
+         roomCreateInvoker: (request) => createRoomForTest(
+           firestore: firestore,
+           userId: 'host-uid',
+           request: request,
+         ),
+       );
 
+  final FakeFirebaseFirestore firestore;
   final bool commitBeforeThrow;
   final bool serverReadFails;
 
   @override
-  Future<void> updateImageUrl({
+  Future<void> finalizeRoomCoverUpload({
     required String roomId,
-    required String imageUrl,
+    required String storagePath,
+    required String objectGeneration,
+    required String reservationId,
   }) async {
     if (commitBeforeThrow) {
-      await super.updateImageUrl(roomId: roomId, imageUrl: imageUrl);
+      await firestore.collection('rooms').doc(roomId).update({
+        'imageUrl': null,
+        'coverStoragePath': storagePath,
+        'coverGeneration': objectGeneration,
+        'coverContentType': 'image/jpeg',
+        'coverSize': 128,
+      });
     }
     throw StateError('The write acknowledgement was lost.');
   }
@@ -94,7 +146,8 @@ class _LostAckCreateRoomService extends RoomService {
     if (serverReadFails) {
       throw StateError('The authoritative read is unavailable.');
     }
-    return getRoom(roomId);
+    final snapshot = await firestore.collection('rooms').doc(roomId).get();
+    return VoiceRoom.fromFirestore(snapshot);
   }
 }
 
@@ -154,7 +207,15 @@ void main() {
     return CreateRoomScreen(
       experience: experience,
       roomService:
-          roomService ?? RoomService(firestore: db, auth: firebaseAuth),
+          roomService ??
+          RoomService(
+            firestore: db,
+            auth: firebaseAuth,
+            roomCreateInvoker: (request) =>
+                createRoomForTest(firestore: db, userId: uid, request: request),
+            coverFinalizeInvoker: (request) =>
+                _finalizeCoverForTest(db, request),
+          ),
       imageService: images ?? _FakeImageService(),
       // Real crop geometry is covered by image_crop_screen_test. The wizard
       // gets a deterministic editor seam so its picker/cancel/upload state can
@@ -486,7 +547,7 @@ void main() {
       expect(find.textContaining('cover did not upload'), findsOneWidget);
     });
 
-    testWidgets('successful create publishes the confirmed bytes and URL', (
+    testWidgets('successful create publishes canonical cover identity', (
       tester,
     ) async {
       useSize(tester, const Size(430, 2000));
@@ -512,7 +573,9 @@ void main() {
       expect(images.uploadCalls, 1);
       expect(images.uploadedForRoom, room.id);
       expect(images.uploadedBytes, sourceBytes);
-      expect(room.data()['imageUrl'], _managedRoomCoverUrl(room.id));
+      expect(room.data()['imageUrl'], isNull);
+      expect(room.data()['coverStoragePath'], _managedRoomCoverPath(room.id));
+      expect(room.data()['coverGeneration'], '42');
     });
 
     testWidgets(
@@ -546,7 +609,9 @@ void main() {
 
         tester.takeException();
         final room = (await db.collection('rooms').get()).docs.single;
-        expect(room.data()['imageUrl'], _managedRoomCoverUrl(room.id));
+        expect(room.data()['imageUrl'], isNull);
+        expect(room.data()['coverStoragePath'], _managedRoomCoverPath(room.id));
+        expect(room.data()['coverGeneration'], '42');
         expect(images.deletedUrls, isEmpty);
         expect(find.textContaining('cover did not upload'), findsNothing);
       },
@@ -583,9 +648,8 @@ void main() {
 
         tester.takeException();
         final room = (await db.collection('rooms').get()).docs.single;
-        final uploadedUrl = _managedRoomCoverUrl(room.id);
         expect(room.data()['imageUrl'], isNull);
-        expect(images.deletedUrls, [uploadedUrl]);
+        expect(images.deletedUrls, [_managedRoomCoverPath(room.id)]);
         expect(find.textContaining('cover did not upload'), findsOneWidget);
       },
     );

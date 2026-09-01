@@ -237,6 +237,23 @@ someone decide what to pick up next.
   calls expire after 60 seconds into a missed-call notification. Bilateral
   friendship, blocks, restrictions and active accounts are revalidated at
   start, answer and token issuance.
+- **Fixed in source 2026-08-31 — direct video calls extend the same
+  server-authoritative lifecycle** (ADR-135, **TESTER RELEASE PENDING**): Chats
+  exposes a distinct video action; incoming/outgoing UI supports remote video,
+  mirrored local PiP, camera flip, camera/mic/speaker controls and audio-only
+  fallback. The backend stores immutable audio/video intent and scopes LiveKit
+  publication by the client's declared source (microphone, or microphone plus
+  camera; screen-share labels omitted). This is not capture-origin proof
+  against a modified client. Late joins are canceled across
+  logout/hang-up/account changes,
+  backgrounding invalidates any camera-enable race, microphone teardown
+  re-stops captured track objects after delayed SDK work, active calls expire
+  with durable room teardown, and external room links confirm then start muted.
+  Transport is encrypted by WebRTC/LiveKit, but app-level E2EE and native
+  CallKit/ConnectionService presentation remain separate release work. A
+  server-checked recipient/minimum-build capability is also required before a
+  mixed-version rollout. No web, Functions or store build was published by
+  this source change.
 
 > **DEPLOYED 2026-08-20.** This banner previously said the whole 2026-08-19/20
 > wave was fixed in source and unreachable in production. That is no longer

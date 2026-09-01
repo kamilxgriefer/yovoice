@@ -73,11 +73,10 @@ class PublicIdentity {
     isVip: false,
   );
 
-  factory PublicIdentity.fromWire(Map<String, dynamic> data) =>
-      PublicIdentity(
-        role: OfficialRole.fromWire(data['staffRole'] as String?),
-        isVip: data['isVip'] == true,
-      );
+  factory PublicIdentity.fromWire(Map<String, dynamic> data) => PublicIdentity(
+    role: OfficialRole.fromWire(data['staffRole'] as String?),
+    isVip: data['isVip'] == true,
+  );
 
   final OfficialRole role;
   final bool isVip;

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/helpers/error_messages.dart';
+import 'package:yovoice/core/theme/app_motion.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_spacing.dart';
 import 'package:yovoice/core/theme/app_typography.dart';
@@ -31,11 +32,12 @@ class YoErrorState extends StatelessWidget {
   Widget build(BuildContext context) {
     final String text = message ?? friendlyErrorMessage(error!);
     final palette = context.appPalette;
+    final duration = AppMotion.resolve(context, AppMotion.entrance);
 
     return TweenAnimationBuilder<double>(
       tween: Tween<double>(begin: 0, end: 1),
-      duration: const Duration(milliseconds: 320),
-      curve: Curves.easeOutCubic,
+      duration: duration,
+      curve: AppMotion.entranceCurve,
       builder: (context, value, child) {
         return Opacity(
           opacity: value,
@@ -53,33 +55,43 @@ class YoErrorState extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: <Widget>[
-            Container(
-              width: 76,
-              height: 76,
-              decoration: BoxDecoration(
-                color: palette.dangerSurface,
-                shape: BoxShape.circle,
-              ),
-              child: Icon(
-                Icons.cloud_off_rounded,
-                size: 34,
-                color: palette.dangerForeground,
-              ),
-            ),
-            const SizedBox(height: AppSpacing.lg),
-            Text(
-              'Something went wrong',
-              textAlign: TextAlign.center,
-              style: AppTypography.titleLarge.copyWith(
-                color: palette.textPrimary,
-              ),
-            ),
-            const SizedBox(height: AppSpacing.sm),
-            Text(
-              text,
-              textAlign: TextAlign.center,
-              style: AppTypography.bodyMedium.copyWith(
-                color: palette.textSecondary,
+            Semantics(
+              container: true,
+              liveRegion: true,
+              label: 'Something went wrong. $text',
+              excludeSemantics: true,
+              child: Column(
+                children: <Widget>[
+                  Container(
+                    width: 76,
+                    height: 76,
+                    decoration: BoxDecoration(
+                      color: palette.dangerSurface,
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(
+                      Icons.cloud_off_rounded,
+                      size: 34,
+                      color: palette.dangerForeground,
+                    ),
+                  ),
+                  const SizedBox(height: AppSpacing.lg),
+                  Text(
+                    'Something went wrong',
+                    textAlign: TextAlign.center,
+                    style: AppTypography.titleLarge.copyWith(
+                      color: palette.textPrimary,
+                    ),
+                  ),
+                  const SizedBox(height: AppSpacing.sm),
+                  Text(
+                    text,
+                    textAlign: TextAlign.center,
+                    style: AppTypography.bodyMedium.copyWith(
+                      color: palette.textSecondary,
+                    ),
+                  ),
+                ],
               ),
             ),
             if (onRetry != null) ...<Widget>[

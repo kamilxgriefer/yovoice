@@ -124,7 +124,7 @@ describe("public profile derivation", () => {
       email: "private@example.com",
       displayName: " Visible Voice ",
       username: "VisibleVoice",
-      photoUrl: "https://cdn.example/avatar.jpg",
+      photoUrl: null,
       bannerUrl: "javascript:alert(1)",
       bio: "Hello",
       country: "Poland",
@@ -159,6 +159,16 @@ describe("public profile derivation", () => {
         displayName: "Visible Voice",
         photoUrl: "http://cdn.example/avatar.jpg",
         website: "http://example.com",
+      }).photoUrl,
+      null,
+    );
+    assert.equal(
+      derivePublicProfile(VISIBLE, {
+        displayName: "Visible Voice",
+        photoUrl:
+          "https://firebasestorage.googleapis.com/v0/b/demo/o/" +
+          encodeURIComponent(`users/${VISIBLE}/profile/avatar_1.jpg`) +
+          "?alt=media&token=durable-secret",
       }).photoUrl,
       null,
     );
@@ -533,7 +543,7 @@ describe("public profile search", () => {
       uid: VISIBLE,
       displayName: "Voice Friend",
       username: "voice.friend",
-      photoUrl: "https://cdn.example/avatar.jpg",
+      photoUrl: null,
       bio: "",
       statusMessage: "",
       accountType: "personal",

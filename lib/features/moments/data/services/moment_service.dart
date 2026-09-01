@@ -5,9 +5,13 @@ import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 
+import 'package:yovoice/core/security/ephemeral_media_access_registry.dart';
 import 'package:yovoice/features/moments/data/models/moment_availability.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
 import 'package:yovoice/features/moments/data/services/recorded_audio.dart';
+
+typedef MomentMediaAccessInvoker =
+    Future<Map<Object?, Object?>> Function(Map<String, Object?> request);
 
 class MomentService {
   MomentService({
@@ -15,15 +19,24 @@ class MomentService {
     FirebaseAuth? auth,
     FirebaseStorage? storage,
     FirebaseFunctions? functions,
+    MomentMediaAccessInvoker? mediaAccessInvoker,
   }) : _firestore = firestore ?? FirebaseFirestore.instance,
        _auth = auth ?? FirebaseAuth.instance,
        _storage = storage ?? FirebaseStorage.instance,
-       _functionsOverride = functions;
+       _functionsOverride = functions,
+       _mediaAccessInvoker = mediaAccessInvoker;
 
   final FirebaseFirestore _firestore;
   final FirebaseAuth _auth;
   final FirebaseStorage _storage;
   final FirebaseFunctions? _functionsOverride;
+  final MomentMediaAccessInvoker? _mediaAccessInvoker;
+  // Playback surfaces create short-lived MomentService instances. Keep the
+  // bearer-grant cache process-wide so logout can invalidate every surface in
+  // one operation instead of leaving an unreachable per-instance URL alive.
+  static final Map<String, _CachedMomentMediaAccess> _mediaAccessCache = {};
+  static int _mediaAccessCacheEpoch = 0;
+  final Map<String, Future<Uri>> _pendingMediaAccess = {};
 
   /// One logical publish operation per recording. Keeping this state in the
   /// service makes the screen's "try publishing again" a real retry: the
@@ -73,6 +86,119 @@ class MomentService {
     }
     return error is FirebaseFunctionsException && error.code == 'unimplemented';
   }
+
+  /// Resolves a canonical Moment object to a short-lived, server-authorized
+  /// media grant. Firestore download-token URLs are deliberately ignored:
+  /// the callable rechecks publication, expiry, account restrictions and
+  /// both block directions on every fresh grant.
+  Future<Uri> resolveMediaUri({required String momentId, String? commentId}) {
+    final uid = _auth.currentUser?.uid ?? '';
+    final cleanMomentId = momentId.trim();
+    final cleanCommentId = commentId?.trim();
+    if (uid.isEmpty) {
+      throw StateError('You must be signed in to play a Voice Moment.');
+    }
+    if (cleanMomentId.isEmpty ||
+        cleanMomentId.contains('/') ||
+        (cleanCommentId != null &&
+            (cleanCommentId.isEmpty || cleanCommentId.contains('/')))) {
+      throw const FormatException('The Voice Moment media id is invalid.');
+    }
+    final cacheKey = '$uid:$cleanMomentId:${cleanCommentId ?? ''}';
+    final cacheEpoch = _mediaAccessCacheEpoch;
+    final now = DateTime.now().toUtc();
+    final cached = _mediaAccessCache[cacheKey];
+    if (cached != null &&
+        cached.expiresAt.isAfter(now.add(const Duration(seconds: 15)))) {
+      return Future<Uri>.value(cached.uri);
+    }
+    return _pendingMediaAccess.putIfAbsent(cacheKey, () async {
+      try {
+        final payload = <String, Object?>{
+          'momentId': cleanMomentId,
+          'commentId': ?cleanCommentId,
+        };
+        final response = _mediaAccessInvoker != null
+            ? await _mediaAccessInvoker(payload)
+            : await _requestMediaAccess(payload);
+        if (_auth.currentUser?.uid != uid) {
+          throw StateError(
+            'Your account changed before media access was granted.',
+          );
+        }
+        if (_mediaAccessCacheEpoch != cacheEpoch) {
+          throw StateError('Voice Moment media access was cleared. Try again.');
+        }
+        final schemaVersion = response['schemaVersion'];
+        final rawUrl = response['url'];
+        final rawExpiry = response['expiresAtMillis'];
+        final generation = response['mediaGeneration'];
+        final contentType = response['mediaContentType'];
+        final mediaSize = response['mediaSize'];
+        if (schemaVersion != 1 ||
+            rawUrl is! String ||
+            rawUrl.length > 4096 ||
+            rawExpiry is! int ||
+            generation is! String ||
+            !RegExp(r'^[0-9]{1,30}$').hasMatch(generation) ||
+            !const <String>{
+              'audio/mp4',
+              'audio/m4a',
+              'audio/x-m4a',
+            }.contains(contentType) ||
+            mediaSize is! int ||
+            mediaSize < 512 ||
+            mediaSize > 12 * 1024 * 1024) {
+          throw const FormatException('Malformed private media grant.');
+        }
+        final uri = Uri.tryParse(rawUrl);
+        final expiresAt = DateTime.fromMillisecondsSinceEpoch(
+          rawExpiry,
+          isUtc: true,
+        );
+        if (uri == null ||
+            uri.scheme != 'https' ||
+            uri.host != 'storage.googleapis.com' ||
+            uri.hasPort ||
+            uri.userInfo.isNotEmpty ||
+            !expiresAt.isAfter(DateTime.now().toUtc())) {
+          throw const FormatException('Unsafe private media grant.');
+        }
+        _mediaAccessCache[cacheKey] = _CachedMomentMediaAccess(
+          uri: uri,
+          expiresAt: expiresAt,
+        );
+        return uri;
+      } finally {
+        _pendingMediaAccess.remove(cacheKey);
+      }
+    });
+  }
+
+  Future<Map<Object?, Object?>> _requestMediaAccess(
+    Map<String, Object?> payload,
+  ) async {
+    final functions = _functions;
+    if (functions == null) {
+      throw StateError('The YO Voice media service is unavailable.');
+    }
+    final result = await functions
+        .httpsCallable('getVoiceMomentMediaAccess')
+        .call<Map<Object?, Object?>>(payload);
+    return result.data;
+  }
+
+  /// Invalidates every in-memory bearer grant, including a response already
+  /// in flight. The logout coordinator calls this once; the static cache is
+  /// shared by every MomentService instance used by playback surfaces.
+  static void clearAllMediaAccessCaches() {
+    _mediaAccessCacheEpoch += 1;
+    _mediaAccessCache.clear();
+    EphemeralMediaAccessRegistry.clearAll();
+  }
+
+  /// Backwards-compatible instance entry point for existing coordinators.
+  void clearMediaAccessCache() => clearAllMediaAccessCaches();
 
   Stream<List<VoiceMoment>> watchPublishedMoments({int limit = 30}) {
     return _moments
@@ -688,4 +814,11 @@ class _PendingMomentPublish {
       this.durationSeconds == durationSeconds &&
       this.replyToMomentId == replyToMomentId &&
       this.availability == availability;
+}
+
+class _CachedMomentMediaAccess {
+  const _CachedMomentMediaAccess({required this.uri, required this.expiresAt});
+
+  final Uri uri;
+  final DateTime expiresAt;
 }
