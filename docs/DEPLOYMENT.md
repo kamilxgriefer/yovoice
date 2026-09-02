@@ -15,6 +15,68 @@ deployables described in
 | Storage rules | `firebase deploy --only storage` | Manual |
 | `yovoice-website` | Vercel | Automatic, on push to `main` (separate repo) |
 
+### Released 2026-09-02: coordinated mobile build 18
+
+**WEB, SCOPED BACKEND AND BOTH PERMANENT MOBILE TESTER CHANNELS RELEASED from
+`d9a731956acb03da02020a223ef06a4c26cf3d31`.** Build 18 combines the
+chat/outbox and avatar-refresh fixes, durable friend search and relationship
+state, explicit room prejoin with chat visible by default, listener-safe
+Podcast entry, guided permissions, email-verification routing, profile-photo
+viewing, room-cover cropping, direct-call reliability, Polish production
+localization and the expanded 41-locale catalogue. Restrictive
+Firestore/Storage migrations, billing/Stripe, App Check enforcement,
+private-media IAM changes and public video remain outside this release.
+
+Hosting workflow
+[33600125808](https://github.com/kamilxgriefer/yovoice/actions/runs/33600125808)
+passed for the exact source commit and deployed Firebase Hosting release
+version `e419b65a4b172e56`. The exact commit also passed
+[push verification](https://github.com/kamilxgriefer/yovoice/actions/runs/33598800596),
+[CodeQL](https://github.com/kamilxgriefer/yovoice/actions/runs/33598800623)
+and the
+[Chrome browser smoke](https://github.com/kamilxgriefer/yovoice/actions/runs/33598800777).
+
+Eight scoped Functions were deployed and read back **ACTIVE** in
+`europe-west1` on Node 22: `createLiveKitToken`, `startDirectCall`,
+`createDirectCallToken`, `sendDirectMessage`, `sendRoomMessage`,
+`getMutualFriends`, `getFriendSuggestions` and `searchPublicProfiles`.
+`minInstances=1` is limited to `createLiveKitToken`, `startDirectCall`,
+`createDirectCallToken`, `sendDirectMessage` and `sendRoomMessage`; the three
+search/suggestion callables remain at zero with `maxInstances=20`. Firestore
+Rules, indexes, Storage Rules, billing/Stripe, App Check enforcement and
+public video were not deployed.
+
+Google Play Internal Testing reports `18 (1.0.0)` as active and available to
+internal testers. The persistent 14-account `YO Voice Internal Testers` list
+was checked and remains assigned. Testers join through
+`https://play.google.com/apps/internaltest/4700922314668761556` while signed in
+to an authorized Google account. The 111,076,228-byte AAB SHA-256 is
+`79d39bc2e8d569de626a9b52455f7eacf7fdf3285c9cafb541fe2134c422248a`;
+its package is `app.yovoice`, version code 18, min SDK 24 and target SDK 36.
+Camera, camera-any, autofocus, front-camera and microphone hardware remain
+optional.
+
+App Store Connect accepted and processed `1.0.0 (18)` and shows it as
+**Testing** in both permanent groups: the one-account `YO Voice Internal
+Testers` group and the six-account external `YO Voice Beta Testers` group.
+Automatic tester notification was enabled for the external group. The
+55,963,651-byte IPA SHA-256 is
+`c887a6d87ce440e94d9a035318ed5d6c4edeef51d2cb4138a4b26da3ff02cba1`;
+inspection confirmed bundle `app.yovoice`, minimum iOS 15.0, production APNs,
+`get-task-allow=false` and `ITSAppUsesNonExemptEncryption=false`.
+
+Release verification passed Flutter VM **2044/2044** in one invocation,
+Functions **1100/1100** across 118 suites with Auth and Firestore emulators,
+Firestore Rules **522/522**, Storage Rules **60/60**, combined Family media
+**11/11**, Chrome media/crop **18/18**, Playwright compiled-web smoke **2/2**
+and room visual harness **55/55**. `flutter analyze --no-pub`, the production
+web build, sound-asset generation check, iOS plist/Podfile/platform checks,
+`git diff --check` and staged-diff gitleaks scan were green. Production
+dependency audits reported zero known vulnerabilities for Functions and the
+Firestore test harness. Bluetooth routing on Android 12+, network-loss/process
+restart and a complete two-physical-device call remain explicit tester
+acceptance rather than inferred emulator or browser results.
+
 ### Released 2026-08-29: compact active-room YO Live Capsule
 
 **WEB HOSTING RELEASED from
