@@ -1,6 +1,8 @@
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/helpers/error_messages.dart';
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/role_identity.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/staff/data/staff_capabilities.dart';
@@ -43,9 +45,10 @@ class RoomStaffMenu extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (!capabilities.hasRoomModeration) return const SizedBox.shrink();
+    final copy = AppLocalizations.of(context);
 
     return PopupMenuButton<_StaffAction>(
-      tooltip: 'Staff actions',
+      tooltip: copy.text('Staff actions', 'Działania zespołu'),
       icon: Icon(Icons.shield_rounded, color: _tierColor, size: 20),
       color: const Color(0xFF171121),
       shape: RoundedRectangleBorder(
@@ -54,35 +57,35 @@ class RoomStaffMenu extends StatelessWidget {
       ),
       itemBuilder: (context) => [
         if (capabilities.endPublicRoomWithReason && !capabilities.endAnyRoom)
-          const PopupMenuItem(
+          PopupMenuItem(
             value: _StaffAction.endWithReason,
             child: _MenuRow(
               icon: Icons.stop_circle_outlined,
-              label: 'End public room…',
+              label: copy.text('End public room…', 'Zakończ pokój publiczny…'),
             ),
           ),
         if (capabilities.endAnyRoom)
-          const PopupMenuItem(
+          PopupMenuItem(
             value: _StaffAction.end,
             child: _MenuRow(
               icon: Icons.stop_circle_outlined,
-              label: 'End room…',
+              label: copy.text('End room…', 'Zakończ pokój…'),
             ),
           ),
         if (capabilities.quarantineSpaces)
-          const PopupMenuItem(
+          PopupMenuItem(
             value: _StaffAction.quarantine,
             child: _MenuRow(
               icon: Icons.gpp_maybe_outlined,
-              label: 'Quarantine…',
+              label: copy.text('Quarantine…', 'Poddaj kwarantannie…'),
             ),
           ),
         if (capabilities.permanentDeleteSpaces)
-          const PopupMenuItem(
+          PopupMenuItem(
             value: _StaffAction.deletePermanently,
             child: _MenuRow(
               icon: Icons.delete_forever_rounded,
-              label: 'Delete permanently…',
+              label: copy.text('Delete permanently…', 'Usuń trwale…'),
               color: RoleIdentity.ownerColor,
             ),
           ),
@@ -92,13 +95,17 @@ class RoomStaffMenu extends StatelessWidget {
   }
 
   Future<void> _handle(BuildContext context, _StaffAction action) async {
+    final copy = AppLocalizations.of(context);
     switch (action) {
       case _StaffAction.endWithReason:
       case _StaffAction.end:
         await _withReason(
           context,
-          title: 'End "${room.name}"?',
-          confirmLabel: 'End room',
+          title: copy.text(
+            'End "${room.name}"?',
+            'Zakończyć pokój „${room.name}”?',
+          ),
+          confirmLabel: copy.text('End room', 'Zakończ pokój'),
           onConfirm: (reason) => _functions
               .httpsCallable('forceEndRoom')
               .call<Map<String, dynamic>>({
@@ -109,8 +116,11 @@ class RoomStaffMenu extends StatelessWidget {
       case _StaffAction.quarantine:
         await _withReason(
           context,
-          title: 'Quarantine "${room.name}"?',
-          confirmLabel: 'Quarantine',
+          title: copy.text(
+            'Quarantine "${room.name}"?',
+            'Poddaj pokój „${room.name}” kwarantannie?',
+          ),
+          confirmLabel: copy.text('Quarantine', 'Poddaj kwarantannie'),
           onConfirm: (reason) => _functions
               .httpsCallable('setRoomModerationStatus')
               .call<Map<String, dynamic>>({
@@ -218,9 +228,17 @@ class _ReasonDialogState extends State<_ReasonDialog> {
       if (mounted) Navigator.of(context).pop();
     } catch (error) {
       if (mounted) {
+        final copy = AppLocalizations.of(context);
         setState(() {
           _busy = false;
-          _error = error.toString().replaceFirst(RegExp(r'^\[[^\]]*\]\s*'), '');
+          _error = friendlyErrorMessage(
+            error,
+            fallback: copy.text(
+              'Could not complete this action. Please try again.',
+              'Nie udało się wykonać działania. Spróbuj ponownie.',
+            ),
+            copy: copy,
+          );
         });
       }
     }
@@ -228,6 +246,7 @@ class _ReasonDialogState extends State<_ReasonDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     return AlertDialog(
       backgroundColor: const Color(0xFF171121),
       title: Text(
@@ -243,9 +262,9 @@ class _ReasonDialogState extends State<_ReasonDialog> {
             maxLength: 500,
             style: const TextStyle(color: Colors.white),
             onChanged: (_) => setState(() {}),
-            decoration: const InputDecoration(
-              labelText: 'Reason (required)',
-              labelStyle: TextStyle(color: Color(0xFFB8AFC2)),
+            decoration: InputDecoration(
+              labelText: copy.text('Reason (required)', 'Powód (wymagany)'),
+              labelStyle: const TextStyle(color: Color(0xFFB8AFC2)),
             ),
           ),
           if (_error != null)
@@ -264,16 +283,22 @@ class _ReasonDialogState extends State<_ReasonDialog> {
       actions: [
         TextButton(
           onPressed: _busy ? null : () => Navigator.of(context).pop(),
-          child: const Text('Cancel'),
+          child: Text(copy.text('Cancel', 'Anuluj')),
         ),
         FilledButton(
           onPressed: _busy || _reason.text.trim().isEmpty ? null : _submit,
           style: FilledButton.styleFrom(backgroundColor: widget.color),
           child: _busy
-              ? const SizedBox(
-                  width: 16,
-                  height: 16,
-                  child: CircularProgressIndicator(strokeWidth: 2),
+              ? Semantics(
+                  label: copy.text(
+                    'Applying room action',
+                    'Wykonywanie działania w pokoju',
+                  ),
+                  child: const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
                 )
               : Text(widget.confirmLabel),
         ),
@@ -337,9 +362,17 @@ class _OwnerDeleteRoomDialogState extends State<OwnerDeleteRoomDialog> {
       if (mounted) Navigator.of(context).pop(true);
     } catch (error) {
       if (mounted) {
+        final copy = AppLocalizations.of(context);
         setState(() {
           _busy = false;
-          _error = error.toString().replaceFirst(RegExp(r'^\[[^\]]*\]\s*'), '');
+          _error = friendlyErrorMessage(
+            error,
+            fallback: copy.text(
+              'Could not permanently delete the room. Please try again.',
+              'Nie udało się trwale usunąć pokoju. Spróbuj ponownie.',
+            ),
+            copy: copy,
+          );
         });
       }
     }
@@ -347,11 +380,12 @@ class _OwnerDeleteRoomDialogState extends State<OwnerDeleteRoomDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     return AlertDialog(
       backgroundColor: const Color(0xFF171121),
-      title: const Text(
-        'Delete permanently',
-        style: TextStyle(color: RoleIdentity.ownerColor, fontSize: 17),
+      title: Text(
+        copy.text('Delete permanently', 'Usuń trwale'),
+        style: const TextStyle(color: RoleIdentity.ownerColor, fontSize: 17),
       ),
       content: SizedBox(
         width: 380,
@@ -360,8 +394,10 @@ class _OwnerDeleteRoomDialogState extends State<OwnerDeleteRoomDialog> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'This removes "${widget.room.name}" and everything in it. '
-              'There is no undo.',
+              copy.text(
+                'This removes "${widget.room.name}" and everything in it. There is no undo.',
+                'Usuniesz pokój „${widget.room.name}” wraz z całą jego zawartością. Tej operacji nie można cofnąć.',
+              ),
               style: const TextStyle(
                 color: Color(0xFFB6ACBB),
                 fontSize: 13,
@@ -375,9 +411,9 @@ class _OwnerDeleteRoomDialogState extends State<OwnerDeleteRoomDialog> {
               maxLength: 500,
               style: const TextStyle(color: Colors.white),
               onChanged: (_) => setState(() {}),
-              decoration: const InputDecoration(
-                labelText: 'Reason (required)',
-                labelStyle: TextStyle(color: Color(0xFFB8AFC2)),
+              decoration: InputDecoration(
+                labelText: copy.text('Reason (required)', 'Powód (wymagany)'),
+                labelStyle: const TextStyle(color: Color(0xFFB8AFC2)),
               ),
             ),
             TextField(
@@ -386,7 +422,10 @@ class _OwnerDeleteRoomDialogState extends State<OwnerDeleteRoomDialog> {
               style: const TextStyle(color: Colors.white),
               onChanged: (_) => setState(() {}),
               decoration: InputDecoration(
-                labelText: 'Type the room name to confirm',
+                labelText: copy.text(
+                  'Type the room name to confirm',
+                  'Wpisz nazwę pokoju, aby potwierdzić',
+                ),
                 hintText: widget.room.name,
                 labelStyle: const TextStyle(color: Color(0xFFB8AFC2)),
                 hintStyle: const TextStyle(color: Color(0xFF746A80)),
@@ -409,7 +448,7 @@ class _OwnerDeleteRoomDialogState extends State<OwnerDeleteRoomDialog> {
       actions: [
         TextButton(
           onPressed: _busy ? null : () => Navigator.of(context).pop(false),
-          child: const Text('Cancel'),
+          child: Text(copy.text('Cancel', 'Anuluj')),
         ),
         FilledButton(
           onPressed: _busy || !_valid ? null : _submit,
@@ -417,12 +456,18 @@ class _OwnerDeleteRoomDialogState extends State<OwnerDeleteRoomDialog> {
             backgroundColor: RoleIdentity.ownerColor,
           ),
           child: _busy
-              ? const SizedBox(
-                  width: 16,
-                  height: 16,
-                  child: CircularProgressIndicator(strokeWidth: 2),
+              ? Semantics(
+                  label: copy.text(
+                    'Deleting room permanently',
+                    'Trwałe usuwanie pokoju',
+                  ),
+                  child: const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
                 )
-              : const Text('Delete permanently'),
+              : Text(copy.text('Delete permanently', 'Usuń trwale')),
         ),
       ],
     );

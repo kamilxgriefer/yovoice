@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/helpers/error_messages.dart';
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/notifications/data/models/app_notification.dart';
 import 'package:yovoice/features/notifications/data/services/notification_service.dart';
@@ -47,40 +49,61 @@ const _kPreferenceGroups = [
   ),
 ];
 
-String _labelFor(NotificationType type) {
+String _groupTitle(AppLocalizations copy, String title) => switch (title) {
+  'Friends & follows' => copy.text(
+    'Friends & follows',
+    'Znajomi i obserwowani',
+  ),
+  'Clubs' => copy.text('Clubs', 'Kluby'),
+  'Rooms' => copy.text('Rooms', 'Pokoje'),
+  'Calls' => copy.text('Calls', 'Połączenia'),
+  'Messages' => copy.text('Messages', 'Wiadomości'),
+  _ => title,
+};
+
+String _labelFor(AppLocalizations copy, NotificationType type) {
   switch (type) {
     case NotificationType.friendRequest:
-      return 'Friend requests';
+      return copy.text('Friend requests', 'Zaproszenia do znajomych');
     case NotificationType.friendAccepted:
-      return 'Friend request accepted';
+      return copy.text(
+        'Friend request accepted',
+        'Przyjęte zaproszenie do znajomych',
+      );
     case NotificationType.follow:
-      return 'New followers';
+      return copy.text('New followers', 'Nowi obserwujący');
     case NotificationType.clubInvite:
-      return 'Club invitations';
+      return copy.text('Club invitations', 'Zaproszenia do klubów');
     case NotificationType.clubInviteAccepted:
-      return 'Club invitation accepted';
+      return copy.text(
+        'Club invitation accepted',
+        'Przyjęte zaproszenie do klubu',
+      );
     case NotificationType.roomInvite:
-      return 'Room invitations';
+      return copy.text('Room invitations', 'Zaproszenia do pokoi');
     case NotificationType.broadcastInvite:
-      return 'Podcast invitations';
+      return copy.text('Podcast invitations', 'Zaproszenia do podcastów');
     case NotificationType.liveStarted:
-      return 'People you follow go live';
+      return copy.text(
+        'People you follow go live',
+        'Obserwowane osoby rozpoczynają transmisję',
+      );
     case NotificationType.directMessage:
-      return 'Direct messages';
+      return copy.text('Direct messages', 'Wiadomości bezpośrednie');
     case NotificationType.directCall:
-      return 'Incoming voice calls';
+      return copy.text('Incoming voice calls', 'Przychodzące połączenia');
     case NotificationType.missedCall:
-      return 'Missed calls';
+      return copy.text('Missed calls', 'Nieodebrane połączenia');
     case NotificationType.mention:
-      return 'Mentions';
+      return copy.text('Mentions', 'Wzmianki');
     case NotificationType.reply:
-      return 'Replies';
+      return copy.text('Replies', 'Odpowiedzi');
     case NotificationType.achievementUnlocked:
-      return 'Achievements';
+      return copy.text('Achievements', 'Osiągnięcia');
     case NotificationType.moderation:
-      return 'Moderation';
+      return copy.text('Moderation', 'Moderacja');
     case NotificationType.system:
-      return 'System announcements';
+      return copy.text('System announcements', 'Komunikaty systemowe');
   }
 }
 
@@ -127,12 +150,20 @@ class _NotificationPreferencesScreenState
       await _notificationService.setPreference(type, enabled);
     } catch (error) {
       if (!mounted) return;
+      final copy = AppLocalizations.of(context);
       ScaffoldMessenger.of(context)
         ..hideCurrentSnackBar()
         ..showSnackBar(
           SnackBar(
             content: Text(
-              'Could not update preference: $error',
+              friendlyErrorMessage(
+                error,
+                fallback: copy.text(
+                  'Could not update this notification setting.',
+                  'Nie udało się zmienić ustawienia powiadomień.',
+                ),
+                copy: copy,
+              ),
               style: TextStyle(
                 color: Theme.of(context).colorScheme.onErrorContainer,
               ),
@@ -148,6 +179,7 @@ class _NotificationPreferencesScreenState
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
     return Scaffold(
       backgroundColor: palette.background,
@@ -163,7 +195,7 @@ class _NotificationPreferencesScreenState
                     if (!widget.isRootTab) ...[
                       IconButton(
                         onPressed: () => Navigator.of(context).pop(),
-                        tooltip: 'Back',
+                        tooltip: copy.text('Back', 'Wróć'),
                         icon: Icon(
                           Icons.arrow_back_ios_new_rounded,
                           color: palette.textPrimary,
@@ -174,7 +206,10 @@ class _NotificationPreferencesScreenState
                     ],
                     Expanded(
                       child: Text(
-                        'Notification preferences',
+                        copy.text(
+                          'Notification preferences',
+                          'Ustawienia powiadomień',
+                        ),
                         style: TextStyle(
                           color: palette.textPrimary,
                           fontSize: 20,
@@ -195,10 +230,15 @@ class _NotificationPreferencesScreenState
                       padding: const EdgeInsets.fromLTRB(18, 4, 18, 32),
                       children: [
                         Text(
-                          'Choose which activity sends you a push '
-                          'notification. In-app activity is always recorded '
-                          'in your notification center regardless of these '
-                          'settings.',
+                          copy.text(
+                            'Choose which activity sends you a push '
+                                'notification. In-app activity is always recorded '
+                                'in your notification center regardless of these '
+                                'settings.',
+                            'Wybierz, o jakiej aktywności chcesz otrzymywać '
+                                'powiadomienia push. Aktywność w aplikacji zawsze '
+                                'pozostaje widoczna w centrum powiadomień.',
+                          ),
                           style: TextStyle(
                             color: palette.textSecondary,
                             fontSize: 12.5,
@@ -208,7 +248,7 @@ class _NotificationPreferencesScreenState
                         const SizedBox(height: 20),
                         for (final group in _kPreferenceGroups) ...[
                           Text(
-                            group.title,
+                            _groupTitle(copy, group.title),
                             style: TextStyle(
                               color: palette.textPrimary,
                               fontSize: 14,
@@ -237,7 +277,7 @@ class _NotificationPreferencesScreenState
                                       endIndent: 16,
                                     ),
                                   _PreferenceRow(
-                                    label: _labelFor(group.types[index]),
+                                    label: _labelFor(copy, group.types[index]),
                                     // Preferences are opt-out: an absent key
                                     // means enabled, matching
                                     // onNotificationCreated's default in

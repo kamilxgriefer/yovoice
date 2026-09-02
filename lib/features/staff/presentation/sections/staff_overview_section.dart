@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/features/staff/data/staff_overview_service.dart';
+import 'package:yovoice/features/staff/presentation/staff_localized_copy.dart';
 import 'package:yovoice/features/staff/presentation/sections/staff_section_shared.dart';
 
 /// Overview — the Staff Center's opening screen. Every number and every
@@ -59,17 +61,19 @@ class _StaffOverviewSectionState extends State<StaffOverviewSection> {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final overview = _overview;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         StaffSectionHeader(
-          title: 'Overview',
-          subtitle:
-              'Live, server-derived state of the platform. Every card opens '
-              'its section.',
+          title: copy.text('Overview', 'Przegląd'),
+          subtitle: copy.text(
+            'Live, server-derived state of the platform. Every card opens its section.',
+            'Aktualny stan platformy na podstawie danych z serwera. Każda karta otwiera odpowiednią sekcję.',
+          ),
           trailing: IconButton(
-            tooltip: 'Refresh',
+            tooltip: copy.text('Refresh', 'Odśwież'),
             onPressed: _load,
             icon: const Icon(
               Icons.refresh_rounded,
@@ -80,13 +84,22 @@ class _StaffOverviewSectionState extends State<StaffOverviewSection> {
         Expanded(
           child: _failed
               ? StaffErrorState(
-                  message:
-                      'The overview could not be loaded. It is reserved for '
-                      'the application owner.',
+                  message: copy.text(
+                    'The overview could not be loaded. It is reserved for the application owner.',
+                    'Nie udało się wczytać przeglądu. Ta sekcja jest dostępna wyłącznie dla właściciela aplikacji.',
+                  ),
                   onRetry: _load,
                 )
               : overview == null
-              ? const Center(child: CircularProgressIndicator())
+              ? Center(
+                  child: Semantics(
+                    label: copy.text(
+                      'Loading staff overview',
+                      'Wczytywanie przeglądu zespołu',
+                    ),
+                    child: const CircularProgressIndicator(),
+                  ),
+                )
               : _body(overview),
         ),
       ],
@@ -94,6 +107,7 @@ class _StaffOverviewSectionState extends State<StaffOverviewSection> {
   }
 
   Widget _body(StaffOverview overview) {
+    final copy = AppLocalizations.of(context);
     final counts = overview.counts;
     return SingleChildScrollView(
       child: Column(
@@ -104,49 +118,49 @@ class _StaffOverviewSectionState extends State<StaffOverviewSection> {
             runSpacing: 10,
             children: [
               _StatCard(
-                label: 'Total users',
+                label: copy.text('Total users', 'Wszyscy użytkownicy'),
                 value: counts.totalUsers,
                 icon: Icons.people_alt_rounded,
                 color: const Color(0xFF8D5BFF),
                 onTap: () => widget.onOpenUsers('all'),
               ),
               _StatCard(
-                label: 'Active rooms',
+                label: copy.text('Active rooms', 'Aktywne pokoje'),
                 value: counts.activeRooms,
                 icon: Icons.podcasts_rounded,
                 color: StaffCenterStyle.good,
                 onTap: widget.onOpenRooms,
               ),
               _StatCard(
-                label: 'Open reports',
+                label: copy.text('Open reports', 'Otwarte zgłoszenia'),
                 value: counts.openReports,
                 icon: Icons.flag_rounded,
                 color: StaffCenterStyle.warn,
                 onTap: widget.onOpenReports,
               ),
               _StatCard(
-                label: 'Restricted',
+                label: copy.text('Restricted', 'Ograniczone konta'),
                 value: counts.restrictedAccounts,
                 icon: Icons.voice_over_off_rounded,
                 color: StaffCenterStyle.warn,
                 onTap: () => widget.onOpenUsers('restricted'),
               ),
               _StatCard(
-                label: 'Staff members',
+                label: copy.text('Staff members', 'Członkowie zespołu'),
                 value: counts.staffMembers,
                 icon: Icons.shield_rounded,
                 color: const Color(0xFFA855F7),
                 onTap: widget.onOpenStaffRoles,
               ),
               _StatCard(
-                label: 'VIP users',
+                label: copy.text('VIP users', 'Użytkownicy VIP'),
                 value: counts.vipUsers,
                 icon: Icons.diamond_rounded,
                 color: const Color(0xFFFFD166),
                 onTap: () => widget.onOpenUsers('vip'),
               ),
               _StatCard(
-                label: 'Security alerts',
+                label: copy.text('Security alerts', 'Alerty bezpieczeństwa'),
                 value: counts.securityAlerts,
                 icon: Icons.gpp_maybe_rounded,
                 color: StaffCenterStyle.bad,
@@ -162,28 +176,41 @@ class _StaffOverviewSectionState extends State<StaffOverviewSection> {
               final twoColumns = constraints.maxWidth >= 860;
               final panels = [
                 _listPanel(
-                  'Latest open reports',
+                  copy.text(
+                    'Latest open reports',
+                    'Najnowsze otwarte zgłoszenia',
+                  ),
                   widget.onOpenReports,
                   overview.latestOpenReports.isEmpty
-                      ? [const StaffEmptyState(message: 'No open reports.')]
+                      ? [
+                          StaffEmptyState(
+                            message: copy.text(
+                              'No open reports.',
+                              'Brak otwartych zgłoszeń.',
+                            ),
+                          ),
+                        ]
                       : [
                           for (final report in overview.latestOpenReports)
                             _line(
                               icon: Icons.flag_rounded,
                               color: StaffCenterStyle.warn,
                               title:
-                                  '${report.reason ?? 'report'} · ${report.targetType ?? ''}',
-                              trailing: staffStamp(report.createdAt),
+                                  '${report.reason ?? copy.text('report', 'zgłoszenie')} · ${report.targetType ?? ''}',
+                              trailing: staffStamp(copy, report.createdAt),
                             ),
                         ],
                 ),
                 _listPanel(
-                  'Active rooms',
+                  copy.text('Active rooms', 'Aktywne pokoje'),
                   widget.onOpenRooms,
                   overview.activeRooms.isEmpty
                       ? [
-                          const StaffEmptyState(
-                            message: 'Nothing live right now.',
+                          StaffEmptyState(
+                            message: copy.text(
+                              'Nothing live right now.',
+                              'Teraz nic nie jest nadawane na żywo.',
+                            ),
                           ),
                         ]
                       : [
@@ -192,32 +219,48 @@ class _StaffOverviewSectionState extends State<StaffOverviewSection> {
                               icon: Icons.podcasts_rounded,
                               color: StaffCenterStyle.good,
                               title: room.name,
-                              trailing: '${room.participantCount} in room',
+                              trailing: localizedStaffParticipantCount(
+                                copy,
+                                room.participantCount,
+                              ),
                             ),
                         ],
                 ),
                 _listPanel(
-                  'Recent sanctions',
+                  copy.text('Recent sanctions', 'Ostatnie sankcje'),
                   widget.onOpenSanctions,
                   overview.recentSanctions.isEmpty
-                      ? [const StaffEmptyState(message: 'No recent sanctions.')]
+                      ? [
+                          StaffEmptyState(
+                            message: copy.text(
+                              'No recent sanctions.',
+                              'Brak ostatnich sankcji.',
+                            ),
+                          ),
+                        ]
                       : [
                           for (final entry in overview.recentSanctions)
                             _line(
                               icon: Icons.gavel_rounded,
                               color: StaffCenterStyle.warn,
-                              title: entry.action.replaceAll('_', ' '),
-                              trailing: staffStamp(entry.createdAt),
+                              title: localizedStaffAuditAction(
+                                copy,
+                                entry.action,
+                              ),
+                              trailing: staffStamp(copy, entry.createdAt),
                             ),
                         ],
                 ),
                 _listPanel(
-                  'Recent role changes',
+                  copy.text('Recent role changes', 'Ostatnie zmiany ról'),
                   widget.onOpenStaffRoles,
                   overview.recentRoleChanges.isEmpty
                       ? [
-                          const StaffEmptyState(
-                            message: 'No recent role changes.',
+                          StaffEmptyState(
+                            message: copy.text(
+                              'No recent role changes.',
+                              'Brak ostatnich zmian ról.',
+                            ),
                           ),
                         ]
                       : [
@@ -226,20 +269,23 @@ class _StaffOverviewSectionState extends State<StaffOverviewSection> {
                               icon: Icons.badge_rounded,
                               color: const Color(0xFFA855F7),
                               title:
-                                  '${entry.previousRole ?? '?'} → ${entry.role ?? '?'}',
-                              trailing: staffStamp(entry.createdAt),
+                                  '${localizedStaffRole(copy, entry.previousRole ?? '?')} → ${localizedStaffRole(copy, entry.role ?? '?')}',
+                              trailing: staffStamp(copy, entry.createdAt),
                             ),
                         ],
                 ),
                 _listPanel(
-                  'Security alerts',
+                  copy.text('Security alerts', 'Alerty bezpieczeństwa'),
                   () => widget.onOpenAudit(
                     action: 'security_alert_non_owner_super_admin',
                   ),
                   overview.securityAlerts.isEmpty
                       ? [
-                          const StaffEmptyState(
-                            message: 'No security alerts. Good.',
+                          StaffEmptyState(
+                            message: copy.text(
+                              'No security alerts. Good.',
+                              'Brak alertów bezpieczeństwa.',
+                            ),
                           ),
                         ]
                       : [
@@ -247,8 +293,11 @@ class _StaffOverviewSectionState extends State<StaffOverviewSection> {
                             _line(
                               icon: Icons.gpp_maybe_rounded,
                               color: StaffCenterStyle.bad,
-                              title: 'non-owner superAdmin observed',
-                              trailing: staffStamp(entry.createdAt),
+                              title: copy.text(
+                                'non-owner superAdmin observed',
+                                'Wykryto superadministratora niebędącego właścicielem',
+                              ),
+                              trailing: staffStamp(copy, entry.createdAt),
                             ),
                         ],
                 ),

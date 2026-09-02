@@ -2704,9 +2704,12 @@ before build 11 is available to their permanent tester group.
    edit/delete/reaction/read fields must fail. If adoption cannot be confirmed,
    hold this step rather than breaking an installed client.
 6. Observe callable latency, `unavailable`/`deadline-exceeded`, notification
-   replay/claim counts and call-lock cleanup for at least one tester cycle.
-   `minInstances=1` for `sendDirectMessage` or `startDirectCall` is a separate
-   recurring-cost decision and is not part of this deployment by default.
+   replay/claim counts, instance count, cost and call-lock cleanup for at least
+   one tester cycle. Build 18 deliberately deploys `minInstances=1` only for
+   `sendDirectMessage`, `sendRoomMessage`, `createLiveKitToken`,
+   `startDirectCall` and `createDirectCallToken`; search/suggestion callables
+   remain at zero. If the measured improvement does not justify the recurring
+   cost, redeploy those five endpoints with `minInstances: 0`.
 
 Rollback clients first, then restore Rules only after the previous compatible
 Functions are restored. Do not delete notification ledgers, call documents or

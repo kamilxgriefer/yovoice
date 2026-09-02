@@ -9,14 +9,29 @@
 /// fact on the author's own surfaces.
 library;
 
+import 'package:yovoice/core/localization/app_localizations.dart';
+
 /// "now", "5m ago", "2h ago", "1d ago" — from the real `createdAt`.
-String momentRelativeAge(DateTime? createdAt, {DateTime? now}) {
+String momentRelativeAge(
+  DateTime? createdAt, {
+  DateTime? now,
+  AppLocalizations? copy,
+}) {
   if (createdAt == null) return '';
   final diff = (now ?? DateTime.now()).difference(createdAt);
-  if (diff.inMinutes < 1) return 'now';
-  if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
-  if (diff.inHours < 24) return '${diff.inHours}h ago';
-  return '${diff.inDays}d ago';
+  if (diff.inMinutes < 1) return _text(copy, 'now', 'teraz');
+  if (diff.inMinutes < 60) {
+    return _text(copy, '${diff.inMinutes}m ago', '${diff.inMinutes} min temu');
+  }
+  if (diff.inHours < 24) {
+    return _text(copy, '${diff.inHours}h ago', '${diff.inHours} godz. temu');
+  }
+  final days = diff.inDays;
+  return _text(
+    copy,
+    '${days}d ago',
+    days == 1 ? '1 dzień temu' : '$days dni temu',
+  );
 }
 
 /// "Expires in 12d" / "Expires in 8h" / "Expires in 42m" /
@@ -29,14 +44,37 @@ String momentRelativeAge(DateTime? createdAt, {DateTime? now}) {
 /// Days appear from 48 hours up: the 7- and 30-day availability choices
 /// made "Expires in 719h" a real string, and nobody counts hours in the
 /// hundreds.
-String? momentExpiryLabel(DateTime? expiresAt, {DateTime? now}) {
+String? momentExpiryLabel(
+  DateTime? expiresAt, {
+  DateTime? now,
+  AppLocalizations? copy,
+}) {
   if (expiresAt == null) return null;
   final remaining = expiresAt.difference(now ?? DateTime.now());
   if (remaining.isNegative) return null;
-  if (remaining.inHours >= 48) return 'Expires in ${remaining.inDays}d';
-  if (remaining.inHours >= 1) return 'Expires in ${remaining.inHours}h';
-  if (remaining.inMinutes >= 1) return 'Expires in ${remaining.inMinutes}m';
-  return 'Expires soon';
+  if (remaining.inHours >= 48) {
+    final days = remaining.inDays;
+    return _text(
+      copy,
+      'Expires in ${days}d',
+      days == 1 ? 'Wygasa za 1 dzień' : 'Wygasa za $days dni',
+    );
+  }
+  if (remaining.inHours >= 1) {
+    return _text(
+      copy,
+      'Expires in ${remaining.inHours}h',
+      'Wygasa za ${remaining.inHours} godz.',
+    );
+  }
+  if (remaining.inMinutes >= 1) {
+    return _text(
+      copy,
+      'Expires in ${remaining.inMinutes}m',
+      'Wygasa za ${remaining.inMinutes} min',
+    );
+  }
+  return _text(copy, 'Expires soon', 'Wkrótce wygaśnie');
 }
 
 /// The availability line an AUTHOR sees on their own Moment: the real
@@ -44,7 +82,16 @@ String? momentExpiryLabel(DateTime? expiresAt, {DateTime? now}) {
 /// permanent Moment. Returns `null` only when a deadline exists but has
 /// already passed — the same "should have been filtered" case as
 /// [momentExpiryLabel].
-String? momentAvailabilityLabel(DateTime? expiresAt, {DateTime? now}) {
-  if (expiresAt == null) return 'Stays until deleted';
-  return momentExpiryLabel(expiresAt, now: now);
+String? momentAvailabilityLabel(
+  DateTime? expiresAt, {
+  DateTime? now,
+  AppLocalizations? copy,
+}) {
+  if (expiresAt == null) {
+    return _text(copy, 'Stays until deleted', 'Dostępny do usunięcia');
+  }
+  return momentExpiryLabel(expiresAt, now: now, copy: copy);
 }
+
+String _text(AppLocalizations? copy, String english, String polish) =>
+    copy?.text(english, polish) ?? english;

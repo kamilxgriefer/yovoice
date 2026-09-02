@@ -244,9 +244,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('Delete the Club "family"?'), findsOneWidget);
       expect(
-        find.textContaining(
-          'its lounge, chat, channels, members and invites',
-        ),
+        find.textContaining('its lounge, chat, channels, members and invites'),
         findsOneWidget,
       );
       expect(find.textContaining('This cannot be undone'), findsOneWidget);
@@ -360,19 +358,22 @@ void main() {
       await tester.tap(find.text('Delete'));
       await tester.pumpAndSettle();
 
-      // Dialog stays open with the server's own words.
+      // Dialog stays open with safe product copy. Callable diagnostics may
+      // contain implementation details and must never be rendered verbatim.
       expect(find.text('Delete the Club "family"?'), findsOneWidget);
       expect(
-        find.textContaining('already being deleted'),
+        find.text('Could not delete this room. Please try again.'),
         findsOneWidget,
       );
+      expect(find.textContaining('already being deleted'), findsNothing);
     });
   });
 
   group('Home board: state recycling', () {
     testWidgets('REGRESSION: swapping the tile to another lounge retargets '
-        'the menu — Delete club… must never erase the previous tile\'s club',
-        (tester) async {
+        'the menu — Delete club… must never erase the previous tile\'s club', (
+      tester,
+    ) async {
       // Home\'s lists reorder on every join/leave, and Flutter reuses the
       // element at a position. Before the fix the menu state bound its club
       // stream in initState alone, so after a reorder "Delete club…" showed
@@ -448,8 +449,9 @@ void main() {
   });
 
   group('Home board: ordinary room (pinned)', () {
-    testWidgets('the room delete flow is byte-for-byte what it was',
-        (tester) async {
+    testWidgets('the room delete flow is byte-for-byte what it was', (
+      tester,
+    ) async {
       useSize(tester, const Size(390, 844));
       var deleted = 0;
 
@@ -563,8 +565,9 @@ void main() {
       expect(functions.calls.single.payload, {'clubId': clubId});
     });
 
-    testWidgets('lounge + non-owner: no delete control of either kind',
-        (tester) async {
+    testWidgets('lounge + non-owner: no delete control of either kind', (
+      tester,
+    ) async {
       useSize(tester, const Size(390, 844));
       final db = await seededDb(clubOwnerId: 'someone-else');
       final functions = _RecordingFunctions();

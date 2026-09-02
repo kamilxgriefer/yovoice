@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_immersive_colors.dart';
 import 'package:yovoice/features/clubs/data/models/club.dart';
@@ -34,6 +35,7 @@ class CreatorAnalyticsScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final summary = CreatorAnalyticsSummary.fromData(
       profile: profile,
       rooms: rooms,
@@ -53,10 +55,12 @@ class CreatorAnalyticsScreen extends StatelessWidget {
               const SizedBox(height: 18),
               const _TruthNotice(),
               const SizedBox(height: 24),
-              const _SectionHeading(
-                title: 'Audience snapshot',
-                subtitle:
-                    'Totals captured when Analytics opened — no estimated growth or reach.',
+              _SectionHeading(
+                title: copy.text('Audience snapshot', 'Stan odbiorców'),
+                subtitle: copy.text(
+                  'Totals captured when Analytics opened — no estimated growth or reach.',
+                  'Dane z chwili otwarcia Statystyk — bez szacowanego wzrostu ani zasięgu.',
+                ),
               ),
               const SizedBox(height: 12),
               _MetricGrid(
@@ -65,30 +69,44 @@ class CreatorAnalyticsScreen extends StatelessWidget {
                     key: const ValueKey('analytics-followers'),
                     icon: Icons.people_alt_outlined,
                     value: '${summary.currentFollowers}',
-                    label: 'Followers',
-                    supporting: 'Profile count when Analytics opened',
+                    label: copy.text('Followers', 'Obserwujący'),
+                    supporting: copy.text(
+                      'Profile count when Analytics opened',
+                      'Liczba na profilu w chwili otwarcia Statystyk',
+                    ),
                   ),
                   _Metric(
                     key: const ValueKey('analytics-hosted-rooms'),
                     icon: Icons.meeting_room_outlined,
                     value: '${summary.hostedRooms}',
-                    label: 'Rooms hosted',
-                    supporting: 'Rooms currently stored under your account',
+                    label: copy.text('Rooms hosted', 'Utworzone pokoje'),
+                    supporting: copy.text(
+                      'Rooms currently stored under your account',
+                      'Pokoje obecnie zapisane na Twoim koncie',
+                    ),
                   ),
                   _Metric(
                     key: const ValueKey('analytics-owned-clubs'),
                     icon: Icons.groups_2_outlined,
                     value: '${summary.ownedClubs}',
-                    label: 'Clubs owned',
-                    supporting: 'Excludes clubs where you are only a member',
+                    label: copy.text('Clubs owned', 'Własne kluby'),
+                    supporting: copy.text(
+                      'Excludes clubs where you are only a member',
+                      'Bez klubów, w których jesteś tylko członkiem',
+                    ),
                   ),
                 ],
               ),
               const SizedBox(height: 28),
-              const _SectionHeading(
-                title: 'Room status when opened',
-                subtitle:
-                    'Go back and reopen Analytics to capture a newer room snapshot.',
+              _SectionHeading(
+                title: copy.text(
+                  'Room status when opened',
+                  'Stan pokojów przy otwarciu',
+                ),
+                subtitle: copy.text(
+                  'Go back and reopen Analytics to capture a newer room snapshot.',
+                  'Wróć i otwórz Statystyki ponownie, aby odświeżyć stan pokojów.',
+                ),
               ),
               const SizedBox(height: 12),
               _MetricGrid(
@@ -97,32 +115,52 @@ class CreatorAnalyticsScreen extends StatelessWidget {
                     key: const ValueKey('analytics-live-rooms'),
                     icon: Icons.graphic_eq_rounded,
                     value: '${summary.liveRooms}',
-                    label: 'Rooms marked live',
-                    supporting: 'Active hosted rooms in this snapshot',
+                    label: copy.text(
+                      'Rooms marked live',
+                      'Pokoje oznaczone jako aktywne',
+                    ),
+                    supporting: copy.text(
+                      'Active hosted rooms in this snapshot',
+                      'Aktywne pokoje utworzone przez Ciebie',
+                    ),
                     accent: AppColors.live,
                   ),
                   _Metric(
                     key: const ValueKey('analytics-live-people'),
                     icon: Icons.headphones_rounded,
                     value: '${summary.peopleInLiveRooms}',
-                    label: 'People in rooms marked live',
-                    supporting: 'Snapshot participant counters, not attendance',
+                    label: copy.text(
+                      'People in rooms marked live',
+                      'Osoby w aktywnych pokojach',
+                    ),
+                    supporting: copy.text(
+                      'Snapshot participant counters, not attendance',
+                      'Stan liczników uczestników, a nie statystyka obecności',
+                    ),
                     accent: AppColors.live,
                   ),
                   _Metric(
                     key: const ValueKey('analytics-room-memberships'),
                     icon: Icons.group_work_outlined,
                     value: '${summary.roomMemberships}',
-                    label: 'Room memberships',
-                    supporting: 'Member slots across your hosted rooms',
+                    label: copy.text(
+                      'Room memberships',
+                      'Członkostwa w pokojach',
+                    ),
+                    supporting: copy.text(
+                      'Member slots across your hosted rooms',
+                      'Łączna liczba członkostw w Twoich pokojach',
+                    ),
                   ),
                 ],
               ),
               const SizedBox(height: 28),
-              const _SectionHeading(
-                title: 'Voice Moments',
-                subtitle:
-                    'Only published Moments contribute to this open-time snapshot.',
+              _SectionHeading(
+                title: copy.text('Voice Moments', 'Voice Moment'),
+                subtitle: copy.text(
+                  'Only published Moments contribute to this open-time snapshot.',
+                  'W tym zestawieniu uwzględniamy tylko opublikowane materiały Voice Moment.',
+                ),
               ),
               const SizedBox(height: 12),
               _MetricGrid(
@@ -131,30 +169,45 @@ class CreatorAnalyticsScreen extends StatelessWidget {
                     key: const ValueKey('analytics-published-moments'),
                     icon: Icons.mic_none_rounded,
                     value: '${summary.publishedMoments}',
-                    label: 'Published',
-                    supporting: 'Drafts and failed uploads are excluded',
+                    label: copy.text('Published', 'Opublikowane'),
+                    supporting: copy.text(
+                      'Drafts and failed uploads are excluded',
+                      'Bez wersji roboczych i nieudanych publikacji',
+                    ),
                   ),
                   _Metric(
                     key: const ValueKey('analytics-moment-likes'),
                     icon: Icons.favorite_border_rounded,
                     value: '${summary.momentLikes}',
-                    label: 'Likes',
-                    supporting: 'Stored likes across published Moments',
+                    label: copy.text('Likes', 'Polubienia'),
+                    supporting: copy.text(
+                      'Stored likes across published Moments',
+                      'Zapisane polubienia opublikowanych materiałów Voice Moment',
+                    ),
                     accent: AppColors.secondary,
                   ),
                   _Metric(
                     key: const ValueKey('analytics-moment-comments'),
                     icon: Icons.chat_bubble_outline_rounded,
                     value: '${summary.momentComments}',
-                    label: 'Comments',
-                    supporting: 'Stored comments across published Moments',
+                    label: copy.text('Comments', 'Komentarze'),
+                    supporting: copy.text(
+                      'Stored comments across published Moments',
+                      'Zapisane komentarze opublikowanych materiałów Voice Moment',
+                    ),
                   ),
                   _Metric(
                     key: const ValueKey('analytics-published-audio'),
                     icon: Icons.timer_outlined,
-                    value: _formatDuration(summary.publishedAudioSeconds),
-                    label: 'Published audio',
-                    supporting: 'Combined duration of published Moments',
+                    value: _formatDuration(summary.publishedAudioSeconds, copy),
+                    label: copy.text(
+                      'Published audio',
+                      'Opublikowane nagrania',
+                    ),
+                    supporting: copy.text(
+                      'Combined duration of published Moments',
+                      'Łączny czas opublikowanych materiałów Voice Moment',
+                    ),
                   ),
                 ],
               ),
@@ -263,34 +316,41 @@ class _Header extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         if (!isRootTab) ...[
           IconButton.filledTonal(
-            tooltip: 'Back to Creator Studio',
+            tooltip: copy.text(
+              'Back to Creator Studio',
+              'Wróć do Studia twórcy',
+            ),
             onPressed: () => Navigator.of(context).maybePop(),
             icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 18),
           ),
           const SizedBox(width: 10),
         ],
-        const Expanded(
+        Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'Analytics',
-                style: TextStyle(
+                copy.text('Analytics', 'Statystyki'),
+                style: const TextStyle(
                   color: AppImmersiveColors.textPrimary,
                   fontSize: 26,
                   fontWeight: FontWeight.w900,
                   letterSpacing: -0.6,
                 ),
               ),
-              SizedBox(height: 3),
+              const SizedBox(height: 3),
               Text(
-                'A truthful snapshot of your audience and content.',
-                style: TextStyle(
+                copy.text(
+                  'A truthful snapshot of your audience and content.',
+                  'Rzetelny obraz Twoich odbiorców i treści.',
+                ),
+                style: const TextStyle(
                   color: AppImmersiveColors.textSecondary,
                   fontSize: 13,
                   height: 1.35,
@@ -309,6 +369,7 @@ class _TruthNotice extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -316,31 +377,44 @@ class _TruthNotice extends StatelessWidget {
         borderRadius: BorderRadius.circular(20),
         border: Border.all(color: AppImmersiveColors.border),
       ),
-      child: const Row(
+      child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(Icons.verified_outlined, color: AppColors.success, size: 22),
-          SizedBox(width: 12),
+          const Icon(
+            Icons.verified_outlined,
+            color: AppColors.success,
+            size: 22,
+          ),
+          const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Real data, clearly labeled',
-                  style: TextStyle(
+                  copy.text(
+                    'Real data, clearly labeled',
+                    'Prawdziwe dane, jasno opisane',
+                  ),
+                  style: const TextStyle(
                     color: AppImmersiveColors.textPrimary,
                     fontSize: 14,
                     fontWeight: FontWeight.w800,
                   ),
                 ),
-                SizedBox(height: 4),
+                const SizedBox(height: 4),
                 Text(
-                  'These are snapshot totals from your profile, rooms, clubs '
-                  'and published Voice Moments, captured when Analytics '
-                  'opened. Historical audience trends '
-                  'are not recorded yet, so this page never invents growth '
-                  'percentages, views or attendance.',
-                  style: TextStyle(
+                  copy.text(
+                    'These are snapshot totals from your profile, rooms, clubs '
+                        'and published Voice Moments, captured when Analytics '
+                        'opened. Historical audience trends '
+                        'are not recorded yet, so this page never invents growth '
+                        'percentages, views or attendance.',
+                    'To stan danych z Twojego profilu, pokojów, klubów i '
+                        'opublikowanych materiałów Voice Moment w chwili otwarcia Statystyk. '
+                        'YO Voice nie zapisuje jeszcze historycznych trendów odbiorców, '
+                        'dlatego nie pokazujemy wymyślonych wzrostów, wyświetleń ani obecności.',
+                  ),
+                  style: const TextStyle(
                     color: AppImmersiveColors.textSecondary,
                     fontSize: 12,
                     height: 1.45,
@@ -517,12 +591,16 @@ class _TopMoments extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const _SectionHeading(
-          title: 'Most interacted with',
-          subtitle: 'Published Moments ranked by stored likes and comments.',
+        _SectionHeading(
+          title: copy.text('Most interacted with', 'Najwięcej interakcji'),
+          subtitle: copy.text(
+            'Published Moments ranked by stored likes and comments.',
+            'Opublikowane materiały Voice Moment według liczby zapisanych polubień i komentarzy.',
+          ),
         ),
         const SizedBox(height: 12),
         Container(
@@ -534,10 +612,12 @@ class _TopMoments extends StatelessWidget {
             border: Border.all(color: AppImmersiveColors.border),
           ),
           child: moments.isEmpty
-              ? const _EmptyInline(
+              ? _EmptyInline(
                   icon: Icons.mic_none_rounded,
-                  text:
-                      'Publish a Voice Moment to see its stored likes and comments here.',
+                  text: copy.text(
+                    'Publish a Voice Moment to see its stored likes and comments here.',
+                    'Opublikuj Voice Moment, aby zobaczyć tutaj zapisane polubienia i komentarze.',
+                  ),
                 )
               : Column(
                   children: [
@@ -565,8 +645,9 @@ class _MomentRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final caption = moment.caption.trim().isEmpty
-        ? 'Untitled Voice Moment'
+        ? copy.text('Untitled Voice Moment', 'Voice Moment bez tytułu')
         : moment.caption.trim();
 
     return Row(
@@ -604,11 +685,11 @@ class _MomentRow extends StatelessWidget {
                 children: [
                   _TinyStat(
                     icon: Icons.favorite_rounded,
-                    value: '${moment.likeCount} likes',
+                    value: _localizedLikeCount(moment.likeCount, copy),
                   ),
                   _TinyStat(
                     icon: Icons.chat_bubble_rounded,
-                    value: '${moment.commentCount} comments',
+                    value: _localizedCommentCount(moment.commentCount, copy),
                   ),
                   _TinyStat(
                     icon: Icons.timer_outlined,
@@ -657,6 +738,7 @@ class _OwnedSpaces extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -667,18 +749,21 @@ class _OwnedSpaces extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            'Owned spaces',
-            style: TextStyle(
+          Text(
+            copy.text('Owned spaces', 'Twoje przestrzenie'),
+            style: const TextStyle(
               color: AppImmersiveColors.textPrimary,
               fontSize: 16,
               fontWeight: FontWeight.w900,
             ),
           ),
           const SizedBox(height: 4),
-          const Text(
-            'Membership counters are current totals per space. The same person may belong to more than one space, so they are not labeled as unique audience.',
-            style: TextStyle(
+          Text(
+            copy.text(
+              'Membership counters are current totals per space. The same person may belong to more than one space, so they are not labeled as unique audience.',
+              'Liczniki pokazują aktualną liczbę członkostw w każdej przestrzeni. Jedna osoba może należeć do kilku przestrzeni, dlatego nie traktujemy tych wartości jako liczby unikalnych odbiorców.',
+            ),
+            style: const TextStyle(
               color: AppImmersiveColors.textSecondary,
               fontSize: 11.5,
               height: 1.45,
@@ -690,11 +775,11 @@ class _OwnedSpaces extends StatelessWidget {
             runSpacing: 10,
             children: [
               _CountChip(
-                label: 'Room memberships',
+                label: copy.text('Room memberships', 'członkostwa w pokojach'),
                 value: summary.roomMemberships,
               ),
               _CountChip(
-                label: 'Club memberships',
+                label: copy.text('Club memberships', 'członkostwa w klubach'),
                 value: summary.clubMemberships,
               ),
             ],
@@ -760,15 +845,47 @@ class _EmptyInline extends StatelessWidget {
   }
 }
 
-String _formatDuration(int seconds) {
+String _formatDuration(int seconds, AppLocalizations copy) {
   final hours = seconds ~/ 3600;
   final minutes = (seconds % 3600) ~/ 60;
   final rest = seconds % 60;
   if (hours > 0) {
-    return minutes == 0 ? '${hours}h' : '${hours}h ${minutes}m';
+    return copy.isPolish
+        ? minutes == 0
+              ? '$hours godz.'
+              : '$hours godz. $minutes min'
+        : minutes == 0
+        ? '${hours}h'
+        : '${hours}h ${minutes}m';
   }
   if (minutes > 0) {
-    return rest == 0 ? '${minutes}m' : '${minutes}m ${rest}s';
+    return copy.isPolish
+        ? rest == 0
+              ? '$minutes min'
+              : '$minutes min $rest s'
+        : rest == 0
+        ? '${minutes}m'
+        : '${minutes}m ${rest}s';
   }
-  return '${rest}s';
+  return copy.isPolish ? '$rest s' : '${rest}s';
+}
+
+String _localizedLikeCount(int count, AppLocalizations copy) {
+  if (!copy.isPolish) return '$count likes';
+  return '$count ${_polishPlural(count, 'polubienie', 'polubienia', 'polubień')}';
+}
+
+String _localizedCommentCount(int count, AppLocalizations copy) {
+  if (!copy.isPolish) return '$count comments';
+  return '$count ${_polishPlural(count, 'komentarz', 'komentarze', 'komentarzy')}';
+}
+
+String _polishPlural(int count, String one, String few, String many) {
+  if (count == 1) return one;
+  final tens = count % 100;
+  final units = count % 10;
+  if (tens < 12 || tens > 14) {
+    if (units >= 2 && units <= 4) return few;
+  }
+  return many;
 }

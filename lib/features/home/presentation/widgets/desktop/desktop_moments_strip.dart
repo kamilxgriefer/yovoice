@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/friends/data/models/friend_user.dart';
@@ -122,6 +123,7 @@ class _DesktopMomentsStripState extends State<DesktopMomentsStrip> {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     return StreamBuilder<UserProfile>(
       stream: widget.profile,
       builder: (context, profileSnapshot) {
@@ -185,8 +187,14 @@ class _DesktopMomentsStripState extends State<DesktopMomentsStrip> {
                       clock: widget.expiryClock ?? DateTime.now,
                       transitionScope: 'desktop-home-moments',
                       announcementBuilder: (count) => count == 1
-                          ? 'One Voice Moment expired and was removed from Home.'
-                          : '$count Voice Moments expired and were removed from Home.',
+                          ? copy.text(
+                              'One Voice Moment expired and was removed from Home.',
+                              'Jeden Voice Moment wygasł i został usunięty ze strony głównej.',
+                            )
+                          : copy.text(
+                              '$count Voice Moments expired and were removed from Home.',
+                              '$count Voice Momentów wygasło i zostało usuniętych ze strony głównej.',
+                            ),
                       builder: (context, recoveryFocus, tileFocusNode) {
                         return Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
@@ -287,6 +295,7 @@ class _StripHeading extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
     return Padding(
@@ -297,11 +306,17 @@ class _StripHeading extends StatelessWidget {
             child: MomentExpiryFocusTarget(
               key: const ValueKey('desktop-home-moments-heading'),
               focusNode: expiryRecoveryFocus,
-              semanticLabel: 'Moments from your circle',
+              semanticLabel: copy.text(
+                'Moments from your circle',
+                'Momenty z Twojego kręgu',
+              ),
               child: Align(
                 alignment: Alignment.centerLeft,
                 child: Text(
-                  'Moments from your circle',
+                  copy.text(
+                    'Moments from your circle',
+                    'Momenty z Twojego kręgu',
+                  ),
                   style: TextStyle(
                     color: palette.textPrimary,
                     fontSize: 16.5,
@@ -320,18 +335,18 @@ class _StripHeading extends StatelessWidget {
                 tapTargetSize: MaterialTapTargetSize.padded,
                 foregroundColor: colors.primary,
               ),
-              child: const Row(
+              child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Text(
-                    'See all',
-                    style: TextStyle(
+                    copy.text('See all', 'Zobacz wszystkie'),
+                    style: const TextStyle(
                       fontSize: 12.5,
                       fontWeight: FontWeight.w700,
                     ),
                   ),
-                  SizedBox(width: 3),
-                  Icon(Icons.chevron_right_rounded, size: 16),
+                  const SizedBox(width: 3),
+                  const Icon(Icons.chevron_right_rounded, size: 16),
                 ],
               ),
             ),
@@ -432,6 +447,7 @@ class _MomentTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final fresh = _isNew;
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
@@ -443,8 +459,14 @@ class _MomentTile extends StatelessWidget {
         button: true,
         excludeSemantics: true,
         label: chainLength == 1
-            ? 'Play Voice Moment from ${moment.authorName}'
-            : 'Play $chainLength Voice Moments from ${moment.authorName}',
+            ? copy.text(
+                'Play Voice Moment from ${moment.authorName}',
+                'Odtwórz Voice Moment użytkownika ${moment.authorName}',
+              )
+            : copy.text(
+                'Play $chainLength Voice Moments from ${moment.authorName}',
+                'Odtwórz $chainLength Voice Momentów użytkownika ${moment.authorName}',
+              ),
         child: InkWell(
           focusNode: focusNode,
           onTap: onTap,
@@ -481,7 +503,7 @@ class _MomentTile extends StatelessWidget {
                     Text(
                       // Both are facts the document carries: freshly posted,
                       // or exactly how long the recording runs.
-                      fresh ? 'New' : moment.durationLabel,
+                      fresh ? copy.text('New', 'Nowy') : moment.durationLabel,
                       maxLines: 1,
                       style: TextStyle(
                         color: fresh ? colors.secondary : palette.textSecondary,
@@ -600,6 +622,7 @@ class _YourMomentTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final newest = mine.isEmpty ? null : mine.last;
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
@@ -614,10 +637,19 @@ class _YourMomentTile extends StatelessWidget {
       child: Semantics(
         button: true,
         label: newest == null
-            ? 'Record your first Voice Moment'
+            ? copy.text(
+                'Record your first Voice Moment',
+                'Nagraj swój pierwszy Voice Moment',
+              )
             : (mine.length > 1
-                  ? 'Play your ${mine.length} Voice Moments'
-                  : 'Play your Voice Moment'),
+                  ? copy.text(
+                      'Play your ${mine.length} Voice Moments',
+                      _polishPlayOwnMomentsLabel(mine.length),
+                    )
+                  : copy.text(
+                      'Play your Voice Moment',
+                      'Odtwórz swój Voice Moment',
+                    )),
         child: InkWell(
           key: const ValueKey('home-your-moment'),
           focusNode: focusNode,
@@ -691,7 +723,10 @@ class _YourMomentTile extends StatelessWidget {
                       right: 0,
                       bottom: 0,
                       child: Tooltip(
-                        message: 'Record a Voice Moment',
+                        message: copy.text(
+                          'Record a Voice Moment',
+                          'Nagraj Voice Moment',
+                        ),
                         child: InkWell(
                           key: const ValueKey('home-record-moment'),
                           onTap: onCreate,
@@ -733,17 +768,22 @@ class _YourMomentTile extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 7),
-              const _MomentNameLabel(name: 'Your Moment'),
+              _MomentNameLabel(name: copy.text('Your Moment', 'Twój Moment')),
               const SizedBox(height: 2),
               SizedBox(
                 height: _MomentTile.actionHeightFor(context),
                 child: Center(
                   child: Text(
                     newest == null
-                        ? 'Record'
+                        ? copy.text('Record', 'Nagraj')
                         : (mine.length > 1
-                              ? '${mine.length} Moments'
-                              : (fresh ? 'New' : newest.durationLabel)),
+                              ? copy.text(
+                                  '${mine.length} Moments',
+                                  _polishMomentCountLabel(mine.length),
+                                )
+                              : (fresh
+                                    ? copy.text('New', 'Nowy')
+                                    : newest.durationLabel)),
                     maxLines: 1,
                     style: TextStyle(
                       color: newest == null || !fresh
@@ -761,4 +801,25 @@ class _YourMomentTile extends StatelessWidget {
       ),
     );
   }
+}
+
+String _polishPlayOwnMomentsLabel(int count) {
+  final form = _polishMomentNoun(count);
+  final possessive = form == 'Momenty' ? 'swoje' : 'swoich';
+  return 'Odtwórz $possessive $count Voice $form';
+}
+
+String _polishMomentCountLabel(int count) =>
+    '$count ${_polishMomentNoun(count)}';
+
+String _polishMomentNoun(int count) {
+  if (count == 1) return 'Moment';
+  final lastTwoDigits = count % 100;
+  final lastDigit = count % 10;
+  if (lastDigit >= 2 &&
+      lastDigit <= 4 &&
+      (lastTwoDigits < 12 || lastTwoDigits > 14)) {
+    return 'Momenty';
+  }
+  return 'Momentów';
 }

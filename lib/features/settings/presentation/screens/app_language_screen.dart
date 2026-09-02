@@ -12,7 +12,15 @@ class AppLanguageScreen extends StatefulWidget {
 }
 
 class _AppLanguageScreenState extends State<AppLanguageScreen> {
+  final _searchController = TextEditingController();
   AppLanguagePreference? _saving;
+  String _query = '';
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
 
   Future<void> _select(AppLanguagePreference preference) async {
     if (_saving != null) return;
@@ -36,6 +44,16 @@ class _AppLanguageScreenState extends State<AppLanguageScreen> {
     final copy = AppLocalizations.of(context);
     final selected = AppPreferencesScope.of(context).value.language;
     final colors = Theme.of(context).colorScheme;
+    final query = _query.trim().toLowerCase();
+    final languages = selectableAppLanguages
+        .where((language) {
+          if (query.isEmpty) return true;
+          return language.nativeName.toLowerCase().contains(query) ||
+              language.englishName.toLowerCase().contains(query) ||
+              copy.languageName(language).toLowerCase().contains(query) ||
+              language.localeKey.toLowerCase().contains(query);
+        })
+        .toList(growable: false);
 
     return Scaffold(
       appBar: AppBar(title: Text(copy.appLanguage)),
@@ -48,10 +66,7 @@ class _AppLanguageScreenState extends State<AppLanguageScreen> {
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 40),
             children: [
               Text(
-                copy.text(
-                  'Choose the language used on this device.',
-                  'Wybierz język używany na tym urządzeniu.',
-                ),
+                copy.chooseLanguage,
                 style: Theme.of(
                   context,
                 ).textTheme.bodyLarge?.copyWith(color: colors.onSurfaceVariant),
@@ -59,36 +74,71 @@ class _AppLanguageScreenState extends State<AppLanguageScreen> {
               const SizedBox(height: 20),
               _LanguageChoice(
                 title: copy.systemLanguage,
-                subtitle: copy.text(
-                  'Uses Polish when your device is set to Polish, otherwise English.',
-                  'Używa polskiego, gdy urządzenie jest ustawione na polski; w przeciwnym razie angielskiego.',
-                ),
-                code: 'A',
+                subtitle: copy.systemLanguageDescription,
+                code: AppLanguagePreference.system.badge,
                 selected: selected == AppLanguagePreference.system,
                 saving: _saving == AppLanguagePreference.system,
                 disabled: _saving != null,
                 onTap: () => _select(AppLanguagePreference.system),
               ),
-              const SizedBox(height: 12),
-              _LanguageChoice(
-                title: 'English',
-                subtitle: 'English',
-                code: 'EN',
-                selected: selected == AppLanguagePreference.english,
-                saving: _saving == AppLanguagePreference.english,
-                disabled: _saving != null,
-                onTap: () => _select(AppLanguagePreference.english),
+              const SizedBox(height: 20),
+              TextField(
+                key: const ValueKey('language-search'),
+                controller: _searchController,
+                onChanged: (value) => setState(() => _query = value),
+                textInputAction: TextInputAction.search,
+                decoration: InputDecoration(
+                  hintText: copy.searchLanguages,
+                  prefixIcon: const Icon(Icons.search_rounded),
+                  suffixIcon: _query.isEmpty
+                      ? null
+                      : IconButton(
+                          tooltip: MaterialLocalizations.of(
+                            context,
+                          ).deleteButtonTooltip,
+                          onPressed: () {
+                            _searchController.clear();
+                            setState(() => _query = '');
+                          },
+                          icon: const Icon(Icons.close_rounded),
+                        ),
+                ),
               ),
-              const SizedBox(height: 12),
-              _LanguageChoice(
-                title: 'Polski · Beta',
-                subtitle: 'Polish',
-                code: 'PL',
-                selected: selected == AppLanguagePreference.polish,
-                saving: _saving == AppLanguagePreference.polish,
-                disabled: _saving != null,
-                onTap: () => _select(AppLanguagePreference.polish),
-              ),
+              const SizedBox(height: 14),
+              if (languages.isEmpty)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 28),
+                  child: Column(
+                    children: [
+                      Icon(
+                        Icons.translate_rounded,
+                        size: 36,
+                        color: colors.onSurfaceVariant,
+                      ),
+                      const SizedBox(height: 10),
+                      Text(
+                        copy.noLanguagesFound,
+                        style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                          color: colors.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                  ),
+                )
+              else
+                for (final language in languages) ...[
+                  _LanguageChoice(
+                    key: ValueKey('language-${language.localeKey}'),
+                    title: language.nativeName,
+                    subtitle: copy.languageName(language),
+                    code: language.badge,
+                    selected: selected == language,
+                    saving: _saving == language,
+                    disabled: _saving != null,
+                    onTap: () => _select(language),
+                  ),
+                  if (language != languages.last) const SizedBox(height: 12),
+                ],
               const SizedBox(height: 20),
               Container(
                 padding: const EdgeInsets.all(18),
@@ -138,7 +188,7 @@ class _AppLanguageScreenState extends State<AppLanguageScreen> {
   }
 }
 
-class _LanguageChoice extends StatelessWidget {
+class _LanguageChoice extends StatefulWidget {
   const _LanguageChoice({
     required this.title,
     required this.subtitle,
@@ -147,6 +197,7 @@ class _LanguageChoice extends StatelessWidget {
     required this.saving,
     required this.disabled,
     required this.onTap,
+    super.key,
   });
 
   final String title;
@@ -158,30 +209,66 @@ class _LanguageChoice extends StatelessWidget {
   final VoidCallback onTap;
 
   @override
+  State<_LanguageChoice> createState() => _LanguageChoiceState();
+}
+
+class _LanguageChoiceState extends State<_LanguageChoice> {
+  late final FocusNode _focusNode = FocusNode(
+    debugLabel: 'language-choice-${widget.code}',
+  );
+  bool _focused = false;
+
+  @override
+  void didUpdateWidget(_LanguageChoice oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.disabled && _focusNode.hasFocus) _focusNode.unfocus();
+  }
+
+  @override
+  void dispose() {
+    _focusNode.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
     final copy = AppLocalizations.of(context);
     return Semantics(
-      selected: selected,
+      selected: widget.selected,
       button: true,
-      enabled: !disabled,
-      label: '$title. $subtitle',
-      value: saving ? copy.text('Saving', 'Zapisywanie') : null,
-      liveRegion: saving,
-      onTap: disabled ? null : onTap,
+      enabled: !widget.disabled,
+      label: '${widget.title}. ${widget.subtitle}',
+      value: widget.saving ? copy.text('Saving', 'Zapisywanie') : null,
+      liveRegion: widget.saving,
+      onTap: widget.disabled ? null : widget.onTap,
       excludeSemantics: true,
       child: Material(
-        color: selected ? colors.primary.withValues(alpha: .1) : colors.surface,
+        color: widget.selected
+            ? colors.primary.withValues(alpha: .1)
+            : colors.surface,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(20),
           side: BorderSide(
-            color: selected ? colors.primary : colors.outlineVariant,
-            width: selected ? 2 : 1,
+            color: _focused || widget.selected
+                ? colors.primary
+                : colors.outlineVariant,
+            width: _focused
+                ? 3
+                : widget.selected
+                ? 2
+                : 1,
           ),
         ),
         clipBehavior: Clip.antiAlias,
         child: InkWell(
-          onTap: disabled ? null : onTap,
+          focusNode: _focusNode,
+          canRequestFocus: !widget.disabled,
+          focusColor: colors.primary.withValues(alpha: .12),
+          onFocusChange: (focused) {
+            if (_focused != focused) setState(() => _focused = focused);
+          },
+          onTap: widget.disabled ? null : widget.onTap,
           child: ConstrainedBox(
             constraints: const BoxConstraints(minHeight: 80),
             child: Padding(
@@ -197,7 +284,7 @@ class _LanguageChoice extends StatelessWidget {
                       borderRadius: BorderRadius.circular(15),
                     ),
                     child: Text(
-                      code,
+                      widget.code,
                       style: Theme.of(
                         context,
                       ).textTheme.labelLarge?.copyWith(color: colors.primary),
@@ -209,12 +296,12 @@ class _LanguageChoice extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          title,
+                          widget.title,
                           style: Theme.of(context).textTheme.titleMedium,
                         ),
                         const SizedBox(height: 3),
                         Text(
-                          subtitle,
+                          widget.subtitle,
                           style: Theme.of(context).textTheme.bodySmall
                               ?.copyWith(color: colors.onSurfaceVariant),
                         ),
@@ -222,7 +309,7 @@ class _LanguageChoice extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(width: 12),
-                  if (saving)
+                  if (widget.saving)
                     SizedBox(
                       width: 24,
                       height: 24,
@@ -233,10 +320,10 @@ class _LanguageChoice extends StatelessWidget {
                     )
                   else
                     Icon(
-                      selected
+                      widget.selected
                           ? Icons.check_circle_rounded
                           : Icons.circle_outlined,
-                      color: selected ? colors.primary : colors.outline,
+                      color: widget.selected ? colors.primary : colors.outline,
                     ),
                 ],
               ),

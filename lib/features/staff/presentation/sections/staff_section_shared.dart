@@ -1,6 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
+import 'package:yovoice/features/staff/presentation/staff_localized_copy.dart';
+import 'package:yovoice/shared/identity/public_identity.dart';
+import 'package:yovoice/shared/widgets/identity/official_role_badge.dart';
+
 /// The Staff Center's shared visual vocabulary — one place for the
 /// palette and the small pieces every section reuses, so seven sections
 /// read as one screen.
@@ -17,16 +22,32 @@ abstract final class StaffCenterStyle {
   static const bad = Color(0xFFFF5F6D);
 }
 
-String staffStamp(DateTime? at) {
+String staffStamp(AppLocalizations copy, DateTime? at) {
   if (at == null) return '—';
   final local = at.toLocal();
   final now = DateTime.now();
   final difference = now.difference(local);
-  if (difference.inMinutes < 1) return 'now';
-  if (difference.inMinutes < 60) return '${difference.inMinutes}m ago';
-  if (difference.inHours < 24) return '${difference.inHours}h ago';
-  if (difference.inDays < 7) return '${difference.inDays}d ago';
-  return '${local.year}-${local.month.toString().padLeft(2, '0')}-${local.day.toString().padLeft(2, '0')}';
+  if (difference.inMinutes < 1) return copy.text('now', 'teraz');
+  if (difference.inMinutes < 60) {
+    return copy.text(
+      '${difference.inMinutes}m ago',
+      '${difference.inMinutes} min temu',
+    );
+  }
+  if (difference.inHours < 24) {
+    return copy.text(
+      '${difference.inHours}h ago',
+      '${difference.inHours} godz. temu',
+    );
+  }
+  if (difference.inDays < 7) {
+    final days = difference.inDays;
+    final polishUnit = days == 1 ? 'dzień' : 'dni';
+    return copy.text('${days}d ago', '$days $polishUnit temu');
+  }
+  final englishDate =
+      '${local.year}-${local.month.toString().padLeft(2, '0')}-${local.day.toString().padLeft(2, '0')}';
+  return copy.text(englishDate, copy.calendarDate(local));
 }
 
 class StaffSectionHeader extends StatelessWidget {
@@ -126,6 +147,7 @@ class StaffPanelTitle extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
       child: Row(
@@ -148,7 +170,10 @@ class StaffPanelTitle extends StatelessWidget {
                 padding: const EdgeInsets.symmetric(horizontal: 8),
                 foregroundColor: const Color(0xFFD3A5FF),
               ),
-              child: const Text('Open', style: TextStyle(fontSize: 12)),
+              child: Text(
+                copy.text('Open', 'Otwórz'),
+                style: const TextStyle(fontSize: 12),
+              ),
             ),
         ],
       ),
@@ -208,6 +233,7 @@ class StaffErrorState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 22),
       child: Center(
@@ -238,7 +264,7 @@ class StaffErrorState extends StatelessWidget {
                     foregroundColor: Colors.white,
                     side: const BorderSide(color: StaffCenterStyle.border),
                   ),
-                  child: const Text('Retry'),
+                  child: Text(copy.text('Retry', 'Spróbuj ponownie')),
                 ),
                 if (onClear != null) ...[
                   const SizedBox(width: 8),
@@ -247,7 +273,7 @@ class StaffErrorState extends StatelessWidget {
                     style: TextButton.styleFrom(
                       foregroundColor: StaffCenterStyle.muted,
                     ),
-                    child: const Text('Clear'),
+                    child: Text(copy.text('Clear', 'Wyczyść')),
                   ),
                 ],
               ],
@@ -268,6 +294,7 @@ class CopyableUid extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -285,7 +312,7 @@ class CopyableUid extends StatelessWidget {
         ),
         const SizedBox(width: 2),
         Tooltip(
-          message: 'Copy uid',
+          message: copy.text('Copy uid', 'Kopiuj UID'),
           child: InkWell(
             borderRadius: BorderRadius.circular(8),
             onTap: () async {
@@ -294,9 +321,14 @@ class CopyableUid extends StatelessWidget {
               final messenger = ScaffoldMessenger.maybeOf(context);
               await Clipboard.setData(ClipboardData(text: uid));
               messenger?.showSnackBar(
-                const SnackBar(
-                  content: Text('User id copied.'),
-                  duration: Duration(seconds: 1),
+                SnackBar(
+                  content: Text(
+                    copy.text(
+                      'User id copied.',
+                      'Skopiowano identyfikator użytkownika.',
+                    ),
+                  ),
+                  duration: const Duration(seconds: 1),
                 ),
               );
             },
@@ -336,7 +368,7 @@ class AccountStatusChip extends StatelessWidget {
         border: Border.all(color: color.withValues(alpha: .45)),
       ),
       child: Text(
-        status,
+        localizedStaffStatus(AppLocalizations.of(context), status),
         style: TextStyle(
           color: color,
           fontSize: 9.5,
@@ -344,6 +376,35 @@ class AccountStatusChip extends StatelessWidget {
           letterSpacing: .5,
         ),
       ),
+    );
+  }
+}
+
+/// Staff-localized presentation of the shared, server-owned role badge.
+///
+/// The wire role and canonical color/icon remain untouched; only the visible
+/// label is translated at this Staff presentation boundary.
+class StaffOfficialRoleBadge extends StatelessWidget {
+  const StaffOfficialRoleBadge({
+    required this.role,
+    this.variant = IdentityBadgeVariant.full,
+    super.key,
+  });
+
+  final String? role;
+  final IdentityBadgeVariant variant;
+
+  @override
+  Widget build(BuildContext context) {
+    final officialRole = OfficialRole.fromWire(role);
+    return IdentityBadgePill(
+      label: localizedStaffOfficialRole(
+        AppLocalizations.of(context),
+        officialRole.wire,
+      ),
+      color: officialRole.color,
+      icon: OfficialRoleBadge.iconFor(officialRole),
+      variant: variant,
     );
   }
 }

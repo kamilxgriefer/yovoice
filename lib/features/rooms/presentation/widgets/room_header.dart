@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/space_identity.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
@@ -60,19 +61,22 @@ class RoomHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
+    final resolvedSpeakingLabel = copy.isPolish && speakingLabel == 'Speaking'
+        ? 'Mówi'
+        : speakingLabel;
+    final resolvedListenersLabel =
+        copy.isPolish && listenersLabel == 'Listeners'
+        ? 'Słucha'
+        : listenersLabel;
     return LayoutBuilder(
       builder: (context, constraints) {
         final narrow = constraints.maxWidth < 560;
-        final identityRow = Row(
-          children: [
-            IconButton(
-              onPressed: onBack,
-              tooltip: 'Back',
-              icon: const Icon(Icons.keyboard_arrow_down_rounded, size: 30),
-              color: Colors.white,
-            ),
-            if (avatarName != null)
-              UserAvatar(
+        final accessibilityReflow =
+            narrow && MediaQuery.textScalerOf(context).scale(1) >= 1.75;
+
+        Widget buildIdentityAvatar() => avatarName != null
+            ? UserAvatar(
                 radius: 17,
                 photoUrl: avatarUrl,
                 displayName: avatarName,
@@ -85,8 +89,7 @@ class RoomHeader extends StatelessWidget {
                   .45,
                 )!,
               )
-            else
-              Container(
+            : Container(
                 width: 34,
                 height: 34,
                 decoration: BoxDecoration(
@@ -94,45 +97,57 @@ class RoomHeader extends StatelessWidget {
                   borderRadius: BorderRadius.circular(11),
                 ),
                 child: Icon(identity.icon, color: identity.accent, size: 17),
-              ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 18,
-                      fontWeight: FontWeight.w900,
-                      letterSpacing: -.2,
-                    ),
-                  ),
-                  const SizedBox(height: 1),
-                  Text(
-                    subtitle,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: identity.accent,
-                      fontSize: 10.5,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: 1.05,
-                    ),
-                  ),
-                ],
+              );
+
+        Widget buildTitleBlock() => Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              key: const ValueKey('room-header-title'),
+              title,
+              maxLines: accessibilityReflow ? 3 : 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 18,
+                fontWeight: FontWeight.w900,
+                letterSpacing: -.2,
               ),
             ),
+            const SizedBox(height: 1),
+            Text(
+              key: const ValueKey('room-header-subtitle'),
+              subtitle,
+              maxLines: accessibilityReflow ? null : 1,
+              overflow: accessibilityReflow ? null : TextOverflow.ellipsis,
+              style: TextStyle(
+                color: identity.accent,
+                fontSize: 10.5,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 1.05,
+              ),
+            ),
+          ],
+        );
+
+        final identityRow = Row(
+          children: [
+            IconButton(
+              onPressed: onBack,
+              tooltip: copy.text('Back', 'Wróć'),
+              icon: const Icon(Icons.keyboard_arrow_down_rounded, size: 30),
+              color: Colors.white,
+            ),
+            buildIdentityAvatar(),
+            const SizedBox(width: 10),
+            Expanded(child: buildTitleBlock()),
             if (!narrow && people != null) ...[
               const SizedBox(width: 8),
               ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 180),
                 child: RoomCounterPill(
                   icon: Icons.groups_rounded,
-                  label: 'In room',
+                  label: copy.text('In room', 'W pokoju'),
                   value: people!,
                   identity: identity,
                   onTap: onPeopleTap ?? onSpeakingTap,
@@ -146,7 +161,7 @@ class RoomHeader extends StatelessWidget {
                 constraints: const BoxConstraints(maxWidth: 180),
                 child: RoomCounterPill(
                   icon: Icons.graphic_eq_rounded,
-                  label: speakingLabel,
+                  label: resolvedSpeakingLabel,
                   value: speaking,
                   identity: identity,
                   onTap: onSpeakingTap,
@@ -157,7 +172,7 @@ class RoomHeader extends StatelessWidget {
                 constraints: const BoxConstraints(maxWidth: 180),
                 child: RoomCounterPill(
                   icon: Icons.headphones_rounded,
-                  label: listenersLabel,
+                  label: resolvedListenersLabel,
                   value: listeners,
                   identity: identity,
                   onTap: onListenersTap,
@@ -170,7 +185,69 @@ class RoomHeader extends StatelessWidget {
 
         return Padding(
           padding: const EdgeInsets.fromLTRB(6, 8, 12, 6),
-          child: narrow
+          child: accessibilityReflow
+              ? Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Row(
+                      children: [
+                        IconButton(
+                          onPressed: onBack,
+                          tooltip: copy.text('Back', 'Wróć'),
+                          icon: const Icon(
+                            Icons.keyboard_arrow_down_rounded,
+                            size: 30,
+                          ),
+                          color: Colors.white,
+                        ),
+                        buildIdentityAvatar(),
+                        const Spacer(),
+                        ...actions,
+                      ],
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(10, 6, 4, 0),
+                      child: buildTitleBlock(),
+                    ),
+                    const SizedBox(height: 8),
+                    if (people != null)
+                      Padding(
+                        padding: const EdgeInsets.only(left: 10),
+                        child: RoomCounterPill(
+                          icon: Icons.groups_rounded,
+                          label: copy.text('In room', 'W pokoju'),
+                          value: people!,
+                          identity: identity,
+                          onTap: onPeopleTap ?? onSpeakingTap,
+                        ),
+                      )
+                    else
+                      Padding(
+                        padding: const EdgeInsets.only(left: 10),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            RoomCounterPill(
+                              icon: Icons.graphic_eq_rounded,
+                              label: resolvedSpeakingLabel,
+                              value: speaking,
+                              identity: identity,
+                              onTap: onSpeakingTap,
+                            ),
+                            const SizedBox(height: 8),
+                            RoomCounterPill(
+                              icon: Icons.headphones_rounded,
+                              label: resolvedListenersLabel,
+                              value: listeners,
+                              identity: identity,
+                              onTap: onListenersTap,
+                            ),
+                          ],
+                        ),
+                      ),
+                  ],
+                )
+              : narrow
               ? Column(
                   children: [
                     identityRow,
@@ -180,7 +257,7 @@ class RoomHeader extends StatelessWidget {
                         padding: const EdgeInsets.only(left: 46),
                         child: RoomCounterPill(
                           icon: Icons.groups_rounded,
-                          label: 'In room',
+                          label: copy.text('In room', 'W pokoju'),
                           value: people!,
                           identity: identity,
                           onTap: onPeopleTap ?? onSpeakingTap,
@@ -193,7 +270,7 @@ class RoomHeader extends StatelessWidget {
                           Expanded(
                             child: RoomCounterPill(
                               icon: Icons.graphic_eq_rounded,
-                              label: speakingLabel,
+                              label: resolvedSpeakingLabel,
                               value: speaking,
                               identity: identity,
                               onTap: onSpeakingTap,
@@ -203,7 +280,7 @@ class RoomHeader extends StatelessWidget {
                           Expanded(
                             child: RoomCounterPill(
                               icon: Icons.headphones_rounded,
-                              label: listenersLabel,
+                              label: resolvedListenersLabel,
                               value: listeners,
                               identity: identity,
                               onTap: onListenersTap,
@@ -240,10 +317,14 @@ class RoomCounterPill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     return Semantics(
       button: true,
       excludeSemantics: true,
-      label: '$value $label. Open people',
+      label: copy.text(
+        '$value $label. Open people',
+        '$value $label. Otwórz listę osób',
+      ),
       child: InkWell(
         onTap: onTap,
         borderRadius: BorderRadius.circular(20),

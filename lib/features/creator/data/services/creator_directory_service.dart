@@ -60,8 +60,8 @@ class CreatorDirectoryService {
           })
           .whereType<CreatorSearchResult>()
           .toList(growable: false);
-    } on FirebaseFunctionsException catch (error) {
-      throw StateError(error.message ?? 'Creator search is unavailable.');
+    } on FirebaseFunctionsException {
+      throw StateError('Creator search is unavailable.');
     }
   }
 }

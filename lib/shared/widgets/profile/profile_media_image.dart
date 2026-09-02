@@ -76,6 +76,7 @@ class _ProfileMediaImageState extends State<ProfileMediaImage> {
       _grant = (widget.service ?? ProfileMediaService()).resolve(
         userId: userId,
         kind: widget.kind,
+        revision: widget.revision,
       );
     } catch (error) {
       // Rendering identity media is optional. During app bootstrap, logout,

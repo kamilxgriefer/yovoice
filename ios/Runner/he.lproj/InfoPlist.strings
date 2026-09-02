@@ -1,0 +1,3 @@
+"NSCameraUsageDescription" = "YO Voice משתמש במצלמה כאשר בחרת לנהל שיחת וידאו פרטית, לצלם תמונה לצ׳אט או ליצור תמונה לפרופיל, לחדר או למועדון.";
+"NSMicrophoneUsageDescription" = "YO Voice משתמש במיקרופון כאשר בחרת לדבר בחדר קולי, להקליט שמע או לנהל שיחה פרטית.";
+"NSPhotoLibraryUsageDescription" = "YO Voice משתמש רק בתמונות שבחרת לצ׳אטים או לתמונות הפרופיל, החדר או המועדון שלך.";

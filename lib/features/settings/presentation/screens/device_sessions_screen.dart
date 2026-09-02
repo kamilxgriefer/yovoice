@@ -3,6 +3,7 @@ import 'dart:io' show Platform;
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/features/auth/data/auth_service.dart';
 import 'package:yovoice/features/settings/data/services/session_management_service.dart';
 import 'package:yovoice/shared/widgets/buttons/yo_icon_button.dart';
@@ -48,27 +49,37 @@ class _DeviceSessionsScreenState extends State<DeviceSessionsScreen> {
     if (_revoking) return;
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Sign out on every device?'),
-        content: const Text(
-          'This includes this device. You will need to sign in again everywhere. '
-          'Already-issued access can take up to one hour to expire.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            style: FilledButton.styleFrom(
-              backgroundColor: Theme.of(context).colorScheme.errorContainer,
-              foregroundColor: Theme.of(context).colorScheme.onErrorContainer,
+      builder: (context) {
+        final copy = AppLocalizations.of(context);
+        return AlertDialog(
+          title: Text(
+            copy.text(
+              'Sign out on every device?',
+              'Wylogować na wszystkich urządzeniach?',
             ),
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Sign out everywhere'),
           ),
-        ],
-      ),
+          content: Text(
+            copy.text(
+              'This includes this device. You will need to sign in again everywhere. Already-issued access can take up to one hour to expire.',
+              'Dotyczy to także tego urządzenia. Na każdym urządzeniu konieczne będzie ponowne logowanie. Wygaśnięcie już przyznanego dostępu może potrwać do godziny.',
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: Text(copy.text('Cancel', 'Anuluj')),
+            ),
+            FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: Theme.of(context).colorScheme.errorContainer,
+                foregroundColor: Theme.of(context).colorScheme.onErrorContainer,
+              ),
+              onPressed: () => Navigator.pop(context, true),
+              child: Text(copy.text('Sign out everywhere', 'Wyloguj wszędzie')),
+            ),
+          ],
+        );
+      },
     );
     if (confirmed != true || !mounted) return;
 
@@ -82,12 +93,19 @@ class _DeviceSessionsScreenState extends State<DeviceSessionsScreen> {
       await signOut();
     } on SessionManagementFailure catch (error) {
       if (!mounted) return;
-      setState(() => _actionError = error.message);
+      setState(
+        () => _actionError = AppLocalizations.of(context).text(
+          error.message,
+          'Nie udało się zakończyć wszystkich sesji. Spróbuj ponownie.',
+        ),
+      );
     } catch (_) {
       if (!mounted) return;
       setState(() {
-        _actionError =
-            'Your remote sessions were ended, but this device could not finish signing out. Close YO Voice and sign out again.';
+        _actionError = AppLocalizations.of(context).text(
+          'Your remote sessions were ended, but this device could not finish signing out. Close YO Voice and sign out again.',
+          'Pozostałe sesje zostały zakończone, ale nie udało się wylogować tego urządzenia. Zamknij YO Voice i spróbuj wylogować się ponownie.',
+        );
       });
     } finally {
       if (mounted) setState(() => _revoking = false);
@@ -104,16 +122,17 @@ class _DeviceSessionsScreenState extends State<DeviceSessionsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
     return Scaffold(
       appBar: AppBar(
         leading: YoIconButton(
           icon: Icons.arrow_back_rounded,
-          tooltip: 'Back',
+          tooltip: copy.text('Back', 'Wstecz'),
           onPressed: () => Navigator.maybePop(context),
         ),
-        title: const Text('Devices & sessions'),
+        title: Text(copy.text('Devices & sessions', 'Urządzenia i sesje')),
       ),
       body: SafeArea(
         top: false,
@@ -124,7 +143,10 @@ class _DeviceSessionsScreenState extends State<DeviceSessionsScreen> {
             padding: const EdgeInsets.fromLTRB(20, 18, 20, 40),
             children: [
               Text(
-                'Review this session or securely sign out everywhere.',
+                copy.text(
+                  'Review this session or securely sign out everywhere.',
+                  'Sprawdź bieżącą sesję lub bezpiecznie wyloguj się wszędzie.',
+                ),
                 style: theme.textTheme.bodyLarge?.copyWith(
                   color: colors.onSurfaceVariant,
                 ),
@@ -141,7 +163,7 @@ class _DeviceSessionsScreenState extends State<DeviceSessionsScreen> {
                   }
                   return _CurrentSessionCard(
                     session: snapshot.requireData,
-                    deviceLabel: widget.deviceLabel ?? _deviceLabel(),
+                    deviceLabel: widget.deviceLabel ?? _deviceLabel(context),
                   );
                 },
               ),
@@ -160,15 +182,20 @@ class _DeviceSessionsScreenState extends State<DeviceSessionsScreen> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              'One secure account-wide action',
+                              copy.text(
+                                'One secure account-wide action',
+                                'Jedna bezpieczna czynność dla całego konta',
+                              ),
                               style: theme.textTheme.titleMedium?.copyWith(
                                 fontWeight: FontWeight.w800,
                               ),
                             ),
                             const SizedBox(height: 6),
                             Text(
-                              'YO Voice does not receive a trustworthy per-device login list from its authentication provider. '
-                              'Push registrations are not login sessions. To guarantee a real result, YO Voice can end every session together.',
+                              copy.text(
+                                'YO Voice does not receive a trustworthy per-device login list from its authentication provider. Push registrations are not login sessions. To guarantee a real result, YO Voice can end every session together.',
+                                'Dostawca uwierzytelniania nie udostępnia YO Voice wiarygodnej listy logowań na poszczególnych urządzeniach. Rejestracje powiadomień push nie są sesjami logowania. Aby zagwarantować skuteczne działanie, YO Voice może zakończyć wszystkie sesje jednocześnie.',
+                              ),
                               style: theme.textTheme.bodyMedium?.copyWith(
                                 color: colors.onSurfaceVariant,
                                 height: 1.45,
@@ -218,13 +245,18 @@ class _DeviceSessionsScreenState extends State<DeviceSessionsScreen> {
                         )
                       : const Icon(Icons.logout_rounded),
                   label: Text(
-                    _revoking ? 'Ending sessions…' : 'Sign out everywhere',
+                    _revoking
+                        ? copy.text('Ending sessions…', 'Kończenie sesji…')
+                        : copy.text('Sign out everywhere', 'Wyloguj wszędzie'),
                   ),
                 ),
               ),
               const SizedBox(height: 10),
               Text(
-                'Refresh access is revoked immediately. An access token already issued by Firebase can remain valid for up to one hour.',
+                copy.text(
+                  'Refresh access is revoked immediately. An access token already issued by Firebase can remain valid for up to one hour.',
+                  'Możliwość odświeżenia dostępu jest odbierana natychmiast. Token dostępu wydany wcześniej przez Firebase może pozostać ważny nawet przez godzinę.',
+                ),
                 textAlign: TextAlign.center,
                 style: theme.textTheme.bodySmall?.copyWith(
                   color: colors.onSurfaceVariant,
@@ -247,11 +279,12 @@ class _CurrentSessionCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
     final signedInAt = session.signedInAt;
     final providers = session.providerLabels.isEmpty
-        ? 'Firebase account'
+        ? copy.text('Firebase account', 'Konto Firebase')
         : session.providerLabels.join(' · ');
     return Card(
       margin: EdgeInsets.zero,
@@ -298,7 +331,7 @@ class _CurrentSessionCard extends StatelessWidget {
                           borderRadius: BorderRadius.circular(999),
                         ),
                         child: Text(
-                          'Current',
+                          copy.text('Current', 'Bieżąca'),
                           style: theme.textTheme.labelMedium?.copyWith(
                             color: colors.primary,
                             fontWeight: FontWeight.w800,
@@ -317,7 +350,10 @@ class _CurrentSessionCard extends StatelessWidget {
                   if (signedInAt != null) ...[
                     const SizedBox(height: 4),
                     Text(
-                      'Authenticated ${_formatSessionTime(signedInAt)}',
+                      copy.text(
+                        'Authenticated ${_formatSessionTime(context, signedInAt)}',
+                        'Uwierzytelniono ${_formatSessionTime(context, signedInAt)}',
+                      ),
                       style: theme.textTheme.bodySmall?.copyWith(
                         color: colors.onSurfaceVariant,
                       ),
@@ -353,6 +389,7 @@ class _SessionErrorCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final colors = Theme.of(context).colorScheme;
     return Card(
       margin: EdgeInsets.zero,
@@ -362,8 +399,18 @@ class _SessionErrorCard extends StatelessWidget {
           children: [
             Icon(Icons.error_outline_rounded, color: colors.error),
             const SizedBox(width: 12),
-            const Expanded(child: Text('This session could not be loaded.')),
-            TextButton(onPressed: onRetry, child: const Text('Retry')),
+            Expanded(
+              child: Text(
+                copy.text(
+                  'This session could not be loaded.',
+                  'Nie udało się wczytać tej sesji.',
+                ),
+              ),
+            ),
+            TextButton(
+              onPressed: onRetry,
+              child: Text(copy.text('Retry', 'Spróbuj ponownie')),
+            ),
           ],
         ),
       ),
@@ -371,26 +418,46 @@ class _SessionErrorCard extends StatelessWidget {
   }
 }
 
-String _deviceLabel() {
-  if (kIsWeb) return 'This web browser';
-  if (Platform.isIOS) return 'This iPhone or iPad';
-  if (Platform.isAndroid) return 'This Android device';
-  if (Platform.isMacOS) return 'This Mac';
-  if (Platform.isWindows) return 'This Windows device';
-  if (Platform.isLinux) return 'This Linux device';
-  return 'This device';
+String _deviceLabel(BuildContext context) {
+  final copy = AppLocalizations.of(context);
+  if (kIsWeb) {
+    return copy.text('This web browser', 'Ta przeglądarka internetowa');
+  }
+  if (Platform.isIOS) {
+    return copy.text('This iPhone or iPad', 'Ten iPhone lub iPad');
+  }
+  if (Platform.isAndroid) {
+    return copy.text('This Android device', 'To urządzenie z Androidem');
+  }
+  if (Platform.isMacOS) return copy.text('This Mac', 'Ten Mac');
+  if (Platform.isWindows) {
+    return copy.text('This Windows device', 'To urządzenie z Windows');
+  }
+  if (Platform.isLinux) {
+    return copy.text('This Linux device', 'To urządzenie z Linuxem');
+  }
+  return copy.text('This device', 'To urządzenie');
 }
 
-String _formatSessionTime(DateTime value) {
+String _formatSessionTime(BuildContext context, DateTime value) {
+  final copy = AppLocalizations.of(context);
   final local = value.toLocal();
   final now = DateTime.now();
   final difference = now.difference(local);
-  if (!difference.isNegative && difference.inMinutes < 1) return 'just now';
+  if (!difference.isNegative && difference.inMinutes < 1) {
+    return copy.text('just now', 'przed chwilą');
+  }
   if (!difference.isNegative && difference.inHours < 1) {
-    return '${difference.inMinutes} min ago';
+    return copy.text(
+      '${difference.inMinutes} min ago',
+      '${difference.inMinutes} min temu',
+    );
   }
   if (!difference.isNegative && difference.inDays < 1) {
-    return '${difference.inHours} hr ago';
+    return copy.text(
+      '${difference.inHours} hr ago',
+      '${difference.inHours} godz. temu',
+    );
   }
   final day = local.day.toString().padLeft(2, '0');
   final month = local.month.toString().padLeft(2, '0');

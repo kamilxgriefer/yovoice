@@ -1,11 +1,14 @@
 import 'dart:async';
 
-import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'package:yovoice/core/helpers/error_messages.dart';
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/space_identity.dart';
 import 'package:yovoice/features/calls/data/services/voice_call_service.dart';
+import 'package:yovoice/features/permissions/data/permission_readiness_service.dart';
+import 'package:yovoice/features/rooms/data/models/room_metadata.dart';
 import 'package:yovoice/features/rooms/data/models/room_participant.dart';
 import 'package:yovoice/features/rooms/data/models/room_voice_access.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
@@ -40,7 +43,7 @@ class BroadcastRoomScreen extends StatefulWidget {
     this.entryCoordinator,
     this.muteCoordinator,
     this.playInitialJoinSound = true,
-    this.startMuted = false,
+    this.startMuted = true,
     super.key,
   });
 
@@ -60,7 +63,7 @@ class BroadcastRoomScreen extends StatefulWidget {
   /// keep the normal connected cue.
   final bool playInitialJoinSound;
 
-  /// External/deep-link entry may connect as a listener until a mic gesture.
+  /// Room entry is mic-safe until the person deliberately unmutes.
   final bool startMuted;
 
   @override
@@ -104,7 +107,9 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
   bool _wasSeenAsParticipant = false;
 
   bool _ending = false;
-  bool _showCompactChat = false;
+  // Chat opens as a compact bottom dock after entry. Closing it keeps the
+  // stage visible, and the dock control below reopens the same surface.
+  bool _showCompactChat = true;
   bool _showDesktopQueue = false;
   final Set<String> _participantActions = <String>{};
 
@@ -117,6 +122,13 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
   VoiceRoom get _room => _entry.room;
   bool get _isHost => _room.hostId == _uid;
   String get _shareLink => 'https://yovoice.app/rooms/${widget.room.id}';
+  AppLocalizations get _copy => AppLocalizations.of(context);
+  String _text(String english, String polish) => _copy.text(english, polish);
+
+  String _entryMessage(String englishFallback, String polish) {
+    if (_copy.isPolish) return polish;
+    return _entry.message ?? englishFallback;
+  }
 
   @override
   void initState() {
@@ -145,7 +157,12 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
     }
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      _showMessage(message, isError: true);
+      _showMessage(
+        _copy.isPolish
+            ? 'Nie udało się wejść do pokoju. Spróbuj ponownie.'
+            : message,
+        isError: true,
+      );
     });
   }
 
@@ -182,18 +199,42 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
   void _recoverRolePermissionIfNeeded(bool shouldPublish) {
     _rolePermissionRecovery?.cancel();
     _rolePermissionRecovery = Timer(const Duration(milliseconds: 900), () {
+      unawaited(_finishAutomaticRoleRecovery(shouldPublish));
+    });
+  }
+
+  Future<void> _finishAutomaticRoleRecovery(bool shouldPublish) async {
+    if (!mounted ||
+        !_voice.isConnected ||
+        _voice.roomId != widget.room.id ||
+        shouldPublish == _voice.canPublish ||
+        _roleReconnectInFlight) {
+      return;
+    }
+
+    // Promotion may require a fresh token with publish rights. Reconnecting
+    // automatically is safe only when the microphone is already authorized:
+    // permission prompts must originate from the listener's mic-button tap.
+    if (shouldPublish) {
+      final permissions = await _voice.mediaPermissionStatus(
+        includeCamera: false,
+      );
       if (!mounted ||
+          !permissions[AppPermissionKind.microphone].isUsable ||
           !_voice.isConnected ||
           _voice.roomId != widget.room.id ||
           shouldPublish == _voice.canPublish ||
           _roleReconnectInFlight) {
         return;
       }
-      _roleReconnectInFlight = true;
-      unawaited(
-        _reconnectForRole().whenComplete(() => _roleReconnectInFlight = false),
-      );
-    });
+    }
+
+    _roleReconnectInFlight = true;
+    try {
+      await _reconnectForRole();
+    } finally {
+      _roleReconnectInFlight = false;
+    }
   }
 
   /// Whether an AUTOMATIC audio action from this screen is legitimate.
@@ -247,8 +288,14 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
           // Stale failure copy described a moment that has passed.
           message: gone
               ? (room.deletionInProgress
-                    ? 'This room is being deleted.'
-                    : 'This room has ended.')
+                    ? _text(
+                        'This room is being deleted.',
+                        'Ten pokój jest usuwany.',
+                      )
+                    : _text(
+                        'This room has ended.',
+                        'Ten pokój został zakończony.',
+                      ))
               : null,
         );
       });
@@ -281,7 +328,14 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
         return;
       }
       final message = entry.message;
-      if (message != null && mounted) _showMessage(message, isError: true);
+      if (message != null && mounted) {
+        _showMessage(
+          _copy.isPolish
+              ? 'Nie udało się uruchomić transmisji. Spróbuj ponownie.'
+              : message,
+          isError: true,
+        );
+      }
     } finally {
       if (mounted) setState(() => _startingVoice = false);
     }
@@ -305,7 +359,10 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
     } catch (_) {
       if (!mounted) return;
       _showMessage(
-        _voice.errorMessage ?? 'Could not join live audio. Please try again.',
+        _text(
+          'Could not join live audio. Please try again.',
+          'Nie udało się połączyć z transmisją. Spróbuj ponownie.',
+        ),
         isError: true,
       );
     }
@@ -314,14 +371,22 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
   /// The mic can't publish right now — say why instead of a dead control.
   void _explainMicState(RoomMicAffordance affordance) {
     final message = switch (affordance) {
-      RoomMicAffordance.connecting => 'Connecting to live audio…',
-      RoomMicAffordance.listenOnly =>
+      RoomMicAffordance.connecting => _text(
+        'Connecting to live audio…',
+        'Łączenie z transmisją…',
+      ),
+      RoomMicAffordance.listenOnly => _text(
         "You're listening — the host decides who joins the stage.",
-      RoomMicAffordance.waitingForHost =>
-        _entry.message ?? _entry.authority.waitingExplanation,
-      RoomMicAffordance.unavailable =>
-        _voice.errorMessage ??
-            'Live audio is not connected. Leave and rejoin to retry.',
+        'Słuchasz — to prowadzący decyduje, kto dołącza do sceny.',
+      ),
+      RoomMicAffordance.waitingForHost => _entryMessage(
+        _entry.authority.waitingExplanation,
+        'Poczekaj, aż prowadzący rozpocznie transmisję.',
+      ),
+      RoomMicAffordance.unavailable => _text(
+        'Live audio is not connected. Tap the microphone to retry.',
+        'Brak połączenia z transmisją. Dotknij mikrofonu, aby spróbować ponownie.',
+      ),
       RoomMicAffordance.live ||
       RoomMicAffordance.muted ||
       RoomMicAffordance.startVoice => '',
@@ -330,11 +395,16 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
     _showMessage(message);
   }
 
-  Future<void> _toggleMic() async {
+  Future<void> _toggleMic({bool microphonePrepared = false}) async {
     // `setOwnRoomParticipantMute` is refused on a room that is not live; the
     // affordance already prevents this call, and the guard keeps it true.
     final roomId = widget.room.id;
     if (!_isCurrentMuteOperation(roomId)) return;
+    if (_voice.isMuted &&
+        !microphonePrepared &&
+        !await _prepareMicrophoneFromUserGesture()) {
+      return;
+    }
     final outcome = await _muteCoordinator.toggle(
       roomId: roomId,
       isOperationCurrent: () => _isCurrentMuteOperation(roomId),
@@ -353,11 +423,20 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
         break;
       case RoomMuteOutcome.mutedLocally:
         _showMessage(
-          "You're muted. Room status couldn't sync; try again.",
+          _text(
+            "You're muted. Room status couldn't sync; try again.",
+            'Mikrofon jest wyciszony, ale nie udało się zsynchronizować statusu. Spróbuj ponownie.',
+          ),
           isError: true,
         );
       case RoomMuteOutcome.sessionEnded:
-        _showMessage('This room is no longer live.', isError: true);
+        _showMessage(
+          _text(
+            'This room is no longer live.',
+            'Ten pokój nie jest już aktywny.',
+          ),
+          isError: true,
+        );
         await _leaveCoordinator.leave(
           disconnectAudio: _voice.disconnect,
           navigateAway: () {
@@ -370,10 +449,52 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
         );
       case RoomMuteOutcome.failed:
         _showMessage(
-          'Could not change microphone state. Try again.',
+          _text(
+            'Could not change microphone state. Try again.',
+            'Nie udało się zmienić stanu mikrofonu. Spróbuj ponownie.',
+          ),
           isError: true,
         );
     }
+  }
+
+  Future<bool> _prepareMicrophoneFromUserGesture() async {
+    final permissions = await _voice.prepareMediaPermissionsFromUserGesture(
+      includeCamera: false,
+    );
+    if (!mounted) return false;
+    if (permissions[AppPermissionKind.microphone].isUsable) return true;
+    _showMessage(
+      _text(
+        'Microphone access is needed to speak. Enable it and try again.',
+        'Aby mówić, zezwól na dostęp do mikrofonu i spróbuj ponownie.',
+      ),
+      isError: true,
+    );
+    return false;
+  }
+
+  Future<void> _restorePublisherAudioFromUserGesture() async {
+    if (_roleReconnectInFlight ||
+        !_live ||
+        _ending ||
+        !await _prepareMicrophoneFromUserGesture()) {
+      return;
+    }
+    _rolePermissionRecovery?.cancel();
+    _roleReconnectInFlight = true;
+    try {
+      await _reconnectForRole();
+    } finally {
+      _roleReconnectInFlight = false;
+    }
+    if (!mounted ||
+        !_voice.isConnected ||
+        !_voice.canPublish ||
+        !_voice.isMuted) {
+      return;
+    }
+    await _toggleMic(microphonePrepared: true);
   }
 
   Future<void> _leaveRoom() async {
@@ -460,7 +581,12 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
     if (me == null || me.isSpeaker || me.isHost) return;
 
     if (!_room.handRaisingEnabled && !me.isHandRaised) {
-      _showMessage('The host has closed stage requests for this episode.');
+      _showMessage(
+        _text(
+          'The host has closed stage requests for this episode.',
+          'Prowadzący wyłączył zgłoszenia na scenę w tym odcinku.',
+        ),
+      );
       return;
     }
 
@@ -533,13 +659,15 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
   Future<void> _copyShareLink() async {
     await Clipboard.setData(ClipboardData(text: _shareLink));
     if (!mounted) return;
-    _showMessage('Invite link copied.');
+    _showMessage(
+      _text('Invite link copied.', 'Link z zaproszeniem skopiowany.'),
+    );
   }
 
   Future<void> _copyRoomId() async {
     await Clipboard.setData(ClipboardData(text: widget.room.id));
     if (!mounted) return;
-    _showMessage('Room ID copied.');
+    _showMessage(_text('Room ID copied.', 'Identyfikator pokoju skopiowany.'));
   }
 
   void _openShareSheet() {
@@ -578,7 +706,9 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
     );
 
     if (!mounted || saved != true) return;
-    _showMessage('Room settings updated.');
+    _showMessage(
+      _text('Room settings updated.', 'Ustawienia pokoju zapisane.'),
+    );
   }
 
   void _openOwnerMenu(List<RoomParticipant> participants) {
@@ -626,6 +756,7 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
   }
 
   void _showAnalytics(List<RoomParticipant> participants) {
+    final copy = _copy;
     final speakers = participants.where((p) => p.isSpeaker).length;
     final listeners = participants.where((p) => !p.isSpeaker).length;
     final hands = participants.where((p) => p.isHandRaised).length;
@@ -644,29 +775,32 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const YoModalSheetChrome(
-              sheetLabel: 'podcast analytics',
+            YoModalSheetChrome(
+              sheetLabel: copy.text('podcast analytics', 'statystyki podcastu'),
               surfaceColor: BroadcastRoomColors.surface,
             ),
-            const Text(
-              'Podcast analytics',
-              style: TextStyle(
+            Text(
+              copy.text('Podcast analytics', 'Statystyki podcastu'),
+              style: const TextStyle(
                 color: Colors.white,
                 fontSize: 22,
                 fontWeight: FontWeight.w900,
               ),
             ),
             const SizedBox(height: 6),
-            const Text(
-              'Live snapshot for this podcast.',
-              style: TextStyle(color: BroadcastRoomColors.muted),
+            Text(
+              copy.text(
+                'Live snapshot for this podcast.',
+                'Bieżące statystyki tego podcastu.',
+              ),
+              style: const TextStyle(color: BroadcastRoomColors.muted),
             ),
             const SizedBox(height: 20),
             Row(
               children: [
                 Expanded(
                   child: AnalyticsTile(
-                    label: 'Total',
+                    label: copy.text('Total', 'Łącznie'),
                     value: participants.length,
                     icon: Icons.groups_rounded,
                   ),
@@ -674,7 +808,7 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
                 const SizedBox(width: 10),
                 Expanded(
                   child: AnalyticsTile(
-                    label: 'Speaking',
+                    label: copy.text('Speaking', 'Na scenie'),
                     value: speakers,
                     icon: Icons.graphic_eq_rounded,
                   ),
@@ -686,7 +820,7 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
               children: [
                 Expanded(
                   child: AnalyticsTile(
-                    label: 'Listening',
+                    label: copy.text('Listening', 'Słuchacze'),
                     value: listeners,
                     icon: Icons.headphones_rounded,
                   ),
@@ -694,7 +828,7 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
                 const SizedBox(width: 10),
                 Expanded(
                   child: AnalyticsTile(
-                    label: 'Hands',
+                    label: copy.text('Hands', 'Zgłoszenia'),
                     value: hands,
                     icon: Icons.back_hand_rounded,
                   ),
@@ -709,30 +843,37 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
 
   Future<void> _confirmEndBroadcast() async {
     if (!_isHost || _ending) return;
+    final copy = _copy;
 
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
         backgroundColor: BroadcastRoomColors.surface,
-        title: const Text(
-          'End podcast?',
-          style: TextStyle(color: Colors.white, fontWeight: FontWeight.w900),
+        title: Text(
+          copy.text('End podcast?', 'Zakończyć podcast?'),
+          style: const TextStyle(
+            color: Colors.white,
+            fontWeight: FontWeight.w900,
+          ),
         ),
-        content: const Text(
-          'Everyone will be disconnected, the room will disappear from Discover and this podcast will be marked as closed.',
-          style: TextStyle(color: BroadcastRoomColors.muted, height: 1.4),
+        content: Text(
+          copy.text(
+            'Everyone will be disconnected, the room will disappear from Discover and this podcast will be marked as closed.',
+            'Wszyscy zostaną rozłączeni, pokój zniknie z sekcji Odkrywaj, a podcast zostanie oznaczony jako zakończony.',
+          ),
+          style: const TextStyle(color: BroadcastRoomColors.muted, height: 1.4),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: const Text('Cancel'),
+            child: Text(copy.text('Cancel', 'Anuluj')),
           ),
           FilledButton(
             onPressed: () => Navigator.of(dialogContext).pop(true),
             style: FilledButton.styleFrom(
               backgroundColor: BroadcastRoomColors.accent,
             ),
-            child: const Text('End podcast'),
+            child: Text(copy.text('End podcast', 'Zakończ podcast')),
           ),
         ],
       ),
@@ -758,30 +899,37 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
 
   Future<void> _confirmDeleteRoom() async {
     if (!_isHost || _ending) return;
+    final copy = _copy;
 
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
         backgroundColor: BroadcastRoomColors.surface,
-        title: const Text(
-          'Delete room permanently?',
-          style: TextStyle(color: Colors.white, fontWeight: FontWeight.w900),
+        title: Text(
+          copy.text('Delete room permanently?', 'Trwale usunąć pokój?'),
+          style: const TextStyle(
+            color: Colors.white,
+            fontWeight: FontWeight.w900,
+          ),
         ),
-        content: const Text(
-          'This removes the podcast, participants and room messages. This action cannot be undone.',
-          style: TextStyle(color: BroadcastRoomColors.muted, height: 1.4),
+        content: Text(
+          copy.text(
+            'This removes the podcast, participants and room messages. This action cannot be undone.',
+            'Podcast, lista uczestników i wiadomości z pokoju zostaną usunięte. Tej operacji nie można cofnąć.',
+          ),
+          style: const TextStyle(color: BroadcastRoomColors.muted, height: 1.4),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: const Text('Cancel'),
+            child: Text(copy.text('Cancel', 'Anuluj')),
           ),
           FilledButton(
             onPressed: () => Navigator.of(dialogContext).pop(true),
             style: FilledButton.styleFrom(
               backgroundColor: const Color(0xFFB71C35),
             ),
-            child: const Text('Delete permanently'),
+            child: Text(copy.text('Delete permanently', 'Usuń trwale')),
           ),
         ],
       ),
@@ -806,18 +954,14 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
   }
 
   String _readableError(Object error) {
-    // Server refusals carry product copy in .message; the
-    // "[firebase_functions/…]" prefix is developer noise.
-    if (error is FirebaseFunctionsException) {
-      final message = error.message?.trim();
-      if (message != null && message.isNotEmpty) return message;
-      return 'Something went wrong. Please try again.';
-    }
-    return error
-        .toString()
-        .replaceFirst('Bad state: ', '')
-        .replaceFirst('Invalid argument(s): ', '')
-        .replaceFirst('Exception: ', '');
+    return friendlyErrorMessage(
+      error,
+      copy: _copy,
+      fallback: _text(
+        'Something went wrong. Please try again.',
+        'Coś poszło nie tak. Spróbuj ponownie.',
+      ),
+    );
   }
 
   void _showMessage(String message, {bool isError = false}) {
@@ -849,6 +993,7 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
     required List<RoomParticipant> raised,
     required bool desktop,
   }) {
+    final copy = _copy;
     const accent = BroadcastRoomColors.accent;
     final micBusy =
         _voice.muteChangeInProgress ||
@@ -868,7 +1013,7 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
     if (affordance == RoomMicAffordance.startVoice) {
       primary = RoomDockButton(
         icon: Icons.graphic_eq_rounded,
-        label: 'Start voice',
+        label: copy.text('Start voice', 'Rozpocznij transmisję'),
         style: RoomDockStyle.accent,
         accentColor: accent,
         showSpinner: micBusy,
@@ -877,13 +1022,16 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
     } else if (affordance == RoomMicAffordance.waitingForHost) {
       primary = RoomDockButton(
         icon: Icons.mic_off_rounded,
-        label: 'Not live',
+        label: copy.text('Not live', 'Nieaktywne'),
         style: RoomDockStyle.neutral,
         accentColor: accent,
         onTap: _ending
             ? null
             : () => _showMessage(
-                _entry.message ?? _entry.authority.waitingExplanation,
+                _entryMessage(
+                  _entry.authority.waitingExplanation,
+                  'Poczekaj, aż prowadzący rozpocznie transmisję.',
+                ),
               ),
       );
     } else if (canSpeak) {
@@ -894,10 +1042,16 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
           _ => micMuted ? Icons.mic_off_rounded : Icons.mic_rounded,
         },
         label: switch (affordance) {
-          RoomMicAffordance.connecting => 'Connecting…',
-          RoomMicAffordance.listenOnly => 'Listening',
-          RoomMicAffordance.unavailable => 'Audio off',
-          _ => micMuted ? 'Unmute' : 'Mute',
+          RoomMicAffordance.connecting => copy.text('Connecting…', 'Łączenie…'),
+          RoomMicAffordance.listenOnly => copy.text('Listening', 'Słuchasz'),
+          RoomMicAffordance.unavailable => copy.text(
+            'Audio off',
+            'Dźwięk wyłączony',
+          ),
+          _ =>
+            micMuted
+                ? copy.text('Unmute', 'Włącz mikrofon')
+                : copy.text('Mute', 'Wycisz'),
         },
         style: switch (affordance) {
           RoomMicAffordance.live => RoomDockStyle.accent,
@@ -916,6 +1070,11 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
             ? (micBusy || !connected ? null : () => unawaited(_toggleMic()))
             : affordance == RoomMicAffordance.connecting
             ? null
+            : affordance == RoomMicAffordance.listenOnly ||
+                  affordance == RoomMicAffordance.unavailable
+            ? (micBusy
+                  ? null
+                  : () => unawaited(_restorePublisherAudioFromUserGesture()))
             : () => _explainMicState(affordance),
       );
     } else {
@@ -926,10 +1085,10 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
             ? Icons.back_hand_outlined
             : Icons.headphones_rounded,
         label: handRaised
-            ? 'Lower hand'
+            ? copy.text('Lower hand', 'Opuść rękę')
             : _room.handRaisingEnabled
-            ? 'Raise hand'
-            : 'Listening',
+            ? copy.text('Raise hand', 'Zgłoś się')
+            : copy.text('Listening', 'Słuchasz'),
         style: handRaised ? RoomDockStyle.accent : RoomDockStyle.neutral,
         accentColor: accent,
         onTap: _ending
@@ -939,7 +1098,10 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
             : _room.handRaisingEnabled
             ? null
             : () => _showMessage(
-                'The host has closed stage requests for this episode.',
+                copy.text(
+                  'The host has closed stage requests for this episode.',
+                  'Prowadzący wyłączył zgłoszenia na scenę w tym odcinku.',
+                ),
               ),
       );
     }
@@ -949,7 +1111,7 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
         primary,
         RoomDockButton(
           icon: Icons.forum_rounded,
-          label: 'Chat',
+          label: copy.text('Chat', 'Czat'),
           style: RoomDockStyle.neutral,
           accentColor: accent,
           onTap: _ending
@@ -965,7 +1127,12 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
         if (_isHost)
           RoomDockButton(
             icon: Icons.back_hand_rounded,
-            label: raised.isEmpty ? 'Requests' : 'Requests ${raised.length}',
+            label: raised.isEmpty
+                ? copy.text('Requests', 'Zgłoszenia')
+                : copy.text(
+                    'Requests ${raised.length}',
+                    'Zgłoszenia: ${raised.length}',
+                  ),
             style: raised.isEmpty
                 ? RoomDockStyle.neutral
                 : RoomDockStyle.accent,
@@ -983,7 +1150,7 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
         else
           RoomDockButton(
             icon: Icons.groups_rounded,
-            label: 'People',
+            label: copy.text('People', 'Osoby'),
             style: RoomDockStyle.neutral,
             accentColor: accent,
             onTap: _ending ? null : () => _openParticipants(participants),
@@ -995,7 +1162,9 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
           const RoomDockDivider(),
           RoomDockButton(
             icon: _isHost ? Icons.stop_circle_rounded : Icons.logout_rounded,
-            label: _isHost ? 'End' : 'Leave',
+            label: _isHost
+                ? copy.text('End', 'Zakończ')
+                : copy.text('Leave', 'Wyjdź'),
             style: RoomDockStyle.danger,
             accentColor: accent,
             onTap: _ending
@@ -1011,6 +1180,7 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final desktop = RoomWorkspace.usesDesktopLayout(context);
     final fillPodcastStage =
         MediaQuery.sizeOf(context).width >= 700 &&
@@ -1112,12 +1282,18 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
                           identity: SpaceIdentity.podcast,
                           title: _room.name,
                           subtitle: _live
-                              ? 'LIVE · ${(_room.showFormat?.label ?? 'PODCAST').toUpperCase()}'
-                              : 'PODCAST STUDIO · NOT LIVE',
+                              ? copy.text(
+                                  'LIVE · ${(_room.showFormat?.label ?? 'PODCAST').toUpperCase()}',
+                                  'NA ŻYWO · ${_localizedShowFormat(_room.showFormat, copy).toUpperCase()}',
+                                )
+                              : copy.text(
+                                  'PODCAST STUDIO · NOT LIVE',
+                                  'STUDIO PODCASTOWE · NIEAKTYWNE',
+                                ),
                           speaking: _live ? stageSpeakers.length : 0,
                           listeners: listeners.length,
-                          speakingLabel: 'On stage',
-                          listenersLabel: 'Audience',
+                          speakingLabel: copy.text('On stage', 'Na scenie'),
+                          listenersLabel: copy.text('Audience', 'Publiczność'),
                           onBack: () => Navigator.of(context).pop(),
                           onSpeakingTap: () => _openParticipants(
                             participants,
@@ -1129,7 +1305,10 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
                           ),
                           actions: [
                             IconButton(
-                              tooltip: 'Share room',
+                              tooltip: copy.text(
+                                'Share room',
+                                'Udostępnij pokój',
+                              ),
                               onPressed: _openShareSheet,
                               color: Colors.white,
                               icon: const Icon(
@@ -1139,7 +1318,10 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
                             ),
                             if (_isHost)
                               IconButton(
-                                tooltip: 'Manage podcast',
+                                tooltip: copy.text(
+                                  'Manage podcast',
+                                  'Zarządzaj podcastem',
+                                ),
                                 onPressed: () => _openOwnerMenu(participants),
                                 color: Colors.white,
                                 icon: const Icon(Icons.more_vert_rounded),
@@ -1198,9 +1380,11 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
                               speakers: stageSpeakers,
                               identity: SpaceIdentity.podcast,
                               fill: fillPodcastStage,
-                              title: 'Live stage',
-                              emptyMessage:
-                                  'The microphones are ready for this episode.',
+                              title: copy.text('Live stage', 'Scena na żywo'),
+                              emptyMessage: copy.text(
+                                'The microphones are ready for this episode.',
+                                'Mikrofony są gotowe na ten odcinek.',
+                              ),
                               onOverflowTap: () => _openParticipants(
                                 participants,
                                 initialFilter: 'speakers',
@@ -1286,6 +1470,18 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
     );
     return YoImmersiveDarkSurface(child: content);
   }
+}
+
+String _localizedShowFormat(ShowFormat? format, AppLocalizations copy) {
+  if (format == null) return 'Podcast';
+  if (!copy.isPolish) return format.label;
+  return switch (format) {
+    ShowFormat.solo => 'Solo',
+    ShowFormat.interview => 'Wywiad',
+    ShowFormat.panel => 'Panel',
+    ShowFormat.qAndA => 'Pytania i odpowiedzi',
+    ShowFormat.openDiscussion => 'Otwarta dyskusja',
+  };
 }
 
 extension _FirstOrNullExtension<T> on Iterable<T> {

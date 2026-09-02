@@ -12,10 +12,7 @@ import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 void main() {
   late FakeFirebaseFirestore db;
 
-  Future<VoiceRoom> roomFrom(
-    String id,
-    Map<String, dynamic> data,
-  ) async {
+  Future<VoiceRoom> roomFrom(String id, Map<String, dynamic> data) async {
     await db.collection('rooms').doc(id).set({
       'hostId': 'host',
       'hostName': 'Host',
@@ -32,9 +29,7 @@ void main() {
       'experience': 'community',
       ...data,
     });
-    return VoiceRoom.fromFirestore(
-      await db.collection('rooms').doc(id).get(),
-    );
+    return VoiceRoom.fromFirestore(await db.collection('rooms').doc(id).get());
   }
 
   setUp(() => db = FakeFirebaseFirestore());

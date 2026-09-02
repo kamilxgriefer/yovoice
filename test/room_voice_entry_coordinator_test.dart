@@ -27,6 +27,7 @@ VoiceRoom _room({
   bool isLive = false,
   RoomStatus status = RoomStatus.active,
   bool deletionInProgress = false,
+  String experience = 'community',
 }) {
   return VoiceRoom(
     id: id,
@@ -52,6 +53,7 @@ VoiceRoom _room({
     createdAt: null,
     updatedAt: null,
     deletionInProgress: deletionInProgress,
+    experience: experience,
   );
 }
 
@@ -80,8 +82,9 @@ class _Harness {
         if (error != null) throw error;
         _server = _server.withLiveness(true);
       },
-      joinRoom: (roomId) async {
+      joinRoom: (roomId, {startMuted = false}) async {
         events.add('join:$roomId');
+        joinMutedFlags.add(startMuted);
         final error = joinError;
         if (error != null) throw error;
         return _server;
@@ -94,30 +97,28 @@ class _Harness {
   final Object? startError;
   final Object? joinError;
   final List<String> events = [];
+  final List<bool> joinMutedFlags = [];
   VoiceRoom _server;
   late final RoomVoiceEntryCoordinator coordinator;
 }
 
 void main() {
-  test(
-    'a dormant room is made live and joined before anything could ask for a '
-    'token',
-    () async {
-      final harness = _Harness();
+  test('a dormant room is made live and joined before anything could ask for a '
+      'token', () async {
+    final harness = _Harness();
 
-      final entry = await harness.coordinator.enter(_room());
+    final entry = await harness.coordinator.enter(_room());
 
-      expect(harness.events, [
-        'read:room-1',
-        'authority:room-1',
-        'start:room-1',
-        'join:room-1',
-      ]);
-      expect(entry.outcome, RoomVoiceEntryOutcome.started);
-      expect(entry.voiceIsLive, isTrue);
-      expect(entry.room.isLive, isTrue);
-    },
-  );
+    expect(harness.events, [
+      'read:room-1',
+      'authority:room-1',
+      'start:room-1',
+      'join:room-1',
+    ]);
+    expect(entry.outcome, RoomVoiceEntryOutcome.started);
+    expect(entry.voiceIsLive, isTrue);
+    expect(entry.room.isLive, isTrue);
+  });
 
   test('an already-live room is joined and never written to', () async {
     final harness = _Harness(server: _room(isLive: true));
@@ -131,6 +132,61 @@ void main() {
       reason: 'both rule branches require isLive to be false to start',
     );
     expect(entry.outcome, RoomVoiceEntryOutcome.live);
+  });
+
+  test('the explicit prejoin mute choice reaches the roster join', () async {
+    final harness = _Harness(server: _room(isLive: true));
+
+    await harness.coordinator.enter(_room(isLive: true), startMuted: true);
+
+    expect(harness.joinMutedFlags, <bool>[true]);
+  });
+
+  test('community entry keeps the microphone permission gate', () {
+    final harness = _Harness(server: _room(isLive: true));
+
+    expect(
+      harness.coordinator.requiresMicrophoneForInitialEntry(
+        _room(isLive: true),
+      ),
+      isTrue,
+    );
+  });
+
+  test('broadcast audience entry does not require microphone access', () {
+    final coordinator = RoomVoiceEntryCoordinator(
+      readRoom: (_) async => _room(isLive: true, experience: 'broadcast'),
+      resolveAuthority: (_) async => RoomVoiceStartAuthority.none,
+      startVoice: (_) async {},
+      joinRoom: (_, {startMuted = false}) async =>
+          _room(isLive: true, experience: 'broadcast'),
+      currentUserId: () => 'listener',
+    );
+
+    expect(
+      coordinator.requiresMicrophoneForInitialEntry(
+        _room(isLive: true, experience: 'broadcast'),
+      ),
+      isFalse,
+    );
+  });
+
+  test('broadcast host entry keeps the microphone permission gate', () {
+    final coordinator = RoomVoiceEntryCoordinator(
+      readRoom: (_) async => _room(isLive: true, experience: 'broadcast'),
+      resolveAuthority: (_) async => RoomVoiceStartAuthority.host,
+      startVoice: (_) async {},
+      joinRoom: (_, {startMuted = false}) async =>
+          _room(isLive: true, experience: 'broadcast'),
+      currentUserId: () => 'host',
+    );
+
+    expect(
+      coordinator.requiresMicrophoneForInitialEntry(
+        _room(isLive: true, experience: 'broadcast'),
+      ),
+      isTrue,
+    );
   });
 
   test(
@@ -200,7 +256,11 @@ void main() {
 
       final entry = await harness.coordinator.enter(_room());
 
-      expect(harness.events, ['read:room-1', 'authority:room-1', 'start:room-1']);
+      expect(harness.events, [
+        'read:room-1',
+        'authority:room-1',
+        'start:room-1',
+      ]);
       expect(entry.outcome, RoomVoiceEntryOutcome.failed);
       expect(entry.voiceIsLive, isFalse);
       expect(
@@ -225,41 +285,35 @@ void main() {
     },
   );
 
-  test(
-    'a failed refresh falls back to the document we were handed rather than '
-    'blocking entry',
-    () async {
-      final harness = _Harness(readError: StateError('offline'));
+  test('a failed refresh falls back to the document we were handed rather than '
+      'blocking entry', () async {
+    final harness = _Harness(readError: StateError('offline'));
 
-      final entry = await harness.coordinator.enter(_room(isLive: true));
+    final entry = await harness.coordinator.enter(_room(isLive: true));
 
-      expect(harness.events, ['read:room-1', 'join:room-1']);
-      expect(entry.outcome, RoomVoiceEntryOutcome.live);
-    },
-  );
+    expect(harness.events, ['read:room-1', 'join:room-1']);
+    expect(entry.outcome, RoomVoiceEntryOutcome.live);
+  });
 
-  test(
-    'a raw Firestore refusal is translated, never shown verbatim — this is '
-    'the delivery vehicle for every failure on the entry path',
-    () async {
-      final harness = _Harness(
-        joinError: FirebaseException(
-          plugin: 'cloud_firestore',
-          code: 'permission-denied',
-          message:
-              'The caller does not have permission to execute the specified '
-              'operation.',
-        ),
-      );
+  test('a raw Firestore refusal is translated, never shown verbatim — this is '
+      'the delivery vehicle for every failure on the entry path', () async {
+    final harness = _Harness(
+      joinError: FirebaseException(
+        plugin: 'cloud_firestore',
+        code: 'permission-denied',
+        message:
+            'The caller does not have permission to execute the specified '
+            'operation.',
+      ),
+    );
 
-      final entry = await harness.coordinator.enter(_room());
+    final entry = await harness.coordinator.enter(_room());
 
-      expect(entry.outcome, RoomVoiceEntryOutcome.failed);
-      expect(entry.message, 'You do not have access to this room right now.');
-      expect(entry.message, isNot(contains('cloud_firestore')));
-      expect(entry.message, isNot(contains('permission-denied')));
-    },
-  );
+    expect(entry.outcome, RoomVoiceEntryOutcome.failed);
+    expect(entry.message, 'You do not have access to this room right now.');
+    expect(entry.message, isNot(contains('cloud_firestore')));
+    expect(entry.message, isNot(contains('permission-denied')));
+  });
 
   test('an offline refusal says so in words a person can act on', () async {
     final harness = _Harness(
@@ -290,6 +344,30 @@ void main() {
       final entry = await harness.coordinator.enter(_room());
 
       expect(entry.message, 'This room is not currently live.');
+    },
+  );
+
+  test(
+    'unknown backend details never cross the room-entry UI boundary',
+    () async {
+      const secretShapedDetail = 'internal lease token=do-not-render';
+      final callableHarness = _Harness(
+        startError: _ServerRefusal(secretShapedDetail),
+      );
+      final stateHarness = _Harness(joinError: StateError(secretShapedDetail));
+
+      final callableEntry = await callableHarness.coordinator.enter(_room());
+      final stateEntry = await stateHarness.coordinator.enter(
+        _room(isLive: true),
+      );
+
+      expect(
+        callableEntry.message,
+        'The room changed while you were joining. Try again.',
+      );
+      expect(stateEntry.message, 'Could not join this room. Try again.');
+      expect(callableEntry.message, isNot(contains('do-not-render')));
+      expect(stateEntry.message, isNot(contains('do-not-render')));
     },
   );
 

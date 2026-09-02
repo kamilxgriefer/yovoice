@@ -48,6 +48,7 @@ class AppTheme {
       bodyColor: palette.textPrimary,
       displayColor: palette.textPrimary,
       decorationColor: palette.textPrimary,
+      fontFamilyFallback: AppTypography.fontFamilyFallback,
     );
     final colorScheme =
         ColorScheme.fromSeed(
@@ -103,6 +104,7 @@ class AppTheme {
       useMaterial3: true,
       brightness: brightness,
       fontFamily: AppTypography.fontFamily,
+      fontFamilyFallback: AppTypography.fontFamilyFallback,
       materialTapTargetSize: MaterialTapTargetSize.padded,
       visualDensity: VisualDensity.standard,
       scaffoldBackgroundColor: palette.background,

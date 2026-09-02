@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 
 /// The "✦ YO VOICE PREMIUM" eyebrow pill that opens every Premium
@@ -10,6 +11,7 @@ class PremiumBadgePill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final colors = Theme.of(context).colorScheme;
     return Container(
       key: const ValueKey('premium-badge-pill'),
@@ -37,7 +39,7 @@ class PremiumBadgePill extends StatelessWidget {
             color: colors.onPrimaryContainer,
           ),
           Text(
-            'YO VOICE PREMIUM',
+            copy.text('YO VOICE PREMIUM', 'YO VOICE PREMIUM'),
             style: TextStyle(
               color: colors.onPrimaryContainer,
               fontSize: 11,

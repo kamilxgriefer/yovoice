@@ -1,11 +1,12 @@
 import 'dart:async';
 import 'dart:typed_data';
 
-import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/audio/ui_sound.dart';
 import 'package:yovoice/core/audio/ui_sound_service.dart';
+import 'package:yovoice/core/helpers/error_messages.dart';
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/space_identity.dart';
 import 'package:yovoice/features/rooms/data/models/room_experience.dart';
 import 'package:yovoice/features/rooms/data/models/room_metadata.dart';
@@ -135,15 +136,15 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
   }
 
   String _readable(Object error) {
-    if (error is FirebaseFunctionsException) {
-      final message = error.message?.trim();
-      if (message != null && message.isNotEmpty) return message;
-      return 'Something went wrong. Please try again.';
-    }
-    return error
-        .toString()
-        .replaceFirst('Bad state: ', '')
-        .replaceFirst('Invalid argument(s): ', '');
+    final copy = AppLocalizations.of(context);
+    return friendlyErrorMessage(
+      error,
+      copy: copy,
+      fallback: copy.text(
+        'That operation could not be completed. Please try again.',
+        'Nie udało się wykonać tej operacji. Spróbuj ponownie.',
+      ),
+    );
   }
 
   // -------------------------------------------------------------- tags
@@ -297,11 +298,15 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
           }
         } catch (error) {
           if (mounted) {
+            final copy = AppLocalizations.of(context);
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
                 content: Text(
-                  'The room was created, but the cover did not upload: '
-                  '${_readable(error)}',
+                  copy.text(
+                    'The room was created, but the cover did not upload: '
+                        '${_readable(error)}',
+                    'Pokój został utworzony, ale nie udało się przesłać okładki. Możesz dodać ją później w ustawieniach pokoju.',
+                  ),
                 ),
               ),
             );
@@ -332,6 +337,7 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final identity = _identity;
     final content = Scaffold(
       backgroundColor: _background,
@@ -340,7 +346,12 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
         foregroundColor: Colors.white,
         centerTitle: true,
         title: Text(
-          _isBroadcast ? 'Create Podcast Room' : 'Create Community Room',
+          _isBroadcast
+              ? copy.text('Create Podcast Room', 'Utwórz pokój podcastowy')
+              : copy.text(
+                  'Create Community Room',
+                  'Utwórz pokój społecznościowy',
+                ),
           style: const TextStyle(fontWeight: FontWeight.w900),
         ),
       ),
@@ -376,7 +387,9 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
         onBack: _step == _Step.identity ? null : _back,
         onNext: _step == _Step.experience ? null : _next,
         onCreate: _step == _Step.experience ? _create : null,
-        createLabel: _isBroadcast ? 'Create Podcast Room' : 'Create Room',
+        createLabel: _isBroadcast
+            ? copy.text('Create Podcast Room', 'Utwórz pokój podcastowy')
+            : copy.text('Create Room', 'Utwórz pokój'),
       ),
     );
     return YoImmersiveDarkSurface(child: content);
@@ -385,6 +398,7 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
   // ---------------------------------------------------- step: identity
 
   Widget _identityStep(SpaceIdentity identity) {
+    final copy = AppLocalizations.of(context);
     return Form(
       key: _identityKey,
       child: Column(
@@ -392,7 +406,12 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
         children: [
           _Hero(identity: identity, isBroadcast: _isBroadcast),
           const SizedBox(height: 20),
-          _SectionLabel(_isBroadcast ? 'Show cover' : 'Room cover', identity),
+          _SectionLabel(
+            _isBroadcast
+                ? copy.text('Show cover', 'Okładka audycji')
+                : copy.text('Room cover', 'Okładka pokoju'),
+            identity,
+          ),
           const SizedBox(height: 10),
           _CoverPicker(
             identity: identity,
@@ -407,11 +426,18 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
           _Field(
             controller: _name,
             identity: identity,
-            label: _isBroadcast ? 'Show title' : 'Room name',
-            hint: _isBroadcast ? 'e.g. Flutter Weekly' : 'e.g. Late Night Talk',
+            label: _isBroadcast
+                ? copy.text('Show title', 'Tytuł audycji')
+                : copy.text('Room name', 'Nazwa pokoju'),
+            hint: _isBroadcast
+                ? copy.text('e.g. Flutter Weekly', 'np. Flutter Weekly')
+                : copy.text('e.g. Late Night Talk', 'np. Nocne rozmowy'),
             maxLength: 50,
             validator: (value) => (value?.trim().length ?? 0) < 3
-                ? 'Enter at least 3 characters'
+                ? copy.text(
+                    'Enter at least 3 characters',
+                    'Wpisz co najmniej 3 znaki',
+                  )
                 : null,
           ),
           if (_isBroadcast) ...[
@@ -419,19 +445,26 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
             _Field(
               controller: _topic,
               identity: identity,
-              label: 'Episode topic',
-              hint: 'What are you discussing today?',
+              label: copy.text('Episode topic', 'Temat odcinka'),
+              hint: copy.text(
+                'What are you discussing today?',
+                'O czym dzisiaj rozmawiacie?',
+              ),
               maxLength: RoomMetadataLimits.maxPodcastTopicLength,
-              validator: (value) =>
-                  (value?.trim().length ?? 0) < 3 ? 'Add a short topic' : null,
+              validator: (value) => (value?.trim().length ?? 0) < 3
+                  ? copy.text('Add a short topic', 'Dodaj krótki temat')
+                  : null,
             ),
           ],
           const SizedBox(height: 14),
           _Field(
             controller: _description,
             identity: identity,
-            label: 'Description',
-            hint: 'Tell people what to expect',
+            label: copy.text('Description', 'Opis'),
+            hint: copy.text(
+              'Tell people what to expect',
+              'Powiedz, czego można się spodziewać',
+            ),
             maxLength: 160,
             maxLines: 3,
           ),
@@ -443,14 +476,15 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
   // ---------------------------------------------------- step: audience
 
   Widget _audienceStep(SpaceIdentity identity) {
+    final copy = AppLocalizations.of(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _SectionLabel('Category', identity),
+        _SectionLabel(copy.text('Category', 'Kategoria'), identity),
         const SizedBox(height: 10),
         _Dropdown(
           identity: identity,
-          label: 'Category',
+          label: copy.text('Category', 'Kategoria'),
           value: _category,
           values: const [
             'talk',
@@ -463,11 +497,14 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
           onChanged: (value) => setState(() => _category = value),
         ),
         const SizedBox(height: 18),
-        _SectionLabel('Topic tags', identity),
+        _SectionLabel(copy.text('Topic tags', 'Tagi tematyczne'), identity),
         const SizedBox(height: 6),
         Text(
-          'Up to ${RoomMetadataLimits.maxTopicTags}. These help people find '
-          'the room; they never decide who may join.',
+          copy.text(
+            'Up to ${RoomMetadataLimits.maxTopicTags}. These help people find '
+                'the room; they never decide who may join.',
+            'Maksymalnie ${RoomMetadataLimits.maxTopicTags}. Ułatwiają znalezienie pokoju, ale nie decydują o tym, kto może dołączyć.',
+          ),
           style: const TextStyle(color: _muted, fontSize: 12.5, height: 1.35),
         ),
         const SizedBox(height: 10),
@@ -477,8 +514,8 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
               child: _Field(
                 controller: _tagInput,
                 identity: identity,
-                label: 'Add a tag',
-                hint: 'e.g. flutter',
+                label: copy.text('Add a tag', 'Dodaj tag'),
+                hint: copy.text('e.g. flutter', 'np. flutter'),
                 maxLength: RoomMetadataLimits.maxTopicTagLength,
                 onSubmitted: (_) => _addTag(),
               ),
@@ -495,7 +532,7 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
                   side: BorderSide(color: identity.primary),
                   shape: const StadiumBorder(),
                 ),
-                child: const Text('Add'),
+                child: Text(copy.text('Add', 'Dodaj')),
               ),
             ),
           ],
@@ -519,11 +556,17 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
           ),
         ],
         const SizedBox(height: 20),
-        _SectionLabel('Intended audience', identity),
+        _SectionLabel(
+          copy.text('Intended audience', 'Docelowa publiczność'),
+          identity,
+        ),
         const SizedBox(height: 6),
-        const Text(
-          'Descriptive only. Anyone may still join a public room.',
-          style: TextStyle(color: _muted, fontSize: 12.5, height: 1.35),
+        Text(
+          copy.text(
+            'Descriptive only. Anyone may still join a public room.',
+            'To tylko opis. Do publicznego pokoju nadal może dołączyć każdy.',
+          ),
+          style: const TextStyle(color: _muted, fontSize: 12.5, height: 1.35),
         ),
         const SizedBox(height: 10),
         Wrap(
@@ -533,18 +576,18 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
             for (final audience in TargetAudience.values)
               _ChoiceChip(
                 identity: identity,
-                label: audience.label,
+                label: _targetAudienceLabel(audience, copy),
                 selected: _targetAudience == audience,
                 onTap: () => setState(() => _targetAudience = audience),
               ),
           ],
         ),
         const SizedBox(height: 20),
-        _SectionLabel('Visibility', identity),
+        _SectionLabel(copy.text('Visibility', 'Widoczność'), identity),
         const SizedBox(height: 10),
         _Dropdown(
           identity: identity,
-          label: 'Visibility',
+          label: copy.text('Visibility', 'Widoczność'),
           value: _visibility,
           values: const ['public', 'private'],
           onChanged: (value) => setState(() => _visibility = value),
@@ -552,7 +595,7 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
         const SizedBox(height: 14),
         _Dropdown(
           identity: identity,
-          label: 'Language',
+          label: copy.text('Language', 'Język'),
           value: _language,
           values: const [
             'English',
@@ -571,17 +614,22 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
   // -------------------------------------------------- step: experience
 
   Widget _experienceStep(SpaceIdentity identity) {
+    final copy = AppLocalizations.of(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _SectionLabel(
-          _isBroadcast ? 'Audience capacity' : 'Voice capacity',
+          _isBroadcast
+              ? copy.text('Audience capacity', 'Limit publiczności')
+              : copy.text('Voice capacity', 'Limit uczestników rozmowy'),
           identity,
         ),
         const SizedBox(height: 10),
         _Dropdown(
           identity: identity,
-          label: _isBroadcast ? 'Audience capacity' : 'Voice capacity',
+          label: _isBroadcast
+              ? copy.text('Audience capacity', 'Limit publiczności')
+              : copy.text('Voice capacity', 'Limit uczestników rozmowy'),
           value: _maxParticipants?.toString() ?? 'Unlimited',
           values: const ['10', '25', '50', '100', 'Unlimited'],
           onChanged: (value) => setState(
@@ -592,16 +640,21 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
         ),
         const SizedBox(height: 20),
         if (!_isBroadcast) ...[
-          _SectionLabel('Room lifecycle', identity),
+          _SectionLabel(
+            copy.text('Room lifecycle', 'Działanie pokoju'),
+            identity,
+          ),
           const SizedBox(height: 10),
           _LifecycleChoice(
             identity: identity,
             selected: _roomType == RoomType.community,
             icon: Icons.all_inclusive_rounded,
-            title: 'Stay open',
-            subtitle:
-                'People can keep talking after you leave. Voice sleeps when '
-                'the room becomes empty.',
+            title: copy.text('Stay open', 'Pozostaw otwarty'),
+            subtitle: copy.text(
+              'People can keep talking after you leave. Voice sleeps when '
+                  'the room becomes empty.',
+              'Rozmowa może trwać po Twoim wyjściu. Po opróżnieniu pokoju głos zostanie uśpiony.',
+            ),
             onTap: () => setState(() => _roomType = RoomType.community),
           ),
           const SizedBox(height: 10),
@@ -609,12 +662,18 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
             identity: identity,
             selected: _roomType == RoomType.temporary,
             icon: Icons.person_off_outlined,
-            title: 'End with host',
-            subtitle: 'Everyone is disconnected when you leave the room.',
+            title: copy.text('End with host', 'Zakończ z gospodarzem'),
+            subtitle: copy.text(
+              'Everyone is disconnected when you leave the room.',
+              'Po Twoim wyjściu wszyscy zostaną rozłączeni.',
+            ),
             onTap: () => setState(() => _roomType = RoomType.temporary),
           ),
           const SizedBox(height: 20),
-          _SectionLabel('Conversation style', identity),
+          _SectionLabel(
+            copy.text('Conversation style', 'Styl rozmowy'),
+            identity,
+          ),
           const SizedBox(height: 10),
           Wrap(
             spacing: 8,
@@ -623,7 +682,7 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
               for (final style in ConversationStyle.values)
                 _ChoiceChip(
                   identity: identity,
-                  label: style.label,
+                  label: _conversationStyleLabel(style, copy),
                   selected: _conversationStyle == style,
                   onTap: () => setState(() => _conversationStyle = style),
                 ),
@@ -633,12 +692,15 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
           _SwitchTile(
             identity: identity,
             value: _newcomerFriendly,
-            title: 'Newcomer friendly',
-            subtitle: 'Signals that first-time guests are welcome here.',
+            title: copy.text('Newcomer friendly', 'Przyjazny dla nowych osób'),
+            subtitle: copy.text(
+              'Signals that first-time guests are welcome here.',
+              'Informuje, że osoby odwiedzające pokój po raz pierwszy są mile widziane.',
+            ),
             onChanged: (value) => setState(() => _newcomerFriendly = value),
           ),
         ] else ...[
-          _SectionLabel('Show format', identity),
+          _SectionLabel(copy.text('Show format', 'Format audycji'), identity),
           const SizedBox(height: 10),
           Wrap(
             spacing: 8,
@@ -647,7 +709,7 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
               for (final format in ShowFormat.values)
                 _ChoiceChip(
                   identity: identity,
-                  label: format.label,
+                  label: _showFormatLabel(format, copy),
                   selected: _showFormat == format,
                   onTap: () => setState(() => _showFormat = format),
                 ),
@@ -657,19 +719,28 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
           _SwitchTile(
             identity: identity,
             value: _handRaisingEnabled,
-            title: 'Allow audience to raise hands',
-            subtitle: 'The host can invite selected listeners to the stage.',
+            title: copy.text(
+              'Allow audience to raise hands',
+              'Zezwól publiczności na zgłoszenia',
+            ),
+            subtitle: copy.text(
+              'The host can invite selected listeners to the stage.',
+              'Gospodarz może zapraszać wybranych słuchaczy na scenę.',
+            ),
             onChanged: (value) => setState(() => _handRaisingEnabled = value),
           ),
         ],
         const SizedBox(height: 20),
-        _SectionLabel('Room guidelines', identity),
+        _SectionLabel(copy.text('Room guidelines', 'Zasady pokoju'), identity),
         const SizedBox(height: 10),
         _Field(
           controller: _guidelines,
           identity: identity,
-          label: 'Guidelines',
-          hint: 'One or two lines on how this room runs',
+          label: copy.text('Guidelines', 'Zasady'),
+          hint: copy.text(
+            'One or two lines on how this room runs',
+            'Jedno lub dwa zdania o zasadach tego pokoju',
+          ),
           maxLength: RoomMetadataLimits.maxGuidelinesLength,
           maxLines: 3,
         ),
@@ -680,28 +751,100 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
   }
 
   List<(String, String)> _summaryLines() {
+    final copy = AppLocalizations.of(context);
     return <(String, String)>[
-      (_isBroadcast ? 'Show' : 'Room', _name.text.trim()),
-      if (_isBroadcast) ('Episode', _topic.text.trim()),
-      ('Cover', _coverBytes == null ? 'None' : 'Selected'),
-      ('Category', _category),
-      if (_tags.isNotEmpty) ('Tags', _tags.join(', ')),
-      ('Audience', _targetAudience.label),
-      ('Visibility', _visibility),
-      ('Language', _language),
-      ('Capacity', _maxParticipants?.toString() ?? 'Unlimited'),
-      if (!_isBroadcast) ('Style', _conversationStyle.label),
+      (
+        _isBroadcast
+            ? copy.text('Show', 'Audycja')
+            : copy.text('Room', 'Pokój'),
+        _name.text.trim(),
+      ),
+      if (_isBroadcast) (copy.text('Episode', 'Odcinek'), _topic.text.trim()),
+      (
+        copy.text('Cover', 'Okładka'),
+        _coverBytes == null
+            ? copy.text('None', 'Brak')
+            : copy.text('Selected', 'Wybrana'),
+      ),
+      (
+        copy.text('Category', 'Kategoria'),
+        _localizedRoomOption(_category, copy),
+      ),
+      if (_tags.isNotEmpty) (copy.text('Tags', 'Tagi'), _tags.join(', ')),
+      (
+        copy.text('Audience', 'Publiczność'),
+        _targetAudienceLabel(_targetAudience, copy),
+      ),
+      (
+        copy.text('Visibility', 'Widoczność'),
+        _localizedRoomOption(_visibility, copy),
+      ),
+      (copy.text('Language', 'Język'), _localizedRoomOption(_language, copy)),
+      (
+        copy.text('Capacity', 'Limit uczestników'),
+        _maxParticipants?.toString() ?? copy.text('Unlimited', 'Bez limitu'),
+      ),
       if (!_isBroadcast)
         (
-          'Lifecycle',
-          _roomType == RoomType.community ? 'Stay open' : 'End with host',
+          copy.text('Style', 'Styl'),
+          _conversationStyleLabel(_conversationStyle, copy),
         ),
       if (!_isBroadcast)
-        ('Newcomer friendly', _newcomerFriendly ? 'Yes' : 'No'),
-      if (_isBroadcast) ('Format', _showFormat.label),
+        (
+          copy.text('Lifecycle', 'Działanie'),
+          _roomType == RoomType.community
+              ? copy.text('Stay open', 'Pozostaw otwarty')
+              : copy.text('End with host', 'Zakończ z gospodarzem'),
+        ),
+      if (!_isBroadcast)
+        (
+          copy.text('Newcomer friendly', 'Przyjazny dla nowych osób'),
+          _newcomerFriendly ? copy.text('Yes', 'Tak') : copy.text('No', 'Nie'),
+        ),
       if (_isBroadcast)
-        ('Raise hands', _handRaisingEnabled ? 'Allowed' : 'Off'),
+        (copy.text('Format', 'Format'), _showFormatLabel(_showFormat, copy)),
+      if (_isBroadcast)
+        (
+          copy.text('Raise hands', 'Zgłoszenia do głosu'),
+          _handRaisingEnabled
+              ? copy.text('Allowed', 'Włączone')
+              : copy.text('Off', 'Wyłączone'),
+        ),
     ];
+  }
+
+  String _targetAudienceLabel(TargetAudience audience, AppLocalizations copy) {
+    if (!copy.isPolish) return audience.label;
+    return switch (audience) {
+      TargetAudience.everyone => 'Dla wszystkich',
+      TargetAudience.newcomers => 'Dla nowych osób',
+      TargetAudience.enthusiasts => 'Dla entuzjastów',
+      TargetAudience.professionals => 'Dla profesjonalistów',
+    };
+  }
+
+  String _conversationStyleLabel(
+    ConversationStyle style,
+    AppLocalizations copy,
+  ) {
+    if (!copy.isPolish) return style.label;
+    return switch (style) {
+      ConversationStyle.casual => 'Swobodna',
+      ConversationStyle.focused => 'Skupiona',
+      ConversationStyle.networking => 'Networkingowa',
+      ConversationStyle.supportive => 'Wspierająca',
+    };
+  }
+
+  String _showFormatLabel(ShowFormat format, AppLocalizations copy) {
+    if (!copy.isPolish) return format.label;
+    return switch (format) {
+      ShowFormat.solo => 'Solo',
+      ShowFormat.interview => 'Wywiad',
+      ShowFormat.panel => 'Panel',
+      ShowFormat.qAndA => 'Pytania i odpowiedzi',
+      ShowFormat.openDiscussion => 'Otwarta dyskusja',
+    };
   }
 }
 
@@ -812,9 +955,18 @@ class _StepBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
+    final labels = [
+      copy.text('Identity', 'Tożsamość'),
+      copy.text('Audience', 'Publiczność'),
+      copy.text('Experience', 'Przebieg'),
+    ];
     final index = _Step.values.indexOf(step);
     return Semantics(
-      label: 'Step ${index + 1} of 3, ${_labels[index]}',
+      label: copy.text(
+        'Step ${index + 1} of 3, ${_labels[index]}',
+        'Krok ${index + 1} z 3: ${labels[index]}',
+      ),
       child: Padding(
         padding: const EdgeInsets.fromLTRB(18, 8, 18, 12),
         child: Row(
@@ -836,7 +988,7 @@ class _StepBar extends StatelessWidget {
                     ),
                     const SizedBox(height: 6),
                     Text(
-                      _labels[i],
+                      labels[i],
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
@@ -879,6 +1031,7 @@ class _BottomBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     return Container(
       color: const Color(0xFF171121),
       child: ResponsiveContentFrame(
@@ -904,7 +1057,7 @@ class _BottomBar extends StatelessWidget {
                       shape: const StadiumBorder(),
                       padding: const EdgeInsets.symmetric(horizontal: 22),
                     ),
-                    child: const Text('Back'),
+                    child: Text(copy.text('Back', 'Wstecz')),
                   ),
                 ),
                 const SizedBox(width: 10),
@@ -933,7 +1086,9 @@ class _BottomBar extends StatelessWidget {
                                   ),
                                 )
                               : Text(
-                                  onCreate != null ? createLabel : 'Continue',
+                                  onCreate != null
+                                      ? createLabel
+                                      : copy.text('Continue', 'Dalej'),
                                   style: const TextStyle(
                                     color: Colors.white,
                                     fontWeight: FontWeight.w900,
@@ -962,6 +1117,7 @@ class _Hero extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     return Container(
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
@@ -987,9 +1143,15 @@ class _Hero extends StatelessWidget {
           Expanded(
             child: Text(
               isBroadcast
-                  ? 'You control the stage. Listeners can request to speak.'
-                  : 'A free-flowing room where everyone can join the '
-                        'conversation.',
+                  ? copy.text(
+                      'You control the stage. Listeners can request to speak.',
+                      'Ty zarządzasz sceną. Słuchacze mogą poprosić o głos.',
+                    )
+                  : copy.text(
+                      'A free-flowing room where everyone can join the '
+                          'conversation.',
+                      'Swobodny pokój, w którym każdy może dołączyć do rozmowy.',
+                    ),
               style: const TextStyle(color: Colors.white, height: 1.4),
             ),
           ),
@@ -1025,13 +1187,16 @@ class _CoverPicker extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _AccessibleCoverPickerAction(
           enabled: !busy,
           busy: busy,
-          label: bytes == null ? 'Choose a cover image' : 'Replace cover image',
+          label: bytes == null
+              ? copy.text('Choose a cover image', 'Wybierz okładkę')
+              : copy.text('Replace cover image', 'Zmień okładkę'),
           onTap: onPick,
           child: AspectRatio(
             aspectRatio: 21 / 9,
@@ -1063,18 +1228,18 @@ class _CoverPicker extends StatelessWidget {
                       alignment: Alignment.center,
                       child: busy
                           ? const CircularProgressIndicator(color: Colors.white)
-                          : const Column(
+                          : Column(
                               mainAxisSize: MainAxisSize.min,
                               children: [
-                                Icon(
+                                const Icon(
                                   Icons.add_photo_alternate_rounded,
                                   color: Colors.white,
                                   size: 30,
                                 ),
-                                SizedBox(height: 8),
+                                const SizedBox(height: 8),
                                 Text(
-                                  'Choose cover',
-                                  style: TextStyle(
+                                  copy.text('Choose cover', 'Wybierz okładkę'),
+                                  style: const TextStyle(
                                     color: Colors.white,
                                     fontWeight: FontWeight.w800,
                                     height: 1.2,
@@ -1112,7 +1277,7 @@ class _CoverPicker extends StatelessWidget {
               TextButton(
                 onPressed: onPick,
                 style: TextButton.styleFrom(foregroundColor: identity.accent),
-                child: const Text('Retry'),
+                child: Text(copy.text('Retry', 'Spróbuj ponownie')),
               ),
             ],
           ),
@@ -1127,7 +1292,7 @@ class _CoverPicker extends StatelessWidget {
                 onPressed: onPick,
                 icon: Icon(Icons.swap_horiz_rounded, color: identity.accent),
                 label: Text(
-                  'Replace',
+                  copy.text('Replace', 'Zmień'),
                   style: TextStyle(color: identity.accent),
                 ),
               ),
@@ -1137,9 +1302,9 @@ class _CoverPicker extends StatelessWidget {
                   Icons.delete_outline_rounded,
                   color: Color(0xFFB6ACBB),
                 ),
-                label: const Text(
-                  'Remove',
-                  style: TextStyle(color: Color(0xFFB6ACBB)),
+                label: Text(
+                  copy.text('Remove', 'Usuń'),
+                  style: const TextStyle(color: Color(0xFFB6ACBB)),
                 ),
               ),
             ],
@@ -1176,6 +1341,7 @@ class _AccessibleCoverPickerActionState
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final onTap = widget.enabled ? widget.onTap : null;
     return Semantics(
       excludeSemantics: true,
@@ -1184,7 +1350,12 @@ class _AccessibleCoverPickerActionState
       enabled: widget.enabled,
       liveRegion: widget.busy,
       label: widget.label,
-      value: widget.busy ? 'Processing cover. Please wait.' : null,
+      value: widget.busy
+          ? copy.text(
+              'Processing cover. Please wait.',
+              'Przetwarzanie okładki. Chwileczkę.',
+            )
+          : null,
       onTap: onTap,
       child: InkWell(
         onTap: onTap,
@@ -1322,6 +1493,7 @@ class _Dropdown extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     return DropdownButtonFormField<String>(
       initialValue: value,
       dropdownColor: const Color(0xFF21172D),
@@ -1344,13 +1516,40 @@ class _Dropdown extends StatelessWidget {
         border: OutlineInputBorder(borderRadius: BorderRadius.circular(18)),
       ),
       items: values
-          .map((item) => DropdownMenuItem(value: item, child: Text(item)))
+          .map(
+            (item) => DropdownMenuItem(
+              value: item,
+              child: Text(_localizedRoomOption(item, copy)),
+            ),
+          )
           .toList(growable: false),
       onChanged: (value) {
         if (value != null) onChanged(value);
       },
     );
   }
+}
+
+String _localizedRoomOption(String value, AppLocalizations copy) {
+  if (!copy.isPolish) return value;
+  return switch (value) {
+    'talk' => 'Rozmowy',
+    'music' => 'Muzyka',
+    'gaming' => 'Gry',
+    'chill' => 'Na luzie',
+    'study' => 'Nauka',
+    'business' => 'Biznes',
+    'public' => 'Publiczny',
+    'private' => 'Prywatny',
+    'English' => 'Angielski',
+    'Polish' => 'Polski',
+    'Dutch' => 'Niderlandzki',
+    'German' => 'Niemiecki',
+    'French' => 'Francuski',
+    'Spanish' => 'Hiszpański',
+    'Unlimited' => 'Bez limitu',
+    _ => value,
+  };
 }
 
 class _ChoiceChip extends StatelessWidget {
@@ -1449,6 +1648,7 @@ class _Summary extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -1460,7 +1660,7 @@ class _Summary extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Before you create',
+            copy.text('Before you create', 'Przed utworzeniem'),
             style: TextStyle(
               color: identity.accent,
               fontWeight: FontWeight.w900,

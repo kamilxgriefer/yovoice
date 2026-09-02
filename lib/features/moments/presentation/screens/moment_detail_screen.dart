@@ -5,6 +5,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:share_plus/share_plus.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/home/data/services/home_feed_service.dart';
 import 'package:yovoice/features/moderation/data/services/content_report_service.dart';
@@ -106,6 +107,8 @@ class _MomentDetailScreenState extends State<MomentDetailScreen> {
   final FocusNode _goneBackFocus = FocusNode(debugLabel: 'Expired Moment back');
   final MomentExpiryAnnouncer _expiryAnnouncer = MomentExpiryAnnouncer();
   bool _sending = false;
+
+  AppLocalizations get _copy => AppLocalizations.of(context);
 
   String get _uid {
     try {
@@ -253,7 +256,10 @@ class _MomentDetailScreenState extends State<MomentDetailScreen> {
     _expiryAnnouncer.announce(
       context,
       transition: 'detail-gone-${widget.moment.id}',
-      message: 'Voice Moment is no longer available.',
+      message: _copy.text(
+        'Voice Moment is no longer available.',
+        'Ten Voice Moment nie jest już dostępny.',
+      ),
     );
     recoverMomentExpiryFocusAfterFrame(
       context: context,
@@ -298,7 +304,12 @@ class _MomentDetailScreenState extends State<MomentDetailScreen> {
   Future<void> _togglePlay() async {
     final moments = _moments;
     if (moments == null || !_moment.hasMediaReference) {
-      setState(() => _playbackError = 'This Moment has no audio to play.');
+      setState(
+        () => _playbackError = _copy.text(
+          'This Moment has no audio to play.',
+          'Ten Moment nie zawiera nagrania do odtworzenia.',
+        ),
+      );
       return;
     }
     final player = _ensurePlayer();
@@ -334,11 +345,14 @@ class _MomentDetailScreenState extends State<MomentDetailScreen> {
         if (!mounted || _missing) return;
         await player.play(UrlSource(uri.toString()));
       }
-    } catch (error) {
+    } catch (_) {
       if (!mounted) return;
       setState(() {
         _isPlaying = false;
-        _playbackError = 'This Moment could not be played. ($error)';
+        _playbackError = _copy.text(
+          'This Moment could not be played. Try again.',
+          'Nie udało się odtworzyć tego Momentu. Spróbuj ponownie.',
+        );
       });
     }
   }
@@ -360,23 +374,30 @@ class _MomentDetailScreenState extends State<MomentDetailScreen> {
     // website resolves ?moment= on yovoice.app.
     await SharePlus.instance.share(
       ShareParams(
-        text:
-            'Listen to ${_moment.authorName} on YO Voice: '
-            'https://yovoice.app/?moment=${_moment.id}',
+        text: _copy.text(
+          'Listen to ${_moment.authorName} on YO Voice: '
+              'https://yovoice.app/?moment=${_moment.id}',
+          'Posłuchaj ${_moment.authorName} w YO Voice: '
+              'https://yovoice.app/?moment=${_moment.id}',
+        ),
       ),
     );
   }
 
   Future<void> _report() async {
+    final copy = _copy;
     await reportContent(
       context: context,
       service: widget.contentReportService,
       content: ReportedContent.voiceMoment(momentId: _moment.id),
-      title: 'Report this Voice Moment',
-      subtitle:
-          'Your report goes to the YO Voice moderation team with this '
-          'Moment attached. ${_moment.authorName} is not told who reported '
-          'it.',
+      title: copy.text('Report this Voice Moment', 'Zgłoś ten Voice Moment'),
+      subtitle: copy.text(
+        'Your report goes to the YO Voice moderation team with this '
+            'Moment attached. ${_moment.authorName} is not told who reported '
+            'it.',
+        'Zgłoszenie wraz z tym Momentem trafi do zespołu moderacji YO Voice. '
+            '${_moment.authorName} nie dowie się, kto je wysłał.',
+      ),
     );
   }
 
@@ -391,23 +412,27 @@ class _MomentDetailScreenState extends State<MomentDetailScreen> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) {
+        final copy = AppLocalizations.of(dialogContext);
         final palette = dialogContext.appPalette;
         final colors = Theme.of(dialogContext).colorScheme;
         return AlertDialog(
           backgroundColor: palette.surfaceRaised,
           title: Text(
-            'Delete this moment?',
+            copy.text('Delete this moment?', 'Usunąć ten Moment?'),
             style: TextStyle(color: palette.textPrimary),
           ),
           content: Text(
-            'This cannot be undone.',
+            copy.text(
+              'This cannot be undone.',
+              'Tej operacji nie można cofnąć.',
+            ),
             style: TextStyle(color: palette.textSecondary),
           ),
           actions: [
             TextButton(
               key: const ValueKey('moment-detail-delete-cancel'),
               onPressed: () => Navigator.of(dialogContext).pop(false),
-              child: const Text('Cancel'),
+              child: Text(copy.text('Cancel', 'Anuluj')),
             ),
             FilledButton(
               key: const ValueKey('moment-detail-delete-confirm'),
@@ -416,7 +441,7 @@ class _MomentDetailScreenState extends State<MomentDetailScreen> {
                 foregroundColor: colors.onError,
               ),
               onPressed: () => Navigator.of(dialogContext).pop(true),
-              child: const Text('Delete'),
+              child: Text(copy.text('Delete', 'Usuń')),
             ),
           ],
         );
@@ -443,9 +468,14 @@ class _MomentDetailScreenState extends State<MomentDetailScreen> {
       messenger
         ?..hideCurrentSnackBar()
         ..showSnackBar(
-          const SnackBar(
+          SnackBar(
             behavior: SnackBarBehavior.floating,
-            content: Text('The Moment could not be deleted. Try again.'),
+            content: Text(
+              _copy.text(
+                'The Moment could not be deleted. Try again.',
+                'Nie udało się usunąć Momentu. Spróbuj ponownie.',
+              ),
+            ),
           ),
         );
       return;
@@ -454,9 +484,11 @@ class _MomentDetailScreenState extends State<MomentDetailScreen> {
     messenger
       ?..hideCurrentSnackBar()
       ..showSnackBar(
-        const SnackBar(
+        SnackBar(
           behavior: SnackBarBehavior.floating,
-          content: Text('Voice Moment deleted.'),
+          content: Text(
+            _copy.text('Voice Moment deleted.', 'Voice Moment usunięty.'),
+          ),
         ),
       );
     navigator.maybePop();
@@ -475,7 +507,14 @@ class _MomentDetailScreenState extends State<MomentDetailScreen> {
       ScaffoldMessenger.maybeOf(context)
         ?..hideCurrentSnackBar()
         ..showSnackBar(
-          const SnackBar(content: Text('Could not post your comment.')),
+          SnackBar(
+            content: Text(
+              _copy.text(
+                'Could not post your comment. Try again.',
+                'Nie udało się dodać komentarza. Spróbuj ponownie.',
+              ),
+            ),
+          ),
         );
     } finally {
       if (mounted) setState(() => _sending = false);
@@ -561,12 +600,13 @@ class _MomentDetailScreenState extends State<MomentDetailScreen> {
   Widget _authorBlock() {
     final moment = _moment;
     final palette = context.appPalette;
-    final age = momentRelativeAge(moment.createdAt);
+    final copy = _copy;
+    final age = momentRelativeAge(moment.createdAt, copy: copy);
     // The author sees the availability fact even for a permanent Moment
     // ("Stays until deleted"); everyone else only a real countdown.
     final availability = _isOwn
-        ? momentAvailabilityLabel(moment.expiresAt)
-        : momentExpiryLabel(moment.expiresAt);
+        ? momentAvailabilityLabel(moment.expiresAt, copy: copy)
+        : momentExpiryLabel(moment.expiresAt, copy: copy);
     return Row(
       children: [
         AccessibleTapRegion(
@@ -576,8 +616,14 @@ class _MomentDetailScreenState extends State<MomentDetailScreen> {
             displayName: moment.authorName,
             photoUrl: moment.authorPhotoUrl,
           ),
-          semanticLabel: 'Open profile for ${moment.authorName}',
-          tooltip: 'Open ${moment.authorName}\'s profile',
+          semanticLabel: copy.text(
+            'Open profile for ${moment.authorName}',
+            'Otwórz profil: ${moment.authorName}',
+          ),
+          tooltip: copy.text(
+            'Open ${moment.authorName}\'s profile',
+            'Otwórz profil ${moment.authorName}',
+          ),
           circular: true,
           child: UserAvatar(
             radius: 23,
@@ -649,7 +695,7 @@ class _MomentDetailScreenState extends State<MomentDetailScreen> {
   Widget _captionHeading() {
     final caption = _moment.caption.trim();
     return Text(
-      caption.isEmpty ? 'Voice Moment' : caption,
+      caption.isEmpty ? _copy.text('Voice Moment', 'Voice Moment') : caption,
       maxLines: 6,
       overflow: TextOverflow.ellipsis,
       style: TextStyle(
@@ -666,6 +712,7 @@ class _MomentDetailScreenState extends State<MomentDetailScreen> {
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final copy = _copy;
     final totalSeconds = _duration?.inSeconds ?? moment.durationSeconds;
     final hasTotal = totalSeconds > 0;
     final progress = hasTotal
@@ -716,7 +763,9 @@ class _MomentDetailScreenState extends State<MomentDetailScreen> {
           const SizedBox(height: 18),
           Semantics(
             button: true,
-            label: _isPlaying ? 'Pause this Moment' : 'Play this Moment',
+            label: _isPlaying
+                ? copy.text('Pause this Moment', 'Wstrzymaj ten Moment')
+                : copy.text('Play this Moment', 'Odtwórz ten Moment'),
             child: Material(
               color: colors.primary,
               shape: const CircleBorder(),
@@ -756,6 +805,7 @@ class _MomentDetailScreenState extends State<MomentDetailScreen> {
     final moment = _moment;
     final feed = _feed;
     final canReport = _uid.isNotEmpty && !_isOwn;
+    final copy = _copy;
     return Wrap(
       spacing: 8,
       runSpacing: 8,
@@ -763,7 +813,9 @@ class _MomentDetailScreenState extends State<MomentDetailScreen> {
         if (feed == null)
           _ActionChip(
             icon: Icons.favorite_border_rounded,
-            label: moment.likeCount == 0 ? 'Like' : '${moment.likeCount}',
+            label: moment.likeCount == 0
+                ? copy.text('Like', 'Lubię to')
+                : '${moment.likeCount}',
             active: false,
             onTap: null,
           )
@@ -779,11 +831,16 @@ class _MomentDetailScreenState extends State<MomentDetailScreen> {
                 icon: liked
                     ? Icons.favorite_rounded
                     : Icons.favorite_border_rounded,
-                label: moment.likeCount == 0 ? 'Like' : '${moment.likeCount}',
+                label: moment.likeCount == 0
+                    ? copy.text('Like', 'Lubię to')
+                    : '${moment.likeCount}',
                 active: liked,
                 semanticLabel: liked
-                    ? 'Unlike this Moment'
-                    : 'Like this Moment',
+                    ? copy.text(
+                        'Unlike this Moment',
+                        'Usuń polubienie tego Momentu',
+                      )
+                    : copy.text('Like this Moment', 'Polub ten Moment'),
                 onTap: () => unawaited(_toggleLike(feed)),
               );
             },
@@ -792,37 +849,46 @@ class _MomentDetailScreenState extends State<MomentDetailScreen> {
           key: const ValueKey('moment-detail-comments'),
           icon: Icons.mode_comment_outlined,
           label: moment.commentCount == 0
-              ? 'Comment'
+              ? copy.text('Comment', 'Komentarz')
               : '${moment.commentCount}',
           active: false,
-          semanticLabel: 'Write a comment',
+          semanticLabel: copy.text('Write a comment', 'Napisz komentarz'),
           onTap: _composerFocus.requestFocus,
         ),
         _ActionChip(
           key: const ValueKey('moment-detail-share'),
           icon: Icons.share_outlined,
-          label: 'Share',
+          label: copy.text('Share', 'Udostępnij'),
           active: false,
-          semanticLabel: 'Share this Moment',
+          semanticLabel: copy.text(
+            'Share this Moment',
+            'Udostępnij ten Moment',
+          ),
           onTap: () => unawaited(_share()),
         ),
         if (canReport)
           _ActionChip(
             key: ValueKey('moment-detail-report-${moment.id}'),
             icon: Icons.flag_outlined,
-            label: 'Report',
+            label: copy.text('Report', 'Zgłoś'),
             active: false,
-            semanticLabel: 'Report this Voice Moment',
+            semanticLabel: copy.text(
+              'Report this Voice Moment',
+              'Zgłoś ten Voice Moment',
+            ),
             onTap: () => unawaited(_report()),
           ),
         if (_isOwn)
           _ActionChip(
             key: ValueKey('moment-detail-delete-${moment.id}'),
             icon: Icons.delete_outline_rounded,
-            label: 'Delete',
+            label: copy.text('Delete', 'Usuń'),
             active: false,
             destructive: true,
-            semanticLabel: 'Delete this Voice Moment',
+            semanticLabel: copy.text(
+              'Delete this Voice Moment',
+              'Usuń ten Voice Moment',
+            ),
             onTap: _deleting ? null : () => unawaited(_confirmDelete()),
           ),
       ],
@@ -837,9 +903,14 @@ class _MomentDetailScreenState extends State<MomentDetailScreen> {
       messenger
         ?..hideCurrentSnackBar()
         ..showSnackBar(
-          const SnackBar(
+          SnackBar(
             behavior: SnackBarBehavior.floating,
-            content: Text('Your like could not be saved.'),
+            content: Text(
+              _copy.text(
+                'Your like could not be saved. Try again.',
+                'Nie udało się zapisać polubienia. Spróbuj ponownie.',
+              ),
+            ),
           ),
         );
     }
@@ -853,6 +924,7 @@ class _MomentDetailScreenState extends State<MomentDetailScreen> {
     final reactions = _reactions;
     final likeCount = _moment.likeCount;
     if (reactions == null || likeCount <= 0) return const SizedBox.shrink();
+    final copy = _copy;
     return FutureBuilder<List<MomentReactor>>(
       future: reactions,
       builder: (context, snapshot) {
@@ -866,7 +938,7 @@ class _MomentDetailScreenState extends State<MomentDetailScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'Top reactions',
+                copy.text('Top reactions', 'Najpopularniejsze reakcje'),
                 style: TextStyle(
                   color: palette.textPrimary,
                   fontSize: 14,
@@ -930,6 +1002,8 @@ class _MomentDetailScreenState extends State<MomentDetailScreen> {
   Widget _commentsSection() {
     final service = _moments;
     final palette = context.appPalette;
+    final copy = _copy;
+    final commentsLabel = copy.text('Comments', 'Komentarze');
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -941,11 +1015,11 @@ class _MomentDetailScreenState extends State<MomentDetailScreen> {
           // photographed.
           _loadedCommentCount == null
               ? (_moment.commentCount > 0
-                    ? 'Comments (${_moment.commentCount})'
-                    : 'Comments')
+                    ? '$commentsLabel (${_moment.commentCount})'
+                    : commentsLabel)
               : (_loadedCommentCount! > 0
-                    ? 'Comments ($_loadedCommentCount)'
-                    : 'Comments'),
+                    ? '$commentsLabel ($_loadedCommentCount)'
+                    : commentsLabel),
           style: TextStyle(
             color: palette.textPrimary,
             fontSize: 14,
@@ -955,7 +1029,10 @@ class _MomentDetailScreenState extends State<MomentDetailScreen> {
         const SizedBox(height: 10),
         if (service == null)
           Text(
-            'Comments are unavailable right now.',
+            copy.text(
+              'Comments are unavailable right now.',
+              'Komentarze są teraz niedostępne.',
+            ),
             style: TextStyle(color: palette.textTertiary, fontSize: 12.5),
           )
         else
@@ -964,7 +1041,10 @@ class _MomentDetailScreenState extends State<MomentDetailScreen> {
             builder: (context, snapshot) {
               if (snapshot.hasError) {
                 return Text(
-                  'Could not load comments.',
+                  copy.text(
+                    'Could not load comments.',
+                    'Nie udało się wczytać komentarzy.',
+                  ),
                   style: TextStyle(color: palette.textTertiary, fontSize: 12.5),
                 );
               }
@@ -990,7 +1070,10 @@ class _MomentDetailScreenState extends State<MomentDetailScreen> {
               }
               if (comments.isEmpty) {
                 return Text(
-                  'Be the first to comment.',
+                  copy.text(
+                    'Be the first to comment.',
+                    'Napisz pierwszy komentarz.',
+                  ),
                   style: TextStyle(color: palette.textTertiary, fontSize: 12.5),
                 );
               }
@@ -1009,6 +1092,7 @@ class _MomentDetailScreenState extends State<MomentDetailScreen> {
   Widget _composerBar() {
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
+    final copy = _copy;
     return Container(
       padding: const EdgeInsets.fromLTRB(14, 8, 14, 10),
       decoration: BoxDecoration(
@@ -1029,7 +1113,7 @@ class _MomentDetailScreenState extends State<MomentDetailScreen> {
               enabled: _moments != null,
               style: TextStyle(color: palette.textPrimary),
               decoration: InputDecoration(
-                hintText: 'Write a comment...',
+                hintText: copy.text('Write a comment...', 'Napisz komentarz…'),
                 hintStyle: TextStyle(color: palette.textTertiary),
                 filled: true,
                 fillColor: palette.surfaceSunken,
@@ -1047,6 +1131,7 @@ class _MomentDetailScreenState extends State<MomentDetailScreen> {
           const SizedBox(width: 8),
           IconButton.filled(
             key: const ValueKey('moment-detail-comment-send'),
+            tooltip: copy.text('Post comment', 'Dodaj komentarz'),
             onPressed: _sending || _moments == null
                 ? null
                 : () => unawaited(_send()),
@@ -1082,6 +1167,7 @@ class _Header extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
+    final copy = AppLocalizations.of(context);
     return Padding(
       padding: const EdgeInsets.fromLTRB(6, 6, 6, 2),
       child: Row(
@@ -1089,7 +1175,7 @@ class _Header extends StatelessWidget {
           IconButton(
             key: const ValueKey('moment-detail-back'),
             onPressed: onBack,
-            tooltip: 'Back',
+            tooltip: copy.text('Back', 'Wstecz'),
             style: IconButton.styleFrom(
               minimumSize: const Size(48, 48),
               tapTargetSize: MaterialTapTargetSize.padded,
@@ -1112,7 +1198,7 @@ class _Header extends StatelessWidget {
           IconButton(
             key: const ValueKey('moment-detail-share-top'),
             onPressed: onShare,
-            tooltip: 'Share this Moment',
+            tooltip: copy.text('Share this Moment', 'Udostępnij ten Moment'),
             style: IconButton.styleFrom(
               minimumSize: const Size(48, 48),
               tapTargetSize: MaterialTapTargetSize.padded,
@@ -1137,6 +1223,7 @@ class _GoneState extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
+    final copy = AppLocalizations.of(context);
     return Center(
       key: const ValueKey('moment-detail-gone'),
       child: SingleChildScrollView(
@@ -1151,7 +1238,10 @@ class _GoneState extends StatelessWidget {
             ),
             const SizedBox(height: 14),
             Text(
-              'This Moment is no longer available',
+              copy.text(
+                'This Moment is no longer available',
+                'Ten Moment nie jest już dostępny',
+              ),
               textAlign: TextAlign.center,
               style: TextStyle(
                 color: palette.textPrimary,
@@ -1161,8 +1251,11 @@ class _GoneState extends StatelessWidget {
             ),
             const SizedBox(height: 8),
             Text(
-              'It reached the end of its availability or was deleted by '
-              'its author.',
+              copy.text(
+                'It reached the end of its availability or was deleted by '
+                    'its author.',
+                'Minął czas jego dostępności lub autor go usunął.',
+              ),
               textAlign: TextAlign.center,
               style: TextStyle(
                 color: palette.textSecondary,
@@ -1175,7 +1268,7 @@ class _GoneState extends StatelessWidget {
               key: const ValueKey('moment-detail-gone-back'),
               focusNode: backFocus,
               onPressed: onBack,
-              child: const Text('Back to Moments'),
+              child: Text(copy.text('Back to Moments', 'Wróć do Momentów')),
             ),
           ],
         ),
@@ -1192,6 +1285,7 @@ class _CommentRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
+    final copy = AppLocalizations.of(context);
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: Row(
@@ -1225,7 +1319,7 @@ class _CommentRow extends StatelessWidget {
                       variant: IdentityBadgeVariant.icon,
                     ),
                     Text(
-                      momentRelativeAge(comment.createdAt),
+                      momentRelativeAge(comment.createdAt, copy: copy),
                       style: TextStyle(
                         color: palette.textTertiary,
                         fontSize: 11,
@@ -1238,8 +1332,12 @@ class _CommentRow extends StatelessWidget {
                 // none in the schema, so none are printed.
                 if (comment.isVoice)
                   Text(
-                    'Voice reply · ${comment.durationSeconds}s'
-                    '${comment.text.isNotEmpty ? ' — ${comment.text}' : ''}',
+                    copy.text(
+                      'Voice reply · ${comment.durationSeconds}s'
+                          '${comment.text.isNotEmpty ? ' — ${comment.text}' : ''}',
+                      'Odpowiedź głosowa · ${comment.durationSeconds} s'
+                          '${comment.text.isNotEmpty ? ' — ${comment.text}' : ''}',
+                    ),
                     style: TextStyle(
                       color: palette.textSecondary,
                       fontSize: 13,

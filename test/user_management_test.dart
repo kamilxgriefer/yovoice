@@ -185,7 +185,13 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
 
       expect(functions.calls, hasLength(1));
-      expect(find.textContaining('rejected by the server'), findsOneWidget);
+      expect(
+        find.text(
+          'That operation could not be completed. Check your connection and try again.',
+        ),
+        findsOneWidget,
+      );
+      expect(find.textContaining('rejected by the server'), findsNothing);
       expect(tester.takeException(), isNull);
     });
 

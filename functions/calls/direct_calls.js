@@ -1379,6 +1379,7 @@ const startDirectCall = onCall(
     // after an attested client build has reached the whole tester cohort.
     enforceAppCheck: false,
     maxInstances: 50,
+    minInstances: 1,
   },
   startDirectCallHandler,
 );
@@ -1405,6 +1406,7 @@ const createDirectCallToken = onCall(
     memory: "256MiB",
     timeoutSeconds: 30,
     maxInstances: 50,
+    minInstances: 1,
     secrets: [livekitApiKey, livekitApiSecret],
   },
   (request) => createDirectCallTokenHandler(request),

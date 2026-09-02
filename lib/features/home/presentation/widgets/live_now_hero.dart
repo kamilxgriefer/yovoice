@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/rooms/data/models/room_participant.dart';
@@ -69,6 +70,7 @@ class _FeaturedRoom extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final identity = RoomCardIdentity.of(room);
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
@@ -86,7 +88,7 @@ class _FeaturedRoom extends StatelessWidget {
             Row(
               children: [
                 Text(
-                  'LIVE NOW',
+                  copy.text('LIVE NOW', 'TERAZ NA ŻYWO'),
                   style: TextStyle(
                     color: palette.interactiveForeground,
                     fontSize: 11,
@@ -113,9 +115,9 @@ class _FeaturedRoom extends StatelessWidget {
                     color: AppColors.live,
                     borderRadius: BorderRadius.circular(8),
                   ),
-                  child: const Text(
-                    'LIVE',
-                    style: TextStyle(
+                  child: Text(
+                    copy.text('LIVE', 'NA ŻYWO'),
+                    style: const TextStyle(
                       color: AppColors.onLive,
                       fontSize: 9.5,
                       fontWeight: FontWeight.w900,
@@ -128,10 +130,10 @@ class _FeaturedRoom extends StatelessWidget {
             const SizedBox(height: 8),
             Text(
               identity == RoomCardIdentity.podcast
-                  ? 'Podcast Room'
+                  ? copy.text('Podcast Room', 'Pokój podcastowy')
                   : identity == RoomCardIdentity.club
-                  ? 'Club Room'
-                  : 'Community Room',
+                  ? copy.text('Club Room', 'Pokój klubowy')
+                  : copy.text('Community Room', 'Pokój społeczności'),
               style: TextStyle(
                 color: identity.accent,
                 fontSize: 12,
@@ -200,7 +202,10 @@ class _FeaturedRoom extends StatelessWidget {
                 ),
                 const SizedBox(width: 5),
                 Text(
-                  '${participants.length} people',
+                  copy.text(
+                    '${participants.length} people',
+                    '${participants.length} osób',
+                  ),
                   style: TextStyle(
                     color: palette.textPrimary,
                     fontSize: 12.5,
@@ -215,7 +220,7 @@ class _FeaturedRoom extends StatelessWidget {
                 ),
                 const SizedBox(width: 5),
                 Text(
-                  '$speaking speaking',
+                  copy.text('$speaking speaking', '$speaking mówi'),
                   style: TextStyle(
                     color: palette.textSecondary,
                     fontSize: 12.5,
@@ -236,15 +241,15 @@ class _FeaturedRoom extends StatelessWidget {
                       borderRadius: BorderRadius.circular(16),
                     ),
                   ),
-                  child: const Row(
+                  child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Text(
-                        'Join room',
-                        style: TextStyle(fontWeight: FontWeight.w800),
+                        copy.text('Join room', 'Dołącz do pokoju'),
+                        style: const TextStyle(fontWeight: FontWeight.w800),
                       ),
-                      SizedBox(width: 6),
-                      Icon(Icons.arrow_forward_rounded, size: 16),
+                      const SizedBox(width: 6),
+                      const Icon(Icons.arrow_forward_rounded, size: 16),
                     ],
                   ),
                 ),
@@ -319,12 +324,13 @@ class _EmptyState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
     return Column(
       children: [
         const SizedBox(height: 6),
         Text(
-          'LIVE NOW',
+          copy.text('LIVE NOW', 'TERAZ NA ŻYWO'),
           style: TextStyle(
             color: palette.interactiveForeground,
             fontSize: 11,
@@ -336,7 +342,7 @@ class _EmptyState extends StatelessWidget {
         const VoiceCore(size: 84),
         const SizedBox(height: 12),
         Text(
-          "It's quiet right now",
+          copy.text("It's quiet right now", 'Teraz jest tu cicho'),
           style: TextStyle(
             color: palette.textPrimary,
             fontSize: 18,
@@ -345,7 +351,10 @@ class _EmptyState extends StatelessWidget {
         ),
         const SizedBox(height: 4),
         Text(
-          'Start a room and your people will hear about it.',
+          copy.text(
+            'Start a room and your people will hear about it.',
+            'Uruchom pokój, a Twoja społeczność się o nim dowie.',
+          ),
           textAlign: TextAlign.center,
           style: TextStyle(color: palette.textSecondary, fontSize: 13),
         ),

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/shared/identity/public_identity.dart';
 
 /// How much room the surface has for a badge. None of the variants ever
@@ -45,8 +46,9 @@ class OfficialRoleBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     return IdentityBadgePill(
-      label: role.label,
+      label: role.localizedLabel(copy),
       color: role.color,
       icon: iconFor(role),
       variant: variant,

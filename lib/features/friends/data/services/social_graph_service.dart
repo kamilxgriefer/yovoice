@@ -15,12 +15,14 @@ class SuggestedFriend {
     required this.displayName,
     required this.photoUrl,
     required this.mutualCount,
+    this.profileUpdatedAt,
   });
 
   final String uid;
   final String displayName;
   final String? photoUrl;
   final int mutualCount;
+  final DateTime? profileUpdatedAt;
 
   factory SuggestedFriend.fromMap(Map<Object?, Object?> map) {
     return SuggestedFriend(
@@ -28,6 +30,15 @@ class SuggestedFriend {
       displayName: map['displayName'] as String? ?? 'YO Voice user',
       photoUrl: map['photoUrl'] as String?,
       mutualCount: (map['mutualCount'] as num?)?.toInt() ?? 0,
+      profileUpdatedAt: switch (map['profileUpdatedAtMillis']) {
+        int value when value > 0 => DateTime.fromMillisecondsSinceEpoch(
+          value,
+          isUtc: true,
+        ),
+        num value when value.isFinite && value > 0 =>
+          DateTime.fromMillisecondsSinceEpoch(value.toInt(), isUtc: true),
+        _ => null,
+      },
     );
   }
 

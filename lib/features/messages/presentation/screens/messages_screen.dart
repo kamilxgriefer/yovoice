@@ -4,12 +4,14 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/helpers/error_messages.dart';
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:share_plus/share_plus.dart';
 
 import 'package:yovoice/features/friends/data/models/friend_user.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/messages/data/models/conversation.dart';
+import 'package:yovoice/features/messages/data/models/message.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/messages/presentation/screens/chat_screen.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
@@ -137,11 +139,16 @@ class _MessagesScreenState extends State<MessagesScreen> {
         // this method is fired through `unawaited`, so without this the
         // conversation simply never opened and nothing was ever said.
         if (mounted) {
+          final copy = AppLocalizations.of(context);
           _showMessage(
             intentionalOrFriendly(
               error,
-              fallback: 'Could not move this conversation out of Archived.',
+              fallback: copy.text(
+                'Could not move this conversation out of Archived.',
+                'Nie udało się przenieść tej rozmowy z archiwum.',
+              ),
             ),
+            isError: true,
           );
         }
       }
@@ -163,6 +170,7 @@ class _MessagesScreenState extends State<MessagesScreen> {
           otherPhotoUrl: liveFriend == null
               ? conversation.photoUrlFor(otherUserId)
               : liveFriend.photoUrl ?? '',
+          otherProfileUpdatedAt: liveFriend?.profileUpdatedAt,
           messageService: widget.messageService,
           auth: widget.auth,
         ),
@@ -191,6 +199,7 @@ class _MessagesScreenState extends State<MessagesScreen> {
             otherDisplayName: friend.displayName,
             otherEmail: '',
             otherPhotoUrl: friend.photoUrl ?? '',
+            otherProfileUpdatedAt: friend.profileUpdatedAt,
             messageService: widget.messageService,
             auth: widget.auth,
           ),
@@ -204,8 +213,12 @@ class _MessagesScreenState extends State<MessagesScreen> {
       _showMessage(
         intentionalOrFriendly(
           error,
-          fallback: 'Could not open this conversation.',
+          fallback: AppLocalizations.of(context).text(
+            'Could not open this conversation.',
+            'Nie udało się otworzyć tej rozmowy.',
+          ),
         ),
+        isError: true,
       );
     }
   }
@@ -226,11 +239,21 @@ class _MessagesScreenState extends State<MessagesScreen> {
     try {
       await _messageService.archiveConversation(conversation.id);
       if (mounted) {
-        _showMessage('Conversation archived.');
+        _showMessage(
+          AppLocalizations.of(
+            context,
+          ).text('Conversation archived.', 'Rozmowa została zarchiwizowana.'),
+        );
       }
     } catch (_) {
       if (mounted) {
-        _showMessage('Could not archive this conversation.');
+        _showMessage(
+          AppLocalizations.of(context).text(
+            'Could not archive this conversation.',
+            'Nie udało się zarchiwizować tej rozmowy.',
+          ),
+          isError: true,
+        );
       }
     }
   }
@@ -243,20 +266,34 @@ class _MessagesScreenState extends State<MessagesScreen> {
       );
 
       if (mounted) {
+        final copy = AppLocalizations.of(context);
         _showMessage(
-          isMuted ? 'Notifications turned on.' : 'Conversation muted.',
+          isMuted
+              ? copy.text(
+                  'Notifications turned on.',
+                  'Powiadomienia zostały włączone.',
+                )
+              : copy.text(
+                  'Conversation muted.',
+                  'Powiadomienia dla rozmowy zostały wyciszone.',
+                ),
         );
       }
     } catch (_) {
       if (mounted) {
-        _showMessage('Could not update notifications.');
+        _showMessage(
+          AppLocalizations.of(context).text(
+            'Could not update notifications.',
+            'Nie udało się zmienić ustawień powiadomień.',
+          ),
+          isError: true,
+        );
       }
     }
   }
 
-  void _showMessage(String message) {
+  void _showMessage(String message, {bool isError = false}) {
     final palette = context.appPalette;
-    final isError = message.startsWith('Could not');
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(
@@ -366,8 +403,11 @@ class _MessagesScreenState extends State<MessagesScreen> {
                                 }
 
                                 if (currentUserId == null) {
-                                  return const _MessagesError(
-                                    message: 'Sign in to open your chats.',
+                                  return _MessagesError(
+                                    message: AppLocalizations.of(context).text(
+                                      'Sign in to open your chats.',
+                                      'Zaloguj się, aby otworzyć swoje czaty.',
+                                    ),
                                   );
                                 }
 
@@ -395,9 +435,12 @@ class _MessagesScreenState extends State<MessagesScreen> {
                                                     otherId,
                                                   ))
                                               .toLowerCase();
-                                      final preview = conversation
-                                          .previewFor(currentUserId)
-                                          .toLowerCase();
+                                      final preview =
+                                          _localizedConversationPreview(
+                                            conversation,
+                                            currentUserId,
+                                            AppLocalizations.of(context),
+                                          ).toLowerCase();
 
                                       return name.contains(_query) ||
                                           preview.contains(_query);
@@ -468,11 +511,12 @@ class _MessagesScreenState extends State<MessagesScreen> {
     // Developer-speak ("check your security rules", "needs an index")
     // never belongs in user-facing copy — route through the shared
     // mapping with a flow-specific fallback.
-    if (error == null) return 'Could not load your conversations.';
-    return friendlyErrorMessage(
-      error,
-      fallback: 'Could not load your conversations.',
+    final fallback = AppLocalizations.of(context).text(
+      'Could not load your conversations.',
+      'Nie udało się wczytać rozmów.',
     );
+    if (error == null) return fallback;
+    return friendlyErrorMessage(error, fallback: fallback);
   }
 }
 
@@ -490,6 +534,7 @@ class _MessagesHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
+    final copy = AppLocalizations.of(context);
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(18, 18, 18, 14),
@@ -500,7 +545,9 @@ class _MessagesHeader extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  showArchived ? 'Archived' : 'Chats',
+                  showArchived
+                      ? copy.text('Archived', 'Archiwum')
+                      : copy.text('Chats', 'Czaty'),
                   style: TextStyle(
                     color: palette.textPrimary,
                     fontSize: 30,
@@ -511,8 +558,14 @@ class _MessagesHeader extends StatelessWidget {
                 const SizedBox(height: 4),
                 Text(
                   showArchived
-                      ? 'Conversations kept out of your inbox.'
-                      : 'Private conversations with your friends.',
+                      ? copy.text(
+                          'Conversations kept out of your inbox.',
+                          'Rozmowy przeniesione poza główną skrzynkę.',
+                        )
+                      : copy.text(
+                          'Private conversations with your friends.',
+                          'Prywatne rozmowy ze znajomymi.',
+                        ),
                   style: TextStyle(color: palette.textSecondary, fontSize: 13),
                 ),
               ],
@@ -521,14 +574,20 @@ class _MessagesHeader extends StatelessWidget {
           _HeaderButton(
             icon: showArchived ? Icons.inbox_rounded : Icons.archive_outlined,
             tooltip: showArchived
-                ? 'Show inbox'
-                : 'Show archived conversations',
+                ? copy.text('Show inbox', 'Pokaż skrzynkę odbiorczą')
+                : copy.text(
+                    'Show archived conversations',
+                    'Pokaż zarchiwizowane rozmowy',
+                  ),
             onTap: onToggleArchived,
           ),
           const SizedBox(width: 9),
           _HeaderButton(
             icon: Icons.edit_square,
-            tooltip: 'Start a new message',
+            tooltip: copy.text(
+              'Start a new message',
+              'Rozpocznij nową rozmowę',
+            ),
             onTap: onNewMessage,
             highlighted: true,
           ),
@@ -594,12 +653,13 @@ class _SearchField extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
+    final copy = AppLocalizations.of(context);
 
     return TextField(
       controller: controller,
       style: TextStyle(color: palette.textPrimary),
       decoration: InputDecoration(
-        hintText: 'Search',
+        hintText: copy.text('Search', 'Szukaj'),
         hintStyle: TextStyle(color: palette.textTertiary),
         prefixIcon: Icon(Icons.search_rounded, color: palette.textSecondary),
         suffixIcon: ValueListenableBuilder<TextEditingValue>(
@@ -611,7 +671,7 @@ class _SearchField extends StatelessWidget {
 
             return IconButton(
               onPressed: controller.clear,
-              tooltip: 'Clear search',
+              tooltip: copy.text('Clear search', 'Wyczyść wyszukiwanie'),
               icon: Icon(Icons.close_rounded, color: palette.textSecondary),
             );
           },
@@ -649,6 +709,7 @@ class _FriendsRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final labelScale = MediaQuery.textScalerOf(context).scale(11) / 11;
     final height = 92.0 + (labelScale - 1).clamp(0.0, 2.0) * 14.0;
 
@@ -658,12 +719,19 @@ class _FriendsRow extends StatelessWidget {
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.symmetric(horizontal: 18),
         children: [
-          _FriendStory(label: 'New', icon: Icons.add_rounded, onTap: onAdd),
+          _FriendStory(
+            label: copy.text('New', 'Nowa'),
+            semanticLabel: copy.text('New message', 'Nowa wiadomość'),
+            icon: Icons.add_rounded,
+            onTap: onAdd,
+          ),
           ...friends
               .take(12)
               .map(
                 (friend) => _FriendStory(
                   label: friend.displayName,
+                  semanticLabel:
+                      '${friend.displayName}, ${friend.isOnline ? copy.text('online', 'aktywny') : copy.text('offline', 'nieaktywny')}',
                   friend: friend,
                   onTap: () => onFriendSelected(friend),
                 ),
@@ -677,12 +745,14 @@ class _FriendsRow extends StatelessWidget {
 class _FriendStory extends StatelessWidget {
   const _FriendStory({
     required this.label,
+    required this.semanticLabel,
     required this.onTap,
     this.friend,
     this.icon,
   });
 
   final String label;
+  final String semanticLabel;
   final VoidCallback onTap;
   final FriendUser? friend;
   final IconData? icon;
@@ -695,9 +765,7 @@ class _FriendStory extends StatelessWidget {
 
     return AccessibleTapRegion(
       onTap: onTap,
-      semanticLabel: user == null
-          ? 'New message'
-          : '${user.displayName}, ${user.isOnline ? 'online' : 'offline'}',
+      semanticLabel: semanticLabel,
       borderRadius: 18,
       child: ExcludeSemantics(
         child: SizedBox(
@@ -723,6 +791,7 @@ class _FriendStory extends StatelessWidget {
                       radius: 27,
                       userId: user?.id,
                       photoUrl: hasPhoto ? user!.photoUrl : null,
+                      mediaRevision: user?.profileUpdatedAt,
                       displayName: user?.displayName,
                       fallbackIcon: icon,
                     ),
@@ -796,9 +865,14 @@ class _ConversationTile extends StatelessWidget {
         ? conversation.photoUrlFor(otherUserId)
         : friend.photoUrl ?? '';
     final unread = conversation.unreadCountFor(currentUserId);
-    final preview = conversation.previewFor(currentUserId);
+    final preview = _localizedConversationPreview(
+      conversation,
+      currentUserId,
+      AppLocalizations.of(context),
+    );
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
+    final copy = AppLocalizations.of(context);
 
     return Material(
       color: Colors.transparent,
@@ -820,6 +894,7 @@ class _ConversationTile extends StatelessWidget {
                 name: name,
                 photoUrl: photoUrl,
                 userId: otherUserId,
+                mediaRevision: friend?.profileUpdatedAt,
                 service: service,
               ),
               const SizedBox(width: 13),
@@ -845,7 +920,7 @@ class _ConversationTile extends StatelessWidget {
                         ),
                         const SizedBox(width: 8),
                         Text(
-                          _relativeTime(conversation.updatedAt),
+                          _relativeTime(context, conversation.updatedAt, copy),
                           style: TextStyle(
                             color: unread > 0
                                 ? palette.focus
@@ -915,7 +990,10 @@ class _ConversationTile extends StatelessWidget {
               ),
               IconButton(
                 onPressed: () => _showActions(context),
-                tooltip: 'Conversation actions for $name',
+                tooltip: copy.text(
+                  'Conversation actions for $name',
+                  'Opcje rozmowy z $name',
+                ),
                 icon: Icon(
                   Icons.more_horiz_rounded,
                   color: palette.textSecondary,
@@ -953,32 +1031,32 @@ class _ConversationTile extends StatelessWidget {
     );
   }
 
-  static String _relativeTime(DateTime date) {
-    final now = DateTime.now();
-    final difference = now.difference(date);
-
-    if (date.millisecondsSinceEpoch == 0) {
-      return '';
-    }
-
-    if (difference.inMinutes < 1) {
-      return 'now';
-    }
-
+  static String _relativeTime(
+    BuildContext context,
+    DateTime date,
+    AppLocalizations copy,
+  ) {
+    if (date.millisecondsSinceEpoch == 0) return '';
+    final difference = DateTime.now().difference(date);
+    if (difference.inMinutes < 1) return copy.text('now', 'teraz');
     if (difference.inMinutes < 60) {
-      return '${difference.inMinutes}m';
+      return copy.text(
+        '${difference.inMinutes}m',
+        '${difference.inMinutes} min',
+      );
     }
-
     if (difference.inHours < 24) {
-      return '${difference.inHours}h';
+      return copy.text('${difference.inHours}h', '${difference.inHours} godz.');
     }
-
     if (difference.inDays < 7) {
-      const weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-      return weekdays[date.weekday - 1];
+      const english = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+      const polish = ['pon.', 'wt.', 'śr.', 'czw.', 'pt.', 'sob.', 'niedz.'];
+      if (copy.locale.languageCode == 'en') return english[date.weekday - 1];
+      if (copy.isPolish) return polish[date.weekday - 1];
+      final localizations = MaterialLocalizations.of(context);
+      return localizations.narrowWeekdays[date.weekday % 7];
     }
-
-    return '${date.day}/${date.month}';
+    return copy.text('${date.day}/${date.month}', '${date.day}.${date.month}');
   }
 }
 
@@ -992,12 +1070,14 @@ class _ConversationAvatar extends StatefulWidget {
     required this.name,
     required this.photoUrl,
     required this.userId,
+    required this.mediaRevision,
     required this.service,
   });
 
   final String name;
   final String photoUrl;
   final String userId;
+  final Object? mediaRevision;
   final MessageService service;
 
   @override
@@ -1028,9 +1108,11 @@ class _ConversationAvatarState extends State<_ConversationAvatar> {
       builder: (context, snapshot) {
         final online = snapshot.data?.isOnline ?? false;
         final palette = context.appPalette;
+        final copy = AppLocalizations.of(context);
 
         return Semantics(
-          label: '$name, ${online ? 'online' : 'offline'}',
+          label:
+              '$name, ${online ? copy.text('online', 'aktywny') : copy.text('offline', 'nieaktywny')}',
           image: true,
           excludeSemantics: true,
           child: Stack(
@@ -1041,6 +1123,7 @@ class _ConversationAvatarState extends State<_ConversationAvatar> {
                 userId: widget.userId,
                 backgroundColor: palette.surfaceSunken,
                 photoUrl: photoUrl,
+                mediaRevision: widget.mediaRevision,
                 displayName: name,
               ),
               if (online)
@@ -1079,6 +1162,7 @@ class _ConversationActionsSheet extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
+    final copy = AppLocalizations.of(context);
 
     return Container(
       padding: EdgeInsets.fromLTRB(
@@ -1095,7 +1179,7 @@ class _ConversationActionsSheet extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           YoModalSheetChrome(
-            sheetLabel: 'conversation actions',
+            sheetLabel: copy.text('conversation actions', 'opcje rozmowy'),
             surfaceColor: palette.surfaceRaised,
           ),
           const SizedBox(height: 2),
@@ -1108,7 +1192,9 @@ class _ConversationActionsSheet extends StatelessWidget {
               color: palette.textPrimary,
             ),
             title: Text(
-              muted ? 'Unmute messages' : 'Mute messages',
+              muted
+                  ? copy.text('Unmute messages', 'Włącz powiadomienia')
+                  : copy.text('Mute messages', 'Wycisz powiadomienia'),
               style: TextStyle(color: palette.textPrimary),
             ),
           ),
@@ -1116,7 +1202,7 @@ class _ConversationActionsSheet extends StatelessWidget {
             onTap: onArchive,
             leading: Icon(Icons.archive_outlined, color: palette.textPrimary),
             title: Text(
-              'Archive conversation',
+              copy.text('Archive conversation', 'Archiwizuj rozmowę'),
               style: TextStyle(color: palette.textPrimary),
             ),
           ),
@@ -1178,6 +1264,7 @@ class NewMessageSheetState extends State<NewMessageSheet> {
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
+    final copy = AppLocalizations.of(context);
 
     return DraggableScrollableSheet(
       expand: false,
@@ -1199,7 +1286,7 @@ class NewMessageSheetState extends State<NewMessageSheet> {
           child: Column(
             children: [
               YoModalSheetChrome(
-                sheetLabel: 'New message',
+                sheetLabel: copy.text('New message', 'Nowa wiadomość'),
                 surfaceColor: palette.surfaceRaised,
               ),
               Padding(
@@ -1207,7 +1294,7 @@ class NewMessageSheetState extends State<NewMessageSheet> {
                 child: Align(
                   alignment: Alignment.centerLeft,
                   child: Text(
-                    'New message',
+                    copy.text('New message', 'Nowa wiadomość'),
                     style: TextStyle(
                       color: palette.textPrimary,
                       fontSize: 22,
@@ -1332,7 +1419,9 @@ class NewMessageSheetState extends State<NewMessageSheet> {
                           padding: const EdgeInsets.fromLTRB(12, 4, 12, 28),
                           children: [
                             if (filteredRecent.isNotEmpty) ...[
-                              const _NewMessageSectionLabel('Recent'),
+                              _NewMessageSectionLabel(
+                                copy.text('Recent', 'Ostatnie'),
+                              ),
                               for (final conversation in filteredRecent)
                                 _RecentChatTile(
                                   conversation: conversation,
@@ -1344,7 +1433,9 @@ class NewMessageSheetState extends State<NewMessageSheet> {
                               const SizedBox(height: 6),
                             ],
                             if (filteredFriends.isNotEmpty) ...[
-                              const _NewMessageSectionLabel('Friends'),
+                              _NewMessageSectionLabel(
+                                copy.text('Friends', 'Znajomi'),
+                              ),
                               for (final friend in filteredFriends)
                                 _FriendTile(
                                   friend: friend,
@@ -1355,8 +1446,10 @@ class NewMessageSheetState extends State<NewMessageSheet> {
                             _InviteFriendsTile(
                               onTap: () => SharePlus.instance.share(
                                 ShareParams(
-                                  text:
-                                      'Join me on YO Voice — the app for live voice rooms and communities: https://yovoice.app/download',
+                                  text: copy.text(
+                                    'Join me on YO Voice — the app for live voice rooms and communities: https://yovoice.app/download',
+                                    'Dołącz do mnie w YO Voice — aplikacji z pokojami głosowymi na żywo i społecznościami: https://yovoice.app/download',
+                                  ),
                                 ),
                               ),
                             ),
@@ -1435,7 +1528,11 @@ class _RecentChatTile extends StatelessWidget {
         ),
       ),
       subtitle: Text(
-        conversation.previewFor(currentUserId),
+        _localizedConversationPreview(
+          conversation,
+          currentUserId,
+          AppLocalizations.of(context),
+        ),
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
         style: TextStyle(color: palette.textSecondary),
@@ -1454,12 +1551,13 @@ class _FriendTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
+    final copy = AppLocalizations.of(context);
 
     return ListTile(
       onTap: onTap,
       leading: Semantics(
         label:
-            '${friend.displayName}, ${friend.isOnline ? 'online' : 'offline'}',
+            '${friend.displayName}, ${friend.isOnline ? copy.text('online', 'aktywny') : copy.text('offline', 'nieaktywny')}',
         image: true,
         excludeSemantics: true,
         child: Stack(
@@ -1470,6 +1568,7 @@ class _FriendTile extends StatelessWidget {
               userId: friend.id,
               backgroundColor: palette.surfaceSunken,
               photoUrl: friend.photoUrl,
+              mediaRevision: friend.profileUpdatedAt,
               displayName: friend.displayName,
             ),
             if (friend.isOnline)
@@ -1498,10 +1597,10 @@ class _FriendTile extends StatelessWidget {
       ),
       subtitle: Text(
         friend.isOnline
-            ? 'Active now'
+            ? copy.text('Active now', 'Aktywny teraz')
             : friend.username.trim().isNotEmpty
             ? '@${friend.username.trim()}'
-            : 'Offline',
+            : copy.text('Offline', 'Nieaktywny'),
         style: TextStyle(color: palette.textSecondary),
       ),
       trailing: Icon(Icons.chevron_right_rounded, color: palette.textSecondary),
@@ -1517,10 +1616,14 @@ class _InviteFriendsTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
+    final copy = AppLocalizations.of(context);
 
     return AccessibleTapRegion(
       onTap: onTap,
-      semanticLabel: 'Invite friends to YO Voice',
+      semanticLabel: copy.text(
+        'Invite friends to YO Voice',
+        'Zaproś znajomych do YO Voice',
+      ),
       borderRadius: 16,
       child: Container(
         padding: const EdgeInsets.all(14),
@@ -1550,7 +1653,7 @@ class _InviteFriendsTile extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'Invite friends',
+                    copy.text('Invite friends', 'Zaproś znajomych'),
                     style: TextStyle(
                       color: palette.textPrimary,
                       fontWeight: FontWeight.w800,
@@ -1558,7 +1661,10 @@ class _InviteFriendsTile extends StatelessWidget {
                     ),
                   ),
                   Text(
-                    'Not on YO Voice yet? Send them an invite.',
+                    copy.text(
+                      'Not on YO Voice yet? Send them an invite.',
+                      'Nie korzystają jeszcze z YO Voice? Wyślij im zaproszenie.',
+                    ),
                     style: TextStyle(
                       color: palette.textSecondary,
                       fontSize: 11.5,
@@ -1585,12 +1691,24 @@ class _NewMessageEmptyState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final title = hasSearch ? 'No matches' : "You're all caught up";
+    final copy = AppLocalizations.of(context);
+    final title = hasSearch
+        ? copy.text('No matches', 'Brak wyników')
+        : copy.text("You're all caught up", 'Wszystko gotowe');
     final subtitle = hasSearch
-        ? 'Try another name or email.'
+        ? copy.text(
+            'Try another name or email.',
+            'Wpisz inną nazwę lub adres e-mail.',
+          )
         : hasNoFriendsAtAll
-        ? 'Add friends to start messaging them here.'
-        : "You've already started every conversation you can.";
+        ? copy.text(
+            'Add friends to start messaging them here.',
+            'Dodaj znajomych, aby rozpocząć z nimi rozmowę.',
+          )
+        : copy.text(
+            "You've already started every conversation you can.",
+            'Masz już rozpoczęte rozmowy ze wszystkimi znajomymi.',
+          );
     final palette = context.appPalette;
 
     return Center(
@@ -1651,6 +1769,7 @@ class _NewMessageErrorState extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
+    final copy = AppLocalizations.of(context);
 
     return Center(
       child: Padding(
@@ -1675,7 +1794,10 @@ class _NewMessageErrorState extends StatelessWidget {
             ),
             const SizedBox(height: 16),
             Text(
-              "We couldn't load your people",
+              copy.text(
+                "We couldn't load your people",
+                'Nie udało się wczytać kontaktów',
+              ),
               style: TextStyle(
                 color: palette.textPrimary,
                 fontWeight: FontWeight.w800,
@@ -1684,7 +1806,10 @@ class _NewMessageErrorState extends StatelessWidget {
             ),
             const SizedBox(height: 6),
             Text(
-              'Check your connection and try again.',
+              copy.text(
+                'Check your connection and try again.',
+                'Sprawdź połączenie i spróbuj ponownie.',
+              ),
               textAlign: TextAlign.center,
               style: TextStyle(
                 color: palette.textSecondary,
@@ -1712,16 +1837,26 @@ class _EmptyMessages extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final title = hasSearch
-        ? 'No matching chats'
+        ? copy.text('No matching chats', 'Brak pasujących czatów')
         : archived
-        ? 'No archived chats'
-        : 'Your inbox is quiet';
+        ? copy.text('No archived chats', 'Brak zarchiwizowanych czatów')
+        : copy.text('Your inbox is quiet', 'W skrzynce jest cicho');
     final subtitle = hasSearch
-        ? 'Try another name or message.'
+        ? copy.text(
+            'Try another name or message.',
+            'Wpisz inną nazwę lub treść wiadomości.',
+          )
         : archived
-        ? 'Archived conversations will appear here.'
-        : 'Start a private conversation with one of your friends.';
+        ? copy.text(
+            'Archived conversations will appear here.',
+            'Tutaj pojawią się zarchiwizowane rozmowy.',
+          )
+        : copy.text(
+            'Start a private conversation with one of your friends.',
+            'Rozpocznij prywatną rozmowę ze znajomym.',
+          );
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
 
@@ -1786,9 +1921,9 @@ class _EmptyMessages extends StatelessWidget {
                       ),
                     ),
                     icon: const Icon(Icons.edit_square),
-                    label: const Text(
-                      'New message',
-                      style: TextStyle(fontWeight: FontWeight.w900),
+                    label: Text(
+                      copy.text('New message', 'Nowa wiadomość'),
+                      style: const TextStyle(fontWeight: FontWeight.w900),
                     ),
                   ),
                 ],
@@ -1821,4 +1956,23 @@ class _MessagesError extends StatelessWidget {
       ),
     );
   }
+}
+
+String _localizedConversationPreview(
+  Conversation conversation,
+  String currentUserId,
+  AppLocalizations copy,
+) {
+  if (conversation.lastMessage.isEmpty) {
+    return copy.text('Start a conversation', 'Rozpocznij rozmowę');
+  }
+  final prefix = conversation.lastMessageSenderId == currentUserId
+      ? copy.text('You: ', 'Ty: ')
+      : '';
+  final content = switch (conversation.lastMessageType) {
+    MessageType.voice => copy.text('Voice message', 'Wiadomość głosowa'),
+    MessageType.image => copy.text('Photo', 'Zdjęcie'),
+    MessageType.text => conversation.lastMessage,
+  };
+  return '$prefix$content';
 }

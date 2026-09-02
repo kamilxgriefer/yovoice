@@ -28,14 +28,15 @@ import 'package:yovoice/core/theme/app_immersive_colors.dart';
 import 'package:yovoice/core/theme/app_theme.dart';
 import 'package:yovoice/features/calls/data/services/voice_call_service.dart';
 import 'package:yovoice/features/clubs/data/services/club_service.dart';
+import 'package:yovoice/features/permissions/data/permission_readiness_service.dart';
 import 'package:yovoice/features/rooms/data/models/room_metadata.dart';
 import 'package:yovoice/features/rooms/data/models/room_voice_access.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
 import 'package:yovoice/features/rooms/presentation/screens/broadcast_room_screen.dart';
 import 'package:yovoice/features/rooms/presentation/screens/community_voice_room_screen.dart';
+import 'package:yovoice/features/rooms/presentation/screens/room_entry_screen.dart';
 import 'package:yovoice/features/rooms/presentation/widgets/room_ended_state.dart';
-import 'package:yovoice/shared/widgets/states/yo_loading_indicator.dart';
 
 final _capture = GlobalKey();
 
@@ -89,9 +90,29 @@ Future<void> _loadFonts() async {
 /// A stand-in for the audio session. Nothing here contacts LiveKit: the
 /// screenshots are of the ROOM's states, and the audio service only supplies
 /// the mic state each one should render.
+class _ScreenshotPermissionGateway implements AppPermissionPlatformGateway {
+  const _ScreenshotPermissionGateway();
+
+  @override
+  Future<bool> openSettings() async => true;
+
+  @override
+  Future<AppPermissionAccess> requestFromUserGesture(
+    AppPermissionKind permission,
+  ) async => AppPermissionAccess.granted;
+
+  @override
+  Future<AppPermissionAccess> status(AppPermissionKind permission) async =>
+      AppPermissionAccess.granted;
+}
+
 class _StubVoice extends VoiceCallService {
   _StubVoice({this.state = MicState.unavailable, this.connected = false})
-    : super.forTesting();
+    : super.forTesting(
+        permissionReadiness: PermissionReadinessService(
+          platform: const _ScreenshotPermissionGateway(),
+        ),
+      );
 
   final MicState state;
   final bool connected;
@@ -871,22 +892,21 @@ void main() {
     );
   });
 
-  testWidgets('entry screen: loading and ended', (tester) async {
+  testWidgets('entry screen: passive prejoin and ended', (tester) async {
+    final preview = room(
+      id: 'prejoin-preview',
+      isLive: true,
+      name: 'Sunday Morning Talk',
+      description: 'A calm place to talk about anything.',
+    );
     for (final size in const [Size(390, 844), Size(1100, 800)]) {
       tester.view.devicePixelRatio = 1;
       tester.view.physicalSize = size;
       addTearDown(tester.view.reset);
 
-      await tester.pumpWidget(
-        _host(
-          const Scaffold(
-            backgroundColor: AppImmersiveColors.background,
-            body: YoLoadingIndicator.fullscreen(message: 'Joining room…'),
-          ),
-        ),
-      );
+      await tester.pumpWidget(_host(RoomEntryScreen(room: preview)));
       await _settle(tester);
-      await _shoot(tester, 'voice-entry-loading-${size.width.toInt()}');
+      await _shoot(tester, 'voice-entry-prejoin-${size.width.toInt()}');
 
       await tester.pumpWidget(
         _host(

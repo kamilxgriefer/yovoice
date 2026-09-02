@@ -133,10 +133,7 @@ void main() {
         await tester.pump(const Duration(milliseconds: 300));
 
         const badgeKey = ValueKey('discover-type-badge-COMMUNITY');
-        await tester.drag(
-          find.byType(CustomScrollView),
-          const Offset(0, -420),
-        );
+        await tester.drag(find.byType(CustomScrollView), const Offset(0, -420));
         await tester.pump();
         expect(find.byKey(badgeKey), findsOne);
         final badge = tester.widget<Container>(find.byKey(badgeKey));

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
 
 import 'package:yovoice/core/helpers/error_messages.dart';
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 
 import 'package:yovoice/features/clubs/data/models/club_channel.dart';
@@ -83,6 +84,7 @@ class _ClubChatScreenState extends State<ClubChatScreen> {
   Future<void> _send() async {
     final text = _controller.text.trim();
     if (text.isEmpty || _sending) return;
+    final copy = AppLocalizations.of(context);
     setState(() => _sending = true);
     try {
       await _service.sendTextMessage(
@@ -94,10 +96,12 @@ class _ClubChatScreenState extends State<ClubChatScreen> {
       _focusNode.requestFocus();
     } catch (error) {
       _showNotice(
-        intentionalOrFriendly(
-          error,
-          fallback: 'Could not send your message. Please try again.',
-        ),
+        copy.isPolish
+            ? 'Nie udało się wysłać wiadomości. Spróbuj ponownie.'
+            : intentionalOrFriendly(
+                error,
+                fallback: 'Could not send your message. Please try again.',
+              ),
       );
     } finally {
       if (mounted) setState(() => _sending = false);
@@ -117,7 +121,7 @@ class _ClubChatScreenState extends State<ClubChatScreen> {
   ) async {
     if (!authority.canRemove(message)) {
       final refusal = authority.removalRefusal(message);
-      if (refusal != null) _showNotice(refusal);
+      if (refusal != null) _showNotice(_localizedRemovalRefusal(refusal));
       return;
     }
     await _delete(message, authority);
@@ -128,12 +132,17 @@ class _ClubChatScreenState extends State<ClubChatScreen> {
   /// permit — and can name what will actually happen.
   Future<void> _delete(ClubMessage message, ClubChatAuthority authority) async {
     final moderating = authority.isModeratingOthers(message);
-    final name = _safeSenderName(message);
+    final copy = AppLocalizations.of(context);
+    final name = _safeSenderName(
+      message,
+      fallback: copy.text('this member', 'ten członek'),
+    );
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) {
         final palette = dialogContext.appPalette;
         final colors = Theme.of(dialogContext).colorScheme;
+        final dialogCopy = AppLocalizations.of(dialogContext);
         return AlertDialog(
           backgroundColor: palette.surfaceRaised,
           // Long copy at a large text scale is silently CLIPPED by
@@ -151,7 +160,12 @@ class _ClubChatScreenState extends State<ClubChatScreen> {
             vertical: 24,
           ),
           title: Text(
-            moderating ? 'Remove this message?' : 'Delete message?',
+            moderating
+                ? dialogCopy.text(
+                    'Remove this message?',
+                    'Usunąć tę wiadomość?',
+                  )
+                : dialogCopy.text('Delete message?', 'Usunąć wiadomość?'),
             style: TextStyle(color: palette.textPrimary),
           ),
           content: ConstrainedBox(
@@ -163,11 +177,17 @@ class _ClubChatScreenState extends State<ClubChatScreen> {
                 const BoxConstraints(),
             child: Text(
               moderating
-                  ? 'This removes $name’s message for everyone in '
-                        '#${widget.channel.name}, and records your account '
-                        'against the removal.'
-                  : 'This message will be replaced with “Message '
-                        'deleted”.',
+                  ? dialogCopy.text(
+                      'This removes $name’s message for everyone in '
+                          '#${widget.channel.name}, and records your account '
+                          'against the removal.',
+                      'Wiadomość użytkownika $name zniknie u wszystkich na kanale '
+                          '#${widget.channel.name}, a usunięcie zostanie przypisane do Twojego konta.',
+                    )
+                  : dialogCopy.text(
+                      'This message will be replaced with “Message deleted”.',
+                      'Wiadomość zostanie zastąpiona tekstem „Wiadomość usunięta”.',
+                    ),
               style: TextStyle(color: palette.textSecondary),
             ),
           ),
@@ -178,7 +198,7 @@ class _ClubChatScreenState extends State<ClubChatScreen> {
               // and it was the SAFE choice sitting next to a destructive
               // one. Stated explicitly rather than inherited.
               style: TextButton.styleFrom(foregroundColor: palette.textPrimary),
-              child: const Text('Cancel'),
+              child: Text(dialogCopy.text('Cancel', 'Anuluj')),
             ),
             TextButton.icon(
               onPressed: () => Navigator.pop(dialogContext, true),
@@ -186,7 +206,11 @@ class _ClubChatScreenState extends State<ClubChatScreen> {
               // An icon so the destructive action is not distinguished by
               // colour weight alone.
               icon: const Icon(Icons.delete_outline_rounded, size: 18),
-              label: Text(moderating ? 'Remove' : 'Delete'),
+              label: Text(
+                moderating
+                    ? dialogCopy.text('Remove', 'Usuń')
+                    : dialogCopy.text('Delete', 'Usuń'),
+              ),
             ),
           ],
         );
@@ -207,16 +231,20 @@ class _ClubChatScreenState extends State<ClubChatScreen> {
       if (mounted) {
         _focusNode.requestFocus();
         _announce(
-          moderating ? 'Message removed.' : 'Message deleted.',
+          moderating
+              ? copy.text('Message removed.', 'Wiadomość usunięta.')
+              : copy.text('Message deleted.', 'Wiadomość usunięta.'),
           assertive: false,
         );
       }
     } catch (error) {
       _showNotice(
-        intentionalOrFriendly(
-          error,
-          fallback: 'Could not remove this message. Please try again.',
-        ),
+        copy.isPolish
+            ? 'Nie udało się usunąć wiadomości. Spróbuj ponownie.'
+            : intentionalOrFriendly(
+                error,
+                fallback: 'Could not remove this message. Please try again.',
+              ),
       );
     }
   }
@@ -244,9 +272,32 @@ class _ClubChatScreenState extends State<ClubChatScreen> {
     );
   }
 
+  String _localizedRemovalRefusal(String refusal) {
+    final copy = AppLocalizations.of(context);
+    if (!copy.isPolish) return refusal;
+    return switch (refusal) {
+      'You must be signed in to use club chat.' =>
+        'Musisz się zalogować, aby korzystać z czatu klubu.',
+      'This message has already been removed.' =>
+        'Ta wiadomość została już usunięta.',
+      'Your role cannot remove this message.' =>
+        'Twoja rola nie pozwala usunąć tej wiadomości.',
+      'Verify your email address to moderate club chat.' =>
+        'Zweryfikuj adres e-mail, aby moderować czat klubu.',
+      'You cannot moderate club chat while your account is muted. You can still delete your own messages.' =>
+        'Nie możesz moderować czatu, gdy Twoje konto jest wyciszone. Nadal możesz usuwać własne wiadomości.',
+      'We could not confirm who owns this club. Please try again in a moment.' =>
+        'Nie udało się potwierdzić właściciela klubu. Spróbuj ponownie za chwilę.',
+      'The club owner’s messages can only be removed by YO Voice staff. Report it instead.' =>
+        'Wiadomości właściciela klubu może usuwać tylko zespół YO Voice. Zamiast tego zgłoś wiadomość.',
+      _ => 'Nie możesz teraz usunąć tej wiadomości.',
+    };
+  }
+
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
+    final copy = AppLocalizations.of(context);
     return Scaffold(
       key: const ValueKey('club-chat-screen'),
       backgroundColor: palette.background,
@@ -288,8 +339,14 @@ class _ClubChatScreenState extends State<ClubChatScreen> {
                       padding: const EdgeInsets.fromLTRB(20, 12, 20, 18),
                       child: Text(
                         _isAnnouncements
-                            ? 'Announcements can be posted by club moderators.'
-                            : 'This channel is read-only for your current role.',
+                            ? copy.text(
+                                'Announcements can be posted by club moderators.',
+                                'Ogłoszenia mogą publikować moderatorzy klubu.',
+                              )
+                            : copy.text(
+                                'This channel is read-only for your current role.',
+                                'Dla Twojej roli ten kanał jest tylko do odczytu.',
+                              ),
                         textAlign: TextAlign.center,
                         style: TextStyle(
                           color: Theme.of(context).colorScheme.onSurfaceVariant,
@@ -304,8 +361,14 @@ class _ClubChatScreenState extends State<ClubChatScreen> {
                       focusNode: _focusNode,
                       sending: _sending,
                       hint: _isAnnouncements
-                          ? 'Write an announcement…'
-                          : 'Message #${widget.channel.name}',
+                          ? copy.text(
+                              'Write an announcement…',
+                              'Napisz ogłoszenie…',
+                            )
+                          : copy.text(
+                              'Message #${widget.channel.name}',
+                              'Wiadomość na #${widget.channel.name}',
+                            ),
                       onSend: _send,
                     ),
                 ],
@@ -318,6 +381,7 @@ class _ClubChatScreenState extends State<ClubChatScreen> {
   }
 
   Widget _buildMessages(ClubChatAuthority authority) {
+    final copy = AppLocalizations.of(context);
     return StreamBuilder<List<ClubMessage>>(
       stream: _messageStream,
       builder: (context, snapshot) {
@@ -336,11 +400,16 @@ class _ClubChatScreenState extends State<ClubChatScreen> {
         if (snapshot.hasError) {
           return _ChatState(
             icon: Icons.cloud_off_rounded,
-            title: 'Could not load messages',
-            subtitle: friendlyErrorMessage(
-              snapshot.error ?? 'unknown',
-              fallback: 'Could not load this chat.',
+            title: copy.text(
+              'Could not load messages',
+              'Nie udało się wczytać wiadomości',
             ),
+            subtitle: copy.isPolish
+                ? 'Sprawdź połączenie i spróbuj ponownie.'
+                : friendlyErrorMessage(
+                    snapshot.error ?? 'unknown',
+                    fallback: 'Could not load this chat.',
+                  ),
           );
         }
         final messages = snapshot.data ?? const <ClubMessage>[];
@@ -350,11 +419,20 @@ class _ClubChatScreenState extends State<ClubChatScreen> {
                 ? Icons.campaign_rounded
                 : Icons.forum_rounded,
             title: _isAnnouncements
-                ? 'No announcements yet'
-                : 'Start the club conversation',
+                ? copy.text('No announcements yet', 'Brak ogłoszeń')
+                : copy.text(
+                    'Start the club conversation',
+                    'Rozpocznij rozmowę w klubie',
+                  ),
             subtitle: _isAnnouncements
-                ? 'Important club updates will appear here.'
-                : 'Be the first member to write in #${widget.channel.name}.',
+                ? copy.text(
+                    'Important club updates will appear here.',
+                    'Ważne aktualizacje klubu pojawią się tutaj.',
+                  )
+                : copy.text(
+                    'Be the first member to write in #${widget.channel.name}.',
+                    'Napisz pierwszą wiadomość na #${widget.channel.name}.',
+                  ),
           );
         }
         return ListView.builder(
@@ -391,12 +469,12 @@ class _ClubChatScreenState extends State<ClubChatScreen> {
 /// could otherwise script the words a blind moderator hears immediately
 /// before a destructive action ("… Cancel button. Wrong message, press
 /// Cancel."). Collapse and clamp before interpolating.
-String _safeSenderName(ClubMessage message) {
+String _safeSenderName(ClubMessage message, {String fallback = 'this member'}) {
   final collapsed = message.senderName.replaceAll(RegExp(r'\s+'), ' ').trim();
-  if (collapsed.isEmpty) return 'this member';
+  if (collapsed.isEmpty) return fallback;
   // The model substitutes this placeholder for an empty name; saying
   // "YO Voice user's message" reads like an official account.
-  if (collapsed == 'YO Voice user') return 'this member';
+  if (collapsed == 'YO Voice user') return fallback;
   return collapsed.length <= 40 ? collapsed : '${collapsed.substring(0, 40)}…';
 }
 
@@ -422,6 +500,7 @@ class _ClubMessageTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
+    final copy = AppLocalizations.of(context);
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: AccessibleContextAction(
@@ -430,7 +509,7 @@ class _ClubMessageTile extends StatelessWidget {
         // before, so the button node could not be told apart from its
         // neighbour. The time and an opening fragment make each one
         // identifiable without a second stop on the content node.
-        semanticLabel: _actionLabel(),
+        semanticLabel: _actionLabel(copy),
         borderRadius: 16,
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -482,7 +561,7 @@ class _ClubMessageTile extends StatelessWidget {
                     ),
                     const SizedBox(height: 5),
                     Text(
-                      _bodyText(),
+                      _bodyText(copy),
                       style: TextStyle(
                         color: message.isDeleted
                             ? palette.textTertiary
@@ -508,23 +587,38 @@ class _ClubMessageTile extends StatelessWidget {
   /// moderator's act. Telling members a moderator removed the owner's
   /// message would describe something the app tells moderators is
   /// impossible, and would pin a platform decision on club volunteers.
-  String _bodyText() {
-    if (message.wasRemovedByStaff) return 'Removed by YO Voice';
-    if (message.wasRemovedByModerator) return 'Removed by a club moderator';
-    if (message.isDeleted) return 'Message deleted';
+  String _bodyText(AppLocalizations copy) {
+    if (message.wasRemovedByStaff) {
+      return copy.text('Removed by YO Voice', 'Usunięto przez YO Voice');
+    }
+    if (message.wasRemovedByModerator) {
+      return copy.text(
+        'Removed by a club moderator',
+        'Usunięto przez moderatora klubu',
+      );
+    }
+    if (message.isDeleted) {
+      return copy.text('Message deleted', 'Wiadomość usunięta');
+    }
     return message.content;
   }
 
-  String _actionLabel() {
-    final name = _safeSenderName(message);
+  String _actionLabel(AppLocalizations copy) {
+    final name = _safeSenderName(
+      message,
+      fallback: copy.text('this member', 'ten członek'),
+    );
     final opening = message.content.trim();
     final snippet = opening.length <= 40
         ? opening
         : '${opening.substring(0, 40)}…';
     final where = snippet.isEmpty ? '' : ': $snippet';
     return isModeration
-        ? 'Remove $name’s message$where'
-        : 'Delete your message$where';
+        ? copy.text(
+            'Remove $name’s message$where',
+            'Usuń wiadomość użytkownika $name$where',
+          )
+        : copy.text('Delete your message$where', 'Usuń swoją wiadomość$where');
   }
 
   static String _formatTime(BuildContext context, DateTime value) {
@@ -654,6 +748,9 @@ class _Composer extends StatelessWidget {
           const SizedBox(width: 9),
           IconButton.filled(
             onPressed: sending ? null : onSend,
+            tooltip: AppLocalizations.of(
+              context,
+            ).text('Send message', 'Wyślij wiadomość'),
             style: IconButton.styleFrom(
               backgroundColor: colors.primary,
               foregroundColor: colors.onPrimary,

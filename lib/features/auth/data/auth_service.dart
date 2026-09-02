@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:http/http.dart' as http;
 
+import 'package:yovoice/core/localization/firebase_auth_language_sync.dart';
 import 'package:yovoice/core/presence/presence_service.dart';
 import 'package:yovoice/features/auth/data/action_code_settings.dart';
 import 'package:yovoice/features/auth/data/auth_profile_identity.dart';
@@ -59,6 +60,7 @@ class AuthService {
     @visibleForTesting ActiveDirectCallEnd? endActiveDirectCall,
     @visibleForTesting LocalSensitiveDataClear? clearLocalSensitiveData,
     @visibleForTesting EphemeralMediaAccessClear? clearEphemeralMediaAccess,
+    @visibleForTesting Future<void> Function()? waitForAuthLanguage,
     @visibleForTesting
     Duration bestEffortCleanupTimeout = const Duration(seconds: 10),
   }) : _firebaseAuth = firebaseAuth ?? FirebaseAuth.instance,
@@ -71,6 +73,9 @@ class AuthService {
        _injectedEndActiveDirectCall = endActiveDirectCall,
        _injectedClearLocalSensitiveData = clearLocalSensitiveData,
        _injectedClearEphemeralMediaAccess = clearEphemeralMediaAccess,
+       _waitForAuthLanguage =
+           waitForAuthLanguage ??
+           (() => FirebaseAuthLanguageSync.instance.ready),
        _bestEffortCleanupTimeout = bestEffortCleanupTimeout,
        _appleSignInFeatureEnabled =
            appleSignInFeatureEnabled ??
@@ -100,6 +105,7 @@ class AuthService {
   final ActiveDirectCallEnd? _injectedEndActiveDirectCall;
   final LocalSensitiveDataClear? _injectedClearLocalSensitiveData;
   final EphemeralMediaAccessClear? _injectedClearEphemeralMediaAccess;
+  final Future<void> Function() _waitForAuthLanguage;
   final Duration _bestEffortCleanupTimeout;
 
   final GoogleSignIn _googleSignIn = GoogleSignIn.instance;
@@ -122,6 +128,7 @@ class AuthService {
     required String password,
   }) async {
     try {
+      await _waitForAuthLanguage();
       return await _firebaseAuth.signInWithEmailAndPassword(
         email: email.trim(),
         password: password,
@@ -137,6 +144,7 @@ class AuthService {
 
   Future<UserCredential> signInWithGoogle() async {
     try {
+      await _waitForAuthLanguage();
       UserCredential credential;
 
       if (kIsWeb) {
@@ -188,14 +196,13 @@ class AuthService {
           );
 
         case GoogleSignInExceptionCode.clientConfigurationError:
-          throw AuthServiceException(
-            error.description ?? 'Google Sign-In is not configured correctly.',
+          throw const AuthServiceException(
+            'Google Sign-In is not configured correctly.',
           );
 
         case GoogleSignInExceptionCode.providerConfigurationError:
-          throw AuthServiceException(
-            error.description ??
-                'Google authentication provider is unavailable.',
+          throw const AuthServiceException(
+            'Google authentication provider is unavailable.',
           );
 
         case GoogleSignInExceptionCode.uiUnavailable:
@@ -204,8 +211,8 @@ class AuthService {
           );
 
         default:
-          throw AuthServiceException(
-            error.description ?? 'An unexpected Google Sign-In error occurred.',
+          throw const AuthServiceException(
+            'An unexpected Google Sign-In error occurred.',
           );
       }
     } on FirebaseAuthException {
@@ -252,6 +259,7 @@ class AuthService {
   }
 
   Future<UserCredential> signInWithApple() async {
+    await _waitForAuthLanguage();
     final availability = await getAppleSignInAvailability();
     if (availability != AppleSignInAvailability.available) {
       throw const AuthServiceException(
@@ -291,6 +299,7 @@ class AuthService {
     UserCredential? credential;
 
     try {
+      await _waitForAuthLanguage();
       credential = await _firebaseAuth.createUserWithEmailAndPassword(
         email: email.trim(),
         password: password,
@@ -350,6 +359,7 @@ class AuthService {
     }
 
     try {
+      await _waitForAuthLanguage();
       await user.sendEmailVerification(verifyEmailActionCodeSettings());
     } on FirebaseAuthException {
       rethrow;
@@ -373,6 +383,7 @@ class AuthService {
 
   Future<void> sendPasswordResetEmail(String email) async {
     try {
+      await _waitForAuthLanguage();
       await _firebaseAuth.sendPasswordResetEmail(
         email: email.trim(),
         actionCodeSettings: resetPasswordActionCodeSettings(),
@@ -770,10 +781,10 @@ class AuthService {
         return 'Sign-in was cancelled.';
 
       case 'unauthorized-domain':
-        return 'This website domain is not authorized in Firebase Authentication.';
+        return 'This website is not authorized for sign-in.';
 
       default:
-        return error.message ?? 'Firebase authentication error.';
+        return 'Authentication could not be completed. Try again.';
     }
   }
 }

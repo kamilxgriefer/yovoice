@@ -62,9 +62,9 @@ class ProfileVisibilityService {
         );
       }
       return ProfileVisibility.fromValue(value);
-    } on FirebaseFunctionsException catch (error) {
-      throw ProfileVisibilityException(
-        error.message ?? 'Profile visibility could not be updated.',
+    } on FirebaseFunctionsException {
+      throw const ProfileVisibilityException(
+        'Profile visibility could not be updated.',
       );
     } on ProfileVisibilityException {
       rethrow;

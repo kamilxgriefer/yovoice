@@ -13,39 +13,36 @@ import 'package:yovoice/features/rooms/data/services/room_service.dart';
 /// a voice token unless the room document says
 /// `status == 'active' && isLive == true`, and refuses again unless the
 /// caller already holds a participant row. Nothing in the app performed
-/// either transition for an ordinary room: `RoomService.startCommunityVoice`
-/// had no callers at all, and `enterClubLounge` — the one path that did it —
-/// was reachable only from the Club overview. Every other entry point (Home,
-/// Discover, notifications, profile, the mini bar, and creating a room)
-/// pushed straight into a room screen that asked for a token immediately, so
-/// a persistent room's own host pressed unmute and was told "This room is not
-/// currently live." Home's room board even labels the button "Start" for a
-/// dormant room; nothing started anything.
+/// either transition consistently for an ordinary room. Entry points used to
+/// push straight into a room screen that asked for a token immediately, so a
+/// persistent room's own host could press unmute and be told "This room is not
+/// currently live."
 ///
 /// ORDER IS THE WHOLE POINT. Liveness first, roster second, token third.
 /// `joinRoom` refuses a room whose `isLive` is not true, and the token
 /// function refuses both a dormant room and a caller with no participant row,
 /// so any other order is a guaranteed, user-visible failure.
 ///
-/// ENTERING IS THE START. A room screen has no lobby (that detour was removed
-/// deliberately) — it renders a stage, a live status line and a microphone the
-/// moment it opens, and Home already advertises a dormant room's entry button
-/// as "Start". Making the start a second, separate tap on a screen that
-/// already looks live is the mismatch this fix is about, so entry performs
-/// the transition for anyone the deployed rules would accept and for nobody
-/// else. Someone with no such authority is never shown a start control; they
-/// get an honest dormant state instead.
+/// CONSENT IS THE BOUNDARY. Navigation only opens RoomEntryScreen's passive
+/// preview. That screen invokes this coordinator after the explicit Join CTA;
+/// constructing the screen never starts voice or creates a roster row. Once
+/// invoked, [enter] performs the transition for anyone the deployed rules
+/// accept and for nobody else. Someone with no such authority gets an honest
+/// dormant state instead.
 class RoomVoiceEntryCoordinator {
   RoomVoiceEntryCoordinator({
     required Future<VoiceRoom> Function(String roomId) readRoom,
     required Future<RoomVoiceStartAuthority> Function(VoiceRoom room)
     resolveAuthority,
     required Future<void> Function(String roomId) startVoice,
-    required Future<VoiceRoom> Function(String roomId) joinRoom,
+    required Future<VoiceRoom> Function(String roomId, {bool startMuted})
+    joinRoom,
+    String Function()? currentUserId,
   }) : _readRoom = readRoom,
        _resolveAuthority = resolveAuthority,
        _startVoice = startVoice,
-       _joinRoom = joinRoom;
+       _joinRoom = joinRoom,
+       _currentUserId = currentUserId;
 
   /// The production wiring. Constructed lazily so that merely importing this
   /// file cannot touch Firebase — the room screens are reachable from widget
@@ -57,6 +54,7 @@ class RoomVoiceEntryCoordinator {
       resolveAuthority: service.resolveVoiceStartAuthority,
       startVoice: service.startRoomVoice,
       joinRoom: service.joinRoom,
+      currentUserId: () => service.currentUserId,
     );
   }
 
@@ -64,11 +62,30 @@ class RoomVoiceEntryCoordinator {
   final Future<RoomVoiceStartAuthority> Function(VoiceRoom room)
   _resolveAuthority;
   final Future<void> Function(String roomId) _startVoice;
-  final Future<VoiceRoom> Function(String roomId) _joinRoom;
+  final Future<VoiceRoom> Function(String roomId, {bool startMuted}) _joinRoom;
+  final String Function()? _currentUserId;
+
+  /// Whether prejoin must obtain microphone access before creating a roster
+  /// row. Community members and a broadcast host enter with publish rights.
+  /// A broadcast audience member does not: the server-minted token grants
+  /// `canPublish: false`, so asking that listener for microphone access would
+  /// be both unnecessary and a privacy regression.
+  ///
+  /// This is deliberately only the initial-role decision. LiveKit remains
+  /// authoritative and [VoiceCallService] rechecks the token grant before it
+  /// touches media; a listener promoted later is handled by that path.
+  bool requiresMicrophoneForInitialEntry(VoiceRoom room) {
+    if (!room.isBroadcast) return true;
+    final currentUserId = _currentUserId?.call() ?? '';
+    return currentUserId.isNotEmpty && currentUserId == room.hostId;
+  }
 
   /// Resolves [room] into the state the screens render from, performing the
   /// liveness transition when — and only when — this account may.
-  Future<RoomVoiceEntry> enter(VoiceRoom room) async {
+  Future<RoomVoiceEntry> enter(
+    VoiceRoom room, {
+    bool startMuted = false,
+  }) async {
     // The caller's copy can be arbitrarily stale: Home hands over a document
     // from a cached list, a notification hands over one fetched minutes ago,
     // and `isLive` is exactly the field most likely to have moved. A refresh
@@ -93,7 +110,11 @@ class RoomVoiceEntryCoordinator {
     }
 
     if (current.isLive) {
-      return _joinLive(current, RoomVoiceEntryOutcome.live);
+      return _joinLive(
+        current,
+        RoomVoiceEntryOutcome.live,
+        startMuted: startMuted,
+      );
     }
 
     final RoomVoiceStartAuthority authority;
@@ -135,6 +156,7 @@ class RoomVoiceEntryCoordinator {
       current.withLiveness(true),
       RoomVoiceEntryOutcome.started,
       authority: authority,
+      startMuted: startMuted,
     );
   }
 
@@ -142,9 +164,10 @@ class RoomVoiceEntryCoordinator {
     VoiceRoom room,
     RoomVoiceEntryOutcome outcome, {
     RoomVoiceStartAuthority authority = RoomVoiceStartAuthority.none,
+    bool startMuted = false,
   }) async {
     try {
-      final joined = await _joinRoom(room.id);
+      final joined = await _joinRoom(room.id, startMuted: startMuted);
       return RoomVoiceEntry(
         outcome: outcome,
         room: joined,
@@ -164,19 +187,24 @@ class RoomVoiceEntryCoordinator {
     }
   }
 
-  /// Server refusals carry product copy in `.message`; the
-  /// "[firebase_functions/…]" and "Bad state: " prefixes are developer noise
-  /// and must never reach a person.
-  ///
-  /// This is the delivery vehicle for EVERY failure on the entry path — the
-  /// room screen now announces the message on arrival, not only when the
-  /// control is tapped — so anything falling through to `toString()` is
-  /// shown to the user verbatim.
+  /// Maps transport and application failures to a small allow-list of product
+  /// messages. Backend exception text must never cross this presentation
+  /// boundary: it can contain implementation details or user-controlled data.
   static String _friendly(Object error, String fallback) {
     if (error is FirebaseFunctionsException) {
-      final message = error.message?.trim();
-      if (message != null && message.isNotEmpty) return message;
-      return fallback;
+      final productMessage = _allowedProductMessage(error.message);
+      if (productMessage != null) return productMessage;
+      return switch (error.code) {
+        'permission-denied' => 'You do not have access to this room right now.',
+        'not-found' => 'This room no longer exists.',
+        'unavailable' || 'deadline-exceeded' || 'network-request-failed' =>
+          'You appear to be offline. Check your connection and try again.',
+        'resource-exhausted' => 'Voice is busy right now. Try again shortly.',
+        'unauthenticated' => 'Please sign in again to join this room.',
+        'aborted' || 'failed-precondition' =>
+          'The room changed while you were joining. Try again.',
+        _ => fallback,
+      };
     }
     // Ordered AFTER the callable branch on purpose: FirebaseFunctionsException
     // IS a FirebaseException, and its `.message` carries real product copy
@@ -197,14 +225,27 @@ class RoomVoiceEntryCoordinator {
       };
     }
     if (error is StateError) {
-      final message = error.message.trim();
-      if (message.isNotEmpty) return message;
+      return _allowedProductMessage(error.message) ?? fallback;
     }
-    final text = error
-        .toString()
-        .replaceFirst('Bad state: ', '')
-        .replaceFirst('Exception: ', '')
-        .trim();
-    return text.isEmpty ? fallback : text;
+    return fallback;
+  }
+
+  static String? _allowedProductMessage(Object? rawMessage) {
+    final message = rawMessage?.toString().trim();
+    return switch (message) {
+      'This room is full.' ||
+      'This room is currently unavailable.' ||
+      'Voice is not live in this room.' ||
+      'Only club members can enter the Club Lounge.' ||
+      'This lounge is not available right now.' ||
+      'The room could not be opened.' ||
+      'This room is not currently live.' => message,
+      'The requested room does not exist.' ||
+      'The room no longer exists.' ||
+      'Room not found.' => 'This room no longer exists.',
+      'You must be signed in to use rooms.' =>
+        'Please sign in again to join this room.',
+      _ => null,
+    };
   }
 }

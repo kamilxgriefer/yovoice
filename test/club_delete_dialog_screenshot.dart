@@ -64,10 +64,7 @@ Widget _host(Widget child) => RepaintBoundary(
   child: MaterialApp(
     debugShowCheckedModeBanner: false,
     theme: ThemeData.dark(useMaterial3: true),
-    home: Scaffold(
-      backgroundColor: const Color(0xFF080711),
-      body: child,
-    ),
+    home: Scaffold(backgroundColor: const Color(0xFF080711), body: child),
   ),
 );
 
@@ -186,8 +183,9 @@ void main() {
     });
   }
 
-  testWidgets('club delete dialog 390 px — server refusal shown in place',
-      (tester) async {
+  testWidgets('club delete dialog 390 px — server refusal shown in place', (
+    tester,
+  ) async {
     tester.view.devicePixelRatio = 1;
     tester.view.physicalSize = const Size(390, 844);
     addTearDown(tester.view.reset);

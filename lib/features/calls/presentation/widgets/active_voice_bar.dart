@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
+
 import '../../data/services/voice_call_service.dart';
 import '../screens/voice_call_screen.dart';
 
@@ -31,6 +33,7 @@ class _ActiveVoiceBarState extends State<ActiveVoiceBar> {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final roomId = _voice.roomId;
     final roomName = _voice.roomName;
 
@@ -79,8 +82,8 @@ class _ActiveVoiceBarState extends State<ActiveVoiceBar> {
                 ),
                 Text(
                   _voice.status == VoiceCallStatus.reconnecting
-                      ? 'Reconnecting…'
-                      : 'Voice connected',
+                      ? copy.text('Reconnecting…', 'Ponowne łączenie…')
+                      : copy.text('Voice connected', 'Głos połączony'),
                   style: const TextStyle(
                     color: Color(0xFFB8ADBF),
                     fontSize: 12,

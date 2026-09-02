@@ -2,8 +2,11 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:yovoice/core/helpers/error_messages.dart';
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/discover/presentation/discover_category_identity.dart';
+import 'package:yovoice/features/discover/presentation/discover_localized_copy.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/features/discover/presentation/widgets/hero_live_room.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
@@ -83,54 +86,67 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
   }
 
   Future<void> _openRoom(VoiceRoom room) async {
+    final copy = AppLocalizations.of(context);
     try {
-      final joinedRoom = await _roomService.joinRoom(room.id);
-
       if (!mounted) {
         return;
       }
 
       await Navigator.of(context).push<void>(
-        MaterialPageRoute<void>(
-          builder: (_) => RoomEntryScreen(room: joinedRoom),
-        ),
+        MaterialPageRoute<void>(builder: (_) => RoomEntryScreen(room: room)),
       );
     } catch (error) {
       if (!mounted) {
         return;
       }
 
-      _showError(_readableError(error));
+      _showError(_readableError(error, copy));
     }
   }
 
-  String _readableError(Object error) {
+  String _readableError(Object error, AppLocalizations copy) {
     final message = error.toString();
 
     if (message.contains('permission-denied')) {
-      return "You don't have permission to do that.";
+      return copy.text(
+        "You don't have permission to do that.",
+        'Nie masz uprawnień do wykonania tej czynności.',
+      );
     }
 
     if (message.toLowerCase().contains('full')) {
-      return 'This room is full.';
+      return copy.text('This room is full.', 'Ten pokój jest pełny.');
     }
 
     if (message.toLowerCase().contains('no longer live')) {
-      return 'This room has already ended.';
+      return copy.text(
+        'This room has already ended.',
+        'Ten pokój już się zakończył.',
+      );
     }
 
     if (message.toLowerCase().contains('not live')) {
-      return 'Voice is no longer live in this room.';
+      return copy.text(
+        'Voice is no longer live in this room.',
+        'Rozmowa głosowa w tym pokoju już się zakończyła.',
+      );
     }
 
     if (message.toLowerCase().contains('unavailable')) {
-      return 'This room is currently unavailable.';
+      return copy.text(
+        'This room is currently unavailable.',
+        'Ten pokój jest obecnie niedostępny.',
+      );
     }
 
-    return message
-        .replaceFirst('Bad state: ', '')
-        .replaceFirst('Invalid argument(s): ', '')
-        .replaceFirst('Exception: ', '');
+    return friendlyErrorMessage(
+      error,
+      copy: copy,
+      fallback: copy.text(
+        'Could not open this room. Please try again.',
+        'Nie udało się otworzyć pokoju. Spróbuj ponownie.',
+      ),
+    );
   }
 
   void _showError(String message) {
@@ -306,6 +322,7 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
     final dark = Theme.of(context).brightness == Brightness.dark;
@@ -337,7 +354,7 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
               builder: (context, snapshot) {
                 if (snapshot.hasError) {
                   return _DiscoverErrorState(
-                    message: _readableError(snapshot.error!),
+                    message: _readableError(snapshot.error!, copy),
                   );
                 }
 
@@ -418,14 +435,14 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
   }
 
   List<Widget> _buildSearchResults(List<VoiceRoom> rooms) {
+    final copy = AppLocalizations.of(context);
     return [
       SliverToBoxAdapter(
         child: Padding(
           padding: const EdgeInsets.fromLTRB(18, 28, 18, 14),
           child: _SectionHeader(
-            title: 'Search results',
-            subtitle:
-                '${rooms.length} live ${rooms.length == 1 ? 'room' : 'rooms'}',
+            title: copy.text('Search results', 'Wyniki wyszukiwania'),
+            subtitle: localizedLiveRoomCount(copy, rooms.length),
             icon: Icons.search_rounded,
             accent: Theme.of(context).colorScheme.primary,
           ),
@@ -452,6 +469,7 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
   }
 
   List<Widget> _buildPremiumSections(_DiscoverSections sections) {
+    final copy = AppLocalizations.of(context);
     final widgets = <Widget>[];
     final hero = sections.hero;
 
@@ -472,8 +490,11 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
           child: Padding(
             padding: const EdgeInsets.fromLTRB(18, 31, 18, 14),
             child: _SectionHeader(
-              title: 'Featured',
-              subtitle: 'Rooms selected for you',
+              title: copy.text('Featured', 'Polecane'),
+              subtitle: copy.text(
+                'Rooms selected for you',
+                'Pokoje wybrane dla Ciebie',
+              ),
               icon: Icons.auto_awesome_rounded,
               accent: const Color(0xFFFFB84D),
             ),
@@ -497,8 +518,11 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
           child: Padding(
             padding: const EdgeInsets.fromLTRB(18, 32, 18, 14),
             child: _SectionHeader(
-              title: 'Trending',
-              subtitle: 'The busiest conversations right now',
+              title: copy.text('Trending', 'Popularne'),
+              subtitle: copy.text(
+                'The busiest conversations right now',
+                'Najbardziej oblegane rozmowy w tej chwili',
+              ),
               icon: Icons.local_fire_department_rounded,
               accent: const Color(0xFFFF5C75),
             ),
@@ -533,8 +557,11 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
           child: Padding(
             padding: const EdgeInsets.fromLTRB(18, 32, 18, 14),
             child: _SectionHeader(
-              title: 'Rising',
-              subtitle: 'Fresh rooms gaining momentum',
+              title: copy.text('Rising', 'Na fali'),
+              subtitle: copy.text(
+                'Fresh rooms gaining momentum',
+                'Nowe pokoje, które nabierają tempa',
+              ),
               icon: Icons.trending_up_rounded,
               accent: const Color(0xFF57D9A3),
             ),
@@ -584,6 +611,7 @@ class _DiscoverHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
     final largeText = MediaQuery.textScalerOf(context).scale(1) > 1.4;
@@ -591,7 +619,7 @@ class _DiscoverHeader extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'Discover',
+          copy.text('Discover', 'Odkrywaj'),
           style: TextStyle(
             color: palette.textPrimary,
             fontSize: 31,
@@ -602,7 +630,10 @@ class _DiscoverHeader extends StatelessWidget {
         ),
         const SizedBox(height: 8),
         Text(
-          'Find voices worth staying for.',
+          copy.text(
+            'Find voices worth staying for.',
+            'Znajdź głosy, przy których warto zostać.',
+          ),
           style: TextStyle(
             color: palette.textSecondary,
             fontSize: 14,
@@ -648,7 +679,10 @@ class _DiscoverHeader extends StatelessWidget {
             fontWeight: FontWeight.w600,
           ),
           decoration: InputDecoration(
-            hintText: 'Search rooms, hosts or topics...',
+            hintText: copy.text(
+              'Search rooms, hosts or topics...',
+              'Szukaj pokoi, prowadzących lub tematów…',
+            ),
             hintStyle: TextStyle(
               color: palette.textSecondary,
               fontWeight: FontWeight.w500,
@@ -665,7 +699,7 @@ class _DiscoverHeader extends StatelessWidget {
                 }
 
                 return IconButton(
-                  tooltip: 'Clear search',
+                  tooltip: copy.text('Clear search', 'Wyczyść wyszukiwanie'),
                   onPressed: () {
                     searchController.clear();
                     onSearchChanged('');
@@ -702,6 +736,7 @@ class _LiveRoomCounter extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
     return Container(
@@ -723,7 +758,7 @@ class _LiveRoomCounter extends StatelessWidget {
           Icon(Icons.circle, color: colors.error, size: 9),
           const SizedBox(width: 7),
           Text(
-            '$count LIVE',
+            copy.text('$count LIVE', '$count NA ŻYWO'),
             style: TextStyle(
               color: palette.textPrimary,
               fontSize: 10,
@@ -750,6 +785,7 @@ class _CategorySelector extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
     final largeText = MediaQuery.textScalerOf(context).scale(1) > 1.4;
@@ -805,7 +841,7 @@ class _CategorySelector extends StatelessWidget {
                       ),
                       const SizedBox(width: 7),
                       Text(
-                        category.label,
+                        localizedDiscoverCategory(copy, category.label),
                         style: TextStyle(
                           color: selected
                               ? colors.onPrimary
@@ -971,6 +1007,7 @@ class _FeaturedRoomCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final accent = _identity.seed;
     final palette = context.appPalette;
     final dark = Theme.of(context).brightness == Brightness.dark;
@@ -1058,7 +1095,7 @@ class _FeaturedRoomCard extends StatelessWidget {
                     const SizedBox(height: 7),
                     Text(
                       room.description.isEmpty
-                          ? 'Hosted by ${room.hostName}'
+                          ? localizedHostedBy(copy, room.hostName)
                           : room.description,
                       maxLines: expandedLayout ? 4 : 2,
                       overflow: TextOverflow.ellipsis,
@@ -1213,17 +1250,17 @@ class _PremiumRoomCard extends StatelessWidget {
     }
   }
 
-  String get _roomTypeLabel {
-    return room.isBroadcast ? 'PODCAST' : 'COMMUNITY';
+  String _roomTypeLabel(AppLocalizations copy) {
+    return room.isBroadcast
+        ? copy.text('PODCAST', 'PODCAST')
+        : copy.text('COMMUNITY', 'SPOŁECZNOŚĆ');
   }
 
-  String get _peopleLabel {
-    if (room.isBroadcast) {
-      return '${room.participantCount} listening';
-    }
-
-    return '${room.participantCount} inside';
-  }
+  String _peopleLabel(AppLocalizations copy) => localizedDiscoverAudience(
+    copy,
+    count: room.participantCount,
+    isBroadcast: room.isBroadcast,
+  );
 
   IconData get _roomIcon {
     return room.isBroadcast ? Icons.podcasts_rounded : Icons.groups_rounded;
@@ -1231,6 +1268,7 @@ class _PremiumRoomCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final accent = _accent;
     final palette = context.appPalette;
     final brightness = Theme.of(context).brightness;
@@ -1263,8 +1301,8 @@ class _PremiumRoomCard extends StatelessWidget {
     final details = _PremiumRoomDetails(
       room: room,
       accent: accent,
-      roomTypeLabel: _roomTypeLabel,
-      peopleLabel: _peopleLabel,
+      roomTypeLabel: _roomTypeLabel(copy),
+      peopleLabel: _peopleLabel(copy),
       roomIcon: _roomIcon,
       occupancy: occupancy,
       useAccessibleLayout: useAccessibleLayout,
@@ -1305,7 +1343,10 @@ class _PremiumRoomCard extends StatelessWidget {
                       children: [
                         avatar,
                         const Spacer(),
-                        Semantics(label: 'Open room', child: chevron),
+                        Semantics(
+                          label: copy.text('Open room', 'Otwórz pokój'),
+                          child: chevron,
+                        ),
                       ],
                     ),
                     const SizedBox(height: 14),
@@ -1352,6 +1393,7 @@ class _PremiumRoomDetails extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
     final visuals = DiscoverCategoryVisuals.fromSeed(
       accent,
@@ -1386,7 +1428,7 @@ class _PremiumRoomDetails extends StatelessWidget {
         const SizedBox(height: 5),
         Text(
           room.description.isEmpty
-              ? 'Hosted by ${room.hostName}'
+              ? localizedHostedBy(copy, room.hostName)
               : room.description,
           maxLines: useAccessibleLayout ? 4 : 2,
           overflow: TextOverflow.ellipsis,
@@ -1443,7 +1485,10 @@ class _PremiumRoomDetails extends StatelessWidget {
               label: peopleLabel,
             ),
             _RoomTag(icon: Icons.language_rounded, label: room.language),
-            _RoomTag(icon: Icons.local_offer_rounded, label: room.category),
+            _RoomTag(
+              icon: Icons.local_offer_rounded,
+              label: localizedDiscoverCategory(copy, room.category),
+            ),
           ],
         ),
         if (occupancy != null) ...[
@@ -1633,6 +1678,7 @@ class _SmallLiveBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
       decoration: BoxDecoration(
@@ -1642,14 +1688,14 @@ class _SmallLiveBadge extends StatelessWidget {
           color: const Color(0xFFFF416C).withValues(alpha: 0.65),
         ),
       ),
-      child: const Row(
+      child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(Icons.circle, color: Color(0xFFFF416C), size: 7),
-          SizedBox(width: 5),
+          const Icon(Icons.circle, color: Color(0xFFFF416C), size: 7),
+          const SizedBox(width: 5),
           Text(
-            'LIVE',
-            style: TextStyle(
+            copy.text('LIVE', 'NA ŻYWO'),
+            style: const TextStyle(
               color: Colors.white,
               fontSize: 8,
               fontWeight: FontWeight.w900,
@@ -1819,6 +1865,7 @@ class _DiscoverEmptyState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
     return Center(
@@ -1852,8 +1899,11 @@ class _DiscoverEmptyState extends StatelessWidget {
             const SizedBox(height: 19),
             Text(
               hasFilters && !nothingIsLive
-                  ? 'No matching rooms'
-                  : 'No rooms are live right now',
+                  ? copy.text('No matching rooms', 'Brak pasujących pokoi')
+                  : copy.text(
+                      'No rooms are live right now',
+                      'Żaden pokój nie jest teraz aktywny',
+                    ),
               textAlign: TextAlign.center,
               style: TextStyle(
                 color: palette.textPrimary,
@@ -1864,8 +1914,14 @@ class _DiscoverEmptyState extends StatelessWidget {
             const SizedBox(height: 8),
             Text(
               hasFilters && !nothingIsLive
-                  ? 'Try another search phrase or clear the selected category.'
-                  : 'Live public Community and Podcast rooms will appear here automatically.',
+                  ? copy.text(
+                      'Try another search phrase or clear the selected category.',
+                      'Spróbuj innej frazy lub wyczyść wybraną kategorię.',
+                    )
+                  : copy.text(
+                      'Live public Community and Podcast rooms will appear here automatically.',
+                      'Aktywne publiczne pokoje społecznościowe i podcasty pojawią się tutaj automatycznie.',
+                    ),
               textAlign: TextAlign.center,
               style: TextStyle(
                 color: palette.textSecondary,
@@ -1889,9 +1945,9 @@ class _DiscoverEmptyState extends StatelessWidget {
                   ),
                 ),
                 icon: const Icon(Icons.refresh_rounded, size: 19),
-                label: const Text(
-                  'CLEAR FILTERS',
-                  style: TextStyle(
+                label: Text(
+                  copy.text('CLEAR FILTERS', 'WYCZYŚĆ FILTRY'),
+                  style: const TextStyle(
                     fontSize: 11,
                     fontWeight: FontWeight.w900,
                     letterSpacing: 0.7,
@@ -1913,6 +1969,7 @@ class _DiscoverErrorState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
     return Center(
@@ -1938,7 +1995,10 @@ class _DiscoverErrorState extends StatelessWidget {
             ),
             const SizedBox(height: 18),
             Text(
-              'Could not load Discover',
+              copy.text(
+                'Could not load Discover',
+                'Nie udało się wczytać sekcji Odkrywaj',
+              ),
               style: TextStyle(
                 color: palette.textPrimary,
                 fontSize: 19,

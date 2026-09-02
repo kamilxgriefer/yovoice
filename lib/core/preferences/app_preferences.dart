@@ -1,8 +1,9 @@
-import 'dart:ui' show Locale, PlatformDispatcher;
-
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+import 'package:yovoice/core/localization/app_language.dart';
+
+export 'package:yovoice/core/localization/app_language.dart';
 
 enum AppThemePreference {
   system,
@@ -16,30 +17,11 @@ enum AppThemePreference {
   };
 }
 
-enum AppLanguagePreference {
-  system,
-  english,
-  polish;
-
-  Locale? get locale => switch (this) {
-    AppLanguagePreference.system => null,
-    AppLanguagePreference.english => const Locale('en'),
-    AppLanguagePreference.polish => const Locale('pl'),
-  };
-
-  Locale get effectiveLocale {
-    final requested = locale ?? PlatformDispatcher.instance.locale;
-    return requested.languageCode == 'pl'
-        ? const Locale('pl')
-        : const Locale('en');
-  }
-}
-
 @immutable
 class AppPreferences {
   const AppPreferences({
     this.theme = AppThemePreference.dark,
-    this.language = AppLanguagePreference.english,
+    this.language = AppLanguagePreference.system,
     this.soundEffectsEnabled = true,
   });
 
@@ -169,6 +151,7 @@ class AppPreferencesController extends ChangeNotifier {
   }
 
   static AppLanguagePreference _parseLanguage(String? value) {
+    if (value == null) return AppLanguagePreference.system;
     return AppLanguagePreference.values.firstWhere(
       (candidate) => candidate.name == value,
       orElse: () => AppLanguagePreference.english,

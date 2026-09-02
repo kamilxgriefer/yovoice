@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/shared/widgets/theme/yo_immersive_dark_surface.dart';
 
 import '../../data/services/voice_call_service.dart';
@@ -57,15 +58,24 @@ class _VoiceCallScreenState extends State<VoiceCallScreen>
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('You must be signed in.')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            AppLocalizations.of(
+              context,
+            ).text('You must be signed in.', 'Musisz się zalogować.'),
+          ),
+        ),
+      );
       return;
     }
 
     final participantName = user.displayName?.trim().isNotEmpty == true
         ? user.displayName!.trim()
-        : user.email?.split('@').first ?? 'YO Voice user';
+        : user.email?.split('@').first ??
+              AppLocalizations.of(
+                context,
+              ).text('YO Voice user', 'Użytkownik YO Voice');
 
     try {
       await _voice.join(
@@ -75,7 +85,10 @@ class _VoiceCallScreenState extends State<VoiceCallScreen>
       );
     } catch (_) {
       if (!mounted) return;
-      final message = _voice.errorMessage ?? 'Could not join voice chat.';
+      final copy = AppLocalizations.of(context);
+      final message = copy.isPolish
+          ? 'Nie udało się dołączyć do rozmowy głosowej.'
+          : _voice.errorMessage ?? 'Could not join voice chat.';
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text(message)));
@@ -195,6 +208,7 @@ class _TopBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     return Padding(
       padding: const EdgeInsets.fromLTRB(10, 8, 10, 6),
       child: Row(
@@ -219,7 +233,7 @@ class _TopBar extends StatelessWidget {
                   ),
                 ),
                 Text(
-                  _statusLabel(status),
+                  _statusLabel(status, copy),
                   style: const TextStyle(
                     color: Color(0xFFAAA0B8),
                     fontSize: 12,
@@ -255,19 +269,34 @@ class _TopBar extends StatelessWidget {
             ),
           ),
           PopupMenuButton<String>(
-            tooltip: 'Send reaction',
+            tooltip: copy.text('Send reaction', 'Wyślij reakcję'),
             color: const Color(0xFF171020),
             icon: const Icon(
               Icons.auto_awesome_rounded,
               color: Color(0xFFC864FF),
             ),
             onSelected: onReaction,
-            itemBuilder: (_) => const [
-              PopupMenuItem(value: '😂', child: Text('😂  Laugh')),
-              PopupMenuItem(value: '🔥', child: Text('🔥  Fire')),
-              PopupMenuItem(value: '❤️', child: Text('❤️  Love')),
-              PopupMenuItem(value: '👏', child: Text('👏  Applause')),
-              PopupMenuItem(value: '😡', child: Text('😡  Angry eyes')),
+            itemBuilder: (_) => [
+              PopupMenuItem(
+                value: '😂',
+                child: Text(copy.text('😂  Laugh', '😂  Śmiech')),
+              ),
+              PopupMenuItem(
+                value: '🔥',
+                child: Text(copy.text('🔥  Fire', '🔥  Ogień')),
+              ),
+              PopupMenuItem(
+                value: '❤️',
+                child: Text(copy.text('❤️  Love', '❤️  Miłość')),
+              ),
+              PopupMenuItem(
+                value: '👏',
+                child: Text(copy.text('👏  Applause', '👏  Brawa')),
+              ),
+              PopupMenuItem(
+                value: '😡',
+                child: Text(copy.text('😡  Angry eyes', '😡  Złość')),
+              ),
             ],
           ),
         ],
@@ -275,13 +304,25 @@ class _TopBar extends StatelessWidget {
     );
   }
 
-  static String _statusLabel(VoiceCallStatus status) {
+  static String _statusLabel(VoiceCallStatus status, AppLocalizations copy) {
     return switch (status) {
-      VoiceCallStatus.disconnected => 'Disconnected',
-      VoiceCallStatus.connecting => 'Connecting to voice…',
-      VoiceCallStatus.connected => 'Live voice room',
-      VoiceCallStatus.reconnecting => 'Reconnecting…',
-      VoiceCallStatus.failed => 'Connection failed',
+      VoiceCallStatus.disconnected => copy.text('Disconnected', 'Rozłączono'),
+      VoiceCallStatus.connecting => copy.text(
+        'Connecting to voice…',
+        'Łączenie z pokojem…',
+      ),
+      VoiceCallStatus.connected => copy.text(
+        'Live voice room',
+        'Pokój głosowy na żywo',
+      ),
+      VoiceCallStatus.reconnecting => copy.text(
+        'Reconnecting…',
+        'Ponowne łączenie…',
+      ),
+      VoiceCallStatus.failed => copy.text(
+        'Connection failed',
+        'Nie udało się połączyć',
+      ),
     };
   }
 }
@@ -303,6 +344,7 @@ class _OrbitalStage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     return LayoutBuilder(
       builder: (context, constraints) {
         final size = Size(constraints.maxWidth, constraints.maxHeight);
@@ -336,12 +378,12 @@ class _OrbitalStage extends StatelessWidget {
               if (participants.isEmpty &&
                   status != VoiceCallStatus.connecting &&
                   status != VoiceCallStatus.reconnecting)
-                const Center(
+                Center(
                   child: Padding(
-                    padding: EdgeInsets.only(top: 240),
+                    padding: const EdgeInsets.only(top: 240),
                     child: Text(
-                      'Waiting for voices…',
-                      style: TextStyle(
+                      copy.text('Waiting for voices…', 'Czekamy na głosy…'),
+                      style: const TextStyle(
                         color: Color(0xFFACA1B7),
                         fontWeight: FontWeight.w700,
                       ),
@@ -429,6 +471,7 @@ class _VoiceEnergyCore extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final connected = status == VoiceCallStatus.connected;
     final percent = connected ? (energy * 100).round().clamp(4, 100) : 0;
 
@@ -469,10 +512,10 @@ class _VoiceEnergyCore extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text(
-              'VOICE\nENERGY',
+            Text(
+              copy.text('VOICE\nENERGY', 'ENERGIA\nGŁOSU'),
               textAlign: TextAlign.center,
-              style: TextStyle(
+              style: const TextStyle(
                 color: Colors.white,
                 fontSize: 22,
                 height: .95,
@@ -493,11 +536,17 @@ class _VoiceEnergyCore extends StatelessWidget {
             Text(
               connected
                   ? energy > .65
-                        ? 'The room is on fire 🔥'
+                        ? copy.text(
+                            'The room is on fire 🔥',
+                            'Ten pokój płonie 🔥',
+                          )
                         : energy > .25
-                        ? 'The room is vibing ✨'
-                        : 'Listening for voices'
-                  : 'Connecting…',
+                        ? copy.text('The room is vibing ✨', 'Świetna energia ✨')
+                        : copy.text(
+                            'Listening for voices',
+                            'Nasłuchiwanie głosów',
+                          )
+                  : copy.text('Connecting…', 'Łączenie…'),
               textAlign: TextAlign.center,
               style: const TextStyle(
                 color: Color(0xFFD1C5DA),
@@ -520,6 +569,7 @@ class _OrbitingParticipant extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final level = participant.audioLevel.clamp(0.0, 1.0);
     final speaking = participant.isSpeaking;
     final shouting = participant.isShouting;
@@ -651,7 +701,9 @@ class _OrbitingParticipant extends StatelessWidget {
                 children: [
                   Flexible(
                     child: Text(
-                      participant.isLocal ? 'You' : participant.displayName,
+                      participant.isLocal
+                          ? copy.text('You', 'Ty')
+                          : participant.displayName,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
@@ -772,6 +824,7 @@ class _VoiceControls extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     return Container(
       margin: const EdgeInsets.fromLTRB(12, 4, 12, 10),
       padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
@@ -787,16 +840,16 @@ class _VoiceControls extends StatelessWidget {
           _RoundControl(
             icon: isMuted ? Icons.mic_off_rounded : Icons.mic_rounded,
             label: muteBusy
-                ? 'Changing…'
+                ? copy.text('Changing…', 'Zmienianie…')
                 : isMuted
-                ? 'Unmute'
-                : 'Mute',
+                ? copy.text('Unmute', 'Włącz mikrofon')
+                : copy.text('Mute', 'Wycisz'),
             emphasized: !isMuted,
             onTap: connected && !muteBusy ? () => onMute() : null,
           ),
           _RoundControl(
             icon: Icons.call_end_rounded,
-            label: 'Leave',
+            label: copy.text('Leave', 'Wyjdź'),
             danger: true,
             onTap: () => onLeave(),
           ),
@@ -882,6 +935,7 @@ class _ConnectionError extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(28),
@@ -894,10 +948,13 @@ class _ConnectionError extends StatelessWidget {
               size: 58,
             ),
             const SizedBox(height: 14),
-            const Text(
-              'Could not connect to voice',
+            Text(
+              copy.text(
+                'Could not connect to voice',
+                'Nie udało się połączyć z pokojem',
+              ),
               textAlign: TextAlign.center,
-              style: TextStyle(
+              style: const TextStyle(
                 color: Colors.white,
                 fontSize: 21,
                 fontWeight: FontWeight.w900,
@@ -905,7 +962,9 @@ class _ConnectionError extends StatelessWidget {
             ),
             const SizedBox(height: 9),
             Text(
-              message ?? 'Unknown connection error.',
+              copy.isPolish
+                  ? 'Sprawdź połączenie i spróbuj ponownie.'
+                  : message ?? 'Unknown connection error.',
               textAlign: TextAlign.center,
               style: const TextStyle(color: Color(0xFFAAA0B8)),
             ),
@@ -913,7 +972,7 @@ class _ConnectionError extends StatelessWidget {
             FilledButton.icon(
               onPressed: onRetry,
               icon: const Icon(Icons.refresh_rounded),
-              label: const Text('Try again'),
+              label: Text(copy.text('Try again', 'Spróbuj ponownie')),
             ),
           ],
         ),

@@ -9,6 +9,7 @@ import 'package:flutter/services.dart';
 import 'package:record/record.dart' show Amplitude;
 
 import 'package:yovoice/core/helpers/error_messages.dart';
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_immersive_colors.dart';
 import 'package:yovoice/features/moments/data/models/moment_availability.dart';
@@ -191,6 +192,71 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
   int _accessAttempt = 0;
   bool _captionLimitAnnounced = false;
 
+  AppLocalizations get _copy => AppLocalizations.of(context);
+
+  String _noticeMessage(VoiceRecordingException notice) {
+    final copy = _copy;
+    if (!copy.isPolish) return notice.message;
+    if (notice.problem == VoiceRecordingProblem.uploadFailed &&
+        notice.message.contains('limit of active Moments')) {
+      return 'Osiągnięto limit aktywnych Momentów. Miejsce zwolni się, gdy '
+          'jeden z nich wygaśnie lub go usuniesz.';
+    }
+    return switch (notice.problem) {
+      VoiceRecordingProblem.platformCannotRecord =>
+        'Nagrywanie głosu nie jest dostępne na tym urządzeniu.',
+      VoiceRecordingProblem.microphoneBlocked =>
+        'Dostęp do mikrofonu jest zablokowany.',
+      VoiceRecordingProblem.microphonePromptDismissed =>
+        'Nie przyznano dostępu do mikrofonu.',
+      VoiceRecordingProblem.microphoneNotFound => 'Nie znaleziono mikrofonu.',
+      VoiceRecordingProblem.microphoneUnavailable =>
+        'Mikrofon jest teraz niedostępny.',
+      VoiceRecordingProblem.captureFailed => 'Nie udało się nagrać dźwięku.',
+      VoiceRecordingProblem.recordingUnusable =>
+        'Tego nagrania nie można opublikować.',
+      VoiceRecordingProblem.uploadFailed =>
+        'Nie udało się opublikować Voice Momentu.',
+    };
+  }
+
+  String? _noticeAction(VoiceRecordingException notice) {
+    final copy = _copy;
+    if (!copy.isPolish) return notice.action;
+    if (notice.problem == VoiceRecordingProblem.uploadFailed &&
+        notice.message.contains('limit of active Moments')) {
+      return 'Nagranie zostało zachowane. Opublikuj je, gdy zwolni się miejsce.';
+    }
+    return switch (notice.problem) {
+      VoiceRecordingProblem.platformCannotRecord =>
+        'Spróbuj w aktualnej wersji Chrome, Edge lub Safari albo w aplikacji YO Voice.',
+      VoiceRecordingProblem.microphoneBlocked =>
+        'Włącz dostęp do mikrofonu w ustawieniach urządzenia lub przeglądarki.',
+      VoiceRecordingProblem.microphonePromptDismissed =>
+        'Rozpocznij nagrywanie ponownie i zezwól na dostęp.',
+      VoiceRecordingProblem.microphoneNotFound =>
+        'Podłącz mikrofon i spróbuj ponownie.',
+      VoiceRecordingProblem.microphoneUnavailable =>
+        'Zamknij aplikację korzystającą z mikrofonu i spróbuj ponownie.',
+      VoiceRecordingProblem.captureFailed => 'Spróbuj nagrać ponownie.',
+      VoiceRecordingProblem.recordingUnusable =>
+        'Nagraj nową wypowiedź trwającą co najmniej sekundę.',
+      VoiceRecordingProblem.uploadFailed =>
+        'Nagranie zostało zachowane. Spróbuj opublikować je ponownie.',
+    };
+  }
+
+  String _localizedMeterValue(String value) {
+    if (!_copy.isPolish) return value;
+    return switch (value) {
+      _meterSilent => 'Cisza',
+      _meterQuiet => 'Cicho',
+      _meterGood => 'Dobry poziom',
+      _meterUnknown => 'Poziom wejścia niedostępny',
+      _ => value,
+    };
+  }
+
   @override
   void initState() {
     super.initState();
@@ -260,7 +326,7 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
       _phase = phase;
       _notice = notice;
     });
-    _announce('${notice.message} ${notice.action ?? ''}');
+    _announce('${_noticeMessage(notice)} ${_noticeAction(notice) ?? ''}');
   }
 
   void _onCaptionChanged() {
@@ -270,7 +336,12 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
       if (!_captionLimitAnnounced) {
         _captionLimitAnnounced = true;
         // Input is silently dropped past the limit otherwise.
-        _announce('Caption limit reached: $_captionMaxLength characters.');
+        _announce(
+          _copy.text(
+            'Caption limit reached: $_captionMaxLength characters.',
+            'Osiągnięto limit opisu: $_captionMaxLength znaków.',
+          ),
+        );
       }
     } else {
       _captionLimitAnnounced = false;
@@ -304,14 +375,21 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
 
   String? _timedAvailabilityValidationMessage() {
     final amount = int.tryParse(_availabilityAmountController.text.trim());
-    if (amount == null) return 'Enter a whole number.';
+    if (amount == null) {
+      return _copy.text('Enter a whole number.', 'Wpisz liczbę całkowitą.');
+    }
     return switch (_availabilityUnit) {
       _AvailabilityUnit.hours
           when amount < MomentAvailability.minimumHours ||
               amount > MomentAvailability.maximumHours =>
-        'Choose between 24 and 720 hours.',
-      _AvailabilityUnit.days when amount < 1 || amount > 30 =>
+        _copy.text(
+          'Choose between 24 and 720 hours.',
+          'Wybierz od 24 do 720 godzin.',
+        ),
+      _AvailabilityUnit.days when amount < 1 || amount > 30 => _copy.text(
         'Choose between 1 and 30 days.',
+        'Wybierz od 1 do 30 dni.',
+      ),
       _ => null,
     };
   }
@@ -353,7 +431,12 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
     final availability = _readTimedAvailability();
     final error = _timedAvailabilityValidationMessage();
     if (availability == null || error != null) {
-      final message = error ?? 'Choose a valid duration.';
+      final message =
+          error ??
+          _copy.text(
+            'Choose a valid duration.',
+            'Wybierz prawidłowy czas dostępności.',
+          );
       setState(() => _availabilityError = message);
       _announce(message);
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -414,9 +497,12 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
 
   void _showPreviewError(Object _) {
     if (!mounted) return;
-    const message =
-        'Preview could not be played on this device. You can '
-        'try again, record a new take, or publish this one.';
+    final message = _copy.text(
+      'Preview could not be played on this device. You can '
+          'try again, record a new take, or publish this one.',
+      'Nie udało się odtworzyć podglądu na tym urządzeniu. Spróbuj ponownie, '
+          'nagraj nową wersję albo opublikuj tę.',
+    );
     setState(() {
       _previewBusy = false;
       _previewPlaying = false;
@@ -649,7 +735,7 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
             action: error.action,
           );
         });
-        _announce('${error.message} ${error.action ?? ''}');
+        _announce('${_noticeMessage(error)} ${_noticeAction(error) ?? ''}');
       } else {
         _showNotice(error, phase: VoiceMomentRecordingPhase.idle);
       }
@@ -661,9 +747,12 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
           VoiceRecordingProblem.captureFailed,
           intentionalOrFriendly(
             error,
-            fallback: 'Recording could not be started.',
+            fallback: _copy.text(
+              'Recording could not be started.',
+              'Nie udało się rozpocząć nagrywania.',
+            ),
           ),
-          action: 'Try again.',
+          action: _copy.text('Try again.', 'Spróbuj ponownie.'),
           cause: error,
         ),
         phase: VoiceMomentRecordingPhase.idle,
@@ -698,7 +787,9 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
       // flood the queue — so the limit gets one spoken warning instead.
       if (!_limitWarned && elapsed.inSeconds >= _limitWarningAtSeconds) {
         _limitWarned = true;
-        _announce('Ten seconds left.');
+        _announce(
+          _copy.text('Ten seconds left.', 'Pozostało dziesięć sekund.'),
+        );
       }
       setState(() {});
     });
@@ -717,8 +808,12 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
             if (!_silenceAnnounced) {
               _silenceAnnounced = true;
               _announce(
-                'No sound is reaching the microphone. Check that the right '
-                'microphone is selected and not muted.',
+                _copy.text(
+                  'No sound is reaching the microphone. Check that the right '
+                      'microphone is selected and not muted.',
+                  'Mikrofon nie odbiera dźwięku. Sprawdź, czy wybrano właściwy '
+                      'mikrofon i czy nie jest wyciszony.',
+                ),
               );
             }
           }
@@ -750,8 +845,12 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
         if (!_silenceAnnounced) {
           _silenceAnnounced = true;
           _announce(
-            'Microphone level is unavailable, so YO Voice cannot tell you '
-            'whether sound is being picked up. Recording continues.',
+            _copy.text(
+              'Microphone level is unavailable, so YO Voice cannot tell you '
+                  'whether sound is being picked up. Recording continues.',
+              'Poziom mikrofonu jest niedostępny, więc YO Voice nie może '
+                  'sprawdzić, czy dźwięk jest odbierany. Nagrywanie trwa dalej.',
+            ),
           );
         }
       },
@@ -781,9 +880,12 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
           VoiceRecordingProblem.captureFailed,
           intentionalOrFriendly(
             error,
-            fallback: 'Recording could not be finished.',
+            fallback: _copy.text(
+              'Recording could not be finished.',
+              'Nie udało się zakończyć nagrywania.',
+            ),
           ),
-          action: 'Record again.',
+          action: _copy.text('Record again.', 'Nagraj ponownie.'),
           cause: error,
         ),
         phase: VoiceMomentRecordingPhase.idle,
@@ -797,11 +899,18 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
       await audio.discard();
       if (!mounted) return;
       _showNotice(
-        const VoiceRecordingException(
+        VoiceRecordingException(
           VoiceRecordingProblem.recordingUnusable,
-          'That was too short to publish — a Voice Moment needs at least '
-          'one second.',
-          action: 'Hold on a little longer this time.',
+          _copy.text(
+            'That was too short to publish — a Voice Moment needs at least '
+                'one second.',
+            'Nagranie jest za krótkie — Voice Moment musi trwać co najmniej '
+                'sekundę.',
+          ),
+          action: _copy.text(
+            'Hold on a little longer this time.',
+            'Tym razem nagrywaj odrobinę dłużej.',
+          ),
         ),
         phase: VoiceMomentRecordingPhase.idle,
       );
@@ -834,7 +943,12 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
       _notice = null;
       _phase = VoiceMomentRecordingPhase.idle;
     });
-    _announce('Microphone request cancelled.');
+    _announce(
+      _copy.text(
+        'Microphone request cancelled.',
+        'Anulowano prośbę o dostęp do mikrofonu.',
+      ),
+    );
   }
 
   Future<void> _discardRecording() async {
@@ -920,12 +1034,10 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
         VoiceRecordingException(
           VoiceRecordingProblem.uploadFailed,
           capRefusal
-              ? (error.message?.trim().isNotEmpty == true
-                    ? error.message!.trim()
-                    : 'You have reached the limit of active Moments. '
-                          'A slot frees up when one of your Moments '
-                          'reaches the end of its availability — or when '
-                          'you delete one.')
+              ? 'You have reached the limit of active Moments. '
+                    'A slot frees up when one of your Moments '
+                    'reaches the end of its availability — or when '
+                    'you delete one.'
               : intentionalOrFriendly(
                   error,
                   fallback: 'Your Voice Moment could not be published.',
@@ -1028,13 +1140,14 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
   }
 
   Widget _header(bool busy) {
+    final copy = _copy;
     return Padding(
       padding: const EdgeInsets.fromLTRB(8, 8, 8, 0),
       child: Row(
         children: [
           IconButton(
             onPressed: busy ? null : _leave,
-            tooltip: 'Back',
+            tooltip: copy.text('Back', 'Wstecz'),
             // Material 3's default IconButton padding yields a 40x40 box;
             // docs/UI.md sets a 44x44 floor.
             style: IconButton.styleFrom(
@@ -1046,11 +1159,11 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
               color: Colors.white,
             ),
           ),
-          const Expanded(
+          Expanded(
             child: Text(
-              'Record Voice Moment',
+              copy.text('Record Voice Moment', 'Nagraj Voice Moment'),
               textAlign: TextAlign.center,
-              style: TextStyle(
+              style: const TextStyle(
                 color: Colors.white,
                 fontSize: 19,
                 fontWeight: FontWeight.w900,
@@ -1192,12 +1305,21 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
 
   Widget _intro({TextAlign alignment = TextAlign.center}) {
     final title = _isReply
-        ? "Reply to ${widget.replyToAuthorName ?? 'this moment'}"
-        : 'Share your voice';
+        ? _copy.text(
+            "Reply to ${widget.replyToAuthorName ?? 'this moment'}",
+            'Odpowiedz: ${widget.replyToAuthorName ?? 'ten Moment'}',
+          )
+        : _copy.text('Share your voice', 'Podziel się swoim głosem');
     final subtitle = _isReply
-        ? 'Record a voice reply up to 60 seconds long.'
-        : 'Record between 1 and 60 seconds and publish it directly to your '
-              'feed.';
+        ? _copy.text(
+            'Record a voice reply up to 60 seconds long.',
+            'Nagraj odpowiedź głosową trwającą do 60 sekund.',
+          )
+        : _copy.text(
+            'Record between 1 and 60 seconds and publish it directly to your '
+                'feed.',
+            'Nagraj od 1 do 60 sekund i opublikuj bezpośrednio w swoim kanale.',
+          );
 
     return Column(
       crossAxisAlignment: alignment == TextAlign.left
@@ -1326,9 +1448,9 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
                 ),
               ),
               const SizedBox(width: 9),
-              const Text(
-                'Recording',
-                style: TextStyle(
+              Text(
+                _copy.text('Recording', 'Nagrywanie'),
+                style: const TextStyle(
                   color: Colors.white,
                   fontSize: 15,
                   fontWeight: FontWeight.w800,
@@ -1337,11 +1459,15 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
             ],
           ),
           const SizedBox(height: 14),
-          _liveRow(Icons.graphic_eq_rounded, 'Input level', _meterValue),
+          _liveRow(
+            Icons.graphic_eq_rounded,
+            _copy.text('Input level', 'Poziom wejścia'),
+            _localizedMeterValue(_meterValue),
+          ),
           const SizedBox(height: 10),
           _liveRow(
             Icons.timer_outlined,
-            'Remaining',
+            _copy.text('Remaining', 'Pozostało'),
             _formatDuration(_maxSeconds - _elapsedSeconds),
           ),
           if (_silenceDetected) ...[const SizedBox(height: 14), _silenceHint()],
@@ -1385,7 +1511,10 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
           ),
           const SizedBox(height: 16),
           Text(
-            'Checking whether this device can record…',
+            _copy.text(
+              'Checking whether this device can record…',
+              'Sprawdzamy, czy to urządzenie może nagrywać…',
+            ),
             textAlign: TextAlign.center,
             style: const TextStyle(color: _muted, fontSize: 13.5),
           ),
@@ -1431,10 +1560,13 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
               ),
             ),
             const SizedBox(height: 18),
-            const Text(
-              'Recording is not available here',
+            Text(
+              _copy.text(
+                'Recording is not available here',
+                'Nagrywanie nie jest tutaj dostępne',
+              ),
               textAlign: TextAlign.center,
-              style: TextStyle(
+              style: const TextStyle(
                 color: Colors.white,
                 fontSize: 19,
                 fontWeight: FontWeight.w900,
@@ -1442,8 +1574,12 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
             ),
             const SizedBox(height: 10),
             Text(
-              support?.reason ??
-                  'YO Voice could not reach an audio recorder on this device.',
+              _copy.text(
+                support?.reason ??
+                    'YO Voice could not reach an audio recorder on this device.',
+                'YO Voice nie może skorzystać z nagrywania dźwięku na tym '
+                'urządzeniu.',
+              ),
               textAlign: TextAlign.center,
               style: const TextStyle(
                 color: _muted,
@@ -1454,7 +1590,11 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
             if (support?.action != null) ...[
               const SizedBox(height: 12),
               Text(
-                support!.action!,
+                _copy.text(
+                  support!.action!,
+                  'Spróbuj w aktualnej wersji Chrome, Edge lub Safari albo '
+                  'w aplikacji YO Voice.',
+                ),
                 textAlign: TextAlign.center,
                 style: const TextStyle(
                   color: AppImmersiveColors.textPrimary,
@@ -1478,7 +1618,7 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
                     borderRadius: BorderRadius.circular(14),
                   ),
                 ),
-                child: const Text('Go back'),
+                child: Text(_copy.text('Go back', 'Wróć')),
               ),
             ),
           ],
@@ -1524,7 +1664,7 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    notice.message,
+                    _noticeMessage(notice),
                     style: const TextStyle(
                       color: Colors.white,
                       fontSize: 13.5,
@@ -1532,10 +1672,10 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
                       fontWeight: FontWeight.w700,
                     ),
                   ),
-                  if (notice.action != null) ...[
+                  if (_noticeAction(notice) != null) ...[
                     const SizedBox(height: 5),
                     Text(
-                      notice.action!,
+                      _noticeAction(notice)!,
                       style: const TextStyle(
                         color: _muted,
                         fontSize: 12.5,
@@ -1553,10 +1693,25 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
   }
 
   Widget _guidanceCard() {
-    const points = <(IconData, String)>[
-      (Icons.timer_outlined, 'Between 1 and 60 seconds.'),
-      (Icons.headphones_outlined, 'Somewhere quiet records best.'),
-      (Icons.public_outlined, 'Published straight to your feed.'),
+    final points = <(IconData, String)>[
+      (
+        Icons.timer_outlined,
+        _copy.text('Between 1 and 60 seconds.', 'Od 1 do 60 sekund.'),
+      ),
+      (
+        Icons.headphones_outlined,
+        _copy.text(
+          'Somewhere quiet records best.',
+          'Najlepszą jakość uzyskasz w cichym miejscu.',
+        ),
+      ),
+      (
+        Icons.public_outlined,
+        _copy.text(
+          'Published straight to your feed.',
+          'Publikacja trafi bezpośrednio do Twojego kanału.',
+        ),
+      ),
     ];
     return Container(
       padding: const EdgeInsets.fromLTRB(20, 20, 20, 18),
@@ -1568,9 +1723,9 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            'Before you start',
-            style: TextStyle(
+          Text(
+            _copy.text('Before you start', 'Zanim zaczniesz'),
+            style: const TextStyle(
               color: Colors.white,
               fontSize: 15,
               fontWeight: FontWeight.w800,
@@ -1633,8 +1788,11 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
         // live region would flood the announcement queue. The approaching
         // limit is covered by one spoken warning from the ticker.
         Semantics(
-          label: 'Recording length',
-          value: '$_elapsedSeconds of $_maxSeconds seconds',
+          label: _copy.text('Recording length', 'Długość nagrania'),
+          value: _copy.text(
+            '$_elapsedSeconds of $_maxSeconds seconds',
+            '$_elapsedSeconds z $_maxSeconds sekund',
+          ),
           excludeSemantics: true,
           child: Text(
             _timeLabel,
@@ -1676,9 +1834,12 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
             spacing: 12,
             runSpacing: 4,
             children: [
-              const Text(
-                'Listen before publishing',
-                style: TextStyle(
+              Text(
+                _copy.text(
+                  'Listen before publishing',
+                  'Posłuchaj przed publikacją',
+                ),
+                style: const TextStyle(
                   color: Colors.white,
                   fontSize: 15,
                   fontWeight: FontWeight.w800,
@@ -1703,13 +1864,21 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
                 enabled: !publishing && !_previewBusy,
                 excludeSemantics: true,
                 label: _previewPlaying
-                    ? 'Pause recording preview'
-                    : 'Play recording preview',
+                    ? _copy.text(
+                        'Pause recording preview',
+                        'Wstrzymaj podgląd nagrania',
+                      )
+                    : _copy.text(
+                        'Play recording preview',
+                        'Odtwórz podgląd nagrania',
+                      ),
                 onTap: publishing || _previewBusy ? null : _togglePreview,
                 child: IconButton.filled(
                   key: const ValueKey('voice-preview-toggle'),
                   onPressed: publishing || _previewBusy ? null : _togglePreview,
-                  tooltip: _previewPlaying ? 'Pause preview' : 'Play preview',
+                  tooltip: _previewPlaying
+                      ? _copy.text('Pause preview', 'Wstrzymaj podgląd')
+                      : _copy.text('Play preview', 'Odtwórz podgląd'),
                   style: IconButton.styleFrom(
                     minimumSize: const Size(52, 52),
                     backgroundColor: _primary,
@@ -1738,7 +1907,10 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
                 child: Column(
                   children: [
                     Semantics(
-                      label: 'Recording preview position',
+                      label: _copy.text(
+                        'Recording preview position',
+                        'Pozycja podglądu nagrania',
+                      ),
                       child: Slider(
                         key: const ValueKey('voice-preview-seek'),
                         value: value,
@@ -1804,7 +1976,10 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
           const SizedBox(width: 8),
           Flexible(
             child: Text(
-              'No sound detected — check your microphone.',
+              _copy.text(
+                'No sound detected — check your microphone.',
+                'Nie wykryto dźwięku — sprawdź mikrofon.',
+              ),
               style: const TextStyle(
                 color: AppImmersiveColors.textPrimary,
                 fontSize: 12.5,
@@ -1826,7 +2001,7 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
           foregroundColor: _muted,
           minimumSize: const Size(88, 48),
         ),
-        child: const Text('Cancel'),
+        child: Text(_copy.text('Cancel', 'Anuluj')),
       ),
     );
   }
@@ -1846,7 +2021,9 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
     return Center(
       child: AccessibleTapRegion(
         onTap: enabled ? _toggleRecording : null,
-        semanticLabel: recording ? 'Stop recording' : 'Start recording',
+        semanticLabel: recording
+            ? _copy.text('Stop recording', 'Zatrzymaj nagrywanie')
+            : _copy.text('Start recording', 'Rozpocznij nagrywanie'),
         circular: true,
         minimumSize: const Size(86, 86),
         child: AnimatedContainer(
@@ -1887,13 +2064,26 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
 
   Widget _statusLine() {
     final text = switch (_phase) {
-      VoiceMomentRecordingPhase.requestingAccess =>
+      VoiceMomentRecordingPhase.requestingAccess => _copy.text(
         'Waiting for microphone access…',
-      VoiceMomentRecordingPhase.recording => 'Recording — tap to stop.',
-      VoiceMomentRecordingPhase.reviewing =>
+        'Czekamy na dostęp do mikrofonu…',
+      ),
+      VoiceMomentRecordingPhase.recording => _copy.text(
+        'Recording — tap to stop.',
+        'Nagrywanie — dotknij, aby zatrzymać.',
+      ),
+      VoiceMomentRecordingPhase.reviewing => _copy.text(
         'Preview your take, then publish — or record again.',
-      VoiceMomentRecordingPhase.publishing => 'Publishing your Voice Moment…',
-      _ => 'Tap the microphone to start.',
+        'Odsłuchaj nagranie, a potem opublikuj je lub nagraj ponownie.',
+      ),
+      VoiceMomentRecordingPhase.publishing => _copy.text(
+        'Publishing your Voice Moment…',
+        'Publikujemy Twój Voice Moment…',
+      ),
+      _ => _copy.text(
+        'Tap the microphone to start.',
+        'Dotknij mikrofonu, aby rozpocząć.',
+      ),
     };
     return Semantics(
       liveRegion: true,
@@ -1920,19 +2110,21 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
         // A real label, not just a hint: a hint is the field's only
         // accessible name until the user types, and then it disappears
         // and the field becomes anonymous.
-        labelText: 'Caption',
+        labelText: _copy.text('Caption', 'Opis'),
         labelStyle: const TextStyle(color: _muted),
         floatingLabelStyle: const TextStyle(
           color: AppImmersiveColors.textPrimary,
         ),
-        hintText: 'Add a caption…',
+        hintText: _copy.text('Add a caption…', 'Dodaj opis…'),
         hintStyle: const TextStyle(color: _muted),
         counterStyle: const TextStyle(color: _muted),
         // The visible counter is a detached node that screen readers do
         // not associate with the field; this is what is actually read.
-        semanticCounterText:
-            '${_captionController.text.length} of $_captionMaxLength '
-            'characters',
+        semanticCounterText: _copy.text(
+          '${_captionController.text.length} of $_captionMaxLength '
+              'characters',
+          '${_captionController.text.length} z $_captionMaxLength znaków',
+        ),
         filled: true,
         fillColor: _inset,
         // Stated explicitly rather than left to `border:`, which the
@@ -1955,6 +2147,25 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
     );
   }
 
+  String _availabilityUnitLabel(int amount) {
+    if (!_copy.isPolish) {
+      if (_availabilityUnit == _AvailabilityUnit.hours) {
+        return amount == 1 ? 'hour' : 'hours';
+      }
+      return amount == 1 ? 'day' : 'days';
+    }
+    final lastTwo = amount % 100;
+    final last = amount % 10;
+    if (_availabilityUnit == _AvailabilityUnit.hours) {
+      if (amount == 1) return 'godzinę';
+      if (lastTwo >= 12 && lastTwo <= 14) return 'godzin';
+      if (last >= 2 && last <= 4) return 'godziny';
+      return 'godzin';
+    }
+    if (amount == 1) return 'dzień';
+    return 'dni';
+  }
+
   /// A custom, server-validated visibility window. Timed Moments accept a
   /// whole number of hours (24–720) or days (1–30); the other explicit mode
   /// stays visible until the author deletes it.
@@ -1964,15 +2175,22 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
     final validTimed = _readTimedAvailability();
     final amount = int.tryParse(_availabilityAmountController.text.trim());
     final timedCopy = validTimed == null || amount == null
-        ? 'Choose how long this Moment stays visible in the feed.'
-        : 'This Moment will stay visible in the feed for $amount '
-              '${_availabilityUnit == _AvailabilityUnit.hours ? (amount == 1 ? 'hour' : 'hours') : (amount == 1 ? 'day' : 'days')}.';
+        ? _copy.text(
+            'Choose how long this Moment stays visible in the feed.',
+            'Wybierz, jak długo ten Moment ma być widoczny w kanale.',
+          )
+        : _copy.text(
+            'This Moment will stay visible in the feed for $amount '
+                '${_availabilityUnitLabel(amount)}.',
+            'Ten Moment będzie widoczny w kanale przez $amount '
+                '${_availabilityUnitLabel(amount)}.',
+          );
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
-          'Available for',
-          style: TextStyle(
+        Text(
+          _copy.text('Available for', 'Dostępny przez'),
+          style: const TextStyle(
             color: Colors.white,
             fontSize: 13.5,
             fontWeight: FontWeight.w800,
@@ -1981,7 +2199,10 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
         const SizedBox(height: 4),
         Text(
           _untilDeleted
-              ? 'This Moment will stay visible in the feed until you delete it.'
+              ? _copy.text(
+                  'This Moment will stay visible in the feed until you delete it.',
+                  'Ten Moment pozostanie widoczny w kanale, dopóki go nie usuniesz.',
+                )
               : timedCopy,
           style: const TextStyle(color: _muted, fontSize: 12, height: 1.35),
         ),
@@ -1992,7 +2213,7 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
             final stacked = constraints.maxWidth < 310 || textScale >= 1.6;
             final timed = _AvailabilityModeButton(
               key: const ValueKey('availability-timed'),
-              label: 'Timed',
+              label: _copy.text('Timed', 'Na określony czas'),
               icon: Icons.schedule_rounded,
               selected: !_untilDeleted,
               enabled: enabled,
@@ -2000,7 +2221,7 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
             );
             final permanent = _AvailabilityModeButton(
               key: const ValueKey('availability-permanent'),
-              label: 'Until deleted',
+              label: _copy.text('Until deleted', 'Do usunięcia'),
               icon: Icons.all_inclusive_rounded,
               selected: _untilDeleted,
               enabled: enabled,
@@ -2039,7 +2260,7 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
                   inputFormatters: [FilteringTextInputFormatter.digitsOnly],
                   style: const TextStyle(color: Colors.white),
                   decoration: InputDecoration(
-                    labelText: 'Duration',
+                    labelText: _copy.text('Duration', 'Czas'),
                     labelStyle: const TextStyle(color: _muted),
                     floatingLabelStyle: const TextStyle(
                       color: AppImmersiveColors.textPrimary,
@@ -2060,7 +2281,7 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
                 key: const ValueKey('availability-unit'),
                 initialValue: _availabilityUnit,
                 decoration: InputDecoration(
-                  labelText: 'Unit',
+                  labelText: _copy.text('Unit', 'Jednostka'),
                   labelStyle: const TextStyle(color: _muted),
                   floatingLabelStyle: const TextStyle(
                     color: AppImmersiveColors.textPrimary,
@@ -2078,14 +2299,14 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
                 style: const TextStyle(color: Colors.white),
                 iconEnabledColor: _muted,
                 iconDisabledColor: AppImmersiveColors.textTertiary,
-                items: const [
+                items: [
                   DropdownMenuItem(
                     value: _AvailabilityUnit.hours,
-                    child: Text('Hours'),
+                    child: Text(_copy.text('Hours', 'Godziny')),
                   ),
                   DropdownMenuItem(
                     value: _AvailabilityUnit.days,
-                    child: Text('Days'),
+                    child: Text(_copy.text('Days', 'Dni')),
                   ),
                 ],
                 onChanged: enabled
@@ -2122,8 +2343,15 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
   Widget _publishContractLockNotice() {
     return Text(
       _isReply
-          ? 'Caption is locked for this retry.'
-          : 'Caption and availability are locked for this retry.',
+          ? _copy.text(
+              'Caption is locked for this retry.',
+              'Opis jest zablokowany podczas tej ponownej próby.',
+            )
+          : _copy.text(
+              'Caption and availability are locked for this retry.',
+              'Opis i czas dostępności są zablokowane podczas tej ponownej '
+                  'próby.',
+            ),
       style: const TextStyle(color: _muted, fontSize: 11.5, height: 1.35),
     );
   }
@@ -2149,14 +2377,14 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
         minimumSize: const Size.fromHeight(48),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       ),
-      child: const Row(
+      child: Row(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(Icons.refresh_rounded),
-          SizedBox(width: 8),
+          const Icon(Icons.refresh_rounded),
+          const SizedBox(width: 8),
           Flexible(
             child: Text(
-              'Record again',
+              _copy.text('Record again', 'Nagraj ponownie'),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
             ),
@@ -2196,10 +2424,10 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
           Flexible(
             child: Text(
               publishing
-                  ? 'Publishing…'
+                  ? _copy.text('Publishing…', 'Publikowanie…')
                   : (_notice?.problem == VoiceRecordingProblem.uploadFailed
-                        ? 'Try again'
-                        : 'Publish'),
+                        ? _copy.text('Try again', 'Spróbuj ponownie')
+                        : _copy.text('Publish', 'Opublikuj')),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
             ),
@@ -2245,10 +2473,11 @@ class _AvailabilityModeButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     return Semantics(
       button: true,
       selected: selected,
-      label: 'Availability: $label',
+      label: copy.text('Availability: $label', 'Dostępność: $label'),
       child: Material(
         color: selected
             ? AppColors.primary
@@ -2330,12 +2559,18 @@ class _LevelMeter extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     // Show the most recent [barCount] samples, oldest on the left.
     final start = math.max(0, levels.length - barCount);
     final visible = levels.sublist(start);
 
     return Semantics(
-      label: live ? 'Microphone level' : 'Microphone level, not recording',
+      label: live
+          ? copy.text('Microphone level', 'Poziom mikrofonu')
+          : copy.text(
+              'Microphone level, not recording',
+              'Poziom mikrofonu, nagrywanie wyłączone',
+            ),
       value: value,
       excludeSemantics: true,
       child: Row(

@@ -4,6 +4,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/features/profile/data/services/image_crop.dart';
 import 'package:yovoice/features/profile/data/services/profile_image_rules.dart';
 import 'package:yovoice/shared/widgets/theme/yo_immersive_dark_surface.dart';
@@ -46,6 +47,8 @@ class _ImageCropScreenState extends State<ImageCropScreen> {
   Size _viewport = Size.zero;
   bool _processing = false;
 
+  AppLocalizations get _copy => AppLocalizations.of(context);
+
   ProfileImageRules? get _profileRules =>
       widget.roomCover ? null : ProfileImageRules.of(widget._kind!);
   bool get _isAvatar => widget._kind == ProfileImageKind.avatar;
@@ -55,14 +58,23 @@ class _ImageCropScreenState extends State<ImageCropScreen> {
   String get _title => switch ((widget._kind, widget.roomCover)) {
     // Keep the visual title readable beside Close and Reset on narrow phones.
     // Semantics below still announces the full room-cover task.
-    (_, true) => 'Adjust cover',
-    (ProfileImageKind.avatar, false) => 'Adjust your avatar',
-    _ => 'Adjust your banner',
+    (_, true) => _copy.text('Adjust cover', 'Dopasuj okładkę'),
+    (ProfileImageKind.avatar, false) => _copy.text(
+      'Adjust your avatar',
+      'Dopasuj awatar',
+    ),
+    _ => _copy.text('Adjust your banner', 'Dopasuj baner'),
   };
   String get _previewLabel => switch ((widget._kind, widget.roomCover)) {
-    (_, true) => 'Room cover crop preview',
-    (ProfileImageKind.avatar, false) => 'Avatar crop preview',
-    _ => 'Banner crop preview',
+    (_, true) => _copy.text(
+      'Room cover crop preview',
+      'Podgląd kadru okładki pokoju',
+    ),
+    (ProfileImageKind.avatar, false) => _copy.text(
+      'Avatar crop preview',
+      'Podgląd kadru awatara',
+    ),
+    _ => _copy.text('Banner crop preview', 'Podgląd kadru banera'),
   };
   double get _imageWidth => widget.image.width.toDouble();
   double get _imageHeight => widget.image.height.toDouble();
@@ -140,7 +152,9 @@ class _ImageCropScreenState extends State<ImageCropScreen> {
   }
 
   String _cropSemanticValue() {
-    if (_viewport == Size.zero) return 'Crop preview loading';
+    if (_viewport == Size.zero) {
+      return _copy.text('Crop preview loading', 'Ładowanie podglądu kadru');
+    }
     final cover = _coverScale(_viewport);
     final scale = _controller.value.getMaxScaleOnAxis();
     final source = ImageCrop.sourceRectFor(
@@ -151,8 +165,12 @@ class _ImageCropScreenState extends State<ImageCropScreen> {
     final zoom = (scale / cover * 100).round();
     final horizontal = (source.center.dx / _imageWidth * 100).round();
     final vertical = (source.center.dy / _imageHeight * 100).round();
-    return 'Zoom $zoom percent. Position $horizontal percent horizontal, '
-        '$vertical percent vertical.';
+    return _copy.text(
+      'Zoom $zoom percent. Position $horizontal percent horizontal, '
+          '$vertical percent vertical.',
+      'Powiększenie: $zoom procent. Pozycja: $horizontal procent w poziomie '
+          'i $vertical procent w pionie.',
+    );
   }
 
   void _announceCropAdjustment() {
@@ -168,10 +186,13 @@ class _ImageCropScreenState extends State<ImageCropScreen> {
 
   void _explainBlockedBack() {
     if (!_processing || !mounted) return;
-    const message = 'Processing cover. Please wait.';
+    final message = _copy.text(
+      'Processing cover. Please wait.',
+      'Przetwarzanie okładki. Poczekaj chwilę.',
+    );
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
-      ..showSnackBar(const SnackBar(content: Text(message)));
+      ..showSnackBar(SnackBar(content: Text(message)));
     unawaited(
       SemanticsService.sendAnnouncement(
         View.of(context),
@@ -196,7 +217,7 @@ class _ImageCropScreenState extends State<ImageCropScreen> {
     final zoomControls = <Widget>[
       _CropControlButton(
         key: const ValueKey('crop-zoom-out'),
-        tooltip: 'Zoom out',
+        tooltip: _copy.text('Zoom out', 'Pomniejsz'),
         icon: Icons.remove_rounded,
         onPressed: ready && !_processing && scale > cover + epsilon
             ? () => _adjustZoom(1 / 1.2)
@@ -204,7 +225,7 @@ class _ImageCropScreenState extends State<ImageCropScreen> {
       ),
       _CropControlButton(
         key: const ValueKey('crop-zoom-in'),
-        tooltip: 'Zoom in',
+        tooltip: _copy.text('Zoom in', 'Powiększ'),
         icon: Icons.add_rounded,
         onPressed: ready && !_processing && scale < cover * 6 - epsilon
             ? () => _adjustZoom(1.2)
@@ -214,7 +235,7 @@ class _ImageCropScreenState extends State<ImageCropScreen> {
     final positionControls = <Widget>[
       _CropControlButton(
         key: const ValueKey('crop-move-left'),
-        tooltip: 'Move photo left',
+        tooltip: _copy.text('Move photo left', 'Przesuń zdjęcie w lewo'),
         icon: Icons.arrow_left_rounded,
         onPressed: ready && !_processing && translation.x > minX + epsilon
             ? () => _nudge(const Offset(-20, 0))
@@ -222,7 +243,7 @@ class _ImageCropScreenState extends State<ImageCropScreen> {
       ),
       _CropControlButton(
         key: const ValueKey('crop-move-up'),
-        tooltip: 'Move photo up',
+        tooltip: _copy.text('Move photo up', 'Przesuń zdjęcie w górę'),
         icon: Icons.arrow_drop_up_rounded,
         onPressed: ready && !_processing && translation.y > minY + epsilon
             ? () => _nudge(const Offset(0, -20))
@@ -230,7 +251,7 @@ class _ImageCropScreenState extends State<ImageCropScreen> {
       ),
       _CropControlButton(
         key: const ValueKey('crop-move-down'),
-        tooltip: 'Move photo down',
+        tooltip: _copy.text('Move photo down', 'Przesuń zdjęcie w dół'),
         icon: Icons.arrow_drop_down_rounded,
         onPressed: ready && !_processing && translation.y < -epsilon
             ? () => _nudge(const Offset(0, 20))
@@ -238,7 +259,7 @@ class _ImageCropScreenState extends State<ImageCropScreen> {
       ),
       _CropControlButton(
         key: const ValueKey('crop-move-right'),
-        tooltip: 'Move photo right',
+        tooltip: _copy.text('Move photo right', 'Przesuń zdjęcie w prawo'),
         icon: Icons.arrow_right_rounded,
         onPressed: ready && !_processing && translation.x < -epsilon
             ? () => _nudge(const Offset(20, 0))
@@ -251,11 +272,17 @@ class _ImageCropScreenState extends State<ImageCropScreen> {
         final scaledBody = MediaQuery.textScalerOf(context).scale(14);
         final stackGroups = constraints.maxWidth <= 360 || scaledBody >= 21;
         final zoom = _CropControlGroup(
-          semanticsLabel: 'Zoom controls',
+          semanticsLabel: _copy.text(
+            'Zoom controls',
+            'Sterowanie powiększeniem',
+          ),
           children: zoomControls,
         );
         final position = _CropControlGroup(
-          semanticsLabel: 'Position controls',
+          semanticsLabel: _copy.text(
+            'Position controls',
+            'Sterowanie położeniem',
+          ),
           children: positionControls,
         );
         if (stackGroups) {
@@ -293,19 +320,32 @@ class _ImageCropScreenState extends State<ImageCropScreen> {
       Navigator.of(context).pop(bytes);
     } on ProfileImageException catch (error) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(error.message)));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(_localizedImageError(error.message))),
+      );
       setState(() => _processing = false);
     } catch (_) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text("We couldn't process this image. Try another one."),
+        SnackBar(
+          content: Text(
+            _copy.text(
+              "We couldn't process this image. Try another one.",
+              'Nie udało się przetworzyć obrazu. Wybierz inny.',
+            ),
+          ),
         ),
       );
       setState(() => _processing = false);
     }
+  }
+
+  String _localizedImageError(String message) {
+    if (!_copy.isPolish) return message;
+    if (message.contains('too large to process safely')) {
+      return 'Obraz jest zbyt duży, aby bezpiecznie go przetworzyć. Wybierz inny.';
+    }
+    return 'Nie udało się przetworzyć obrazu. Wybierz inny.';
   }
 
   @override
@@ -316,6 +356,7 @@ class _ImageCropScreenState extends State<ImageCropScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final content = PopScope(
       // Encoding reads the decoded native image asynchronously. System Back
       // or Escape must not dispose that image underneath the renderer; the
@@ -331,19 +372,21 @@ class _ImageCropScreenState extends State<ImageCropScreen> {
           foregroundColor: Colors.white,
           leading: IconButton(
             icon: const Icon(Icons.close_rounded),
-            tooltip: 'Cancel',
+            tooltip: copy.text('Cancel', 'Anuluj'),
             onPressed: _processing ? null : () => Navigator.of(context).pop(),
           ),
           title: Text(
             _title,
-            semanticsLabel: _isRoomCover ? 'Adjust room cover' : null,
+            semanticsLabel: _isRoomCover
+                ? copy.text('Adjust room cover', 'Dopasuj okładkę pokoju')
+                : null,
           ),
           actions: [
             TextButton(
               onPressed: _processing
                   ? null
                   : () => setState(() => _resetTo(_viewport)),
-              child: const Text('Reset'),
+              child: Text(copy.text('Reset', 'Resetuj')),
             ),
           ],
         ),
@@ -469,7 +512,10 @@ class _ImageCropScreenState extends State<ImageCropScreen> {
                             child: Semantics(
                               container: true,
                               explicitChildNodes: true,
-                              label: 'Crop controls',
+                              label: copy.text(
+                                'Crop controls',
+                                'Sterowanie kadrem',
+                              ),
                               child: _cropControls(),
                             ),
                           ),
@@ -482,10 +528,18 @@ class _ImageCropScreenState extends State<ImageCropScreen> {
                             padding: const EdgeInsets.fromLTRB(20, 4, 20, 4),
                             child: Text(
                               _isRoomCover
-                                  ? 'Everything in the frame appears on wide covers. '
-                                        'Keep faces, logos and text inside the center '
-                                        'guide for compact cards.'
-                                  : 'Pinch or use controls · drag or use arrows',
+                                  ? copy.text(
+                                      'Everything in the frame appears on wide covers. '
+                                          'Keep faces, logos and text inside the center '
+                                          'guide for compact cards.',
+                                      'Cały kadr będzie widoczny na szerokich okładkach. '
+                                          'Twarze, logo i tekst umieść w środkowym obszarze, '
+                                          'aby pozostały widoczne na małych kartach.',
+                                    )
+                                  : copy.text(
+                                      'Pinch or use controls · drag or use arrows',
+                                      'Uszczypnij lub użyj przycisków · przeciągnij albo użyj strzałek',
+                                    ),
                               textAlign: TextAlign.center,
                               style: TextStyle(
                                 color: Colors.white.withValues(alpha: .68),
@@ -523,7 +577,9 @@ class _ImageCropScreenState extends State<ImageCropScreen> {
                                           ),
                                         ),
                                       ),
-                                      child: const Text('Cancel'),
+                                      child: Text(
+                                        copy.text('Cancel', 'Anuluj'),
+                                      ),
                                     ),
                                   ),
                                   const SizedBox(width: 12),
@@ -546,9 +602,11 @@ class _ImageCropScreenState extends State<ImageCropScreen> {
                                       child: _processing
                                           ? Semantics(
                                               liveRegion: true,
-                                              label:
-                                                  'Processing cover. Please wait.',
-                                              child: const ExcludeSemantics(
+                                              label: copy.text(
+                                                'Processing cover. Please wait.',
+                                                'Przetwarzanie okładki. Poczekaj chwilę.',
+                                              ),
+                                              child: ExcludeSemantics(
                                                 child: Row(
                                                   mainAxisAlignment:
                                                       MainAxisAlignment.center,
@@ -564,10 +622,13 @@ class _ImageCropScreenState extends State<ImageCropScreen> {
                                                             color: Colors.white,
                                                           ),
                                                     ),
-                                                    SizedBox(width: 7),
+                                                    const SizedBox(width: 7),
                                                     Flexible(
                                                       child: Text(
-                                                        'Processing…',
+                                                        copy.text(
+                                                          'Processing…',
+                                                          'Przetwarzanie…',
+                                                        ),
                                                       ),
                                                     ),
                                                   ],
@@ -576,8 +637,14 @@ class _ImageCropScreenState extends State<ImageCropScreen> {
                                             )
                                           : Text(
                                               _isRoomCover
-                                                  ? 'Use cover'
-                                                  : 'Use photo',
+                                                  ? copy.text(
+                                                      'Use cover',
+                                                      'Użyj okładki',
+                                                    )
+                                                  : copy.text(
+                                                      'Use photo',
+                                                      'Użyj zdjęcia',
+                                                    ),
                                               style: const TextStyle(
                                                 fontWeight: FontWeight.w800,
                                               ),
@@ -612,6 +679,7 @@ class _RoomCoverSafeAreaOverlay extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     return Stack(
       fit: StackFit.expand,
       children: [
@@ -648,23 +716,23 @@ class _RoomCoverSafeAreaOverlay extends StatelessWidget {
                       vertical: BorderSide(color: Colors.white, width: 2),
                     ),
                   ),
-                  child: const Align(
+                  child: Align(
                     alignment: Alignment.topCenter,
                     child: Padding(
-                      padding: EdgeInsets.only(top: 8),
+                      padding: const EdgeInsets.only(top: 8),
                       child: DecoratedBox(
-                        decoration: BoxDecoration(
+                        decoration: const BoxDecoration(
                           color: Color(0xD90D0618),
                           borderRadius: BorderRadius.all(Radius.circular(999)),
                         ),
                         child: Padding(
-                          padding: EdgeInsets.symmetric(
+                          padding: const EdgeInsets.symmetric(
                             horizontal: 8,
                             vertical: 3,
                           ),
                           child: Text(
-                            'COMPACT SAFE',
-                            style: TextStyle(
+                            copy.text('COMPACT SAFE', 'BEZPIECZNY KADR'),
+                            style: const TextStyle(
                               color: Colors.white,
                               fontSize: 7.5,
                               fontWeight: FontWeight.w800,

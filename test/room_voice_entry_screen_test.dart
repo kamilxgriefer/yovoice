@@ -6,10 +6,13 @@ import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:firebase_storage_mocks/firebase_storage_mocks.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/features/calls/data/services/voice_call_service.dart';
 import 'package:yovoice/features/clubs/data/services/club_service.dart';
+import 'package:yovoice/features/permissions/data/permission_readiness_service.dart';
 import 'package:yovoice/features/rooms/data/models/room_metadata.dart';
 import 'package:yovoice/features/rooms/data/models/room_voice_access.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
@@ -18,6 +21,7 @@ import 'package:yovoice/features/rooms/data/services/room_mute_coordinator.dart'
 import 'package:yovoice/features/rooms/data/services/room_voice_entry_coordinator.dart';
 import 'package:yovoice/features/rooms/presentation/screens/broadcast_room_screen.dart';
 import 'package:yovoice/features/rooms/presentation/screens/community_voice_room_screen.dart';
+import 'package:yovoice/features/rooms/presentation/screens/room_entry_screen.dart';
 
 /// THE LOAD-BEARING SCREEN ASSERTION.
 ///
@@ -27,11 +31,48 @@ import 'package:yovoice/features/rooms/presentation/screens/community_voice_room
 /// substitutable: the production singleton hides behind a private
 /// constructor, and `VoiceCallService.forTesting()` is the seam that lets a
 /// recording stand-in answer "was a token requested?".
+class _PermissionGateway implements AppPermissionPlatformGateway {
+  const _PermissionGateway(this.access, [this.requests, this.requestAccess]);
+
+  final AppPermissionAccess access;
+  final List<AppPermissionKind>? requests;
+  final AppPermissionAccess? requestAccess;
+
+  @override
+  Future<bool> openSettings() async => true;
+
+  @override
+  Future<AppPermissionAccess> requestFromUserGesture(
+    AppPermissionKind permission,
+  ) async {
+    requests?.add(permission);
+    return requestAccess ?? access;
+  }
+
+  @override
+  Future<AppPermissionAccess> status(AppPermissionKind permission) async =>
+      access;
+}
+
 class _RecordingVoice extends VoiceCallService {
   _RecordingVoice({
     this.muted = false,
     this.cast = const <VoiceParticipantViewData>[],
-  }) : super.forTesting();
+    AppPermissionAccess permission = AppPermissionAccess.granted,
+    List<AppPermissionKind>? permissionRequests,
+    AppPermissionAccess? permissionRequestResult,
+    bool? canPublish,
+    this.publishOnReconnect = false,
+  }) : _canPublishOverride = canPublish,
+       super.forTesting(
+         permissionReadiness: PermissionReadinessService(
+           platform: _PermissionGateway(
+             permission,
+             permissionRequests,
+             permissionRequestResult,
+           ),
+         ),
+       );
 
   final bool muted;
   final List<VoiceParticipantViewData> cast;
@@ -39,8 +80,10 @@ class _RecordingVoice extends VoiceCallService {
   final List<bool> joinSoundFlags = [];
   final List<bool> joinMutedFlags = [];
   final List<String> disconnects = [];
+  final bool publishOnReconnect;
   bool _connected = false;
   String? _joinedRoom;
+  bool? _canPublishOverride;
 
   @override
   Future<void> join({
@@ -53,6 +96,9 @@ class _RecordingVoice extends VoiceCallService {
     joins.add(roomId);
     joinSoundFlags.add(playSound);
     joinMutedFlags.add(startMuted);
+    if (publishOnReconnect && joins.length > 1) {
+      _canPublishOverride = true;
+    }
     _joinedRoom = roomId;
     _connected = true;
     notifyListeners();
@@ -73,12 +119,17 @@ class _RecordingVoice extends VoiceCallService {
   bool get isConnected => _connected;
 
   @override
+  bool get canPublish => _canPublishOverride ?? super.canPublish;
+
+  @override
   bool get isMuted => muted;
 
   @override
-  MicState get micState => _connected
-      ? (muted ? MicState.muted : MicState.on)
-      : MicState.unavailable;
+  MicState get micState {
+    if (!_connected) return MicState.unavailable;
+    if (_canPublishOverride == false) return MicState.listenOnly;
+    return muted ? MicState.muted : MicState.on;
+  }
 
   @override
   List<VoiceParticipantViewData> get participants => cast;
@@ -137,7 +188,7 @@ void main() {
           return result.authority;
         },
         startVoice: (id) async => events.add('start'),
-        joinRoom: (id) async {
+        joinRoom: (id, {startMuted = false}) async {
           events.add('join');
           return result.room;
         },
@@ -243,6 +294,305 @@ void main() {
     await tester.pump();
   }
 
+  group('explicit prejoin', () {
+    testWidgets(
+      'preview is passive until CTA and repeated taps start one entry flow',
+      (tester) async {
+        await seedRoom(isLive: true);
+        tester.view.devicePixelRatio = 1;
+        tester.view.physicalSize = const Size(390, 844);
+        addTearDown(tester.view.reset);
+        final readGate = Completer<VoiceRoom>();
+        final joinGate = Completer<VoiceRoom>();
+        final events = <String>[];
+        bool? rosterStartedMuted;
+        final coordinator = RoomVoiceEntryCoordinator(
+          readRoom: (id) {
+            events.add('read:$id');
+            return readGate.future;
+          },
+          resolveAuthority: (_) async {
+            events.add('authority');
+            return RoomVoiceStartAuthority.host;
+          },
+          startVoice: (id) async => events.add('start:$id'),
+          joinRoom: (id, {startMuted = false}) async {
+            events.add('join:$id');
+            rosterStartedMuted = startMuted;
+            return joinGate.future;
+          },
+        );
+
+        final voice = _RecordingVoice();
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: ThemeData.dark(useMaterial3: true),
+            home: RoomEntryScreen(
+              room: roomModel(isLive: true),
+              coordinator: coordinator,
+              roomService: serviceFor('guest'),
+              voiceService: voice,
+            ),
+          ),
+        );
+        await tester.pump();
+
+        expect(events, isEmpty);
+        expect(find.text('The Family Lounge'), findsOneWidget);
+        expect(find.text('Host'), findsOneWidget);
+        expect(find.text('Live now'), findsOneWidget);
+        expect(find.text('Microphone off'), findsOneWidget);
+        expect(find.text('Join conversation'), findsOneWidget);
+
+        await tester.tap(find.byKey(const ValueKey('room-prejoin-join')));
+        await tester.tap(find.byKey(const ValueKey('room-prejoin-join')));
+        await tester.pump();
+
+        expect(events, ['read:room-1']);
+        expect(find.text('Joining…'), findsOneWidget);
+        expect(find.byType(CommunityVoiceRoomScreen), findsNothing);
+
+        readGate.complete(roomModel(isLive: true));
+        await tester.pump();
+        await tester.pump();
+
+        expect(rosterStartedMuted, isTrue);
+        expect(find.byType(CommunityVoiceRoomScreen), findsNothing);
+
+        joinGate.complete(roomModel(isLive: true));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 20));
+
+        expect(find.byType(CommunityVoiceRoomScreen), findsOneWidget);
+        expect(voice.joinMutedFlags, <bool>[true]);
+      },
+    );
+
+    testWidgets('prejoin CTA and mic safety copy are natural in Polish', (
+      tester,
+    ) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = const Size(390, 844);
+      addTearDown(tester.view.reset);
+      final recorded = recorder(
+        result: RoomVoiceEntry.unresolved(roomModel(isLive: false)),
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          locale: const Locale('pl'),
+          supportedLocales: AppLocalizations.supportedLocales,
+          localizationsDelegates: const [
+            AppLocalizationsDelegate(),
+            GlobalMaterialLocalizations.delegate,
+            GlobalWidgetsLocalizations.delegate,
+            GlobalCupertinoLocalizations.delegate,
+          ],
+          theme: ThemeData.dark(useMaterial3: true),
+          home: RoomEntryScreen(
+            room: roomModel(isLive: false),
+            coordinator: recorded.coordinator,
+          ),
+        ),
+      );
+      await tester.pump();
+
+      expect(recorded.events, isEmpty);
+      expect(find.text('Zanim dołączysz'), findsOneWidget);
+      expect(find.text('Mikrofon wyłączony'), findsOneWidget);
+      expect(find.text('Dołącz do rozmowy'), findsOneWidget);
+      expect(find.text('Gotowy, gdy gospodarz rozpocznie'), findsOneWidget);
+    });
+
+    testWidgets('failed entry stays on preview and offers a safe retry', (
+      tester,
+    ) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = const Size(390, 844);
+      addTearDown(tester.view.reset);
+      var reads = 0;
+      final liveRoom = roomModel(isLive: true);
+      final coordinator = RoomVoiceEntryCoordinator(
+        readRoom: (_) async {
+          reads += 1;
+          return liveRoom;
+        },
+        resolveAuthority: (_) async => RoomVoiceStartAuthority.none,
+        startVoice: (_) async {},
+        joinRoom: (_, {startMuted = false}) async =>
+            throw StateError('This room is full.'),
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData.dark(useMaterial3: true),
+          home: RoomEntryScreen(
+            room: liveRoom,
+            coordinator: coordinator,
+            voiceService: _RecordingVoice(),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('room-prejoin-join')));
+      await tester.pumpAndSettle();
+
+      expect(reads, 1);
+      expect(find.byKey(const ValueKey('room-prejoin-error')), findsOneWidget);
+      expect(find.text('This room is full.'), findsOneWidget);
+      expect(find.text('Join conversation'), findsOneWidget);
+      expect(find.byType(CommunityVoiceRoomScreen), findsNothing);
+
+      await tester.tap(find.byKey(const ValueKey('room-prejoin-join')));
+      await tester.pumpAndSettle();
+      expect(reads, 2);
+    });
+
+    testWidgets('denied microphone access creates no roster entry', (
+      tester,
+    ) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = const Size(390, 844);
+      addTearDown(tester.view.reset);
+      final recorded = recorder(
+        result: RoomVoiceEntry.unresolved(roomModel(isLive: true)),
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData.dark(useMaterial3: true),
+          home: RoomEntryScreen(
+            room: roomModel(isLive: true),
+            coordinator: recorded.coordinator,
+            voiceService: _RecordingVoice(
+              permission: AppPermissionAccess.denied,
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('room-prejoin-join')));
+      await tester.pumpAndSettle();
+
+      expect(recorded.events, isEmpty);
+      expect(find.byKey(const ValueKey('room-prejoin-error')), findsOneWidget);
+      expect(
+        find.text(
+          'Microphone access is needed to join. Enable it and try again.',
+        ),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets(
+      'broadcast listener joins listen-only when microphone is denied',
+      (tester) async {
+        tester.view.devicePixelRatio = 1;
+        tester.view.physicalSize = const Size(390, 844);
+        addTearDown(tester.view.reset);
+        final broadcast = roomModel(isLive: true, experience: 'broadcast');
+        final events = <String>[];
+        final permissionRequests = <AppPermissionKind>[];
+        final coordinator = RoomVoiceEntryCoordinator(
+          readRoom: (_) async {
+            events.add('read');
+            return broadcast;
+          },
+          resolveAuthority: (_) async => RoomVoiceStartAuthority.none,
+          startVoice: (_) async => events.add('start'),
+          joinRoom: (_, {startMuted = false}) async {
+            events.add('join');
+            return broadcast;
+          },
+          currentUserId: () => 'listener',
+        );
+        final voice = _RecordingVoice(
+          permission: AppPermissionAccess.denied,
+          permissionRequests: permissionRequests,
+        );
+
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: ThemeData.dark(useMaterial3: true),
+            home: RoomEntryScreen(
+              room: broadcast,
+              coordinator: coordinator,
+              roomService: serviceFor('listener'),
+              voiceService: voice,
+            ),
+          ),
+        );
+        await tester.pump();
+        await tester.tap(find.byKey(const ValueKey('room-prejoin-join')));
+        await tester.pumpAndSettle();
+
+        expect(events, <String>['read', 'join']);
+        expect(find.byType(BroadcastRoomScreen), findsOneWidget);
+        expect(find.byKey(const ValueKey('room-prejoin-error')), findsNothing);
+        expect(voice.joins, <String>[roomId]);
+        expect(voice.canPublish, isFalse);
+        expect(permissionRequests, isEmpty);
+      },
+    );
+
+    testWidgets(
+      'broadcast host still needs microphone before the roster write',
+      (tester) async {
+        tester.view.devicePixelRatio = 1;
+        tester.view.physicalSize = const Size(390, 844);
+        addTearDown(tester.view.reset);
+        final broadcast = roomModel(isLive: true, experience: 'broadcast');
+        final events = <String>[];
+        final permissionRequests = <AppPermissionKind>[];
+        final coordinator = RoomVoiceEntryCoordinator(
+          readRoom: (_) async {
+            events.add('read');
+            return broadcast;
+          },
+          resolveAuthority: (_) async => RoomVoiceStartAuthority.host,
+          startVoice: (_) async => events.add('start'),
+          joinRoom: (_, {startMuted = false}) async {
+            events.add('join');
+            return broadcast;
+          },
+          currentUserId: () => 'host',
+        );
+
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: ThemeData.dark(useMaterial3: true),
+            home: RoomEntryScreen(
+              room: broadcast,
+              coordinator: coordinator,
+              voiceService: _RecordingVoice(
+                permission: AppPermissionAccess.denied,
+                permissionRequests: permissionRequests,
+              ),
+            ),
+          ),
+        );
+        await tester.pump();
+        await tester.tap(find.byKey(const ValueKey('room-prejoin-join')));
+        await tester.pumpAndSettle();
+
+        expect(
+          find.byKey(const ValueKey('room-prejoin-error')),
+          findsOneWidget,
+        );
+        expect(find.byType(BroadcastRoomScreen), findsNothing);
+        expect(permissionRequests, <AppPermissionKind>[
+          AppPermissionKind.microphone,
+        ]);
+        expect(events, isEmpty);
+      },
+    );
+
+    test('RoomEntryScreen defaults every route to a muted entry', () {
+      final screen = RoomEntryScreen(room: roomModel(isLive: true));
+      expect(screen.startMuted, isTrue);
+    });
+  });
+
   setUp(() async {
     db = FakeFirebaseFirestore();
     await db.collection('users').doc('relative').set({
@@ -252,6 +602,44 @@ void main() {
   });
 
   group('community room', () {
+    testWidgets('compact chat starts docked and can close and reopen', (
+      tester,
+    ) async {
+      await seedRoom(isLive: false);
+      await pumpCommunity(
+        tester,
+        uid: 'relative',
+        voice: _RecordingVoice(),
+        entry: RoomVoiceEntry(
+          outcome: RoomVoiceEntryOutcome.dormant,
+          room: roomModel(isLive: false),
+          authority: RoomVoiceStartAuthority.none,
+        ),
+        size: const Size(390, 844),
+      );
+
+      expect(find.byKey(const ValueKey('room-stage-pane')), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('room-compact-chat-dock')),
+        findsOneWidget,
+      );
+
+      await tester.tap(find.byTooltip('Back to stage'));
+      await tester.pump();
+      expect(find.byKey(const ValueKey('room-stage-pane')), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('room-compact-chat-dock')),
+        findsNothing,
+      );
+
+      await tester.tap(find.text('Chat'));
+      await tester.pump();
+      expect(
+        find.byKey(const ValueKey('room-compact-chat-dock')),
+        findsOneWidget,
+      );
+    });
+
     testWidgets(
       'a dormant room this account cannot start requests NO token and offers '
       'NO mute control',
@@ -903,6 +1291,40 @@ void main() {
       await tester.pump();
     }
 
+    testWidgets('compact podcast chat starts docked and can close and reopen', (
+      tester,
+    ) async {
+      await seedRoom(isLive: false, experience: 'broadcast');
+      await pumpBroadcast(
+        tester,
+        voice: _RecordingVoice(),
+        entry: RoomVoiceEntry(
+          outcome: RoomVoiceEntryOutcome.dormant,
+          room: roomModel(isLive: false, experience: 'broadcast'),
+          authority: RoomVoiceStartAuthority.none,
+        ),
+        size: const Size(390, 844),
+      );
+
+      expect(find.byKey(const ValueKey('room-stage-pane')), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('room-compact-chat-dock')),
+        findsOneWidget,
+      );
+      await tester.tap(find.byTooltip('Back to stage'));
+      await tester.pump();
+      expect(
+        find.byKey(const ValueKey('room-compact-chat-dock')),
+        findsNothing,
+      );
+      await tester.tap(find.text('Chat'));
+      await tester.pump();
+      expect(
+        find.byKey(const ValueKey('room-compact-chat-dock')),
+        findsOneWidget,
+      );
+    });
+
     testWidgets(
       'a dormant broadcast offers neither a mic nor a raise-hand into a show '
       'that has not started',
@@ -998,6 +1420,143 @@ void main() {
       expect(voice.joins, [roomId]);
       expect(voice.joinMutedFlags, [isTrue]);
     });
+
+    testWidgets(
+      'a promoted listener asks for microphone access only from the mic tap',
+      (tester) async {
+        await seedRoom(isLive: true, experience: 'broadcast');
+        await db
+            .collection('rooms')
+            .doc(roomId)
+            .collection('participants')
+            .doc('relative')
+            .set({
+              'userId': 'relative',
+              'displayName': 'relative',
+              'role': 'speaker',
+              'isMuted': true,
+              'isSpeaker': true,
+              'isHandRaised': false,
+            });
+        final permissionRequests = <AppPermissionKind>[];
+        final voice = _RecordingVoice(
+          muted: true,
+          permission: AppPermissionAccess.denied,
+          permissionRequests: permissionRequests,
+          canPublish: false,
+        );
+        final muteEvents = <String>[];
+        final muteCoordinator = RoomMuteCoordinator(
+          persistRosterState: (roomId, muted) async {
+            muteEvents.add('persist:$roomId:$muted');
+          },
+          applyMicrophoneState: (muted) async {
+            muteEvents.add('apply:$muted');
+          },
+          readCurrentMuted: () => true,
+          disconnectStaleSession: () async {},
+        );
+        addTearDown(muteCoordinator.dispose);
+
+        await pumpBroadcast(
+          tester,
+          voice: voice,
+          muteCoordinator: muteCoordinator,
+          entry: RoomVoiceEntry(
+            outcome: RoomVoiceEntryOutcome.live,
+            room: roomModel(isLive: true, experience: 'broadcast'),
+            authority: RoomVoiceStartAuthority.none,
+          ),
+        );
+        await tester.pump(const Duration(seconds: 1));
+
+        expect(permissionRequests, isEmpty);
+        expect(voice.disconnects, isEmpty);
+        expect(find.text('Listening'), findsOneWidget);
+
+        await tester.tap(find.text('Listening'));
+        await tester.pump();
+
+        expect(permissionRequests, <AppPermissionKind>[
+          AppPermissionKind.microphone,
+        ]);
+        expect(muteEvents, isEmpty);
+        expect(
+          find.text(
+            'Microphone access is needed to speak. Enable it and try again.',
+          ),
+          findsOneWidget,
+        );
+      },
+    );
+
+    testWidgets(
+      'the promoted-listener mic tap grants access before reconnect and roster unmute',
+      (tester) async {
+        await seedRoom(isLive: true, experience: 'broadcast');
+        await db
+            .collection('rooms')
+            .doc(roomId)
+            .collection('participants')
+            .doc('relative')
+            .set({
+              'userId': 'relative',
+              'displayName': 'relative',
+              'role': 'speaker',
+              'isMuted': true,
+              'isSpeaker': true,
+              'isHandRaised': false,
+            });
+        final permissionRequests = <AppPermissionKind>[];
+        final voice = _RecordingVoice(
+          muted: true,
+          permission: AppPermissionAccess.denied,
+          permissionRequestResult: AppPermissionAccess.granted,
+          permissionRequests: permissionRequests,
+          canPublish: false,
+          publishOnReconnect: true,
+        );
+        final muteEvents = <String>[];
+        final muteCoordinator = RoomMuteCoordinator(
+          persistRosterState: (roomId, muted) async {
+            muteEvents.add('persist:$roomId:$muted');
+          },
+          applyMicrophoneState: (muted) async {
+            muteEvents.add('apply:$muted');
+          },
+          readCurrentMuted: () => true,
+          disconnectStaleSession: () async {},
+        );
+        addTearDown(muteCoordinator.dispose);
+
+        await pumpBroadcast(
+          tester,
+          voice: voice,
+          muteCoordinator: muteCoordinator,
+          entry: RoomVoiceEntry(
+            outcome: RoomVoiceEntryOutcome.live,
+            room: roomModel(isLive: true, experience: 'broadcast'),
+            authority: RoomVoiceStartAuthority.none,
+          ),
+        );
+        await tester.pump(const Duration(seconds: 1));
+
+        expect(permissionRequests, isEmpty);
+        expect(voice.disconnects, isEmpty);
+        expect(muteEvents, isEmpty);
+        expect(find.text('Listening'), findsOneWidget);
+
+        await tester.tap(find.text('Listening'));
+        await tester.pumpAndSettle();
+
+        expect(permissionRequests, <AppPermissionKind>[
+          AppPermissionKind.microphone,
+        ]);
+        expect(voice.disconnects, <String>[roomId]);
+        expect(voice.joins, <String>[roomId, roomId]);
+        expect(muteEvents, <String>['persist:$roomId:false', 'apply:false']);
+      },
+    );
 
     testWidgets(
       'a delayed Broadcast refusal cannot disconnect the replacement room',

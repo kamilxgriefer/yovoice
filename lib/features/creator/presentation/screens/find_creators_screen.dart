@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/helpers/error_messages.dart';
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/features/creator/data/models/creator_search_result.dart';
 import 'package:yovoice/features/creator/data/services/creator_directory_service.dart';
 import 'package:yovoice/features/profile/data/services/follow_service.dart';
@@ -119,7 +120,10 @@ class _FindCreatorsScreenState extends State<FindCreatorsScreen> {
         _searching = false;
         _error = intentionalOrFriendly(
           error,
-          fallback: 'Creator search is temporarily unavailable.',
+          fallback: AppLocalizations.of(context).text(
+            'Creator search is temporarily unavailable.',
+            'Wyszukiwanie twórców jest chwilowo niedostępne.',
+          ),
         );
       });
     }
@@ -149,6 +153,7 @@ class _FindCreatorsScreenState extends State<FindCreatorsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final content = Scaffold(
       backgroundColor: _background,
       body: DecoratedBox(
@@ -203,7 +208,7 @@ class _FindCreatorsScreenState extends State<FindCreatorsScreen> {
                       ],
                     ),
                   ),
-                  ..._buildResultSlivers(),
+                  ..._buildResultSlivers(copy),
                 ],
               ),
             ),
@@ -228,7 +233,7 @@ class _FindCreatorsScreenState extends State<FindCreatorsScreen> {
     if (query.length >= 2) unawaited(_search(query, requestVersion));
   }
 
-  List<Widget> _buildResultSlivers() {
+  List<Widget> _buildResultSlivers(AppLocalizations copy) {
     final query = _searchController.text.trim();
     if (_searching) {
       return const [
@@ -252,7 +257,10 @@ class _FindCreatorsScreenState extends State<FindCreatorsScreen> {
             padding: const EdgeInsets.only(top: 18, bottom: 32),
             child: _DirectoryState(
               icon: Icons.wifi_off_rounded,
-              title: 'Search is taking a break',
+              title: copy.text(
+                'Search is taking a break',
+                'Wyszukiwanie jest chwilowo niedostępne',
+              ),
               subtitle: _error!,
             ),
           ),
@@ -260,16 +268,20 @@ class _FindCreatorsScreenState extends State<FindCreatorsScreen> {
       ];
     }
     if (query.length < 2) {
-      return const [
+      return [
         SliverToBoxAdapter(
           child: Padding(
-            padding: EdgeInsets.only(top: 18, bottom: 32),
+            padding: const EdgeInsets.only(top: 18, bottom: 32),
             child: _DirectoryState(
               icon: Icons.auto_awesome_rounded,
-              title: 'Find a voice worth following',
-              subtitle:
-                  'Search by display name or @username. Verified creators '
-                  'are marked with a YO Voice badge.',
+              title: copy.text(
+                'Find a voice worth following',
+                'Znajdź głos, który warto obserwować',
+              ),
+              subtitle: copy.text(
+                'Search by display name or @username. Verified creators are marked with a YO Voice badge.',
+                'Szukaj według nazwy profilu lub @nazwy_użytkownika. Zweryfikowani twórcy mają odznakę YO Voice.',
+              ),
             ),
           ),
         ),
@@ -284,11 +296,20 @@ class _FindCreatorsScreenState extends State<FindCreatorsScreen> {
             child: _DirectoryState(
               icon: Icons.person_search_rounded,
               title: _filter == _CreatorFilter.verified
-                  ? 'No verified creators found'
-                  : 'No creators found',
+                  ? copy.text(
+                      'No verified creators found',
+                      'Nie znaleziono zweryfikowanych twórców',
+                    )
+                  : copy.text('No creators found', 'Nie znaleziono twórców'),
               subtitle: _filter == _CreatorFilter.verified
-                  ? 'Try another name or view all creators.'
-                  : 'Try another name or @username.',
+                  ? copy.text(
+                      'Try another name or view all creators.',
+                      'Wpisz inną nazwę albo wyświetl wszystkich twórców.',
+                    )
+                  : copy.text(
+                      'Try another name or @username.',
+                      'Wpisz inną nazwę lub @nazwę_użytkownika.',
+                    ),
             ),
           ),
         ),
@@ -349,6 +370,7 @@ class _Header extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     return Padding(
       padding: const EdgeInsets.only(top: 10),
       child: Row(
@@ -357,29 +379,32 @@ class _Header extends StatelessWidget {
           if (showBack) ...[
             IconButton(
               onPressed: onBack,
-              tooltip: 'Back',
+              tooltip: copy.text('Back', 'Wstecz'),
               icon: const Icon(Icons.arrow_back_ios_new_rounded),
               color: Colors.white,
             ),
             const SizedBox(width: 4),
           ],
-          const Expanded(
+          Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Find creators',
-                  style: TextStyle(
+                  copy.findCreators,
+                  style: const TextStyle(
                     color: Colors.white,
                     fontSize: 30,
                     fontWeight: FontWeight.w900,
                     letterSpacing: -.7,
                   ),
                 ),
-                SizedBox(height: 5),
+                const SizedBox(height: 5),
                 Text(
-                  'Discover people building conversations, shows and communities.',
-                  style: TextStyle(
+                  copy.text(
+                    'Discover people building conversations, shows and communities.',
+                    'Odkrywaj osoby, które tworzą rozmowy, audycje i społeczności.',
+                  ),
+                  style: const TextStyle(
                     color: _FindCreatorsScreenState._muted,
                     fontSize: 14,
                     height: 1.35,
@@ -409,6 +434,7 @@ class _SearchPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
@@ -430,7 +456,10 @@ class _SearchPanel extends StatelessWidget {
         textInputAction: TextInputAction.search,
         style: const TextStyle(color: Colors.white, fontSize: 15),
         decoration: InputDecoration(
-          hintText: 'Search creators by name or @username',
+          hintText: copy.text(
+            'Search creators by name or @username',
+            'Szukaj twórców według nazwy lub @nazwy_użytkownika',
+          ),
           hintStyle: const TextStyle(color: Color(0xFF83798F)),
           prefixIcon: const Icon(
             Icons.search_rounded,
@@ -452,7 +481,7 @@ class _SearchPanel extends StatelessWidget {
               ? null
               : IconButton(
                   onPressed: onClear,
-                  tooltip: 'Clear search',
+                  tooltip: copy.text('Clear search', 'Wyczyść wyszukiwanie'),
                   icon: const Icon(Icons.close_rounded),
                 ),
           filled: true,
@@ -488,21 +517,28 @@ class _FilterBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     return Wrap(
       spacing: 8,
       runSpacing: 8,
       children: [
         _FilterChip(
           filterKey: const ValueKey('creator-filter-all'),
-          label: 'All creators',
-          semanticLabel: 'All creators filter',
+          label: copy.text('All creators', 'Wszyscy twórcy'),
+          semanticLabel: copy.text(
+            'All creators filter',
+            'Filtr: wszyscy twórcy',
+          ),
           selected: selected == _CreatorFilter.allCreators,
           onTap: () => onSelected(_CreatorFilter.allCreators),
         ),
         _FilterChip(
           filterKey: const ValueKey('creator-filter-verified'),
-          label: 'Verified',
-          semanticLabel: 'Verified creators filter',
+          label: copy.text('Verified', 'Zweryfikowani'),
+          semanticLabel: copy.text(
+            'Verified creators filter',
+            'Filtr: zweryfikowani twórcy',
+          ),
           selected: selected == _CreatorFilter.verified,
           onTap: () => onSelected(_CreatorFilter.verified),
         ),
@@ -608,7 +644,10 @@ class _CreatorResultCardState extends State<_CreatorResultCard> {
           content: Text(
             intentionalOrFriendly(
               error,
-              fallback: 'The follow action could not be completed.',
+              fallback: AppLocalizations.of(context).text(
+                'The follow action could not be completed.',
+                'Nie udało się zmienić obserwowania.',
+              ),
             ),
           ),
         ),
@@ -620,6 +659,7 @@ class _CreatorResultCardState extends State<_CreatorResultCard> {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final creator = widget.creator;
     final textScale = MediaQuery.textScalerOf(context).scale(1);
     return StreamBuilder<bool>(
@@ -688,7 +728,7 @@ class _CreatorResultCardState extends State<_CreatorResultCard> {
                       ),
                       SizedBox(height: denseGridCard ? 4 : 7),
                       Text(
-                        _followersLabel(creator.followerCount),
+                        _followersLabel(copy, creator.followerCount),
                         style: const TextStyle(
                           color: Color(0xFFD3A5FF),
                           fontSize: 11.5,
@@ -711,7 +751,7 @@ class _CreatorResultCardState extends State<_CreatorResultCard> {
                   BorderSide(color: _FindCreatorsScreenState._accent),
                 ),
               ),
-              child: const Text('View profile'),
+              child: Text(copy.text('View profile', 'Zobacz profil')),
             );
             final followButton = FilledButton.icon(
               onPressed: _busy ? null : () => _toggle(following),
@@ -733,7 +773,11 @@ class _CreatorResultCardState extends State<_CreatorResultCard> {
                           : Icons.person_add_alt_1_rounded,
                       size: 18,
                     ),
-              label: Text(following ? 'Following' : 'Follow'),
+              label: Text(
+                following
+                    ? copy.text('Following', 'Obserwujesz')
+                    : copy.text('Follow', 'Obserwuj'),
+              ),
             );
             final actions = textScale > 1.35
                 ? Column(
@@ -799,9 +843,18 @@ class _CreatorResultCardState extends State<_CreatorResultCard> {
     );
   }
 
-  static String _followersLabel(int count) {
-    if (count == 1) return '1 follower';
-    return '$count followers';
+  static String _followersLabel(AppLocalizations copy, int count) {
+    if (copy.isPolish) {
+      if (count == 1) return '1 obserwujący';
+      final lastTwo = count % 100;
+      final last = count % 10;
+      if (last >= 2 && last <= 4 && (lastTwo < 12 || lastTwo > 14)) {
+        return '$count obserwujących';
+      }
+      return '$count obserwujących';
+    }
+    if (count == 1) return copy.text('1 follower', '1 obserwujący');
+    return copy.text('$count followers', '$count obserwujących');
   }
 }
 
@@ -812,11 +865,12 @@ class _CreatorStatusBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     return _IdentityBadge(
       key: ValueKey('creator-status-$uid'),
       icon: Icons.auto_awesome_rounded,
-      label: 'Creator',
-      semanticLabel: 'Creator account',
+      label: copy.text('Creator', 'Twórca'),
+      semanticLabel: copy.text('Creator account', 'Konto twórcy'),
       color: const Color(0xFFD59BFF),
     );
   }
@@ -829,11 +883,15 @@ class _VerifiedCreatorBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     return _IdentityBadge(
       key: ValueKey('verified-status-$uid'),
       icon: Icons.verified_rounded,
-      label: 'Verified',
-      semanticLabel: 'Verified by YO Voice',
+      label: copy.text('Verified', 'Zweryfikowany'),
+      semanticLabel: copy.text(
+        'Verified by YO Voice',
+        'Zweryfikowany przez YO Voice',
+      ),
       color: const Color(0xFF67D8FF),
     );
   }

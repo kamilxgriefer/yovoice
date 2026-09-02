@@ -58,7 +58,12 @@ void main() {
     PublicIdentityRepository.instance = originalIdentityRepository;
   });
 
-  FriendService buildService({String? sendOutcome}) {
+  FriendService buildService({
+    String? sendOutcome,
+    String? embeddedRelationshipStatus,
+    RelationshipStatusInvoker? relationshipStatusInvoker,
+    PublicProfileSearchInvoker? searchInvoker,
+  }) {
     return FriendService(
       firestore: db,
       auth: MockFirebaseAuth(signedIn: true, mockUser: MockUser(uid: meUid)),
@@ -73,9 +78,17 @@ void main() {
         }
         return const <String, dynamic>{'changed': true};
       },
-      searchInvoker: (query, limit) async => [
-        {'uid': otherUid, 'displayName': 'Riley', 'username': 'riley'},
-      ],
+      searchInvoker:
+          searchInvoker ??
+          (query, limit) async => [
+            {
+              'uid': otherUid,
+              'displayName': 'Riley',
+              'username': 'riley',
+              'relationshipStatus': ?embeddedRelationshipStatus,
+            },
+          ],
+      relationshipStatusInvoker: relationshipStatusInvoker,
     );
   }
 
@@ -129,6 +142,24 @@ void main() {
 
     expect(find.text('Friends'), findsOneWidget);
     expect(find.text('You and Riley are now friends.'), findsOneWidget);
+  });
+
+  testWidgets('embedded search status avoids per-result relationship reads', (
+    tester,
+  ) async {
+    var fallbackReads = 0;
+    final service = buildService(
+      embeddedRelationshipStatus: 'requestReceived',
+      relationshipStatusInvoker: (userId) async {
+        fallbackReads += 1;
+        return FriendRelationshipStatus.none;
+      },
+    );
+    await pumpScreen(tester, service);
+    await searchForRiley(tester);
+
+    expect(find.text('Accept'), findsOneWidget);
+    expect(fallbackReads, 0);
   });
 
   testWidgets('the received state shows a decline affordance that invokes '
@@ -195,6 +226,46 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('an older failed search cannot erase a newer success', (
+    tester,
+  ) async {
+    final oldRequest = Completer<List<Map<String, dynamic>>>();
+    final newRequest = Completer<List<Map<String, dynamic>>>();
+    final service = buildService(
+      searchInvoker: (query, limit) {
+        if (query == 'Al') return oldRequest.future;
+        if (query == 'Be') return newRequest.future;
+        return Future.value(const <Map<String, dynamic>>[]);
+      },
+    );
+    await pumpScreen(tester, service);
+
+    await tester.enterText(find.byType(TextField), 'Al');
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.enterText(find.byType(TextField), 'Be');
+    await tester.pump(const Duration(milliseconds: 500));
+
+    newRequest.complete(const [
+      {
+        'uid': 'beta-uid',
+        'displayName': 'Beta',
+        'username': 'beta',
+        'relationshipStatus': 'none',
+      },
+    ]);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 20));
+    expect(find.text('Beta'), findsOneWidget);
+
+    oldRequest.completeError(StateError('stale network failure'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 20));
+
+    expect(find.text('Beta'), findsOneWidget);
+    expect(find.textContaining('stale network failure'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('suggestion failure is honest and Retry loads the list', (
     tester,
   ) async {
@@ -231,6 +302,33 @@ void main() {
     expect(find.text('Suggested for you'), findsOneWidget);
     expect(find.text('Riley'), findsOneWidget);
     expect(graph.calls, 2);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('a populated suggestion remains usable at 320px and 200% text', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(320, 720);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await pumpScreen(
+      tester,
+      buildService(),
+      textScaler: const TextScaler.linear(2),
+      socialGraphService: _SingleSuggestionGraphService(),
+    );
+
+    final card = find.byKey(const ValueKey('friend-suggestion-riley-uid'));
+    final add = find.widgetWithText(FilledButton, 'Add');
+    expect(card, findsOneWidget);
+    expect(add, findsOneWidget);
+    await tester.ensureVisible(card);
+    await tester.pumpAndSettle();
+    expect(tester.getSize(add).height, greaterThanOrEqualTo(44));
+    expect(
+      tester.getRect(add).top,
+      greaterThan(tester.getRect(find.text('Riley')).bottom),
+    );
     expect(tester.takeException(), isNull);
   });
 

@@ -4687,8 +4687,9 @@ separate decision.
 
 ## ADR-072: Appearance and UI language are device-local preferences with explicit Beta boundaries
 
-**Status:** Accepted; deployed to web/PWA on 2026-08-18 (`8fa0192`). Native
-store release pending.
+**Status:** Superseded by ADR-136 on 2026-09-01. The original bounded-Beta
+release was deployed to web/PWA on 2026-08-18 (`8fa0192`); this record remains
+as history.
 
 ### Context
 
@@ -8457,3 +8458,81 @@ depending on widget lifecycle timing.
 - Release order is backward-compatible Functions, authoritative capability
   registration/gate, compatible clients, then video enablement.
 - This decision authorizes source work only; it does not authorize deployment.
+
+## ADR-136: UI language is device-local, Polish is production copy, and additional locales enter through one guarded core catalog
+
+**Status**: Implemented in source; tester release pending
+**Date**: 2026-09-01
+
+### Context
+
+ADR-072 deliberately shipped only English and a bounded Polish Beta. The
+language switch itself was sound, but raw presentation strings meant Polish
+could not honestly graduate and adding languages screen by screen would create
+different partial products with no enforceable maintenance boundary. Android,
+iOS, Firebase Auth email flows and the web document language also need the same
+locale decision as Flutter or a selected language produces a mixed platform
+experience.
+
+### Decision
+
+Language remains a non-sensitive, device-local preference. New installations
+start with **System**; malformed legacy state falls back to English. The exact
+selectable registry contains English, production Polish and 41 additional
+regional/script-aware variants (43 selectable variants total). Portuguese
+distinguishes Portugal and Brazil; Chinese distinguishes Simplified and
+Traditional and resolves `Hans`/`Hant` plus Hong Kong, Macau, Singapore and
+Taiwan deterministically.
+
+One canonical catalog owns the multi-language core: navigation,
+authentication, onboarding, Settings and system controls. Every production
+catalog must have exactly the canonical keys, preserve placeholders, contain
+no empty values and pass plural/date smoke tests. Unsupported feature phrases
+fall back to English explicitly rather than displaying a missing key or an
+invented translation. User-created names, messages and media captions are
+never translated. Canonical lookup keys are stable templates (`{name}`,
+`{count}`, `{date}`); runtime values are substituted only after locale lookup,
+and a source regression rejects interpolation inside those keys.
+
+Polish is no longer Beta. User-facing product copy is migrated through
+`AppLocalizations`, including errors, empty/loading states, tooltips and
+accessibility labels, and receives a full linguistic and responsive pass. A
+source guard prevents migrated feature roots from reintroducing direct English
+UI literals. From this point forward, localization is part of the feature's
+definition of done: changed copy and its Polish version land in the same
+change; a phrase in the production multi-language core lands in every catalog
+before release.
+
+The resolved locale also updates Firebase Auth's language code, the web
+document's `lang`, Android's per-app locale configuration, iOS declared
+localizations and localized permission descriptions. No locale or inferred
+language is written to Firestore.
+
+### Reasoning
+
+Device-local selection preserves offline startup and avoids creating profile
+data from a presentation preference. A small exact catalog provides a strict,
+testable contract for the highest-frequency and account-critical flows without
+pretending that thousands of specialist staff and creator phrases received a
+native-speaker translation in one mechanical pass. Polish can be held to a
+complete-app bar because it has direct product ownership; additional languages
+can expand from the guarded core without silently degrading already translated
+keys.
+
+### Consequences
+
+- Users can select 43 locale variants and System follows any supported device
+  locale, with English as the deterministic unsupported fallback.
+- Polish is a production language and cannot be released with a new raw UI
+  string; the localization source guard is part of the normal test gate.
+- The additional 41 locale variants guarantee the canonical core, not an
+  editorial claim that every specialist screen is fully translated. Feature
+  phrases outside that boundary remain English until deliberately catalogued.
+- Native permission prompts, Firebase Auth flows and HTML language metadata
+  stay aligned with Flutter's resolved locale.
+- Catalog growth has a real maintenance cost: placeholders, plural forms,
+  right-to-left layout and platform bundles must be updated together whenever
+  the core contract changes.
+- This decision supersedes ADR-072's three-language registry, English default
+  for missing state and Polish Beta boundary. It does not authorize a store or
+  Hosting deployment.

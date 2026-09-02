@@ -5,9 +5,11 @@ import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_theme.dart';
 import 'package:yovoice/features/friends/data/models/friend_user.dart';
@@ -18,7 +20,9 @@ import 'package:yovoice/features/messages/data/services/message_outbox.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/messages/presentation/screens/chat_screen.dart';
 import 'package:yovoice/features/messages/presentation/screens/messages_screen.dart';
+import 'package:yovoice/features/profile/data/services/profile_service.dart';
 import 'package:yovoice/shared/identity/public_identity_repository.dart';
+import 'package:yovoice/shared/widgets/profile/profile_media_image.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
 /// User actions stay recoverable while background bookkeeping stays quiet.
@@ -39,8 +43,22 @@ void main() {
 
   late PublicIdentityRepository originalIdentityRepository;
 
-  Widget host(Widget child, {ThemeData? theme}) =>
-      MaterialApp(theme: theme ?? AppTheme.darkTheme, home: child);
+  Widget host(
+    Widget child, {
+    ThemeData? theme,
+    Locale locale = const Locale('en'),
+  }) => MaterialApp(
+    locale: locale,
+    supportedLocales: AppLocalizations.supportedLocales,
+    localizationsDelegates: const [
+      AppLocalizationsDelegate(),
+      GlobalMaterialLocalizations.delegate,
+      GlobalWidgetsLocalizations.delegate,
+      GlobalCupertinoLocalizations.delegate,
+    ],
+    theme: theme ?? AppTheme.darkTheme,
+    home: child,
+  );
 
   void useSurface(WidgetTester tester, Size size) {
     tester.view.physicalSize = size;
@@ -93,6 +111,9 @@ void main() {
     required Size size,
     TextScaler textScaler = TextScaler.noScaling,
     ThemeData? theme,
+    Locale locale = const Locale('en'),
+    ProfileService? profileService,
+    DateTime? otherProfileUpdatedAt,
   }) async {
     useSurface(tester, size);
     await tester.pumpWidget(
@@ -106,15 +127,18 @@ void main() {
               otherDisplayName: 'Them',
               otherEmail: '',
               otherPhotoUrl: '',
+              otherProfileUpdatedAt: otherProfileUpdatedAt,
               messageService: service,
               auth: MockFirebaseAuth(
                 signedIn: true,
                 mockUser: MockUser(uid: currentUserId),
               ),
+              profileService: profileService,
             ),
           ),
         ),
         theme: theme,
+        locale: locale,
       ),
     );
     await tester.pumpAndSettle();
@@ -143,6 +167,54 @@ void main() {
   }
 
   group('direct messaging semantic themes', () {
+    testWidgets('open chat invalidates avatar grants on profile revision', (
+      tester,
+    ) async {
+      final firestore = FakeFirebaseFirestore();
+      final auth = MockFirebaseAuth(
+        signedIn: true,
+        mockUser: MockUser(uid: currentUserId),
+      );
+      final firstRevision = DateTime.utc(2026, 9, 1, 8);
+      final secondRevision = DateTime.utc(2026, 9, 1, 9);
+      await firestore.collection('publicProfiles').doc(otherUserId).set({
+        'displayName': 'Them',
+        'updatedAt': Timestamp.fromDate(firstRevision),
+      });
+
+      await pumpChat(
+        tester,
+        _StubMessageService(messages: const <Message>[]),
+        size: narrow,
+        profileService: ProfileService(firestore: firestore, auth: auth),
+      );
+
+      Iterable<ProfileMediaImage> avatarImages() => tester
+          .widgetList<ProfileMediaImage>(find.byType(ProfileMediaImage))
+          .where((image) => image.userId == otherUserId);
+
+      expect(avatarImages(), isNotEmpty);
+      expect(
+        avatarImages().map(
+          (image) => (image.revision! as DateTime).millisecondsSinceEpoch,
+        ),
+        everyElement(firstRevision.millisecondsSinceEpoch),
+      );
+
+      await firestore.collection('publicProfiles').doc(otherUserId).update({
+        'updatedAt': Timestamp.fromDate(secondRevision),
+      });
+      await tester.pumpAndSettle();
+
+      expect(
+        avatarImages().map(
+          (image) => (image.revision! as DateTime).millisecondsSinceEpoch,
+        ),
+        everyElement(secondRevision.millisecondsSinceEpoch),
+      );
+      expect(tester.takeException(), isNull);
+    });
+
     for (final entry in <String, ThemeData>{
       'dark': AppTheme.darkTheme,
       'light': AppTheme.lightTheme,
@@ -474,6 +546,36 @@ void main() {
       expect(service.maxInFlight, 1);
     });
 
+    testWidgets('opening and leaving an unused chat sends no typing writes', (
+      tester,
+    ) async {
+      final service = _StubMessageService(messages: const <Message>[]);
+      await pumpChat(tester, service, size: narrow);
+
+      await tester.pumpWidget(const MaterialApp(home: SizedBox.shrink()));
+      await tester.pumpAndSettle();
+
+      expect(service.typingCalls, 0);
+    });
+
+    testWidgets('a completed not-typing transition is not repeated on exit', (
+      tester,
+    ) async {
+      final service = _BlockingTypingMessageService();
+      service.releaseFirst.complete();
+      await pumpChat(tester, service, size: narrow);
+
+      await tester.enterText(find.byType(TextField), 'hello');
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField), '');
+      await tester.pumpAndSettle();
+      expect(service.states, <bool>[true, false]);
+
+      await tester.pumpWidget(const MaterialApp(home: SizedBox.shrink()));
+      await tester.pumpAndSettle();
+      expect(service.states, <bool>[true, false]);
+    });
+
     testWidgets(
       'a terminal queued message stays visible with recovery actions',
       (tester) async {
@@ -493,6 +595,13 @@ void main() {
 
         expect(find.text('keep my words'), findsOneWidget);
         expect(find.text('Not sent'), findsOneWidget);
+        expect(
+          find.text(
+            "Messaging isn't available for this conversation. "
+            "Check the person's profile or remove this message.",
+          ),
+          findsOneWidget,
+        );
         expect(find.text('Retry'), findsOneWidget);
         expect(find.text('Remove'), findsOneWidget);
         expect(
@@ -528,6 +637,77 @@ void main() {
         semantics.dispose();
       },
     );
+
+    testWidgets(
+      'terminal guidance is actionable Polish and never exposes backend text',
+      (tester) async {
+        final semantics = tester.ensureSemantics();
+        final service = _StubMessageService(messages: const <Message>[]);
+        await pumpChat(
+          tester,
+          service,
+          size: const Size(320, 720),
+          textScaler: const TextScaler.linear(2),
+          locale: const Locale('pl'),
+        );
+
+        final entry = await service.outbox.enqueue(
+          conversationId: conversationId,
+          recipientId: otherUserId,
+          text: 'zachowaj tę wiadomość',
+        );
+        await service.outbox.markFailed(
+          entry.id,
+          'unavailable:private socket diagnostics',
+        );
+        await tester.pumpAndSettle();
+
+        const guidance =
+            'YO Voice nie może teraz połączyć się z usługą wiadomości. '
+            'Sprawdź internet i spróbuj ponownie.';
+        expect(find.text(guidance), findsOneWidget);
+        expect(find.text('Nie wysłano'), findsOneWidget);
+        expect(find.text('Spróbuj ponownie'), findsOneWidget);
+        expect(find.text('Usuń'), findsOneWidget);
+        expect(find.textContaining('private socket diagnostics'), findsNothing);
+        expect(
+          tester
+              .getSemantics(
+                find.bySemanticsLabel('Dlaczego nie wysłano: $guidance'),
+              )
+              .getSemanticsData()
+              .flagsCollection
+              .isLiveRegion,
+          isTrue,
+        );
+        expect(tester.takeException(), isNull);
+        semantics.dispose();
+      },
+    );
+
+    testWidgets('text Retry targets one entry and preserves its requestId', (
+      tester,
+    ) async {
+      final service = _StubMessageService(messages: const <Message>[]);
+      final entry = await service.outbox.enqueue(
+        conversationId: conversationId,
+        recipientId: otherUserId,
+        text: 'retry this exact message',
+      );
+      final requestId = entry.requestId;
+      await service.outbox.markFailed(entry.id, 'offline');
+      await pumpChat(tester, service, size: narrow);
+
+      await tester.tap(find.text('Retry'));
+      await tester.pump();
+
+      expect(service.retriedEntryIds, <String>[entry.id]);
+      final retried = service.outbox.entries.single;
+      expect(retried.id, entry.id);
+      expect(retried.requestId, requestId);
+      expect(retried.state, OutboxState.retrying);
+      expect(tester.takeException(), isNull);
+    });
 
     testWidgets('retry status and empty state reflow at 320px and 200% text', (
       tester,
@@ -929,6 +1109,7 @@ class _StubMessageService extends MessageService {
   int typingCalls = 0;
   int unarchiveCalls = 0;
   final List<String> sentTexts = <String>[];
+  final List<String> retriedEntryIds = <String>[];
 
   @override
   Stream<List<Message>> watchMessages(String conversationId) {
@@ -981,6 +1162,12 @@ class _StubMessageService extends MessageService {
   Future<void> unarchiveConversation(String conversationId) async {
     unarchiveCalls++;
     if (unarchiveFailure != null) throw unarchiveFailure!;
+  }
+
+  @override
+  Future<void> retryFailedMessage(String entryId) async {
+    retriedEntryIds.add(entryId);
+    await outbox.markRetry(entryId, 'manual retry');
   }
 
   @override

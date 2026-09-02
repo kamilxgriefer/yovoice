@@ -5,11 +5,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_immersive_colors.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/calls/data/services/voice_call_service.dart';
+import 'package:yovoice/features/permissions/data/permission_readiness_service.dart';
 import 'package:yovoice/features/rooms/data/models/room_message.dart';
 import 'package:yovoice/features/rooms/data/services/room_mute_coordinator.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
@@ -111,6 +113,7 @@ class _ActiveRoomMiniPlayerState extends State<ActiveRoomMiniPlayer> {
   bool _expandedOpen = false;
   bool _navigatingIntoRoom = false;
   bool _lastLayoutIsDock = false;
+  bool _preparingMicrophone = false;
 
   @override
   void initState() {
@@ -199,7 +202,7 @@ class _ActiveRoomMiniPlayerState extends State<ActiveRoomMiniPlayer> {
 
     return _RoomBarProjection(
       roomId: roomId,
-      roomName: _voice.roomName ?? 'Live room',
+      roomName: _voice.roomName ?? 'YO Voice',
       status: _voice.status,
       participantCount: _voice.participantCount,
       micState: _voice.micState,
@@ -365,7 +368,8 @@ class _ActiveRoomMiniPlayerState extends State<ActiveRoomMiniPlayer> {
     }
   }
 
-  bool get _muteBusy => _projection.voiceMuteBusy || _coordinatorBusy;
+  bool get _muteBusy =>
+      _projection.voiceMuteBusy || _coordinatorBusy || _preparingMicrophone;
 
   /// Mute goes through the ONE coordinator the room screens use — roster
   /// with privacy-first local mute and authority-first unmute (ADR-094:
@@ -374,11 +378,58 @@ class _ActiveRoomMiniPlayerState extends State<ActiveRoomMiniPlayer> {
     final roomId = _watchedRoomId;
     if (roomId == null || _muteBusy) return;
     final generation = _sessionGeneration;
+
+    // A promoted broadcast listener can become a publisher while the room
+    // screen is minimized. That turns this tile from listen-only into an
+    // Unmute control, but it does not mean microphone access has been
+    // granted. Preserve the browser user activation from this tap and obtain
+    // access BEFORE RoomMuteCoordinator writes `isMuted: false` to the
+    // roster. A refusal therefore changes neither server nor local state.
+    if (_voice.isMuted) {
+      _preparingMicrophone = true;
+      if (mounted) setState(() {});
+      PermissionReadinessSnapshot permissions;
+      try {
+        permissions = await _voice.prepareMediaPermissionsFromUserGesture(
+          includeCamera: false,
+        );
+      } catch (_) {
+        permissions = PermissionReadinessSnapshot(const {
+          AppPermissionKind.microphone: AppPermissionAccess.unavailable,
+        });
+      } finally {
+        _preparingMicrophone = false;
+        if (mounted) setState(() {});
+      }
+      if (!mounted ||
+          !_isCurrentSession(roomId, generation) ||
+          !_voice.isMuted) {
+        return;
+      }
+      if (!permissions[AppPermissionKind.microphone].isUsable) {
+        final copy = AppLocalizations.of(context);
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(
+            SnackBar(
+              content: Text(
+                copy.text(
+                  'Microphone access is needed to speak. Enable it and try again.',
+                  'Aby mówić, zezwól na dostęp do mikrofonu i spróbuj ponownie.',
+                ),
+              ),
+            ),
+          );
+        return;
+      }
+    }
+
     final outcome = await _mutes.toggle(
       roomId: roomId,
       isOperationCurrent: () => _isCurrentSession(roomId, generation),
     );
     if (!mounted || !_isCurrentSession(roomId, generation)) return;
+    final copy = AppLocalizations.of(context);
     switch (outcome) {
       case RoomMuteOutcome.applied:
       case RoomMuteOutcome.busy:
@@ -389,9 +440,12 @@ class _ActiveRoomMiniPlayerState extends State<ActiveRoomMiniPlayer> {
         ScaffoldMessenger.of(context)
           ..hideCurrentSnackBar()
           ..showSnackBar(
-            const SnackBar(
+            SnackBar(
               content: Text(
-                "You're muted. Room status couldn't sync; try again.",
+                copy.text(
+                  "You're muted. Room status couldn't sync; try again.",
+                  'Mikrofon jest wyciszony. Nie udało się zsynchronizować statusu pokoju — spróbuj ponownie.',
+                ),
               ),
             ),
           );
@@ -399,8 +453,13 @@ class _ActiveRoomMiniPlayerState extends State<ActiveRoomMiniPlayer> {
         ScaffoldMessenger.of(context)
           ..hideCurrentSnackBar()
           ..showSnackBar(
-            const SnackBar(
-              content: Text('Could not change microphone state. Try again.'),
+            SnackBar(
+              content: Text(
+                copy.text(
+                  'Could not change microphone state. Try again.',
+                  'Nie udało się zmienić stanu mikrofonu. Spróbuj ponownie.',
+                ),
+              ),
             ),
           );
     }
@@ -453,10 +512,16 @@ class _ActiveRoomMiniPlayerState extends State<ActiveRoomMiniPlayer> {
         builder: (dialogContext) {
           final palette = dialogContext.appPalette;
           final colorScheme = Theme.of(dialogContext).colorScheme;
+          final copy = AppLocalizations.of(dialogContext);
           return AlertDialog(
             backgroundColor: palette.surfaceRaised,
             title: Text(
-              authorityUncertain ? 'Leave or end room?' : 'End room?',
+              authorityUncertain
+                  ? copy.text(
+                      'Leave or end room?',
+                      'Opuścić czy zakończyć pokój?',
+                    )
+                  : copy.text('End room?', 'Zakończyć pokój?'),
               style: TextStyle(
                 color: palette.textPrimary,
                 fontWeight: FontWeight.w900,
@@ -464,17 +529,23 @@ class _ActiveRoomMiniPlayerState extends State<ActiveRoomMiniPlayer> {
             ),
             content: Text(
               authorityUncertain
-                  ? 'Room authority could not be verified. Leaving may end '
-                        'this live session if you are its host.'
-                  : 'You are the host. Leaving can end this live session for '
-                        'everyone still inside.',
+                  ? copy.text(
+                      'Room authority could not be verified. Leaving may end '
+                          'this live session if you are its host.',
+                      'Nie udało się potwierdzić uprawnień w pokoju. Jeśli jesteś gospodarzem, wyjście może zakończyć sesję na żywo.',
+                    )
+                  : copy.text(
+                      'You are the host. Leaving can end this live session for '
+                          'everyone still inside.',
+                      'Jesteś gospodarzem. Wyjście może zakończyć sesję na żywo dla wszystkich osób w pokoju.',
+                    ),
               style: TextStyle(color: palette.textSecondary, height: 1.4),
             ),
             actions: [
               TextButton(
                 onPressed: () => Navigator.of(dialogContext).pop(false),
                 style: TextButton.styleFrom(foregroundColor: palette.focus),
-                child: const Text('Cancel'),
+                child: Text(copy.text('Cancel', 'Anuluj')),
               ),
               FilledButton(
                 key: const ValueKey('mini-player-end-confirm'),
@@ -483,7 +554,11 @@ class _ActiveRoomMiniPlayerState extends State<ActiveRoomMiniPlayer> {
                   backgroundColor: colorScheme.error,
                   foregroundColor: colorScheme.onError,
                 ),
-                child: Text(authorityUncertain ? 'Leave anyway' : 'End room'),
+                child: Text(
+                  authorityUncertain
+                      ? copy.text('Leave anyway', 'Wyjdź mimo to')
+                      : copy.text('End room', 'Zakończ pokój'),
+                ),
               ),
             ],
           );
@@ -522,7 +597,9 @@ class _ActiveRoomMiniPlayerState extends State<ActiveRoomMiniPlayer> {
       unawaited(
         SemanticsService.sendAnnouncement(
           View.of(context),
-          'Room chat expanded',
+          AppLocalizations.of(
+            context,
+          ).text('Room chat expanded', 'Czat pokoju rozwinięty'),
           Directionality.of(context),
         ),
       );
@@ -675,6 +752,7 @@ class _ActiveRoomMiniPlayerState extends State<ActiveRoomMiniPlayer> {
     late final OverlayEntry entry;
     entry = OverlayEntry(
       builder: (overlayContext) {
+        final copy = AppLocalizations.of(overlayContext);
         final screen = MediaQuery.sizeOf(overlayContext);
         final width = math.min(440.0, screen.width - 32);
         final height = math.min(560.0, screen.height * .68);
@@ -691,7 +769,10 @@ class _ActiveRoomMiniPlayerState extends State<ActiveRoomMiniPlayer> {
                   Positioned.fill(
                     child: Semantics(
                       button: true,
-                      label: 'Close room chat',
+                      label: copy.text(
+                        'Close room chat',
+                        'Zamknij czat pokoju',
+                      ),
                       child: GestureDetector(
                         behavior: HitTestBehavior.opaque,
                         onTap: _collapseExpandedChat,

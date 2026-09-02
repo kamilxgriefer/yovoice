@@ -1,0 +1,3 @@
+"NSCameraUsageDescription" = "YO Voice koristi kameru kada upućujete privatne videopozive, fotografirate u razgovoru ili izrađujete sliku profila, sobe ili kluba.";
+"NSMicrophoneUsageDescription" = "YO Voice koristi mikrofon kada govorite u glasovnim sobama, snimate zvuk ili upućujete privatne pozive.";
+"NSPhotoLibraryUsageDescription" = "YO Voice koristi fotografije koje odaberete u razgovorima te kao slike profila, sobe ili kluba.";

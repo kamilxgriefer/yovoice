@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/features/auth/data/auth_service.dart';
+import 'package:yovoice/features/auth/presentation/auth_error_localizer.dart';
 import 'package:yovoice/features/auth/presentation/widgets/check_inbox_sheet.dart';
 import 'package:yovoice/shared/widgets/backgrounds/animated_waves_background.dart';
 import 'package:yovoice/shared/widgets/theme/yo_immersive_dark_surface.dart';
@@ -41,15 +42,23 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
   }
 
   String? _validateEmail(String? value) {
+    final copy = AppLocalizations.of(context);
     final email = value?.trim() ?? '';
-    if (email.isEmpty) return 'Enter your email address.';
+    if (email.isEmpty) {
+      return copy.text('Enter your email address.', 'Wpisz swój adres e-mail.');
+    }
     final emailPattern = RegExp(
       r'^[a-zA-Z0-9.!#$%&'
       r"*+/=?^_`{|}~-]+@"
       r'[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?'
       r'(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+$',
     );
-    if (!emailPattern.hasMatch(email)) return 'Enter a valid email address.';
+    if (!emailPattern.hasMatch(email)) {
+      return copy.text(
+        'Enter a valid email address.',
+        'Wpisz prawidłowy adres e-mail.',
+      );
+    }
     return null;
   }
 
@@ -72,7 +81,9 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
       if (error is FirebaseAuthException && error.code == 'user-not-found') {
         await _showConfirmation(email);
       } else {
-        _showError(_authService.getErrorMessage(error));
+        _showError(
+          localizedAuthError(context, error, authService: _authService),
+        );
       }
     } finally {
       if (mounted) setState(() => _isSending = false);

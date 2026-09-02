@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/helpers/error_messages.dart';
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/settings/data/models/message_privacy.dart';
 import 'package:yovoice/features/settings/data/services/message_privacy_service.dart';
@@ -35,7 +36,12 @@ class _MessagePrivacyScreenState extends State<MessagePrivacyScreen> {
         ..hideCurrentSnackBar()
         ..showSnackBar(
           SnackBar(
-            content: Text('Direct messages: ${next.label}.'),
+            content: Text(
+              AppLocalizations.of(context).text(
+                'Direct messages: ${next.label}.',
+                'Wiadomości bezpośrednie: ${_optionLabel(context, next)}.',
+              ),
+            ),
             behavior: SnackBarBehavior.floating,
           ),
         );
@@ -46,7 +52,10 @@ class _MessagePrivacyScreenState extends State<MessagePrivacyScreen> {
         ..showSnackBar(
           SnackBar(
             content: Text(
-              friendlyErrorMessage(error),
+              AppLocalizations.of(context).text(
+                friendlyErrorMessage(error),
+                'Nie udało się zapisać ustawień wiadomości. Spróbuj ponownie.',
+              ),
               style: TextStyle(
                 color: Theme.of(context).colorScheme.onErrorContainer,
               ),
@@ -62,6 +71,7 @@ class _MessagePrivacyScreenState extends State<MessagePrivacyScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
     return Scaffold(
@@ -69,7 +79,9 @@ class _MessagePrivacyScreenState extends State<MessagePrivacyScreen> {
       appBar: AppBar(
         backgroundColor: palette.background,
         foregroundColor: palette.textPrimary,
-        title: const Text('Who can message you'),
+        title: Text(
+          copy.text('Who can message you', 'Kto może do Ciebie pisać'),
+        ),
       ),
       body: SafeArea(
         top: false,
@@ -83,14 +95,20 @@ class _MessagePrivacyScreenState extends State<MessagePrivacyScreen> {
             builder: (context, snapshot) {
               if (snapshot.hasError) {
                 return YoErrorState(
-                  message: friendlyErrorMessage(snapshot.error!),
+                  message: copy.text(
+                    friendlyErrorMessage(snapshot.error!),
+                    'Nie udało się wczytać ustawień wiadomości.',
+                  ),
                   compact: true,
                 );
               }
               final selected = snapshot.data;
               if (selected == null) {
-                return const YoLoadingIndicator.fullscreen(
-                  message: 'Loading message privacy…',
+                return YoLoadingIndicator.fullscreen(
+                  message: copy.text(
+                    'Loading message privacy…',
+                    'Ładowanie ustawień wiadomości…',
+                  ),
                 );
               }
               return LayoutBuilder(
@@ -100,7 +118,10 @@ class _MessagePrivacyScreenState extends State<MessagePrivacyScreen> {
                     padding: const EdgeInsets.fromLTRB(0, 18, 0, 36),
                     children: [
                       Text(
-                        'Choose your inbox boundary',
+                        copy.text(
+                          'Choose your inbox boundary',
+                          'Wybierz, kto może do Ciebie pisać',
+                        ),
                         style: TextStyle(
                           color: palette.textPrimary,
                           fontSize: 26,
@@ -110,7 +131,10 @@ class _MessagePrivacyScreenState extends State<MessagePrivacyScreen> {
                       ),
                       const SizedBox(height: 8),
                       Text(
-                        'This applies immediately to conversation starts and every new text, photo and voice message. It never deletes your history.',
+                        copy.text(
+                          'This applies immediately to conversation starts and every new text, photo and voice message. It never deletes your history.',
+                          'Zmiana działa od razu dla nowych rozmów oraz każdej nowej wiadomości tekstowej, zdjęcia i wiadomości głosowej. Historia rozmów pozostaje bez zmian.',
+                        ),
                         style: TextStyle(
                           color: palette.textSecondary,
                           height: 1.45,
@@ -181,7 +205,10 @@ class _MessagePrivacyScreenState extends State<MessagePrivacyScreen> {
                             const SizedBox(width: 12),
                             Expanded(
                               child: Text(
-                                'Blocking someone always overrides this setting. Relationship checks happen on YO Voice servers, so altered apps cannot bypass your choice.',
+                                copy.text(
+                                  'Blocking someone always overrides this setting. Relationship checks happen on YO Voice servers, so altered apps cannot bypass your choice.',
+                                  'Zablokowanie osoby zawsze ma pierwszeństwo przed tym ustawieniem. Uprawnienia są sprawdzane na serwerach YO Voice, więc zmodyfikowana aplikacja nie może ominąć Twojego wyboru.',
+                                ),
                                 style: TextStyle(
                                   color: palette.textSecondary,
                                   height: 1.4,
@@ -228,14 +255,17 @@ class _PrivacyOptionCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
+    final label = _optionLabel(context, option);
+    final description = _optionDescription(context, option);
     return Semantics(
       button: true,
       selected: selected,
       enabled: !disabled,
-      label: '${option.label}. ${option.description}',
-      value: saving ? 'Saving' : null,
+      label: '$label. $description',
+      value: saving ? copy.text('Saving', 'Zapisywanie') : null,
       liveRegion: saving,
       onTap: disabled ? null : onTap,
       excludeSemantics: true,
@@ -292,7 +322,7 @@ class _PrivacyOptionCard extends StatelessWidget {
                 ),
                 const SizedBox(height: 13),
                 Text(
-                  option.label,
+                  label,
                   style: TextStyle(
                     color: palette.textPrimary,
                     fontSize: 16,
@@ -301,7 +331,7 @@ class _PrivacyOptionCard extends StatelessWidget {
                 ),
                 const SizedBox(height: 5),
                 Text(
-                  option.description,
+                  description,
                   style: TextStyle(
                     color: palette.textSecondary,
                     height: 1.35,
@@ -315,4 +345,39 @@ class _PrivacyOptionCard extends StatelessWidget {
       ),
     );
   }
+}
+
+String _optionLabel(BuildContext context, MessagePrivacyOption option) {
+  final copy = AppLocalizations.of(context);
+  return switch (option) {
+    MessagePrivacyOption.everyone => copy.text('Everyone', 'Wszyscy'),
+    MessagePrivacyOption.peopleYouFollow => copy.text(
+      'People you follow',
+      'Obserwowane osoby',
+    ),
+    MessagePrivacyOption.friends => copy.text('Friends only', 'Tylko znajomi'),
+    MessagePrivacyOption.nobody => copy.text('Nobody', 'Nikt'),
+  };
+}
+
+String _optionDescription(BuildContext context, MessagePrivacyOption option) {
+  final copy = AppLocalizations.of(context);
+  return switch (option) {
+    MessagePrivacyOption.everyone => copy.text(
+      'Any active YO Voice member can start a conversation with you.',
+      'Każdy aktywny użytkownik YO Voice może rozpocząć z Tobą rozmowę.',
+    ),
+    MessagePrivacyOption.peopleYouFollow => copy.text(
+      'Only people you chose to follow can send you a direct message.',
+      'Wiadomość bezpośrednią mogą wysłać tylko osoby, które obserwujesz.',
+    ),
+    MessagePrivacyOption.friends => copy.text(
+      'Only accepted friends can send new text, photo or voice messages.',
+      'Nowe wiadomości tekstowe, zdjęcia i wiadomości głosowe mogą wysyłać tylko zaakceptowani znajomi.',
+    ),
+    MessagePrivacyOption.nobody => copy.text(
+      'No one can send you new direct messages. Your existing history stays visible.',
+      'Nikt nie może wysyłać Ci nowych wiadomości bezpośrednich. Dotychczasowa historia pozostaje widoczna.',
+    ),
+  };
 }

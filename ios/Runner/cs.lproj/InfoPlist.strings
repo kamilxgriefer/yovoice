@@ -1,0 +1,3 @@
+"NSCameraUsageDescription" = "YO Voice používá kameru, když uskutečňujete soukromé videohovory, pořizujete fotky v chatu nebo vytváříte obrázek profilu, místnosti či klubu.";
+"NSMicrophoneUsageDescription" = "YO Voice používá mikrofon, když mluvíte v hlasových místnostech, nahráváte zvuk nebo uskutečňujete soukromé hovory.";
+"NSPhotoLibraryUsageDescription" = "YO Voice používá vámi vybrané fotky v chatech a jako obrázky profilu, místnosti nebo klubu.";

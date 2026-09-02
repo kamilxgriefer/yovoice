@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -12,6 +13,18 @@ import 'package:yovoice/features/settings/presentation/screens/appearance_settin
 
 void main() {
   group('AppPreferencesController', () {
+    test(
+      'a fresh install follows the device language by default (ADR-136)',
+      () async {
+        final controller = AppPreferencesController(store: _MemoryStore());
+
+        await controller.load();
+
+        expect(controller.isLoaded, isTrue);
+        expect(controller.value.language, AppLanguagePreference.system);
+      },
+    );
+
     test(
       'loads persisted values and falls back safely for invalid values',
       () async {
@@ -78,7 +91,7 @@ void main() {
 
       expect(controller.value, isA<AppPreferences>());
       expect(controller.value.theme, AppThemePreference.dark);
-      expect(controller.value.language, AppLanguagePreference.english);
+      expect(controller.value.language, AppLanguagePreference.system);
       expect(controller.value.soundEffectsEnabled, isTrue);
     });
   });
@@ -113,7 +126,7 @@ void main() {
       );
     });
 
-    testWidgets('Polish changes locale and explains the bounded preview', (
+    testWidgets('Polish is production-ready and has no beta label', (
       tester,
     ) async {
       final controller = AppPreferencesController(store: _MemoryStore());
@@ -129,10 +142,78 @@ void main() {
 
       expect(controller.value.language, AppLanguagePreference.polish);
       expect(find.text('Język aplikacji'), findsOneWidget);
+      await tester.fling(find.byType(ListView), const Offset(0, -5000), 1200);
+      await tester.pumpAndSettle();
       expect(
-        find.textContaining('Część ekranów produktu nadal'),
+        find.textContaining('Nawigacja, logowanie, rejestracja'),
         findsOneWidget,
       );
+      expect(find.textContaining('Beta'), findsNothing);
+    });
+
+    testWidgets('search and a non-Polish locale switch work end to end', (
+      tester,
+    ) async {
+      final store = _MemoryStore();
+      final controller = AppPreferencesController(store: store);
+      await tester.pumpWidget(
+        _PreferencesTestApp(
+          controller: controller,
+          home: const AppLanguageScreen(),
+        ),
+      );
+
+      await tester.enterText(
+        find.byKey(const ValueKey('language-search')),
+        'Deutsch',
+      );
+      await tester.pump();
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('language-de')),
+          matching: find.text('Deutsch'),
+        ),
+        findsOneWidget,
+      );
+      expect(find.text('Español'), findsNothing);
+
+      await tester.tap(find.byKey(const ValueKey('language-de')));
+      await tester.pumpAndSettle();
+
+      expect(controller.value.language, AppLanguagePreference.german);
+      expect(store.values['appearance.language.v1'], 'german');
+      expect(find.text('App-Sprache'), findsOneWidget);
+      expect(find.textContaining('Beta'), findsNothing);
+    });
+
+    testWidgets('language cards are keyboard reachable and activatable', (
+      tester,
+    ) async {
+      final controller = AppPreferencesController(store: _MemoryStore());
+      await tester.pumpWidget(
+        _PreferencesTestApp(
+          controller: controller,
+          home: const AppLanguageScreen(),
+        ),
+      );
+
+      await tester.tap(find.byKey(const ValueKey('language-search')));
+      await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+      await tester.pump();
+
+      final englishCard = find.byKey(const ValueKey('language-en'));
+      final englishInkWell = tester.widget<InkWell>(
+        find.descendant(of: englishCard, matching: find.byType(InkWell)),
+      );
+      expect(
+        englishInkWell.focusNode?.hasFocus,
+        isTrue,
+        reason: 'Tab must move from search into the first language card.',
+      );
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+      expect(controller.value.language, AppLanguagePreference.english);
     });
 
     testWidgets(

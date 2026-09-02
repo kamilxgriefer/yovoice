@@ -1,8 +1,10 @@
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/features/auth/data/auth_service.dart';
 import 'package:yovoice/features/auth/presentation/screens/forgot_password_screen.dart';
 import 'package:yovoice/services/firestore_service.dart';
@@ -10,6 +12,18 @@ import 'package:yovoice/services/firestore_service.dart';
 AuthService _service() => AuthService(
   firebaseAuth: MockFirebaseAuth(),
   firestoreService: FirestoreService(firestore: FakeFirebaseFirestore()),
+);
+
+Widget _localizedApp(Widget child, Locale locale) => MaterialApp(
+  locale: locale,
+  localizationsDelegates: const <LocalizationsDelegate<dynamic>>[
+    AppLocalizationsDelegate(),
+    GlobalMaterialLocalizations.delegate,
+    GlobalWidgetsLocalizations.delegate,
+    GlobalCupertinoLocalizations.delegate,
+  ],
+  supportedLocales: AppLocalizations.supportedLocales,
+  home: child,
 );
 
 void main() {
@@ -51,6 +65,44 @@ void main() {
     await tester.pump();
 
     expect(find.text('Enter your email address.'), findsOneWidget);
+    expect(find.text('Check your inbox'), findsNothing);
+  });
+
+  testWidgets('Polish reset flow contains no English fallback copy', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(390, 844));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(
+      _localizedApp(
+        ForgotPasswordScreen(authService: _service()),
+        const Locale('pl'),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('Zresetuj hasło'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('send-reset-link')));
+    await tester.pump();
+    expect(find.text('Wpisz swój adres e-mail.'), findsOneWidget);
+
+    await tester.enterText(
+      find.byKey(const Key('forgot-password-email')),
+      'osoba@example.com',
+    );
+    await tester.tap(find.byKey(const Key('send-reset-link')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    expect(find.text('Sprawdź skrzynkę odbiorczą'), findsOneWidget);
+    expect(
+      find.textContaining(
+        'Jeśli istnieje konto przypisane do adresu osoba@example.com',
+      ),
+      findsOneWidget,
+    );
+    expect(find.text('Wróć do logowania'), findsAtLeastNWidgets(1));
     expect(find.text('Check your inbox'), findsNothing);
   });
 

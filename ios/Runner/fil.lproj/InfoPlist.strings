@@ -1,0 +1,3 @@
+"NSCameraUsageDescription" = "Ginagamit ng YO Voice ang camera kapag pinili mong gumawa ng pribadong video call, kumuha ng larawan para sa chat, o gumawa ng larawan para sa profile, room, o club.";
+"NSMicrophoneUsageDescription" = "Ginagamit ng YO Voice ang mikropono kapag pinili mong magsalita sa voice room, mag-record ng audio, o gumawa ng pribadong tawag.";
+"NSPhotoLibraryUsageDescription" = "Ginagamit lamang ng YO Voice ang mga larawang pinili mo para sa chat o para sa larawan ng iyong profile, room, o club.";

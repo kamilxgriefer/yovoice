@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/desktop_home.dart'
@@ -43,6 +44,7 @@ class MobileSectionHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
+    final copy = AppLocalizations.of(context);
     final enlargedText = MediaQuery.textScalerOf(context).scale(1) >= 1.6;
     final titleWidget = Text(
       title,
@@ -63,15 +65,18 @@ class MobileSectionHeader extends StatelessWidget {
               padding: const EdgeInsets.symmetric(horizontal: 8),
               foregroundColor: palette.interactiveForeground,
             ),
-            child: const Row(
+            child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
                 Text(
-                  'View all',
-                  style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700),
+                  copy.text('View all', 'Zobacz wszystkie'),
+                  style: const TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
-                SizedBox(width: 2),
-                Icon(Icons.chevron_right_rounded, size: 18),
+                const SizedBox(width: 2),
+                const Icon(Icons.chevron_right_rounded, size: 18),
               ],
             ),
           );
@@ -148,6 +153,7 @@ class MobileMomentsStrip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final playable = moments
         .where((moment) => moment.hasMediaReference)
         .toList(growable: false);
@@ -181,13 +187,19 @@ class MobileMomentsStrip extends StatelessWidget {
       clock: expiryClock ?? DateTime.now,
       transitionScope: 'mobile-home-moments',
       announcementBuilder: (count) => count == 1
-          ? 'One Voice Moment expired and was removed from Home.'
-          : '$count Voice Moments expired and were removed from Home.',
+          ? copy.text(
+              'One Voice Moment expired and was removed from Home.',
+              'Jeden Voice Moment wygasł i został usunięty ze strony głównej.',
+            )
+          : copy.text(
+              '$count Voice Moments expired and were removed from Home.',
+              '$count Voice Moments wygasło i zostało usuniętych ze strony głównej.',
+            ),
       builder: (context, recoveryFocus, tileFocusNode) {
         final yours = _MomentBubble(
           key: const ValueKey('home-your-moment'),
           focusNode: mine == null ? null : tileFocusNode(mine.id),
-          label: 'Your Moment',
+          label: copy.text('Your Moment', 'Twój Moment'),
           userId: profile?.uid ?? currentUserId,
           // The profile is authoritative. A Moment's denormalized photo can
           // be older than a newly saved avatar.
@@ -198,10 +210,19 @@ class MobileMomentsStrip extends StatelessWidget {
           // A real count of YOUR live Moments — the chain badge.
           count: mineAll.length > 1 ? mineAll.length : null,
           semanticLabel: mine == null
-              ? 'Record your first Voice Moment'
+              ? copy.text(
+                  'Record your first Voice Moment',
+                  'Nagraj swój pierwszy Voice Moment',
+                )
               : (mineAll.length > 1
-                    ? 'Play your ${mineAll.length} Voice Moments'
-                    : 'Play your Voice Moment'),
+                    ? copy.text(
+                        'Play your ${mineAll.length} Voice Moments',
+                        'Odtwórz swoje Voice Moments (${mineAll.length})',
+                      )
+                    : copy.text(
+                        'Play your Voice Moment',
+                        'Odtwórz swój Voice Moment',
+                      )),
           onTap: mine == null
               ? onCreateMoment
               : (onOpenChain != null
@@ -217,9 +238,15 @@ class MobileMomentsStrip extends StatelessWidget {
             MomentExpiryFocusTarget(
               key: const ValueKey('mobile-home-moments-heading'),
               focusNode: recoveryFocus,
-              semanticLabel: 'Moments from your circle',
-              child: const MobileSectionHeader(
-                title: 'Moments from your circle',
+              semanticLabel: copy.text(
+                'Moments from your circle',
+                'Momenty z Twojego kręgu',
+              ),
+              child: MobileSectionHeader(
+                title: copy.text(
+                  'Moments from your circle',
+                  'Momenty z Twojego kręgu',
+                ),
               ),
             ),
             // This is a story rail, not an empty-state card. The signed-in
@@ -241,8 +268,14 @@ class MobileMomentsStrip extends StatelessWidget {
                       photoUrl: chain.authorPhotoUrl,
                       displayName: chain.authorName,
                       semanticLabel: chain.length == 1
-                          ? 'Play Voice Moment from ${chain.authorName}'
-                          : 'Play ${chain.length} Voice Moments from ${chain.authorName}',
+                          ? copy.text(
+                              'Play Voice Moment from ${chain.authorName}',
+                              'Odtwórz Voice Moment użytkownika ${chain.authorName}',
+                            )
+                          : copy.text(
+                              'Play ${chain.length} Voice Moments from ${chain.authorName}',
+                              'Odtwórz ${chain.length} Voice Moments użytkownika ${chain.authorName}',
+                            ),
                       onTap: onOpenChain == null
                           ? () => onOpenMoment(chain.moments.last)
                           : () => onOpenChain!(chain.moments),
@@ -444,9 +477,10 @@ class _AddMomentBadge extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (onTap == null) return child;
+    final copy = AppLocalizations.of(context);
     return Semantics(
       button: true,
-      label: 'Record a Voice Moment',
+      label: copy.text('Record a Voice Moment', 'Nagraj Voice Moment'),
       child: InkWell(
         key: const ValueKey('home-record-moment'),
         onTap: onTap,
@@ -477,6 +511,7 @@ class MobileLiveRail extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (rooms.isEmpty) return const SizedBox.shrink();
+    final copy = AppLocalizations.of(context);
 
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -490,7 +525,7 @@ class MobileLiveRail extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             MobileSectionHeader(
-              title: 'Live around you',
+              title: copy.text('Live around you', 'Na żywo w pobliżu'),
               live: true,
               onSeeAll: onSeeAll,
             ),
@@ -534,9 +569,13 @@ class _MobileRoomCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
+    final copy = AppLocalizations.of(context);
     return Semantics(
       button: true,
-      label: '${room.name}, live, ${room.participantCount} listening',
+      label: copy.text(
+        '${room.name}, live, ${room.participantCount} listening',
+        '${room.name}, na żywo, liczba uczestników: ${room.participantCount}',
+      ),
       child: InkWell(
         onTap: onTap,
         borderRadius: BorderRadius.circular(18),
@@ -569,9 +608,9 @@ class _MobileRoomCard extends StatelessWidget {
                         borderRadius: BorderRadius.circular(999),
                         color: Colors.black.withValues(alpha: .55),
                       ),
-                      child: const Text(
-                        'LIVE',
-                        style: TextStyle(
+                      child: Text(
+                        copy.text('LIVE', 'NA ŻYWO'),
+                        style: const TextStyle(
                           color: Color(0xFFFF7A93),
                           fontSize: 8,
                           fontWeight: FontWeight.w900,
@@ -645,6 +684,7 @@ class MobileVoiceTrending extends StatelessWidget {
     final people = creators.take(2).toList(growable: false);
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
+    final copy = AppLocalizations.of(context);
 
     return Container(
       padding: const EdgeInsets.all(14),
@@ -658,7 +698,7 @@ class MobileVoiceTrending extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           Text(
-            'Voice Trending',
+            copy.text('Voice Trending', 'Popularne teraz'),
             style: TextStyle(
               color: palette.textPrimary,
               fontSize: 16,
@@ -666,10 +706,15 @@ class MobileVoiceTrending extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 12),
-          const _MiniLabel('Trending Moments'),
+          _MiniLabel(copy.text('Trending Moments', 'Popularne Momenty')),
           const SizedBox(height: 6),
           if (live.isEmpty)
-            const _MiniNote('No one is live right now.')
+            _MiniNote(
+              copy.text(
+                'No one is live right now.',
+                'Nikt nie nadaje teraz na żywo.',
+              ),
+            )
           else
             for (final room in live)
               _MiniRow(
@@ -680,10 +725,15 @@ class MobileVoiceTrending extends StatelessWidget {
                 onTap: () => onOpenRoom(room),
               ),
           const SizedBox(height: 12),
-          const _MiniLabel('People to Follow'),
+          _MiniLabel(copy.text('People to Follow', 'Osoby warte obserwowania')),
           const SizedBox(height: 6),
           if (people.isEmpty)
-            const _MiniNote('No suggestions right now.')
+            _MiniNote(
+              copy.text(
+                'No suggestions right now.',
+                'Brak propozycji na ten moment.',
+              ),
+            )
           else
             for (final person in people)
               _MiniRow(
@@ -693,7 +743,7 @@ class MobileVoiceTrending extends StatelessWidget {
                   variant: IdentityBadgeVariant.icon,
                 ),
                 subtitle: person.username.isEmpty
-                    ? 'On YO Voice'
+                    ? copy.text('On YO Voice', 'W YO Voice')
                     : '@${person.username}',
                 leading: UserAvatar(
                   radius: 17,
@@ -713,9 +763,12 @@ class MobileVoiceTrending extends StatelessWidget {
                 padding: EdgeInsets.zero,
                 foregroundColor: colors.primary,
               ),
-              child: const Text(
-                'See all',
-                style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700),
+              child: Text(
+                copy.text('See all', 'Zobacz wszystkie'),
+                style: const TextStyle(
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w700,
+                ),
               ),
             ),
           ),
@@ -762,6 +815,7 @@ class _MiniLivePill extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
+    final copy = AppLocalizations.of(context);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
       decoration: BoxDecoration(
@@ -769,7 +823,7 @@ class _MiniLivePill extends StatelessWidget {
         color: colors.primaryContainer,
       ),
       child: Text(
-        'Live',
+        copy.text('Live', 'Na żywo'),
         style: TextStyle(
           color: colors.onPrimaryContainer,
           fontSize: 9,
@@ -873,6 +927,7 @@ class MobilePremiumCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
+    final copy = AppLocalizations.of(context);
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
@@ -895,7 +950,14 @@ class MobilePremiumCard extends StatelessWidget {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Text(
-                        PremiumPlans.benefits[i].$1,
+                        copy.text(
+                          PremiumPlans.benefits[i].$1,
+                          const [
+                            'Zostań twórcą',
+                            'Twórz własne kluby',
+                            'Wyróżnij się',
+                          ][i],
+                        ),
                         style: TextStyle(
                           color: palette.textPrimary,
                           fontSize: 13,
@@ -903,7 +965,14 @@ class MobilePremiumCard extends StatelessWidget {
                         ),
                       ),
                       Text(
-                        PremiumPlans.benefits[i].$2,
+                        copy.text(
+                          PremiumPlans.benefits[i].$2,
+                          const [
+                            'Odblokuj pełne narzędzia dla twórców',
+                            'Buduj przestrzenie dla swojej społeczności',
+                            'Zyskaj wygląd Premium w całym YO Voice',
+                          ][i],
+                        ),
                         style: TextStyle(
                           color: palette.textSecondary,
                           fontSize: 11.5,
@@ -919,7 +988,7 @@ class MobilePremiumCard extends StatelessWidget {
           const SizedBox(height: 14),
           YoButton(
             key: const ValueKey('home-premium-check-plans'),
-            label: 'Check plans  ›',
+            label: copy.text('Check plans  ›', 'Zobacz plany  ›'),
             onPressed: onCheckPlans,
             height: 48,
           ),
@@ -946,6 +1015,7 @@ class MobileTopCreators extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
+    final copy = AppLocalizations.of(context);
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
@@ -961,7 +1031,10 @@ class MobileTopCreators extends StatelessWidget {
             children: [
               Flexible(
                 child: Text(
-                  'Top creators you follow',
+                  copy.text(
+                    'Top creators you follow',
+                    'Najpopularniejsi obserwowani twórcy',
+                  ),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
@@ -980,9 +1053,12 @@ class MobileTopCreators extends StatelessWidget {
                     padding: const EdgeInsets.symmetric(horizontal: 6),
                     foregroundColor: colors.primary,
                   ),
-                  child: const Text(
-                    'View all',
-                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+                  child: Text(
+                    copy.text('View all', 'Zobacz wszystkie'),
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
                 ),
             ],
@@ -990,7 +1066,10 @@ class MobileTopCreators extends StatelessWidget {
           if (creators.isEmpty) ...[
             const SizedBox(height: 6),
             Text(
-              'You are not following anyone yet.',
+              copy.text(
+                'You are not following anyone yet.',
+                'Nie obserwujesz jeszcze żadnych osób.',
+              ),
               style: TextStyle(color: palette.textTertiary, fontSize: 11.5),
             ),
           ] else
@@ -1002,7 +1081,7 @@ class MobileTopCreators extends StatelessWidget {
                   variant: IdentityBadgeVariant.icon,
                 ),
                 subtitle: creator.username.isEmpty
-                    ? 'On YO Voice'
+                    ? copy.text('On YO Voice', 'W YO Voice')
                     : '@${creator.username}',
                 leading: UserAvatar(
                   radius: 17,

@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/space_identity.dart';
 import 'package:yovoice/features/calls/data/services/voice_call_service.dart';
 import 'package:yovoice/features/clubs/data/models/club.dart';
@@ -39,7 +40,7 @@ class CommunityVoiceRoomScreen extends StatefulWidget {
     this.muteCoordinator,
     this.clubService,
     this.playInitialJoinSound = true,
-    this.startMuted = false,
+    this.startMuted = true,
     super.key,
   });
 
@@ -63,7 +64,7 @@ class CommunityVoiceRoomScreen extends StatefulWidget {
   /// keep the normal connected cue.
   final bool playInitialJoinSound;
 
-  /// External/deep-link entry may connect as a listener until a mic gesture.
+  /// Room entry is mic-safe until the person deliberately unmutes.
   final bool startMuted;
 
   @override
@@ -115,7 +116,9 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
   bool _joinedDocumentSeen = false;
   bool _leaving = false;
   bool _roomOver = false;
-  bool _showCompactChat = false;
+  // Chat opens as a compact bottom dock after entry. Closing it keeps the
+  // stage visible, and the dock control below reopens the same surface.
+  bool _showCompactChat = true;
 
   /// Guards the server confirmation below against re-entry while an
   /// in-flight check is pending (the roster stream keeps emitting).
@@ -215,6 +218,7 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
   /// dormant room is connected the moment it opens, instead of having to
   /// leave and come back.
   void _handleRoomState(VoiceRoom room) {
+    final copy = AppLocalizations.of(context);
     // A closed, archived, suspended or half-deleted room is NOT "dormant" —
     // dormant means "no session yet, one could start". Collapsing the two
     // put a Start control on an ended room for anyone who never held a
@@ -240,8 +244,14 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
           // passed, and it is what the control would explain on tap.
           message: gone
               ? (room.deletionInProgress
-                    ? 'This room is being deleted.'
-                    : 'This room has ended.')
+                    ? copy.text(
+                        'This room is being deleted.',
+                        'Ten pokój jest usuwany.',
+                      )
+                    : copy.text(
+                        'This room has ended.',
+                        'Ten pokój już się zakończył.',
+                      ))
               : null,
         );
       });
@@ -280,9 +290,18 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
       }
       final message = entry.message;
       if (message != null && mounted) {
+        final copy = AppLocalizations.of(context);
         ScaffoldMessenger.of(context)
           ..hideCurrentSnackBar()
-          ..showSnackBar(SnackBar(content: Text(message)));
+          ..showSnackBar(
+            SnackBar(
+              content: Text(
+                copy.isPolish
+                    ? 'Nie udało się uruchomić rozmowy głosowej. Spróbuj ponownie.'
+                    : message,
+              ),
+            ),
+          );
       }
     } finally {
       if (mounted) setState(() => _startingVoice = false);
@@ -307,8 +326,15 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
       }
     } catch (_) {
       if (!mounted) return;
+      final copy = AppLocalizations.of(context);
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(_voice.errorMessage ?? 'Could not join voice.')),
+        SnackBar(
+          content: Text(
+            copy.isPolish
+                ? 'Nie udało się dołączyć do rozmowy głosowej.'
+                : _voice.errorMessage ?? 'Could not join voice.',
+          ),
+        ),
       );
     }
   }
@@ -398,6 +424,7 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
       isOperationCurrent: () => _isCurrentMuteOperation(roomId),
     );
     if (!mounted) return;
+    final copy = AppLocalizations.of(context);
     // A valid session-ended outcome disconnects this room before returning,
     // so `roomId == null` is expected. A non-null replacement belongs to a
     // different room and must not receive this screen's UI/leave side effects.
@@ -414,9 +441,12 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
         ScaffoldMessenger.of(context)
           ..hideCurrentSnackBar()
           ..showSnackBar(
-            const SnackBar(
+            SnackBar(
               content: Text(
-                "You're muted. Room status couldn't sync; try again.",
+                copy.text(
+                  "You're muted. Room status couldn't sync; try again.",
+                  'Mikrofon jest wyciszony. Nie udało się zsynchronizować statusu pokoju — spróbuj ponownie.',
+                ),
               ),
             ),
           );
@@ -424,15 +454,27 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
         ScaffoldMessenger.of(context)
           ..hideCurrentSnackBar()
           ..showSnackBar(
-            const SnackBar(content: Text('This room is no longer live.')),
+            SnackBar(
+              content: Text(
+                copy.text(
+                  'This room is no longer live.',
+                  'Ten pokój nie jest już na żywo.',
+                ),
+              ),
+            ),
           );
         await _leave();
       case RoomMuteOutcome.failed:
         ScaffoldMessenger.of(context)
           ..hideCurrentSnackBar()
           ..showSnackBar(
-            const SnackBar(
-              content: Text('Could not change microphone state. Try again.'),
+            SnackBar(
+              content: Text(
+                copy.text(
+                  'Could not change microphone state. Try again.',
+                  'Nie udało się zmienić stanu mikrofonu. Spróbuj ponownie.',
+                ),
+              ),
             ),
           );
     }
@@ -440,17 +482,27 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
 
   /// The mic can't publish right now — say why instead of a dead tap.
   void _explainMicState(RoomMicAffordance affordance) {
+    final copy = AppLocalizations.of(context);
     final message = switch (affordance) {
-      RoomMicAffordance.connecting => 'Connecting to live audio…',
-      RoomMicAffordance.listenOnly =>
+      RoomMicAffordance.connecting => copy.text(
+        'Connecting to live audio…',
+        'Łączenie z rozmową na żywo…',
+      ),
+      RoomMicAffordance.listenOnly => copy.text(
         "You're listening — the host controls who can speak here.",
+        'Słuchasz — gospodarz decyduje, kto może zabrać głos.',
+      ),
       // Honest, and never a permission code: this account genuinely cannot
       // open the mics here, and saying so is the whole point.
       RoomMicAffordance.waitingForHost =>
-        _entry.message ?? _entry.authority.waitingExplanation,
+        copy.isPolish
+            ? 'Rozmowa głosowa jeszcze się nie rozpoczęła. Poczekaj na gospodarza.'
+            : _entry.message ?? _entry.authority.waitingExplanation,
       RoomMicAffordance.unavailable =>
-        _voice.errorMessage ??
-            'Live audio is not connected. Leave and rejoin to retry.',
+        copy.isPolish
+            ? 'Brak połączenia z rozmową na żywo. Wyjdź i dołącz ponownie.'
+            : _voice.errorMessage ??
+                  'Live audio is not connected. Leave and rejoin to retry.',
       RoomMicAffordance.live ||
       RoomMicAffordance.muted ||
       RoomMicAffordance.startVoice => '',
@@ -464,6 +516,7 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
   // One People drawer for the whole Community room. There is no stage versus
   // listener hierarchy here: the host is first, then everybody else by name.
   void _openParticipants(List<RoomParticipant> participants) {
+    final copy = AppLocalizations.of(context);
     final ordered = [...participants]
       ..sort((a, b) {
         int rank(RoomParticipant p) => p.isHost ? 0 : 1;
@@ -484,7 +537,7 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
         maxWidth: 720,
       ),
       builder: (context) => _ParticipantsSheet(
-        title: 'People here',
+        title: copy.text('People here', 'Osoby w pokoju'),
         participants: ordered,
         hostId: widget.room.hostId,
         currentUserId: _uid,
@@ -511,6 +564,7 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
   /// state come from the Firestore roster. Legacy `listener` rows are still
   /// rendered as normal room members because Community has no audience role.
   Widget _buildStage(List<RoomParticipant> roomParticipants, Club? club) {
+    final copy = AppLocalizations.of(context);
     final identity = voiceRoomIdentity(widget.room, club: club);
     final voiceByIdentity = {
       for (final v in _voice.participants) v.identity: v,
@@ -526,7 +580,7 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
           isMuted: p.isMuted,
           isSpeaking: voiceByIdentity[p.userId]?.isSpeaking ?? false,
           audioLevel: voiceByIdentity[p.userId]?.audioLevel ?? 0,
-          roleLabel: 'Member',
+          roleLabel: copy.text('Member', 'Członek'),
         ),
     ];
 
@@ -560,7 +614,9 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
       action: club == null
           ? null
           : RoomHeroLinkAction(
-              label: club.isFamilyRoom ? 'Open family space' : 'View club',
+              label: club.isFamilyRoom
+                  ? copy.text('Open family space', 'Otwórz przestrzeń rodzinną')
+                  : copy.text('View club', 'Zobacz klub'),
               onTap: _openClubOverview,
               identity: identity,
               // Width alone decides. The family room previously forced
@@ -573,8 +629,11 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
       speakers: roomPeople,
       identity: identity,
       fill: fill,
-      title: 'People here',
-      emptyMessage: 'Join the room to start the conversation.',
+      title: copy.text('People here', 'Osoby w pokoju'),
+      emptyMessage: copy.text(
+        'Join the room to start the conversation.',
+        'Dołącz do pokoju, aby rozpocząć rozmowę.',
+      ),
       icon: Icons.groups_rounded,
       onOverflowTap: () => _openParticipants(_latestParticipants),
       onSpeakerTap: (speaker) => showProfilePreview(
@@ -629,24 +688,36 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
   /// "OFFLINE" — that describes a broken connection, not a room nobody
   /// has opened the mics in yet.
   String _subtitleText(Club? club) {
+    final copy = AppLocalizations.of(context);
     final subtitle = club?.isFamilyRoom == true
-        ? 'FAMILY ROOM'
+        ? copy.text('FAMILY ROOM', 'POKÓJ RODZINNY')
         : _isClubRoom
-        ? 'CLUB ROOM'
+        ? copy.text('CLUB ROOM', 'POKÓJ KLUBOWY')
         : null;
     if (!_live) {
-      return subtitle == null ? 'NOT LIVE YET' : '$subtitle · NOT LIVE YET';
+      final dormant = copy.text('NOT LIVE YET', 'JESZCZE NIE NA ŻYWO');
+      return subtitle == null ? dormant : '$subtitle · $dormant';
     }
-    return subtitle ?? _statusText(_voice.status);
+    return subtitle ?? _statusText(_voice.status, copy);
   }
 
-  static String _statusText(VoiceCallStatus status) => switch (status) {
-    VoiceCallStatus.connected => 'COMMUNITY LIVE',
-    VoiceCallStatus.connecting => 'CONNECTING…',
-    VoiceCallStatus.reconnecting => 'RECONNECTING…',
-    VoiceCallStatus.failed => 'CONNECTION FAILED',
-    VoiceCallStatus.disconnected => 'OFFLINE',
-  };
+  static String _statusText(VoiceCallStatus status, AppLocalizations copy) =>
+      switch (status) {
+        VoiceCallStatus.connected => copy.text(
+          'COMMUNITY LIVE',
+          'SPOŁECZNOŚĆ NA ŻYWO',
+        ),
+        VoiceCallStatus.connecting => copy.text('CONNECTING…', 'ŁĄCZENIE…'),
+        VoiceCallStatus.reconnecting => copy.text(
+          'RECONNECTING…',
+          'PONOWNE ŁĄCZENIE…',
+        ),
+        VoiceCallStatus.failed => copy.text(
+          'CONNECTION FAILED',
+          'BŁĄD POŁĄCZENIA',
+        ),
+        VoiceCallStatus.disconnected => copy.text('OFFLINE', 'ROZŁĄCZONO'),
+      };
 
   /// The floating control dock. Every affordance is a visually distinct
   /// button — the mic must never look "permanently pressed" or dead while
@@ -658,6 +729,7 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
     RoomMicAffordance affordance, {
     required bool desktop,
   }) {
+    final copy = AppLocalizations.of(context);
     final busy =
         _voice.muteChangeInProgress ||
         _muteCoordinator.isBusy ||
@@ -665,37 +737,37 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
     final (icon, label, style) = switch (affordance) {
       RoomMicAffordance.live => (
         Icons.mic_rounded,
-        'Mute',
+        copy.text('Mute', 'Wycisz'),
         RoomDockStyle.accent,
       ),
       RoomMicAffordance.muted => (
         Icons.mic_off_rounded,
-        'Unmute',
+        copy.text('Unmute', 'Włącz mikrofon'),
         RoomDockStyle.warning,
       ),
       RoomMicAffordance.connecting => (
         Icons.mic_rounded,
-        'Connecting…',
+        copy.text('Connecting…', 'Łączenie…'),
         RoomDockStyle.neutral,
       ),
       RoomMicAffordance.listenOnly => (
         Icons.headphones_rounded,
-        'Listening',
+        copy.text('Listening', 'Słuchasz'),
         RoomDockStyle.neutral,
       ),
       RoomMicAffordance.startVoice => (
         Icons.graphic_eq_rounded,
-        'Start voice',
+        copy.text('Start voice', 'Uruchom rozmowę'),
         RoomDockStyle.accent,
       ),
       RoomMicAffordance.waitingForHost => (
         Icons.mic_off_rounded,
-        'Not live',
+        copy.text('Not live', 'Nie na żywo'),
         RoomDockStyle.neutral,
       ),
       RoomMicAffordance.unavailable => (
         Icons.mic_off_rounded,
-        'Audio off',
+        copy.text('Audio off', 'Dźwięk wyłączony'),
         RoomDockStyle.alert,
       ),
     };
@@ -724,14 +796,14 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
         if (!desktop)
           RoomDockButton(
             icon: Icons.forum_rounded,
-            label: 'Chat',
+            label: copy.text('Chat', 'Czat'),
             style: RoomDockStyle.neutral,
             accentColor: identity.primary,
             onTap: _openChat,
           ),
         RoomDockButton(
           icon: Icons.groups_rounded,
-          label: 'People',
+          label: copy.text('People', 'Osoby'),
           style: RoomDockStyle.neutral,
           accentColor: identity.primary,
           onTap: () => _openParticipants(_latestParticipants),
@@ -739,7 +811,7 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
         const RoomDockDivider(),
         RoomDockButton(
           icon: Icons.call_end_rounded,
-          label: 'Leave',
+          label: copy.text('Leave', 'Wyjdź'),
           style: RoomDockStyle.danger,
           accentColor: identity.primary,
           onTap: () => unawaited(_leave()),
@@ -890,6 +962,7 @@ class _ParticipantsSheetState extends State<_ParticipantsSheet> {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     return Container(
       constraints: BoxConstraints(
         maxHeight: MediaQuery.sizeOf(context).height * .72,
@@ -902,8 +975,8 @@ class _ParticipantsSheetState extends State<_ParticipantsSheet> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const YoModalSheetChrome(
-            sheetLabel: 'room participants',
+          YoModalSheetChrome(
+            sheetLabel: copy.text('room participants', 'uczestnicy pokoju'),
             surfaceColor: Color(0xFF120B18),
           ),
           Padding(
@@ -925,11 +998,14 @@ class _ParticipantsSheetState extends State<_ParticipantsSheet> {
           ),
           Flexible(
             child: widget.participants.isEmpty
-                ? const Padding(
-                    padding: EdgeInsets.all(36),
+                ? Padding(
+                    padding: const EdgeInsets.all(36),
                     child: Text(
-                      'Nobody is here yet.',
-                      style: TextStyle(color: Color(0xFFB6A9C2)),
+                      copy.text(
+                        'Nobody is here yet.',
+                        'Nikogo tu jeszcze nie ma.',
+                      ),
+                      style: const TextStyle(color: Color(0xFFB6A9C2)),
                     ),
                   )
                 : ListView.separated(
@@ -962,7 +1038,10 @@ class _ParticipantsSheetState extends State<_ParticipantsSheet> {
                           children: [
                             Text(
                               self
-                                  ? '${participant.displayName} (you)'
+                                  ? copy.text(
+                                      '${participant.displayName} (you)',
+                                      '${participant.displayName} (Ty)',
+                                    )
                                   : participant.displayName,
                               style: const TextStyle(
                                 color: Colors.white,
@@ -974,10 +1053,16 @@ class _ParticipantsSheetState extends State<_ParticipantsSheet> {
                         ),
                         subtitle: Text(
                           host
-                              ? 'Community owner'
+                              ? copy.text(
+                                  'Community owner',
+                                  'Właściciel społeczności',
+                                )
                               : participant.isMuted
-                              ? 'Muted'
-                              : 'Microphone ready',
+                              ? copy.text('Muted', 'Wyciszony')
+                              : copy.text(
+                                  'Microphone ready',
+                                  'Mikrofon gotowy',
+                                ),
                           style: const TextStyle(color: Color(0xFFB6A9C2)),
                         ),
                         trailing: canAct
@@ -1017,15 +1102,24 @@ class _ParticipantsSheetState extends State<_ParticipantsSheet> {
                                     value: 'mute',
                                     child: Text(
                                       participant.isMuted
-                                          ? 'Allow microphone'
-                                          : 'Mute participant',
+                                          ? copy.text(
+                                              'Allow microphone',
+                                              'Zezwól na mikrofon',
+                                            )
+                                          : copy.text(
+                                              'Mute participant',
+                                              'Wycisz uczestnika',
+                                            ),
                                     ),
                                   ),
-                                  const PopupMenuItem(
+                                  PopupMenuItem(
                                     value: 'remove',
                                     child: Text(
-                                      'Remove from room',
-                                      style: TextStyle(
+                                      copy.text(
+                                        'Remove from room',
+                                        'Usuń z pokoju',
+                                      ),
+                                      style: const TextStyle(
                                         color: Color(0xFFFF6688),
                                       ),
                                     ),

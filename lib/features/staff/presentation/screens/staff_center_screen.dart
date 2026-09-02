@@ -3,6 +3,7 @@ import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/features/moderation/data/services/moderation_service.dart';
 import 'package:yovoice/features/moderation/presentation/screens/moderation_center_screen.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
@@ -69,19 +70,35 @@ class StaffCenterScreen extends StatefulWidget {
 }
 
 enum StaffSection {
-  overview('Overview', Icons.space_dashboard_rounded),
-  moderation('Moderation Center', Icons.shield_rounded),
-  users('Users', Icons.people_alt_rounded),
-  rooms('Rooms & Spaces', Icons.podcasts_rounded),
-  sanctions('Sanctions', Icons.gavel_rounded),
-  staffRoles('Staff & Roles', Icons.badge_rounded),
-  audit('Audit Log', Icons.receipt_long_rounded);
+  overview(Icons.space_dashboard_rounded),
+  moderation(Icons.shield_rounded),
+  users(Icons.people_alt_rounded),
+  rooms(Icons.podcasts_rounded),
+  sanctions(Icons.gavel_rounded),
+  staffRoles(Icons.badge_rounded),
+  audit(Icons.receipt_long_rounded);
 
-  const StaffSection(this.label, this.icon);
+  const StaffSection(this.icon);
 
-  final String label;
   final IconData icon;
 }
+
+String _localizedSectionLabel(AppLocalizations copy, StaffSection section) =>
+    switch (section) {
+      StaffSection.overview => copy.text('Overview', 'Przegląd'),
+      StaffSection.moderation => copy.text(
+        'Moderation Center',
+        'Centrum moderacji',
+      ),
+      StaffSection.users => copy.text('Users', 'Użytkownicy'),
+      StaffSection.rooms => copy.text(
+        'Rooms & Spaces',
+        'Pokoje i przestrzenie',
+      ),
+      StaffSection.sanctions => copy.text('Sanctions', 'Sankcje'),
+      StaffSection.staffRoles => copy.text('Staff & Roles', 'Zespół i role'),
+      StaffSection.audit => copy.text('Audit Log', 'Dziennik audytu'),
+    };
 
 class _StaffCenterScreenState extends State<StaffCenterScreen> {
   StaffCapabilities? _capabilities;
@@ -209,6 +226,7 @@ class _StaffCenterScreenState extends State<StaffCenterScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final capabilities = _capabilities ?? StaffCapabilities.none;
     final sections = _visibleSections(capabilities);
 
@@ -232,18 +250,18 @@ class _StaffCenterScreenState extends State<StaffCenterScreen> {
               leading: Navigator.of(context).canPop()
                   ? const BackButton()
                   : null,
-              title: const Row(
+              title: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(
+                  const Icon(
                     Icons.admin_panel_settings_rounded,
                     size: 18,
                     color: Color(0xFFD3A5FF),
                   ),
-                  SizedBox(width: 8),
+                  const SizedBox(width: 8),
                   Flexible(
                     child: Text(
-                      'Staff Center',
+                      copy.text('Staff Center', 'Centrum zespołu'),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
@@ -257,7 +275,10 @@ class _StaffCenterScreenState extends State<StaffCenterScreen> {
               actions: [
                 if (compactNavigation && sections.isNotEmpty)
                   PopupMenuButton<StaffSection>(
-                    tooltip: 'Choose Staff Center section',
+                    tooltip: copy.text(
+                      'Choose Staff Center section',
+                      'Wybierz sekcję Centrum zespołu',
+                    ),
                     initialValue: _section,
                     onSelected: _selectSection,
                     icon: const Icon(Icons.view_list_rounded),
@@ -269,14 +290,18 @@ class _StaffCenterScreenState extends State<StaffCenterScreen> {
                             children: [
                               Icon(section.icon, size: 18),
                               const SizedBox(width: 10),
-                              Expanded(child: Text(section.label)),
+                              Expanded(
+                                child: Text(
+                                  _localizedSectionLabel(copy, section),
+                                ),
+                              ),
                             ],
                           ),
                         ),
                     ],
                   ),
                 IconButton(
-                  tooltip: 'Home',
+                  tooltip: copy.text('Home', 'Strona główna'),
                   onPressed: () =>
                       Navigator.of(context).popUntil((route) => route.isFirst),
                   icon: const Icon(Icons.home_rounded),
@@ -286,16 +311,29 @@ class _StaffCenterScreenState extends State<StaffCenterScreen> {
       body: ResponsiveContentFrame(
         width: ResponsiveContentWidth.workbench,
         child: _loading
-            ? const Center(child: CircularProgressIndicator())
+            ? Center(
+                child: Semantics(
+                  label: copy.text(
+                    'Loading Staff Center',
+                    'Wczytywanie Centrum zespołu',
+                  ),
+                  child: const CircularProgressIndicator(),
+                ),
+              )
             : sections.isEmpty
-            ? const Center(
+            ? Center(
                 child: Padding(
-                  padding: EdgeInsets.all(24),
+                  padding: const EdgeInsets.all(24),
                   child: Text(
-                    'The Staff Center is reserved for the application owner '
-                    'and staff.',
+                    copy.text(
+                      'The Staff Center is reserved for the application owner and staff.',
+                      'Centrum zespołu jest dostępne wyłącznie dla właściciela aplikacji i uprawnionych członków zespołu.',
+                    ),
                     textAlign: TextAlign.center,
-                    style: TextStyle(color: Color(0xFFA69CAF), fontSize: 14),
+                    style: const TextStyle(
+                      color: Color(0xFFA69CAF),
+                      fontSize: 14,
+                    ),
                   ),
                 ),
               )
@@ -357,6 +395,7 @@ class _StaffCenterScreenState extends State<StaffCenterScreen> {
   }
 
   Widget _rail(List<StaffSection> sections) {
+    final copy = AppLocalizations.of(context);
     return Container(
       width: 218,
       color: const Color(0xFF0B0813),
@@ -365,11 +404,14 @@ class _StaffCenterScreenState extends State<StaffCenterScreen> {
         children: [
           // The desktop slot has no app bar; this is where the page says
           // where it lives.
-          const Padding(
-            padding: EdgeInsets.fromLTRB(12, 0, 12, 12),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
             child: Text(
-              'Staff tools / Staff Center',
-              style: TextStyle(
+              copy.text(
+                'Staff tools / Staff Center',
+                'Narzędzia zespołu / Centrum zespołu',
+              ),
+              style: const TextStyle(
                 color: StaffCenterStyle.faint,
                 fontSize: 10.5,
                 fontWeight: FontWeight.w700,
@@ -405,7 +447,7 @@ class _StaffCenterScreenState extends State<StaffCenterScreen> {
                         const SizedBox(width: 10),
                         Expanded(
                           child: Text(
-                            section.label,
+                            _localizedSectionLabel(copy, section),
                             style: TextStyle(
                               color: _section == section
                                   ? Colors.white
@@ -429,6 +471,7 @@ class _StaffCenterScreenState extends State<StaffCenterScreen> {
   }
 
   Widget _tabs(List<StaffSection> sections) {
+    final copy = AppLocalizations.of(context);
     return Container(
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
       decoration: const BoxDecoration(
@@ -447,7 +490,7 @@ class _StaffCenterScreenState extends State<StaffCenterScreen> {
                       ? Colors.white
                       : StaffCenterStyle.muted,
                 ),
-                label: Text(section.label),
+                label: Text(_localizedSectionLabel(copy, section)),
                 selected: _section == section,
                 onSelected: (_) => _selectSection(section),
                 labelStyle: TextStyle(
@@ -497,14 +540,16 @@ class _StaffCenterScreenState extends State<StaffCenterScreen> {
           firestore: widget.firestore,
         );
       case StaffSection.moderation:
+        final copy = AppLocalizations.of(context);
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            const StaffSectionHeader(
-              title: 'Moderation Center',
-              subtitle:
-                  'Review, claim and resolve community reports without '
-                  'leaving Staff Center.',
+            StaffSectionHeader(
+              title: copy.text('Moderation Center', 'Centrum moderacji'),
+              subtitle: copy.text(
+                'Review, claim and resolve community reports without leaving Staff Center.',
+                'Przeglądaj, przejmuj i rozwiązuj zgłoszenia społeczności bez opuszczania Centrum zespołu.',
+              ),
             ),
             const SizedBox(height: 10),
             Expanded(

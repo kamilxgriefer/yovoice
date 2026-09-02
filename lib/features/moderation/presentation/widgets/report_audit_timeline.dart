@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/features/moderation/data/models/moderation_audit_event.dart';
 import 'package:yovoice/features/moderation/data/services/moderation_service.dart';
@@ -56,6 +57,7 @@ class _ReportAuditTimelineState extends State<ReportAuditTimeline> {
   bool _hasMore = false;
   String? _cursor;
   String? _error;
+  ModerationFailure? _errorFailure;
 
   /// Guards against a response for a PREVIOUS report (or a previous
   /// refresh) landing after the selection changed and repainting stale
@@ -86,6 +88,7 @@ class _ReportAuditTimelineState extends State<ReportAuditTimeline> {
       _cursor = null;
       _hasMore = false;
       _error = null;
+      _errorFailure = null;
       _loading = true;
     });
     await _fetch(generation, append: false);
@@ -96,6 +99,7 @@ class _ReportAuditTimelineState extends State<ReportAuditTimeline> {
     setState(() {
       _loadingMore = true;
       _error = null;
+      _errorFailure = null;
     });
     await _fetch(_generation, append: true);
   }
@@ -119,6 +123,7 @@ class _ReportAuditTimelineState extends State<ReportAuditTimeline> {
         _loading = false;
         _loadingMore = false;
         _error = null;
+        _errorFailure = null;
       });
     } on ModerationException catch (error) {
       if (!mounted || generation != _generation) return;
@@ -140,7 +145,8 @@ class _ReportAuditTimelineState extends State<ReportAuditTimeline> {
       setState(() {
         _loading = false;
         _loadingMore = false;
-        _error = error.message;
+        _error = 'failed';
+        _errorFailure = error.failure;
       });
     }
   }
@@ -148,15 +154,19 @@ class _ReportAuditTimelineState extends State<ReportAuditTimeline> {
   @override
   Widget build(BuildContext context) {
     if (_revoked) return const SizedBox.shrink();
+    final copy = AppLocalizations.of(context);
+    final errorMessage = _error == null
+        ? null
+        : _auditFailureMessage(copy, _errorFailure);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(
           children: [
-            const Text(
-              'Moderation history',
-              style: TextStyle(
+            Text(
+              copy.text('Moderation history', 'Historia moderacji'),
+              style: const TextStyle(
                 color: Color(0xFF9A90AC),
                 fontSize: 11,
                 fontWeight: FontWeight.w700,
@@ -166,10 +176,13 @@ class _ReportAuditTimelineState extends State<ReportAuditTimeline> {
             if (!_loading && _error == null)
               Semantics(
                 button: true,
-                label: 'Refresh moderation history',
+                label: copy.text(
+                  'Refresh moderation history',
+                  'Odśwież historię moderacji',
+                ),
                 child: IconButton(
                   onPressed: _reload,
-                  tooltip: 'Refresh',
+                  tooltip: copy.text('Refresh', 'Odśwież'),
                   visualDensity: VisualDensity.compact,
                   iconSize: 15,
                   color: const Color(0xFF9A90AC),
@@ -190,12 +203,15 @@ class _ReportAuditTimelineState extends State<ReportAuditTimeline> {
               ),
             ),
           )
-        else if (_error != null && _events.isEmpty)
-          _AuditProblem(message: _error!, onRetry: _reload)
+        else if (errorMessage != null && _events.isEmpty)
+          _AuditProblem(message: errorMessage, onRetry: _reload)
         else if (_events.isEmpty)
-          const Text(
-            'No recorded activity yet.',
-            style: TextStyle(color: Color(0xFF7E7895), fontSize: 12),
+          Text(
+            copy.text(
+              'No recorded activity yet.',
+              'Brak zarejestrowanej aktywności.',
+            ),
+            style: const TextStyle(color: Color(0xFF7E7895), fontSize: 12),
           )
         else ...[
           for (final event in _events)
@@ -203,15 +219,20 @@ class _ReportAuditTimelineState extends State<ReportAuditTimeline> {
           // A failure while paging keeps the history already on screen —
           // losing it would be a worse answer than the one page that did
           // not arrive. Retrying resumes from the same cursor.
-          if (_error != null)
-            _AuditProblem(message: _error!, onRetry: _loadMore),
+          if (errorMessage != null)
+            _AuditProblem(message: errorMessage, onRetry: _loadMore),
           if (_hasMore && _error == null)
             Align(
               alignment: Alignment.centerLeft,
               child: TextButton(
                 onPressed: _loadingMore ? null : _loadMore,
                 child: Text(
-                  _loadingMore ? 'Loading…' : 'Load earlier activity',
+                  _loadingMore
+                      ? copy.text('Loading…', 'Wczytywanie…')
+                      : copy.text(
+                          'Load earlier activity',
+                          'Wczytaj wcześniejszą aktywność',
+                        ),
                   style: TextStyle(
                     color: _loadingMore
                         ? const Color(0xFF564C63)
@@ -228,6 +249,33 @@ class _ReportAuditTimelineState extends State<ReportAuditTimeline> {
   }
 }
 
+String _polishAuditFailure(ModerationFailure? failure) => switch (failure) {
+  ModerationFailure.conflict =>
+    'To zgłoszenie jest teraz obsługiwane przez inną osobę. Odśwież historię.',
+  ModerationFailure.alreadyHandled => 'To zgłoszenie zostało już rozpatrzone.',
+  ModerationFailure.accessExpired =>
+    'Dostęp moderatorski wygasł. Zaloguj się ponownie.',
+  ModerationFailure.missing =>
+    'Nie znaleziono tego zgłoszenia lub jego historii.',
+  ModerationFailure.unknown ||
+  null => 'Nie udało się wczytać historii moderacji. Spróbuj ponownie.',
+};
+
+String _auditFailureMessage(AppLocalizations copy, ModerationFailure? failure) {
+  final english = switch (failure) {
+    ModerationFailure.conflict =>
+      'Another moderator is handling this report. Refresh the history.',
+    ModerationFailure.alreadyHandled => 'This report has already been handled.',
+    ModerationFailure.accessExpired =>
+      'Your moderation access expired. Sign in again.',
+    ModerationFailure.missing =>
+      'This report or its history could not be found.',
+    ModerationFailure.unknown ||
+    null => 'Moderation history could not be loaded. Please try again.',
+  };
+  return copy.text(english, _polishAuditFailure(failure));
+}
+
 class _AuditProblem extends StatelessWidget {
   const _AuditProblem({required this.message, required this.onRetry});
 
@@ -236,6 +284,7 @@ class _AuditProblem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 10),
       decoration: BoxDecoration(
@@ -258,7 +307,10 @@ class _AuditProblem extends StatelessWidget {
           const SizedBox(width: 8),
           Semantics(
             button: true,
-            label: 'Retry loading moderation history',
+            label: copy.text(
+              'Retry loading moderation history',
+              'Spróbuj ponownie wczytać historię moderacji',
+            ),
             child: TextButton(
               onPressed: onRetry,
               style: TextButton.styleFrom(
@@ -266,9 +318,9 @@ class _AuditProblem extends StatelessWidget {
                 minimumSize: Size.zero,
                 tapTargetSize: MaterialTapTargetSize.shrinkWrap,
               ),
-              child: const Text(
-                'Retry',
-                style: TextStyle(
+              child: Text(
+                copy.text('Retry', 'Spróbuj ponownie'),
+                style: const TextStyle(
                   color: Color(0xFFD3A5FF),
                   fontSize: 11.5,
                   fontWeight: FontWeight.w700,
@@ -287,7 +339,32 @@ class _AuditRow extends StatelessWidget {
 
   final ModerationAuditEvent event;
 
-  static String actionLabel(ModerationAuditEvent event) {
+  static String actionLabel(
+    ModerationAuditEvent event, {
+    AppLocalizations? copy,
+  }) {
+    final english = switch ((event.kind, event.action)) {
+      (ModerationAuditKind.contentModeration, _) => 'Message removed',
+      (_, 'report_claim') => 'Claimed for review',
+      (_, 'report_release') => 'Claim released',
+      (_, 'report_resolve') => 'Resolved',
+      (_, 'report_removeAndResolve') => 'Removed content and resolved',
+      (_, 'report_dismiss') => 'Dismissed',
+      _ => 'Recorded action',
+    };
+    final polish = switch ((event.kind, event.action)) {
+      (ModerationAuditKind.contentModeration, _) => 'Wiadomość usunięta',
+      (_, 'report_claim') => 'Przejęto do weryfikacji',
+      (_, 'report_release') => 'Zwolniono przypisanie',
+      (_, 'report_resolve') => 'Rozstrzygnięto',
+      (_, 'report_removeAndResolve') => 'Usunięto treść i rozstrzygnięto',
+      (_, 'report_dismiss') => 'Odrzucono',
+      _ => 'Zarejestrowana czynność',
+    };
+    return copy?.text(english, polish) ?? english;
+  }
+
+  static String _legacyActionLabel(ModerationAuditEvent event) {
     if (event.kind == ModerationAuditKind.contentModeration) {
       return 'Message removed';
     }
@@ -308,16 +385,24 @@ class _AuditRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final isContent = event.kind == ModerationAuditKind.contentModeration;
     final accent = isContent
         ? const Color(0xFFFF7A93)
         : const Color(0xFF5CE1E6);
 
+    final action = actionLabel(event, copy: copy);
+    final actor = event.actorName;
+    final timestamp = stamp(event.createdAt);
+    final englishSemantics =
+        '${_legacyActionLabel(event)}'
+        '${actor == null ? '' : ' by $actor'}, $timestamp';
+    final polishSemantics = actor == null
+        ? '$action, $timestamp'
+        : '$action, moderator: $actor, $timestamp';
+
     return Semantics(
-      label:
-          '${actionLabel(event)}'
-          '${event.actorName == null ? '' : ' by ${event.actorName}'}, '
-          '${stamp(event.createdAt)}',
+      label: copy.text(englishSemantics, polishSemantics),
       child: Container(
         margin: const EdgeInsets.only(bottom: 8),
         padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 9),
@@ -342,7 +427,7 @@ class _AuditRow extends StatelessWidget {
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    actionLabel(event),
+                    action,
                     style: const TextStyle(
                       color: Colors.white,
                       fontSize: 12.5,
@@ -363,7 +448,9 @@ class _AuditRow extends StatelessWidget {
                     border: Border.all(color: accent.withValues(alpha: .35)),
                   ),
                   child: Text(
-                    isContent ? 'Content' : 'Report',
+                    isContent
+                        ? copy.text('Content', 'Treść')
+                        : copy.text('Report', 'Zgłoszenie'),
                     style: TextStyle(
                       color: accent,
                       fontSize: 9,
@@ -391,9 +478,10 @@ class _AuditRow extends StatelessWidget {
                 // '›' rather than '→': Roboto is what CanvasKit falls
                 // back to on web and it has no U+2192, so the arrow
                 // rendered as a tofu box. Caught by looking at it.
-                '${event.previousStatus} › ${event.newStatus}'
-                '${event.resolution == null ? '' : ' · ${event.resolution}'}'
-                '${event.contentRemoved ? ' · content removed' : ''}',
+                '${_auditStatus(copy, event.previousStatus!)} › '
+                '${_auditStatus(copy, event.newStatus!)}'
+                '${event.resolution == null ? '' : ' · ${_auditResolution(copy, event.resolution!)}'}'
+                '${event.contentRemoved ? ' · ${copy.text('content removed', 'treść usunięta')}' : ''}',
                 style: const TextStyle(color: Color(0xFFB3A8C4), fontSize: 11),
               ),
             ],
@@ -429,9 +517,15 @@ class _AuditRow extends StatelessWidget {
             ],
             if (event.kind == ModerationAuditKind.unknown) ...[
               const SizedBox(height: 4),
-              const Text(
-                'This entry has a shape this version does not recognise.',
-                style: TextStyle(color: Color(0xFF7E7895), fontSize: 10.5),
+              Text(
+                copy.text(
+                  'This entry has a shape this version does not recognise.',
+                  'Ten wpis ma format nierozpoznawany przez tę wersję aplikacji.',
+                ),
+                style: const TextStyle(
+                  color: Color(0xFF7E7895),
+                  fontSize: 10.5,
+                ),
               ),
             ],
           ],
@@ -439,4 +533,28 @@ class _AuditRow extends StatelessWidget {
       ),
     );
   }
+}
+
+String _auditStatus(AppLocalizations copy, String value) {
+  if (!copy.isPolish) return value;
+  return switch (value) {
+    'open' => 'Otwarte',
+    'inReview' => 'W trakcie weryfikacji',
+    'resolved' => 'Rozstrzygnięte',
+    'dismissed' => 'Odrzucone',
+    _ => value,
+  };
+}
+
+String _auditResolution(AppLocalizations copy, String value) {
+  if (!copy.isPolish) return value;
+  return switch (value) {
+    'contentRemoved' => 'Treść usunięta',
+    'warningIssued' => 'Wydano ostrzeżenie',
+    'noActionNeeded' => 'Brak potrzeby działania',
+    'notAViolation' => 'Brak naruszenia',
+    'duplicate' => 'Duplikat',
+    'insufficientEvidence' => 'Niewystarczające dowody',
+    _ => value,
+  };
 }

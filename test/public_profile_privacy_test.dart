@@ -130,6 +130,8 @@ void main() {
               'email': 'must-not-survive@private.invalid',
               'isOnline': true,
               'role': 'superAdmin',
+              'relationshipStatus': 'requestSent',
+              'profileUpdatedAtMillis': 1788278400000,
             },
           ];
         },
@@ -143,6 +145,15 @@ void main() {
       expect(results.single.isOnline, isFalse);
       expect(results.single.displayName, 'Public Friend');
       expect(results.single.username, 'public.friend');
+      expect(results.single.photoUrl, isNull);
+      expect(
+        results.single.relationshipStatus,
+        FriendRelationshipStatus.requestSent,
+      );
+      expect(
+        results.single.profileUpdatedAt?.toUtc(),
+        DateTime.utc(2026, 9, 1, 16),
+      );
     },
   );
 

@@ -62,6 +62,45 @@ void main() {
   });
 
   test(
+    'a new public-profile revision cannot reuse a stale media grant',
+    () async {
+      var calls = 0;
+      final service = ProfileMediaService(
+        auth: auth('viewer'),
+        invoker: (_, __) async {
+          calls += 1;
+          return grant();
+        },
+      );
+      final firstRevision = DateTime.utc(2026, 9, 1, 12);
+      final secondRevision = firstRevision.add(const Duration(seconds: 1));
+
+      await service.resolve(
+        userId: 'target',
+        kind: ProfileMediaKind.avatar,
+        revision: firstRevision,
+      );
+      await service.resolve(
+        userId: 'target',
+        kind: ProfileMediaKind.avatar,
+        revision: firstRevision,
+      );
+      expect(calls, 1);
+
+      await service.resolve(
+        userId: 'target',
+        kind: ProfileMediaKind.avatar,
+        revision: secondRevision,
+      );
+      expect(
+        calls,
+        2,
+        reason: 'a changed revision must obtain a fresh viewer grant',
+      );
+    },
+  );
+
+  test(
     'negative grants cache null and never fall back to legacy URLs',
     () async {
       var calls = 0;

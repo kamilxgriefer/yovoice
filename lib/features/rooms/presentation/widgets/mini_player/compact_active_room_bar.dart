@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/calls/data/services/voice_call_service.dart';
@@ -43,6 +44,42 @@ class CompactActiveRoomBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
+    final copy = AppLocalizations.of(context);
+    final accessibilityReflow =
+        MediaQuery.sizeOf(context).width <= 360 &&
+        MediaQuery.textScalerOf(context).scale(1) >= 1.75;
+    final roomInfo = _CompactRoomInfo(
+      roomName: roomName,
+      reconnecting: reconnecting,
+      participantCount: participantCount,
+      latest: latest,
+      reflow: accessibilityReflow,
+      onTap: onReturnToRoom,
+    );
+    final controls = <Widget>[
+      _CompactChatButton(
+        latest: latest,
+        newCount: newCount,
+        onTap: onExpandChat,
+      ),
+      const SizedBox(width: 5),
+      _CompactMuteButton(
+        micState: micState,
+        busy: muteBusy,
+        onToggleMute: onToggleMute,
+      ),
+      const SizedBox(width: 5),
+      _CompactCircleButton(
+        key: const ValueKey('mini-player-more'),
+        semanticLabel: copy.text('More room controls', 'Więcej opcji pokoju'),
+        tooltip: copy.text('More room controls', 'Więcej opcji pokoju'),
+        icon: Icons.more_horiz_rounded,
+        foreground: palette.textPrimary,
+        fill: palette.surfaceMuted,
+        border: palette.borderStrong.withValues(alpha: .62),
+        onTap: onMore,
+      ),
+    ];
 
     return Align(
       child: Container(
@@ -77,42 +114,27 @@ class CompactActiveRoomBar extends StatelessWidget {
             ),
           ],
         ),
-        child: Row(
-          children: [
-            Expanded(
-              child: _CompactRoomInfo(
-                roomName: roomName,
-                reconnecting: reconnecting,
-                participantCount: participantCount,
-                latest: latest,
-                onTap: onReturnToRoom,
+        child: accessibilityReflow
+            ? Column(
+                key: const ValueKey('mini-player-accessibility-reflow'),
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  roomInfo,
+                  const SizedBox(height: 6),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: controls,
+                  ),
+                ],
+              )
+            : Row(
+                children: [
+                  Expanded(child: roomInfo),
+                  const SizedBox(width: 7),
+                  ...controls,
+                ],
               ),
-            ),
-            const SizedBox(width: 7),
-            _CompactChatButton(
-              latest: latest,
-              newCount: newCount,
-              onTap: onExpandChat,
-            ),
-            const SizedBox(width: 5),
-            _CompactMuteButton(
-              micState: micState,
-              busy: muteBusy,
-              onToggleMute: onToggleMute,
-            ),
-            const SizedBox(width: 5),
-            _CompactCircleButton(
-              key: const ValueKey('mini-player-more'),
-              semanticLabel: 'More room controls',
-              tooltip: 'More room controls',
-              icon: Icons.more_horiz_rounded,
-              foreground: palette.textPrimary,
-              fill: palette.surfaceMuted,
-              border: palette.borderStrong.withValues(alpha: .62),
-              onTap: onMore,
-            ),
-          ],
-        ),
       ),
     );
   }
@@ -124,6 +146,7 @@ class _CompactRoomInfo extends StatelessWidget {
     required this.reconnecting,
     required this.participantCount,
     required this.latest,
+    required this.reflow,
     required this.onTap,
   });
 
@@ -131,21 +154,97 @@ class _CompactRoomInfo extends StatelessWidget {
   final bool reconnecting;
   final int participantCount;
   final RoomMessage? latest;
+  final bool reflow;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
-    final status = reconnecting ? 'Reconnecting' : 'Live';
-    final latestText = _latestLabel(latest);
-    final countText = participantCount > 0 ? '$participantCount inside' : null;
+    final copy = AppLocalizations.of(context);
+    final status = reconnecting
+        ? copy.text('Reconnecting', 'Ponowne łączenie')
+        : copy.text('Live', 'Na żywo');
+    final latestText = _latestLabel(latest, copy);
+    final countText = participantCount > 0
+        ? copy.text('$participantCount inside', '$participantCount w pokoju')
+        : null;
     final metadata = reconnecting
         ? status
         : [status, ?countText, latestText].join(' · ');
+    final visibleMetadata = reflow && !reconnecting
+        ? [status, ?countText].join(' · ')
+        : metadata;
+    final badgeSize = reflow ? 24.0 : 38.0;
+    final badge = Container(
+      width: badgeSize,
+      height: badgeSize,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [AppColors.primary, AppColors.secondary],
+        ),
+        border: Border.all(color: AppColors.voice.withValues(alpha: .72)),
+        boxShadow: [
+          BoxShadow(
+            color: AppColors.primary.withValues(alpha: .34),
+            blurRadius: reflow ? 8 : 12,
+          ),
+        ],
+      ),
+      child: Icon(
+        Icons.graphic_eq_rounded,
+        color: Colors.white,
+        size: reflow ? 14 : 21,
+      ),
+    );
+    final title = Text(
+      key: const ValueKey('mini-player-room-title'),
+      roomName,
+      maxLines: reflow ? 3 : 1,
+      overflow: TextOverflow.ellipsis,
+      style: TextStyle(
+        color: palette.textPrimary,
+        fontSize: 13,
+        fontWeight: FontWeight.w800,
+        height: 1.1,
+      ),
+    );
+    final statusRow = Row(
+      children: [
+        Container(
+          width: 6,
+          height: 6,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: reconnecting ? AppColors.warning : AppColors.live,
+          ),
+        ),
+        const SizedBox(width: 5),
+        Expanded(
+          child: Text(
+            key: const ValueKey('mini-player-room-metadata'),
+            visibleMetadata,
+            maxLines: reflow ? 2 : 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: palette.textSecondary,
+              fontSize: 10.5,
+              fontWeight: FontWeight.w600,
+              height: 1.1,
+            ),
+          ),
+        ),
+      ],
+    );
 
     return Semantics(
       button: true,
-      label: 'Return to $roomName. $metadata',
+      label: copy.text(
+        'Return to $roomName. $metadata',
+        'Wróć do pokoju $roomName. $metadata',
+      ),
       excludeSemantics: true,
       onTap: onTap,
       child: Material(
@@ -158,85 +257,39 @@ class _CompactRoomInfo extends StatelessWidget {
             constraints: const BoxConstraints(minHeight: 48),
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 3),
-              child: Row(
-                children: [
-                  Container(
-                    width: 38,
-                    height: 38,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      gradient: const LinearGradient(
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                        colors: [AppColors.primary, AppColors.secondary],
-                      ),
-                      border: Border.all(
-                        color: AppColors.voice.withValues(alpha: .72),
-                      ),
-                      boxShadow: [
-                        BoxShadow(
-                          color: AppColors.primary.withValues(alpha: .34),
-                          blurRadius: 12,
-                        ),
-                      ],
-                    ),
-                    child: const Icon(
-                      Icons.graphic_eq_rounded,
-                      color: Colors.white,
-                      size: 21,
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Column(
+              child: reflow
+                  ? Column(
                       mainAxisSize: MainAxisSize.min,
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
-                          roomName,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: palette.textPrimary,
-                            fontSize: 13,
-                            fontWeight: FontWeight.w800,
-                            height: 1.1,
-                          ),
-                        ),
+                        title,
                         const SizedBox(height: 4),
                         Row(
                           children: [
-                            Container(
-                              width: 6,
-                              height: 6,
-                              decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                color: reconnecting
-                                    ? AppColors.warning
-                                    : AppColors.live,
-                              ),
-                            ),
-                            const SizedBox(width: 5),
-                            Expanded(
-                              child: Text(
-                                metadata,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  color: palette.textSecondary,
-                                  fontSize: 10.5,
-                                  fontWeight: FontWeight.w600,
-                                  height: 1.1,
-                                ),
-                              ),
-                            ),
+                            badge,
+                            const SizedBox(width: 7),
+                            Expanded(child: statusRow),
                           ],
                         ),
                       ],
+                    )
+                  : Row(
+                      children: [
+                        badge,
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              title,
+                              const SizedBox(height: 4),
+                              statusRow,
+                            ],
+                          ),
+                        ),
+                      ],
                     ),
-                  ),
-                ],
-              ),
             ),
           ),
         ),
@@ -244,8 +297,8 @@ class _CompactRoomInfo extends StatelessWidget {
     );
   }
 
-  static String _latestLabel(RoomMessage? message) {
-    if (message == null) return 'No chat yet';
+  static String _latestLabel(RoomMessage? message, AppLocalizations copy) {
+    if (message == null) return copy.text('No chat yet', 'Brak wiadomości');
     final text = message.text.replaceAll(RegExp(r'\s+'), ' ').trim();
     if (text.isEmpty) return message.senderName;
     return '${message.senderName}: $text';
@@ -266,19 +319,31 @@ class _CompactChatButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
+    final copy = AppLocalizations.of(context);
     final unreadLabel = newCount == 0
         ? ''
-        : '. $newCount new ${newCount == 1 ? 'message' : 'messages'}';
+        : copy.text(
+            '. $newCount new ${newCount == 1 ? 'message' : 'messages'}',
+            newCount == 1
+                ? '. 1 nowa wiadomość'
+                : '. $newCount nowych wiadomości',
+          );
     final latestLabel = latest == null
-        ? '. No messages yet'
-        : '. Latest from ${latest!.senderName}: ${latest!.text}';
+        ? copy.text('. No messages yet', '. Brak wiadomości')
+        : copy.text(
+            '. Latest from ${latest!.senderName}: ${latest!.text}',
+            '. Ostatnia wiadomość od ${latest!.senderName}: ${latest!.text}',
+          );
     return Stack(
       clipBehavior: Clip.none,
       children: [
         _CompactCircleButton(
           key: const ValueKey('mini-player-expand-chat'),
-          semanticLabel: 'Expand room chat$unreadLabel$latestLabel',
-          tooltip: 'Room chat',
+          semanticLabel: copy.text(
+            'Expand room chat$unreadLabel$latestLabel',
+            'Rozwiń czat pokoju$unreadLabel$latestLabel',
+          ),
+          tooltip: copy.text('Room chat', 'Czat pokoju'),
           icon: Icons.chat_bubble_rounded,
           foreground: AppColors.voice,
           fill: palette.surfaceMuted,
@@ -342,6 +407,7 @@ class _CompactMuteButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
+    final copy = AppLocalizations.of(context);
     final muted = micState == MicState.muted;
     final listenOnly = micState == MicState.listenOnly;
     final connecting = micState == MicState.connecting;
@@ -349,17 +415,31 @@ class _CompactMuteButton extends StatelessWidget {
     final String label;
     final String tooltip;
     if (listenOnly) {
-      label = 'Listening. Listen-only';
-      tooltip = 'Listen-only';
+      label = copy.text('Listening. Listen-only', 'Słuchasz. Tylko słuchanie');
+      tooltip = copy.text('Listen-only', 'Tylko słuchanie');
     } else if (busy || connecting) {
-      label = '${muted ? 'Unmute' : 'Mute'} microphone. One moment';
-      tooltip = 'Updating microphone';
+      label = muted
+          ? copy.text(
+              'Unmute microphone. One moment',
+              'Włącz mikrofon. Chwileczkę',
+            )
+          : copy.text(
+              'Mute microphone. One moment',
+              'Wycisz mikrofon. Chwileczkę',
+            );
+      tooltip = copy.text('Updating microphone', 'Aktualizowanie mikrofonu');
     } else if (muted) {
-      label = 'Unmute microphone. Microphone muted';
-      tooltip = 'Unmute microphone';
+      label = copy.text(
+        'Unmute microphone. Microphone muted',
+        'Włącz mikrofon. Mikrofon jest wyciszony',
+      );
+      tooltip = copy.text('Unmute microphone', 'Włącz mikrofon');
     } else {
-      label = 'Mute microphone. You are live';
-      tooltip = 'Mute microphone';
+      label = copy.text(
+        'Mute microphone. You are live',
+        'Wycisz mikrofon. Jesteś na żywo',
+      );
+      tooltip = copy.text('Mute microphone', 'Wycisz mikrofon');
     }
 
     final fill = muted
@@ -524,6 +604,7 @@ class _CompactRoomMoreSheet extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     final colorScheme = Theme.of(context).colorScheme;
+    final copy = AppLocalizations.of(context);
     return Material(
       color: palette.surfaceRaised,
       clipBehavior: Clip.antiAlias,
@@ -534,7 +615,7 @@ class _CompactRoomMoreSheet extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             YoModalSheetChrome(
-              sheetLabel: 'room controls',
+              sheetLabel: copy.text('room controls', 'opcje pokoju'),
               surfaceColor: palette.surfaceRaised,
               onClose: () => Navigator.of(context).pop(),
             ),
@@ -543,7 +624,7 @@ class _CompactRoomMoreSheet extends StatelessWidget {
               child: Align(
                 alignment: Alignment.centerLeft,
                 child: Text(
-                  'Room controls',
+                  copy.text('Room controls', 'Opcje pokoju'),
                   style: TextStyle(
                     color: palette.textPrimary,
                     fontSize: 20,
@@ -557,8 +638,11 @@ class _CompactRoomMoreSheet extends StatelessWidget {
               child: _SheetAction(
                 key: const ValueKey('mini-player-return'),
                 icon: Icons.arrow_forward_rounded,
-                title: 'Return to room',
-                subtitle: 'Open the live room',
+                title: copy.text('Return to room', 'Wróć do pokoju'),
+                subtitle: copy.text(
+                  'Open the live room',
+                  'Otwórz pokój na żywo',
+                ),
                 accent: colorScheme.primary,
                 onTap: () => onSelected(CompactRoomMoreAction.returnToRoom),
               ),
@@ -569,13 +653,24 @@ class _CompactRoomMoreSheet extends StatelessWidget {
                 key: const ValueKey('mini-player-leave'),
                 icon: Icons.logout_rounded,
                 title: !authorityResolved
-                    ? 'Leave / end room'
-                    : (endsRoomNow ? 'End room' : 'Leave room'),
-                subtitle: !authorityResolved
-                    ? 'Confirmation required'
+                    ? copy.text('Leave / end room', 'Opuść lub zakończ pokój')
                     : (endsRoomNow
-                          ? 'End this live session'
-                          : 'Leave this live session'),
+                          ? copy.text('End room', 'Zakończ pokój')
+                          : copy.text('Leave room', 'Opuść pokój')),
+                subtitle: !authorityResolved
+                    ? copy.text(
+                        'Confirmation required',
+                        'Wymagane potwierdzenie',
+                      )
+                    : (endsRoomNow
+                          ? copy.text(
+                              'End this live session',
+                              'Zakończ tę sesję na żywo',
+                            )
+                          : copy.text(
+                              'Leave this live session',
+                              'Opuść tę sesję na żywo',
+                            )),
                 accent: colorScheme.error,
                 danger: true,
                 onTap: () => onSelected(CompactRoomMoreAction.leave),

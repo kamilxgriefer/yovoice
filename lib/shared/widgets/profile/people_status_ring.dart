@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
@@ -36,6 +37,16 @@ enum PeopleStatus {
     PeopleStatus.online => 'Online',
     PeopleStatus.away => 'Away',
   };
+
+  /// Localized status copy used by both visible text and accessibility.
+  /// [label] remains a stable English value for diagnostics and compatibility.
+  String localizedLabel(AppLocalizations copy) => switch (this) {
+    PeopleStatus.speaking => copy.text('Speaking', 'Mówi'),
+    PeopleStatus.inRoom => copy.text('In a room', 'W pokoju'),
+    PeopleStatus.inClub => copy.text('In a club', 'W klubie'),
+    PeopleStatus.online => copy.text('Online', 'Dostępny'),
+    PeopleStatus.away => copy.text('Away', 'Nieobecny'),
+  };
 }
 
 /// Avatar + status ring + name + status label, as one column — the
@@ -60,16 +71,18 @@ class PeopleStatusAvatar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
     final active = status != PeopleStatus.away;
     final statusForeground = status.foreground(palette);
+    final statusLabel = status.localizedLabel(copy);
     final borderRadius = BorderRadius.circular(18);
 
     return Semantics(
       excludeSemantics: true,
       button: true,
       label: displayName,
-      value: status.label,
+      value: statusLabel,
       onTap: onTap,
       child: InkWell(
         onTap: onTap,
@@ -128,7 +141,7 @@ class PeopleStatusAvatar extends StatelessWidget {
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      status.label,
+                      statusLabel,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       textAlign: TextAlign.center,

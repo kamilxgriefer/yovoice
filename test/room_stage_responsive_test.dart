@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:yovoice/core/theme/space_identity.dart';
@@ -154,6 +155,10 @@ void main() {
           await tester.pump();
 
           expect(find.text(identity.label.toUpperCase()), findsOneWidget);
+          if (find.text('On stage').evaluate().isEmpty) {
+            await tester.drag(find.byType(ListView), const Offset(0, -1000));
+            await tester.pump();
+          }
           expect(find.text('On stage'), findsOneWidget);
           expect(
             find.text('The room is quiet — your voice can start it'),
@@ -284,10 +289,10 @@ void main() {
   });
 
   // A tablet is never a squeezed desktop: below the 1100 breakpoint the
-  // workspace shows exactly one full-width pane.
+  // stage keeps its full canvas and chat docks over its bottom edge.
   for (final width in const [320.0, 390.0, 768.0, 1024.0]) {
     testWidgets(
-      'compact workspace shows one full-width pane at ${width.toInt()}',
+      'compact workspace keeps stage and docks chat at ${width.toInt()}',
       (tester) async {
         tester.view.devicePixelRatio = 1;
         tester.view.physicalSize = Size(width, 844);
@@ -318,16 +323,146 @@ void main() {
         );
 
         await tester.pumpWidget(app(true));
-        expect(find.byKey(const ValueKey('compact-stage')), findsNothing);
+        expect(find.byKey(const ValueKey('compact-stage')), findsOneWidget);
         expect(find.byKey(const ValueKey('compact-chat')), findsOneWidget);
         expect(
-          tester.getSize(find.byKey(const ValueKey('compact-chat'))).width,
-          width - 24,
+          find.byKey(const ValueKey('room-compact-chat-dock')),
+          findsOneWidget,
         );
+        expect(
+          tester.getSize(find.byKey(const ValueKey('compact-chat'))).width,
+          width <= 584 ? width - 24 : 560,
+        );
+        final stageRect = tester.getRect(
+          find.byKey(const ValueKey('compact-stage')),
+        );
+        final chatRect = tester.getRect(
+          find.byKey(const ValueKey('compact-chat')),
+        );
+        expect(chatRect.bottom, stageRect.bottom);
+        expect(chatRect.height, lessThan(stageRect.height));
         expect(tester.takeException(), isNull);
       },
     );
   }
+
+  testWidgets('200% text keeps the compact chat below 40% of the room', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(320, 844);
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        builder: (context, child) => MediaQuery(
+          data: MediaQuery.of(
+            context,
+          ).copyWith(textScaler: const TextScaler.linear(2)),
+          child: child!,
+        ),
+        home: const Scaffold(
+          body: RoomWorkspace(
+            showCompactChat: true,
+            stage: ColoredBox(
+              key: ValueKey('scaled-stage'),
+              color: Colors.purple,
+            ),
+            chat: ColoredBox(key: ValueKey('scaled-chat'), color: Colors.blue),
+          ),
+        ),
+      ),
+    );
+
+    final stage = tester.getRect(find.byKey(const ValueKey('scaled-stage')));
+    final chat = tester.getRect(find.byKey(const ValueKey('scaled-chat')));
+    expect(chat.height, greaterThanOrEqualTo(230));
+    expect(chat.height / stage.height, lessThan(.40));
+    expect(chat.bottom, stage.bottom);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('320px at 200% keeps the full long room identity readable', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(320, 844);
+    addTearDown(tester.view.reset);
+    const title =
+        'The Extended Jaguszewski Family Sunday Evening Lounge and Storytime';
+    const topic =
+        'A very long description that has to wrap gracefully at the '
+        'narrowest supported width, at double text scale, without losing '
+        'the meaning of the room.';
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        builder: (context, child) => MediaQuery(
+          data: MediaQuery.of(
+            context,
+          ).copyWith(textScaler: const TextScaler.linear(2)),
+          child: child!,
+        ),
+        home: Scaffold(
+          backgroundColor: const Color(0xFF05030A),
+          body: SafeArea(
+            child: Column(
+              children: [
+                RoomHeader(
+                  identity: SpaceIdentity.family,
+                  title: title,
+                  subtitle: 'FAMILY ROOM · NOT LIVE YET',
+                  speaking: 0,
+                  listeners: 0,
+                  people: 0,
+                  onBack: () {},
+                  onSpeakingTap: () {},
+                  onListenersTap: () {},
+                ),
+                Expanded(
+                  child: ListView(
+                    padding: const EdgeInsets.all(12),
+                    children: const [
+                      RoomHeroBanner(
+                        identity: SpaceIdentity.family,
+                        title: title,
+                        topic: topic,
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+
+    final heroTitle = tester.renderObject<RenderParagraph>(
+      find.byKey(const ValueKey('room-hero-title')),
+    );
+    final heroTopic = tester.renderObject<RenderParagraph>(
+      find.byKey(const ValueKey('room-hero-topic')),
+    );
+    final headerSubtitle = tester.renderObject<RenderParagraph>(
+      find.byKey(const ValueKey('room-header-subtitle')),
+    );
+    expect(heroTitle.didExceedMaxLines, isFalse);
+    expect(heroTopic.didExceedMaxLines, isFalse);
+    expect(
+      headerSubtitle.didExceedMaxLines,
+      isFalse,
+      reason: 'The room type and liveness must not collapse into fragments.',
+    );
+    expect(
+      tester
+          .widget<Text>(find.byKey(const ValueKey('room-header-title')))
+          .maxLines,
+      3,
+    );
+    expect(tester.takeException(), isNull);
+  });
 
   for (final viewport in const [
     (320.0, 844.0),

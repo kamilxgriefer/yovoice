@@ -238,7 +238,7 @@ class _ResponsiveAuthScreenState extends State<ResponsiveAuthScreen>
       final copy = AppLocalizations.of(context);
       final heading = mode == AuthMode.login
           ? copy.text('Welcome back', 'Witaj ponownie')
-          : copy.text('Create your voice', 'Stwórz swój głos');
+          : copy.text('Create your voice', 'Utwórz konto');
       unawaited(
         SemanticsService.sendAnnouncement(
           View.of(context),
@@ -483,7 +483,7 @@ class _ResponsiveAuthScreenState extends State<ResponsiveAuthScreen>
         _showMessage(
           AppLocalizations.of(context).text(
             'This account requires a second factor that this app cannot verify. Contact support.',
-            'To konto wymaga drugiego składnika, którego aplikacja nie może zweryfikować. Skontaktuj się ze wsparciem.',
+            'To konto wymaga metody weryfikacji, której aplikacja nie obsługuje. Skontaktuj się z pomocą techniczną.',
           ),
         );
         return false;
@@ -550,7 +550,7 @@ class _ResponsiveAuthScreenState extends State<ResponsiveAuthScreen>
     if (!RegExp(r'^[a-zA-Z0-9_.]+$').hasMatch(username)) {
       return copy.text(
         'Use only letters, numbers, dots, and underscores.',
-        'Użyj tylko liter, cyfr, kropek i podkreśleń.',
+        'Użyj tylko liter A–Z, cyfr, kropek i znaków podkreślenia.',
       );
     }
     return null;
@@ -615,7 +615,7 @@ class _ResponsiveAuthScreenState extends State<ResponsiveAuthScreen>
       return copy.text('Confirm your password.', 'Powtórz hasło.');
     }
     if (value != _registerPasswordController.text) {
-      return copy.text('Passwords do not match.', 'Hasła nie są takie same.');
+      return copy.text('Passwords do not match.', 'Hasła nie są zgodne.');
     }
     return null;
   }
@@ -905,7 +905,7 @@ class _ResponsiveAuthScreenState extends State<ResponsiveAuthScreen>
           title: copy.text('Welcome back', 'Witaj ponownie'),
           subtitle: copy.text(
             'Your people and conversations are waiting.',
-            'Twoi ludzie i rozmowy już czekają.',
+            'Znajomi i rozmowy już na Ciebie czekają.',
           ),
         ),
         const SizedBox(height: 20),
@@ -984,10 +984,10 @@ class _ResponsiveAuthScreenState extends State<ResponsiveAuthScreen>
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           _FormHeading(
-            title: copy.text('Create your voice', 'Stwórz swój głos'),
+            title: copy.text('Create your voice', 'Utwórz konto'),
             subtitle: copy.text(
               'One account for rooms, moments and real conversations.',
-              'Jedno konto do pokoi, momentów i prawdziwych rozmów.',
+              'Jedno konto — pokoje, Voice Moments i prawdziwe rozmowy.',
             ),
           ),
           const SizedBox(height: 20),
@@ -1520,11 +1520,11 @@ class _DesktopBrandPanel extends StatelessWidget {
                               mode == AuthMode.login
                                   ? copy.text(
                                       'New here? Create one identity for every voice space.',
-                                      'Jesteś tu pierwszy raz? Utwórz jedną tożsamość dla każdej przestrzeni głosowej.',
+                                      'Jesteś tu pierwszy raz? Utwórz konto i dołącz do rozmów w YO Voice.',
                                     )
                                   : copy.text(
                                       'Already have your voice? Return to your people.',
-                                      'Masz już swoje konto? Wróć do swoich ludzi.',
+                                      'Masz już konto? Wróć do swojej społeczności.',
                                     ),
                               textAlign: TextAlign.center,
                               style: const TextStyle(

@@ -678,6 +678,10 @@ async function profileSummaries(userIds, callerId, readBudget = null) {
       // Media is resolved by uid through the private media grant service.
       // Never turn a stale projection URL into a caller-controlled fetch.
       photoUrl: null,
+      profileUpdatedAtMillis:
+        data.updatedAt && typeof data.updatedAt.toMillis === "function"
+          ? data.updatedAt.toMillis()
+          : null,
     });
   }
   return result;
@@ -746,6 +750,11 @@ async function safeSuggestionSummaries(entries, callerId, readBudget) {
         120,
       ),
       photoUrl: null,
+      profileUpdatedAtMillis:
+        projectionData.updatedAt &&
+        typeof projectionData.updatedAt.toMillis === "function"
+          ? projectionData.updatedAt.toMillis()
+          : null,
       mutualCount: entries[index].mutualCount,
     });
   }

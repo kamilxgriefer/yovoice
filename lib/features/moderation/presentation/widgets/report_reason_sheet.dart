@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/moderation/data/services/report_service.dart';
 import 'package:yovoice/features/moderation/presentation/report_reason_labels.dart';
@@ -61,6 +62,7 @@ class ReportReasonSheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final media = MediaQuery.of(context);
     final palette = context.appPalette;
 
@@ -82,7 +84,7 @@ class ReportReasonSheet extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             YoModalSheetChrome(
-              sheetLabel: 'report reason',
+              sheetLabel: copy.text('report reason', 'powód zgłoszenia'),
               surfaceColor: palette.surface,
               handleColor: palette.borderStrong,
               closeColor: palette.textSecondary,
@@ -192,6 +194,7 @@ class _ReportReasonTileState extends State<_ReportReasonTile> {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
     final reason = widget.reason;
     return AnimatedContainer(
@@ -216,7 +219,7 @@ class _ReportReasonTileState extends State<_ReportReasonTile> {
               : palette.textSecondary,
         ),
         title: Text(
-          reportReasonLabel(reason),
+          reportReasonLabel(reason, copy: copy),
           style: TextStyle(color: palette.textPrimary, fontSize: 15),
         ),
       ),

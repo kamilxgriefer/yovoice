@@ -76,7 +76,7 @@ class _GuidedOnboardingTourState extends State<GuidedOnboardingTour> {
         title: copy.text('Welcome to YO Voice', 'Witaj w YO Voice'),
         body: copy.text(
           'Join live rooms, listen to Voice Moments, and catch up with your people.',
-          'Dołączaj do pokojów na żywo, słuchaj Voice Momentów i bądź blisko swoich ludzi.',
+          'Dołączaj do pokojów na żywo, słuchaj Voice Moments i bądź na bieżąco ze swoją społecznością.',
         ),
       ),
       _GuidedTourStep(
@@ -86,11 +86,11 @@ class _GuidedOnboardingTourState extends State<GuidedOnboardingTour> {
         body: desktop
             ? copy.text(
                 'Create a Voice Moment or start a Voice Room here.',
-                'Tutaj nagrasz Voice Moment albo rozpoczniesz Voice Room.',
+                'Tutaj szybko nagrasz Voice Moment lub utworzysz pokój głosowy.',
               )
             : copy.text(
                 'YO is your shortcut to a Voice Moment or a new Voice Room.',
-                'YO to Twój skrót do nagrania Voice Momentu lub utworzenia Voice Roomu.',
+                'Przycisk YO pozwala szybko nagrać Voice Moment lub utworzyć pokój głosowy.',
               ),
       ),
       _GuidedTourStep(
@@ -99,13 +99,13 @@ class _GuidedOnboardingTourState extends State<GuidedOnboardingTour> {
         title: copy.text('Hear what\'s new', 'Usłysz, co nowego'),
         body: copy.text(
           'Moments are short voice updates from people you follow.',
-          'Momenty to krótkie głosowe aktualizacje od obserwowanych osób.',
+          'Voice Moments to krótkie nagrania głosowe od obserwowanych osób.',
         ),
       ),
       _GuidedTourStep(
         target: GuidedOnboardingTarget.chats,
         icon: Icons.chat_bubble_outline_rounded,
-        title: copy.text('Keep conversations going', 'Rozmawiaj bez przerwy'),
+        title: copy.text('Keep conversations going', 'Pozostań w kontakcie'),
         body: copy.text(
           'Message friends, send photos or voice notes, and start a direct call.',
           'Pisz do znajomych, wysyłaj zdjęcia i głosówki albo zadzwoń bezpośrednio.',
@@ -114,15 +114,15 @@ class _GuidedOnboardingTourState extends State<GuidedOnboardingTour> {
       _GuidedTourStep(
         target: GuidedOnboardingTarget.more,
         icon: Icons.grid_view_rounded,
-        title: copy.text('More, one tap away', 'Więcej — jedno dotknięcie'),
+        title: copy.text('More, one tap away', 'Wszystko inne pod ręką'),
         body: desktop
             ? copy.text(
                 'Open Clubs, Creator Studio, Awards, alerts, and Settings. You can replay this tour in Settings anytime.',
-                'Otwórz Kluby, Creator Studio, Nagrody, alerty i Ustawienia. Ten przewodnik możesz odtworzyć ponownie w Ustawieniach.',
+                'Otwórz kluby, Creator Studio, nagrody, powiadomienia i ustawienia. Ten przewodnik możesz odtworzyć ponownie w ustawieniach.',
               )
             : copy.text(
                 'Find Friends, Clubs, your profile, and Settings here. Replay this tour from Settings anytime.',
-                'Tutaj znajdziesz Znajomych, Kluby, profil i Ustawienia. Przewodnik możesz zawsze odtworzyć w Ustawieniach.',
+                'Tutaj znajdziesz znajomych, kluby, profil i ustawienia. Przewodnik możesz zawsze odtworzyć w ustawieniach.',
               ),
       ),
     ];
@@ -410,9 +410,11 @@ class _GuidedTourCard extends StatelessWidget {
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
     final finalStep = index == count - 1;
-    final stepLabel = copy.text(
-      'Step ${index + 1} of $count. ${step.title}. ${step.body}',
-      'Krok ${index + 1} z $count. ${step.title}. ${step.body}',
+    final stepLabel = copy.tourStepSemantics(
+      index + 1,
+      count,
+      step.title,
+      step.body,
     );
     return Semantics(
       key: const ValueKey('guided-tour-card'),
@@ -470,10 +472,7 @@ class _GuidedTourCard extends StatelessWidget {
                     Expanded(
                       child: ExcludeSemantics(
                         child: Text(
-                          copy.text(
-                            'Step ${index + 1} of $count',
-                            'Krok ${index + 1} z $count',
-                          ),
+                          copy.tourProgress(index + 1, count),
                           style: TextStyle(
                             color: palette.textSecondary,
                             fontSize: 12,

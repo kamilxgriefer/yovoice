@@ -1,5 +1,22 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+enum FriendRelationshipStatus {
+  none,
+  friends,
+  requestSent,
+  requestReceived,
+  blocked;
+
+  static FriendRelationshipStatus? fromWire(Object? value) => switch (value) {
+    'none' => FriendRelationshipStatus.none,
+    'friends' => FriendRelationshipStatus.friends,
+    'requestSent' => FriendRelationshipStatus.requestSent,
+    'requestReceived' => FriendRelationshipStatus.requestReceived,
+    'blocked' => FriendRelationshipStatus.blocked,
+    _ => null,
+  };
+}
+
 class FriendUser {
   const FriendUser({
     required this.id,
@@ -10,6 +27,8 @@ class FriendUser {
     required this.lastSeen,
     this.username = '',
     this.premiumIdentity = false,
+    this.profileUpdatedAt,
+    this.relationshipStatus,
   });
 
   final String id;
@@ -19,6 +38,12 @@ class FriendUser {
   final String? photoUrl;
   final bool isOnline;
   final DateTime? lastSeen;
+  final DateTime? profileUpdatedAt;
+
+  /// Server-resolved state returned with public-search results. Null means
+  /// the caller is talking to an older callable and should use the legacy
+  /// relationship lookup as a backward-compatible fallback.
+  final FriendRelationshipStatus? relationshipStatus;
 
   /// The server-written public mirror of the premium entitlement, read
   /// straight off the user document. Never a locally computed flag —
@@ -83,6 +108,12 @@ class FriendUser {
       isOnline: false,
       lastSeen: null,
       premiumIdentity: data['premiumIdentity'] as bool? ?? false,
+      profileUpdatedAt: _dateTime(
+        data['profileUpdatedAt'] ?? data['updatedAt'],
+      ),
+      relationshipStatus: FriendRelationshipStatus.fromWire(
+        data['relationshipStatus'],
+      ),
     );
   }
 
@@ -99,6 +130,14 @@ class FriendUser {
       isOnline: false,
       lastSeen: null,
       premiumIdentity: data['premiumIdentity'] as bool? ?? false,
+      profileUpdatedAt: _dateTime(
+        data['profileUpdatedAtMillis'] ??
+            data['profileUpdatedAt'] ??
+            data['updatedAt'],
+      ),
+      relationshipStatus: FriendRelationshipStatus.fromWire(
+        data['relationshipStatus'],
+      ),
     );
   }
 
@@ -125,6 +164,10 @@ class FriendUser {
     DateTime? lastSeen,
     bool clearLastSeen = false,
     bool? premiumIdentity,
+    DateTime? profileUpdatedAt,
+    bool clearProfileUpdatedAt = false,
+    FriendRelationshipStatus? relationshipStatus,
+    bool clearRelationshipStatus = false,
   }) {
     return FriendUser(
       id: id ?? this.id,
@@ -135,6 +178,12 @@ class FriendUser {
       isOnline: isOnline ?? this.isOnline,
       lastSeen: clearLastSeen ? null : lastSeen ?? this.lastSeen,
       premiumIdentity: premiumIdentity ?? this.premiumIdentity,
+      profileUpdatedAt: clearProfileUpdatedAt
+          ? null
+          : profileUpdatedAt ?? this.profileUpdatedAt,
+      relationshipStatus: clearRelationshipStatus
+          ? null
+          : relationshipStatus ?? this.relationshipStatus,
     );
   }
 
@@ -167,6 +216,16 @@ class FriendUser {
   static String _normalizeString(Object? value) {
     return _normalizeNullableString(value) ?? '';
   }
+
+  static DateTime? _dateTime(Object? value) => switch (value) {
+    Timestamp timestamp => timestamp.toDate(),
+    int milliseconds when milliseconds > 0 =>
+      DateTime.fromMillisecondsSinceEpoch(milliseconds, isUtc: true),
+    num milliseconds when milliseconds.isFinite && milliseconds > 0 =>
+      DateTime.fromMillisecondsSinceEpoch(milliseconds.toInt(), isUtc: true),
+    DateTime dateTime => dateTime,
+    _ => null,
+  };
 
   @override
   bool operator ==(Object other) {

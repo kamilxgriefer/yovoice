@@ -1,8 +1,10 @@
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/discover/presentation/discover_category_identity.dart';
+import 'package:yovoice/features/discover/presentation/discover_localized_copy.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 
 class HeroLiveRoom extends StatefulWidget {
@@ -42,17 +44,17 @@ class _HeroLiveRoomState extends State<HeroLiveRoom>
         isBroadcast: widget.room.isBroadcast,
       );
 
-  String get _roomTypeLabel {
+  String _roomTypeLabel(AppLocalizations copy) {
     return widget.room.isBroadcast
-        ? 'FEATURED BROADCAST'
-        : 'FEATURED COMMUNITY';
+        ? copy.text('FEATURED BROADCAST', 'WYRÓŻNIONY PODCAST')
+        : copy.text('FEATURED COMMUNITY', 'WYRÓŻNIONY POKÓJ SPOŁECZNOŚCIOWY');
   }
 
-  String get _peopleLabel {
-    final count = widget.room.participantCount;
-
-    return widget.room.isBroadcast ? '$count listening' : '$count inside';
-  }
+  String _peopleLabel(AppLocalizations copy) => localizedDiscoverAudience(
+    copy,
+    count: widget.room.participantCount,
+    isBroadcast: widget.room.isBroadcast,
+  );
 
   double? get _occupancy {
     final maximum = widget.room.maxParticipants;
@@ -64,30 +66,31 @@ class _HeroLiveRoomState extends State<HeroLiveRoom>
     return (widget.room.participantCount / maximum).clamp(0.0, 1.0);
   }
 
-  String get _occupancyLabel {
+  String _occupancyLabel(AppLocalizations copy) {
     final occupancy = _occupancy;
 
     if (occupancy == null) {
-      return 'Open room';
+      return copy.text('Open room', 'Pokój otwarty');
     }
 
     if (occupancy >= 0.9) {
-      return 'Almost full';
+      return copy.text('Almost full', 'Prawie pełny');
     }
 
     if (occupancy >= 0.65) {
-      return 'Filling fast';
+      return copy.text('Filling fast', 'Szybko się zapełnia');
     }
 
     if (occupancy >= 0.3) {
-      return 'Growing now';
+      return copy.text('Growing now', 'Przybywa uczestników');
     }
 
-    return 'Join early';
+    return copy.text('Join early', 'Dołącz jako jedna z pierwszych osób');
   }
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final room = widget.room;
     final palette = context.appPalette;
     final brightness = Theme.of(context).brightness;
@@ -97,7 +100,7 @@ class _HeroLiveRoomState extends State<HeroLiveRoom>
     final identityVisuals = identity.resolve(brightness);
     final largeText = MediaQuery.textScalerOf(context).scale(1) > 1.4;
     final occupancyStatus = Text(
-      _occupancyLabel,
+      _occupancyLabel(copy),
       style: TextStyle(
         color: _occupancy != null && _occupancy! >= 0.9
             ? Theme.of(context).colorScheme.error
@@ -119,9 +122,9 @@ class _HeroLiveRoomState extends State<HeroLiveRoom>
         room.isBroadcast ? Icons.headphones_rounded : Icons.login_rounded,
         size: 18,
       ),
-      label: const Text(
-        'JOIN ROOM',
-        style: TextStyle(
+      label: Text(
+        copy.text('JOIN ROOM', 'DOŁĄCZ DO POKOJU'),
+        style: const TextStyle(
           fontSize: 11,
           fontWeight: FontWeight.w900,
           letterSpacing: 0.7,
@@ -215,7 +218,7 @@ class _HeroLiveRoomState extends State<HeroLiveRoom>
                               const SizedBox(width: 9),
                               Expanded(
                                 child: Text(
-                                  _roomTypeLabel,
+                                  _roomTypeLabel(copy),
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
                                   style: TextStyle(
@@ -262,7 +265,10 @@ class _HeroLiveRoomState extends State<HeroLiveRoom>
                                     const SizedBox(height: 8),
                                     Text(
                                       room.description.trim().isEmpty
-                                          ? 'Hosted by ${room.hostName}'
+                                          ? localizedHostedBy(
+                                              copy,
+                                              room.hostName,
+                                            )
                                           : room.description,
                                       maxLines: 2,
                                       overflow: TextOverflow.ellipsis,
@@ -287,7 +293,7 @@ class _HeroLiveRoomState extends State<HeroLiveRoom>
                                 icon: room.isBroadcast
                                     ? Icons.headphones_rounded
                                     : Icons.people_alt_rounded,
-                                label: _peopleLabel,
+                                label: _peopleLabel(copy),
                               ),
                               _HeroInfoChip(
                                 icon: Icons.language_rounded,
@@ -297,7 +303,10 @@ class _HeroLiveRoomState extends State<HeroLiveRoom>
                                 icon: room.isBroadcast
                                     ? Icons.podcasts_rounded
                                     : Icons.groups_rounded,
-                                label: room.category,
+                                label: localizedDiscoverCategory(
+                                  copy,
+                                  room.category,
+                                ),
                               ),
                             ],
                           ),
@@ -370,6 +379,7 @@ class _LiveBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
       decoration: BoxDecoration(
@@ -387,9 +397,9 @@ class _LiveBadge extends StatelessWidget {
             child: const Icon(Icons.circle, color: Color(0xFFFF416C), size: 9),
           ),
           const SizedBox(width: 7),
-          const Text(
-            'LIVE NOW',
-            style: TextStyle(
+          Text(
+            copy.text('LIVE NOW', 'TERAZ NA ŻYWO'),
+            style: const TextStyle(
               color: Colors.white,
               fontSize: 9,
               fontWeight: FontWeight.w900,
@@ -525,6 +535,7 @@ class _HostAndSpeakersPreview extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
     final visuals = DiscoverCategoryVisuals.fromSeed(
       accent,
@@ -570,8 +581,14 @@ class _HostAndSpeakersPreview extends StatelessWidget {
               const SizedBox(height: 2),
               Text(
                 room.isBroadcast
-                    ? 'Host and active listeners'
-                    : 'Host and active speakers',
+                    ? copy.text(
+                        'Host and active listeners',
+                        'Prowadzący i aktywni słuchacze',
+                      )
+                    : copy.text(
+                        'Host and active speakers',
+                        'Prowadzący i aktywni rozmówcy',
+                      ),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(

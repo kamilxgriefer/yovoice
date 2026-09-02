@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_immersive_colors.dart';
 import 'package:yovoice/shared/widgets/theme/yo_immersive_dark_surface.dart';
 
@@ -51,6 +52,7 @@ class _StartupLoadingScreenState extends State<StartupLoadingScreen>
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final reduceMotion = MediaQuery.disableAnimationsOf(context);
     final width = MediaQuery.sizeOf(context).width;
     final compact = width < 420;
@@ -59,7 +61,7 @@ class _StartupLoadingScreenState extends State<StartupLoadingScreen>
       backgroundColor: AppImmersiveColors.background,
       body: Semantics(
         liveRegion: true,
-        label: 'Opening YO Voice',
+        label: copy.text('Opening YO Voice', 'Otwieranie YO Voice'),
         excludeSemantics: true,
         child: Stack(
           fit: StackFit.expand,
@@ -140,8 +142,11 @@ class _StartupLoadingScreenState extends State<StartupLoadingScreen>
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      const Text(
-                        'Create your space',
+                      Text(
+                        copy.text(
+                          'Create your space',
+                          'Stwórz swoją przestrzeń',
+                        ),
                         textAlign: TextAlign.center,
                         style: TextStyle(
                           color: AppImmersiveColors.textSecondary,

@@ -378,8 +378,16 @@ class ModerationService {
   }
 
   static String _messageFor(FirebaseFunctionsException error) {
-    final message = error.message?.trim();
-    if (message != null && message.isNotEmpty) return message;
-    return 'That action could not be completed.';
+    return switch (_failureFor(error)) {
+      ModerationFailure.conflict =>
+        'Another moderator is handling this report. Refresh and try again.',
+      ModerationFailure.alreadyHandled =>
+        'This report has already been handled.',
+      ModerationFailure.accessExpired =>
+        'Your moderation access expired. Sign in again.',
+      ModerationFailure.missing =>
+        'This report or its reported content could not be found.',
+      ModerationFailure.unknown => 'That action could not be completed.',
+    };
   }
 }

@@ -1,0 +1,3 @@
+"NSCameraUsageDescription" = "YO Voice 會在你選擇進行私人視訊通話、拍攝聊天相片，或建立個人檔案、房間及俱樂部圖片時使用相機。";
+"NSMicrophoneUsageDescription" = "YO Voice 會在你選擇於語音房間發言、錄製音訊或進行私人通話時使用麥克風。";
+"NSPhotoLibraryUsageDescription" = "YO Voice 只會使用你為聊天、個人檔案、房間或俱樂部圖片所選擇的相片。";

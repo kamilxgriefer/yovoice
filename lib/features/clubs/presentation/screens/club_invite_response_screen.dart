@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/clubs/data/models/club_invite.dart';
 import 'package:yovoice/features/clubs/data/services/club_service.dart';
@@ -78,7 +79,10 @@ class _ClubInviteResponseScreenState extends State<ClubInviteResponseScreen> {
       if (!mounted) return;
       setState(() {
         _busy = false;
-        _error = 'This invitation could not be accepted. Please try again.';
+        _error = AppLocalizations.of(context).text(
+          'This invitation could not be accepted. Please try again.',
+          'Nie udało się przyjąć zaproszenia. Spróbuj ponownie.',
+        );
       });
     }
   }
@@ -100,7 +104,10 @@ class _ClubInviteResponseScreenState extends State<ClubInviteResponseScreen> {
       if (!mounted) return;
       setState(() {
         _busy = false;
-        _error = 'This invitation could not be declined. Please try again.';
+        _error = AppLocalizations.of(context).text(
+          'This invitation could not be declined. Please try again.',
+          'Nie udało się odrzucić zaproszenia. Spróbuj ponownie.',
+        );
       });
     }
   }
@@ -109,13 +116,14 @@ class _ClubInviteResponseScreenState extends State<ClubInviteResponseScreen> {
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
+    final copy = AppLocalizations.of(context);
     return Scaffold(
       key: const ValueKey('club-invite-response-screen'),
       backgroundColor: palette.background,
       appBar: AppBar(
         backgroundColor: palette.background,
         foregroundColor: palette.textPrimary,
-        title: const Text('Club invitation'),
+        title: Text(copy.text('Club invitation', 'Zaproszenie do klubu')),
       ),
       body: ResponsiveContentFrame(
         width: ResponsiveContentWidth.form,
@@ -126,15 +134,21 @@ class _ClubInviteResponseScreenState extends State<ClubInviteResponseScreen> {
               return const Center(child: CircularProgressIndicator());
             }
             if (snapshot.hasError) {
-              return const _InviteMessage(
-                message: 'This invitation is unavailable right now.',
+              return _InviteMessage(
+                message: copy.text(
+                  'This invitation is unavailable right now.',
+                  'To zaproszenie jest teraz niedostępne.',
+                ),
               );
             }
             final invite = snapshot.data;
             if (invite == null) {
-              return const _InviteMessage(
-                key: ValueKey('club-invite-unavailable'),
-                message: 'This invitation is no longer pending.',
+              return _InviteMessage(
+                key: const ValueKey('club-invite-unavailable'),
+                message: copy.text(
+                  'This invitation is no longer pending.',
+                  'To zaproszenie nie jest już aktywne.',
+                ),
               );
             }
             return Center(
@@ -179,7 +193,10 @@ class _ClubInviteResponseScreenState extends State<ClubInviteResponseScreen> {
                           ),
                           const SizedBox(height: 8),
                           Text(
-                            '${invite.inviterName} invited you to join.',
+                            copy.text(
+                              '${invite.inviterName} invited you to join.',
+                              '${invite.inviterName} zaprasza Cię do klubu.',
+                            ),
                             textAlign: TextAlign.center,
                             style: TextStyle(
                               color: palette.textSecondary,
@@ -227,15 +244,20 @@ class _InviteActions extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final decline = OutlinedButton(
       key: const ValueKey('decline-club-invite'),
       onPressed: busy ? null : onDecline,
-      child: const Text('Decline'),
+      child: Text(copy.text('Decline', 'Odrzuć')),
     );
     final accept = FilledButton(
       key: const ValueKey('accept-club-invite'),
       onPressed: busy ? null : onAccept,
-      child: Text(busy ? 'Please wait…' : 'Accept'),
+      child: Text(
+        busy
+            ? copy.text('Please wait…', 'Chwileczkę…')
+            : copy.text('Accept', 'Akceptuj'),
+      ),
     );
 
     return LayoutBuilder(

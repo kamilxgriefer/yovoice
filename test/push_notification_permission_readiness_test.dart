@@ -5,51 +5,48 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:yovoice/features/notifications/data/services/push_notification_service.dart';
 
 void main() {
-  test(
-    'permission barrier settles after permission, before later push work',
-    () async {
-      final localInitialization = Completer<void>();
-      final permission = Completer<String>();
-      var permissionRequested = false;
-      var settled = 0;
+  test('startup barrier inspects permission without requesting it', () async {
+    final localInitialization = Completer<void>();
+    final inspection = Completer<String>();
+    var permissionInspected = false;
+    var settled = 0;
 
-      final phase = runInitialNotificationPermissionPhase(
-        initializeLocalNotifications: () => localInitialization.future,
-        requestPermission: () {
-          permissionRequested = true;
-          return permission.future;
-        },
-        onSettled: () => settled += 1,
-        timeout: const Duration(seconds: 1),
-      );
+    final phase = runInitialNotificationInspectionPhase(
+      initializeLocalNotifications: () => localInitialization.future,
+      inspectPermission: () {
+        permissionInspected = true;
+        return inspection.future;
+      },
+      onSettled: () => settled += 1,
+      timeout: const Duration(seconds: 1),
+    );
 
-      await Future<void>.delayed(Duration.zero);
-      expect(permissionRequested, isFalse);
-      expect(settled, 0);
+    await Future<void>.delayed(Duration.zero);
+    expect(permissionInspected, isFalse);
+    expect(settled, 0);
 
-      localInitialization.complete();
-      await Future<void>.delayed(Duration.zero);
-      expect(permissionRequested, isTrue);
-      expect(settled, 0);
+    localInitialization.complete();
+    await Future<void>.delayed(Duration.zero);
+    expect(permissionInspected, isTrue);
+    expect(settled, 0);
 
-      permission.complete('authorized');
-      expect(await phase, 'authorized');
-      expect(settled, 1);
-    },
-  );
+    inspection.complete('authorized');
+    expect(await phase, 'authorized');
+    expect(settled, 1);
+  });
 
   test(
     'local notification initialization failure releases the barrier',
     () async {
-      var permissionRequested = false;
+      var permissionInspected = false;
       var settled = 0;
 
       await expectLater(
-        runInitialNotificationPermissionPhase<void>(
+        runInitialNotificationInspectionPhase<void>(
           initializeLocalNotifications: () =>
               Future<void>.error(StateError('local init failed')),
-          requestPermission: () async {
-            permissionRequested = true;
+          inspectPermission: () async {
+            permissionInspected = true;
           },
           onSettled: () => settled += 1,
           timeout: const Duration(seconds: 1),
@@ -57,18 +54,18 @@ void main() {
         throwsStateError,
       );
 
-      expect(permissionRequested, isFalse);
+      expect(permissionInspected, isFalse);
       expect(settled, 1);
     },
   );
 
-  test('permission request failure also releases the barrier once', () async {
+  test('permission inspection failure releases the barrier once', () async {
     var settled = 0;
 
     await expectLater(
-      runInitialNotificationPermissionPhase<void>(
+      runInitialNotificationInspectionPhase<void>(
         initializeLocalNotifications: () async {},
-        requestPermission: () =>
+        inspectPermission: () =>
             Future<void>.error(StateError('permission failed')),
         onSettled: () => settled += 1,
         timeout: const Duration(seconds: 1),
@@ -80,42 +77,42 @@ void main() {
   });
 
   test(
-    'hung local initialization times out without a late permission request',
+    'hung local initialization times out without a late inspection',
     () async {
       final localInitialization = Completer<void>();
-      var permissionRequests = 0;
+      var permissionInspections = 0;
       var settled = 0;
 
       await expectLater(
-        runInitialNotificationPermissionPhase<void>(
+        runInitialNotificationInspectionPhase<void>(
           initializeLocalNotifications: () => localInitialization.future,
-          requestPermission: () async => permissionRequests += 1,
+          inspectPermission: () async => permissionInspections += 1,
           onSettled: () => settled += 1,
           timeout: const Duration(milliseconds: 10),
         ),
         throwsA(isA<TimeoutException>()),
       );
 
-      expect(permissionRequests, 0);
+      expect(permissionInspections, 0);
       expect(settled, 1);
       localInitialization.complete();
       await pumpEventQueue();
-      expect(permissionRequests, 0);
+      expect(permissionInspections, 0);
       expect(settled, 1);
     },
   );
 
-  test('hung permission request is issued once and settles once', () async {
-    final permission = Completer<void>();
-    var permissionRequests = 0;
+  test('hung permission inspection is issued once and settles once', () async {
+    final inspection = Completer<void>();
+    var permissionInspections = 0;
     var settled = 0;
 
     await expectLater(
-      runInitialNotificationPermissionPhase<void>(
+      runInitialNotificationInspectionPhase<void>(
         initializeLocalNotifications: () async {},
-        requestPermission: () {
-          permissionRequests += 1;
-          return permission.future;
+        inspectPermission: () {
+          permissionInspections += 1;
+          return inspection.future;
         },
         onSettled: () => settled += 1,
         timeout: const Duration(milliseconds: 10),
@@ -123,11 +120,11 @@ void main() {
       throwsA(isA<TimeoutException>()),
     );
 
-    expect(permissionRequests, 1);
+    expect(permissionInspections, 1);
     expect(settled, 1);
-    permission.complete();
+    inspection.complete();
     await pumpEventQueue();
-    expect(permissionRequests, 1);
+    expect(permissionInspections, 1);
     expect(settled, 1);
   });
 

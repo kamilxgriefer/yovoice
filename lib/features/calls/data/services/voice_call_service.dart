@@ -1,12 +1,12 @@
 import 'dart:async';
 
-import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/foundation.dart';
 import 'package:livekit_client/livekit_client.dart';
-import 'package:permission_handler/permission_handler.dart';
 
 import 'package:yovoice/core/audio/ui_sound.dart';
 import 'package:yovoice/core/audio/ui_sound_service.dart';
+import 'package:yovoice/core/helpers/error_messages.dart';
+import 'package:yovoice/features/permissions/data/permission_readiness_service.dart';
 
 import '../models/voice_connection_info.dart';
 import 'direct_call_service.dart';
@@ -56,10 +56,23 @@ enum MicState {
   unavailable,
 }
 
+final class VoicePermissionRequiredException implements Exception {
+  const VoicePermissionRequiredException(this.permission, this.status);
+
+  final AppPermissionKind permission;
+  final AppPermissionAccess status;
+
+  @override
+  String toString() =>
+      'VoicePermissionRequiredException(${permission.name}, ${status.name})';
+}
+
 class VoiceCallService extends ChangeNotifier {
-  VoiceCallService._()
+  VoiceCallService._({PermissionReadinessService? permissionReadiness})
     : _microphoneTeardownTimeout = const Duration(seconds: 3),
-      _captureDisableWaiter = _waitForCaptureDisable;
+      _captureDisableWaiter = _waitForCaptureDisable,
+      _permissionReadiness =
+          permissionReadiness ?? PermissionReadinessService.instance;
 
   /// Test seam. The production service is a singleton behind a private
   /// constructor, which left no way for a widget test to observe whether a
@@ -73,14 +86,18 @@ class VoiceCallService extends ChangeNotifier {
     Future<bool> Function(Future<void> pendingDisable, Duration timeout)
         microphoneTeardownWaiter =
         _waitForCaptureDisable,
+    PermissionReadinessService? permissionReadiness,
   }) : _microphoneTeardownTimeout = microphoneTeardownTimeout,
-       _captureDisableWaiter = microphoneTeardownWaiter;
+       _captureDisableWaiter = microphoneTeardownWaiter,
+       _permissionReadiness =
+           permissionReadiness ?? PermissionReadinessService.instance;
 
   static final VoiceCallService instance = VoiceCallService._();
 
   final Duration _microphoneTeardownTimeout;
   final Future<bool> Function(Future<void> pendingDisable, Duration timeout)
   _captureDisableWaiter;
+  final PermissionReadinessService _permissionReadiness;
 
   // Lazy: VoiceTokenService touches FirebaseFunctions at construction,
   // and this singleton is now reachable from always-mounted UI (the
@@ -286,6 +303,19 @@ class VoiceCallService extends ChangeNotifier {
     return result;
   }
 
+  /// Check-only gate used by [join]. It never opens a native/browser prompt.
+  Future<PermissionReadinessSnapshot> mediaPermissionStatus({
+    bool includeCamera = false,
+  }) => _permissionReadiness.mediaSnapshot(includeCamera: includeCamera);
+
+  /// Explicit prejoin/call-control API. UI must invoke it directly from a
+  /// button press so web permission requests retain a genuine user gesture.
+  Future<PermissionReadinessSnapshot> prepareMediaPermissionsFromUserGesture({
+    bool includeCamera = false,
+  }) => _permissionReadiness.prepareMediaFromUserGesture(
+    includeCamera: includeCamera,
+  );
+
   Future<void> join({
     required String roomId,
     required String roomName,
@@ -389,12 +419,13 @@ class VoiceCallService extends ChangeNotifier {
       final connectionInfo = await tokenLoader();
       if (!_isJoinCurrent(joinEpoch, sessionRoomId)) return;
 
-      // The server grant is known before prompting. Broadcast/podcast audience
-      // can listen without granting a microphone they are not allowed to use.
-      final cameraAvailable = await _requestPermissions(
-        requestMicrophone:
+      // The server grant is known before checking media readiness.
+      // Broadcast/podcast audience can listen without granting a microphone
+      // they are not allowed to use.
+      final cameraAvailable = await _checkPermissions(
+        requireMicrophone:
             kind == VoiceSessionKind.directCall || connectionInfo.canPublish,
-        requestCamera: cameraRequestedNow,
+        requireCamera: cameraRequestedNow,
       );
       if (!_isJoinCurrent(joinEpoch, sessionRoomId)) return;
 
@@ -737,7 +768,7 @@ class VoiceCallService extends ChangeNotifier {
     _cameraIssue = null;
     notifyListeners();
     try {
-      if (enabled && !await _requestCameraPermission()) {
+      if (enabled && !await _cameraPermissionAvailable()) {
         _cameraPermissionDenied = true;
         throw StateError('Camera permission is required to turn on video.');
       }
@@ -1247,32 +1278,36 @@ class VoiceCallService extends ChangeNotifier {
     stopCurrentCapture: stopCurrentCapture,
   );
 
-  Future<bool> _requestPermissions({
-    required bool requestMicrophone,
-    required bool requestCamera,
+  Future<bool> _checkPermissions({
+    required bool requireMicrophone,
+    required bool requireCamera,
   }) async {
-    if (kIsWeb) return true;
-
-    if (requestMicrophone) {
-      final microphone = await Permission.microphone.request();
-      if (!microphone.isGranted) {
-        throw StateError(
-          'Microphone permission is required to join voice chat.',
+    if (!requireMicrophone && !requireCamera) return true;
+    final snapshot = await _permissionReadiness.mediaSnapshot(
+      includeCamera: requireCamera,
+    );
+    if (requireMicrophone) {
+      final microphone = snapshot[AppPermissionKind.microphone];
+      if (!microphone.isUsable) {
+        throw VoicePermissionRequiredException(
+          AppPermissionKind.microphone,
+          microphone,
         );
       }
-
-      if (defaultTargetPlatform == TargetPlatform.android) {
-        await Permission.bluetoothConnect.request();
-      }
     }
-    if (!requestCamera) return true;
-    return _requestCameraPermission();
+    if (!requireCamera) return true;
+    final camera = snapshot[AppPermissionKind.camera];
+    _cameraPermissionDenied = !camera.isUsable;
+    if (!camera.isUsable) {
+      _cameraIssue =
+          'Camera access is off. The call will continue with audio only.';
+    }
+    return camera.isUsable;
   }
 
-  Future<bool> _requestCameraPermission() async {
-    if (kIsWeb) return true;
-    final camera = await Permission.camera.request();
-    final granted = camera.isGranted;
+  Future<bool> _cameraPermissionAvailable() async {
+    final camera = await _permissionReadiness.status(AppPermissionKind.camera);
+    final granted = camera.isUsable;
     _cameraPermissionDenied = !granted;
     if (!granted) {
       _cameraIssue =
@@ -1296,20 +1331,24 @@ class VoiceCallService extends ChangeNotifier {
     return identity;
   }
 
+  @visibleForTesting
+  String friendlyErrorForTesting(Object error) => _friendlyError(error);
+
   String _friendlyError(Object error) {
-    // A callable refusal carries product copy in .message ("This room is
-    // not currently live."); the code prefix ("[firebase_functions/…]")
-    // is developer noise and must never reach a SnackBar.
-    if (error is FirebaseFunctionsException) {
-      final message = error.message?.trim();
-      if (message != null && message.isNotEmpty) return message;
-      return 'Live audio is unavailable right now. Try again.';
+    if (error is VoicePermissionRequiredException) {
+      return switch (error.permission) {
+        AppPermissionKind.microphone =>
+          'Microphone access is needed to speak. Enable it and try again.',
+        AppPermissionKind.camera =>
+          'Camera access is off. The call can continue with audio only.',
+        AppPermissionKind.notifications =>
+          'A required permission is unavailable. Check Settings and try again.',
+      };
     }
-    final text = error.toString();
-    if (text.startsWith('Exception: ')) {
-      return text.substring('Exception: '.length);
-    }
-    return text;
+    return friendlyErrorMessage(
+      error,
+      fallback: 'Live audio is unavailable right now. Try again.',
+    );
   }
 
   @override

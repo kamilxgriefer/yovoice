@@ -48,17 +48,14 @@ void main() {
     expect(await serviceFor('host').shouldEndVoiceOnLeaving('room-1'), isTrue);
   });
 
-  test(
-    'a room whose counter never existed is closed too — that IS the stuck '
-    'empty-live room',
-    () async {
-      await seedRoom('legacy-room', {});
-      expect(
-        await serviceFor('host').shouldEndVoiceOnLeaving('legacy-room'),
-        isTrue,
-      );
-    },
-  );
+  test('a room whose counter never existed is closed too — that IS the stuck '
+      'empty-live room', () async {
+    await seedRoom('legacy-room', {});
+    expect(
+      await serviceFor('host').shouldEndVoiceOnLeaving('legacy-room'),
+      isTrue,
+    );
+  });
 
   test('the host stepping out of a busy room closes nothing', () async {
     await seedRoom('room-1', {'participantCount': 4});
@@ -142,25 +139,20 @@ void main() {
     },
   );
 
-  test(
-    'someone joining while the host leaves keeps the room open',
-    () async {
-      await seedRoom('room-1', {'participantCount': 1});
-      final service = serviceFor('host');
-      expect(await service.shouldEndVoiceOnLeaving('room-1'), isTrue);
+  test('someone joining while the host leaves keeps the room open', () async {
+    await seedRoom('room-1', {'participantCount': 1});
+    final service = serviceFor('host');
+    expect(await service.shouldEndVoiceOnLeaving('room-1'), isTrue);
 
-      // Two people arrive; the host's own departure takes it back to 2.
-      await db.collection('rooms').doc('room-1').update({
-        'participantCount': 2,
-      });
+    // Two people arrive; the host's own departure takes it back to 2.
+    await db.collection('rooms').doc('room-1').update({'participantCount': 2});
 
-      expect(
-        await service.canCloseEmptyRoom('room-1'),
-        isFalse,
-        reason: 'the room is not empty; closing it would evict them',
-      );
-    },
-  );
+    expect(
+      await service.canCloseEmptyRoom('room-1'),
+      isFalse,
+      reason: 'the room is not empty; closing it would evict them',
+    );
+  });
 
   test('the empty-room check keeps every other guard', () async {
     await seedRoom('club_lounge_x', {

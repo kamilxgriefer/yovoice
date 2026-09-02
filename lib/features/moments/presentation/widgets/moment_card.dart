@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/home/data/services/home_feed_service.dart';
@@ -86,6 +87,8 @@ class _MomentCardState extends State<MomentCard> {
   bool _downloading = false;
   int _downloadLookupGeneration = 0;
 
+  AppLocalizations get _copy => AppLocalizations.of(context);
+
   @override
   void initState() {
     super.initState();
@@ -156,9 +159,14 @@ class _MomentCardState extends State<MomentCard> {
       ScaffoldMessenger.of(context)
         ..hideCurrentSnackBar()
         ..showSnackBar(
-          const SnackBar(
+          SnackBar(
             behavior: SnackBarBehavior.floating,
-            content: Text('This Voice Moment is unavailable right now.'),
+            content: Text(
+              _copy.text(
+                'This Voice Moment is unavailable right now.',
+                'Ten Voice Moment jest teraz niedostępny.',
+              ),
+            ),
           ),
         );
     }
@@ -203,12 +211,18 @@ class _MomentCardState extends State<MomentCard> {
             behavior: SnackBarBehavior.floating,
             content: Text(
               _downloaded
-                  ? 'Voice Moment downloaded for offline listening.'
-                  : 'Offline download removed.',
+                  ? _copy.text(
+                      'Voice Moment downloaded for offline listening.',
+                      'Voice Moment pobrany do słuchania offline.',
+                    )
+                  : _copy.text(
+                      'Offline download removed.',
+                      'Usunięto pobrane nagranie.',
+                    ),
             ),
           ),
         );
-    } catch (error) {
+    } catch (_) {
       if (!mounted) return;
       ScaffoldMessenger.of(context)
         ..hideCurrentSnackBar()
@@ -217,9 +231,10 @@ class _MomentCardState extends State<MomentCard> {
             behavior: SnackBarBehavior.floating,
             backgroundColor: Theme.of(context).colorScheme.errorContainer,
             content: Text(
-              error is OfflineAudioException
-                  ? error.message
-                  : 'The Voice Moment could not be downloaded.',
+              _copy.text(
+                'The Voice Moment could not be downloaded. Try again.',
+                'Nie udało się pobrać Voice Momentu. Spróbuj ponownie.',
+              ),
               style: TextStyle(
                 color: Theme.of(context).colorScheme.onErrorContainer,
               ),
@@ -241,9 +256,14 @@ class _MomentCardState extends State<MomentCard> {
       ScaffoldMessenger.of(context)
         ..hideCurrentSnackBar()
         ..showSnackBar(
-          const SnackBar(
+          SnackBar(
             behavior: SnackBarBehavior.floating,
-            content: Text('Your like could not be saved.'),
+            content: Text(
+              _copy.text(
+                'Your like could not be saved. Try again.',
+                'Nie udało się zapisać polubienia. Spróbuj ponownie.',
+              ),
+            ),
           ),
         );
     }
@@ -256,25 +276,34 @@ class _MomentCardState extends State<MomentCard> {
   /// feed rendered other people's audio with no way to say anything was
   /// wrong with it.
   Future<void> _report() async {
+    final copy = _copy;
     await reportContent(
       context: context,
       service: widget.contentReportService,
       content: ReportedContent.voiceMoment(momentId: widget.moment.id),
-      title: 'Report this Voice Moment',
-      subtitle:
-          'Your report goes to the YO Voice moderation team with this '
-          'Moment attached. ${widget.moment.authorName} is not told who '
-          'reported it.',
+      title: copy.text('Report this Voice Moment', 'Zgłoś ten Voice Moment'),
+      subtitle: copy.text(
+        'Your report goes to the YO Voice moderation team with this '
+            'Moment attached. ${widget.moment.authorName} is not told who '
+            'reported it.',
+        'Zgłoszenie wraz z tym Momentem trafi do zespołu moderacji YO Voice. '
+            '${widget.moment.authorName} nie dowie się, kto je wysłał.',
+      ),
     );
   }
 
   String _age(DateTime? createdAt) {
     if (createdAt == null) return '';
     final diff = DateTime.now().difference(createdAt);
-    if (diff.inMinutes < 1) return 'now';
-    if (diff.inMinutes < 60) return '${diff.inMinutes}m';
-    if (diff.inHours < 24) return '${diff.inHours}h';
-    return '${diff.inDays}d';
+    if (diff.inMinutes < 1) return _copy.text('now', 'teraz');
+    if (diff.inMinutes < 60) {
+      return _copy.text('${diff.inMinutes}m', '${diff.inMinutes} min');
+    }
+    if (diff.inHours < 24) {
+      return _copy.text('${diff.inHours}h', '${diff.inHours} godz.');
+    }
+    final days = diff.inDays;
+    return _copy.text('${days}d', days == 1 ? '1 dzień' : '$days dni');
   }
 
   @override
@@ -282,6 +311,7 @@ class _MomentCardState extends State<MomentCard> {
     final moment = widget.moment;
     final playable = moment.hasMediaReference;
     final palette = context.appPalette;
+    final copy = _copy;
 
     return Container(
       key: ValueKey('moment-card-${moment.id}'),
@@ -304,8 +334,14 @@ class _MomentCardState extends State<MomentCard> {
                   displayName: moment.authorName,
                   photoUrl: moment.authorPhotoUrl,
                 ),
-                semanticLabel: 'Open profile for ${moment.authorName}',
-                tooltip: 'Open ${moment.authorName}\'s profile',
+                semanticLabel: copy.text(
+                  'Open profile for ${moment.authorName}',
+                  'Otwórz profil: ${moment.authorName}',
+                ),
+                tooltip: copy.text(
+                  'Open ${moment.authorName}\'s profile',
+                  'Otwórz profil ${moment.authorName}',
+                ),
                 circular: true,
                 child: UserAvatar(
                   radius: 18,
@@ -354,7 +390,7 @@ class _MomentCardState extends State<MomentCard> {
                 Padding(
                   padding: const EdgeInsets.only(left: 6),
                   child: Text(
-                    'Uploading…',
+                    copy.text('Uploading…', 'Przesyłanie…'),
                     style: TextStyle(color: palette.textTertiary, fontSize: 11),
                   ),
                 ),
@@ -414,7 +450,7 @@ class _MomentCardState extends State<MomentCard> {
                 ),
                 label: Text(
                   moment.commentCount == 0
-                      ? 'Comment'
+                      ? copy.text('Comment', 'Komentarz')
                       : '${moment.commentCount}',
                   style: TextStyle(
                     color: palette.textSecondary,
@@ -436,7 +472,10 @@ class _MomentCardState extends State<MomentCard> {
                     width: 44,
                     height: 44,
                   ),
-                  tooltip: 'Report this Voice Moment',
+                  tooltip: copy.text(
+                    'Report this Voice Moment',
+                    'Zgłoś ten Voice Moment',
+                  ),
                   onPressed: _report,
                   icon: Icon(Icons.flag_outlined, color: palette.textSecondary),
                 ),
@@ -448,8 +487,14 @@ class _MomentCardState extends State<MomentCard> {
                     height: 44,
                   ),
                   tooltip: _downloaded
-                      ? 'Remove offline download'
-                      : 'Download for offline listening',
+                      ? copy.text(
+                          'Remove offline download',
+                          'Usuń pobrane nagranie',
+                        )
+                      : copy.text(
+                          'Download for offline listening',
+                          'Pobierz do słuchania offline',
+                        ),
                   onPressed: _downloading ? null : _toggleDownload,
                   icon: _downloading
                       ? const SizedBox.square(
@@ -495,9 +540,10 @@ class _LikeControl extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final service = feedService;
+    final copy = AppLocalizations.of(context);
     // Zero reads as a verb, not a number — no invented social proof, and
     // no hiding the control either.
-    final label = likeCount == 0 ? 'Like' : '$likeCount';
+    final label = likeCount == 0 ? copy.text('Like', 'Lubię to') : '$likeCount';
 
     if (service == null) {
       return _LikeButton(liked: false, label: label, onTap: null);
@@ -526,9 +572,12 @@ class _LikeButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
+    final copy = AppLocalizations.of(context);
     return Semantics(
       button: onTap != null,
-      label: liked ? 'Unlike this Moment' : 'Like this Moment',
+      label: liked
+          ? copy.text('Unlike this Moment', 'Usuń polubienie tego Momentu')
+          : copy.text('Like this Moment', 'Polub ten Moment'),
       child: TextButton.icon(
         key: ValueKey('like-moment-$label-$liked'),
         onPressed: onTap,
@@ -571,9 +620,12 @@ class _PlayButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
+    final copy = AppLocalizations.of(context);
     return Semantics(
       button: enabled,
-      label: playing ? 'Pause this Moment' : 'Play this Moment',
+      label: playing
+          ? copy.text('Pause this Moment', 'Wstrzymaj ten Moment')
+          : copy.text('Play this Moment', 'Odtwórz ten Moment'),
       child: Material(
         color: enabled ? colors.primary : colors.primary.withValues(alpha: .25),
         shape: const CircleBorder(),

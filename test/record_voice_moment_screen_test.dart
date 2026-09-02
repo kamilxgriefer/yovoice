@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:audioplayers/audioplayers.dart' show BytesSource;
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show MissingPluginException;
 import 'package:flutter_test/flutter_test.dart';
@@ -659,6 +660,30 @@ void main() {
         find.text('Your Voice Moment could not be published.'),
         findsOneWidget,
       );
+    });
+
+    testWidgets('the active-Moment limit never surfaces callable detail', (
+      tester,
+    ) async {
+      useSurface(tester, medium);
+      final harness = build();
+      harness.service.failure = FirebaseFunctionsException(
+        code: 'resource-exhausted',
+        message: 'quota bucket users/private-user-id reached internal cap',
+      );
+      await tester.pumpWidget(host(harness.screen));
+      await tester.pumpAndSettle();
+
+      await recordFor(tester, harness.clock, seconds: 3);
+      await tester.tap(find.text('Publish'));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.textContaining('You have reached the limit of active Moments.'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('private-user-id'), findsNothing);
+      expect(find.textContaining('internal cap'), findsNothing);
     });
 
     testWidgets('record again releases the previous recording', (tester) async {

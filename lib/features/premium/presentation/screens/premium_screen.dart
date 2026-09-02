@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/premium/data/models/subscription_entitlements.dart';
@@ -9,6 +10,7 @@ import 'package:yovoice/features/premium/data/premium_plans.dart';
 import 'package:yovoice/features/premium/data/services/entitlement_service.dart';
 import 'package:yovoice/features/premium/data/services/premium_billing_service.dart';
 import 'package:yovoice/features/premium/presentation/screens/premium_plans_screen.dart';
+import 'package:yovoice/features/premium/presentation/premium_localized_copy.dart';
 import 'package:yovoice/features/premium/presentation/widgets/premium_badge_pill.dart';
 import 'package:yovoice/features/profile/data/models/user_profile.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
@@ -129,6 +131,7 @@ class _PremiumPresentationView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
+    final copy = AppLocalizations.of(context);
     return Center(
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 560),
@@ -138,7 +141,10 @@ class _PremiumPresentationView extends StatelessWidget {
             const Center(child: PremiumBadgePill()),
             const SizedBox(height: 18),
             Text(
-              'More room\nfor your voice.',
+              copy.text(
+                'More room\nfor your voice.',
+                'Więcej przestrzeni\ndla Twojego głosu.',
+              ),
               textAlign: TextAlign.center,
               style: TextStyle(
                 color: palette.textPrimary,
@@ -150,7 +156,10 @@ class _PremiumPresentationView extends StatelessWidget {
             ),
             const SizedBox(height: 12),
             Text(
-              'Create. Lead. Build communities.\nStand out.',
+              copy.text(
+                'Create. Lead. Build communities.\nStand out.',
+                'Twórz. Prowadź. Buduj społeczności.\nWyróżnij się.',
+              ),
               textAlign: TextAlign.center,
               style: TextStyle(
                 color: palette.textSecondary,
@@ -172,8 +181,14 @@ class _PremiumPresentationView extends StatelessWidget {
                     _BenefitCard(
                       icon: _benefitIcons[i].$1,
                       iconColor: _benefitIcons[i].$2,
-                      title: PremiumPlans.benefits[i].$1,
-                      subtitle: PremiumPlans.benefits[i].$2,
+                      title: localizedPremiumBenefit(
+                        copy,
+                        PremiumPlans.benefits[i],
+                      ).$1,
+                      subtitle: localizedPremiumBenefit(
+                        copy,
+                        PremiumPlans.benefits[i],
+                      ).$2,
                     ),
                 ];
                 final stacked =
@@ -222,6 +237,7 @@ class _PremiumHero extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     return LayoutBuilder(
       builder: (context, constraints) {
         final width = math.min(340.0, constraints.maxWidth);
@@ -300,25 +316,28 @@ class _PremiumHero extends StatelessWidget {
                   top: height / 2 - chipOffset - chipSize / 2,
                   child: const _CrownChip(size: chipSize),
                 ),
-                const Positioned(
+                Positioned(
                   left: 0,
                   top: height / 2 + 28,
                   child: _HeroPill(
                     icon: Icons.groups_rounded,
-                    label: 'Club Owner',
+                    label: copy.text('Club Owner', 'Właściciel klubu'),
                   ),
                 ),
-                const Positioned(
+                Positioned(
                   right: 0,
                   top: height / 2 - 58,
-                  child: _HeroPill(icon: Icons.mic_rounded, label: 'Creator'),
+                  child: _HeroPill(
+                    icon: Icons.mic_rounded,
+                    label: copy.text('Creator', 'Twórca'),
+                  ),
                 ),
                 Positioned(
                   bottom: 4,
                   right: width * .12,
-                  child: const _HeroPill(
+                  child: _HeroPill(
                     icon: Icons.auto_awesome_rounded,
-                    label: 'Premium Identity',
+                    label: copy.text('Premium Identity', 'Tożsamość Premium'),
                   ),
                 ),
               ],
@@ -470,9 +489,10 @@ class _CheckPlansButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     return YoButton(
       key: const ValueKey('premium-check-plans-gradient'),
-      label: 'Check plans',
+      label: copy.text('Check plans', 'Sprawdź plany'),
       onPressed: onTap,
       icon: const Icon(Icons.arrow_forward_rounded),
     );
@@ -498,6 +518,20 @@ class _PremiumActiveView extends StatelessWidget {
     final periodEnd = entitlements.currentPeriodEnd;
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
+    final copy = AppLocalizations.of(context);
+    final planLabel = localizedPremiumPlanLabel(copy, entitlements.plan);
+    final periodLabel = periodEnd == null
+        ? ''
+        : copy.text(
+            ' · renews/ends ${copy.calendarDate(periodEnd)}',
+            ' · aktywny do ${copy.calendarDate(periodEnd)}',
+          );
+    final paymentLabel = entitlements.inGracePeriod
+        ? copy.text(
+            ' · payment issue — check your billing',
+            ' · problem z płatnością — sprawdź dane rozliczeniowe',
+          )
+        : '';
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(28),
@@ -528,8 +562,14 @@ class _PremiumActiveView extends StatelessWidget {
               const SizedBox(height: 22),
               Text(
                 justActivated
-                    ? 'Welcome to YO Voice Premium'
-                    : 'You have YO Voice Premium',
+                    ? copy.text(
+                        'Welcome to YO Voice Premium',
+                        'Witaj w YO Voice Premium',
+                      )
+                    : copy.text(
+                        'You have YO Voice Premium',
+                        'Masz YO Voice Premium',
+                      ),
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   color: palette.textPrimary,
@@ -539,7 +579,10 @@ class _PremiumActiveView extends StatelessWidget {
               ),
               const SizedBox(height: 8),
               Text(
-                'Your voice just got more room to grow.',
+                copy.text(
+                  'Your voice just got more room to grow.',
+                  'Twój głos ma teraz więcej przestrzeni, by się rozwijać.',
+                ),
                 textAlign: TextAlign.center,
                 style: TextStyle(color: palette.textSecondary, fontSize: 14),
               ),
@@ -555,10 +598,12 @@ class _PremiumActiveView extends StatelessWidget {
                   border: Border.all(color: palette.border),
                 ),
                 child: Text(
-                  '${entitlements.plan.label} plan'
-                  '${periodEnd == null ? '' : ' · renews/ends '
-                            '${periodEnd.day}.${periodEnd.month}.${periodEnd.year}'}'
-                  '${entitlements.inGracePeriod ? ' · payment issue — check your billing' : ''}',
+                  copy.text(
+                        '${entitlements.plan.label} plan',
+                        'Plan $planLabel',
+                      ) +
+                      periodLabel +
+                      paymentLabel,
                   textAlign: TextAlign.center,
                   style: TextStyle(color: palette.textSecondary, fontSize: 13),
                 ),
@@ -574,9 +619,9 @@ class _PremiumActiveView extends StatelessWidget {
                     vertical: 14,
                   ),
                 ),
-                child: const Text(
-                  'Manage subscription',
-                  style: TextStyle(fontWeight: FontWeight.w800),
+                child: Text(
+                  copy.text('Manage subscription', 'Zarządzaj subskrypcją'),
+                  style: const TextStyle(fontWeight: FontWeight.w800),
                 ),
               ),
             ],

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/features/creator/data/models/creator_pinned_post.dart';
 import 'package:yovoice/features/creator/data/services/creator_pinned_post_service.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
@@ -64,12 +65,16 @@ class _CreatorPinnedPostsScreenState extends State<CreatorPinnedPostsScreen> {
   }
 
   void _handleExpiryDeadline(DateTime deadline) {
+    final copy = AppLocalizations.of(context);
     final previousFocus = FocusManager.instance.primaryFocus;
     final recoverFocus = momentExpiryFocusIsWithin(context, previousFocus);
     _expiryAnnouncer.announce(
       context,
       transition: 'pinned-management-${deadline.microsecondsSinceEpoch}',
-      message: 'Voice Moment expired and is no longer available to pin.',
+      message: copy.text(
+        'Voice Moment expired and is no longer available to pin.',
+        'Voice Moment wygasł i nie można go już przypiąć.',
+      ),
     );
     recoverMomentExpiryFocusAfterFrame(
       context: context,
@@ -94,17 +99,26 @@ class _CreatorPinnedPostsScreenState extends State<CreatorPinnedPostsScreen> {
         SnackBar(
           content: Text(
             momentId == null
-                ? 'Pinned post removed.'
-                : 'Voice Moment pinned to your profile.',
+                ? AppLocalizations.of(
+                    context,
+                  ).text('Pinned post removed.', 'Usunięto przypięty post.')
+                : AppLocalizations.of(context).text(
+                    'Voice Moment pinned to your profile.',
+                    'Voice Moment został przypięty do Twojego profilu.',
+                  ),
           ),
         ),
       );
     } catch (_) {
       if (!mounted) return;
+      final copy = AppLocalizations.of(context);
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
+        SnackBar(
           content: Text(
-            'The pinned post could not be changed. Check your Premium Creator access and try again.',
+            copy.text(
+              'The pinned post could not be changed. Check your Premium Creator access and try again.',
+              'Nie udało się zmienić przypiętego postu. Sprawdź dostęp Premium Creator i spróbuj ponownie.',
+            ),
           ),
         ),
       );
@@ -120,6 +134,7 @@ class _CreatorPinnedPostsScreenState extends State<CreatorPinnedPostsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final content = Scaffold(
       backgroundColor: _background,
       body: SafeArea(
@@ -134,12 +149,21 @@ class _CreatorPinnedPostsScreenState extends State<CreatorPinnedPostsScreen> {
                   if (momentSnapshot.hasError || pinSnapshot.hasError) {
                     return _ErrorBody(
                       isRootTab: widget.isRootTab,
-                      message: 'Pinned posts could not be loaded.',
+                      message: copy.text(
+                        'Pinned posts could not be loaded.',
+                        'Nie udało się wczytać przypiętych postów.',
+                      ),
                     );
                   }
                   if (!momentSnapshot.hasData) {
-                    return const Center(
-                      child: CircularProgressIndicator(color: _accent),
+                    return Center(
+                      child: Semantics(
+                        label: copy.text(
+                          'Loading published Voice Moments',
+                          'Wczytywanie opublikowanych materiałów Voice Moment',
+                        ),
+                        child: const CircularProgressIndicator(color: _accent),
+                      ),
                     );
                   }
                   final snapshotMoments = momentSnapshot.data!;
@@ -177,6 +201,7 @@ class _CreatorPinnedPostsScreenState extends State<CreatorPinnedPostsScreen> {
     required List<VoiceMoment> moments,
     required CreatorPinnedPost? pin,
   }) {
+    final copy = AppLocalizations.of(context);
     return ListView(
       padding: const EdgeInsets.fromLTRB(18, 10, 18, 48),
       children: [
@@ -189,6 +214,8 @@ class _CreatorPinnedPostsScreenState extends State<CreatorPinnedPostsScreen> {
                 size: 48,
                 backgroundColor: _surface,
                 borderColor: _border,
+                tooltip: copy.text('Back', 'Wróć'),
+                semanticLabel: copy.text('Back', 'Wróć'),
                 onPressed: () => Navigator.of(context).pop(),
               ),
               const SizedBox(width: 12),
@@ -196,13 +223,13 @@ class _CreatorPinnedPostsScreenState extends State<CreatorPinnedPostsScreen> {
             Expanded(
               child: MomentExpiryFocusTarget(
                 focusNode: _expiryRecoveryFocus,
-                semanticLabel: 'Pinned post',
-                child: const Column(
+                semanticLabel: copy.text('Pinned post', 'Przypięty post'),
+                child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Pinned post',
-                      style: TextStyle(
+                      copy.text('Pinned post', 'Przypięty post'),
+                      style: const TextStyle(
                         color: Colors.white,
                         fontSize: 24,
                         fontWeight: FontWeight.w900,
@@ -210,8 +237,11 @@ class _CreatorPinnedPostsScreenState extends State<CreatorPinnedPostsScreen> {
                       ),
                     ),
                     Text(
-                      'Put one real Voice Moment at the top of your profile.',
-                      style: TextStyle(color: _muted, fontSize: 12.5),
+                      copy.text(
+                        'Put one real Voice Moment at the top of your profile.',
+                        'Umieść wybrany Voice Moment na górze swojego profilu.',
+                      ),
+                      style: const TextStyle(color: _muted, fontSize: 12.5),
                     ),
                   ],
                 ),
@@ -229,15 +259,18 @@ class _CreatorPinnedPostsScreenState extends State<CreatorPinnedPostsScreen> {
             borderRadius: BorderRadius.circular(20),
             border: Border.all(color: const Color(0xFF603277)),
           ),
-          child: const Row(
+          child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Icon(Icons.push_pin_rounded, color: _accent),
-              SizedBox(width: 12),
+              const Icon(Icons.push_pin_rounded, color: _accent),
+              const SizedBox(width: 12),
               Expanded(
                 child: Text(
-                  'Followers will see this Moment first on your profile. You can replace it or remove it at any time.',
-                  style: TextStyle(
+                  copy.text(
+                    'Followers will see this Moment first on your profile. You can replace it or remove it at any time.',
+                    'Obserwujący zobaczą ten Voice Moment jako pierwszy na Twoim profilu. Możesz go w każdej chwili zastąpić lub usunąć.',
+                  ),
+                  style: const TextStyle(
                     color: Colors.white,
                     fontSize: 13,
                     height: 1.4,
@@ -251,10 +284,13 @@ class _CreatorPinnedPostsScreenState extends State<CreatorPinnedPostsScreen> {
         const SizedBox(height: 26),
         Row(
           children: [
-            const Expanded(
+            Expanded(
               child: Text(
-                'Your published Moments',
-                style: TextStyle(
+                copy.text(
+                  'Your published Moments',
+                  'Twoje opublikowane materiały Voice Moment',
+                ),
+                style: const TextStyle(
                   color: Colors.white,
                   fontSize: 17,
                   fontWeight: FontWeight.w900,
@@ -262,7 +298,7 @@ class _CreatorPinnedPostsScreenState extends State<CreatorPinnedPostsScreen> {
               ),
             ),
             Text(
-              '${moments.length} available',
+              _availableMomentsLabel(moments.length, copy),
               style: const TextStyle(color: _muted, fontSize: 12),
             ),
           ],
@@ -327,13 +363,23 @@ class _MomentChoice extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
+    final caption = moment.caption.trim().isEmpty
+        ? copy.text('Voice Moment', 'Voice Moment')
+        : moment.caption.trim();
     return Semantics(
       container: true,
       explicitChildNodes: true,
       selected: selected,
       label: selected
-          ? 'Pinned Voice Moment: ${moment.caption}'
-          : 'Voice Moment available to pin: ${moment.caption}',
+          ? copy.text(
+              'Pinned Voice Moment: $caption',
+              'Przypięty Voice Moment: $caption',
+            )
+          : copy.text(
+              'Voice Moment available to pin: $caption',
+              'Voice Moment dostępny do przypięcia: $caption',
+            ),
       child: Container(
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
@@ -371,7 +417,7 @@ class _MomentChoice extends StatelessWidget {
             ),
             const SizedBox(height: 14),
             Text(
-              moment.caption.trim().isEmpty ? 'Voice Moment' : moment.caption,
+              caption,
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(
@@ -390,17 +436,25 @@ class _MomentChoice extends StatelessWidget {
                 _CountMeta(
                   icon: Icons.favorite_border_rounded,
                   value: moment.likeCount,
+                  semanticLabel: _likeCountLabel(moment.likeCount, copy),
                 ),
                 _CountMeta(
                   icon: Icons.chat_bubble_outline_rounded,
                   value: moment.commentCount,
+                  semanticLabel: _commentCountLabel(moment.commentCount, copy),
                 ),
                 Semantics(
                   button: true,
                   enabled: !busy,
                   label: selected
-                      ? 'Remove pinned Voice Moment'
-                      : 'Pin this Voice Moment',
+                      ? copy.text(
+                          'Remove pinned Voice Moment',
+                          'Usuń przypięty Voice Moment',
+                        )
+                      : copy.text(
+                          'Pin this Voice Moment',
+                          'Przypnij ten Voice Moment',
+                        ),
                   onTap: busy ? null : onTap,
                   excludeSemantics: true,
                   child: FilledButton.tonalIcon(
@@ -420,7 +474,11 @@ class _MomentChoice extends StatelessWidget {
                                 : Icons.push_pin_outlined,
                             size: 16,
                           ),
-                    label: Text(selected ? 'Unpin' : 'Pin'),
+                    label: Text(
+                      selected
+                          ? copy.text('Unpin', 'Odepnij')
+                          : copy.text('Pin', 'Przypnij'),
+                    ),
                   ),
                 ),
               ],
@@ -433,20 +491,29 @@ class _MomentChoice extends StatelessWidget {
 }
 
 class _CountMeta extends StatelessWidget {
-  const _CountMeta({required this.icon, required this.value});
+  const _CountMeta({
+    required this.icon,
+    required this.value,
+    required this.semanticLabel,
+  });
 
   final IconData icon;
   final int value;
+  final String semanticLabel;
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(icon, color: _muted, size: 14),
-        const SizedBox(width: 4),
-        Text('$value', style: const TextStyle(color: _muted)),
-      ],
+    return Semantics(
+      label: semanticLabel,
+      excludeSemantics: true,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, color: _muted, size: 14),
+          const SizedBox(width: 4),
+          Text('$value', style: const TextStyle(color: _muted)),
+        ],
+      ),
     );
   }
 }
@@ -456,15 +523,16 @@ class _SelectedPill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
         color: _accent.withValues(alpha: .16),
         borderRadius: BorderRadius.circular(99),
       ),
-      child: const Text(
-        'PINNED',
-        style: TextStyle(
+      child: Text(
+        copy.text('PINNED', 'PRZYPIĘTY'),
+        style: const TextStyle(
           color: _accent,
           fontSize: 9,
           fontWeight: FontWeight.w900,
@@ -482,6 +550,7 @@ class _EmptyMoments extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     return Container(
       padding: const EdgeInsets.all(22),
       decoration: BoxDecoration(
@@ -493,16 +562,19 @@ class _EmptyMoments extends StatelessWidget {
         children: [
           const Icon(Icons.mic_none_rounded, color: _muted, size: 28),
           const SizedBox(height: 10),
-          const Text(
-            'Publish a Voice Moment before pinning a post.',
+          Text(
+            copy.text(
+              'Publish a Voice Moment before pinning a post.',
+              'Opublikuj Voice Moment, zanim przypniesz post.',
+            ),
             textAlign: TextAlign.center,
-            style: TextStyle(color: _muted, height: 1.4),
+            style: const TextStyle(color: _muted, height: 1.4),
           ),
           const SizedBox(height: 14),
           FilledButton.icon(
             onPressed: onCreate,
             icon: const Icon(Icons.mic_rounded),
-            label: const Text('Record a Moment'),
+            label: Text(copy.text('Record a Moment', 'Nagraj Voice Moment')),
           ),
         ],
       ),
@@ -518,6 +590,7 @@ class _ErrorBody extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(24),
@@ -531,7 +604,7 @@ class _ErrorBody extends StatelessWidget {
               const SizedBox(height: 12),
               TextButton(
                 onPressed: () => Navigator.of(context).pop(),
-                child: const Text('Go back'),
+                child: Text(copy.text('Go back', 'Wróć')),
               ),
             ],
           ],
@@ -539,4 +612,29 @@ class _ErrorBody extends StatelessWidget {
       ),
     );
   }
+}
+
+String _availableMomentsLabel(int count, AppLocalizations copy) {
+  if (!copy.isPolish) return '$count available';
+  return '$count ${_polishPlural(count, 'dostępny', 'dostępne', 'dostępnych')}';
+}
+
+String _likeCountLabel(int count, AppLocalizations copy) {
+  if (!copy.isPolish) return '$count likes';
+  return '$count ${_polishPlural(count, 'polubienie', 'polubienia', 'polubień')}';
+}
+
+String _commentCountLabel(int count, AppLocalizations copy) {
+  if (!copy.isPolish) return '$count comments';
+  return '$count ${_polishPlural(count, 'komentarz', 'komentarze', 'komentarzy')}';
+}
+
+String _polishPlural(int count, String one, String few, String many) {
+  if (count == 1) return one;
+  final tens = count % 100;
+  final units = count % 10;
+  if (tens < 12 || tens > 14) {
+    if (units >= 2 && units <= 4) return few;
+  }
+  return many;
 }

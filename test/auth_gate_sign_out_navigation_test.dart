@@ -4,10 +4,12 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_core_platform_interface/firebase_core_platform_interface.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:yovoice/app/app.dart';
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/features/auth/presentation/navigation/auth_epoch_route_resetter.dart';
 import 'package:yovoice/features/auth/presentation/screens/auth_gate.dart';
 import 'package:yovoice/features/auth/presentation/screens/login_screen.dart';
@@ -49,6 +51,27 @@ Route<void> _zeroDurationRoot(String label) {
     reverseTransitionDuration: Duration.zero,
     pageBuilder: (context, animation, secondaryAnimation) =>
         Scaffold(body: Center(child: Text(label))),
+  );
+}
+
+Widget _localizedAuthGate({
+  required Stream<User?> authStates,
+  required Locale locale,
+  Object? initialAuthError,
+}) {
+  return ProviderScope(
+    overrides: [authStateChangesProvider.overrideWith((ref) => authStates)],
+    child: MaterialApp(
+      locale: locale,
+      localizationsDelegates: const <LocalizationsDelegate<dynamic>>[
+        AppLocalizationsDelegate(),
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
+      supportedLocales: AppLocalizations.supportedLocales,
+      home: AuthGate(initialAuthError: initialAuthError),
+    ),
   );
 }
 
@@ -248,27 +271,63 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('an auth error paints its safe root on the first frame', (
+  testWidgets('an English auth error never paints raw bootstrap details', (
     tester,
   ) async {
     final auth = StreamController<User?>();
     addTearDown(auth.close);
+    const rawBackendDetail =
+        '[firebase_auth/internal-error] bootstrap-token=do-not-render';
 
     await tester.pumpWidget(
-      ProviderScope(
-        overrides: [
-          authStateChangesProvider.overrideWith((ref) => auth.stream),
-        ],
-        child: const MaterialApp(
-          home: AuthGate(initialAuthError: 'Authentication is unavailable.'),
-        ),
+      _localizedAuthGate(
+        authStates: auth.stream,
+        locale: const Locale('en'),
+        initialAuthError: StateError(rawBackendDetail),
       ),
     );
 
     expect(find.text('Something went wrong'), findsOneWidget);
-    expect(find.text('Authentication is unavailable.'), findsOneWidget);
+    expect(
+      find.text('Authentication could not be completed. Try again.'),
+      findsOneWidget,
+    );
+    expect(find.textContaining(rawBackendDetail), findsNothing);
+    expect(find.textContaining('bootstrap-token'), findsNothing);
     expect(find.byType(StartupLoadingScreen), findsNothing);
     expect(find.textContaining('permission-denied'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('a Polish auth-stream error is localized and redacted', (
+    tester,
+  ) async {
+    final auth = StreamController<User?>();
+    addTearDown(auth.close);
+    const rawBackendDetail = 'api-key=secret-value backend exploded';
+
+    await tester.pumpWidget(
+      _localizedAuthGate(authStates: auth.stream, locale: const Locale('pl')),
+    );
+    expect(find.byType(StartupLoadingScreen), findsOneWidget);
+
+    auth.addError(
+      FirebaseAuthException(code: 'internal-error', message: rawBackendDetail),
+      StackTrace.current,
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
+    await tester.pump(const Duration(milliseconds: 250));
+
+    expect(find.text('Coś poszło nie tak'), findsOneWidget);
+    expect(
+      find.text('Nie udało się ukończyć uwierzytelniania. Spróbuj ponownie.'),
+      findsOneWidget,
+    );
+    expect(find.textContaining(rawBackendDetail), findsNothing);
+    expect(find.textContaining('secret-value'), findsNothing);
+    expect(find.textContaining('FirebaseAuthException'), findsNothing);
+    expect(find.byType(StartupLoadingScreen), findsNothing);
     expect(tester.takeException(), isNull);
   });
 

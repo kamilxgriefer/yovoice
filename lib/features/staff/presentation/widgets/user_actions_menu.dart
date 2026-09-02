@@ -3,6 +3,7 @@ import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/helpers/error_messages.dart';
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/role_identity.dart';
 import 'package:yovoice/features/moderation/data/services/report_service.dart';
 import 'package:yovoice/features/moderation/presentation/widgets/report_reason_sheet.dart';
@@ -64,9 +65,10 @@ class UserActionsMenu extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (_isSelf) return const SizedBox.shrink();
+    final copy = AppLocalizations.of(context);
 
     return PopupMenuButton<_UserAction>(
-      tooltip: 'User actions',
+      tooltip: copy.text('User actions', 'Działania wobec użytkownika'),
       icon: const Icon(Icons.more_horiz_rounded, color: Color(0xFFB8AFC2)),
       color: const Color(0xFF171121),
       shape: RoundedRectangleBorder(
@@ -75,15 +77,20 @@ class UserActionsMenu extends StatelessWidget {
       ),
       itemBuilder: (context) => [
         // ------------------------------------------------ personal
-        const PopupMenuItem(
+        PopupMenuItem(
           value: _UserAction.report,
-          child: _Row(icon: Icons.flag_outlined, label: 'Report user'),
+          child: _Row(
+            icon: Icons.flag_outlined,
+            label: copy.text('Report user', 'Zgłoś użytkownika'),
+          ),
         ),
         PopupMenuItem(
           value: _UserAction.toggleBlock,
           child: _Row(
             icon: Icons.block_rounded,
-            label: isBlocked ? 'Unblock user' : 'Block user',
+            label: isBlocked
+                ? copy.text('Unblock user', 'Odblokuj użytkownika')
+                : copy.text('Block user', 'Zablokuj użytkownika'),
           ),
         ),
         PopupMenuItem(
@@ -92,71 +99,76 @@ class UserActionsMenu extends StatelessWidget {
             icon: isPersonallyMuted
                 ? Icons.volume_up_rounded
                 : Icons.volume_off_rounded,
-            label: isPersonallyMuted ? 'Unmute for me' : 'Mute for me',
+            label: isPersonallyMuted
+                ? copy.text('Unmute for me', 'Cofnij wyciszenie dla mnie')
+                : copy.text('Mute for me', 'Wycisz dla mnie'),
           ),
         ),
         // ------------------------------------------------ staff
         if (_hasStaffSection) const PopupMenuDivider(),
         if (capabilities.warnUsers)
-          const PopupMenuItem(
+          PopupMenuItem(
             value: _UserAction.warn,
             child: _Row(
               icon: Icons.report_gmailerrorred_rounded,
-              label: 'Warn user…',
+              label: copy.text('Warn user…', 'Ostrzeż użytkownika…'),
               staff: true,
             ),
           ),
         if (capabilities.suspendUsers) ...[
-          const PopupMenuItem(
+          PopupMenuItem(
             value: _UserAction.communicationMute,
             child: _Row(
               icon: Icons.mic_off_rounded,
-              label: 'Mute communication…',
+              label: copy.text('Mute communication…', 'Wycisz komunikację…'),
               staff: true,
             ),
           ),
-          const PopupMenuItem(
+          PopupMenuItem(
             value: _UserAction.suspend,
             child: _Row(
               icon: Icons.pause_circle_outline_rounded,
-              label: 'Suspend account…',
+              label: copy.text('Suspend account…', 'Zawieś konto…'),
               staff: true,
             ),
           ),
         ],
         if (capabilities.liftSuspensions) ...[
-          const PopupMenuItem(
+          PopupMenuItem(
             value: _UserAction.liftMute,
             child: _Row(
               icon: Icons.mic_rounded,
-              label: 'Lift communication mute…',
+              label: copy.text(
+                'Lift communication mute…',
+                'Zdejmij wyciszenie komunikacji…',
+              ),
               staff: true,
             ),
           ),
-          const PopupMenuItem(
+          PopupMenuItem(
             value: _UserAction.liftSuspension,
             child: _Row(
               icon: Icons.play_circle_outline_rounded,
-              label: 'Lift suspension…',
+              label: copy.text('Lift suspension…', 'Zdejmij zawieszenie…'),
               staff: true,
             ),
           ),
         ],
         if (capabilities.permanentBan) ...[
-          const PopupMenuItem(
+          PopupMenuItem(
             value: _UserAction.permanentBan,
             child: _Row(
               icon: Icons.gavel_rounded,
-              label: 'Ban permanently…',
+              label: copy.text('Ban permanently…', 'Zablokuj trwale…'),
               staff: true,
               color: RoleIdentity.ownerColor,
             ),
           ),
-          const PopupMenuItem(
+          PopupMenuItem(
             value: _UserAction.unban,
             child: _Row(
               icon: Icons.restart_alt_rounded,
-              label: 'Unban account…',
+              label: copy.text('Unban account…', 'Odblokuj konto…'),
               staff: true,
             ),
           ),
@@ -169,16 +181,29 @@ class UserActionsMenu extends StatelessWidget {
   // ------------------------------------------------------------ actions
 
   Future<void> _handle(BuildContext context, _UserAction action) async {
+    final copy = AppLocalizations.of(context);
     switch (action) {
       case _UserAction.report:
         await _report(context);
       case _UserAction.toggleBlock:
-        await _personal(context, () async {
-          final service = friendService ?? FriendService();
+        await _personal(
+          context,
+          () async {
+            final service = friendService ?? FriendService();
+            isBlocked
+                ? await service.unblockUser(targetUid)
+                : await service.blockUser(targetUid);
+          },
           isBlocked
-              ? await service.unblockUser(targetUid)
-              : await service.blockUser(targetUid);
-        }, isBlocked ? 'Unblocked $targetName.' : 'Blocked $targetName.');
+              ? copy.text(
+                  'Unblocked $targetName.',
+                  'Odblokowano użytkownika $targetName.',
+                )
+              : copy.text(
+                  'Blocked $targetName.',
+                  'Zablokowano użytkownika $targetName.',
+                ),
+        );
       case _UserAction.togglePersonalMute:
         await _personal(
           context,
@@ -194,56 +219,83 @@ class UserActionsMenu extends StatelessWidget {
                 : await ref.set({'mutedAt': FieldValue.serverTimestamp()});
           },
           isPersonallyMuted
-              ? 'Unmuted $targetName for you.'
-              : 'Muted $targetName for you only.',
+              ? copy.text(
+                  'Unmuted $targetName for you.',
+                  'Cofnięto wyciszenie użytkownika $targetName.',
+                )
+              : copy.text(
+                  'Muted $targetName for you only.',
+                  'Wyciszono użytkownika $targetName tylko dla Ciebie.',
+                ),
         );
       case _UserAction.warn:
         await _sanction(
           context,
-          title: 'Warn $targetName',
-          confirmLabel: 'Send warning',
+          title: copy.text(
+            'Warn $targetName',
+            'Ostrzeż użytkownika $targetName',
+          ),
+          confirmLabel: copy.text('Send warning', 'Wyślij ostrzeżenie'),
           durations: null,
           onConfirm: (reason, _) => _applySanction('warn', reason),
         );
       case _UserAction.communicationMute:
         await _sanction(
           context,
-          title: 'Mute communication — $targetName',
-          confirmLabel: 'Apply mute',
+          title: copy.text(
+            'Mute communication — $targetName',
+            'Wycisz komunikację — $targetName',
+          ),
+          confirmLabel: copy.text('Apply mute', 'Zastosuj wyciszenie'),
           durations: _durations(),
-          scopeNote: 'Scope: platform-wide public communication.',
+          scopeNote: copy.text(
+            'Scope: platform-wide public communication.',
+            'Zakres: komunikacja publiczna na całej platformie.',
+          ),
           onConfirm: (reason, hours) =>
               _applySanction('communicationMute', reason, hours),
         );
       case _UserAction.liftMute:
         await _sanction(
           context,
-          title: 'Lift communication mute — $targetName',
-          confirmLabel: 'Lift mute',
+          title: copy.text(
+            'Lift communication mute — $targetName',
+            'Zdejmij wyciszenie komunikacji — $targetName',
+          ),
+          confirmLabel: copy.text('Lift mute', 'Zdejmij wyciszenie'),
           durations: null,
           onConfirm: (reason, _) => _applySanction('liftMute', reason),
         );
       case _UserAction.suspend:
         await _sanction(
           context,
-          title: 'Suspend $targetName',
-          confirmLabel: 'Suspend account',
+          title: copy.text(
+            'Suspend $targetName',
+            'Zawieś konto użytkownika $targetName',
+          ),
+          confirmLabel: copy.text('Suspend account', 'Zawieś konto'),
           durations: _durations(forSuspension: true),
           onConfirm: (reason, hours) => _setBan(true, reason, hours),
         );
       case _UserAction.liftSuspension:
         await _sanction(
           context,
-          title: 'Lift suspension — $targetName',
-          confirmLabel: 'Lift suspension',
+          title: copy.text(
+            'Lift suspension — $targetName',
+            'Zdejmij zawieszenie — $targetName',
+          ),
+          confirmLabel: copy.text('Lift suspension', 'Zdejmij zawieszenie'),
           durations: null,
           onConfirm: (reason, _) => _setBan(false, reason, 0),
         );
       case _UserAction.permanentBan:
         await _sanction(
           context,
-          title: 'Ban $targetName permanently',
-          confirmLabel: 'Ban permanently',
+          title: copy.text(
+            'Ban $targetName permanently',
+            'Trwale zablokuj użytkownika $targetName',
+          ),
+          confirmLabel: copy.text('Ban permanently', 'Zablokuj trwale'),
           durations: null,
           destructive: true,
           onConfirm: (reason, _) => _setBan(true, reason, 0),
@@ -251,8 +303,11 @@ class UserActionsMenu extends StatelessWidget {
       case _UserAction.unban:
         await _sanction(
           context,
-          title: 'Unban $targetName',
-          confirmLabel: 'Unban account',
+          title: copy.text(
+            'Unban $targetName',
+            'Odblokuj konto użytkownika $targetName',
+          ),
+          confirmLabel: copy.text('Unban account', 'Odblokuj konto'),
           durations: null,
           onConfirm: (reason, _) => _setBan(false, reason, 0),
         );
@@ -311,14 +366,16 @@ class UserActionsMenu extends StatelessWidget {
   /// `note` is the reporter's own words and is left empty rather than
   /// filled with a sentence the reporter never wrote.
   Future<void> _report(BuildContext context) async {
+    final copy = AppLocalizations.of(context);
     final messenger = ScaffoldMessenger.maybeOf(context);
 
     final reason = await showReportReasonSheet(
       context: context,
-      title: 'Report $targetName',
-      subtitle:
-          'Your report goes to the YO Voice moderation team. $targetName '
-          'is not told who reported them.',
+      title: copy.text('Report $targetName', 'Zgłoś użytkownika $targetName'),
+      subtitle: copy.text(
+        'Your report goes to the YO Voice moderation team. $targetName is not told who reported them.',
+        'Zgłoszenie trafi do zespołu moderacji YO Voice. Użytkownik $targetName nie otrzyma informacji, kto go zgłosił.',
+      ),
     );
     if (reason == null) return;
 
@@ -331,7 +388,14 @@ class UserActionsMenu extends StatelessWidget {
         contextPath: 'users/$targetUid',
       );
       messenger?.showSnackBar(
-        SnackBar(content: Text('Reported $targetName. Our team will review.')),
+        SnackBar(
+          content: Text(
+            copy.text(
+              'Reported $targetName. Our team will review.',
+              'Zgłoszono użytkownika $targetName. Nasz zespół je sprawdzi.',
+            ),
+          ),
+        ),
       );
     } catch (error) {
       // ReportService throws StateErrors carrying finished sentences —
@@ -342,9 +406,12 @@ class UserActionsMenu extends StatelessWidget {
       messenger?.showSnackBar(
         SnackBar(
           content: Text(
-            intentionalOrFriendly(
-              error,
-              fallback: 'Your report could not be sent. Please try again.',
+            copy.text(
+              intentionalOrFriendly(
+                error,
+                fallback: 'Your report could not be sent. Please try again.',
+              ),
+              'Nie udało się wysłać zgłoszenia. Spróbuj ponownie.',
             ),
           ),
         ),
@@ -358,12 +425,13 @@ class UserActionsMenu extends StatelessWidget {
     String successMessage,
   ) async {
     final messenger = ScaffoldMessenger.maybeOf(context);
+    final copy = AppLocalizations.of(context);
     try {
       await act();
       messenger?.showSnackBar(SnackBar(content: Text(successMessage)));
       onChanged?.call();
     } catch (error) {
-      messenger?.showSnackBar(SnackBar(content: Text(_readable(error))));
+      messenger?.showSnackBar(SnackBar(content: Text(_readable(copy, error))));
     }
   }
 
@@ -392,10 +460,16 @@ class UserActionsMenu extends StatelessWidget {
     if (done == true) onChanged?.call();
   }
 
-  static String _readable(Object error) => error
-      .toString()
-      .replaceFirst(RegExp(r'^\[[^\]]*\]\s*'), '')
-      .replaceFirst('Exception: ', '');
+  static String _readable(AppLocalizations copy, Object error) {
+    return friendlyErrorMessage(
+      error,
+      fallback: copy.text(
+        'Could not complete this action. Please try again.',
+        'Nie udało się wykonać działania. Spróbuj ponownie.',
+      ),
+      copy: copy,
+    );
+  }
 }
 
 enum _UserAction {
@@ -498,11 +572,22 @@ class _SanctionDialogState extends State<SanctionDialog> {
       _reason.text.trim().length >= 3 &&
       (widget.durations == null || _hours != null);
 
-  String get _expiryLine {
+  String _expiryLine(AppLocalizations copy) {
     if (widget.durations == null || _hours == null) return '';
-    if (_hours == 0) return 'Expiry: never (indefinite).';
+    if (_hours == 0) {
+      return copy.text(
+        'Expiry: never (indefinite).',
+        'Wygaśnięcie: bezterminowo.',
+      );
+    }
     final expiry = DateTime.now().add(Duration(hours: _hours!));
-    return 'Expiry: ${_hours}h — until ${expiry.toLocal()}'.split('.').first;
+    final local = expiry.toLocal();
+    final hour = local.hour.toString().padLeft(2, '0');
+    final minute = local.minute.toString().padLeft(2, '0');
+    return copy.text(
+      'Expiry: ${_hours}h — until ${expiry.toLocal()}'.split('.').first,
+      'Wygaśnięcie: ${copy.calendarDate(local)}, $hour:$minute',
+    );
   }
 
   Future<void> _submit() async {
@@ -516,9 +601,10 @@ class _SanctionDialogState extends State<SanctionDialog> {
       if (mounted) Navigator.of(context).pop(true);
     } catch (error) {
       if (mounted) {
+        final copy = AppLocalizations.of(context);
         setState(() {
           _busy = false;
-          _error = UserActionsMenu._readable(error);
+          _error = UserActionsMenu._readable(copy, error);
         });
       }
     }
@@ -526,6 +612,7 @@ class _SanctionDialogState extends State<SanctionDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final accent = widget.destructive
         ? RoleIdentity.ownerColor
         : RoleIdentity.moderatorColor;
@@ -542,7 +629,10 @@ class _SanctionDialogState extends State<SanctionDialog> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'Target: ${widget.targetName}',
+              copy.text(
+                'Target: ${widget.targetName}',
+                'Użytkownik: ${widget.targetName}',
+              ),
               style: const TextStyle(
                 color: Color(0xFFE4DEED),
                 fontSize: 13.5,
@@ -563,9 +653,9 @@ class _SanctionDialogState extends State<SanctionDialog> {
               maxLength: 500,
               onChanged: (_) => setState(() {}),
               style: const TextStyle(color: Colors.white),
-              decoration: const InputDecoration(
-                labelText: 'Reason (required)',
-                labelStyle: TextStyle(color: Color(0xFFB8AFC2)),
+              decoration: InputDecoration(
+                labelText: copy.text('Reason (required)', 'Powód (wymagany)'),
+                labelStyle: const TextStyle(color: Color(0xFFB8AFC2)),
               ),
             ),
             if (widget.durations != null) ...[
@@ -573,15 +663,19 @@ class _SanctionDialogState extends State<SanctionDialog> {
                 initialValue: _hours,
                 dropdownColor: const Color(0xFF21172D),
                 style: const TextStyle(color: Colors.white),
-                decoration: const InputDecoration(
-                  labelText: 'Duration',
-                  labelStyle: TextStyle(color: Color(0xFFB8AFC2)),
+                decoration: InputDecoration(
+                  labelText: copy.text('Duration', 'Czas trwania'),
+                  labelStyle: const TextStyle(color: Color(0xFFB8AFC2)),
                 ),
                 items: [
                   for (final h in widget.durations!)
                     DropdownMenuItem(
                       value: h,
-                      child: Text(h == 0 ? 'Indefinite' : '$h hours'),
+                      child: Text(
+                        h == 0
+                            ? copy.text('Indefinite', 'Bezterminowo')
+                            : copy.text('$h hours', _polishHours(h)),
+                      ),
                     ),
                 ],
                 onChanged: _busy
@@ -590,7 +684,7 @@ class _SanctionDialogState extends State<SanctionDialog> {
               ),
               const SizedBox(height: 6),
               Text(
-                _expiryLine,
+                _expiryLine(copy),
                 style: const TextStyle(color: Color(0xFFA69CAF), fontSize: 12),
               ),
             ],
@@ -610,20 +704,37 @@ class _SanctionDialogState extends State<SanctionDialog> {
       actions: [
         TextButton(
           onPressed: _busy ? null : () => Navigator.of(context).pop(false),
-          child: const Text('Cancel'),
+          child: Text(copy.text('Cancel', 'Anuluj')),
         ),
         FilledButton(
           onPressed: _busy || !_valid ? null : _submit,
           style: FilledButton.styleFrom(backgroundColor: accent),
           child: _busy
-              ? const SizedBox(
-                  width: 16,
-                  height: 16,
-                  child: CircularProgressIndicator(strokeWidth: 2),
+              ? Semantics(
+                  label: copy.text('Applying sanction', 'Nakładanie sankcji'),
+                  child: const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
                 )
               : Text(widget.confirmLabel),
         ),
       ],
     );
   }
+}
+
+String _polishHours(int hours) {
+  final absolute = hours.abs();
+  final lastTwo = absolute % 100;
+  final unit = absolute == 1
+      ? 'godzina'
+      : lastTwo >= 12 && lastTwo <= 14
+      ? 'godzin'
+      : switch (absolute % 10) {
+          2 || 3 || 4 => 'godziny',
+          _ => 'godzin',
+        };
+  return '$hours $unit';
 }

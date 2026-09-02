@@ -99,8 +99,7 @@ Map<String, dynamic> _doc(
   'commentCount': comments,
   'isPublished': published,
   'createdAt': Timestamp.fromDate(createdAt ?? _created),
-  if (!withoutExpiry)
-    'expiresAt': Timestamp.fromDate(expiresAt ?? _expires),
+  if (!withoutExpiry) 'expiresAt': Timestamp.fromDate(expiresAt ?? _expires),
   'schemaVersion': 2,
   'status': 'published',
   'isDeleted': deleted,
@@ -291,20 +290,18 @@ void main() {
       // `expiresAt <= now` hides, `expiresAt > now` shows — the boundary
       // itself must fail closed or a Moment flickers back for one frame
       // at the stroke of its own death.
-      final result = MomentDiscoveryService.filterPlayable(
-        [_moment('boundary', expiresAt: _anchor)],
-        now: _anchor,
-      );
+      final result = MomentDiscoveryService.filterPlayable([
+        _moment('boundary', expiresAt: _anchor),
+      ], now: _anchor);
       expect(result.kept, isEmpty);
       expect(result.drops['boundary'], MomentDropReason.expired);
     });
 
     test('the sweeper\'s mark is final: status expired hides a Moment even '
         'when its expiresAt is still in the future', () {
-      final result = MomentDiscoveryService.filterPlayable(
-        [_moment('swept', status: 'expired')],
-        now: _anchor,
-      );
+      final result = MomentDiscoveryService.filterPlayable([
+        _moment('swept', status: 'expired'),
+      ], now: _anchor);
       expect(result.kept, isEmpty);
       expect(result.drops['swept'], MomentDropReason.expired);
     });
@@ -323,10 +320,9 @@ void main() {
       final legacy = _moment('old', schemaVersion: 0, status: 'legacy');
       expect(legacy.isCanonicalPublished, isFalse);
       expect(
-        MomentDiscoveryService.filterPlayable(
-          [legacy],
-          now: _anchor,
-        ).kept.map((m) => m.id),
+        MomentDiscoveryService.filterPlayable([
+          legacy,
+        ], now: _anchor).kept.map((m) => m.id),
         ['old'],
       );
     });
@@ -372,37 +368,43 @@ void main() {
       expect(feed.moments.map((m) => m.id), ['live']);
     });
 
-    test('expired documents never enter the feed and are recorded as '
-        'expired drops; an expiry-less document is PERMANENT and stays', () async {
-      // ADAPTED for the amended availability contract: a document with no
-      // expiresAt used to be dropped as legacy-expired (ADR-101); it now
-      // means "keep until deleted" and must surface like any live Moment.
-      final harness = build();
-      await harness.db.collection('voiceMoments').doc('live').set(_doc('live'));
-      await harness.db
-          .collection('voiceMoments')
-          .doc('dead')
-          .set(
-            _doc(
-              'dead',
-              author: 'b',
-              createdAt: _anchor.subtract(const Duration(hours: 30)),
-              expiresAt: _anchor.subtract(const Duration(hours: 6)),
-            ),
-          );
-      await harness.db
-          .collection('voiceMoments')
-          .doc('forever')
-          .set(_doc('forever', author: 'c', withoutExpiry: true));
+    test(
+      'expired documents never enter the feed and are recorded as '
+      'expired drops; an expiry-less document is PERMANENT and stays',
+      () async {
+        // ADAPTED for the amended availability contract: a document with no
+        // expiresAt used to be dropped as legacy-expired (ADR-101); it now
+        // means "keep until deleted" and must surface like any live Moment.
+        final harness = build();
+        await harness.db
+            .collection('voiceMoments')
+            .doc('live')
+            .set(_doc('live'));
+        await harness.db
+            .collection('voiceMoments')
+            .doc('dead')
+            .set(
+              _doc(
+                'dead',
+                author: 'b',
+                createdAt: _anchor.subtract(const Duration(hours: 30)),
+                expiresAt: _anchor.subtract(const Duration(hours: 6)),
+              ),
+            );
+        await harness.db
+            .collection('voiceMoments')
+            .doc('forever')
+            .set(_doc('forever', author: 'c', withoutExpiry: true));
 
-      final feed = await harness.service.loadDiscoveryFeed(seed: 1);
-      expect(feed.moments.map((m) => m.id).toSet(), {'live', 'forever'});
-      expect(feed.drops['dead'], MomentDropReason.expired);
-      expect(feed.drops.containsKey('forever'), isFalse);
-      // All three WERE fetched: the empty-state arithmetic depends on
-      // the distinction between "not published" and "published but dead".
-      expect(feed.fetchedCount, 3);
-    });
+        final feed = await harness.service.loadDiscoveryFeed(seed: 1);
+        expect(feed.moments.map((m) => m.id).toSet(), {'live', 'forever'});
+        expect(feed.drops['dead'], MomentDropReason.expired);
+        expect(feed.drops.containsKey('forever'), isFalse);
+        // All three WERE fetched: the empty-state arithmetic depends on
+        // the distinction between "not published" and "published but dead".
+        expect(feed.fetchedCount, 3);
+      },
+    );
 
     test('an EMPTY corpus and an ALL-UNPLAYABLE corpus are different '
         'states — collapsing them hides an upload failure', () async {
@@ -585,7 +587,9 @@ void main() {
 
     testWidgets('an all-EXPIRED corpus is the third distinct empty state: '
         'not "nobody posted", not "pipeline broken" — just chosen '
-        'availability doing its job, with the recorder offered', (tester) async {
+        'availability doing its job, with the recorder offered', (
+      tester,
+    ) async {
       await tester.pumpWidget(
         host(
           MomentsScreen(
@@ -673,10 +677,7 @@ void main() {
       // The list: one row per Moment, each with a real play control.
       expect(find.byKey(const ValueKey('moment-row-one')), findsOneWidget);
       expect(find.byKey(const ValueKey('moment-row-two')), findsOneWidget);
-      expect(
-        find.byKey(const ValueKey('moment-row-play-one')),
-        findsOneWidget,
-      );
+      expect(find.byKey(const ValueKey('moment-row-play-one')), findsOneWidget);
       // The real count on the row that owns it…
       expect(
         find.descendant(

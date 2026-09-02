@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/space_identity.dart';
 import 'package:yovoice/features/clubs/data/models/club.dart';
@@ -20,6 +21,7 @@ class ClubCreatedScreen extends StatelessWidget {
     final isFamily = club.isFamilyRoom;
     final identity = isFamily ? SpaceIdentity.family : SpaceIdentity.club;
     final identityVisuals = identity.resolve(colors.brightness);
+    final copy = AppLocalizations.of(context);
     return Scaffold(
       key: const ValueKey('club-created-screen'),
       backgroundColor: palette.background,
@@ -69,8 +71,14 @@ class ClubCreatedScreen extends StatelessWidget {
                       const SizedBox(height: 28),
                       Text(
                         isFamily
-                            ? 'Your Family Room is ready'
-                            : 'Your Club is ready',
+                            ? copy.text(
+                                'Your Family Room is ready',
+                                'Twój pokój rodzinny jest gotowy',
+                              )
+                            : copy.text(
+                                'Your Club is ready',
+                                'Twój klub jest gotowy',
+                              ),
                         textAlign: TextAlign.center,
                         style: TextStyle(
                           color: palette.textPrimary,
@@ -92,8 +100,14 @@ class ClubCreatedScreen extends StatelessWidget {
                       const SizedBox(height: 14),
                       Text(
                         isFamily
-                            ? 'Family chat, announcements and Family Lounge have been created. You are the Organizer.'
-                            : 'General chat, announcements and Club Lounge have been created. You are the Owner.',
+                            ? copy.text(
+                                'Family chat, announcements and Family Lounge have been created. You are the Organizer.',
+                                'Utworzono czat rodzinny, ogłoszenia i rodzinny pokój głosowy. Jesteś organizatorem.',
+                              )
+                            : copy.text(
+                                'General chat, announcements and Club Lounge have been created. You are the Owner.',
+                                'Utworzono czat ogólny, ogłoszenia i klubowy pokój głosowy. Jesteś właścicielem.',
+                              ),
                         textAlign: TextAlign.center,
                         style: TextStyle(
                           color: palette.textSecondary,
@@ -113,22 +127,24 @@ class ClubCreatedScreen extends StatelessWidget {
                           children: [
                             _SummaryRow(
                               icon: Icons.workspace_premium_rounded,
-                              label: 'Your role',
-                              value: isFamily ? 'Organizer' : 'Owner',
+                              label: copy.text('Your role', 'Twoja rola'),
+                              value: isFamily
+                                  ? copy.text('Organizer', 'Organizator')
+                                  : copy.text('Owner', 'Właściciel'),
                               accent: identityVisuals.foreground,
                             ),
                             Divider(color: palette.border, height: 25),
                             _SummaryRow(
                               icon: Icons.language_rounded,
-                              label: 'Language',
-                              value: club.defaultLanguage,
+                              label: copy.text('Language', 'Język'),
+                              value: _languageLabel(club.defaultLanguage, copy),
                               accent: identityVisuals.foreground,
                             ),
                             Divider(color: palette.border, height: 25),
                             _SummaryRow(
                               icon: Icons.lock_outline_rounded,
-                              label: 'Privacy',
-                              value: _privacyLabel(club.privacy),
+                              label: copy.text('Privacy', 'Prywatność'),
+                              value: _privacyLabel(club.privacy, copy),
                               accent: identityVisuals.foreground,
                             ),
                           ],
@@ -161,7 +177,12 @@ class ClubCreatedScreen extends StatelessWidget {
                                 : Icons.arrow_forward_rounded,
                           ),
                           label: Text(
-                            isFamily ? 'Open Family Room' : 'Open Club',
+                            isFamily
+                                ? copy.text(
+                                    'Open Family Room',
+                                    'Otwórz pokój rodzinny',
+                                  )
+                                : copy.text('Open Club', 'Otwórz klub'),
                             style: const TextStyle(
                               fontSize: 17,
                               fontWeight: FontWeight.w900,
@@ -180,11 +201,31 @@ class ClubCreatedScreen extends StatelessWidget {
     );
   }
 
-  static String _privacyLabel(ClubPrivacy privacy) {
+  static String _privacyLabel(ClubPrivacy privacy, AppLocalizations copy) {
     return switch (privacy) {
-      ClubPrivacy.public => 'Public',
-      ClubPrivacy.private => 'Private',
-      ClubPrivacy.inviteOnly => 'Invite only',
+      ClubPrivacy.public => copy.text('Public', 'Publiczny'),
+      ClubPrivacy.private => copy.text('Private', 'Prywatny'),
+      ClubPrivacy.inviteOnly => copy.text(
+        'Invite only',
+        'Tylko na zaproszenie',
+      ),
+    };
+  }
+
+  static String _languageLabel(String language, AppLocalizations copy) {
+    if (!copy.isPolish) return language;
+    return switch (language) {
+      'English' => 'Angielski',
+      'Polish' => 'Polski',
+      'Dutch' => 'Niderlandzki',
+      'German' => 'Niemiecki',
+      'Spanish' => 'Hiszpański',
+      'French' => 'Francuski',
+      'Italian' => 'Włoski',
+      'Portuguese' => 'Portugalski',
+      'Japanese' => 'Japoński',
+      'Korean' => 'Koreański',
+      _ => language,
     };
   }
 }

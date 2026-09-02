@@ -3,6 +3,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/helpers/error_messages.dart';
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/achievements/data/achievement_catalog.dart';
@@ -87,13 +88,21 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
     final user = _firebaseAuth.currentUser;
     if (user == null) {
-      _showMessage('You must be signed in first.', isError: true);
+      _showMessage(
+        AppLocalizations.of(
+          context,
+        ).text('You must be signed in first.', 'Najpierw się zaloguj.'),
+        isError: true,
+      );
       return;
     }
 
     if (!_isOwnerAccount) {
       _showMessage(
-        'Only grieferxgriefer@gmail.com can activate SuperAdmin.',
+        AppLocalizations.of(context).text(
+          'Only grieferxgriefer@gmail.com can activate SuperAdmin.',
+          'Tylko grieferxgriefer@gmail.com może aktywować rolę SuperAdmin.',
+        ),
         isError: true,
       );
       return;
@@ -114,19 +123,41 @@ class _ProfileScreenState extends State<ProfileScreen> {
       });
 
       _showMessage(
-        'SuperAdmin activated successfully. Your permissions are ready.',
+        AppLocalizations.of(context).text(
+          'SuperAdmin activated successfully. Your permissions are ready.',
+          'Rola SuperAdmin została aktywowana. Uprawnienia są gotowe.',
+        ),
       );
     } on FirebaseFunctionsException catch (error) {
       if (!mounted) return;
+      final copy = AppLocalizations.of(context);
 
       _showMessage(
-        error.message ?? 'Could not activate SuperAdmin.',
+        friendlyErrorMessage(
+          error,
+          fallback: copy.text(
+            'Could not activate SuperAdmin.',
+            'Nie udało się aktywować roli SuperAdmin.',
+          ),
+          copy: copy,
+        ),
         isError: true,
       );
     } catch (error) {
       if (!mounted) return;
+      final copy = AppLocalizations.of(context);
 
-      _showMessage('Could not activate SuperAdmin: $error', isError: true);
+      _showMessage(
+        friendlyErrorMessage(
+          error,
+          fallback: copy.text(
+            'Could not activate SuperAdmin.',
+            'Nie udało się aktywować roli SuperAdmin.',
+          ),
+          copy: copy,
+        ),
+        isError: true,
+      );
     } finally {
       if (mounted) {
         setState(() => _isActivatingSuperAdmin = false);
@@ -150,16 +181,28 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     return StreamBuilder<UserProfile>(
       stream: _profileService.watchCurrentProfile(),
       builder: (context, snapshot) {
         if (snapshot.hasError) {
-          return _ErrorView(message: friendlyErrorMessage(snapshot.error!));
+          return _ErrorView(
+            message: copy.text(
+              friendlyErrorMessage(snapshot.error!),
+              'Nie udało się wczytać profilu. Spróbuj ponownie.',
+            ),
+          );
         }
         final profile = snapshot.data;
         if (profile == null) {
-          return const Scaffold(
-            body: Center(child: CircularProgressIndicator()),
+          return Scaffold(
+            body: Semantics(
+              liveRegion: true,
+              label: copy.text('Loading profile', 'Wczytywanie profilu'),
+              child: const ExcludeSemantics(
+                child: Center(child: CircularProgressIndicator()),
+              ),
+            ),
           );
         }
 
@@ -363,21 +406,22 @@ class _SocialStats extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     return _Panel(
       padding: const EdgeInsets.symmetric(vertical: 18, horizontal: 8),
       child: Row(
         children: [
-          _Stat(value: profile.friendCount, label: 'Friends'),
+          _Stat(value: profile.friendCount, label: copy.friends),
           const _Divider(),
           _Stat(
             value: profile.followerCount,
-            label: 'Followers',
+            label: copy.text('Followers', 'Obserwujący'),
             onTap: onFollowers,
           ),
           const _Divider(),
           _Stat(
             value: profile.followingCount,
-            label: 'Following',
+            label: copy.text('Following', 'Obserwowani'),
             onTap: onFollowing,
           ),
         ],
@@ -456,6 +500,7 @@ class ProfileVoiceIdentityCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
     final vibe = profile.statusMessage.trim();
     final bio = profile.bio.trim();
@@ -471,11 +516,17 @@ class ProfileVoiceIdentityCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const _Header(icon: Icons.language_rounded, title: 'Voice identity'),
+          _Header(
+            icon: Icons.language_rounded,
+            title: copy.text('Voice identity', 'Tożsamość głosowa'),
+          ),
           const SizedBox(height: 13),
           if (!hasIdentity)
             Text(
-              'Add your vibe, bio or languages so people know you.',
+              copy.text(
+                'Add your vibe, bio or languages so people know you.',
+                'Dodaj swój Vibe, opis lub języki, aby inni mogli Cię lepiej poznać.',
+              ),
               style: TextStyle(color: palette.textSecondary),
             )
           else ...[
@@ -513,7 +564,10 @@ class ProfileVoiceIdentityCard extends StatelessWidget {
                   ),
                 if (profile.nativeLanguage.isNotEmpty)
                   _Chip(
-                    'Native: ${profile.nativeLanguage}',
+                    copy.text(
+                      'Native: ${profile.nativeLanguage}',
+                      'Ojczysty: ${profile.nativeLanguage}',
+                    ),
                     Icons.record_voice_over_rounded,
                     tone: _IdentityChipTone.voice,
                   ),
@@ -526,7 +580,7 @@ class ProfileVoiceIdentityCard extends StatelessWidget {
                 ),
                 ...profile.learningLanguages.map(
                   (item) => _Chip(
-                    'Learning $item',
+                    copy.text('Learning $item', 'Uczę się: $item'),
                     Icons.school_rounded,
                     tone: _IdentityChipTone.learning,
                   ),
@@ -559,6 +613,7 @@ class _CommunitiesCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
     final total = communities.length + clubs.length;
     return _Panel(
@@ -567,7 +622,7 @@ class _CommunitiesCard extends StatelessWidget {
         children: [
           _Header(
             icon: Icons.hub_rounded,
-            title: 'My communities',
+            title: copy.text('My communities', 'Moje społeczności'),
             action: total == 0 ? null : '$total',
           ),
           const SizedBox(height: 14),
@@ -580,7 +635,10 @@ class _CommunitiesCard extends StatelessWidget {
             )
           else if (total == 0)
             Text(
-              'Your communities and clubs will appear here after you join or create one.',
+              copy.text(
+                'Your communities and clubs will appear here after you join or create one.',
+                'Społeczności i kluby pojawią się tutaj, gdy do nich dołączysz lub je utworzysz.',
+              ),
               style: TextStyle(color: palette.textSecondary, height: 1.4),
             )
           else
@@ -596,9 +654,9 @@ class _CommunitiesCard extends StatelessWidget {
                         name: club.name,
                         imageUrl: club.avatarUrl,
                         subtitle:
-                            '${club.memberCount} members'
-                            '${club.ownerId == currentUid ? ' · Owner' : ''}',
-                        badge: 'CLUB',
+                            '${_memberCount(copy, club.memberCount)}'
+                            '${club.ownerId == currentUid ? copy.text(' · Owner', ' · Właściciel') : ''}',
+                        badge: copy.text('CLUB', 'KLUB'),
                         isOwner: club.ownerId == currentUid,
                         onTap: () => onOpenClub(club),
                       ),
@@ -611,9 +669,11 @@ class _CommunitiesCard extends StatelessWidget {
                         name: room.name,
                         imageUrl: room.imageUrl,
                         subtitle: room.isLive
-                            ? '${room.participantCount} live now'
-                            : '${room.memberCount} members',
-                        badge: room.isLive ? 'LIVE' : 'ROOM',
+                            ? _liveCount(copy, room.participantCount)
+                            : _memberCount(copy, room.memberCount),
+                        badge: room.isLive
+                            ? copy.text('LIVE', 'NA ŻYWO')
+                            : copy.text('ROOM', 'POKÓJ'),
                         onTap: () => onOpen(room),
                       ),
                     ),
@@ -624,6 +684,20 @@ class _CommunitiesCard extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  String _memberCount(AppLocalizations copy, int count) =>
+      copy.text('$count members', count == 1 ? '1 członek' : '$count członków');
+
+  String _liveCount(AppLocalizations copy, int count) {
+    final polish = count == 1
+        ? '1 osoba na żywo'
+        : (count % 10 >= 2 &&
+              count % 10 <= 4 &&
+              (count % 100 < 12 || count % 100 > 14))
+        ? '$count osoby na żywo'
+        : '$count osób na żywo';
+    return copy.text('$count live now', polish);
   }
 }
 
@@ -746,6 +820,7 @@ class _AchievementsCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
     final next = AchievementCatalog.all
         .where((item) => !profile.unlockedTitleIds.contains(item.id))
@@ -765,8 +840,11 @@ class _AchievementsCard extends StatelessWidget {
           children: [
             _Header(
               icon: Icons.workspace_premium_rounded,
-              title: 'Titles & achievements',
-              action: '${unlocked.length} unlocked',
+              title: copy.text('Titles & achievements', 'Tytuły i osiągnięcia'),
+              action: copy.text(
+                '${unlocked.length} unlocked',
+                '${unlocked.length} odblokowanych',
+              ),
             ),
             const SizedBox(height: 14),
             if (unlocked.isNotEmpty)
@@ -780,7 +858,7 @@ class _AchievementsCard extends StatelessWidget {
               )
             else if (next != null) ...[
               Text(
-                'Next: ${next.title}',
+                copy.text('Next: ${next.title}', 'Następny: ${next.title}'),
                 style: TextStyle(
                   color: palette.textPrimary,
                   fontWeight: FontWeight.w800,
@@ -797,7 +875,10 @@ class _AchievementsCard extends StatelessWidget {
               ),
               const SizedBox(height: 7),
               Text(
-                '${profile.achievementStats[next.metric] ?? 0} / ${next.threshold} • ${next.description}',
+                copy.text(
+                  '${profile.achievementStats[next.metric] ?? 0} / ${next.threshold} • ${next.description}',
+                  '${profile.achievementStats[next.metric] ?? 0} / ${next.threshold} • Postęp do następnego osiągnięcia',
+                ),
                 style: TextStyle(color: palette.textSecondary, fontSize: 12),
               ),
             ],
@@ -829,13 +910,14 @@ class _AccountCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     return _Panel(
       padding: EdgeInsets.zero,
       child: Column(
         children: [
           _Option(
             icon: Icons.edit_outlined,
-            title: 'Edit profile',
+            title: copy.text('Edit profile', 'Edytuj profil'),
             onTap: onEdit,
           ),
           if (showSuperAdminActivation)
@@ -847,25 +929,28 @@ class _AccountCard extends StatelessWidget {
             ),
           _Option(
             icon: Icons.logout_rounded,
-            title: 'Log out',
+            title: copy.text('Log out', 'Wyloguj się'),
             destructive: true,
             showDivider: false,
             onTap: () async {
               final shouldLogout = await showDialog<bool>(
                 context: context,
                 builder: (context) => AlertDialog(
-                  title: const Text('Log out?'),
-                  content: const Text(
-                    'You will need to sign in again to use YO Voice.',
+                  title: Text(copy.text('Log out?', 'Wylogować się?')),
+                  content: Text(
+                    copy.text(
+                      'You will need to sign in again to use YO Voice.',
+                      'Aby ponownie korzystać z YO Voice, trzeba będzie się zalogować.',
+                    ),
                   ),
                   actions: [
                     TextButton(
                       onPressed: () => Navigator.pop(context, false),
-                      child: const Text('Cancel'),
+                      child: Text(copy.text('Cancel', 'Anuluj')),
                     ),
                     FilledButton(
                       onPressed: () => Navigator.pop(context, true),
-                      child: const Text('Log out'),
+                      child: Text(copy.text('Log out', 'Wyloguj się')),
                     ),
                   ],
                 ),
@@ -894,6 +979,7 @@ class _SuperAdminOption extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
     return Column(
@@ -916,7 +1002,9 @@ class _SuperAdminOption extends StatelessWidget {
             ),
           ),
           title: Text(
-            isActivated ? 'SuperAdmin active' : 'Activate SuperAdmin',
+            isActivated
+                ? copy.text('SuperAdmin active', 'SuperAdmin aktywny')
+                : copy.text('Activate SuperAdmin', 'Aktywuj SuperAdmin'),
             style: TextStyle(
               color: palette.textPrimary,
               fontWeight: FontWeight.w900,
@@ -924,8 +1012,11 @@ class _SuperAdminOption extends StatelessWidget {
           ),
           subtitle: Text(
             isActivated
-                ? 'Role: $currentRole'
-                : 'Securely activate the owner role for this account.',
+                ? copy.text('Role: $currentRole', 'Rola: $currentRole')
+                : copy.text(
+                    'Securely activate the owner role for this account.',
+                    'Bezpiecznie aktywuj rolę właściciela dla tego konta.',
+                  ),
             style: TextStyle(color: palette.textSecondary, fontSize: 12),
           ),
           trailing: isLoading

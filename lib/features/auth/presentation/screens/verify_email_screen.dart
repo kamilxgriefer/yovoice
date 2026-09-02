@@ -3,7 +3,9 @@ import 'dart:async';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/features/auth/data/auth_service.dart';
+import 'package:yovoice/features/auth/presentation/auth_error_localizer.dart';
 import 'package:yovoice/shared/widgets/backgrounds/animated_waves_background.dart';
 import 'package:yovoice/shared/widgets/theme/yo_immersive_dark_surface.dart';
 
@@ -82,11 +84,22 @@ class _VerifyEmailScreenState extends State<VerifyEmailScreen> {
     try {
       await _authService.resendVerificationEmail();
       if (!mounted) return;
-      setState(() => _successMessage = 'Verification email sent.');
+      setState(
+        () => _successMessage = AppLocalizations.of(context).text(
+          'Verification email sent.',
+          'Wiadomość weryfikacyjna została wysłana.',
+        ),
+      );
       _startCooldown();
     } catch (error) {
       if (!mounted) return;
-      setState(() => _errorMessage = _authService.getErrorMessage(error));
+      setState(
+        () => _errorMessage = localizedAuthError(
+          context,
+          error,
+          authService: _authService,
+        ),
+      );
     } finally {
       if (mounted) setState(() => _sending = false);
     }
@@ -117,7 +130,25 @@ class _VerifyEmailScreenState extends State<VerifyEmailScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final email = _user?.email ?? 'your email';
+    final copy = AppLocalizations.of(context);
+    final email =
+        _user?.email ?? copy.text('your email address', 'Twój adres e-mail');
+    final verificationIntro = copy
+        .text(
+          'We sent a confirmation link to {email}. Open it to verify your account.',
+          'Wysłaliśmy link potwierdzający na adres {email}. Otwórz go, aby zweryfikować konto.',
+        )
+        .replaceAll('{email}', email);
+    final resendLabel = _sending
+        ? copy.text('Sending…', 'Wysyłanie…')
+        : _cooldownSeconds > 0
+        ? copy
+              .text(
+                'Resend email ({seconds}s)',
+                'Wyślij ponownie ({seconds} s)',
+              )
+              .replaceAll('{seconds}', '$_cooldownSeconds')
+        : copy.text('Resend email', 'Wyślij wiadomość ponownie');
 
     final content = Scaffold(
       body: Stack(
@@ -169,7 +200,15 @@ class _VerifyEmailScreenState extends State<VerifyEmailScreen> {
                       ),
                       const SizedBox(height: 28),
                       Text(
-                        _verified ? 'Email verified' : 'Verify your email',
+                        _verified
+                            ? copy.text(
+                                'Email verified',
+                                'Adres e-mail zweryfikowany',
+                              )
+                            : copy.text(
+                                'Verify your email',
+                                'Zweryfikuj adres e-mail',
+                              ),
                         textAlign: TextAlign.center,
                         style: const TextStyle(
                           color: Colors.white,
@@ -180,9 +219,11 @@ class _VerifyEmailScreenState extends State<VerifyEmailScreen> {
                       const SizedBox(height: 10),
                       Text(
                         _verified
-                            ? 'You\'re all set. Taking you onward…'
-                            : 'We sent a confirmation link to $email. '
-                                  'Open it to verify your account.',
+                            ? copy.text(
+                                'You\'re all set. Taking you onward…',
+                                'Wszystko gotowe. Przechodzimy dalej…',
+                              )
+                            : verificationIntro,
                         textAlign: TextAlign.center,
                         style: const TextStyle(
                           color: Color(0xFFB8B1C8),
@@ -205,11 +246,7 @@ class _VerifyEmailScreenState extends State<VerifyEmailScreen> {
                         ],
                         const SizedBox(height: 28),
                         _PrimaryButton(
-                          label: _sending
-                              ? 'Sending…'
-                              : _cooldownSeconds > 0
-                              ? 'Resend email (${_cooldownSeconds}s)'
-                              : 'Resend email',
+                          label: resendLabel,
                           isLoading: _sending,
                           onPressed: (_sending || _cooldownSeconds > 0)
                               ? null
@@ -218,17 +255,20 @@ class _VerifyEmailScreenState extends State<VerifyEmailScreen> {
                         const SizedBox(height: 12),
                         _SecondaryButton(
                           label: _checking
-                              ? 'Checking…'
-                              : 'I have verified my email',
+                              ? copy.text('Checking…', 'Sprawdzanie…')
+                              : copy.text(
+                                  'I have verified my email',
+                                  'Adres e-mail jest już zweryfikowany',
+                                ),
                           isLoading: _checking,
                           onPressed: _checking ? null : () => _checkNow(),
                         ),
                         const SizedBox(height: 20),
                         TextButton(
                           onPressed: _skip,
-                          child: const Text(
-                            'Skip for now',
-                            style: TextStyle(
+                          child: Text(
+                            copy.text('Skip for now', 'Pomiń na razie'),
+                            style: const TextStyle(
                               color: Color(0xFF9189A6),
                               fontSize: 14,
                               fontWeight: FontWeight.w600,

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/features/home/presentation/screens/home_screen.dart';
 
 /// The polished full-screen state a participant lands on when the room
@@ -30,6 +31,7 @@ class RoomEndedState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     return Container(
       color: const Color(0xF20A0710),
       alignment: Alignment.center,
@@ -48,9 +50,9 @@ class RoomEndedState extends StatelessWidget {
             child: Icon(Icons.podcasts_rounded, color: accent, size: 38),
           ),
           const SizedBox(height: 22),
-          const Text(
-            'This room has ended',
-            style: TextStyle(
+          Text(
+            copy.text('This room has ended', 'Ten pokój już się zakończył'),
+            style: const TextStyle(
               color: Colors.white,
               fontSize: 22,
               fontWeight: FontWeight.w900,
@@ -59,7 +61,10 @@ class RoomEndedState extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           Text(
-            'Thanks for listening to "$roomName".',
+            copy.text(
+              'Thanks for listening to "$roomName".',
+              'Dziękujemy za udział w pokoju „$roomName”.',
+            ),
             textAlign: TextAlign.center,
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
@@ -75,17 +80,17 @@ class RoomEndedState extends StatelessWidget {
                 borderRadius: BorderRadius.circular(16),
               ),
             ),
-            child: const Text(
-              'Discover more rooms',
-              style: TextStyle(fontWeight: FontWeight.w800),
+            child: Text(
+              copy.text('Discover more rooms', 'Odkryj więcej pokoi'),
+              style: const TextStyle(fontWeight: FontWeight.w800),
             ),
           ),
           const SizedBox(height: 10),
           TextButton(
             onPressed: () => _backToHome(context),
-            child: const Text(
-              'Back to Home',
-              style: TextStyle(color: Color(0xFFB9AECB)),
+            child: Text(
+              copy.text('Back to Home', 'Wróć na stronę główną'),
+              style: const TextStyle(color: Color(0xFFB9AECB)),
             ),
           ),
         ],

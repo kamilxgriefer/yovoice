@@ -286,9 +286,7 @@ void main() {
       expect(find.byKey(const ValueKey('moment-row-mine-1')), findsOneWidget);
       await tester.tap(find.byKey(const ValueKey('moment-row-menu-mine-1')));
       await tester.pumpAndSettle();
-      await tester.tap(
-        find.byKey(const ValueKey('moment-row-delete-mine-1')),
-      );
+      await tester.tap(find.byKey(const ValueKey('moment-row-delete-mine-1')));
       await tester.pumpAndSettle();
 
       // The exact destructive copy.
@@ -301,10 +299,7 @@ void main() {
       expect(find.byKey(const ValueKey('moment-row-mine-1')), findsNothing);
       expect(find.byKey(const ValueKey('moment-row-mine-2')), findsOneWidget);
       expect(find.text('Voice Moment deleted.'), findsOneWidget);
-      final snapshot = await db
-          .collection('voiceMoments')
-          .doc('mine-1')
-          .get();
+      final snapshot = await db.collection('voiceMoments').doc('mine-1').get();
       expect(snapshot.exists, isFalse);
     });
 
@@ -317,9 +312,7 @@ void main() {
 
       await tester.tap(find.byKey(const ValueKey('moment-row-menu-mine-1')));
       await tester.pumpAndSettle();
-      await tester.tap(
-        find.byKey(const ValueKey('moment-row-delete-mine-1')),
-      );
+      await tester.tap(find.byKey(const ValueKey('moment-row-delete-mine-1')));
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('moment-delete-confirm')));
       await tester.pumpAndSettle();
@@ -338,9 +331,7 @@ void main() {
       await pumpFollowing(
         tester,
         moments: moments,
-        social: [
-          _moment('theirs', author: 'friend', authorName: 'Ola'),
-        ],
+        social: [_moment('theirs', author: 'friend', authorName: 'Ola')],
       );
 
       await tester.tap(find.byKey(const ValueKey('moment-row-menu-theirs')));
@@ -369,10 +360,7 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 400));
 
-      expect(
-        find.byKey(const ValueKey('story-delete-mine-1')),
-        findsOneWidget,
-      );
+      expect(find.byKey(const ValueKey('story-delete-mine-1')), findsOneWidget);
       await tester.tap(find.byKey(const ValueKey('story-delete-mine-1')));
       await tester.pumpAndSettle();
 
@@ -385,10 +373,7 @@ void main() {
       // the row.
       expect(find.byKey(const ValueKey('story-close')), findsNothing);
       expect(find.byKey(const ValueKey('moment-row-mine-1')), findsNothing);
-      final snapshot = await db
-          .collection('voiceMoments')
-          .doc('mine-1')
-          .get();
+      final snapshot = await db.collection('voiceMoments').doc('mine-1').get();
       expect(snapshot.exists, isFalse);
     });
 
@@ -398,9 +383,7 @@ void main() {
       await pumpFollowing(
         tester,
         moments: moments,
-        social: [
-          _moment('theirs', author: 'friend', authorName: 'Ola'),
-        ],
+        social: [_moment('theirs', author: 'friend', authorName: 'Ola')],
       );
 
       await tester.tap(find.byKey(const ValueKey('moments-chain-friend')));
@@ -479,7 +462,8 @@ void main() {
       expect(
         find.byKey(const ValueKey('moment-row-mine-forever')),
         findsOneWidget,
-        reason: 'a null expiresAt is PERMANENT and must render '
+        reason:
+            'a null expiresAt is PERMANENT and must render '
             '(the ADR-101 amendment)',
       );
       expect(find.text('Stays until deleted'), findsOneWidget);
@@ -523,7 +507,6 @@ void main() {
     });
   });
 }
-
 
 /// The one test of the REAL wiring: production deleteMoment must invoke the
 /// deployed `deleteMoment` callable with exactly {momentId, requestId} — the

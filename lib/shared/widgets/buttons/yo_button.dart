@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_motion.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_radius.dart';
@@ -44,6 +45,7 @@ class _YoButtonState extends State<YoButton> {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
     final foreground = _foregroundColor(palette, colors);
@@ -146,7 +148,11 @@ class _YoButtonState extends State<YoButton> {
     return Semantics(
       button: true,
       enabled: false,
-      label: '${widget.label}, loading',
+      label: copy.template(
+        '{label}, loading',
+        '{label}, trwa ładowanie',
+        values: <String, Object>{'label': widget.label},
+      ),
       excludeSemantics: true,
       child: button,
     );

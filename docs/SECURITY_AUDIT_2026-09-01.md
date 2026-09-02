@@ -203,8 +203,8 @@ runs overlap the broader suite.
 | Check | Confirmed result | Status |
 |---|---:|---|
 | `flutter analyze` | 0 issues | Green |
-| Full Flutter suite plus Android hardware-compatibility regression | 1,926 / 1,926 | Green |
-| Final full serial Functions suite | 1,098 / 1,098 (118 suites) | Green |
+| Full Flutter suite plus Android hardware-compatibility regression | 2,030 / 2,030 | Green |
+| Final full serial Functions suite | 1,100 / 1,100 (118 suites) | Green |
 | Participant-control targeted suite | 32 / 32 | Green |
 | Callable invocation contract | 6 / 6 | Green |
 | JavaScript syntax validation | 95 / 95 changed/new files | Green |

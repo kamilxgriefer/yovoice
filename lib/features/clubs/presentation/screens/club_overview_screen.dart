@@ -2,6 +2,8 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:share_plus/share_plus.dart';
 
+import 'package:yovoice/core/helpers/error_messages.dart';
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/clubs/data/models/club.dart';
 import 'package:yovoice/features/clubs/data/models/club_channel.dart';
@@ -18,6 +20,34 @@ import 'package:yovoice/features/clubs/presentation/screens/club_settings_screen
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
+
+String _localizedLanguage(String language, AppLocalizations copy) {
+  if (!copy.isPolish) return language;
+  return switch (language) {
+    'English' => 'Angielski',
+    'Polish' => 'Polski',
+    'Dutch' => 'Niderlandzki',
+    'German' => 'Niemiecki',
+    'Spanish' => 'Hiszpański',
+    'French' => 'Francuski',
+    'Italian' => 'Włoski',
+    'Portuguese' => 'Portugalski',
+    'Japanese' => 'Japoński',
+    'Korean' => 'Koreański',
+    _ => language,
+  };
+}
+
+String _localizedRole(ClubRole role, AppLocalizations copy) {
+  return switch (role) {
+    ClubRole.owner => copy.text('Owner', 'Właściciel'),
+    ClubRole.coOwner => copy.text('Co-owner', 'Współwłaściciel'),
+    ClubRole.admin => copy.text('Admin', 'Administrator'),
+    ClubRole.moderator => copy.text('Moderator', 'Moderator'),
+    ClubRole.member => copy.text('Member', 'Członek'),
+    ClubRole.guest => copy.text('Guest', 'Gość'),
+  };
+}
 
 class ClubOverviewScreen extends StatefulWidget {
   const ClubOverviewScreen({required this.clubId, super.key});
@@ -60,7 +90,7 @@ class _ClubOverviewScreenState extends State<ClubOverviewScreen> {
     setState(() => _openingLounge = true);
 
     try {
-      final room = await _roomService.enterClubLounge(
+      final room = await _roomService.prepareClubLounge(
         clubId: club.id,
         clubName: club.name,
         clubDescription: club.description,
@@ -76,9 +106,19 @@ class _ClubOverviewScreenState extends State<ClubOverviewScreen> {
       );
     } catch (error) {
       if (!mounted) return;
+      final copy = AppLocalizations.of(context);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(error.toString().replaceFirst('Bad state: ', '')),
+          content: Text(
+            friendlyErrorMessage(
+              error,
+              fallback: copy.text(
+                'Could not open the Club voice room. Please try again.',
+                'Nie udało się otworzyć klubowego pokoju głosowego. Spróbuj ponownie.',
+              ),
+              copy: copy,
+            ),
+          ),
         ),
       );
     } finally {
@@ -131,8 +171,14 @@ class _ClubOverviewScreenState extends State<ClubOverviewScreen> {
           Navigator.pop(sheetContext);
           await SharePlus.instance.share(
             ShareParams(
-              text: 'Join ${club.name} on YO Voice: $inviteLink',
-              subject: 'Join ${club.name} on YO Voice',
+              text: AppLocalizations.of(context).text(
+                'Join ${club.name} on YO Voice: $inviteLink',
+                'Dołącz do ${club.name} w YO Voice: $inviteLink',
+              ),
+              subject: AppLocalizations.of(context).text(
+                'Join ${club.name} on YO Voice',
+                'Dołącz do ${club.name} w YO Voice',
+              ),
             ),
           );
         },
@@ -144,6 +190,7 @@ class _ClubOverviewScreenState extends State<ClubOverviewScreen> {
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
+    final copy = AppLocalizations.of(context);
     return Scaffold(
       key: const ValueKey('club-overview-screen'),
       backgroundColor: palette.background,
@@ -159,7 +206,7 @@ class _ClubOverviewScreenState extends State<ClubOverviewScreen> {
             }
 
             if (snapshot.hasError || !snapshot.hasData) {
-              return _ClubLoadError(message: snapshot.error?.toString());
+              return _ClubLoadError(error: snapshot.error);
             }
 
             final club = snapshot.data!;
@@ -177,7 +224,7 @@ class _ClubOverviewScreenState extends State<ClubOverviewScreen> {
                   actions: [
                     IconButton.filledTonal(
                       onPressed: () => _showClubOptions(club),
-                      tooltip: 'Club options',
+                      tooltip: copy.text('Club options', 'Opcje klubu'),
                       icon: const Icon(Icons.more_horiz_rounded),
                     ),
                     const SizedBox(width: 10),
@@ -204,7 +251,10 @@ class _ClubOverviewScreenState extends State<ClubOverviewScreen> {
                         const SizedBox(height: 7),
                         Text(
                           club.description.isEmpty
-                              ? 'A permanent place for your people.'
+                              ? copy.text(
+                                  'A permanent place for your people.',
+                                  'Stałe miejsce dla Twojej społeczności.',
+                                )
                               : club.description,
                           style: TextStyle(
                             color: palette.textSecondary,
@@ -217,17 +267,20 @@ class _ClubOverviewScreenState extends State<ClubOverviewScreen> {
                           children: [
                             _ClubStat(
                               value: club.memberCount.toString(),
-                              label: 'Members',
+                              label: copy.text('Members', 'Członkowie'),
                             ),
                             const SizedBox(width: 10),
                             _ClubStat(
                               value: club.onlineCount.toString(),
-                              label: 'Online',
+                              label: copy.text('Online', 'Online'),
                             ),
                             const SizedBox(width: 10),
                             _ClubStat(
-                              value: club.defaultLanguage,
-                              label: 'Language',
+                              value: _localizedLanguage(
+                                club.defaultLanguage,
+                                copy,
+                              ),
+                              label: copy.text('Language', 'Język'),
                             ),
                           ],
                         ),
@@ -278,15 +331,22 @@ class _ClubOverviewScreenState extends State<ClubOverviewScreen> {
                                       )
                                     : const Icon(Icons.graphic_eq_rounded),
                                 label: Text(
-                                  _openingLounge ? 'OPENING...' : 'CLUB LOUNGE',
-                                  style: TextStyle(fontWeight: FontWeight.w900),
+                                  _openingLounge
+                                      ? copy.text('OPENING...', 'OTWIERANIE...')
+                                      : 'CLUB LOUNGE',
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w900,
+                                  ),
                                 ),
                               ),
                             ),
                             const SizedBox(width: 10),
                             IconButton.outlined(
                               onPressed: () => _showInviteFriends(club),
-                              tooltip: 'Invite members',
+                              tooltip: copy.text(
+                                'Invite members',
+                                'Zaproś członków',
+                              ),
                               style: IconButton.styleFrom(
                                 minimumSize: const Size(52, 52),
                                 side: BorderSide(color: palette.borderStrong),
@@ -473,7 +533,11 @@ class _ClubTabs extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
-    const labels = ['Channels', 'Members'];
+    final copy = AppLocalizations.of(context);
+    final labels = [
+      copy.text('Channels', 'Kanały'),
+      copy.text('Members', 'Członkowie'),
+    ];
     return Container(
       padding: const EdgeInsets.all(4),
       decoration: BoxDecoration(
@@ -531,6 +595,7 @@ class _ChannelsPreview extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
+    final copy = AppLocalizations.of(context);
     return StreamBuilder<List<ClubChannel>>(
       stream: stream,
       builder: (context, snapshot) {
@@ -548,7 +613,7 @@ class _ChannelsPreview extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'Club spaces',
+              copy.text('Club spaces', 'Przestrzenie klubu'),
               style: TextStyle(
                 color: palette.textPrimary,
                 fontSize: 18,
@@ -586,16 +651,20 @@ class _ChannelTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
+    final copy = AppLocalizations.of(context);
     final (icon, subtitle) = switch (channel.type) {
       ClubChannelType.voice => (
         Icons.graphic_eq_rounded,
-        'Persistent voice room',
+        copy.text('Persistent voice room', 'Stały pokój głosowy'),
       ),
       ClubChannelType.announcement => (
         Icons.campaign_rounded,
-        'Important club updates',
+        copy.text('Important club updates', 'Ważne aktualizacje klubu'),
       ),
-      ClubChannelType.chat => (Icons.tag_rounded, 'Main club conversation'),
+      ClubChannelType.chat => (
+        Icons.tag_rounded,
+        copy.text('Main club conversation', 'Główna rozmowa klubu'),
+      ),
     };
 
     return ListTile(
@@ -654,6 +723,7 @@ class _MembersPreview extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
+    final copy = AppLocalizations.of(context);
     return StreamBuilder<List<ClubMember>>(
       stream: stream,
       builder: (context, snapshot) {
@@ -671,7 +741,12 @@ class _MembersPreview extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              '${members.length} members',
+              members.length == 1
+                  ? copy.text('1 member', '1 członek')
+                  : copy.text(
+                      '${members.length} members',
+                      '${members.length} członków',
+                    ),
               style: TextStyle(
                 color: palette.textPrimary,
                 fontSize: 18,
@@ -700,6 +775,7 @@ class _MemberTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
+    final copy = AppLocalizations.of(context);
     return ListTile(
       onTap: () {
         Navigator.of(context).push(
@@ -748,7 +824,9 @@ class _MemberTile extends StatelessWidget {
         ),
       ),
       subtitle: Text(
-        member.isOnline ? 'Online' : 'Offline',
+        member.isOnline
+            ? copy.text('Online', 'Online')
+            : copy.text('Offline', 'Offline'),
         style: TextStyle(color: palette.textSecondary, fontSize: 11),
       ),
       trailing: Row(
@@ -761,7 +839,7 @@ class _MemberTile extends StatelessWidget {
               borderRadius: BorderRadius.circular(20),
             ),
             child: Text(
-              member.role.label,
+              _localizedRole(member.role, copy),
               style: TextStyle(
                 color: colors.onPrimaryContainer,
                 fontSize: 10,
@@ -778,14 +856,15 @@ class _MemberTile extends StatelessWidget {
 }
 
 class _ClubLoadError extends StatelessWidget {
-  const _ClubLoadError({this.message});
+  const _ClubLoadError({this.error});
 
-  final String? message;
+  final Object? error;
 
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
+    final copy = AppLocalizations.of(context);
     return SafeArea(
       child: Center(
         child: Padding(
@@ -796,17 +875,27 @@ class _ClubLoadError extends StatelessWidget {
               Icon(Icons.error_outline_rounded, color: colors.error, size: 48),
               const SizedBox(height: 14),
               Text(
-                'Could not open this club',
+                copy.text(
+                  'Could not open this club',
+                  'Nie udało się otworzyć klubu',
+                ),
                 style: TextStyle(
                   color: palette.textPrimary,
                   fontSize: 18,
                   fontWeight: FontWeight.w900,
                 ),
               ),
-              if (message != null) ...[
+              if (error != null) ...[
                 const SizedBox(height: 8),
                 Text(
-                  message!.replaceFirst('Bad state: ', ''),
+                  friendlyErrorMessage(
+                    error!,
+                    fallback: copy.text(
+                      'Check your connection and try again.',
+                      'Sprawdź połączenie i spróbuj ponownie.',
+                    ),
+                    copy: copy,
+                  ),
                   textAlign: TextAlign.center,
                   style: TextStyle(color: palette.textSecondary),
                 ),
@@ -814,7 +903,7 @@ class _ClubLoadError extends StatelessWidget {
               const SizedBox(height: 18),
               FilledButton(
                 onPressed: () => Navigator.of(context).pop(),
-                child: const Text('Go back'),
+                child: Text(copy.text('Go back', 'Wróć')),
               ),
             ],
           ),
@@ -841,6 +930,7 @@ class _ClubOptionsSheet extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
+    final copy = AppLocalizations.of(context);
     return SafeArea(
       top: false,
       child: Container(
@@ -853,14 +943,14 @@ class _ClubOptionsSheet extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             YoModalSheetChrome(
-              sheetLabel: 'Club options',
+              sheetLabel: copy.text('Club options', 'Opcje klubu'),
               surfaceColor: palette.surfaceRaised,
             ),
             const SizedBox(height: 2),
             Align(
               alignment: Alignment.centerLeft,
               child: Text(
-                'Club options',
+                copy.text('Club options', 'Opcje klubu'),
                 style: TextStyle(
                   color: palette.textPrimary,
                   fontSize: 23,
@@ -874,14 +964,17 @@ class _ClubOptionsSheet extends StatelessWidget {
                 onTap: onSettings,
                 leading: Icon(Icons.settings_rounded, color: colors.primary),
                 title: Text(
-                  'Club settings',
+                  copy.text('Club settings', 'Ustawienia klubu'),
                   style: TextStyle(
                     color: palette.textPrimary,
                     fontWeight: FontWeight.w800,
                   ),
                 ),
                 subtitle: Text(
-                  'Name, description, privacy and language',
+                  copy.text(
+                    'Name, description, privacy and language',
+                    'Nazwa, opis, prywatność i język',
+                  ),
                   style: TextStyle(color: palette.textSecondary),
                 ),
               ),
@@ -892,14 +985,17 @@ class _ClubOptionsSheet extends StatelessWidget {
                 color: colors.primary,
               ),
               title: Text(
-                'Manage members',
+                copy.text('Manage members', 'Zarządzaj członkami'),
                 style: TextStyle(
                   color: palette.textPrimary,
                   fontWeight: FontWeight.w800,
                 ),
               ),
               subtitle: Text(
-                'View members and manage roles',
+                copy.text(
+                  'View members and manage roles',
+                  'Wyświetl członków i zarządzaj rolami',
+                ),
                 style: TextStyle(color: palette.textSecondary),
               ),
             ),
@@ -907,14 +1003,17 @@ class _ClubOptionsSheet extends StatelessWidget {
               onTap: onShare,
               leading: Icon(Icons.link_rounded, color: colors.primary),
               title: Text(
-                'Share invite link',
+                copy.text('Share invite link', 'Udostępnij zaproszenie'),
                 style: TextStyle(
                   color: palette.textPrimary,
                   fontWeight: FontWeight.w800,
                 ),
               ),
               subtitle: Text(
-                'Invite people through any app',
+                copy.text(
+                  'Invite people through any app',
+                  'Zaproś osoby przez dowolną aplikację',
+                ),
                 style: TextStyle(color: palette.textSecondary),
               ),
             ),
@@ -958,16 +1057,31 @@ class _InviteFriendsSheetState extends State<_InviteFriendsSheet> {
         SnackBar(
           content: Text(
             alreadyInvited
-                ? 'Invitation cancelled.'
-                : 'Invitation sent to ${friend.displayName}.',
+                ? AppLocalizations.of(
+                    context,
+                  ).text('Invitation cancelled.', 'Anulowano zaproszenie.')
+                : AppLocalizations.of(context).text(
+                    'Invitation sent to ${friend.displayName}.',
+                    'Wysłano zaproszenie do ${friend.displayName}.',
+                  ),
           ),
         ),
       );
     } catch (error) {
       if (!mounted) return;
+      final copy = AppLocalizations.of(context);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(error.toString().replaceFirst('Bad state: ', '')),
+          content: Text(
+            friendlyErrorMessage(
+              error,
+              fallback: copy.text(
+                'Could not update the invitation. Please try again.',
+                'Nie udało się zaktualizować zaproszenia. Spróbuj ponownie.',
+              ),
+              copy: copy,
+            ),
+          ),
         ),
       );
     } finally {
@@ -981,6 +1095,7 @@ class _InviteFriendsSheetState extends State<_InviteFriendsSheet> {
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
+    final copy = AppLocalizations.of(context);
     return SafeArea(
       top: false,
       child: Container(
@@ -993,14 +1108,14 @@ class _InviteFriendsSheetState extends State<_InviteFriendsSheet> {
         child: Column(
           children: [
             YoModalSheetChrome(
-              sheetLabel: 'Invite friends',
+              sheetLabel: copy.text('Invite friends', 'Zaproś znajomych'),
               surfaceColor: palette.surfaceRaised,
             ),
             const SizedBox(height: 2),
             Align(
               alignment: Alignment.centerLeft,
               child: Text(
-                'Invite friends',
+                copy.text('Invite friends', 'Zaproś znajomych'),
                 style: TextStyle(
                   color: palette.textPrimary,
                   fontSize: 23,
@@ -1012,7 +1127,10 @@ class _InviteFriendsSheetState extends State<_InviteFriendsSheet> {
             Align(
               alignment: Alignment.centerLeft,
               child: Text(
-                'They will join only after accepting your invitation.',
+                copy.text(
+                  'They will join only after accepting your invitation.',
+                  'Dołączą dopiero po zaakceptowaniu zaproszenia.',
+                ),
                 style: TextStyle(color: palette.textSecondary),
               ),
             ),
@@ -1036,7 +1154,10 @@ class _InviteFriendsSheetState extends State<_InviteFriendsSheet> {
                       if (items.isEmpty) {
                         return Center(
                           child: Text(
-                            'Add friends first, then invite them here.',
+                            copy.text(
+                              'Add friends first, then invite them here.',
+                              'Najpierw dodaj znajomych, a potem zaproś ich tutaj.',
+                            ),
                             style: TextStyle(color: palette.textSecondary),
                           ),
                         );
@@ -1065,9 +1186,12 @@ class _InviteFriendsSheetState extends State<_InviteFriendsSheet> {
                             ),
                             subtitle: Text(
                               invited
-                                  ? 'Invitation pending'
+                                  ? copy.text(
+                                      'Invitation pending',
+                                      'Zaproszenie oczekuje',
+                                    )
                                   : friend.isOnline
-                                  ? 'Online'
+                                  ? copy.text('Online', 'Online')
                                   : friend.email,
                               style: TextStyle(
                                 color: invited
@@ -1095,7 +1219,11 @@ class _InviteFriendsSheetState extends State<_InviteFriendsSheet> {
                                         strokeWidth: 2,
                                       ),
                                     )
-                                  : Text(invited ? 'Cancel' : 'Invite'),
+                                  : Text(
+                                      invited
+                                          ? copy.text('Cancel', 'Anuluj')
+                                          : copy.text('Invite', 'Zaproś'),
+                                    ),
                             ),
                           );
                         },

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/features/premium/premium_gates.dart';
 import 'package:yovoice/features/premium/data/models/subscription_entitlements.dart';
 import 'package:yovoice/features/premium/data/services/entitlement_service.dart';
@@ -96,12 +97,16 @@ class _CreatorStudioScreenState extends State<CreatorStudioScreen> {
   }
 
   void _handleExpiryDeadline(DateTime deadline) {
+    final copy = AppLocalizations.of(context);
     final previousFocus = FocusManager.instance.primaryFocus;
     final recoverFocus = momentExpiryFocusIsWithin(context, previousFocus);
     _expiryAnnouncer.announce(
       context,
       transition: 'creator-studio-${deadline.microsecondsSinceEpoch}',
-      message: 'Voice Moment expired and was removed from Creator Studio.',
+      message: copy.text(
+        'Voice Moment expired and was removed from Creator Studio.',
+        'Voice Moment wygasł i został usunięty ze Studia twórcy.',
+      ),
     );
     recoverMomentExpiryFocusAfterFrame(
       context: context,
@@ -112,6 +117,7 @@ class _CreatorStudioScreenState extends State<CreatorStudioScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final content = Scaffold(
       backgroundColor: _background,
       body: SafeArea(
@@ -122,24 +128,38 @@ class _CreatorStudioScreenState extends State<CreatorStudioScreen> {
             builder: (context, profileSnapshot) {
               final profile = profileSnapshot.data;
               if (profileSnapshot.hasError) {
-                return _ErrorBody(message: '${profileSnapshot.error}');
+                return _ErrorBody(
+                  message: copy.text(
+                    'Your profile could not be loaded.',
+                    'Nie udało się wczytać Twojego profilu.',
+                  ),
+                );
               }
               if (profile == null) {
-                return const Center(
-                  child: CircularProgressIndicator(color: _accent),
+                return _CreatorLoading(
+                  label: copy.text(
+                    'Loading Creator Studio',
+                    'Wczytywanie Studia twórcy',
+                  ),
                 );
               }
               return StreamBuilder<List<VoiceRoom>>(
                 stream: _rooms,
                 builder: (context, roomsSnapshot) {
                   if (roomsSnapshot.hasError) {
-                    return const _ErrorBody(
-                      message: 'Your room data could not be loaded.',
+                    return _ErrorBody(
+                      message: copy.text(
+                        'Your room data could not be loaded.',
+                        'Nie udało się wczytać danych Twoich pokojów.',
+                      ),
                     );
                   }
                   if (!roomsSnapshot.hasData) {
-                    return const Center(
-                      child: CircularProgressIndicator(color: _accent),
+                    return _CreatorLoading(
+                      label: copy.text(
+                        'Loading your rooms',
+                        'Wczytywanie Twoich pokojów',
+                      ),
                     );
                   }
                   final rooms = roomsSnapshot.data!;
@@ -147,13 +167,19 @@ class _CreatorStudioScreenState extends State<CreatorStudioScreen> {
                     stream: _clubs,
                     builder: (context, clubsSnapshot) {
                       if (clubsSnapshot.hasError) {
-                        return const _ErrorBody(
-                          message: 'Your club data could not be loaded.',
+                        return _ErrorBody(
+                          message: copy.text(
+                            'Your club data could not be loaded.',
+                            'Nie udało się wczytać danych Twoich klubów.',
+                          ),
                         );
                       }
                       if (!clubsSnapshot.hasData) {
-                        return const Center(
-                          child: CircularProgressIndicator(color: _accent),
+                        return _CreatorLoading(
+                          label: copy.text(
+                            'Loading your clubs',
+                            'Wczytywanie Twoich klubów',
+                          ),
                         );
                       }
                       final clubs = clubsSnapshot.data!;
@@ -161,14 +187,19 @@ class _CreatorStudioScreenState extends State<CreatorStudioScreen> {
                         stream: _moments,
                         builder: (context, momentsSnapshot) {
                           if (momentsSnapshot.hasError) {
-                            return const _ErrorBody(
-                              message:
-                                  'Your Voice Moments could not be loaded.',
+                            return _ErrorBody(
+                              message: copy.text(
+                                'Your Voice Moments could not be loaded.',
+                                'Nie udało się wczytać Twoich materiałów Voice Moment.',
+                              ),
                             );
                           }
                           if (!momentsSnapshot.hasData) {
-                            return const Center(
-                              child: CircularProgressIndicator(color: _accent),
+                            return _CreatorLoading(
+                              label: copy.text(
+                                'Loading your Voice Moments',
+                                'Wczytywanie Twoich materiałów Voice Moment',
+                              ),
                             );
                           }
                           final snapshotMoments = momentsSnapshot.data!;
@@ -227,6 +258,7 @@ class _CreatorStudioContent extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final publishedMoments = moments
         .where((item) => item.isPublished)
         .toList(growable: false);
@@ -249,6 +281,8 @@ class _CreatorStudioContent extends StatelessWidget {
                   size: 40,
                   backgroundColor: _surface,
                   borderColor: _border,
+                  tooltip: copy.text('Back', 'Wróć'),
+                  semanticLabel: copy.text('Back', 'Wróć'),
                   onPressed: () => Navigator.of(context).pop(),
                 ),
                 const SizedBox(width: 12),
@@ -256,13 +290,13 @@ class _CreatorStudioContent extends StatelessWidget {
               Expanded(
                 child: MomentExpiryFocusTarget(
                   focusNode: expiryRecoveryFocus,
-                  semanticLabel: 'Creator Studio',
-                  child: const Column(
+                  semanticLabel: copy.text('Creator Studio', 'Studio twórcy'),
+                  child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        'Creator Studio',
-                        style: TextStyle(
+                        copy.text('Creator Studio', 'Studio twórcy'),
+                        style: const TextStyle(
                           color: Colors.white,
                           fontSize: 24,
                           fontWeight: FontWeight.w900,
@@ -270,8 +304,11 @@ class _CreatorStudioContent extends StatelessWidget {
                         ),
                       ),
                       Text(
-                        'Your tools, your growth, your community.',
-                        style: TextStyle(color: _muted, fontSize: 12.5),
+                        copy.text(
+                          'Your tools, your growth, your community.',
+                          'Twoje narzędzia, rozwój i społeczność.',
+                        ),
+                        style: const TextStyle(color: _muted, fontSize: 12.5),
                       ),
                     ],
                   ),
@@ -313,7 +350,7 @@ class _CreatorStudioContent extends StatelessWidget {
           items: [
             CreatorStudioStatItem(
               value: '${profile.followerCount}',
-              label: 'Followers',
+              label: copy.text('Followers', 'Obserwujący'),
               onTap: () => Navigator.of(context).push<void>(
                 MaterialPageRoute<void>(
                   builder: (_) => FollowListScreen(
@@ -325,7 +362,7 @@ class _CreatorStudioContent extends StatelessWidget {
             ),
             CreatorStudioStatItem(
               value: '${profile.followingCount}',
-              label: 'Following',
+              label: copy.text('Following', 'Obserwowani'),
               onTap: () => Navigator.of(context).push<void>(
                 MaterialPageRoute<void>(
                   builder: (_) => FollowListScreen(
@@ -337,15 +374,15 @@ class _CreatorStudioContent extends StatelessWidget {
             ),
             CreatorStudioStatItem(
               value: '${clubs.length}',
-              label: 'Communities',
+              label: copy.text('Communities', 'Społeczności'),
             ),
             CreatorStudioStatItem(
-              value: _formatMinutes(profile.hostMinutes),
-              label: 'Hosting time',
+              value: _formatMinutes(profile.hostMinutes, copy),
+              label: copy.text('Hosting time', 'Czas prowadzenia'),
             ),
             CreatorStudioStatItem(
-              value: _formatMinutes(profile.voiceMinutes),
-              label: 'Speaking time',
+              value: _formatMinutes(profile.voiceMinutes, copy),
+              label: copy.text('Speaking time', 'Czas mówienia'),
             ),
           ],
         ),
@@ -353,9 +390,11 @@ class _CreatorStudioContent extends StatelessWidget {
 
         Row(
           children: [
-            const Expanded(child: _SectionLabel('Your rooms')),
+            Expanded(
+              child: _SectionLabel(copy.text('Your rooms', 'Twoje pokoje')),
+            ),
             Text(
-              '${rooms.length} hosted',
+              _hostedRoomsLabel(rooms.length, copy),
               style: const TextStyle(color: _muted, fontSize: 12.5),
             ),
           ],
@@ -364,7 +403,10 @@ class _CreatorStudioContent extends StatelessWidget {
         rooms.isEmpty
             ? _EmptySection(
                 icon: Icons.meeting_room_outlined,
-                message: 'Host your first room to start building a stage.',
+                message: copy.text(
+                  'Host your first room to start building a stage.',
+                  'Poprowadź pierwszy pokój i zacznij tworzyć własną scenę.',
+                ),
               )
             : CreatorStudioRoomsList(rooms: rooms),
         const SizedBox(height: 26),
@@ -373,27 +415,33 @@ class _CreatorStudioContent extends StatelessWidget {
           children: [
             const Expanded(child: _SectionLabel('Voice Moments')),
             Text(
-              '${publishedMoments.length} published · ${draftMoments.length} draft',
+              _momentSummaryLabel(
+                publishedMoments.length,
+                draftMoments.length,
+                copy,
+              ),
               style: const TextStyle(color: _muted, fontSize: 12.5),
             ),
           ],
         ),
         if (moments.isEmpty) ...[
           const SizedBox(height: 10),
-          const _EmptySection(
+          _EmptySection(
             icon: Icons.mic_none_rounded,
-            message:
-                'Post a Voice Moment to give your audience something to react to.',
+            message: copy.text(
+              'Post a Voice Moment to give your audience something to react to.',
+              'Opublikuj Voice Moment i daj odbiorcom coś, na co mogą zareagować.',
+            ),
           ),
         ],
         const SizedBox(height: 26),
 
-        const _SectionLabel('Recent activity'),
+        _SectionLabel(copy.text('Recent activity', 'Ostatnia aktywność')),
         const SizedBox(height: 10),
         _RecentActivityCard(rooms: rooms, moments: moments),
         const SizedBox(height: 26),
 
-        const _SectionLabel('Creator tools'),
+        _SectionLabel(copy.text('Creator tools', 'Narzędzia twórcy')),
         const SizedBox(height: 10),
         CreatorStudioToolsRow(
           onAnalytics: () => Navigator.of(context).push<void>(
@@ -416,10 +464,13 @@ class _CreatorStudioContent extends StatelessWidget {
     );
   }
 
-  String _formatMinutes(int minutes) {
-    if (minutes < 60) return '${minutes}m';
+  String _formatMinutes(int minutes, AppLocalizations copy) {
+    if (minutes < 60) return copy.isPolish ? '$minutes min' : '${minutes}m';
     final hours = minutes ~/ 60;
     final rest = minutes % 60;
+    if (copy.isPolish) {
+      return rest == 0 ? '$hours godz.' : '$hours godz. $rest min';
+    }
     return rest == 0 ? '${hours}h' : '${hours}h ${rest}m';
   }
 }
@@ -434,20 +485,21 @@ class _ProfileOverviewCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final avatar = profile.photoUrl?.trim();
     final verification = switch (profile.accountType) {
       AccountType.official => (
-        'Officially verified',
+        copy.text('Officially verified', 'Oficjalnie zweryfikowane konto'),
         Icons.verified_rounded,
         const Color(0xFF4DA3FF),
       ),
       AccountType.creator => (
-        'Creator account',
+        copy.text('Creator account', 'Konto twórcy'),
         Icons.auto_awesome_rounded,
         const Color(0xFFFFA52B),
       ),
       AccountType.personal => (
-        'Personal account',
+        copy.text('Personal account', 'Konto osobiste'),
         Icons.person_rounded,
         _muted,
       ),
@@ -552,7 +604,13 @@ class _ProfileOverviewCard extends StatelessWidget {
                   ),
                   const SizedBox(width: 5),
                   Text(
-                    liveRoomCount > 1 ? '$liveRoomCount LIVE' : 'LIVE',
+                    copy.isPolish
+                        ? liveRoomCount > 1
+                              ? '$liveRoomCount NA ŻYWO'
+                              : 'NA ŻYWO'
+                        : liveRoomCount > 1
+                        ? '$liveRoomCount LIVE'
+                        : 'LIVE',
                     style: const TextStyle(
                       color: Colors.white,
                       fontSize: 10.5,
@@ -576,6 +634,7 @@ class _PersonalAccountBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     return Material(
       color: _surface,
       borderRadius: BorderRadius.circular(18),
@@ -596,10 +655,13 @@ class _PersonalAccountBanner extends StatelessWidget {
             children: [
               const Icon(Icons.auto_awesome_rounded, color: Color(0xFFFFA52B)),
               const SizedBox(width: 12),
-              const Expanded(
+              Expanded(
                 child: Text(
-                  'Switch to a Creator account to unlock the full creator toolkit.',
-                  style: TextStyle(
+                  copy.text(
+                    'Switch to a Creator account to unlock the full creator toolkit.',
+                    'Przełącz konto na konto twórcy, aby odblokować pełny zestaw narzędzi.',
+                  ),
+                  style: const TextStyle(
                     color: Colors.white,
                     fontSize: 12.5,
                     fontWeight: FontWeight.w600,
@@ -619,10 +681,11 @@ class _PersonalAccountBanner extends StatelessWidget {
 class _QuickActionsRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final actions = <Widget>[
       _QuickAction(
         icon: Icons.meeting_room_rounded,
-        label: 'Create Room',
+        label: copy.text('Create Room', 'Utwórz pokój'),
         onTap: () => Navigator.of(context).push(
           MaterialPageRoute<void>(
             builder: (_) => const RoomTypeSelectorScreen(),
@@ -631,7 +694,7 @@ class _QuickActionsRow extends StatelessWidget {
       ),
       _QuickAction(
         icon: Icons.hub_rounded,
-        label: 'Create Club',
+        label: copy.text('Create Club', 'Utwórz klub'),
         onTap: () async {
           if (!await PremiumGates.ensureCanCreateClub(context)) return;
           if (!context.mounted) return;
@@ -642,7 +705,7 @@ class _QuickActionsRow extends StatelessWidget {
       ),
       _QuickAction(
         icon: Icons.mic_rounded,
-        label: 'Post Moment',
+        label: copy.text('Post Moment', 'Opublikuj Voice Moment'),
         onTap: () => Navigator.of(context).push(
           MaterialPageRoute<void>(
             builder: (_) => const RecordVoiceMomentScreen(),
@@ -651,11 +714,13 @@ class _QuickActionsRow extends StatelessWidget {
       ),
       _QuickAction(
         icon: Icons.person_add_rounded,
-        label: 'Invite',
+        label: copy.text('Invite', 'Zaproś'),
         onTap: () => SharePlus.instance.share(
           ShareParams(
-            text:
-                'Join me on YO Voice — the app for live voice rooms and communities: https://yovoice.app/download',
+            text: copy.text(
+              'Join me on YO Voice — the app for live voice rooms and communities: https://yovoice.app/download',
+              'Dołącz do mnie w YO Voice — aplikacji z pokojami głosowymi na żywo i społecznościami: https://yovoice.app/download',
+            ),
           ),
         ),
       ),
@@ -701,34 +766,38 @@ class _QuickAction extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: _surface,
-      borderRadius: BorderRadius.circular(18),
-      child: InkWell(
+    return Semantics(
+      button: true,
+      label: label,
+      child: Material(
+        color: _surface,
         borderRadius: BorderRadius.circular(18),
-        onTap: onTap,
-        child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 6),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(18),
-            border: Border.all(color: _border),
-          ),
-          child: Column(
-            children: [
-              Icon(icon, color: _accent, size: 20),
-              const SizedBox(height: 7),
-              Text(
-                label,
-                textAlign: TextAlign.center,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 10.5,
-                  fontWeight: FontWeight.w700,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(18),
+          onTap: onTap,
+          child: Container(
+            padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 6),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(color: _border),
+            ),
+            child: Column(
+              children: [
+                Icon(icon, color: _accent, size: 20),
+                const SizedBox(height: 7),
+                Text(
+                  label,
+                  textAlign: TextAlign.center,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 10.5,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
@@ -879,18 +948,25 @@ class CreatorStudioToolsRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final textScale = MediaQuery.textScalerOf(context).scale(1).clamp(1.0, 2.0);
     final tools = [
       _CreatorTool(
         Icons.bar_chart_rounded,
-        'Analytics',
-        'See honest snapshots from your rooms, clubs and Voice Moments.',
+        copy.text('Analytics', 'Statystyki'),
+        copy.text(
+          'See honest snapshots from your rooms, clubs and Voice Moments.',
+          'Zobacz rzetelne dane z pokojów, klubów i materiałów Voice Moment.',
+        ),
         onAnalytics,
       ),
       _CreatorTool(
         Icons.push_pin_rounded,
-        'Pinned post',
-        'Put one published Voice Moment at the top of your profile.',
+        copy.text('Pinned post', 'Przypięty post'),
+        copy.text(
+          'Put one published Voice Moment at the top of your profile.',
+          'Umieść opublikowany Voice Moment na górze swojego profilu.',
+        ),
         onPinnedPosts,
       ),
     ];
@@ -928,9 +1004,10 @@ class _CreatorToolCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     return Semantics(
       button: true,
-      label: 'Open ${tool.title}',
+      label: copy.text('Open ${tool.title}', 'Otwórz: ${tool.title}'),
       child: Material(
         color: _surface,
         shape: RoundedRectangleBorder(
@@ -1002,6 +1079,7 @@ class CreatorStudioRoomsList extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final shown = rooms.take(5).toList(growable: false);
     final textScale = MediaQuery.textScalerOf(context).scale(1).clamp(1.0, 2.0);
     final usesLargeText = textScale > 1.4;
@@ -1015,86 +1093,91 @@ class CreatorStudioRoomsList extends StatelessWidget {
         itemBuilder: (context, index) {
           final room = shown[index];
           final hasImage = room.imageUrl?.trim().isNotEmpty == true;
-          return InkWell(
-            borderRadius: BorderRadius.circular(18),
-            onTap: () => Navigator.of(context).push(
-              MaterialPageRoute<void>(
-                builder: (_) => RoomEntryScreen(room: room),
-              ),
+          return Semantics(
+            button: true,
+            label: copy.text(
+              'Open room ${room.name}',
+              'Otwórz pokój ${room.name}',
             ),
-            child: Container(
-              width: 168 + ((textScale - 1) * 72),
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: const Color(0xFF150C1D),
-                borderRadius: BorderRadius.circular(18),
-                border: Border.all(color: const Color(0xFF382741)),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(18),
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => RoomEntryScreen(room: room),
+                ),
               ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      CircleAvatar(
-                        radius: 16,
-                        backgroundColor: const Color(0xFF6D1CAB),
-                        backgroundImage: hasImage
-                            ? NetworkImage(room.imageUrl!)
-                            : null,
-                        child: hasImage
-                            ? null
-                            : Text(
-                                room.name.isEmpty
-                                    ? '?'
-                                    : room.name[0].toUpperCase(),
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w900,
+              child: Container(
+                width: 168 + ((textScale - 1) * 72),
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF150C1D),
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(color: const Color(0xFF382741)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        CircleAvatar(
+                          radius: 16,
+                          backgroundColor: const Color(0xFF6D1CAB),
+                          backgroundImage: hasImage
+                              ? NetworkImage(room.imageUrl!)
+                              : null,
+                          child: hasImage
+                              ? null
+                              : Text(
+                                  room.name.isEmpty
+                                      ? '?'
+                                      : room.name[0].toUpperCase(),
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w900,
+                                  ),
                                 ),
+                        ),
+                        const Spacer(),
+                        if (room.isLive)
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 6,
+                              vertical: 3,
+                            ),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFFF335C),
+                              borderRadius: BorderRadius.circular(99),
+                            ),
+                            child: Text(
+                              copy.text('LIVE', 'NA ŻYWO'),
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 8.5,
+                                fontWeight: FontWeight.w900,
                               ),
-                      ),
-                      const Spacer(),
-                      if (room.isLive)
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 6,
-                            vertical: 3,
-                          ),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFFFF335C),
-                            borderRadius: BorderRadius.circular(99),
-                          ),
-                          child: const Text(
-                            'LIVE',
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 8.5,
-                              fontWeight: FontWeight.w900,
                             ),
                           ),
-                        ),
-                    ],
-                  ),
-                  const Spacer(),
-                  Text(
-                    room.name,
-                    maxLines: usesLargeText ? 2 : 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w800,
-                      fontSize: 12.5,
+                      ],
                     ),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    room.isLive
-                        ? '${room.participantCount} listening'
-                        : '${room.memberCount} members',
-                    style: const TextStyle(color: _muted, fontSize: 10.5),
-                  ),
-                ],
+                    const Spacer(),
+                    Text(
+                      room.name,
+                      maxLines: usesLargeText ? 2 : 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w800,
+                        fontSize: 12.5,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      _roomAudienceLabel(room, copy),
+                      style: const TextStyle(color: _muted, fontSize: 10.5),
+                    ),
+                  ],
+                ),
               ),
             ),
           );
@@ -1111,21 +1194,22 @@ class _RecentActivityCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final events = <(IconData, String, String, DateTime)>[
       for (final room in rooms)
         if (room.createdAt != null)
           (
             Icons.meeting_room_rounded,
-            'Created "${room.name}"',
-            _relativeTime(room.createdAt!),
+            copy.text('Created "${room.name}"', 'Utworzono „${room.name}”'),
+            _relativeTime(room.createdAt!, copy),
             room.createdAt!,
           ),
       for (final moment in moments)
         if (moment.createdAt != null && moment.isPublished)
           (
             Icons.mic_rounded,
-            'Published a Voice Moment',
-            _relativeTime(moment.createdAt!),
+            copy.text('Published a Voice Moment', 'Opublikowano Voice Moment'),
+            _relativeTime(moment.createdAt!, copy),
             moment.createdAt!,
           ),
     ]..sort((a, b) => b.$4.compareTo(a.$4));
@@ -1139,9 +1223,12 @@ class _RecentActivityCard extends StatelessWidget {
           borderRadius: BorderRadius.circular(18),
           border: Border.all(color: const Color(0xFF382741)),
         ),
-        child: const Text(
-          'Host a room or publish a Voice Moment to see your creator activity here.',
-          style: TextStyle(color: _muted, fontSize: 12.5, height: 1.4),
+        child: Text(
+          copy.text(
+            'Host a room or publish a Voice Moment to see your creator activity here.',
+            'Poprowadź pokój lub opublikuj Voice Moment, aby zobaczyć tutaj swoją aktywność.',
+          ),
+          style: const TextStyle(color: _muted, fontSize: 12.5, height: 1.4),
         ),
       );
     }
@@ -1192,13 +1279,23 @@ class _RecentActivityCard extends StatelessWidget {
     );
   }
 
-  String _relativeTime(DateTime date) {
+  String _relativeTime(DateTime date, AppLocalizations copy) {
     final diff = DateTime.now().difference(date);
-    if (diff.inMinutes < 1) return 'Now';
-    if (diff.inHours < 1) return '${diff.inMinutes}m';
-    if (diff.inDays < 1) return '${diff.inHours}h';
-    if (diff.inDays < 30) return '${diff.inDays}d';
-    return '${diff.inDays ~/ 30}mo';
+    if (diff.inMinutes < 1) return copy.text('Now', 'Teraz');
+    if (diff.inHours < 1) {
+      return copy.isPolish ? '${diff.inMinutes} min' : '${diff.inMinutes}m';
+    }
+    if (diff.inDays < 1) {
+      return copy.isPolish ? '${diff.inHours} godz.' : '${diff.inHours}h';
+    }
+    if (diff.inDays < 30) {
+      return copy.isPolish
+          ? '${diff.inDays} ${_polishPlural(diff.inDays, 'dzień', 'dni', 'dni')}'
+          : '${diff.inDays}d';
+    }
+    return copy.isPolish
+        ? '${diff.inDays ~/ 30} mies.'
+        : '${diff.inDays ~/ 30}mo';
   }
 }
 
@@ -1208,14 +1305,36 @@ class _ErrorBody extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Text(
-          message,
-          textAlign: TextAlign.center,
-          style: const TextStyle(color: Colors.white),
+    final copy = AppLocalizations.of(context);
+    return Semantics(
+      liveRegion: true,
+      label: '${copy.text('Error', 'Błąd')}. $message',
+      child: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Text(
+            message,
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: Colors.white),
+          ),
         ),
+      ),
+    );
+  }
+}
+
+class _CreatorLoading extends StatelessWidget {
+  const _CreatorLoading({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Semantics(
+        liveRegion: true,
+        label: label,
+        child: const CircularProgressIndicator(color: _accent),
       ),
     );
   }
@@ -1229,6 +1348,7 @@ class _CreatorPausedBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -1245,12 +1365,17 @@ class _CreatorPausedBanner extends StatelessWidget {
             color: Color(0xFFFFB547),
           ),
           const SizedBox(width: 12),
-          const Expanded(
+          Expanded(
             child: Text(
-              'Creator tools are paused — your Premium has ended. Your '
-              'Studio data stays safe. Renew Premium, then reactivate '
-              'Creator in Edit profile.',
-              style: TextStyle(
+              copy.text(
+                'Creator tools are paused — your Premium has ended. Your '
+                    'Studio data stays safe. Renew Premium, then reactivate '
+                    'Creator in Edit profile.',
+                'Narzędzia twórcy są wstrzymane, ponieważ dostęp Premium wygasł. '
+                    'Dane w Studiu twórcy są bezpieczne. Odnów Premium, a następnie '
+                    'ponownie aktywuj konto twórcy w edycji profilu.',
+              ),
+              style: const TextStyle(
                 color: Color(0xFFF5D9A8),
                 fontSize: 12.5,
                 height: 1.4,
@@ -1261,13 +1386,59 @@ class _CreatorPausedBanner extends StatelessWidget {
             onPressed: () => Navigator.of(context).push(
               MaterialPageRoute<void>(builder: (_) => const PremiumScreen()),
             ),
-            child: const Text(
-              'Explore Premium',
-              style: TextStyle(color: Color(0xFFFFB547), fontSize: 12),
+            child: Text(
+              copy.text('Explore Premium', 'Poznaj Premium'),
+              style: const TextStyle(color: Color(0xFFFFB547), fontSize: 12),
             ),
           ),
         ],
       ),
     );
   }
+}
+
+String _hostedRoomsLabel(int count, AppLocalizations copy) {
+  if (!copy.isPolish) return '$count hosted';
+  return '$count ${_polishPlural(count, 'prowadzony pokój', 'prowadzone pokoje', 'prowadzonych pokojów')}';
+}
+
+String _momentSummaryLabel(int published, int drafts, AppLocalizations copy) {
+  if (!copy.isPolish) return '$published published · $drafts draft';
+  final publishedLabel = _polishPlural(
+    published,
+    'opublikowany',
+    'opublikowane',
+    'opublikowanych',
+  );
+  final draftLabel = _polishPlural(
+    drafts,
+    'wersja robocza',
+    'wersje robocze',
+    'wersji roboczych',
+  );
+  return '$published $publishedLabel · $drafts $draftLabel';
+}
+
+String _roomAudienceLabel(VoiceRoom room, AppLocalizations copy) {
+  if (!copy.isPolish) {
+    return room.isLive
+        ? '${room.participantCount} listening'
+        : '${room.memberCount} members';
+  }
+  if (room.isLive) {
+    final label = room.participantCount == 1 ? 'słuchacz' : 'słuchaczy';
+    return '${room.participantCount} $label';
+  }
+  final label = room.memberCount == 1 ? 'członek' : 'członków';
+  return '${room.memberCount} $label';
+}
+
+String _polishPlural(int count, String one, String few, String many) {
+  if (count == 1) return one;
+  final tens = count % 100;
+  final units = count % 10;
+  if (tens < 12 || tens > 14) {
+    if (units >= 2 && units <= 4) return few;
+  }
+  return many;
 }

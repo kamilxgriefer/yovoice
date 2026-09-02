@@ -681,7 +681,12 @@ class MessageService {
   String _describeError(Object error) {
     if (error is FirebaseFunctionsException) {
       final message = error.message;
-      return message == null || message.isEmpty ? error.code : message;
+      // Preserve the stable callable code for safe UI classification. The
+      // backend message can contain useful diagnostics for a future support
+      // export, but presentation code must never render it verbatim.
+      return message == null || message.isEmpty
+          ? error.code
+          : '${error.code}:$message';
     }
     return error.toString();
   }

@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
+import 'package:yovoice/core/helpers/error_messages.dart';
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/clubs/data/models/club.dart';
 import 'package:yovoice/features/clubs/data/services/club_service.dart';
@@ -92,15 +94,31 @@ class _ClubSettingsScreenState extends State<ClubSettingsScreen> {
         );
       }
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Club settings saved.')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            AppLocalizations.of(
+              context,
+            ).text('Club settings saved.', 'Zapisano ustawienia klubu.'),
+          ),
+        ),
+      );
       Navigator.of(context).pop();
     } catch (error) {
       if (!mounted) return;
+      final copy = AppLocalizations.of(context);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(error.toString().replaceFirst('Bad state: ', '')),
+          content: Text(
+            friendlyErrorMessage(
+              error,
+              fallback: copy.text(
+                'Could not save settings. Please try again.',
+                'Nie udało się zapisać ustawień. Spróbuj ponownie.',
+              ),
+              copy: copy,
+            ),
+          ),
         ),
       );
     } finally {
@@ -112,27 +130,28 @@ class _ClubSettingsScreenState extends State<ClubSettingsScreen> {
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
+    final copy = AppLocalizations.of(context);
     return Scaffold(
       key: const ValueKey('club-settings-screen'),
       backgroundColor: palette.background,
       appBar: AppBar(
         backgroundColor: palette.background,
         foregroundColor: palette.textPrimary,
-        title: const Text('Club settings'),
+        title: Text(copy.text('Club settings', 'Ustawienia klubu')),
       ),
       body: ResponsiveContentFrame(
         width: ResponsiveContentWidth.form,
         child: ListView(
           padding: const EdgeInsets.fromLTRB(18, 16, 18, 120),
           children: [
-            _field(_name, 'Club name'),
+            _field(_name, copy.text('Club name', 'Nazwa klubu')),
             const SizedBox(height: 14),
-            _field(_description, 'Description', maxLines: 4),
+            _field(_description, copy.text('Description', 'Opis'), maxLines: 4),
             const SizedBox(height: 14),
-            _field(_language, 'Default language'),
+            _field(_language, copy.text('Default language', 'Domyślny język')),
             const SizedBox(height: 20),
             Text(
-              'Privacy',
+              copy.text('Privacy', 'Prywatność'),
               style: TextStyle(
                 color: palette.textPrimary,
                 fontSize: 18,
@@ -193,7 +212,7 @@ class _ClubSettingsScreenState extends State<ClubSettingsScreen> {
                           const SizedBox(width: 13),
                           Expanded(
                             child: Text(
-                              _privacyLabel(privacy),
+                              _privacyLabel(privacy, copy),
                               style: TextStyle(
                                 color: palette.textPrimary,
                                 fontWeight: isSelected
@@ -232,7 +251,10 @@ class _ClubSettingsScreenState extends State<ClubSettingsScreen> {
                       ? null
                       : (value) => setState(() => _showOnWebsite = value),
                   title: Text(
-                    'Feature this Club on the YO Voice website',
+                    copy.text(
+                      'Feature this Club on the YO Voice website',
+                      'Pokaż ten klub na stronie YO Voice',
+                    ),
                     style: TextStyle(
                       color: palette.textPrimary,
                       fontWeight: FontWeight.w800,
@@ -240,8 +262,14 @@ class _ClubSettingsScreenState extends State<ClubSettingsScreen> {
                   ),
                   subtitle: Text(
                     _privacy == ClubPrivacy.public
-                        ? 'Publishes only the Club name and current member count. Family and private Clubs are never included.'
-                        : 'Make the Club public before featuring it on the website.',
+                        ? copy.text(
+                            'Publishes only the Club name and current member count. Family and private Clubs are never included.',
+                            'Publikujemy wyłącznie nazwę klubu i aktualną liczbę członków. Pokoje rodzinne i prywatne kluby nigdy nie są uwzględniane.',
+                          )
+                        : copy.text(
+                            'Make the Club public before featuring it on the website.',
+                            'Najpierw ustaw klub jako publiczny.',
+                          ),
                     style: TextStyle(
                       color: palette.textSecondary,
                       fontSize: 12,
@@ -272,7 +300,9 @@ class _ClubSettingsScreenState extends State<ClubSettingsScreen> {
                     )
                   : const Icon(Icons.save_rounded),
               label: Text(
-                _saving ? 'SAVING...' : 'SAVE SETTINGS',
+                _saving
+                    ? copy.text('SAVING...', 'ZAPISYWANIE...')
+                    : copy.text('SAVE SETTINGS', 'ZAPISZ USTAWIENIA'),
                 style: const TextStyle(fontWeight: FontWeight.w900),
               ),
             ),
@@ -311,9 +341,13 @@ class _ClubSettingsScreenState extends State<ClubSettingsScreen> {
     );
   }
 
-  String _privacyLabel(ClubPrivacy privacy) => switch (privacy) {
-    ClubPrivacy.public => 'Public',
-    ClubPrivacy.private => 'Private',
-    ClubPrivacy.inviteOnly => 'Invite only',
-  };
+  String _privacyLabel(ClubPrivacy privacy, AppLocalizations copy) =>
+      switch (privacy) {
+        ClubPrivacy.public => copy.text('Public', 'Publiczny'),
+        ClubPrivacy.private => copy.text('Private', 'Prywatny'),
+        ClubPrivacy.inviteOnly => copy.text(
+          'Invite only',
+          'Tylko na zaproszenie',
+        ),
+      };
 }

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/helpers/error_messages.dart';
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/friends/data/models/friend_request.dart';
 import 'package:yovoice/features/friends/data/models/friend_user.dart';
@@ -116,6 +117,7 @@ class _FriendsScreenState extends State<FriendsScreen> {
             otherDisplayName: friend.displayName,
             otherEmail: friend.email,
             otherPhotoUrl: friend.photoUrl ?? '',
+            otherProfileUpdatedAt: friend.profileUpdatedAt,
           ),
         ),
       );
@@ -127,10 +129,12 @@ class _FriendsScreenState extends State<FriendsScreen> {
       // FirebaseFunctionsException. Raw exception text must never be what
       // the user reads.
       _showMessage(
-        intentionalOrFriendly(
-          error,
-          fallback: 'Could not open this conversation.',
-        ),
+        AppLocalizations.of(context).isPolish
+            ? 'Nie udało się otworzyć rozmowy.'
+            : intentionalOrFriendly(
+                error,
+                fallback: 'Could not open this conversation.',
+              ),
         isError: true,
       );
     }
@@ -140,7 +144,10 @@ class _FriendsScreenState extends State<FriendsScreen> {
     await _runRequestAction(
       request.senderId,
       () => _friendService.acceptFriendRequest(request),
-      '${request.senderName} is now your friend.',
+      AppLocalizations.of(context).text(
+        '${request.senderName} is now your friend.',
+        '${request.senderName} jest teraz w gronie Twoich znajomych.',
+      ),
     );
   }
 
@@ -148,7 +155,9 @@ class _FriendsScreenState extends State<FriendsScreen> {
     await _runRequestAction(
       request.senderId,
       () => _friendService.declineFriendRequest(request.senderId),
-      'Friend request declined.',
+      AppLocalizations.of(
+        context,
+      ).text('Friend request declined.', 'Odrzucono zaproszenie.'),
     );
   }
 
@@ -166,10 +175,12 @@ class _FriendsScreenState extends State<FriendsScreen> {
     } catch (error) {
       if (mounted) {
         _showMessage(
-          intentionalOrFriendly(
-            error,
-            fallback: 'Could not update this friend request. Try again.',
-          ),
+          AppLocalizations.of(context).isPolish
+              ? 'Nie udało się zaktualizować zaproszenia. Spróbuj ponownie.'
+              : intentionalOrFriendly(
+                  error,
+                  fallback: 'Could not update this friend request. Try again.',
+                ),
           isError: true,
         );
       }
@@ -257,6 +268,7 @@ class _FriendsScreenState extends State<FriendsScreen> {
 
   Widget _buildHeader() {
     final palette = context.appPalette;
+    final copy = AppLocalizations.of(context);
     return Padding(
       padding: const EdgeInsets.fromLTRB(18, 18, 18, 14),
       child: LayoutBuilder(
@@ -281,7 +293,7 @@ class _FriendsScreenState extends State<FriendsScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'Friends',
+                copy.text('Friends', 'Znajomi'),
                 style: TextStyle(
                   color: palette.textPrimary,
                   fontSize: 30,
@@ -291,7 +303,10 @@ class _FriendsScreenState extends State<FriendsScreen> {
               ),
               const SizedBox(height: 4),
               Text(
-                'Your people, one tap away.',
+                copy.text(
+                  'Your people, one tap away.',
+                  'Twoi znajomi zawsze pod ręką.',
+                ),
                 style: TextStyle(color: palette.textSecondary, fontSize: 13),
               ),
             ],
@@ -304,7 +319,10 @@ class _FriendsScreenState extends State<FriendsScreen> {
                 builder: (context, snapshot) {
                   final count = snapshot.data ?? 0;
                   return _HeaderButton(
-                    tooltip: 'Friend requests',
+                    tooltip: copy.text(
+                      'Friend requests',
+                      'Zaproszenia do znajomych',
+                    ),
                     icon: Icons.notifications_none_rounded,
                     badgeCount: count,
                     onTap: () =>
@@ -314,13 +332,13 @@ class _FriendsScreenState extends State<FriendsScreen> {
               ),
               const SizedBox(width: 9),
               _HeaderButton(
-                tooltip: 'Blocked users',
+                tooltip: copy.text('Blocked users', 'Zablokowani użytkownicy'),
                 icon: Icons.block_rounded,
                 onTap: _openBlockedUsers,
               ),
               const SizedBox(width: 9),
               _HeaderButton(
-                tooltip: 'Add friend',
+                tooltip: copy.text('Add friend', 'Dodaj znajomego'),
                 icon: Icons.person_add_alt_1_rounded,
                 highlighted: true,
                 onTap: _openAddFriend,
@@ -357,6 +375,7 @@ class _FriendsScreenState extends State<FriendsScreen> {
 
   Widget _buildSearch() {
     final palette = context.appPalette;
+    final copy = AppLocalizations.of(context);
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 18),
       child: TextField(
@@ -364,8 +383,8 @@ class _FriendsScreenState extends State<FriendsScreen> {
         style: TextStyle(color: palette.textPrimary),
         decoration: InputDecoration(
           hintText: _filter == _FriendsFilter.requests
-              ? 'Search requests...'
-              : 'Search friends...',
+              ? copy.text('Search requests...', 'Szukaj zaproszeń...')
+              : copy.text('Search friends...', 'Szukaj znajomych...'),
           hintStyle: TextStyle(color: palette.textTertiary),
           prefixIcon: Icon(Icons.search_rounded, color: palette.textSecondary),
           suffixIcon: ValueListenableBuilder<TextEditingValue>(
@@ -373,7 +392,7 @@ class _FriendsScreenState extends State<FriendsScreen> {
             builder: (context, value, _) {
               if (value.text.isEmpty) return const SizedBox.shrink();
               return IconButton(
-                tooltip: 'Clear search',
+                tooltip: copy.text('Clear search', 'Wyczyść wyszukiwanie'),
                 onPressed: _searchController.clear,
                 icon: Icon(Icons.close_rounded, color: palette.textSecondary),
               );
@@ -396,6 +415,7 @@ class _FriendsScreenState extends State<FriendsScreen> {
   }
 
   Widget _buildFilters() {
+    final copy = AppLocalizations.of(context);
     return Padding(
       padding: const EdgeInsets.fromLTRB(18, 13, 18, 0),
       child: StreamBuilder<int>(
@@ -407,21 +427,24 @@ class _FriendsScreenState extends State<FriendsScreen> {
             child: Row(
               children: [
                 _FilterChip(
-                  label: 'All',
+                  label: copy.text('All', 'Wszyscy'),
                   selected: _filter == _FriendsFilter.all,
                   onTap: () => setState(() => _filter = _FriendsFilter.all),
                 ),
                 const SizedBox(width: 8),
                 _FilterChip(
-                  label: 'Online',
+                  label: copy.text('Online', 'Online'),
                   selected: _filter == _FriendsFilter.online,
                   onTap: () => setState(() => _filter = _FriendsFilter.online),
                 ),
                 const SizedBox(width: 8),
                 _FilterChip(
                   label: requestCount > 0
-                      ? 'Requests $requestCount'
-                      : 'Requests',
+                      ? copy.text(
+                          'Requests $requestCount',
+                          'Zaproszenia $requestCount',
+                        )
+                      : copy.text('Requests', 'Zaproszenia'),
                   selected: _filter == _FriendsFilter.requests,
                   onTap: () =>
                       setState(() => _filter = _FriendsFilter.requests),
@@ -435,6 +458,7 @@ class _FriendsScreenState extends State<FriendsScreen> {
   }
 
   Widget _buildFriends() {
+    final copy = AppLocalizations.of(context);
     return StreamBuilder<List<FriendUser>>(
       stream: _friendsStream,
       builder: (context, snapshot) {
@@ -450,8 +474,13 @@ class _FriendsScreenState extends State<FriendsScreen> {
         if (snapshot.hasError) {
           return _EmptyState(
             icon: Icons.cloud_off_rounded,
-            title: 'Could not load friends',
-            subtitle: friendlyErrorMessage(snapshot.error!),
+            title: copy.text(
+              'Could not load friends',
+              'Nie udało się wczytać znajomych',
+            ),
+            subtitle: copy.isPolish
+                ? 'Sprawdź połączenie i spróbuj ponownie.'
+                : friendlyErrorMessage(snapshot.error!),
           );
         }
 
@@ -476,17 +505,26 @@ class _FriendsScreenState extends State<FriendsScreen> {
                 ? Icons.wifi_off_rounded
                 : Icons.people_outline_rounded,
             title: isSearching
-                ? 'No matching friends'
+                ? copy.text('No matching friends', 'Brak pasujących znajomych')
                 : _filter == _FriendsFilter.online
-                ? 'Nobody is online'
-                : 'No friends yet',
+                ? copy.text('Nobody is online', 'Nikt nie jest teraz online')
+                : copy.text('No friends yet', 'Nie masz jeszcze znajomych'),
             subtitle: isSearching
-                ? 'Try another name or username.'
+                ? copy.text(
+                    'Try another name or username.',
+                    'Wpisz inną nazwę lub pseudonim.',
+                  )
                 : _filter == _FriendsFilter.online
-                ? 'Online friends will appear here.'
-                : 'Find someone and start building your circle.',
+                ? copy.text(
+                    'Online friends will appear here.',
+                    'Znajomi dostępni online pojawią się tutaj.',
+                  )
+                : copy.text(
+                    'Find someone and start building your circle.',
+                    'Znajdź kogoś i zacznij budować swoje grono.',
+                  ),
             actionLabel: _filter == _FriendsFilter.all && !isSearching
-                ? 'Add friend'
+                ? copy.text('Add friend', 'Dodaj znajomego')
                 : null,
             onAction: _filter == _FriendsFilter.all && !isSearching
                 ? _openAddFriend
@@ -523,6 +561,7 @@ class _FriendsScreenState extends State<FriendsScreen> {
   }
 
   Widget _buildRequests() {
+    final copy = AppLocalizations.of(context);
     return StreamBuilder<List<FriendRequest>>(
       stream: _requestsStream,
       builder: (context, snapshot) {
@@ -538,8 +577,13 @@ class _FriendsScreenState extends State<FriendsScreen> {
         if (snapshot.hasError) {
           return _EmptyState(
             icon: Icons.cloud_off_rounded,
-            title: 'Could not load requests',
-            subtitle: friendlyErrorMessage(snapshot.error!),
+            title: copy.text(
+              'Could not load requests',
+              'Nie udało się wczytać zaproszeń',
+            ),
+            subtitle: copy.isPolish
+                ? 'Sprawdź połączenie i spróbuj ponownie.'
+                : friendlyErrorMessage(snapshot.error!),
           );
         }
 
@@ -556,11 +600,20 @@ class _FriendsScreenState extends State<FriendsScreen> {
                 ? Icons.mark_email_read_outlined
                 : Icons.search_off_rounded,
             title: _query.isEmpty
-                ? 'No pending requests'
-                : 'No matching requests',
+                ? copy.text(
+                    'No pending requests',
+                    'Brak oczekujących zaproszeń',
+                  )
+                : copy.text(
+                    'No matching requests',
+                    'Brak pasujących zaproszeń',
+                  ),
             subtitle: _query.isEmpty
-                ? 'New friend requests will appear here.'
-                : 'Try another name.',
+                ? copy.text(
+                    'New friend requests will appear here.',
+                    'Nowe zaproszenia pojawią się tutaj.',
+                  )
+                : copy.text('Try another name.', 'Wpisz inną nazwę.'),
           );
         }
 
@@ -592,6 +645,7 @@ class _FriendsSummary extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
+    final copy = AppLocalizations.of(context);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
       decoration: BoxDecoration(
@@ -614,7 +668,12 @@ class _FriendsSummary extends StatelessWidget {
               const SizedBox(width: 10),
               Flexible(
                 child: Text(
-                  '$totalCount friends',
+                  totalCount == 1
+                      ? copy.text('1 friend', '1 znajomy')
+                      : copy.text(
+                          '$totalCount friends',
+                          '$totalCount znajomych',
+                        ),
                   style: TextStyle(
                     color: palette.textPrimary,
                     fontWeight: FontWeight.w800,
@@ -637,7 +696,7 @@ class _FriendsSummary extends StatelessWidget {
               const SizedBox(width: 7),
               Flexible(
                 child: Text(
-                  '$onlineCount online',
+                  copy.text('$onlineCount online', '$onlineCount online'),
                   style: TextStyle(color: palette.textSecondary),
                 ),
               ),
@@ -671,6 +730,7 @@ class _FriendCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
+    final copy = AppLocalizations.of(context);
 
     return Material(
       color: palette.surface,
@@ -700,6 +760,7 @@ class _FriendCard extends StatelessWidget {
                     child: UserAvatar(
                       radius: 27,
                       userId: friend.id,
+                      mediaRevision: friend.profileUpdatedAt,
                       displayName: friend.displayName,
                       backgroundColor: palette.surfaceSunken,
                     ),
@@ -746,10 +807,10 @@ class _FriendCard extends StatelessWidget {
                     const SizedBox(height: 4),
                     Text(
                       friend.isOnline
-                          ? 'Online now'
+                          ? copy.text('Online now', 'Teraz online')
                           : friend.username.isNotEmpty
                           ? '@${friend.username}'
-                          : 'Offline',
+                          : copy.text('Offline', 'Offline'),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
@@ -763,7 +824,7 @@ class _FriendCard extends StatelessWidget {
                 ),
               ),
               IconButton.filledTonal(
-                tooltip: 'Message',
+                tooltip: copy.text('Message', 'Wiadomość'),
                 onPressed: onMessage,
                 style: IconButton.styleFrom(
                   backgroundColor: colors.secondaryContainer,
@@ -799,9 +860,10 @@ class FriendRequestCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
+    final copy = AppLocalizations.of(context);
     final name = request.senderName.trim().isNotEmpty
         ? request.senderName.trim()
-        : 'YO Voice user';
+        : copy.text('YO Voice user', 'Użytkownik YO Voice');
 
     return Container(
       key: ValueKey('friend-request-card-${request.senderId}'),
@@ -836,7 +898,10 @@ class FriendRequestCard extends StatelessWidget {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  'Wants to be your friend',
+                  copy.text(
+                    'Wants to be your friend',
+                    'Chce dodać Cię do znajomych',
+                  ),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(color: palette.textSecondary, fontSize: 12),
@@ -868,7 +933,7 @@ class FriendRequestCard extends StatelessWidget {
                               ),
                             )
                           : const Icon(Icons.check_rounded, size: 18),
-                      label: const Text('Accept'),
+                      label: Text(copy.text('Accept', 'Akceptuj')),
                     );
                     final decline = OutlinedButton.icon(
                       key: const ValueKey('friend-request-decline'),
@@ -882,7 +947,7 @@ class FriendRequestCard extends StatelessWidget {
                         ),
                       ),
                       icon: const Icon(Icons.close_rounded, size: 18),
-                      label: const Text('Decline'),
+                      label: Text(copy.text('Decline', 'Odrzuć')),
                     );
 
                     if (stackActions) {
@@ -971,8 +1036,12 @@ class _HeaderButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
+    final copy = AppLocalizations.of(context);
     final semanticLabel = badgeCount > 0
-        ? '$tooltip, $badgeCount pending'
+        ? copy.text(
+            '$tooltip, $badgeCount pending',
+            '$tooltip, oczekujących: $badgeCount',
+          )
         : tooltip;
     return Tooltip(
       message: tooltip,

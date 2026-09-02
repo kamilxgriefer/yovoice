@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/shared/widgets/buttons/yo_icon_button.dart';
 
 /// The single close affordance for YO Voice modal bottom sheets.
@@ -32,8 +33,13 @@ class YoModalSheetChrome extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final showHandle = MediaQuery.sizeOf(context).width < desktopBreakpoint;
-    final closeLabel = 'Close $sheetLabel';
+    final closeLabel = copy.template(
+      'Close {sheet}',
+      'Zamknij: {sheet}',
+      values: <String, Object>{'sheet': sheetLabel},
+    );
     final close = onClose ?? () => Navigator.of(context).maybePop<void>();
     final surfaceIsDark =
         ThemeData.estimateBrightnessForColor(surfaceColor) == Brightness.dark;

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/achievements/data/models/achievement_definition.dart';
 import 'package:yovoice/features/achievements/presentation/widgets/title_badge.dart';
@@ -95,6 +96,7 @@ class ProfileHeader extends StatelessWidget {
   }
 
   Widget _toolbar(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
     final canPop = Navigator.of(context).canPop();
@@ -115,7 +117,7 @@ class ProfileHeader extends StatelessWidget {
                   onPressed: () => Navigator.of(context).maybePop(),
                   icon: const Icon(Icons.arrow_back_rounded),
                   color: palette.textPrimary,
-                  tooltip: 'Back',
+                  tooltip: copy.text('Back', 'Wstecz'),
                   constraints: const BoxConstraints(
                     minWidth: 44,
                     minHeight: 44,
@@ -133,7 +135,7 @@ class ProfileHeader extends StatelessWidget {
               const SizedBox(width: 12),
             Expanded(
               child: Text(
-                'Profile',
+                copy.profile,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
@@ -145,7 +147,7 @@ class ProfileHeader extends StatelessWidget {
             ),
             IconButton.filled(
               onPressed: onEdit,
-              tooltip: 'Edit profile',
+              tooltip: copy.text('Edit profile', 'Edytuj profil'),
               constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
               style: IconButton.styleFrom(backgroundColor: colors.primary),
               icon: Icon(Icons.edit_rounded, color: colors.onPrimary),
@@ -393,10 +395,14 @@ class PremiumIdentityChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final colors = Theme.of(context).colorScheme;
     final color = colors.primary;
     return Tooltip(
-      message: 'YO Voice Premium member',
+      message: copy.text(
+        'YO Voice Premium member',
+        'Użytkownik YO Voice Premium',
+      ),
       child: Container(
         constraints: BoxConstraints(minHeight: compact ? 24 : 28),
         padding: EdgeInsets.symmetric(
@@ -456,12 +462,13 @@ class AccountTypeBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
     final (icon, label, surface, foreground, border) = switch (accountType) {
       AccountType.official => (
         Icons.verified_rounded,
-        'Official',
+        copy.text('Official', 'Oficjalne'),
         palette.infoSurface,
         palette.infoForeground,
         Color.alphaBlend(
@@ -471,14 +478,14 @@ class AccountTypeBadge extends StatelessWidget {
       ),
       AccountType.creator => (
         Icons.auto_awesome_rounded,
-        'Creator',
+        copy.text('Creator', 'Twórca'),
         colors.primaryContainer,
         colors.onPrimaryContainer,
         Color.alphaBlend(colors.primary.withValues(alpha: .42), palette.border),
       ),
       AccountType.personal => (
         Icons.person_rounded,
-        'Personal',
+        copy.text('Personal', 'Osobiste'),
         palette.surfaceMuted,
         palette.textSecondary,
         palette.borderStrong,
@@ -486,7 +493,7 @@ class AccountTypeBadge extends StatelessWidget {
     };
 
     return Tooltip(
-      message: '$label account',
+      message: copy.text('$label account', 'Konto: $label'),
       child: Container(
         key: ValueKey('profile-account-type-${accountType.name}'),
         constraints: BoxConstraints(minHeight: compact ? 24 : 28),

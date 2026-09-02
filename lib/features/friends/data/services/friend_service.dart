@@ -9,13 +9,7 @@ import 'package:yovoice/features/notifications/data/services/notification_servic
 import '../models/friend_request.dart';
 import '../models/friend_user.dart';
 
-enum FriendRelationshipStatus {
-  none,
-  friends,
-  requestSent,
-  requestReceived,
-  blocked,
-}
+export '../models/friend_user.dart' show FriendRelationshipStatus;
 
 typedef FriendMutationInvoker =
     Future<Map<String, dynamic>> Function(
@@ -25,6 +19,8 @@ typedef FriendMutationInvoker =
 
 typedef PublicProfileSearchInvoker =
     Future<List<Map<String, dynamic>>> Function(String query, int limit);
+typedef RelationshipStatusInvoker =
+    Future<FriendRelationshipStatus> Function(String otherUserId);
 
 class FriendService {
   FriendService({
@@ -34,17 +30,20 @@ class FriendService {
     FirebaseFunctions? functions,
     FriendMutationInvoker? mutationInvoker,
     PublicProfileSearchInvoker? searchInvoker,
+    RelationshipStatusInvoker? relationshipStatusInvoker,
   }) : _firestore = firestore ?? FirebaseFirestore.instance,
        _auth = auth ?? FirebaseAuth.instance,
        _functionsOverride = functions,
        _mutationInvoker = mutationInvoker,
-       _searchInvoker = searchInvoker;
+       _searchInvoker = searchInvoker,
+       _relationshipStatusInvoker = relationshipStatusInvoker;
 
   final FirebaseFirestore _firestore;
   final FirebaseAuth _auth;
   final FirebaseFunctions? _functionsOverride;
   final FriendMutationInvoker? _mutationInvoker;
   final PublicProfileSearchInvoker? _searchInvoker;
+  final RelationshipStatusInvoker? _relationshipStatusInvoker;
 
   FirebaseFunctions get _functions =>
       _functionsOverride ??
@@ -77,10 +76,8 @@ class FriendService {
       return value is Map
           ? Map<String, dynamic>.from(value)
           : const <String, dynamic>{};
-    } on FirebaseFunctionsException catch (error) {
-      throw StateError(
-        error.message ?? 'The social action could not be completed.',
-      );
+    } on FirebaseFunctionsException {
+      throw StateError('The social action could not be completed.');
     }
   }
 
@@ -357,14 +354,16 @@ class FriendService {
           .whereType<Map>()
           .map((item) => Map<String, dynamic>.from(item))
           .toList(growable: false);
-    } on FirebaseFunctionsException catch (error) {
-      throw StateError(error.message ?? 'User search is unavailable.');
+    } on FirebaseFunctionsException {
+      throw StateError('User search is unavailable.');
     }
   }
 
   Future<FriendRelationshipStatus> getRelationshipStatus(
     String otherUserId,
   ) async {
+    final injected = _relationshipStatusInvoker;
+    if (injected != null) return injected(otherUserId);
     final me = _currentUser.uid;
     final results = await Future.wait([
       _users.doc(me).collection('friends').doc(otherUserId).get(),

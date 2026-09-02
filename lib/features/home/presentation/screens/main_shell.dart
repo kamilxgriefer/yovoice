@@ -6,11 +6,13 @@ import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/helpers/error_messages.dart';
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/navigation/app_route_observer.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 
 import 'package:yovoice/features/auth/data/auth_service.dart';
 import 'package:yovoice/features/auth/presentation/screens/verify_email_screen.dart';
+import 'package:yovoice/features/auth/presentation/widgets/email_verification_banner.dart';
 import 'package:yovoice/features/clubs/presentation/screens/club_overview_screen.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/followed_creators_card.dart';
 import 'package:yovoice/features/messages/presentation/screens/chat_screen.dart';
@@ -34,6 +36,8 @@ import 'package:yovoice/features/notifications/data/services/notification_servic
 import 'package:yovoice/features/notifications/presentation/screens/notifications_screen.dart';
 import 'package:yovoice/features/onboarding/data/guided_onboarding_progress.dart';
 import 'package:yovoice/features/onboarding/presentation/guided_onboarding_tour.dart';
+import 'package:yovoice/features/permissions/data/permission_readiness_service.dart';
+import 'package:yovoice/features/permissions/presentation/permission_setup_sheet.dart';
 import 'package:yovoice/features/premium/data/models/subscription_entitlements.dart';
 import 'package:yovoice/features/premium/data/services/entitlement_service.dart';
 import 'package:yovoice/features/premium/premium_gates.dart';
@@ -135,6 +139,7 @@ class MainShell extends StatefulWidget {
     this.onboardingCreationTime,
     this.onboardingLastSignInTime,
     this.onboardingReadiness,
+    this.permissionReadiness,
     super.key,
   });
 
@@ -152,11 +157,14 @@ class MainShell extends StatefulWidget {
   @visibleForTesting
   final DateTime? onboardingLastSignInTime;
 
-  /// Resolves after startup-owned native modal surfaces (currently the push
-  /// permission prompt) have settled. Only automatic onboarding waits for it;
-  /// the shell and manual replay remain immediate.
+  /// Resolves after non-interactive notification startup and any cold-start
+  /// notification route have settled. The shell and manual replay remain
+  /// immediate.
   @visibleForTesting
   final Future<void>? onboardingReadiness;
+
+  @visibleForTesting
+  final PermissionReadinessService? permissionReadiness;
 
   static const double desktopBreakpoint = 1100;
 
@@ -203,7 +211,7 @@ class MainShell extends StatefulWidget {
 }
 
 class _MainShellState extends State<MainShell>
-    with SingleTickerProviderStateMixin, RouteAware {
+    with SingleTickerProviderStateMixin, RouteAware, WidgetsBindingObserver {
   final MessageService _messageService = MessageService.live;
   final RoomService _roomService = RoomService();
   final AuthService _authService = AuthService();
@@ -214,6 +222,7 @@ class _MainShellState extends State<MainShell>
   bool _handledInitialRoomLink = false;
 
   late final GuidedOnboardingProgress _onboardingProgress;
+  late final PermissionReadinessService _permissionReadiness;
   late final String _onboardingUserId;
   late final DateTime? _onboardingCreationTime;
   late final DateTime? _onboardingLastSignInTime;
@@ -221,6 +230,9 @@ class _MainShellState extends State<MainShell>
   bool _autoOnboardingChecked = false;
   bool _onboardingPending = false;
   bool get _onboardingOpen => _onboardingPresentation.isActive;
+  bool _permissionSetupChecked = false;
+  bool _permissionSetupPending = false;
+  bool _permissionSetupOpen = false;
 
   final Map<GuidedOnboardingTarget, GlobalKey> _onboardingAnchors = {
     for (final target in GuidedOnboardingTarget.values)
@@ -228,6 +240,8 @@ class _MainShellState extends State<MainShell>
   };
 
   Timer? _verificationCheckTimer;
+  StreamSubscription<User?>? _verificationUserSubscription;
+  bool _verificationCheckInFlight = false;
   bool _showVerificationBanner =
       FirebaseAuth.instance.currentUser?.emailVerified == false;
 
@@ -474,10 +488,13 @@ class _MainShellState extends State<MainShell>
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
 
     final currentUser = FirebaseAuth.instance.currentUser;
     _onboardingProgress =
         widget.onboardingProgress ?? GuidedOnboardingProgress();
+    _permissionReadiness =
+        widget.permissionReadiness ?? PermissionReadinessService.instance;
     _onboardingUserId = widget.onboardingUserId ?? currentUser?.uid ?? '';
     _onboardingCreationTime =
         widget.onboardingCreationTime ?? currentUser?.metadata.creationTime;
@@ -534,16 +551,14 @@ class _MainShellState extends State<MainShell>
     }
 
     unawaited(_resolveStaffAccess());
-
-    if (_showVerificationBanner) {
-      // Soft reminder, not the active "waiting room" VerifyEmailScreen is —
-      // a slower interval is enough here since this just needs to notice
-      // "verified elsewhere" eventually, not drive a live countdown.
-      _verificationCheckTimer = Timer.periodic(
-        const Duration(seconds: 30),
-        (_) => _checkVerification(),
-      );
-    }
+    _verificationUserSubscription = FirebaseAuth.instance.userChanges().listen(
+      _handleVerificationUser,
+      onError: (_) {
+        // The cached initial state and periodic reload remain available when
+        // Firebase's user stream is temporarily unavailable.
+      },
+    );
+    _setVerificationReminder(currentUser != null && !currentUser.emailVerified);
   }
 
   @override
@@ -561,6 +576,17 @@ class _MainShellState extends State<MainShell>
   @override
   void didPopNext() {
     unawaited(_showPendingGuidedOnboarding());
+    unawaited(_showPendingPermissionSetup());
+    unawaited(_checkVerification());
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      // The verification link is commonly opened in Mail or a browser. Check
+      // immediately when YO Voice returns instead of waiting for the timer.
+      unawaited(_checkVerification());
+    }
   }
 
   Future<void> _prepareGuidedOnboarding() async {
@@ -569,9 +595,9 @@ class _MainShellState extends State<MainShell>
     await _openInitialRoomLink();
     if (!mounted) return;
 
-    // Never place the guide underneath a native permission surface. The
-    // readiness future ends before token/network registration, so it does not
-    // turn onboarding into a connectivity-dependent feature.
+    // Cold-start notification routing owns the first destination. Permission
+    // inspection is non-interactive, and token/network registration never
+    // becomes part of this startup barrier.
     final eligible = await evaluateGuidedOnboardingAfterReadiness(
       readiness: widget.onboardingReadiness,
       evaluate: () => _onboardingProgress.shouldAutoStart(
@@ -582,9 +608,12 @@ class _MainShellState extends State<MainShell>
     );
     if (!mounted || _autoOnboardingChecked) return;
     _autoOnboardingChecked = true;
-    if (!mounted || !eligible) return;
-    _onboardingPending = true;
-    await _showPendingGuidedOnboarding();
+    if (eligible) {
+      _onboardingPending = true;
+      await _showPendingGuidedOnboarding();
+      return;
+    }
+    await _preparePermissionSetup();
   }
 
   Future<void> _showPendingGuidedOnboarding() async {
@@ -603,6 +632,54 @@ class _MainShellState extends State<MainShell>
       // written. A future launch may offer it again, while this session stays
       // uninterrupted.
       debugPrint('Guided onboarding progress could not be saved: $error');
+    }
+    await _preparePermissionSetup();
+  }
+
+  Future<void> _preparePermissionSetup() async {
+    if (_permissionSetupChecked || !mounted) return;
+    final shouldOffer = await _permissionReadiness.shouldOfferAutomatically(
+      _onboardingUserId,
+    );
+    if (!mounted || _permissionSetupChecked) return;
+    _permissionSetupChecked = true;
+    if (!shouldOffer) return;
+    _permissionSetupPending = true;
+    await _showPendingPermissionSetup();
+  }
+
+  Future<void> _showPendingPermissionSetup() async {
+    if (!_permissionSetupPending ||
+        _permissionSetupOpen ||
+        _onboardingPending ||
+        _onboardingOpen ||
+        !mounted ||
+        ModalRoute.of(context)?.isCurrent != true) {
+      return;
+    }
+    final stillPending = await _permissionReadiness.shouldOfferAutomatically(
+      _onboardingUserId,
+    );
+    if (!mounted ||
+        !stillPending ||
+        !_permissionSetupPending ||
+        _permissionSetupOpen ||
+        _onboardingPending ||
+        _onboardingOpen ||
+        ModalRoute.of(context)?.isCurrent != true) {
+      if (!stillPending) _permissionSetupPending = false;
+      return;
+    }
+    _permissionSetupOpen = true;
+    try {
+      final outcome = await showPermissionSetupSheet(
+        context,
+        userId: _onboardingUserId,
+        service: _permissionReadiness,
+      );
+      if (mounted && outcome != null) _permissionSetupPending = false;
+    } finally {
+      _permissionSetupOpen = false;
     }
   }
 
@@ -659,11 +736,42 @@ class _MainShellState extends State<MainShell>
     if (mounted) await _replayGuidedOnboarding();
   }
 
-  Future<void> _checkVerification() async {
-    final verified = await _authService.reloadCurrentUser();
-    if (verified && mounted) {
+  void _handleVerificationUser(User? user) {
+    _setVerificationReminder(user != null && !user.emailVerified);
+  }
+
+  void _setVerificationReminder(bool visible) {
+    if (!mounted) return;
+    if (_showVerificationBanner != visible) {
+      setState(() => _showVerificationBanner = visible);
+    }
+    if (!visible) {
       _verificationCheckTimer?.cancel();
-      setState(() => _showVerificationBanner = false);
+      _verificationCheckTimer = null;
+      return;
+    }
+    _verificationCheckTimer ??= Timer.periodic(
+      const Duration(seconds: 30),
+      (_) => unawaited(_checkVerification()),
+    );
+  }
+
+  Future<void> _checkVerification() async {
+    if (_verificationCheckInFlight || !_showVerificationBanner) return;
+    _verificationCheckInFlight = true;
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) {
+        _setVerificationReminder(false);
+        return;
+      }
+      final verified = await _authService.reloadCurrentUser();
+      if (mounted) _setVerificationReminder(!verified);
+    } catch (_) {
+      // Offline or throttled reloads must not hide the reminder. The next app
+      // resume/user event/timer tick safely tries again.
+    } finally {
+      _verificationCheckInFlight = false;
     }
   }
 
@@ -687,54 +795,16 @@ class _MainShellState extends State<MainShell>
 
     try {
       final room = await _roomService.getRoom(roomId);
-      if (!mounted || !room.isLive || !room.isActive) {
+      if (!mounted || !room.isActive) {
         return;
       }
 
-      final shouldJoin = await showDialog<bool>(
-        context: context,
-        builder: (dialogContext) {
-          final palette = dialogContext.appPalette;
-          return AlertDialog(
-            backgroundColor: palette.surfaceRaised,
-            title: Text(
-              'Join ${room.name}?',
-              style: TextStyle(
-                color: palette.textPrimary,
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-            content: Text(
-              'This opens a live voice room. You will join muted and can '
-              'turn on your microphone when you are ready.',
-              style: TextStyle(color: palette.textSecondary, height: 1.4),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(dialogContext).pop(false),
-                style: TextButton.styleFrom(foregroundColor: palette.focus),
-                child: const Text('Cancel'),
-              ),
-              FilledButton(
-                key: const ValueKey('initial-room-link-confirm'),
-                onPressed: () => Navigator.of(dialogContext).pop(true),
-                child: const Text('Join voice room'),
-              ),
-            ],
-          );
-        },
-      );
-      if (!mounted || shouldJoin != true) {
-        return;
-      }
-
-      final joined = await _roomService.joinRoom(roomId, startMuted: true);
-      if (!mounted) {
-        return;
-      }
+      // RoomEntryScreen is the one consent boundary for every route. Deep
+      // links may resolve metadata for their passive preview, but do not
+      // write a roster row or touch LiveKit before its explicit CTA.
       await Navigator.of(context).push<void>(
         MaterialPageRoute<void>(
-          builder: (_) => RoomEntryScreen(room: joined, startMuted: true),
+          builder: (_) => RoomEntryScreen(room: room, startMuted: true),
         ),
       );
     } catch (error) {
@@ -749,6 +819,7 @@ class _MainShellState extends State<MainShell>
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     appRouteObserver.unsubscribe(this);
     _momentsVisible.dispose();
     _tabTransition.dispose();
@@ -758,6 +829,7 @@ class _MainShellState extends State<MainShell>
     _unreadConversationCountListenable.dispose();
     _unreadNotificationCountListenable.dispose();
     _verificationCheckTimer?.cancel();
+    _verificationUserSubscription?.cancel();
     _removeMessageOverlay();
     super.dispose();
   }
@@ -1358,7 +1430,7 @@ class _MainShellState extends State<MainShell>
                 key: const ValueKey('desktop-content-column'),
                 children: [
                   if (_showVerificationBanner)
-                    _VerificationBanner(onTap: _openVerifyEmail),
+                    EmailVerificationBanner(onTap: _openVerifyEmail),
                   Expanded(
                     child: ResponsiveContentFrame(
                       width: ResponsiveContentWidth.workbench,
@@ -1411,7 +1483,7 @@ class _MainShellState extends State<MainShell>
       body: Column(
         children: [
           if (_showVerificationBanner)
-            _VerificationBanner(onTap: _openVerifyEmail),
+            EmailVerificationBanner(onTap: _openVerifyEmail),
           Expanded(
             child: _tabContent(
               index: _mobileIndex,
@@ -1709,63 +1781,6 @@ class _MoreDestinationHostState extends State<MoreDestinationHost> {
   }
 }
 
-class _VerificationBanner extends StatelessWidget {
-  const _VerificationBanner({required this.onTap});
-
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = context.appPalette;
-    return Material(
-      color: palette.warningSurface,
-      child: InkWell(
-        onTap: onTap,
-        child: SafeArea(
-          bottom: false,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-            child: Row(
-              children: [
-                Icon(
-                  Icons.mark_email_unread_outlined,
-                  color: palette.warningForeground,
-                  size: 18,
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    "Your email isn't verified yet.",
-                    style: TextStyle(
-                      color: palette.textPrimary,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-                Text(
-                  'Verify now',
-                  style: TextStyle(
-                    color: palette.warningForeground,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-                const SizedBox(width: 4),
-                Icon(
-                  Icons.chevron_right_rounded,
-                  color: palette.warningForeground,
-                  size: 18,
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 class _IncomingMessageBanner extends StatelessWidget {
   const _IncomingMessageBanner({
     required this.senderName,
@@ -1783,6 +1798,7 @@ class _IncomingMessageBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
     final hasPhoto = photoUrl.trim().isNotEmpty;
@@ -1875,7 +1891,7 @@ class _IncomingMessageBanner extends StatelessWidget {
                           ),
                         ),
                         Text(
-                          'now',
+                          copy.text('now', 'teraz'),
                           style: TextStyle(
                             color: palette.textTertiary,
                             fontSize: 10,
@@ -1951,6 +1967,7 @@ class _VoiceActionSheet extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
+    final copy = AppLocalizations.of(context);
     return Container(
       key: const ValueKey('voice-action-sheet'),
       padding: const EdgeInsets.fromLTRB(20, 12, 20, 28),
@@ -1963,12 +1980,12 @@ class _VoiceActionSheet extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           YoModalSheetChrome(
-            sheetLabel: 'voice actions',
+            sheetLabel: copy.text('voice actions', 'opcje głosowe'),
             surfaceColor: palette.surfaceRaised,
           ),
           const SizedBox(height: 4),
           Text(
-            'Use your voice',
+            copy.text('Use your voice', 'Użyj swojego głosu'),
             style: TextStyle(
               color: palette.textPrimary,
               fontSize: 23,
@@ -1978,15 +1995,21 @@ class _VoiceActionSheet extends StatelessWidget {
           ),
           const SizedBox(height: 7),
           Text(
-            'Choose what you want to create.',
+            copy.text(
+              'Choose what you want to create.',
+              'Wybierz, co chcesz utworzyć.',
+            ),
             textAlign: TextAlign.center,
             style: TextStyle(color: palette.textSecondary, fontSize: 14),
           ),
           const SizedBox(height: 24),
           _VoiceOption(
             icon: Icons.mic_rounded,
-            title: 'Create Voice Moment',
-            subtitle: 'Record and share a short voice update',
+            title: copy.text('Create Voice Moment', 'Nagraj Voice Moment'),
+            subtitle: copy.text(
+              'Record and share a short voice update',
+              'Nagraj i udostępnij krótką wiadomość głosową',
+            ),
             colors: const [Color(0xFF9F22FF), Color(0xFF6A00FF)],
             onPressed: () {
               _openVoiceMoment(context);
@@ -1995,8 +2018,11 @@ class _VoiceActionSheet extends StatelessWidget {
           const SizedBox(height: 13),
           _VoiceOption(
             icon: Icons.groups_2_rounded,
-            title: 'Start Voice Room',
-            subtitle: 'Open a live room and invite people',
+            title: copy.text('Start Voice Room', 'Utwórz pokój głosowy'),
+            subtitle: copy.text(
+              'Open a live room and invite people',
+              'Otwórz pokój na żywo i zaproś innych',
+            ),
             colors: const [Color(0xFFFF3E81), Color(0xFF9C1DFF)],
             onPressed: () {
               _openCreateRoom(context);

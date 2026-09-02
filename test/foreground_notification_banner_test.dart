@@ -24,6 +24,7 @@ void main() {
         type: NotificationType.directMessage,
         targetId: 'conversation-pearl',
         actorId: 'friend',
+        openLabel: 'Otwórz',
         palette: AppPalette.light,
       ),
     );
@@ -32,6 +33,7 @@ void main() {
     final snackBar = tester.widget<SnackBar>(find.byType(SnackBar));
     expect(snackBar.backgroundColor, AppPalette.light.surfaceRaised);
     expect(snackBar.action?.textColor, AppPalette.light.interactiveForeground);
+    expect(find.text('Otwórz'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -56,6 +58,7 @@ void main() {
           type: NotificationType.directMessage,
           targetId: 'conversation-1',
           actorId: 'alex',
+          openLabel: 'Open',
         ),
       );
       await tester.pump();
@@ -107,6 +110,7 @@ void main() {
           type: NotificationType.achievementUnlocked,
           targetId: 'room-opener',
           actorId: null,
+          openLabel: 'Open',
           bottomClearance: foregroundNotificationBottomClearance(
             const TextScaler.linear(2),
           ),
@@ -155,6 +159,7 @@ void main() {
         type: NotificationType.achievementUnlocked,
         targetId: 'first-word',
         actorId: null,
+        openLabel: 'Open',
       ),
     );
     await tester.pumpAndSettle();

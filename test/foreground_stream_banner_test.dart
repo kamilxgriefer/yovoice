@@ -58,6 +58,7 @@ void main() {
               type: arrival.type,
               targetId: arrival.targetId,
               actorId: arrival.actorId,
+              openLabel: 'Open',
             ),
           );
         return true;

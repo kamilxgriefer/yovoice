@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/features/rooms/data/models/room_participant.dart';
 import 'package:yovoice/features/rooms/presentation/screens/broadcast_room/broadcast_colors.dart';
 import 'package:yovoice/shared/widgets/identity/official_role_badge.dart';
@@ -103,6 +104,7 @@ class BroadcastEmptyStage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
@@ -110,14 +112,23 @@ class BroadcastEmptyStage extends StatelessWidget {
         borderRadius: BorderRadius.circular(20),
         border: Border.all(color: BroadcastRoomColors.border),
       ),
-      child: const Row(
+      child: Row(
         children: [
-          Icon(Icons.chair_alt_rounded, color: BroadcastRoomColors.accentSoft),
-          SizedBox(width: 12),
+          const Icon(
+            Icons.chair_alt_rounded,
+            color: BroadcastRoomColors.accentSoft,
+          ),
+          const SizedBox(width: 12),
           Expanded(
             child: Text(
-              'No guest speakers yet. Raised hands will appear in the participant panel.',
-              style: TextStyle(color: BroadcastRoomColors.muted, height: 1.35),
+              copy.text(
+                'No guest speakers yet. Raised hands will appear in the participant panel.',
+                'Nie ma jeszcze zaproszonych mówców. Zgłoszenia pojawią się w panelu uczestników.',
+              ),
+              style: const TextStyle(
+                color: BroadcastRoomColors.muted,
+                height: 1.35,
+              ),
             ),
           ),
         ],
@@ -138,6 +149,7 @@ class BroadcastAudiencePreview extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     return Material(
       color: BroadcastRoomColors.surface,
       borderRadius: BorderRadius.circular(22),
@@ -187,8 +199,11 @@ class BroadcastAudiencePreview extends StatelessWidget {
               Expanded(
                 child: Text(
                   listeners.isEmpty
-                      ? 'Audience is waiting'
-                      : '${listeners.length} listening now',
+                      ? copy.text('Audience is waiting', 'Publiczność czeka')
+                      : copy.text(
+                          '${listeners.length} listening now',
+                          '${listeners.length} słucha teraz',
+                        ),
                   style: const TextStyle(
                     color: Colors.white,
                     fontWeight: FontWeight.w800,

@@ -5,6 +5,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/helpers/error_messages.dart';
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_gradients.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
@@ -117,18 +118,23 @@ class _HomeScreenState extends State<HomeScreen> {
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(
-        const SnackBar(
-          content: Text('Voice Moment posted to your feed.'),
+        SnackBar(
+          content: Text(
+            AppLocalizations.of(context).text(
+              'Voice Moment posted to your feed.',
+              'Voice Moment został opublikowany na Twojej tablicy.',
+            ),
+          ),
           behavior: SnackBarBehavior.floating,
         ),
       );
   }
 
-  /// Same join flow the Club overview uses: enterClubLounge (creates or
-  /// reuses the deterministic lounge room) then the club audio screen.
+  /// Creates or resolves the deterministic lounge for preview. Membership is
+  /// checked here, but roster/audio entry remains RoomEntryScreen's one job.
   Future<void> _joinClubLounge(Club club, VoiceRoom lounge) async {
     try {
-      final room = await _roomService.enterClubLounge(
+      final room = await _roomService.prepareClubLounge(
         clubId: club.id,
         clubName: club.name,
         clubDescription: club.description,
@@ -150,7 +156,10 @@ class _HomeScreenState extends State<HomeScreen> {
             content: Text(
               intentionalOrFriendly(
                 error,
-                fallback: "Couldn't open this club room. Please try again.",
+                fallback: AppLocalizations.of(context).text(
+                  "Couldn't open this club room. Please try again.",
+                  'Nie udało się otworzyć pokoju klubu. Spróbuj ponownie.',
+                ),
               ),
             ),
             behavior: SnackBarBehavior.floating,
@@ -161,16 +170,12 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _openRoom(VoiceRoom room) async {
     try {
-      final joinedRoom = await _roomService.joinRoom(room.id);
-
       if (!mounted) {
         return;
       }
 
       await Navigator.of(context).push<void>(
-        MaterialPageRoute<void>(
-          builder: (_) => RoomEntryScreen(room: joinedRoom),
-        ),
+        MaterialPageRoute<void>(builder: (_) => RoomEntryScreen(room: room)),
       );
     } catch (error) {
       if (!mounted) {
@@ -184,7 +189,10 @@ class _HomeScreenState extends State<HomeScreen> {
             content: Text(
               intentionalOrFriendly(
                 error,
-                fallback: "Couldn't open this room. Please try again.",
+                fallback: AppLocalizations.of(context).text(
+                  "Couldn't open this room. Please try again.",
+                  'Nie udało się otworzyć pokoju. Spróbuj ponownie.',
+                ),
               ),
             ),
             behavior: SnackBarBehavior.floating,
@@ -196,22 +204,27 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _deleteMoment(VoiceMoment moment) async {
     final palette = context.appPalette;
     final colorScheme = Theme.of(context).colorScheme;
+    final copy = AppLocalizations.of(context);
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
         backgroundColor: palette.surfaceRaised,
         title: Text(
-          'Delete Voice Moment?',
+          copy.text('Delete Voice Moment?', 'Usunąć Voice Moment?'),
           style: TextStyle(color: palette.textPrimary),
         ),
         content: Text(
-          'This removes the recording, likes, and all comments permanently.',
+          copy.text(
+            'This removes the recording, likes, and all comments permanently.',
+            'Nagranie, polubienia i wszystkie komentarze zostaną trwale '
+                'usunięte.',
+          ),
           style: TextStyle(color: palette.textSecondary),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: const Text('Cancel'),
+            child: Text(copy.text('Cancel', 'Anuluj')),
           ),
           FilledButton(
             onPressed: () => Navigator.of(dialogContext).pop(true),
@@ -219,7 +232,7 @@ class _HomeScreenState extends State<HomeScreen> {
               backgroundColor: colorScheme.error,
               foregroundColor: colorScheme.onError,
             ),
-            child: const Text('Delete'),
+            child: Text(copy.text('Delete', 'Usuń')),
           ),
         ],
       ),
@@ -237,8 +250,13 @@ class _HomeScreenState extends State<HomeScreen> {
       ScaffoldMessenger.of(context)
         ..hideCurrentSnackBar()
         ..showSnackBar(
-          const SnackBar(
-            content: Text('Voice Moment deleted.'),
+          SnackBar(
+            content: Text(
+              copy.text(
+                'Voice Moment deleted.',
+                'Voice Moment został usunięty.',
+              ),
+            ),
             behavior: SnackBarBehavior.floating,
           ),
         );
@@ -250,7 +268,16 @@ class _HomeScreenState extends State<HomeScreen> {
         ..hideCurrentSnackBar()
         ..showSnackBar(
           SnackBar(
-            content: Text('Could not delete Voice Moment: $error'),
+            content: Text(
+              friendlyErrorMessage(
+                error,
+                fallback: copy.text(
+                  'Could not delete the Voice Moment. Please try again.',
+                  'Nie udało się usunąć Voice Momentu. Spróbuj ponownie.',
+                ),
+                copy: copy,
+              ),
+            ),
             behavior: SnackBarBehavior.floating,
           ),
         );
@@ -261,11 +288,12 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     final colorScheme = Theme.of(context).colorScheme;
+    final copy = AppLocalizations.of(context);
     final user = FirebaseAuth.instance.currentUser;
     final fallbackFullName = user?.displayName?.trim();
     final fallbackName = fallbackFullName?.isNotEmpty == true
         ? fallbackFullName!.split(' ').first
-        : user?.email?.split('@').first ?? 'there';
+        : user?.email?.split('@').first ?? copy.text('there', 'Cześć');
 
     return Scaffold(
       backgroundColor: palette.background,
@@ -348,7 +376,9 @@ class _HomeScreenState extends State<HomeScreen> {
                   child: FromYourClubs(onJoinLounge: _joinClubLounge),
                 ),
                 SliverToBoxAdapter(child: _voiceStories()),
-                SliverToBoxAdapter(child: _sectionTitle('Your feed')),
+                SliverToBoxAdapter(
+                  child: _sectionTitle(copy.text('Your feed', 'Twoja tablica')),
+                ),
                 SliverToBoxAdapter(child: _feed()),
                 SliverToBoxAdapter(child: _suggestedClubs()),
                 SliverToBoxAdapter(child: _trending()),
@@ -362,11 +392,12 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   String _timeOfDayGreeting() {
+    final copy = AppLocalizations.of(context);
     final hour = DateTime.now().hour;
-    if (hour < 5) return 'Up late,';
-    if (hour < 12) return 'Good morning,';
-    if (hour < 18) return 'Good afternoon,';
-    return 'Good evening,';
+    if (hour < 5) return copy.text('Up late,', 'Jeszcze nie śpisz,');
+    if (hour < 12) return copy.text('Good morning,', 'Dzień dobry,');
+    if (hour < 18) return copy.text('Good afternoon,', 'Dzień dobry,');
+    return copy.text('Good evening,', 'Dobry wieczór,');
   }
 
   Widget _header(
@@ -377,6 +408,7 @@ class _HomeScreenState extends State<HomeScreen> {
     bool premium = false,
   }) {
     final palette = context.appPalette;
+    final copy = AppLocalizations.of(context);
     return Padding(
       padding: const EdgeInsets.fromLTRB(18, 18, 18, 14),
       child: Row(
@@ -403,7 +435,10 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  'Ready to hear something real?',
+                  copy.text(
+                    'Ready to hear something real?',
+                    'Masz ochotę posłuchać czegoś prawdziwego?',
+                  ),
                   style: TextStyle(color: palette.textSecondary, fontSize: 13),
                 ),
               ],
@@ -418,6 +453,12 @@ class _HomeScreenState extends State<HomeScreen> {
                 children: [
                   IconButton.outlined(
                     onPressed: _openNotifications,
+                    tooltip: unreadCount > 0
+                        ? copy.text(
+                            'Notifications. New: $unreadCount',
+                            'Powiadomienia. Nowe: $unreadCount',
+                          )
+                        : copy.notifications,
                     style: IconButton.styleFrom(
                       minimumSize: const Size(48, 48),
                       side: BorderSide(color: palette.borderStrong),
@@ -465,9 +506,9 @@ class _HomeScreenState extends State<HomeScreen> {
           // left the primary navigation when Friends took its tab.
           Semantics(
             button: true,
-            label: 'Open your profile',
+            label: copy.text('Open your profile', 'Otwórz swój profil'),
             child: Tooltip(
-              message: 'Open your profile',
+              message: copy.text('Open your profile', 'Otwórz swój profil'),
               child: InkResponse(
                 onTap: () => Navigator.of(context).push<void>(
                   MaterialPageRoute<void>(
@@ -500,6 +541,7 @@ class _HomeScreenState extends State<HomeScreen> {
   // source, no fabricated activity.
   Widget _liveRooms() {
     final palette = context.appPalette;
+    final copy = AppLocalizations.of(context);
     return StreamBuilder<List<VoiceRoom>>(
       stream: _rooms,
       builder: (context, snapshot) {
@@ -516,7 +558,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
                   Text(
-                    'Rooms for you',
+                    copy.text('Rooms for you', 'Pokoje dla Ciebie'),
                     style: TextStyle(
                       color: palette.textPrimary,
                       fontSize: 20,
@@ -559,6 +601,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _voiceStories() {
+    final copy = AppLocalizations.of(context);
     return StreamBuilder<List<VoiceMoment>>(
       stream: _moments,
       builder: (context, snapshot) {
@@ -591,7 +634,7 @@ class _HomeScreenState extends State<HomeScreen> {
               StreamBuilder<UserProfile>(
                 stream: _profile,
                 builder: (context, profileSnapshot) => _StoryBubble(
-                  label: 'Your Moment',
+                  label: copy.text('Your Moment', 'Twój Moment'),
                   photoUrl:
                       myLatestMoment?.authorPhotoUrl ??
                       profileSnapshot.data?.photoUrl,
@@ -639,6 +682,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _feed() {
     final palette = context.appPalette;
+    final copy = AppLocalizations.of(context);
     return StreamBuilder<List<VoiceMoment>>(
       stream: _moments,
       builder: (context, snapshot) {
@@ -653,11 +697,22 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           );
         }
-        if (snapshot.hasError) return _empty('Could not load your feed.');
+        if (snapshot.hasError) {
+          return _empty(
+            copy.text(
+              'Could not load your feed.',
+              'Nie udało się wczytać Twojej tablicy.',
+            ),
+          );
+        }
         final moments = snapshot.data ?? const <VoiceMoment>[];
         if (moments.isEmpty) {
           return _empty(
-            'Follow people or add friends to build your voice feed.',
+            copy.text(
+              'Follow people or add friends to build your voice feed.',
+              'Obserwuj innych lub dodaj znajomych, aby zbudować swoją '
+                  'tablicę głosową.',
+            ),
           );
         }
         return Column(
@@ -672,8 +727,12 @@ class _HomeScreenState extends State<HomeScreen> {
                 onDelete: () => _deleteMoment(moment),
                 onShare: () => SharePlus.instance.share(
                   ShareParams(
-                    text:
-                        'Listen to ${moment.authorName} on YO Voice: https://yovoice.app/?moment=${moment.id}',
+                    text: copy.text(
+                      'Listen to ${moment.authorName} on YO Voice: '
+                          'https://yovoice.app/?moment=${moment.id}',
+                      'Posłuchaj ${moment.authorName} w YO Voice: '
+                          'https://yovoice.app/?moment=${moment.id}',
+                    ),
                   ),
                 ),
               ),
@@ -691,6 +750,7 @@ class _HomeScreenState extends State<HomeScreen> {
   // never faked before then.
   Widget _activeFriends() {
     final palette = context.appPalette;
+    final copy = AppLocalizations.of(context);
     return StreamBuilder<List<FriendUser>>(
       stream: _friends,
       builder: (context, snapshot) {
@@ -705,7 +765,7 @@ class _HomeScreenState extends State<HomeScreen> {
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 18),
                 child: Text(
-                  'Your people',
+                  copy.text('Your people', 'Twoi znajomi'),
                   style: TextStyle(
                     color: palette.textPrimary,
                     fontSize: 20,
@@ -767,6 +827,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _trending() {
     final palette = context.appPalette;
+    final copy = AppLocalizations.of(context);
     return StreamBuilder<List<VoiceMoment>>(
       stream: _moments,
       builder: (context, snapshot) {
@@ -790,7 +851,7 @@ class _HomeScreenState extends State<HomeScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'Trending Voice',
+                copy.text('Trending Voice', 'Popularne głosy'),
                 style: TextStyle(
                   color: palette.textPrimary,
                   fontSize: 20,
@@ -825,7 +886,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                       subtitle: Text(
                         moment.caption.isEmpty
-                            ? 'Voice Moment'
+                            ? copy.text('Voice Moment', 'Voice Moment')
                             : moment.caption,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
@@ -1021,8 +1082,13 @@ class _VoiceMomentCardState extends State<_VoiceMomentCard> {
     final url = widget.moment.audioUrl?.trim() ?? '';
     if (url.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('This moment does not have uploaded audio yet.'),
+        SnackBar(
+          content: Text(
+            AppLocalizations.of(context).text(
+              'This moment does not have uploaded audio yet.',
+              'Ten Moment nie ma jeszcze przesłanego nagrania.',
+            ),
+          ),
         ),
       );
       return;
@@ -1037,9 +1103,12 @@ class _VoiceMomentCardState extends State<_VoiceMomentCard> {
   @override
   Widget build(BuildContext context) {
     final moment = widget.moment;
-    final time = _relative(moment.createdAt);
     final palette = context.appPalette;
     final colorScheme = Theme.of(context).colorScheme;
+    final copy = AppLocalizations.of(context);
+    final time = moment.createdAt == null
+        ? copy.text('now', 'teraz')
+        : copy.relativeCompactTime(moment.createdAt!);
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -1088,7 +1157,7 @@ class _VoiceMomentCardState extends State<_VoiceMomentCard> {
                 ),
               ),
               PopupMenuButton<String>(
-                tooltip: 'Moment options',
+                tooltip: copy.text('Moment options', 'Opcje Momentu'),
                 color: palette.surfaceRaised,
                 icon: Icon(
                   Icons.more_horiz_rounded,
@@ -1117,7 +1186,7 @@ class _VoiceMomentCardState extends State<_VoiceMomentCard> {
                           color: palette.textPrimary,
                         ),
                         title: Text(
-                          'View comments',
+                          copy.text('View comments', 'Zobacz komentarze'),
                           style: TextStyle(color: palette.textPrimary),
                         ),
                       ),
@@ -1131,7 +1200,7 @@ class _VoiceMomentCardState extends State<_VoiceMomentCard> {
                           color: palette.textPrimary,
                         ),
                         title: Text(
-                          'Share',
+                          copy.text('Share', 'Udostępnij'),
                           style: TextStyle(color: palette.textPrimary),
                         ),
                       ),
@@ -1146,7 +1215,10 @@ class _VoiceMomentCardState extends State<_VoiceMomentCard> {
                             color: palette.dangerForeground,
                           ),
                           title: Text(
-                            'Delete Voice Moment',
+                            copy.text(
+                              'Delete Voice Moment',
+                              'Usuń Voice Moment',
+                            ),
                             style: TextStyle(color: palette.dangerForeground),
                           ),
                         ),
@@ -1238,7 +1310,7 @@ class _VoiceMomentCardState extends State<_VoiceMomentCard> {
               Expanded(
                 child: _Action(
                   icon: Icons.share_outlined,
-                  label: 'Share',
+                  label: copy.text('Share', 'Udostępnij'),
                   onTap: widget.onShare,
                 ),
               ),
@@ -1250,7 +1322,7 @@ class _VoiceMomentCardState extends State<_VoiceMomentCard> {
             child: TextButton.icon(
               onPressed: widget.onReply,
               icon: const Icon(Icons.mic_rounded, size: 19),
-              label: const Text('Reply with voice'),
+              label: Text(copy.text('Reply with voice', 'Odpowiedz głosem')),
               style: TextButton.styleFrom(
                 foregroundColor: palette.interactiveForeground,
                 padding: const EdgeInsets.symmetric(vertical: 10),
@@ -1261,15 +1333,6 @@ class _VoiceMomentCardState extends State<_VoiceMomentCard> {
         ],
       ),
     );
-  }
-
-  static String _relative(DateTime? date) {
-    if (date == null) return 'now';
-    final difference = DateTime.now().difference(date);
-    if (difference.inMinutes < 1) return 'now';
-    if (difference.inMinutes < 60) return '${difference.inMinutes}m ago';
-    if (difference.inHours < 24) return '${difference.inHours}h ago';
-    return '${difference.inDays}d ago';
   }
 }
 
@@ -1367,6 +1430,7 @@ class _MomentPlayerSheetState extends State<_MomentPlayerSheet> {
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     final colorScheme = Theme.of(context).colorScheme;
+    final copy = AppLocalizations.of(context);
     return Container(
       padding: const EdgeInsets.fromLTRB(22, 12, 22, 34),
       decoration: BoxDecoration(
@@ -1377,7 +1441,7 @@ class _MomentPlayerSheetState extends State<_MomentPlayerSheet> {
         mainAxisSize: MainAxisSize.min,
         children: [
           YoModalSheetChrome(
-            sheetLabel: 'Moment player',
+            sheetLabel: copy.text('Moment player', 'Odtwarzacz Momentu'),
             surfaceColor: palette.surfaceRaised,
           ),
           const SizedBox(height: 4),

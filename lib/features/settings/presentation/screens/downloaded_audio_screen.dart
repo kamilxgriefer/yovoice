@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/features/moments/data/models/downloaded_voice_moment.dart';
 import 'package:yovoice/features/moments/data/services/offline_voice_moment_service.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
@@ -69,6 +70,7 @@ class _DownloadedAudioScreenState extends State<DownloadedAudioScreen> {
 
   Future<void> _toggle(DownloadedVoiceMoment item) async {
     if (_busyId != null || _clearing) return;
+    final copy = AppLocalizations.of(context);
     if (_playingId == item.momentId) {
       await _player!.pause();
       if (mounted) setState(() => _playingId = null);
@@ -79,7 +81,10 @@ class _DownloadedAudioScreenState extends State<DownloadedAudioScreen> {
       final offline = await _service.readPlayback(item.momentId);
       if (offline == null) {
         _notice(
-          'This download is missing. Remove it and download it again.',
+          copy.text(
+            'This download is missing. Remove it and download it again.',
+            'Brakuje pobranego pliku. Usuń go i pobierz ponownie.',
+          ),
           error: true,
         );
         _reload();
@@ -95,8 +100,14 @@ class _DownloadedAudioScreenState extends State<DownloadedAudioScreen> {
     } catch (error) {
       _notice(
         error is OfflineAudioException
-            ? error.message
-            : 'The downloaded audio could not be played.',
+            ? copy.text(
+                error.message,
+                'Nie udało się odtworzyć pobranego nagrania.',
+              )
+            : copy.text(
+                'The downloaded audio could not be played.',
+                'Nie udało się odtworzyć pobranego nagrania.',
+              ),
         error: true,
       );
     } finally {
@@ -106,6 +117,7 @@ class _DownloadedAudioScreenState extends State<DownloadedAudioScreen> {
 
   Future<void> _delete(DownloadedVoiceMoment item) async {
     if (_busyId != null || _clearing) return;
+    final copy = AppLocalizations.of(context);
     setState(() => _busyId = item.momentId);
     try {
       if (_playingId == item.momentId) {
@@ -113,13 +125,19 @@ class _DownloadedAudioScreenState extends State<DownloadedAudioScreen> {
         _playingId = null;
       }
       await _service.delete(item.momentId);
-      _notice('Download removed.');
+      _notice(copy.text('Download removed.', 'Usunięto pobrane nagranie.'));
       _reload();
     } catch (error) {
       _notice(
         error is OfflineAudioException
-            ? error.message
-            : 'The download could not be removed.',
+            ? copy.text(
+                error.message,
+                'Nie udało się usunąć pobranego nagrania.',
+              )
+            : copy.text(
+                'The download could not be removed.',
+                'Nie udało się usunąć pobranego nagrania.',
+              ),
         error: true,
       );
     } finally {
@@ -129,19 +147,26 @@ class _DownloadedAudioScreenState extends State<DownloadedAudioScreen> {
 
   Future<void> _clearAll() async {
     if (_busyId != null || _clearing) return;
+    final copy = AppLocalizations.of(context);
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) {
+        final copy = AppLocalizations.of(dialogContext);
         final colors = Theme.of(dialogContext).colorScheme;
         return AlertDialog(
-          title: const Text('Remove all downloads?'),
-          content: const Text(
-            'Downloaded Voice Moments will no longer be available offline on this device.',
+          title: Text(
+            copy.text('Remove all downloads?', 'Usunąć wszystkie pobrania?'),
+          ),
+          content: Text(
+            copy.text(
+              'Downloaded Voice Moments will no longer be available offline on this device.',
+              'Pobrane Voice Moments nie będą już dostępne offline na tym urządzeniu.',
+            ),
           ),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(dialogContext, false),
-              child: const Text('Cancel'),
+              child: Text(copy.text('Cancel', 'Anuluj')),
             ),
             FilledButton(
               style: FilledButton.styleFrom(
@@ -149,7 +174,7 @@ class _DownloadedAudioScreenState extends State<DownloadedAudioScreen> {
                 foregroundColor: colors.onErrorContainer,
               ),
               onPressed: () => Navigator.pop(dialogContext, true),
-              child: const Text('Remove all'),
+              child: Text(copy.text('Remove all', 'Usuń wszystkie')),
             ),
           ],
         );
@@ -161,10 +186,21 @@ class _DownloadedAudioScreenState extends State<DownloadedAudioScreen> {
       await _player?.stop();
       _playingId = null;
       await _service.clear();
-      _notice('All downloaded audio was removed.');
+      _notice(
+        copy.text(
+          'All downloaded audio was removed.',
+          'Usunięto wszystkie pobrane nagrania.',
+        ),
+      );
       _reload();
     } catch (_) {
-      _notice('Downloaded audio could not be cleared.', error: true);
+      _notice(
+        copy.text(
+          'Downloaded audio could not be cleared.',
+          'Nie udało się usunąć pobranych nagrań.',
+        ),
+        error: true,
+      );
     } finally {
       if (mounted) setState(() => _clearing = false);
     }
@@ -172,11 +208,14 @@ class _DownloadedAudioScreenState extends State<DownloadedAudioScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final theme = Theme.of(context);
     return Scaffold(
       appBar: widget.isRootTab
           ? null
-          : AppBar(title: const Text('Downloaded audio')),
+          : AppBar(
+              title: Text(copy.text('Downloaded audio', 'Pobrane nagrania')),
+            ),
       body: SafeArea(
         top: widget.isRootTab,
         child: ResponsiveContentFrame(
@@ -194,13 +233,22 @@ class _DownloadedAudioScreenState extends State<DownloadedAudioScreen> {
               if (snapshot.hasError) {
                 return _OfflineState(
                   icon: Icons.cloud_off_rounded,
-                  title: 'Downloads unavailable',
+                  title: copy.text(
+                    'Downloads unavailable',
+                    'Pobrane nagrania są niedostępne',
+                  ),
                   message: snapshot.error is OfflineAudioException
-                      ? (snapshot.error! as OfflineAudioException).message
-                      : 'YO Voice could not open this device\'s audio storage.',
+                      ? copy.text(
+                          (snapshot.error! as OfflineAudioException).message,
+                          'Nie udało się otworzyć pamięci nagrań na tym urządzeniu.',
+                        )
+                      : copy.text(
+                          'YO Voice could not open this device\'s audio storage.',
+                          'YO Voice nie może otworzyć pamięci nagrań na tym urządzeniu.',
+                        ),
                   action: TextButton(
                     onPressed: _reload,
-                    child: const Text('Try again'),
+                    child: Text(copy.text('Try again', 'Spróbuj ponownie')),
                   ),
                 );
               }
@@ -222,7 +270,7 @@ class _DownloadedAudioScreenState extends State<DownloadedAudioScreen> {
                       children: [
                         if (widget.isRootTab) ...[
                           Text(
-                            'Downloaded audio',
+                            copy.text('Downloaded audio', 'Pobrane nagrania'),
                             style: theme.textTheme.headlineMedium,
                           ),
                           const SizedBox(height: 18),
@@ -234,8 +282,14 @@ class _DownloadedAudioScreenState extends State<DownloadedAudioScreen> {
                                 MediaQuery.textScalerOf(context).scale(1) > 1.5;
                             final label = Text(
                               items.isEmpty
-                                  ? 'No offline audio on this device'
-                                  : '${items.length} ${items.length == 1 ? 'download' : 'downloads'} · ${_formatBytes(total)}',
+                                  ? copy.text(
+                                      'No offline audio on this device',
+                                      'Brak nagrań offline na tym urządzeniu',
+                                    )
+                                  : copy.text(
+                                      '${items.length} ${items.length == 1 ? 'download' : 'downloads'} · ${_formatBytes(total)}',
+                                      '${items.length} ${_polishDownloadCount(items.length)} · ${_formatBytes(total)}',
+                                    ),
                               style: theme.textTheme.titleMedium,
                             );
                             final action = items.isEmpty
@@ -252,7 +306,9 @@ class _DownloadedAudioScreenState extends State<DownloadedAudioScreen> {
                                         : const Icon(
                                             Icons.delete_sweep_outlined,
                                           ),
-                                    label: const Text('Remove all'),
+                                    label: Text(
+                                      copy.text('Remove all', 'Usuń wszystkie'),
+                                    ),
                                   );
                             if (compact) {
                               return Column(
@@ -278,11 +334,16 @@ class _DownloadedAudioScreenState extends State<DownloadedAudioScreen> {
                     );
                   }
                   if (items.isEmpty) {
-                    return const _OfflineState(
+                    return _OfflineState(
                       icon: Icons.download_for_offline_outlined,
-                      title: 'Listen without a connection',
-                      message:
-                          'Open Moments and use the download button on any published Voice Moment.',
+                      title: copy.text(
+                        'Listen without a connection',
+                        'Słuchaj bez połączenia z internetem',
+                      ),
+                      message: copy.text(
+                        'Open Moments and use the download button on any published Voice Moment.',
+                        'Otwórz Moments i użyj przycisku pobierania przy dowolnym opublikowanym Voice Moment.',
+                      ),
                     );
                   }
                   final item = items[index - 1];
@@ -320,6 +381,7 @@ class _DownloadedAudioCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final theme = Theme.of(context);
     return Material(
       color: theme.colorScheme.surface,
@@ -335,7 +397,12 @@ class _DownloadedAudioCard extends StatelessWidget {
           children: [
             IconButton.filled(
               constraints: const BoxConstraints.tightFor(width: 48, height: 48),
-              tooltip: playing ? 'Pause offline audio' : 'Play offline audio',
+              tooltip: playing
+                  ? copy.text(
+                      'Pause offline audio',
+                      'Wstrzymaj nagranie offline',
+                    )
+                  : copy.text('Play offline audio', 'Odtwórz nagranie offline'),
               onPressed: busy ? null : onPlay,
               icon: busy
                   ? const SizedBox.square(
@@ -352,7 +419,9 @@ class _DownloadedAudioCard extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    item.caption.trim().isEmpty ? 'Voice Moment' : item.caption,
+                    item.caption.trim().isEmpty
+                        ? copy.text('Voice Moment', 'Voice Moment')
+                        : item.caption,
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                     style: theme.textTheme.titleSmall?.copyWith(
@@ -371,7 +440,7 @@ class _DownloadedAudioCard extends StatelessWidget {
             ),
             IconButton(
               constraints: const BoxConstraints.tightFor(width: 48, height: 48),
-              tooltip: 'Remove download',
+              tooltip: copy.text('Remove download', 'Usuń pobrane nagranie'),
               onPressed: busy ? null : onDelete,
               icon: const Icon(Icons.delete_outline_rounded),
             ),
@@ -430,4 +499,14 @@ String _formatBytes(int bytes) {
   final kilobytes = bytes / 1024;
   if (kilobytes < 1024) return '${kilobytes.toStringAsFixed(1)} KB';
   return '${(kilobytes / 1024).toStringAsFixed(1)} MB';
+}
+
+String _polishDownloadCount(int count) {
+  if (count == 1) return 'pobranie';
+  final lastTwo = count % 100;
+  final last = count % 10;
+  if (last >= 2 && last <= 4 && (lastTwo < 12 || lastTwo > 14)) {
+    return 'pobrania';
+  }
+  return 'pobrań';
 }

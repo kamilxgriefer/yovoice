@@ -1,7 +1,7 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
-import 'package:yovoice/core/helpers/error_messages.dart';
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/features/rooms/data/models/room_message.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
@@ -62,14 +62,13 @@ class _RoomChatPanelState extends State<RoomChatPanel> {
     super.dispose();
   }
 
-  void _snack(Object error, String fallback) {
+  void _snack(Object _, String fallback, String polishFallback) {
     if (!mounted) return;
+    final copy = AppLocalizations.of(context);
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(
-        SnackBar(
-          content: Text(intentionalOrFriendly(error, fallback: fallback)),
-        ),
+        SnackBar(content: Text(copy.text(fallback, polishFallback))),
       );
   }
 
@@ -81,7 +80,11 @@ class _RoomChatPanelState extends State<RoomChatPanel> {
       await _service.sendRoomMessage(roomId: widget.roomId, text: text);
       _composer.clear();
     } catch (error) {
-      _snack(error, "Couldn't send that message. Please try again.");
+      _snack(
+        error,
+        "Couldn't send that message. Please try again.",
+        'Nie udało się wysłać wiadomości. Spróbuj ponownie.',
+      );
     } finally {
       if (mounted) setState(() => _sending = false);
     }
@@ -117,7 +120,11 @@ class _RoomChatPanelState extends State<RoomChatPanel> {
         emoji: emoji,
       );
     } catch (error) {
-      _snack(error, "Couldn't react. Please try again.");
+      _snack(
+        error,
+        "Couldn't react. Please try again.",
+        'Nie udało się dodać reakcji. Spróbuj ponownie.',
+      );
     }
   }
 
@@ -177,12 +184,16 @@ class _RoomChatPanelState extends State<RoomChatPanel> {
     BuildContext sheetContext,
     RoomMessage message,
   ) {
+    final copy = AppLocalizations.of(sheetContext);
     return SafeArea(
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const YoModalSheetChrome(
-            sheetLabel: 'room message actions',
+          YoModalSheetChrome(
+            sheetLabel: copy.text(
+              'room message actions',
+              'opcje wiadomości w pokoju',
+            ),
             surfaceColor: Color(0xFF171021),
           ),
           Padding(
@@ -211,9 +222,9 @@ class _RoomChatPanelState extends State<RoomChatPanel> {
                 Icons.delete_outline_rounded,
                 color: Color(0xFFFF6A76),
               ),
-              title: const Text(
-                'Delete message',
-                style: TextStyle(color: Color(0xFFFF6A76)),
+              title: Text(
+                copy.text('Delete message', 'Usuń wiadomość'),
+                style: const TextStyle(color: Color(0xFFFF6A76)),
               ),
               onTap: () async {
                 Navigator.of(sheetContext).pop();
@@ -223,7 +234,11 @@ class _RoomChatPanelState extends State<RoomChatPanel> {
                     messageId: message.id,
                   );
                 } catch (error) {
-                  _snack(error, "Couldn't delete that message.");
+                  _snack(
+                    error,
+                    "Couldn't delete that message.",
+                    'Nie udało się usunąć wiadomości.',
+                  );
                 }
               },
             ),
@@ -234,6 +249,7 @@ class _RoomChatPanelState extends State<RoomChatPanel> {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     return Container(
       key: const ValueKey('room-chat-surface'),
       decoration: BoxDecoration(
@@ -248,290 +264,382 @@ class _RoomChatPanelState extends State<RoomChatPanel> {
           ),
         ],
       ),
-      child: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(18, 16, 12, 8),
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                final compact = constraints.maxWidth < 300;
-                return Row(
-                  children: [
-                    if (compact)
-                      Icon(Icons.forum_rounded, color: widget.accent, size: 19)
-                    else
-                      Container(
-                        width: 36,
-                        height: 36,
-                        decoration: BoxDecoration(
-                          color: widget.accent.withValues(alpha: .14),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: Icon(
-                          Icons.forum_rounded,
-                          color: widget.accent,
-                          size: 19,
-                        ),
-                      ),
-                    SizedBox(width: compact ? 9 : 10),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text(
-                            'Room chat',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 17,
-                              fontWeight: FontWeight.w900,
-                            ),
-                          ),
-                          if (!compact)
-                            const Text(
-                              'Live conversation',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                color: Color(0xFF9C93AB),
-                                fontSize: 11,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                        ],
-                      ),
-                    ),
-                    if (widget.onClose != null) ...[
-                      const SizedBox(width: 4),
-                      IconButton(
-                        tooltip: 'Back to stage',
-                        onPressed: widget.onClose,
-                        icon: const Icon(Icons.close_rounded),
-                        color: Colors.white70,
-                      ),
-                    ],
-                  ],
-                );
-              },
-            ),
-          ),
-          Expanded(
-            child: StreamBuilder<List<RoomMessage>>(
-              stream: _messages,
-              builder: (context, snapshot) {
-                if (snapshot.hasError) {
-                  return Center(
-                    child: Text(
-                      friendlyErrorMessage(
-                        snapshot.error!,
-                        fallback: "Couldn't load the chat.",
-                      ),
-                      style: const TextStyle(color: Color(0xFFA69CAF)),
-                    ),
-                  );
-                }
-                final messages = snapshot.data ?? const <RoomMessage>[];
-                if (messages.isEmpty) {
-                  return LayoutBuilder(
+      child: LayoutBuilder(
+        builder: (context, panelConstraints) {
+          final densePanel = panelConstraints.maxHeight < 240;
+          final ultraDensePanel =
+              MediaQuery.textScalerOf(context).scale(1) >= 1.75 &&
+              panelConstraints.maxHeight < 280;
+          return Column(
+            children: [
+              if (!ultraDensePanel)
+                Padding(
+                  padding: densePanel
+                      ? const EdgeInsets.fromLTRB(12, 3, 8, 3)
+                      : const EdgeInsets.fromLTRB(18, 16, 12, 8),
+                  child: LayoutBuilder(
                     builder: (context, constraints) {
-                      final compact = constraints.maxHeight < 180;
-                      return Center(
-                        child: Padding(
-                          padding: EdgeInsets.all(compact ? 10 : 24),
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              if (!compact) ...[
-                                Container(
-                                  width: 44,
-                                  height: 44,
-                                  decoration: BoxDecoration(
-                                    color: widget.accent.withValues(alpha: .12),
-                                    shape: BoxShape.circle,
-                                  ),
-                                  child: Icon(
-                                    Icons.waving_hand_rounded,
-                                    color: widget.accent,
-                                    size: 21,
-                                  ),
-                                ),
-                                const SizedBox(height: 10),
-                              ],
-                              const Text(
-                                'Start the conversation',
-                                textAlign: TextAlign.center,
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontWeight: FontWeight.w900,
-                                ),
+                      final compact = constraints.maxWidth < 300 || densePanel;
+                      return Row(
+                        children: [
+                          if (compact)
+                            Icon(
+                              Icons.forum_rounded,
+                              color: widget.accent,
+                              size: 19,
+                            )
+                          else
+                            Container(
+                              width: 36,
+                              height: 36,
+                              decoration: BoxDecoration(
+                                color: widget.accent.withValues(alpha: .14),
+                                borderRadius: BorderRadius.circular(12),
                               ),
-                              if (!compact) ...[
-                                const SizedBox(height: 4),
-                                const Text(
-                                  'Messages stay with this room.',
-                                  textAlign: TextAlign.center,
-                                  style: TextStyle(color: Color(0xFF9E92A8)),
-                                ),
-                              ],
-                            ],
-                          ),
-                        ),
-                      );
-                    },
-                  );
-                }
-                return ListView.builder(
-                  controller: widget.scrollController,
-                  reverse: true,
-                  padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
-                  itemCount: messages.length,
-                  itemBuilder: (context, index) {
-                    final message = messages[index];
-                    return _MessageRow(
-                      message: message,
-                      accent: widget.accent,
-                      isMine: message.senderId == _uid,
-                      onLongPress: () => _messageActions(message),
-                      onAvatarTap: () => showProfilePreview(
-                        context,
-                        userId: message.senderId,
-                        displayName: message.senderName,
-                        photoUrl: message.senderPhotoUrl,
-                      ),
-                      onReactionTap: (emoji) => _toggleReaction(message, emoji),
-                    );
-                  },
-                );
-              },
-            ),
-          ),
-          SafeArea(
-            top: false,
-            child: Padding(
-              padding: EdgeInsets.only(left: 10, right: 12, top: 8, bottom: 10),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  // The quick-emoji row: the same five reactions the room
-                  // already uses, inserted into the composer. Opt-in, so
-                  // the resting composer stays a single calm line.
-                  AnimatedSize(
-                    duration: const Duration(milliseconds: 150),
-                    curve: Curves.easeOut,
-                    child: !_emojiRowOpen
-                        ? const SizedBox(width: double.infinity)
-                        : Padding(
-                            padding: const EdgeInsets.only(bottom: 8),
-                            child: Wrap(
-                              spacing: 4,
-                              alignment: WrapAlignment.center,
+                              child: Icon(
+                                Icons.forum_rounded,
+                                color: widget.accent,
+                                size: 19,
+                              ),
+                            ),
+                          SizedBox(width: compact ? 9 : 10),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                for (final emoji in roomReactionEmojis)
-                                  InkWell(
-                                    borderRadius: BorderRadius.circular(18),
-                                    onTap: () => _insertEmoji(emoji),
-                                    child: Padding(
-                                      padding: const EdgeInsets.all(7),
-                                      child: Text(
-                                        emoji,
-                                        style: const TextStyle(fontSize: 21),
-                                      ),
+                                Text(
+                                  copy.text('Room chat', 'Czat pokoju'),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 17,
+                                    fontWeight: FontWeight.w900,
+                                  ),
+                                ),
+                                if (!compact)
+                                  Text(
+                                    copy.text(
+                                      'Live conversation',
+                                      'Rozmowa na żywo',
+                                    ),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      color: Color(0xFF9C93AB),
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w700,
                                     ),
                                   ),
                               ],
                             ),
                           ),
+                          if (widget.onClose != null) ...[
+                            const SizedBox(width: 4),
+                            IconButton(
+                              tooltip: copy.text(
+                                'Back to stage',
+                                'Wróć na scenę',
+                              ),
+                              onPressed: widget.onClose,
+                              icon: const Icon(Icons.close_rounded),
+                              color: Colors.white70,
+                              constraints: BoxConstraints.tight(
+                                const Size.square(44),
+                              ),
+                              padding: EdgeInsets.zero,
+                            ),
+                          ],
+                        ],
+                      );
+                    },
                   ),
-                  Row(
-                    children: [
-                      IconButton(
-                        tooltip: 'Quick emoji',
-                        onPressed: () =>
-                            setState(() => _emojiRowOpen = !_emojiRowOpen),
-                        icon: Icon(
-                          _emojiRowOpen
-                              ? Icons.keyboard_alt_outlined
-                              : Icons.emoji_emotions_outlined,
-                          size: 22,
-                        ),
-                        color: _emojiRowOpen
-                            ? widget.accent
-                            : const Color(0xFF9E92A8),
-                      ),
-                      Expanded(
-                        child: TextField(
-                          controller: _composer,
-                          maxLength: 500,
-                          style: const TextStyle(color: Colors.white),
-                          textInputAction: TextInputAction.send,
-                          onSubmitted: (_) => _send(),
-                          decoration: InputDecoration(
-                            counterText: '',
-                            hintText: 'Say something…',
-                            hintStyle: const TextStyle(
-                              // Lifted from 0xFF766B80 (3.55:1) to clear the 4.5:1 small-text
-                              // bar — a placeholder is still text.
-                              color: Color(0xFF9C93AB),
-                            ),
-                            filled: true,
-                            fillColor: const Color(0xFF1C1428),
-                            contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 16,
-                              vertical: 12,
-                            ),
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(22),
-                              borderSide: const BorderSide(
-                                color: Color(0xFF3A2C49),
-                              ),
-                            ),
-                            enabledBorder: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(22),
-                              borderSide: const BorderSide(
-                                color: Color(0xFF3A2C49),
-                              ),
-                            ),
+                ),
+              Expanded(
+                child: StreamBuilder<List<RoomMessage>>(
+                  stream: _messages,
+                  builder: (context, snapshot) {
+                    if (snapshot.hasError) {
+                      return Center(
+                        child: Text(
+                          copy.text(
+                            "Couldn't load the chat.",
+                            'Nie udało się wczytać czatu.',
                           ),
+                          style: const TextStyle(color: Color(0xFFA69CAF)),
                         ),
-                      ),
-                      const SizedBox(width: 8),
-                      IconButton.filled(
-                        onPressed: _sending ? null : _send,
-                        // The one control a nonspeaking person needs most in
-                        // a voice room, and it announced as an unnamed
-                        // "button" — chat is the alternative channel, so its
-                        // send action must have a name.
-                        tooltip: 'Send',
-                        style: IconButton.styleFrom(
-                          backgroundColor: widget.accent,
-                          minimumSize: const Size(46, 46),
-                          foregroundColor:
-                              ThemeData.estimateBrightnessForColor(
-                                    widget.accent,
-                                  ) ==
-                                  Brightness.light
-                              ? const Color(0xFF120C1B)
-                              : Colors.white,
+                      );
+                    }
+                    final messages = snapshot.data ?? const <RoomMessage>[];
+                    if (messages.isEmpty) {
+                      return LayoutBuilder(
+                        builder: (context, constraints) {
+                          if (densePanel && constraints.maxHeight < 44) {
+                            return const SizedBox.shrink();
+                          }
+                          final compact =
+                              densePanel ||
+                              constraints.maxHeight < 220 ||
+                              MediaQuery.textScalerOf(context).scale(1) > 1.35;
+                          return Center(
+                            child: Padding(
+                              padding: EdgeInsets.all(compact ? 10 : 24),
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  if (!compact) ...[
+                                    Container(
+                                      width: 44,
+                                      height: 44,
+                                      decoration: BoxDecoration(
+                                        color: widget.accent.withValues(
+                                          alpha: .12,
+                                        ),
+                                        shape: BoxShape.circle,
+                                      ),
+                                      child: Icon(
+                                        Icons.waving_hand_rounded,
+                                        color: widget.accent,
+                                        size: 21,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 10),
+                                  ],
+                                  Text(
+                                    copy.text(
+                                      'Start the conversation',
+                                      'Rozpocznij rozmowę',
+                                    ),
+                                    textAlign: TextAlign.center,
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.w900,
+                                    ),
+                                  ),
+                                  if (!compact) ...[
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      copy.text(
+                                        'Messages stay with this room.',
+                                        'Wiadomości pozostają w tym pokoju.',
+                                      ),
+                                      textAlign: TextAlign.center,
+                                      style: const TextStyle(
+                                        color: Color(0xFF9E92A8),
+                                      ),
+                                    ),
+                                  ],
+                                ],
+                              ),
+                            ),
+                          );
+                        },
+                      );
+                    }
+                    return ListView.builder(
+                      controller: widget.scrollController,
+                      reverse: true,
+                      padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+                      itemCount: messages.length,
+                      itemBuilder: (context, index) {
+                        final message = messages[index];
+                        return _MessageRow(
+                          message: message,
+                          accent: widget.accent,
+                          isMine: message.senderId == _uid,
+                          onLongPress: () => _messageActions(message),
+                          onAvatarTap: () => showProfilePreview(
+                            context,
+                            userId: message.senderId,
+                            displayName: message.senderName,
+                            photoUrl: message.senderPhotoUrl,
+                          ),
+                          onReactionTap: (emoji) =>
+                              _toggleReaction(message, emoji),
+                        );
+                      },
+                    );
+                  },
+                ),
+              ),
+              SafeArea(
+                top: false,
+                child: Padding(
+                  padding: densePanel
+                      ? const EdgeInsets.fromLTRB(8, 4, 8, 4)
+                      : const EdgeInsets.only(
+                          left: 10,
+                          right: 12,
+                          top: 8,
+                          bottom: 10,
                         ),
-                        icon: _sending
-                            ? const SizedBox(
-                                width: 16,
-                                height: 16,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: Colors.white,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      // The quick-emoji row: the same five reactions the room
+                      // already uses, inserted into the composer. Opt-in, so
+                      // the resting composer stays a single calm line.
+                      AnimatedSize(
+                        duration: const Duration(milliseconds: 150),
+                        curve: Curves.easeOut,
+                        child: ultraDensePanel || !_emojiRowOpen
+                            ? const SizedBox(width: double.infinity)
+                            : Padding(
+                                padding: const EdgeInsets.only(bottom: 8),
+                                child: Wrap(
+                                  spacing: 4,
+                                  alignment: WrapAlignment.center,
+                                  children: [
+                                    for (final emoji in roomReactionEmojis)
+                                      InkWell(
+                                        borderRadius: BorderRadius.circular(18),
+                                        onTap: () => _insertEmoji(emoji),
+                                        child: Padding(
+                                          padding: const EdgeInsets.all(7),
+                                          child: Text(
+                                            emoji,
+                                            style: const TextStyle(
+                                              fontSize: 21,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                  ],
                                 ),
-                              )
-                            : const Icon(Icons.send_rounded, size: 20),
+                              ),
+                      ),
+                      Builder(
+                        builder: (context) {
+                          final compactComposer =
+                              MediaQuery.sizeOf(context).width < 360 ||
+                              MediaQuery.textScalerOf(context).scale(1) >= 1.5;
+                          return Row(
+                            children: [
+                              if (ultraDensePanel && widget.onClose != null)
+                                IconButton(
+                                  tooltip: copy.text(
+                                    'Back to stage',
+                                    'Wróć na scenę',
+                                  ),
+                                  onPressed: widget.onClose,
+                                  icon: const Icon(
+                                    Icons.close_rounded,
+                                    size: 22,
+                                  ),
+                                  color: const Color(0xFFB6AEC0),
+                                  constraints: BoxConstraints.tight(
+                                    const Size.square(44),
+                                  ),
+                                  padding: EdgeInsets.zero,
+                                )
+                              else
+                                IconButton(
+                                  tooltip: copy.text(
+                                    'Quick emoji',
+                                    'Szybkie emoji',
+                                  ),
+                                  onPressed: () => setState(
+                                    () => _emojiRowOpen = !_emojiRowOpen,
+                                  ),
+                                  icon: Icon(
+                                    _emojiRowOpen
+                                        ? Icons.keyboard_alt_outlined
+                                        : Icons.emoji_emotions_outlined,
+                                    size: 22,
+                                  ),
+                                  color: _emojiRowOpen
+                                      ? widget.accent
+                                      : const Color(0xFF9E92A8),
+                                  constraints: BoxConstraints.tightFor(
+                                    width: compactComposer ? 40 : 48,
+                                    height: 48,
+                                  ),
+                                  padding: EdgeInsets.zero,
+                                ),
+                              Expanded(
+                                child: TextField(
+                                  controller: _composer,
+                                  maxLength: 500,
+                                  style: const TextStyle(color: Colors.white),
+                                  textInputAction: TextInputAction.send,
+                                  onSubmitted: (_) => _send(),
+                                  decoration: InputDecoration(
+                                    counterText: '',
+                                    hintText: compactComposer
+                                        ? copy.text('Write…', 'Napisz…')
+                                        : copy.text(
+                                            'Say something…',
+                                            'Napisz coś…',
+                                          ),
+                                    hintStyle: const TextStyle(
+                                      // Lifted from 0xFF766B80 (3.55:1) to clear the 4.5:1 small-text
+                                      // bar — a placeholder is still text.
+                                      color: Color(0xFF9C93AB),
+                                    ),
+                                    filled: true,
+                                    fillColor: const Color(0xFF1C1428),
+                                    contentPadding: EdgeInsets.symmetric(
+                                      horizontal: densePanel ? 12 : 16,
+                                      vertical: densePanel ? 8 : 12,
+                                    ),
+                                    border: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(22),
+                                      borderSide: const BorderSide(
+                                        color: Color(0xFF3A2C49),
+                                      ),
+                                    ),
+                                    enabledBorder: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(22),
+                                      borderSide: const BorderSide(
+                                        color: Color(0xFF3A2C49),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              SizedBox(width: compactComposer ? 4 : 8),
+                              IconButton.filled(
+                                onPressed: _sending ? null : _send,
+                                // The one control a nonspeaking person needs most in
+                                // a voice room, and it announced as an unnamed
+                                // "button" — chat is the alternative channel, so its
+                                // send action must have a name.
+                                tooltip: copy.text('Send', 'Wyślij'),
+                                style: IconButton.styleFrom(
+                                  backgroundColor: widget.accent,
+                                  minimumSize: Size.square(
+                                    compactComposer ? 42 : 46,
+                                  ),
+                                  foregroundColor:
+                                      ThemeData.estimateBrightnessForColor(
+                                            widget.accent,
+                                          ) ==
+                                          Brightness.light
+                                      ? const Color(0xFF120C1B)
+                                      : Colors.white,
+                                ),
+                                icon: _sending
+                                    ? const SizedBox(
+                                        width: 16,
+                                        height: 16,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                          color: Colors.white,
+                                        ),
+                                      )
+                                    : const Icon(Icons.send_rounded, size: 20),
+                              ),
+                            ],
+                          );
+                        },
                       ),
                     ],
                   ),
-                ],
+                ),
               ),
-            ),
-          ),
-        ],
+            ],
+          );
+        },
       ),
     );
   }
@@ -556,6 +664,7 @@ class _MessageRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     return Container(
       margin: const EdgeInsets.symmetric(vertical: 3),
       padding: const EdgeInsets.all(9),
@@ -575,9 +684,17 @@ class _MessageRow extends StatelessWidget {
         children: [
           Semantics(
             button: true,
-            label: 'Open ${message.senderName} profile',
+            label: copy.template(
+              'Open {name} profile',
+              'Otwórz profil użytkownika {name}',
+              values: {'name': message.senderName},
+            ),
             child: Tooltip(
-              message: 'Open ${message.senderName} profile',
+              message: copy.template(
+                'Open {name} profile',
+                'Otwórz profil użytkownika {name}',
+                values: {'name': message.senderName},
+              ),
               child: InkResponse(
                 onTap: onAvatarTap,
                 radius: 22,
@@ -594,7 +711,11 @@ class _MessageRow extends StatelessWidget {
           Expanded(
             child: AccessibleContextAction(
               onOpen: onLongPress,
-              semanticLabel: 'Open actions for ${message.senderName} message',
+              semanticLabel: copy.template(
+                'Open actions for {name} message',
+                'Otwórz opcje wiadomości użytkownika {name}',
+                values: {'name': message.senderName},
+              ),
               borderRadius: 16,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,

@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:share_plus/share_plus.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_gradients.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
@@ -170,6 +171,8 @@ class _MomentsFeedViewState extends State<MomentsFeedView> {
     debugLabel: 'Reload Moments after expiry',
   );
   final MomentExpiryAnnouncer _expiryAnnouncer = MomentExpiryAnnouncer();
+
+  AppLocalizations get _copy => AppLocalizations.of(context);
 
   String get _uid {
     try {
@@ -436,11 +439,14 @@ class _MomentsFeedViewState extends State<MomentsFeedView> {
         if (!mounted || _playingId != moment.id) return;
         await player.play(UrlSource(uri.toString()));
       }
-    } catch (error) {
+    } catch (_) {
       if (!mounted) return;
       setState(() {
         _isPlaying = false;
-        _playbackError = 'This Moment could not be played. ($error)';
+        _playbackError = _copy.text(
+          'This Moment could not be played. Try again.',
+          'Nie udało się odtworzyć tego Momentu. Spróbuj ponownie.',
+        );
       });
     }
   }
@@ -575,15 +581,19 @@ class _MomentsFeedViewState extends State<MomentsFeedView> {
   }
 
   Future<void> _report(VoiceMoment moment) async {
+    final copy = _copy;
     await reportContent(
       context: context,
       service: widget.contentReportService,
       content: ReportedContent.voiceMoment(momentId: moment.id),
-      title: 'Report this Voice Moment',
-      subtitle:
-          'Your report goes to the YO Voice moderation team with this '
-          'Moment attached. ${moment.authorName} is not told who reported '
-          'it.',
+      title: copy.text('Report this Voice Moment', 'Zgłoś ten Voice Moment'),
+      subtitle: copy.text(
+        'Your report goes to the YO Voice moderation team with this '
+            'Moment attached. ${moment.authorName} is not told who reported '
+            'it.',
+        'Zgłoszenie wraz z tym Momentem trafi do zespołu moderacji YO Voice. '
+            '${moment.authorName} nie dowie się, kto je wysłał.',
+      ),
     );
   }
 
@@ -655,23 +665,27 @@ class _MomentsFeedViewState extends State<MomentsFeedView> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) {
+        final copy = AppLocalizations.of(dialogContext);
         final palette = dialogContext.appPalette;
         final colors = Theme.of(dialogContext).colorScheme;
         return AlertDialog(
           backgroundColor: palette.surfaceRaised,
           title: Text(
-            'Delete this moment?',
+            copy.text('Delete this moment?', 'Usunąć ten Moment?'),
             style: TextStyle(color: palette.textPrimary),
           ),
           content: Text(
-            'This cannot be undone.',
+            copy.text(
+              'This cannot be undone.',
+              'Tej operacji nie można cofnąć.',
+            ),
             style: TextStyle(color: palette.textSecondary),
           ),
           actions: [
             TextButton(
               key: const ValueKey('moment-delete-cancel'),
               onPressed: () => Navigator.of(dialogContext).pop(false),
-              child: const Text('Cancel'),
+              child: Text(copy.text('Cancel', 'Anuluj')),
             ),
             FilledButton(
               key: const ValueKey('moment-delete-confirm'),
@@ -680,7 +694,7 @@ class _MomentsFeedViewState extends State<MomentsFeedView> {
                 foregroundColor: colors.onError,
               ),
               onPressed: () => Navigator.of(dialogContext).pop(true),
-              child: const Text('Delete'),
+              child: Text(copy.text('Delete', 'Usuń')),
             ),
           ],
         );
@@ -694,9 +708,14 @@ class _MomentsFeedViewState extends State<MomentsFeedView> {
       messenger
         ?..hideCurrentSnackBar()
         ..showSnackBar(
-          const SnackBar(
+          SnackBar(
             behavior: SnackBarBehavior.floating,
-            content: Text('The Moment could not be deleted. Try again.'),
+            content: Text(
+              _copy.text(
+                'The Moment could not be deleted. Try again.',
+                'Nie udało się usunąć Momentu. Spróbuj ponownie.',
+              ),
+            ),
           ),
         );
       return;
@@ -712,9 +731,11 @@ class _MomentsFeedViewState extends State<MomentsFeedView> {
     messenger
       ?..hideCurrentSnackBar()
       ..showSnackBar(
-        const SnackBar(
+        SnackBar(
           behavior: SnackBarBehavior.floating,
-          content: Text('Voice Moment deleted.'),
+          content: Text(
+            _copy.text('Voice Moment deleted.', 'Voice Moment usunięty.'),
+          ),
         ),
       );
   }
@@ -826,8 +847,15 @@ class _MomentsFeedViewState extends State<MomentsFeedView> {
               'feed-expiry-${deadline.microsecondsSinceEpoch}:'
               '${transitionIds.join(',')}',
           message: count == 1
-              ? 'One Voice Moment expired and was removed.'
-              : '$count Voice Moments expired and were removed.',
+              ? _copy.text(
+                  'One Voice Moment expired and was removed.',
+                  'Jeden Voice Moment wygasł i został usunięty z listy.',
+                )
+              : _copy.text(
+                  '$count Voice Moments expired and were removed.',
+                  'Wygasłe Voice Momenty zostały usunięte z listy. '
+                      'Liczba: $count.',
+                ),
         );
         recoverMomentExpiryFocusAfterFrame(
           context: context,
@@ -940,11 +968,17 @@ class _MomentsFeedViewState extends State<MomentsFeedView> {
     if (result.corpusIsEmpty) {
       return _EmptyState(
         icon: Icons.mic_none_rounded,
-        title: 'No Voice Moments yet',
-        body:
-            'Nobody has published one. Be the first — record up to 60 '
-            'seconds and choose how long it stays.',
-        actionLabel: 'Record a Moment',
+        title: _copy.text(
+          'No Voice Moments yet',
+          'Nie ma jeszcze Voice Momentów',
+        ),
+        body: _copy.text(
+          'Nobody has published one. Be the first — record up to 60 '
+              'seconds and choose how long it stays.',
+          'Nikt jeszcze niczego nie opublikował. Nagraj maksymalnie 60 sekund '
+              'i wybierz czas dostępności.',
+        ),
+        actionLabel: _copy.text('Record a Moment', 'Nagraj Moment'),
         onAction: widget.onRecord,
       );
     }
@@ -963,18 +997,38 @@ class _MomentsFeedViewState extends State<MomentsFeedView> {
             ? Icons.timer_off_outlined
             : Icons.error_outline_rounded,
         title: expiredOnly
-            ? 'Nothing live right now'
-            : 'Nothing playable right now',
+            ? _copy.text('Nothing live right now', 'Teraz nic nie jest aktywne')
+            : _copy.text(
+                'Nothing playable right now',
+                'Teraz nie ma nic do odtworzenia',
+              ),
         body: expiredOnly
-            ? '${result.fetchedCount} published '
-                  '${result.fetchedCount == 1 ? 'Moment has' : 'Moments have'} '
-                  'reached the end of ${result.fetchedCount == 1 ? 'its' : 'their'} '
-                  'chosen availability. Record a new one to bring the feed '
-                  'back.'
-            : '${result.fetchedCount} published '
-                  '${result.fetchedCount == 1 ? 'Moment' : 'Moments'} could '
-                  'not be played back. This is usually temporary.',
-        actionLabel: expiredOnly ? 'Record a Moment' : 'Try again',
+            ? _copy.text(
+                '${result.fetchedCount} published '
+                '${result.fetchedCount == 1 ? 'Moment has' : 'Moments have'} '
+                'reached the end of ${result.fetchedCount == 1 ? 'its' : 'their'} '
+                'chosen availability. Record a new one to bring the feed '
+                'back.',
+                result.fetchedCount == 1
+                    ? 'Opublikowany Moment zakończył okres dostępności. Nagraj '
+                          'nowy, aby ponownie wypełnić kanał.'
+                    : 'Okres dostępności zakończył się dla '
+                          '${result.fetchedCount} opublikowanych Voice Momentów. '
+                          'Nagraj nowy, aby ponownie wypełnić kanał.',
+              )
+            : _copy.text(
+                '${result.fetchedCount} published '
+                '${result.fetchedCount == 1 ? 'Moment' : 'Moments'} could '
+                'not be played back. This is usually temporary.',
+                result.fetchedCount == 1
+                    ? 'Nie można teraz odtworzyć opublikowanego Momentu. To '
+                          'zwykle problem przejściowy.'
+                    : 'Nie można teraz odtworzyć ${result.fetchedCount} '
+                          'opublikowanych Momentów. To zwykle problem przejściowy.',
+              ),
+        actionLabel: expiredOnly
+            ? _copy.text('Record a Moment', 'Nagraj Moment')
+            : _copy.text('Try again', 'Spróbuj ponownie'),
         onAction: expiredOnly ? widget.onRecord : _load,
       );
     }
@@ -997,8 +1051,11 @@ class _MomentsFeedViewState extends State<MomentsFeedView> {
       viewedIds: _viewedIds,
       featured: featured,
       listTitle: switch (_filter) {
-        MomentsFilter.mostEngaged => 'Most engaged',
-        _ => 'Recent Moments',
+        MomentsFilter.mostEngaged => _copy.text(
+          'Most engaged',
+          'Najpopularniejsze',
+        ),
+        _ => _copy.text('Recent Moments', 'Najnowsze Momenty'),
       },
       moments: list,
       selectedId: wide ? (_selectedId ?? list.first.id) : null,
@@ -1059,11 +1116,13 @@ class _MomentsFeedViewState extends State<MomentsFeedView> {
       return _EmptyState(
         key: const ValueKey('moments-following-empty'),
         icon: Icons.graphic_eq_rounded,
-        title: 'Nothing here yet',
-        body:
-            'Moments from friends and people you follow show up '
-            'here — and so do your own.',
-        actionLabel: 'Record a Moment',
+        title: _copy.text('Nothing here yet', 'Jeszcze nic tu nie ma'),
+        body: _copy.text(
+          'Moments from friends and people you follow show up '
+              'here — and so do your own.',
+          'Tutaj pojawią się Momenty znajomych, obserwowanych osób oraz Twoje.',
+        ),
+        actionLabel: _copy.text('Record a Moment', 'Nagraj Moment'),
         onAction: widget.onRecord,
       );
     }
@@ -1079,7 +1138,7 @@ class _MomentsFeedViewState extends State<MomentsFeedView> {
       chains: chains,
       viewedIds: _viewedIds,
       featured: const <VoiceMoment>[],
-      listTitle: 'From your circle',
+      listTitle: _copy.text('From your circle', 'Z Twojego kręgu'),
       moments: list,
       selectedId: wide && list.isNotEmpty
           ? (_selectedId ?? list.first.id)
@@ -1153,16 +1212,26 @@ class _FilterChips extends StatelessWidget {
   final bool compact;
   final FocusNode recoveryFocusNode;
 
-  static const _labels = <MomentsFilter, (String, IconData)>{
-    MomentsFilter.discover: ('Discover', Icons.explore_outlined),
-    MomentsFilter.following: ('Following', Icons.people_outline_rounded),
-    MomentsFilter.mostEngaged: ('Most engaged', Icons.trending_up_rounded),
-    MomentsFilter.recent: ('Recent', Icons.schedule_rounded),
+  static const _icons = <MomentsFilter, IconData>{
+    MomentsFilter.discover: Icons.explore_outlined,
+    MomentsFilter.following: Icons.people_outline_rounded,
+    MomentsFilter.mostEngaged: Icons.trending_up_rounded,
+    MomentsFilter.recent: Icons.schedule_rounded,
   };
 
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
+    final copy = AppLocalizations.of(context);
+    String labelFor(MomentsFilter value) => switch (value) {
+      MomentsFilter.discover => copy.text('Discover', 'Odkrywaj'),
+      MomentsFilter.following => copy.text('Following', 'Obserwowani'),
+      MomentsFilter.mostEngaged => copy.text(
+        'Most engaged',
+        'Najpopularniejsze',
+      ),
+      MomentsFilter.recent => copy.text('Recent', 'Najnowsze'),
+    };
     return Padding(
       padding: EdgeInsets.fromLTRB(compact ? 16 : 24, 2, compact ? 8 : 16, 8),
       child: Row(
@@ -1172,13 +1241,13 @@ class _FilterChips extends StatelessWidget {
               scrollDirection: Axis.horizontal,
               child: Row(
                 children: [
-                  for (final entry in _labels.entries) ...[
+                  for (final entry in _icons.entries) ...[
                     if (entry.key != MomentsFilter.discover)
                       const SizedBox(width: 8),
                     _FilterChip(
                       key: ValueKey('moments-filter-${entry.key.name}'),
-                      label: entry.value.$1,
-                      icon: entry.value.$2,
+                      label: labelFor(entry.key),
+                      icon: entry.value,
                       selected: filter == entry.key,
                       onTap: () => onFilter(entry.key),
                     ),
@@ -1191,7 +1260,7 @@ class _FilterChips extends StatelessWidget {
             key: const ValueKey('moments-discovery-refresh'),
             focusNode: recoveryFocusNode,
             onPressed: onRefresh,
-            tooltip: 'Reload Moments',
+            tooltip: copy.text('Reload Moments', 'Odśwież Momenty'),
             icon: Icon(Icons.refresh_rounded, color: palette.textSecondary),
           ),
         ],
@@ -1303,6 +1372,7 @@ class _FeedColumn extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final side = compact ? 16.0 : 24.0;
+    final copy = AppLocalizations.of(context);
     return ListView(
       padding: EdgeInsets.fromLTRB(side, 4, side, 32),
       children: [
@@ -1316,14 +1386,14 @@ class _FeedColumn extends StatelessWidget {
         ],
         if (featured.isNotEmpty) ...[
           _SectionTitle(
-            'Featured Moments',
+            copy.text('Featured Moments', 'Polecane Momenty'),
             trailing: onViewAllFeatured == null
                 ? null
                 : TextButton(
                     key: const ValueKey('moments-featured-view-all'),
                     onPressed: onViewAllFeatured,
-                    child: const Text(
-                      'View all',
+                    child: Text(
+                      copy.text('View all', 'Zobacz wszystkie'),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
@@ -1429,14 +1499,21 @@ class _ChainCircle extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
+    final copy = AppLocalizations.of(context);
     final label = chain.length > 1
-        ? '${chain.authorName}, ${chain.length} Moments'
+        ? copy.text(
+            '${chain.authorName}, ${chain.length} Moments',
+            '${chain.authorName}, Momenty: ${chain.length}',
+          )
         : chain.authorName;
     return Semantics(
       button: true,
-      label:
-          'Open the story chain by $label'
-          '${unviewed ? ', has unheard Moments' : ', all heard'}',
+      label: copy.text(
+        'Open the story chain by $label'
+            '${unviewed ? ', has unheard Moments' : ', all heard'}',
+        'Otwórz relację użytkownika $label'
+            '${unviewed ? ', zawiera nieodsłuchane Momenty' : ', wszystko odsłuchane'}',
+      ),
       child: InkWell(
         onTap: onTap,
         borderRadius: BorderRadius.circular(16),
@@ -1550,11 +1627,15 @@ class _FeaturedCard extends StatelessWidget {
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final age = momentRelativeAge(moment.createdAt);
-    final expiry = momentExpiryLabel(moment.expiresAt);
+    final copy = AppLocalizations.of(context);
+    final age = momentRelativeAge(moment.createdAt, copy: copy);
+    final expiry = momentExpiryLabel(moment.expiresAt, copy: copy);
     return Semantics(
       button: true,
-      label: 'Featured Moment by ${moment.authorName}',
+      label: copy.text(
+        'Featured Moment by ${moment.authorName}',
+        'Polecany Moment użytkownika ${moment.authorName}',
+      ),
       child: InkWell(
         onTap: onTap,
         borderRadius: BorderRadius.circular(20),
@@ -1606,7 +1687,10 @@ class _FeaturedCard extends StatelessWidget {
                     Center(
                       child: Semantics(
                         button: true,
-                        label: 'Play this featured Moment',
+                        label: copy.text(
+                          'Play this featured Moment',
+                          'Odtwórz ten polecany Moment',
+                        ),
                         child: Material(
                           color: colors.primary,
                           shape: const CircleBorder(),
@@ -1660,7 +1744,7 @@ class _FeaturedCard extends StatelessWidget {
                   children: [
                     Text(
                       moment.caption.trim().isEmpty
-                          ? 'Voice Moment'
+                          ? copy.text('Voice Moment', 'Voice Moment')
                           : moment.caption,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
@@ -1789,21 +1873,25 @@ class _MomentRow extends StatelessWidget {
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final age = momentRelativeAge(moment.createdAt);
+    final copy = AppLocalizations.of(context);
+    final age = momentRelativeAge(moment.createdAt, copy: copy);
     // The author sees their Moment's real availability — including
     // "Stays until deleted" for a permanent one. Everyone else sees a
     // countdown only when a deadline actually exists.
     final expiry = isOwn && moment.isPublished
-        ? momentAvailabilityLabel(moment.expiresAt)
-        : momentExpiryLabel(moment.expiresAt);
+        ? momentAvailabilityLabel(moment.expiresAt, copy: copy)
+        : momentExpiryLabel(moment.expiresAt, copy: copy);
     final permanent = moment.isPermanent;
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: Semantics(
         button: true,
-        label:
-            'Open the Moment by ${moment.authorName}'
-            '${_uploading ? ', still uploading' : ''}',
+        label: copy.text(
+          'Open the Moment by ${moment.authorName}'
+              '${_uploading ? ', still uploading' : ''}',
+          'Otwórz Moment użytkownika ${moment.authorName}'
+              '${_uploading ? ', nadal przesyłany' : ''}',
+        ),
         child: Material(
           color: selected
               ? colors.primary.withValues(alpha: isDark ? .16 : .1)
@@ -1835,8 +1923,8 @@ class _MomentRow extends StatelessWidget {
                     key: ValueKey('moment-row-play-${moment.id}'),
                     onPressed: _uploading ? null : onPlay,
                     tooltip: _uploading
-                        ? 'Still uploading'
-                        : 'Play this Moment',
+                        ? copy.text('Still uploading', 'Nadal przesyłamy')
+                        : copy.text('Play this Moment', 'Odtwórz ten Moment'),
                     style: IconButton.styleFrom(
                       backgroundColor: colors.primary.withValues(
                         alpha: _uploading ? .25 : 1,
@@ -1863,12 +1951,15 @@ class _MomentRow extends StatelessWidget {
                           onTap: _uploading ? null : onOpenDetail,
                           child: Semantics(
                             button: !_uploading,
-                            label:
-                                'Open details of the Moment by '
-                                '${moment.authorName}',
+                            label: copy.text(
+                              'Open details of the Moment by '
+                                  '${moment.authorName}',
+                              'Otwórz szczegóły Momentu użytkownika '
+                                  '${moment.authorName}',
+                            ),
                             child: Text(
                               moment.caption.trim().isEmpty
-                                  ? 'Voice Moment'
+                                  ? copy.text('Voice Moment', 'Voice Moment')
                                   : moment.caption,
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
@@ -1912,7 +2003,7 @@ class _MomentRow extends StatelessWidget {
                             ),
                             if (_uploading)
                               Text(
-                                'Uploading…',
+                                copy.text('Uploading…', 'Przesyłanie…'),
                                 style: TextStyle(
                                   color: palette.textTertiary,
                                   fontSize: 11.5,
@@ -2020,7 +2111,7 @@ class _MomentRow extends StatelessWidget {
                   ),
                   PopupMenuButton<String>(
                     key: ValueKey('moment-row-menu-${moment.id}'),
-                    tooltip: 'More',
+                    tooltip: copy.text('More', 'Więcej'),
                     color: palette.surfaceRaised,
                     icon: Icon(
                       Icons.more_vert_rounded,
@@ -2050,7 +2141,7 @@ class _MomentRow extends StatelessWidget {
                               ),
                               const SizedBox(width: 8),
                               Text(
-                                'Details',
+                                copy.text('Details', 'Szczegóły'),
                                 style: TextStyle(color: palette.textPrimary),
                               ),
                             ],
@@ -2073,7 +2164,7 @@ class _MomentRow extends StatelessWidget {
                               ),
                               const SizedBox(width: 8),
                               Text(
-                                'Delete',
+                                copy.text('Delete', 'Usuń'),
                                 style: TextStyle(color: colors.error),
                               ),
                             ],
@@ -2092,7 +2183,7 @@ class _MomentRow extends StatelessWidget {
                               ),
                               const SizedBox(width: 8),
                               Text(
-                                'Report',
+                                copy.text('Report', 'Zgłoś'),
                                 style: TextStyle(color: palette.textPrimary),
                               ),
                             ],
@@ -2122,14 +2213,24 @@ class _PoolFooter extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
+    final copy = AppLocalizations.of(context);
     final noun = total == 1 ? 'Moment' : 'Moments';
     return Text(
-      moreExists
-          ? '$total live $noun loaded — more are published than fit one '
-                'load. Reload to draw again.'
-          : (total == 1
-                ? 'That is the only live Moment right now.'
-                : 'That is all $total live Moments right now.'),
+      copy.text(
+        moreExists
+            ? '$total live $noun loaded — more are published than fit one '
+                  'load. Reload to draw again.'
+            : (total == 1
+                  ? 'That is the only live Moment right now.'
+                  : 'That is all $total live Moments right now.'),
+        moreExists
+            ? '$total — tyle aktywnych Voice Momentów wczytano. '
+                  'Opublikowano ich więcej, niż mieści się w jednym zestawie. '
+                  'Odśwież, aby pobrać inny zestaw.'
+            : (total == 1
+                  ? 'To jedyny aktywny Moment w tej chwili.'
+                  : 'To wszystkie aktywne Momenty w tej chwili: $total.'),
+      ),
       textAlign: TextAlign.center,
       style: TextStyle(color: palette.textTertiary, fontSize: 12, height: 1.4),
     );
@@ -2228,6 +2329,8 @@ class _MomentDetailPanelState extends State<MomentDetailPanel> {
   final TextEditingController _composer = TextEditingController();
   bool _sending = false;
 
+  AppLocalizations get _copy => AppLocalizations.of(context);
+
   @override
   void dispose() {
     _composer.dispose();
@@ -2242,12 +2345,19 @@ class _MomentDetailPanelState extends State<MomentDetailPanel> {
     try {
       await service.createTextComment(momentId: widget.moment.id, text: text);
       _composer.clear();
-    } catch (error) {
+    } catch (_) {
       if (!mounted) return;
       ScaffoldMessenger.maybeOf(context)
         ?..hideCurrentSnackBar()
         ..showSnackBar(
-          const SnackBar(content: Text('Could not post your comment.')),
+          SnackBar(
+            content: Text(
+              _copy.text(
+                'Could not post your comment. Try again.',
+                'Nie udało się dodać komentarza. Spróbuj ponownie.',
+              ),
+            ),
+          ),
         );
     } finally {
       if (mounted) setState(() => _sending = false);
@@ -2259,9 +2369,12 @@ class _MomentDetailPanelState extends State<MomentDetailPanel> {
     // resolves ?moment= on yovoice.app. Nothing new is invented here.
     await SharePlus.instance.share(
       ShareParams(
-        text:
-            'Listen to ${widget.moment.authorName} on YO Voice: '
-            'https://yovoice.app/?moment=${widget.moment.id}',
+        text: _copy.text(
+          'Listen to ${widget.moment.authorName} on YO Voice: '
+              'https://yovoice.app/?moment=${widget.moment.id}',
+          'Posłuchaj ${widget.moment.authorName} w YO Voice: '
+              'https://yovoice.app/?moment=${widget.moment.id}',
+        ),
       ),
     );
   }
@@ -2271,12 +2384,13 @@ class _MomentDetailPanelState extends State<MomentDetailPanel> {
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
     final moment = widget.moment;
-    final age = momentRelativeAge(moment.createdAt);
+    final copy = _copy;
+    final age = momentRelativeAge(moment.createdAt, copy: copy);
     // The author sees the availability fact even for a permanent Moment
     // ("Stays until deleted"); everyone else only sees a real countdown.
     final expiry = widget.isOwn
-        ? momentAvailabilityLabel(moment.expiresAt)
-        : momentExpiryLabel(moment.expiresAt);
+        ? momentAvailabilityLabel(moment.expiresAt, copy: copy)
+        : momentExpiryLabel(moment.expiresAt, copy: copy);
     final totalSeconds = widget.duration?.inSeconds ?? moment.durationSeconds;
     final hasTotal = totalSeconds > 0;
     final progress = hasTotal
@@ -2309,8 +2423,14 @@ class _MomentDetailPanelState extends State<MomentDetailPanel> {
                           displayName: moment.authorName,
                           photoUrl: moment.authorPhotoUrl,
                         ),
-                        semanticLabel: 'Open profile for ${moment.authorName}',
-                        tooltip: 'Open ${moment.authorName}\'s profile',
+                        semanticLabel: copy.text(
+                          'Open profile for ${moment.authorName}',
+                          'Otwórz profil: ${moment.authorName}',
+                        ),
+                        tooltip: copy.text(
+                          'Open ${moment.authorName}\'s profile',
+                          'Otwórz profil ${moment.authorName}',
+                        ),
                         circular: true,
                         child: UserAvatar(
                           radius: 22,
@@ -2401,8 +2521,14 @@ class _MomentDetailPanelState extends State<MomentDetailPanel> {
                       Semantics(
                         button: true,
                         label: widget.isPlaying
-                            ? 'Pause this Moment'
-                            : 'Play this Moment',
+                            ? copy.text(
+                                'Pause this Moment',
+                                'Wstrzymaj ten Moment',
+                              )
+                            : copy.text(
+                                'Play this Moment',
+                                'Odtwórz ten Moment',
+                              ),
                         child: Material(
                           color: colors.primary,
                           shape: const CircleBorder(),
@@ -2492,7 +2618,7 @@ class _MomentDetailPanelState extends State<MomentDetailPanel> {
                     children: [
                       Expanded(
                         child: Text(
-                          'Comments',
+                          copy.text('Comments', 'Komentarze'),
                           style: TextStyle(
                             color: palette.textPrimary,
                             fontSize: 14,
@@ -2507,8 +2633,8 @@ class _MomentDetailPanelState extends State<MomentDetailPanel> {
                         child: TextButton(
                           key: const ValueKey('detail-open-thread'),
                           onPressed: widget.onOpenThread,
-                          child: const Text(
-                            'Open thread',
+                          child: Text(
+                            copy.text('Open thread', 'Otwórz wątek'),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                           ),
@@ -2543,7 +2669,10 @@ class _MomentDetailPanelState extends State<MomentDetailPanel> {
                     enabled: widget.momentService != null,
                     style: TextStyle(color: palette.textPrimary),
                     decoration: InputDecoration(
-                      hintText: 'Write a comment...',
+                      hintText: copy.text(
+                        'Write a comment...',
+                        'Napisz komentarz…',
+                      ),
                       hintStyle: TextStyle(color: palette.textTertiary),
                       filled: true,
                       fillColor: palette.surfaceSunken,
@@ -2561,6 +2690,7 @@ class _MomentDetailPanelState extends State<MomentDetailPanel> {
                 const SizedBox(width: 8),
                 IconButton.filled(
                   key: const ValueKey('detail-comment-send'),
+                  tooltip: copy.text('Post comment', 'Dodaj komentarz'),
                   onPressed: _sending || widget.momentService == null
                       ? null
                       : _send,
@@ -2613,6 +2743,7 @@ class _DetailActions extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final service = feedService;
+    final copy = AppLocalizations.of(context);
     return Wrap(
       spacing: 8,
       runSpacing: 8,
@@ -2620,7 +2751,9 @@ class _DetailActions extends StatelessWidget {
         if (service == null)
           _SmallChip(
             icon: Icons.favorite_border_rounded,
-            label: moment.likeCount == 0 ? 'Like' : '${moment.likeCount}',
+            label: moment.likeCount == 0
+                ? copy.text('Like', 'Lubię to')
+                : '${moment.likeCount}',
             active: false,
             onTap: null,
           )
@@ -2636,11 +2769,16 @@ class _DetailActions extends StatelessWidget {
                 icon: liked
                     ? Icons.favorite_rounded
                     : Icons.favorite_border_rounded,
-                label: moment.likeCount == 0 ? 'Like' : '${moment.likeCount}',
+                label: moment.likeCount == 0
+                    ? copy.text('Like', 'Lubię to')
+                    : '${moment.likeCount}',
                 active: liked,
                 semanticLabel: liked
-                    ? 'Unlike this Moment'
-                    : 'Like this Moment',
+                    ? copy.text(
+                        'Unlike this Moment',
+                        'Usuń polubienie tego Momentu',
+                      )
+                    : copy.text('Like this Moment', 'Polub ten Moment'),
                 onTap: () => unawaited(_toggle(context, service)),
               );
             },
@@ -2648,28 +2786,37 @@ class _DetailActions extends StatelessWidget {
         _SmallChip(
           key: const ValueKey('detail-share'),
           icon: Icons.share_outlined,
-          label: 'Share',
+          label: copy.text('Share', 'Udostępnij'),
           active: false,
-          semanticLabel: 'Share this Moment',
+          semanticLabel: copy.text(
+            'Share this Moment',
+            'Udostępnij ten Moment',
+          ),
           onTap: onShare,
         ),
         if (canReport)
           _SmallChip(
             key: ValueKey('detail-report-${moment.id}'),
             icon: Icons.flag_outlined,
-            label: 'Report',
+            label: copy.text('Report', 'Zgłoś'),
             active: false,
-            semanticLabel: 'Report this Voice Moment',
+            semanticLabel: copy.text(
+              'Report this Voice Moment',
+              'Zgłoś ten Voice Moment',
+            ),
             onTap: onReport,
           ),
         if (canDelete)
           _SmallChip(
             key: ValueKey('detail-delete-${moment.id}'),
             icon: Icons.delete_outline_rounded,
-            label: 'Delete',
+            label: copy.text('Delete', 'Usuń'),
             active: false,
             destructive: true,
-            semanticLabel: 'Delete this Voice Moment',
+            semanticLabel: copy.text(
+              'Delete this Voice Moment',
+              'Usuń ten Voice Moment',
+            ),
             onTap: onDelete,
           ),
       ],
@@ -2678,15 +2825,21 @@ class _DetailActions extends StatelessWidget {
 
   Future<void> _toggle(BuildContext context, HomeFeedService service) async {
     final messenger = ScaffoldMessenger.maybeOf(context);
+    final copy = AppLocalizations.of(context);
     try {
       await service.toggleLike(moment.id);
     } catch (_) {
       messenger
         ?..hideCurrentSnackBar()
         ..showSnackBar(
-          const SnackBar(
+          SnackBar(
             behavior: SnackBarBehavior.floating,
-            content: Text('Your like could not be saved.'),
+            content: Text(
+              copy.text(
+                'Your like could not be saved. Try again.',
+                'Nie udało się zapisać polubienia. Spróbuj ponownie.',
+              ),
+            ),
           ),
         );
     }
@@ -2774,12 +2927,16 @@ class MomentCommentsInline extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
+    final copy = AppLocalizations.of(context);
     final service = momentService;
     if (service == null) {
       return Padding(
         padding: const EdgeInsets.symmetric(vertical: 10),
         child: Text(
-          'Comments are unavailable right now.',
+          copy.text(
+            'Comments are unavailable right now.',
+            'Komentarze są teraz niedostępne.',
+          ),
           style: TextStyle(color: palette.textTertiary, fontSize: 12.5),
         ),
       );
@@ -2791,7 +2948,10 @@ class MomentCommentsInline extends StatelessWidget {
           return Padding(
             padding: const EdgeInsets.symmetric(vertical: 10),
             child: Text(
-              'Could not load comments.',
+              copy.text(
+                'Could not load comments.',
+                'Nie udało się wczytać komentarzy.',
+              ),
               style: TextStyle(color: palette.textTertiary, fontSize: 12.5),
             ),
           );
@@ -2813,7 +2973,10 @@ class MomentCommentsInline extends StatelessWidget {
           return Padding(
             padding: const EdgeInsets.symmetric(vertical: 10),
             child: Text(
-              'Be the first to comment.',
+              copy.text(
+                'Be the first to comment.',
+                'Napisz pierwszy komentarz.',
+              ),
               style: TextStyle(color: palette.textTertiary, fontSize: 12.5),
             ),
           );
@@ -2851,7 +3014,10 @@ class MomentCommentsInline extends StatelessWidget {
                                 ),
                               ),
                               Text(
-                                momentRelativeAge(comment.createdAt),
+                                momentRelativeAge(
+                                  comment.createdAt,
+                                  copy: copy,
+                                ),
                                 style: TextStyle(
                                   color: palette.textTertiary,
                                   fontSize: 11,
@@ -2862,8 +3028,12 @@ class MomentCommentsInline extends StatelessWidget {
                           const SizedBox(height: 2),
                           if (comment.isVoice)
                             Text(
-                              'Voice reply · ${comment.durationSeconds}s'
-                              '${comment.text.isNotEmpty ? ' — ${comment.text}' : ''}',
+                              copy.text(
+                                'Voice reply · ${comment.durationSeconds}s'
+                                    '${comment.text.isNotEmpty ? ' — ${comment.text}' : ''}',
+                                'Odpowiedź głosowa · ${comment.durationSeconds} s'
+                                    '${comment.text.isNotEmpty ? ' — ${comment.text}' : ''}',
+                              ),
                               style: TextStyle(
                                 color: palette.textSecondary,
                                 fontSize: 12.5,
@@ -2898,6 +3068,7 @@ class _LoadingState extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
+    final copy = AppLocalizations.of(context);
     Widget bone(double width, double height, [double radius = 10]) => Container(
       width: width,
       height: height,
@@ -2907,34 +3078,40 @@ class _LoadingState extends StatelessWidget {
       ),
     );
 
-    return ListView(
-      key: const ValueKey('moments-discovery-loading'),
-      padding: const EdgeInsets.fromLTRB(22, 8, 22, 22),
-      children: [
-        // The strip skeleton mirrors the real story strip's geometry: a
-        // horizontal list, not a Row. Five fixed 80-pt bones in a Row
-        // overflowed a 390-pt phone by 54 px (390 − 44 padding = 346 <
-        // 400); a non-scrollable horizontal list clips gracefully at any
-        // width instead.
-        SizedBox(
-          height: 92,
-          child: ListView.builder(
-            scrollDirection: Axis.horizontal,
-            physics: const NeverScrollableScrollPhysics(),
-            itemCount: 5,
-            itemBuilder: (context, index) => Padding(
-              padding: const EdgeInsets.only(right: 14),
-              child: bone(66, 66, 33),
+    return Semantics(
+      liveRegion: true,
+      label: copy.text('Loading Moments', 'Wczytywanie Momentów'),
+      child: ExcludeSemantics(
+        child: ListView(
+          key: const ValueKey('moments-discovery-loading'),
+          padding: const EdgeInsets.fromLTRB(22, 8, 22, 22),
+          children: [
+            // The strip skeleton mirrors the real story strip's geometry: a
+            // horizontal list, not a Row. Five fixed 80-pt bones in a Row
+            // overflowed a 390-pt phone by 54 px (390 − 44 padding = 346 <
+            // 400); a non-scrollable horizontal list clips gracefully at any
+            // width instead.
+            SizedBox(
+              height: 92,
+              child: ListView.builder(
+                scrollDirection: Axis.horizontal,
+                physics: const NeverScrollableScrollPhysics(),
+                itemCount: 5,
+                itemBuilder: (context, index) => Padding(
+                  padding: const EdgeInsets.only(right: 14),
+                  child: bone(66, 66, 33),
+                ),
+              ),
             ),
-          ),
+            const SizedBox(height: 18),
+            for (var i = 0; i < 4; i++)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: bone(double.infinity, 74, 18),
+              ),
+          ],
         ),
-        const SizedBox(height: 18),
-        for (var i = 0; i < 4; i++)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 12),
-            child: bone(double.infinity, 74, 18),
-          ),
-      ],
+      ),
     );
   }
 }
@@ -2949,6 +3126,7 @@ class _ErrorState extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
+    final copy = AppLocalizations.of(context);
     return Center(
       key: const ValueKey('moments-discovery-error'),
       child: SingleChildScrollView(
@@ -2959,7 +3137,10 @@ class _ErrorState extends StatelessWidget {
             Icon(Icons.cloud_off_rounded, size: 34, color: colors.error),
             const SizedBox(height: 14),
             Text(
-              'Moments could not load',
+              copy.text(
+                'Moments could not load',
+                'Nie udało się wczytać Momentów',
+              ),
               textAlign: TextAlign.center,
               style: TextStyle(
                 color: palette.textPrimary,
@@ -2969,7 +3150,10 @@ class _ErrorState extends StatelessWidget {
             ),
             const SizedBox(height: 8),
             Text(
-              'Something went wrong reaching the Voice Moments feed.',
+              copy.text(
+                'Something went wrong reaching the Voice Moments feed.',
+                'Nie udało się połączyć z kanałem Voice Moments.',
+              ),
               textAlign: TextAlign.center,
               style: TextStyle(
                 color: palette.textSecondary,
@@ -2986,7 +3170,10 @@ class _ErrorState extends StatelessWidget {
               ),
             ],
             const SizedBox(height: 20),
-            FilledButton(onPressed: onRetry, child: const Text('Try again')),
+            FilledButton(
+              onPressed: onRetry,
+              child: Text(copy.text('Try again', 'Spróbuj ponownie')),
+            ),
           ],
         ),
       ),

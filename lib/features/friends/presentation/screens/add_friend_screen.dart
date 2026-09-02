@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/friends/data/models/friend_request.dart';
 import 'package:yovoice/features/friends/data/models/friend_user.dart';
@@ -9,6 +10,7 @@ import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/friends/data/services/social_graph_service.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
+import 'package:yovoice/shared/widgets/profile/profile_photo_viewer.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
 class AddFriendScreen extends StatefulWidget {
@@ -67,7 +69,12 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
 
   Future<void> _addSuggestion(SuggestedFriend suggestion) async {
     if (_processingIds.contains(suggestion.uid)) return;
-    setState(() => _processingIds.add(suggestion.uid));
+    final previous = _suggestionStatuses[suggestion.uid];
+    setState(() {
+      _processingIds.add(suggestion.uid);
+      _suggestionStatuses[suggestion.uid] =
+          FriendRelationshipStatus.requestSent;
+    });
     try {
       final relationship = await _friendService.sendFriendRequest(
         FriendUser(
@@ -77,17 +84,35 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
           photoUrl: suggestion.photoUrl,
           isOnline: false,
           lastSeen: null,
+          profileUpdatedAt: suggestion.profileUpdatedAt,
         ),
       );
       if (!mounted) return;
       setState(() => _suggestionStatuses[suggestion.uid] = relationship);
       _showMessage(
         relationship == FriendRelationshipStatus.friends
-            ? 'You and ${suggestion.displayName} are now friends.'
-            : 'Friend request sent to ${suggestion.displayName}.',
+            ? AppLocalizations.of(context).template(
+                'You and {name} are now friends.',
+                'Ty i {name} jesteście teraz znajomymi.',
+                values: {'name': suggestion.displayName},
+              )
+            : AppLocalizations.of(context).template(
+                'Friend request sent to {name}.',
+                'Wysłano zaproszenie do {name}.',
+                values: {'name': suggestion.displayName},
+              ),
       );
     } catch (error) {
-      if (mounted) _showError(_readableError(error));
+      if (mounted) {
+        setState(() {
+          if (previous == null) {
+            _suggestionStatuses.remove(suggestion.uid);
+          } else {
+            _suggestionStatuses[suggestion.uid] = previous;
+          }
+        });
+        _showError(_readableError(error));
+      }
     } finally {
       if (mounted) setState(() => _processingIds.remove(suggestion.uid));
     }
@@ -120,8 +145,15 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
   Future<void> _searchUsers(String query) async {
     try {
       final users = await _friendService.searchUsers(query);
+      // New callables return the relationship in the same bounded response.
+      // Only unresolved rows use the legacy lookup, keeping old deployed
+      // backends compatible while removing the production N+1 read burst.
       final statuses = await Future.wait(
-        users.map((user) => _friendService.getRelationshipStatus(user.id)),
+        users.map((user) async {
+          final embedded = user.relationshipStatus;
+          if (embedded != null) return embedded;
+          return _friendService.getRelationshipStatus(user.id);
+        }),
       );
 
       if (!mounted || _searchController.text.trim() != query) {
@@ -142,7 +174,10 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
         _errorMessage = null;
       });
     } catch (error) {
-      if (!mounted) return;
+      // A slower, older request must never erase a newer successful result.
+      // The success path already has this guard; failures need the same race
+      // protection because mobile networks commonly resolve out of order.
+      if (!mounted || _searchController.text.trim() != query) return;
 
       setState(() {
         _results = const [];
@@ -163,7 +198,17 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
       return;
     }
 
-    setState(() => _processingIds.add(user.id));
+    final optimisticStatus = switch (status) {
+      FriendRelationshipStatus.requestSent => status,
+      FriendRelationshipStatus.requestReceived => status,
+      FriendRelationshipStatus.none => FriendRelationshipStatus.requestSent,
+      FriendRelationshipStatus.friends ||
+      FriendRelationshipStatus.blocked => status,
+    };
+    setState(() {
+      _processingIds.add(user.id);
+      _relationshipStatuses[user.id] = optimisticStatus;
+    });
 
     try {
       if (status == FriendRelationshipStatus.requestSent) {
@@ -173,7 +218,11 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
         setState(() {
           _relationshipStatuses[user.id] = FriendRelationshipStatus.none;
         });
-        _showMessage('Friend request cancelled.');
+        _showMessage(
+          AppLocalizations.of(
+            context,
+          ).text('Friend request cancelled.', 'Anulowano zaproszenie.'),
+        );
         return;
       }
 
@@ -196,7 +245,13 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
         setState(() {
           _relationshipStatuses[user.id] = FriendRelationshipStatus.friends;
         });
-        _showMessage('You and ${user.displayName} are now friends.');
+        _showMessage(
+          AppLocalizations.of(context).template(
+            'You and {name} are now friends.',
+            'Ty i {name} jesteście teraz znajomymi.',
+            values: {'name': user.displayName},
+          ),
+        );
         return;
       }
 
@@ -210,22 +265,39 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
 
       _showMessage(
         relationship == FriendRelationshipStatus.friends
-            ? 'You and ${user.displayName} are now friends.'
-            : 'Friend request sent to ${user.displayName}.',
+            ? AppLocalizations.of(context).template(
+                'You and {name} are now friends.',
+                'Ty i {name} jesteście teraz znajomymi.',
+                values: {'name': user.displayName},
+              )
+            : AppLocalizations.of(context).template(
+                'Friend request sent to {name}.',
+                'Wysłano zaproszenie do {name}.',
+                values: {'name': user.displayName},
+              ),
       );
     } catch (error) {
       if (!mounted) return;
 
       final message = _readableError(error);
 
-      if (message == 'You are already friends.') {
+      if (message ==
+          AppLocalizations.of(
+            context,
+          ).text('You are already friends.', 'Jesteście już znajomymi.')) {
         setState(() {
           _relationshipStatuses[user.id] = FriendRelationshipStatus.friends;
         });
-      } else if (message == 'Friend request already sent.') {
+      } else if (message ==
+          AppLocalizations.of(context).text(
+            'Friend request already sent.',
+            'To zaproszenie zostało już wysłane.',
+          )) {
         setState(() {
           _relationshipStatuses[user.id] = FriendRelationshipStatus.requestSent;
         });
+      } else {
+        setState(() => _relationshipStatuses[user.id] = status);
       }
 
       _showError(message);
@@ -243,7 +315,10 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
       return;
     }
 
-    setState(() => _processingIds.add(user.id));
+    setState(() {
+      _processingIds.add(user.id);
+      _relationshipStatuses[user.id] = FriendRelationshipStatus.none;
+    });
 
     try {
       await _friendService.declineFriendRequest(user.id);
@@ -252,9 +327,19 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
       setState(() {
         _relationshipStatuses[user.id] = FriendRelationshipStatus.none;
       });
-      _showMessage('Friend request declined.');
+      _showMessage(
+        AppLocalizations.of(
+          context,
+        ).text('Friend request declined.', 'Odrzucono zaproszenie.'),
+      );
     } catch (error) {
-      if (mounted) _showError(_readableError(error));
+      if (mounted) {
+        setState(
+          () => _relationshipStatuses[user.id] =
+              FriendRelationshipStatus.requestReceived,
+        );
+        _showError(_readableError(error));
+      }
     } finally {
       if (mounted) {
         setState(() => _processingIds.remove(user.id));
@@ -264,30 +349,49 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
 
   String _readableError(Object error) {
     final message = error.toString();
+    final copy = AppLocalizations.of(context);
 
     if (message.contains('cannot add yourself')) {
-      return 'You cannot add yourself.';
+      return copy.text(
+        'You cannot add yourself.',
+        'Nie możesz dodać siebie do znajomych.',
+      );
     }
     if (message.contains('already friends')) {
-      return 'You are already friends.';
+      return copy.text('You are already friends.', 'Jesteście już znajomymi.');
     }
     if (message.contains('already sent')) {
-      return 'Friend request already sent.';
+      return copy.text(
+        'Friend request already sent.',
+        'To zaproszenie zostało już wysłane.',
+      );
     }
     if (message.contains('no longer exists')) {
-      return 'This user no longer exists.';
+      return copy.text(
+        'This user no longer exists.',
+        'To konto już nie istnieje.',
+      );
     }
     if (message.contains('not signed in')) {
-      return 'You must be signed in.';
+      return copy.text('You must be signed in.', 'Musisz się zalogować.');
     }
     if (message.contains('permission-denied')) {
-      return 'Firestore permission denied. Check your security rules.';
+      return copy.text(
+        'You do not have permission to do that.',
+        'Nie masz uprawnień do wykonania tej czynności.',
+      );
     }
     if (message.contains('unavailable')) {
-      return 'Service is temporarily unavailable. Check your connection.';
+      return copy.text(
+        'Service is temporarily unavailable. Check your connection.',
+        'Usługa jest chwilowo niedostępna. Sprawdź połączenie.',
+      );
     }
 
-    return 'Something went wrong. Please try again.';
+    return copy.text(
+      'Something went wrong. Please try again.',
+      'Coś poszło nie tak. Spróbuj ponownie.',
+    );
   }
 
   void _showMessage(String message) {
@@ -370,13 +474,14 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
 
   Widget _buildHeader() {
     final palette = context.appPalette;
+    final copy = AppLocalizations.of(context);
     return Padding(
       padding: const EdgeInsets.fromLTRB(10, 10, 18, 10),
       child: Row(
         children: [
           IconButton(
             onPressed: () => Navigator.of(context).pop(),
-            tooltip: 'Back',
+            tooltip: copy.text('Back', 'Wstecz'),
             icon: Icon(
               Icons.arrow_back_ios_new_rounded,
               color: palette.textPrimary,
@@ -389,7 +494,7 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Add friends',
+                  copy.text('Add friends', 'Dodaj znajomych'),
                   style: TextStyle(
                     color: palette.textPrimary,
                     fontSize: 23,
@@ -399,7 +504,10 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
                 ),
                 const SizedBox(height: 3),
                 Text(
-                  'Search by name or username',
+                  copy.text(
+                    'Search by name or username',
+                    'Szukaj po nazwie lub pseudonimie',
+                  ),
                   style: TextStyle(
                     color: palette.textSecondary,
                     fontSize: 13,
@@ -416,6 +524,7 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
 
   Widget _buildSearchField() {
     final palette = context.appPalette;
+    final copy = AppLocalizations.of(context);
     return Padding(
       padding: const EdgeInsets.fromLTRB(18, 10, 18, 14),
       child: TextField(
@@ -429,12 +538,12 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
           fontWeight: FontWeight.w500,
         ),
         decoration: InputDecoration(
-          hintText: 'Search people...',
+          hintText: copy.text('Search people...', 'Szukaj osób...'),
           hintStyle: TextStyle(color: palette.textTertiary, fontSize: 15),
           prefixIcon: Icon(Icons.search_rounded, color: palette.textSecondary),
           suffixIcon: _searchController.text.isNotEmpty
               ? IconButton(
-                  tooltip: 'Clear search',
+                  tooltip: copy.text('Clear search', 'Wyczyść wyszukiwanie'),
                   onPressed: () {
                     _searchDebounce?.cancel();
                     _searchController.clear();
@@ -469,6 +578,7 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
 
   Widget _buildContent() {
     final query = _searchController.text.trim();
+    final copy = AppLocalizations.of(context);
 
     if (_isSearching) {
       return Center(
@@ -482,7 +592,10 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
     if (_errorMessage != null) {
       return _SearchState(
         icon: Icons.error_outline_rounded,
-        title: 'Could not search users',
+        title: copy.text(
+          'Could not search users',
+          'Nie udało się wyszukać osób',
+        ),
         subtitle: _errorMessage!,
       );
     }
@@ -492,10 +605,13 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
     }
 
     if (_results.isEmpty) {
-      return const _SearchState(
+      return _SearchState(
         icon: Icons.search_off_rounded,
-        title: 'No users found',
-        subtitle: 'Try another display name or username.',
+        title: copy.text('No users found', 'Nie znaleziono osób'),
+        subtitle: copy.text(
+          'Try another display name or username.',
+          'Wpisz inną nazwę lub pseudonim.',
+        ),
       );
     }
 
@@ -518,6 +634,7 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
   }
 
   Widget _buildSuggestions() {
+    final copy = AppLocalizations.of(context);
     return FutureBuilder<List<SuggestedFriend>>(
       future: _suggestionsFuture,
       builder: (context, snapshot) {
@@ -532,19 +649,27 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
         if (snapshot.hasError) {
           return _SearchState(
             icon: Icons.cloud_off_rounded,
-            title: 'Could not load suggestions',
-            subtitle: 'Check your connection and try again.',
-            actionLabel: 'Retry',
+            title: copy.text(
+              'Could not load suggestions',
+              'Nie udało się wczytać propozycji',
+            ),
+            subtitle: copy.text(
+              'Check your connection and try again.',
+              'Sprawdź połączenie i spróbuj ponownie.',
+            ),
+            actionLabel: copy.text('Retry', 'Spróbuj ponownie'),
             onAction: _retrySuggestions,
           );
         }
         final suggestions = snapshot.data ?? const <SuggestedFriend>[];
         if (suggestions.isEmpty) {
-          return const _SearchState(
+          return _SearchState(
             icon: Icons.person_search_rounded,
-            title: 'Find someone you know',
-            subtitle:
-                'Enter at least 2 characters from their display name or username.',
+            title: copy.text('Find someone you know', 'Znajdź znajomą osobę'),
+            subtitle: copy.text(
+              'Enter at least 2 characters from their display name or username.',
+              'Wpisz co najmniej 2 znaki nazwy lub pseudonimu.',
+            ),
           );
         }
 
@@ -554,7 +679,7 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
             Padding(
               padding: const EdgeInsets.only(bottom: 10, left: 2),
               child: Text(
-                'Suggested for you',
+                copy.text('Suggested for you', 'Proponowane dla Ciebie'),
                 style: TextStyle(
                   color: context.appPalette.textPrimary,
                   fontSize: 15,
@@ -597,9 +722,135 @@ class _SuggestionCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
+    final copy = AppLocalizations.of(context);
     final isFriend = relationshipStatus == FriendRelationshipStatus.friends;
     final isSent = relationshipStatus == FriendRelationshipStatus.requestSent;
     final isComplete = isFriend || isSent;
+    final identity = Row(
+      children: [
+        Container(
+          width: 52,
+          height: 52,
+          padding: const EdgeInsets.all(2),
+          decoration: const BoxDecoration(
+            shape: BoxShape.circle,
+            gradient: LinearGradient(
+              colors: [Color(0xFFC32BFF), Color(0xFF6D25FF)],
+            ),
+          ),
+          child: ProfilePhotoButton(
+            userId: suggestion.uid,
+            displayName: suggestion.displayName,
+            mediaRevision: suggestion.profileUpdatedAt,
+            minimumSize: const Size(48, 48),
+            child: ClipOval(
+              child: UserAvatar(
+                radius: 24,
+                userId: suggestion.uid,
+                mediaRevision: suggestion.profileUpdatedAt,
+                displayName: suggestion.displayName,
+                backgroundColor: palette.surfaceSunken,
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(width: 13),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Wrap(
+                spacing: 6,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  Text(
+                    suggestion.displayName,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: palette.textPrimary,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  UserIdentityBadges(uid: suggestion.uid),
+                ],
+              ),
+              if (suggestion.mutualCount > 0) ...[
+                const SizedBox(height: 4),
+                Text(
+                  suggestion.mutualCount == 1
+                      ? copy.text('1 mutual friend', '1 wspólny znajomy')
+                      : copy.template(
+                          '{count} mutual friends',
+                          '{count} wspólnych znajomych',
+                          values: {'count': suggestion.mutualCount},
+                        ),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: palette.textSecondary, fontSize: 12),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ],
+    );
+    final action = SizedBox(
+      height: 44,
+      child: FilledButton.icon(
+        onPressed: isProcessing || isComplete ? null : onPressed,
+        style: FilledButton.styleFrom(
+          backgroundColor: isFriend
+              ? palette.successSurface
+              : isSent
+              ? palette.warningSurface
+              : colors.primary,
+          disabledBackgroundColor: isFriend
+              ? palette.successSurface
+              : isSent
+              ? palette.warningSurface
+              : palette.surfaceMuted,
+          foregroundColor: isFriend
+              ? palette.successForeground
+              : isSent
+              ? palette.warningForeground
+              : colors.onPrimary,
+          disabledForegroundColor: isFriend
+              ? palette.successForeground
+              : isSent
+              ? palette.warningForeground
+              : palette.textTertiary,
+          padding: const EdgeInsets.symmetric(horizontal: 14),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(13),
+          ),
+        ),
+        icon: isProcessing
+            ? SizedBox(
+                width: 15,
+                height: 15,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: colors.onPrimary,
+                ),
+              )
+            : Icon(
+                isComplete
+                    ? Icons.check_rounded
+                    : Icons.person_add_alt_1_rounded,
+                size: 18,
+              ),
+        label: Text(
+          isFriend
+              ? copy.text('Friends', 'Znajomi')
+              : (isSent
+                    ? copy.text('Sent', 'Wysłano')
+                    : copy.text('Add', 'Dodaj')),
+          style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w800),
+        ),
+      ),
+    );
 
     return Container(
       key: ValueKey('friend-suggestion-${suggestion.uid}'),
@@ -609,122 +860,25 @@ class _SuggestionCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(19),
         border: Border.all(color: palette.border),
       ),
-      child: Row(
-        children: [
-          Container(
-            width: 52,
-            height: 52,
-            padding: const EdgeInsets.all(2),
-            decoration: const BoxDecoration(
-              shape: BoxShape.circle,
-              gradient: LinearGradient(
-                colors: [Color(0xFFC32BFF), Color(0xFF6D25FF)],
-              ),
-            ),
-            child: ClipOval(
-              child: UserAvatar(
-                radius: 24,
-                userId: suggestion.uid,
-                displayName: suggestion.displayName,
-                backgroundColor: palette.surfaceSunken,
-              ),
-            ),
-          ),
-          const SizedBox(width: 13),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Wrap(
-                  spacing: 6,
-                  crossAxisAlignment: WrapCrossAlignment.center,
-                  children: [
-                    Text(
-                      suggestion.displayName,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: palette.textPrimary,
-                        fontSize: 15,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                    UserIdentityBadges(uid: suggestion.uid),
-                  ],
-                ),
-                if (suggestion.mutualCount > 0) ...[
-                  const SizedBox(height: 4),
-                  Text(
-                    suggestion.mutualCount == 1
-                        ? '1 mutual friend'
-                        : '${suggestion.mutualCount} mutual friends',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: palette.textSecondary,
-                      fontSize: 12,
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          ),
-          const SizedBox(width: 10),
-          SizedBox(
-            height: 44,
-            child: FilledButton.icon(
-              onPressed: isProcessing || isComplete ? null : onPressed,
-              style: FilledButton.styleFrom(
-                backgroundColor: isFriend
-                    ? palette.successSurface
-                    : isSent
-                    ? palette.warningSurface
-                    : colors.primary,
-                disabledBackgroundColor: isFriend
-                    ? palette.successSurface
-                    : isSent
-                    ? palette.warningSurface
-                    : palette.surfaceMuted,
-                foregroundColor: isFriend
-                    ? palette.successForeground
-                    : isSent
-                    ? palette.warningForeground
-                    : colors.onPrimary,
-                disabledForegroundColor: isFriend
-                    ? palette.successForeground
-                    : isSent
-                    ? palette.warningForeground
-                    : palette.textTertiary,
-                padding: const EdgeInsets.symmetric(horizontal: 14),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(13),
-                ),
-              ),
-              icon: isProcessing
-                  ? SizedBox(
-                      width: 15,
-                      height: 15,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: colors.onPrimary,
-                      ),
-                    )
-                  : Icon(
-                      isComplete
-                          ? Icons.check_rounded
-                          : Icons.person_add_alt_1_rounded,
-                      size: 18,
-                    ),
-              label: Text(
-                isFriend ? 'Friends' : (isSent ? 'Sent' : 'Add'),
-                style: const TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-            ),
-          ),
-        ],
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final stack =
+              constraints.maxWidth < 360 ||
+              MediaQuery.textScalerOf(context).scale(1) >= 1.5;
+          if (stack) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [identity, const SizedBox(height: 12), action],
+            );
+          }
+          return Row(
+            children: [
+              Expanded(child: identity),
+              const SizedBox(width: 10),
+              action,
+            ],
+          );
+        },
       ),
     );
   }
@@ -752,7 +906,13 @@ class _UserResultCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
-    final button = _buttonPresentation(relationshipStatus, palette, colors);
+    final copy = AppLocalizations.of(context);
+    final button = _buttonPresentation(
+      relationshipStatus,
+      palette,
+      colors,
+      copy,
+    );
     final identity = Row(
       children: [
         _UserAvatar(user: user),
@@ -844,7 +1004,10 @@ class _UserResultCard extends StatelessWidget {
             height: 44,
             child: IconButton(
               onPressed: isProcessing ? null : onDecline,
-              tooltip: 'Decline friend request',
+              tooltip: copy.text(
+                'Decline friend request',
+                'Odrzuć zaproszenie',
+              ),
               style: IconButton.styleFrom(
                 backgroundColor: palette.dangerSurface,
                 disabledBackgroundColor: palette.surfaceMuted,
@@ -901,11 +1064,12 @@ class _UserResultCard extends StatelessWidget {
     FriendRelationshipStatus status,
     AppPalette palette,
     ColorScheme colors,
+    AppLocalizations copy,
   ) {
     switch (status) {
       case FriendRelationshipStatus.friends:
         return _FriendButtonPresentation(
-          label: 'Friends',
+          label: copy.text('Friends', 'Znajomi'),
           icon: Icons.people_alt_rounded,
           backgroundColor: palette.successSurface,
           disabledBackgroundColor: palette.successSurface,
@@ -914,7 +1078,7 @@ class _UserResultCard extends StatelessWidget {
         );
       case FriendRelationshipStatus.requestSent:
         return _FriendButtonPresentation(
-          label: 'Cancel',
+          label: copy.text('Cancel', 'Anuluj'),
           icon: Icons.close_rounded,
           backgroundColor: palette.warningSurface,
           disabledBackgroundColor: palette.surfaceMuted,
@@ -923,7 +1087,7 @@ class _UserResultCard extends StatelessWidget {
         );
       case FriendRelationshipStatus.requestReceived:
         return _FriendButtonPresentation(
-          label: 'Accept',
+          label: copy.text('Accept', 'Akceptuj'),
           icon: Icons.check_rounded,
           backgroundColor: colors.primary,
           disabledBackgroundColor: palette.surfaceMuted,
@@ -932,7 +1096,7 @@ class _UserResultCard extends StatelessWidget {
         );
       case FriendRelationshipStatus.none:
         return _FriendButtonPresentation(
-          label: 'Add',
+          label: copy.text('Add', 'Dodaj'),
           icon: Icons.person_add_alt_1_rounded,
           backgroundColor: colors.primary,
           disabledBackgroundColor: palette.surfaceMuted,
@@ -941,7 +1105,7 @@ class _UserResultCard extends StatelessWidget {
         );
       case FriendRelationshipStatus.blocked:
         return _FriendButtonPresentation(
-          label: 'Blocked',
+          label: copy.text('Blocked', 'Zablokowano'),
           icon: Icons.block_rounded,
           backgroundColor: palette.dangerSurface,
           disabledBackgroundColor: palette.dangerSurface,
@@ -989,11 +1153,18 @@ class _UserAvatar extends StatelessWidget {
           colors: [Color(0xFFC32BFF), Color(0xFF6D25FF)],
         ),
       ),
-      child: UserAvatar(
-        radius: 24,
+      child: ProfilePhotoButton(
         userId: user.id,
         displayName: user.displayName,
-        backgroundColor: palette.surfaceSunken,
+        mediaRevision: user.profileUpdatedAt,
+        minimumSize: const Size(48, 48),
+        child: UserAvatar(
+          radius: 24,
+          userId: user.id,
+          mediaRevision: user.profileUpdatedAt,
+          displayName: user.displayName,
+          backgroundColor: palette.surfaceSunken,
+        ),
       ),
     );
   }

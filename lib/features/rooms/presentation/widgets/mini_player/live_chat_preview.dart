@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_immersive_colors.dart';
 import 'package:yovoice/features/rooms/data/models/room_message.dart';
@@ -30,6 +31,7 @@ class LiveChatPreview extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -38,7 +40,7 @@ class LiveChatPreview extends StatelessWidget {
           children: [
             Expanded(
               child: Text(
-                'LATEST CHAT',
+                copy.text('LATEST CHAT', 'OSTATNIA WIADOMOŚĆ'),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
@@ -64,7 +66,7 @@ class LiveChatPreview extends StatelessWidget {
                   ),
                 ),
                 child: Text(
-                  '$newCount new',
+                  copy.text('$newCount new', '$newCount nowych'),
                   style: TextStyle(
                     color: Color.lerp(AppColors.secondary, Colors.white, .45),
                     fontSize: 10,
@@ -76,7 +78,7 @@ class LiveChatPreview extends StatelessWidget {
           ],
         ),
         SizedBox(height: compact ? 5 : 7),
-        _LatestMessage(latest: latest, compact: compact),
+        _LatestMessage(latest: latest, compact: compact, copy: copy),
         SizedBox(height: compact ? 5 : 7),
         const Divider(
           height: 1,
@@ -86,6 +88,7 @@ class LiveChatPreview extends StatelessWidget {
         _ExpandChatButton(
           onExpand: onExpand,
           compact: compact,
+          copy: copy,
           focusNode: expandFocusNode,
         ),
       ],
@@ -94,10 +97,15 @@ class LiveChatPreview extends StatelessWidget {
 }
 
 class _LatestMessage extends StatelessWidget {
-  const _LatestMessage({required this.latest, required this.compact});
+  const _LatestMessage({
+    required this.latest,
+    required this.compact,
+    required this.copy,
+  });
 
   final RoomMessage? latest;
   final bool compact;
+  final AppLocalizations copy;
 
   @override
   Widget build(BuildContext context) {
@@ -106,7 +114,7 @@ class _LatestMessage extends StatelessWidget {
       return Padding(
         padding: const EdgeInsets.symmetric(vertical: 2),
         child: Text(
-          'No messages yet',
+          copy.text('No messages yet', 'Brak wiadomości'),
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
           style: TextStyle(
@@ -177,11 +185,13 @@ class _ExpandChatButton extends StatelessWidget {
   const _ExpandChatButton({
     required this.onExpand,
     required this.compact,
+    required this.copy,
     this.focusNode,
   });
 
   final VoidCallback onExpand;
   final bool compact;
+  final AppLocalizations copy;
   final FocusNode? focusNode;
 
   @override
@@ -191,7 +201,7 @@ class _ExpandChatButton extends StatelessWidget {
       // The label IS the whole announcement; without excluding the child
       // text a screen reader heard "Expand chat" twice.
       excludeSemantics: true,
-      label: 'Expand chat',
+      label: copy.text('Expand chat', 'Rozwiń czat'),
       onTap: onExpand,
       child: InkWell(
         key: const ValueKey('mini-player-expand-chat'),
@@ -218,7 +228,7 @@ class _ExpandChatButton extends StatelessWidget {
                 const SizedBox(width: 3),
                 Flexible(
                   child: Text(
-                    'Expand chat',
+                    copy.text('Expand chat', 'Rozwiń czat'),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(

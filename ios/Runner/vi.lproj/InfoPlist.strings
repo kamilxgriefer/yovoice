@@ -1,0 +1,3 @@
+"NSCameraUsageDescription" = "YO Voice sử dụng camera cho cuộc gọi video riêng tư, ảnh trong cuộc trò chuyện và hình ảnh hồ sơ, phòng hoặc câu lạc bộ mà bạn chọn tạo.";
+"NSMicrophoneUsageDescription" = "YO Voice sử dụng micrô khi bạn chọn trò chuyện trong phòng thoại, ghi âm hoặc thực hiện cuộc gọi riêng tư.";
+"NSPhotoLibraryUsageDescription" = "YO Voice sử dụng những ảnh bạn chọn cho cuộc trò chuyện và hình ảnh hồ sơ, phòng hoặc câu lạc bộ của bạn.";

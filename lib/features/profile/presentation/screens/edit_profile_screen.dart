@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/premium/data/models/subscription_entitlements.dart';
 import 'package:yovoice/features/premium/data/services/entitlement_service.dart';
@@ -80,6 +81,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   bool _displayNameSyncPending = false;
   Timer? _displayNameCooldownTimer;
 
+  AppLocalizations get _copy => AppLocalizations.of(context);
+
   DateTime get _now => (widget.clock ?? DateTime.now)();
 
   bool get _canChangeDisplayName {
@@ -153,8 +156,13 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       // user pressed Save, nothing happened, they left assuming it
       // worked. Validation failure must be loud.
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Please fix the highlighted fields before saving.'),
+        SnackBar(
+          content: Text(
+            _copy.text(
+              'Please fix the highlighted fields before saving.',
+              'Popraw zaznaczone pola przed zapisaniem.',
+            ),
+          ),
         ),
       );
       return;
@@ -266,7 +274,11 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       // was captured before the pop so the confirmation survives this
       // screen's disposal.
       if (mounted) Navigator.of(context).pop();
-      messenger.showSnackBar(const SnackBar(content: Text('Profile saved.')));
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(_copy.text('Profile saved.', 'Profil zapisany.')),
+        ),
+      );
     } catch (error) {
       if (!mounted) return;
       final message = _friendlySaveError(error);
@@ -275,7 +287,10 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           content: Text(
             displayNameSavedDuringAttempt &&
                     error is! DisplayNameChangeException
-                ? 'Your display name was saved, but other profile changes failed. $message'
+                ? _copy.text(
+                    'Your display name was saved, but other profile changes failed. $message',
+                    'Nazwa wyświetlana została zapisana, ale pozostałych zmian nie udało się zapisać. $message',
+                  )
                 : message,
           ),
         ),
@@ -369,31 +384,114 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   /// Firebase messages ("[firebase_storage/unauthorized] ...") never reach
   /// the user.
   String _friendlySaveError(Object error) {
-    if (error is ProfileImageException) return error.message;
-    if (error is DisplayNameChangeException) return error.message;
+    if (error is ProfileImageException) {
+      final megabytes = RegExp(r'(\d+) MB').firstMatch(error.message)?.group(1);
+      if (megabytes != null) {
+        return _copy.text(
+          error.message,
+          'Plik graficzny musi mieć mniej niż $megabytes MB.',
+        );
+      }
+      if (error.message.contains('file type')) {
+        return _copy.text(
+          error.message,
+          'Ten format pliku nie jest obsługiwany. Wybierz obraz JPG, PNG lub WebP.',
+        );
+      }
+      if (error.message.contains('too large to process safely')) {
+        return _copy.text(
+          error.message,
+          'Obraz jest zbyt duży, aby bezpiecznie go przetworzyć. Wybierz inny.',
+        );
+      }
+      return _copy.text(
+        error.message,
+        'Nie udało się przetworzyć obrazu. Wybierz inny.',
+      );
+    }
+    if (error is DisplayNameChangeException) {
+      return switch (error.failure) {
+        DisplayNameChangeFailure.cooldown => _copy.text(
+          error.message,
+          'Nazwę wyświetlaną można zmienić dopiero po upływie wskazanego terminu.',
+        ),
+        DisplayNameChangeFailure.authSyncPending => _copy.text(
+          error.message,
+          'Nazwa została zapisana. Naciśnij Zapisz ponownie, aby dokończyć synchronizację konta.',
+        ),
+        DisplayNameChangeFailure.authAccountMissingAfterSave => _copy.text(
+          error.message,
+          'Nazwa została zapisana, ale konto wymaga ponownego zalogowania.',
+        ),
+        DisplayNameChangeFailure.emailVerificationRequired => _copy.text(
+          error.message,
+          'Najpierw potwierdź swój adres e-mail.',
+        ),
+        DisplayNameChangeFailure.invalidName => _copy.text(
+          error.message,
+          'Podaj prawidłową nazwę wyświetlaną.',
+        ),
+        DisplayNameChangeFailure.signedOut => _copy.text(
+          error.message,
+          'Sesja wygasła. Zaloguj się ponownie.',
+        ),
+        DisplayNameChangeFailure.inactiveAccount => _copy.text(
+          error.message,
+          'To konto nie może teraz zmienić nazwy wyświetlanej.',
+        ),
+        DisplayNameChangeFailure.missingProfile => _copy.text(
+          error.message,
+          'Nie udało się odnaleźć profilu.',
+        ),
+        DisplayNameChangeFailure.tooManyAttempts => _copy.text(
+          error.message,
+          'Zbyt wiele prób. Odczekaj chwilę i spróbuj ponownie.',
+        ),
+        DisplayNameChangeFailure.unavailable => _copy.text(
+          error.message,
+          'Zmiana nazwy jest chwilowo niedostępna. Spróbuj ponownie.',
+        ),
+      };
+    }
 
     final message = error.toString();
     if (error is ArgumentError) {
-      return message.replaceFirst('Invalid argument(s): ', '');
+      return _copy.text(
+        'Those profile details could not be saved. Check the fields and try again.',
+        'Nie udało się zapisać tych danych. Sprawdź pola i spróbuj ponownie.',
+      );
     }
     if (message.contains('object-not-found')) {
-      return "We couldn't find that image on our servers. Please try again.";
+      return _copy.text(
+        "We couldn't find that image on our servers. Please try again.",
+        'Nie znaleźliśmy tego obrazu na serwerze. Spróbuj ponownie.',
+      );
     }
     if (message.contains('unauthorized') ||
         message.contains('permission-denied')) {
-      return "You don't have permission to update this profile.";
+      return _copy.text(
+        "You don't have permission to update this profile.",
+        'Nie masz uprawnień do aktualizacji tego profilu.',
+      );
     }
     if (message.contains('canceled')) {
-      return 'Upload cancelled.';
+      return _copy.text('Upload cancelled.', 'Przesyłanie anulowane.');
     }
     if (message.contains('retry-limit') || message.contains('network')) {
-      return 'Upload failed. Please check your connection and try again.';
+      return _copy.text(
+        'Upload failed. Please check your connection and try again.',
+        'Nie udało się przesłać pliku. Sprawdź połączenie i spróbuj ponownie.',
+      );
     }
-    return 'Upload failed. Please try again.';
+    return _copy.text(
+      'Upload failed. Please try again.',
+      'Nie udało się przesłać pliku. Spróbuj ponownie.',
+    );
   }
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
     return Scaffold(
@@ -401,11 +499,15 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       appBar: AppBar(
         backgroundColor: palette.background,
         foregroundColor: palette.textPrimary,
-        title: const Text('Edit profile'),
+        title: Text(copy.text('Edit profile', 'Edytuj profil')),
         actions: [
           TextButton(
             onPressed: _saving ? null : _save,
-            child: Text(_saving ? 'Saving...' : 'Save'),
+            child: Text(
+              _saving
+                  ? copy.text('Saving...', 'Zapisywanie…')
+                  : copy.text('Save', 'Zapisz'),
+            ),
           ),
         ],
       ),
@@ -422,7 +524,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
             child: ListView(
               padding: const EdgeInsets.fromLTRB(18, 12, 18, 40),
               children: [
-                const _SectionLabel('Profile media'),
+                _SectionLabel(copy.text('Profile media', 'Zdjęcia profilu')),
                 _ProfileImagePreview(
                   profile: widget.profile,
                   pendingAvatar: _pendingAvatar,
@@ -434,8 +536,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                     Expanded(
                       child: _ImageAction(
                         label: _pendingAvatar == null
-                            ? 'Change avatar'
-                            : 'Avatar ready',
+                            ? copy.text('Change avatar', 'Zmień awatar')
+                            : copy.text('Avatar ready', 'Awatar gotowy'),
                         icon: Icons.account_circle_outlined,
                         loading: _pickingAvatar,
                         onTap: () => _pick(ProfileImageKind.avatar),
@@ -448,8 +550,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                     Expanded(
                       child: _ImageAction(
                         label: _pendingBanner == null
-                            ? 'Change banner'
-                            : 'Banner ready',
+                            ? copy.text('Change banner', 'Zmień baner')
+                            : copy.text('Banner ready', 'Baner gotowy'),
                         icon: Icons.panorama_outlined,
                         loading: _pickingBanner,
                         onTap: () => _pick(ProfileImageKind.banner),
@@ -463,32 +565,47 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                 if (_hasPendingImages) ...[
                   const SizedBox(height: 10),
                   Text(
-                    'New images are applied when you press Save.',
+                    copy.text(
+                      'New images are applied when you press Save.',
+                      'Nowe zdjęcia zostaną zastosowane po naciśnięciu Zapisz.',
+                    ),
                     style: TextStyle(color: colors.primary, fontSize: 12),
                   ),
                 ],
                 const SizedBox(height: 26),
-                const _SectionLabel('Identity'),
+                _SectionLabel(copy.text('Identity', 'Tożsamość')),
                 _field(
                   _displayName,
-                  'Display name',
+                  copy.text('Display name', 'Nazwa wyświetlana'),
                   required: true,
                   readOnly: !_canChangeDisplayName,
                   helper: _displayNameHelper(context),
                   validator: _validateDisplayName,
                   semanticLabel: _displayNameSemanticLabel(context),
                 ),
-                _field(_username, 'Username', required: true),
+                _field(
+                  _username,
+                  copy.text('Username', 'Nazwa użytkownika'),
+                  required: true,
+                ),
                 // The "vibe" line — the profile's social headline, shown
                 // on previews and search results. Website was demoted to
                 // an About-you detail in its favor.
                 _field(
                   _statusMessage,
                   'Vibe',
-                  hint: 'Music + late night talks · Gaming tonight 🎮',
+                  hint: copy.text(
+                    'Music + late night talks · Gaming tonight 🎮',
+                    'Muzyka i nocne rozmowy · Dziś gram 🎮',
+                  ),
                   maxLength: 80,
                 ),
-                _field(_bio, 'Bio', maxLines: 4, maxLength: 220),
+                _field(
+                  _bio,
+                  copy.text('Bio', 'O mnie'),
+                  maxLines: 4,
+                  maxLength: 220,
+                ),
                 StreamBuilder<SubscriptionEntitlements>(
                   stream: _entitlements,
                   builder: (context, entitlementSnapshot) {
@@ -523,20 +640,26 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                   },
                 ),
                 const SizedBox(height: 26),
-                const _SectionLabel('About you'),
-                _field(_country, 'Country'),
-                _field(_nativeLanguage, 'Native language'),
+                _SectionLabel(copy.text('About you', 'O Tobie')),
+                _field(_country, copy.text('Country', 'Kraj')),
+                _field(
+                  _nativeLanguage,
+                  copy.text('Native language', 'Język ojczysty'),
+                ),
                 _field(
                   _spokenLanguages,
-                  'Languages you speak',
-                  hint: 'English, Polish',
+                  copy.text('Languages you speak', 'Języki, którymi mówisz'),
+                  hint: copy.text('English, Polish', 'Angielski, polski'),
                 ),
                 _field(
                   _learningLanguages,
-                  'Languages you are learning',
-                  hint: 'Spanish, Dutch',
+                  copy.text(
+                    'Languages you are learning',
+                    'Języki, których się uczysz',
+                  ),
+                  hint: copy.text('Spanish, Dutch', 'Hiszpański, niderlandzki'),
                 ),
-                _field(_website, 'Website'),
+                _field(_website, copy.text('Website', 'Strona internetowa')),
               ],
             ),
           ),
@@ -573,7 +696,9 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           validator:
               validator ??
               (required
-                  ? (value) => value?.trim().isEmpty == true ? 'Required' : null
+                  ? (value) => value?.trim().isEmpty == true
+                        ? _copy.text('Required', 'Pole wymagane')
+                        : null
                   : null),
           decoration: InputDecoration(
             labelText: label,
@@ -584,9 +709,12 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
             // boundary visible instead of silently ellipsizing it.
             helperMaxLines: 8,
             suffixIcon: readOnly
-                ? const Icon(
+                ? Icon(
                     Icons.lock_clock_rounded,
-                    semanticLabel: 'Change limit active',
+                    semanticLabel: _copy.text(
+                      'Change limit active',
+                      'Aktywny limit zmian',
+                    ),
                   )
                 : null,
             labelStyle: TextStyle(color: palette.textSecondary),
@@ -611,10 +739,23 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   String? _validateDisplayName(String? value) {
     final trimmed = value?.trim() ?? '';
     final length = trimmed.runes.length;
-    if (length < 2) return 'Use at least 2 characters.';
-    if (length > 120) return 'Use no more than 120 characters.';
+    if (length < 2) {
+      return _copy.text(
+        'Use at least 2 characters.',
+        'Wpisz co najmniej 2 znaki.',
+      );
+    }
+    if (length > 120) {
+      return _copy.text(
+        'Use no more than 120 characters.',
+        'Wpisz nie więcej niż 120 znaków.',
+      );
+    }
     if (trimmed.runes.any(_isControlOrFormatCodePoint)) {
-      return 'Remove line breaks or control characters.';
+      return _copy.text(
+        'Remove line breaks or control characters.',
+        'Usuń znaki nowego wiersza i znaki sterujące.',
+      );
     }
     return null;
   }
@@ -646,17 +787,28 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
 
   String _displayNameHelper(BuildContext context) {
     if (_displayNameSyncPending) {
-      return 'Name saved. Press Save again to finish account sync.';
+      return _copy.text(
+        'Name saved. Press Save again to finish account sync.',
+        'Nazwa została zapisana. Naciśnij Zapisz ponownie, aby dokończyć synchronizację konta.',
+      );
     }
     final next = _nextDisplayNameChangeAt;
     if (next != null && _now.isBefore(next)) {
-      return 'You can change this again ${_formatDateTime(context, next)}.';
+      return _copy.text(
+        'You can change this again ${_formatDateTime(context, next)}.',
+        'Nazwę możesz zmienić ponownie ${_formatDateTime(context, next)}.',
+      );
     }
-    return 'You can change this once every 30 days.';
+    return _copy.text(
+      'You can change this once every 30 days.',
+      'Nazwę możesz zmienić raz na 30 dni.',
+    );
   }
 
-  String _displayNameSemanticLabel(BuildContext context) =>
-      'Display name. ${_displayNameHelper(context)}';
+  String _displayNameSemanticLabel(BuildContext context) => _copy.text(
+    'Display name. ${_displayNameHelper(context)}',
+    'Nazwa wyświetlana. ${_displayNameHelper(context)}',
+  );
 
   void _scheduleDisplayNameCooldownRefresh() {
     _displayNameCooldownTimer?.cancel();
@@ -680,7 +832,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       TimeOfDay.fromDateTime(local),
       alwaysUse24HourFormat: MediaQuery.alwaysUse24HourFormatOf(context),
     );
-    return 'on $date at $time';
+    return _copy.text('on $date at $time', '$date o $time');
   }
 }
 
@@ -803,6 +955,7 @@ class _ImageAction extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
     return Material(
@@ -852,7 +1005,7 @@ class _ImageAction extends StatelessWidget {
                 IconButton(
                   onPressed: onClear,
                   visualDensity: VisualDensity.compact,
-                  tooltip: 'Undo',
+                  tooltip: copy.text('Undo', 'Cofnij'),
                   icon: Icon(
                     Icons.close_rounded,
                     size: 16,
@@ -886,6 +1039,7 @@ class _AccountTypePicker extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
     return Container(
@@ -899,7 +1053,7 @@ class _AccountTypePicker extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Account type',
+            copy.text('Account type', 'Typ konta'),
             style: TextStyle(
               color: palette.textPrimary,
               fontSize: 16,
@@ -908,7 +1062,10 @@ class _AccountTypePicker extends StatelessWidget {
           ),
           const SizedBox(height: 6),
           Text(
-            'Creator accounts are prepared for public followers, podcasts and creator tools.',
+            copy.text(
+              'Creator accounts are prepared for public followers, podcasts and creator tools.',
+              'Konta twórców są przeznaczone do budowania publicznej społeczności, podcastów i narzędzi twórcy.',
+            ),
             style: TextStyle(
               color: palette.textSecondary,
               fontSize: 12,
@@ -918,10 +1075,10 @@ class _AccountTypePicker extends StatelessWidget {
           const SizedBox(height: 12),
           SegmentedButton<AccountType>(
             segments: [
-              const ButtonSegment(
+              ButtonSegment(
                 value: AccountType.personal,
-                icon: Icon(Icons.person_rounded),
-                label: Text('Personal'),
+                icon: const Icon(Icons.person_rounded),
+                label: Text(copy.text('Personal', 'Osobiste')),
               ),
               ButtonSegment(
                 value: AccountType.creator,
@@ -933,7 +1090,7 @@ class _AccountTypePicker extends StatelessWidget {
                       ? const ValueKey('creator-premium-lock')
                       : null,
                 ),
-                label: const Text('Creator'),
+                label: Text(copy.text('Creator', 'Twórca')),
               ),
             ],
             selected: <AccountType>{
@@ -954,7 +1111,10 @@ class _AccountTypePicker extends StatelessWidget {
                 const SizedBox(width: 7),
                 Expanded(
                   child: Text(
-                    'Premium is required to activate Creator.',
+                    copy.text(
+                      'Premium is required to activate Creator.',
+                      'Do aktywacji konta twórcy wymagane jest Premium.',
+                    ),
                     key: ValueKey('creator-premium-required'),
                     style: TextStyle(
                       color: palette.textPrimary,
@@ -969,16 +1129,24 @@ class _AccountTypePicker extends StatelessWidget {
           if (value == AccountType.official) ...[
             const SizedBox(height: 10),
             Text(
-              'Official status is verified by YO Voice and cannot be selected manually.',
+              copy.text(
+                'Official status is verified by YO Voice and cannot be selected manually.',
+                'Status oficjalny jest weryfikowany przez YO Voice i nie można wybrać go samodzielnie.',
+              ),
               style: TextStyle(color: colors.primary, fontSize: 11),
             ),
           ],
           if (creatorPaused) ...[
             const SizedBox(height: 10),
             Text(
-              'Creator tools are paused — your Premium subscription has '
-              'ended. Your Studio data stays safe. Renew Premium, then '
-              'reactivate Creator in Edit profile.',
+              copy.text(
+                'Creator tools are paused — your Premium subscription has '
+                    'ended. Your Studio data stays safe. Renew Premium, then '
+                    'reactivate Creator in Edit profile.',
+                'Narzędzia twórcy są wstrzymane, ponieważ subskrypcja Premium wygasła. '
+                    'Dane w Studio są bezpieczne. Odnów Premium, a następnie ponownie aktywuj '
+                    'konto twórcy w edycji profilu.',
+              ),
               style: TextStyle(color: colors.error, fontSize: 11),
             ),
           ],

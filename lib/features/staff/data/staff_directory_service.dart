@@ -115,14 +115,24 @@ class StaffDirectoryService {
         mode: data['mode'] as String? ?? 'name',
       );
     } on FirebaseFunctionsException catch (error) {
-      throw DirectorySearchException(switch (error.code) {
+      final kind = switch (error.code) {
         'permission-denied' ||
         'unauthenticated' => DirectorySearchErrorKind.permission,
         'unavailable' ||
         'deadline-exceeded' => DirectorySearchErrorKind.network,
         'invalid-argument' => DirectorySearchErrorKind.invalidQuery,
         _ => DirectorySearchErrorKind.server,
-      }, error.message ?? 'The search failed.');
+      };
+      throw DirectorySearchException(kind, switch (kind) {
+        DirectorySearchErrorKind.permission =>
+          'User search is not available for this account.',
+        DirectorySearchErrorKind.network =>
+          'The server could not be reached. Check your connection.',
+        DirectorySearchErrorKind.invalidQuery =>
+          'Enter a valid name, username, email address or account ID.',
+        DirectorySearchErrorKind.server =>
+          'The search failed on the server. Try again.',
+      });
     } catch (_) {
       throw const DirectorySearchException(
         DirectorySearchErrorKind.network,

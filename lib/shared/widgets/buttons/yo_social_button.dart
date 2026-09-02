@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_motion.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_radius.dart';
@@ -32,6 +33,7 @@ class YoSocialButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
     final foreground = _blocked ? palette.textTertiary : palette.textPrimary;
     final textScale = MediaQuery.textScalerOf(context).scale(1);
@@ -146,7 +148,11 @@ class YoSocialButton extends StatelessWidget {
     return Semantics(
       button: true,
       enabled: false,
-      label: '$label, loading',
+      label: copy.template(
+        '{label}, loading',
+        '{label}, trwa ładowanie',
+        values: <String, Object>{'label': label},
+      ),
       excludeSemantics: true,
       child: button,
     );

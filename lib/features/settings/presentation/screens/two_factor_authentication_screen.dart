@@ -3,6 +3,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/auth/data/auth_service.dart';
 import 'package:yovoice/features/auth/data/totp_mfa_service.dart';
@@ -103,8 +104,10 @@ class _TwoFactorAuthenticationScreenState
     if (!providers.contains(EmailAuthProvider.PROVIDER_ID)) {
       if (mounted) {
         setState(() {
-          _error =
-              'Sign out and sign in again before changing two-factor authentication.';
+          _error = AppLocalizations.of(context).text(
+            'Sign out and sign in again before changing two-factor authentication.',
+            'Wyloguj się i zaloguj ponownie, zanim zmienisz ustawienia uwierzytelniania dwuskładnikowego.',
+          );
         });
       }
       return false;
@@ -113,28 +116,33 @@ class _TwoFactorAuthenticationScreenState
     final passwordController = TextEditingController();
     final password = await showDialog<String>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Confirm your password'),
-        content: TextField(
-          controller: passwordController,
-          autofocus: true,
-          obscureText: true,
-          autofillHints: const [AutofillHints.password],
-          decoration: const InputDecoration(labelText: 'Password'),
-          onSubmitted: (value) => Navigator.pop(dialogContext, value),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('Cancel'),
+      builder: (dialogContext) {
+        final copy = AppLocalizations.of(dialogContext);
+        return AlertDialog(
+          title: Text(copy.text('Confirm your password', 'Potwierdź hasło')),
+          content: TextField(
+            controller: passwordController,
+            autofocus: true,
+            obscureText: true,
+            autofillHints: const [AutofillHints.password],
+            decoration: InputDecoration(
+              labelText: copy.text('Password', 'Hasło'),
+            ),
+            onSubmitted: (value) => Navigator.pop(dialogContext, value),
           ),
-          FilledButton(
-            onPressed: () =>
-                Navigator.pop(dialogContext, passwordController.text),
-            child: const Text('Continue'),
-          ),
-        ],
-      ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: Text(copy.text('Cancel', 'Anuluj')),
+            ),
+            FilledButton(
+              onPressed: () =>
+                  Navigator.pop(dialogContext, passwordController.text),
+              child: Text(copy.text('Continue', 'Dalej')),
+            ),
+          ],
+        );
+      },
     );
     passwordController.dispose();
     if (password == null) return false;
@@ -177,7 +185,10 @@ class _TwoFactorAuthenticationScreenState
       setState(() {
         _draft = null;
         _codeController.clear();
-        _error = 'This setup expired. Start again to create a new secret.';
+        _error = AppLocalizations.of(context).text(
+          'This setup expired. Start again to create a new secret.',
+          'Ta konfiguracja wygasła. Rozpocznij ponownie, aby utworzyć nowy klucz.',
+        );
       });
       return;
     }
@@ -194,7 +205,12 @@ class _TwoFactorAuthenticationScreenState
         _draft = null;
         _factors = factors;
       });
-      _notify('Two-factor authentication is now enabled.');
+      _notify(
+        AppLocalizations.of(context).text(
+          'Two-factor authentication is now enabled.',
+          'Uwierzytelnianie dwuskładnikowe zostało włączone.',
+        ),
+      );
     } catch (error) {
       if (mounted) setState(() => _error = _messageFor(error));
     } finally {
@@ -206,16 +222,25 @@ class _TwoFactorAuthenticationScreenState
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) {
+        final copy = AppLocalizations.of(dialogContext);
         final colors = Theme.of(dialogContext).colorScheme;
         return AlertDialog(
-          title: const Text('Remove authenticator?'),
-          content: const Text(
-            'You will no longer need a code from this authenticator when signing in.',
+          title: Text(
+            copy.text(
+              'Remove authenticator?',
+              'Usunąć aplikację uwierzytelniającą?',
+            ),
+          ),
+          content: Text(
+            copy.text(
+              'You will no longer need a code from this authenticator when signing in.',
+              'Kod z tej aplikacji uwierzytelniającej nie będzie już wymagany podczas logowania.',
+            ),
           ),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(dialogContext, false),
-              child: const Text('Keep it'),
+              child: Text(copy.text('Keep it', 'Zachowaj')),
             ),
             FilledButton(
               style: FilledButton.styleFrom(
@@ -223,7 +248,7 @@ class _TwoFactorAuthenticationScreenState
                 foregroundColor: colors.onErrorContainer,
               ),
               onPressed: () => Navigator.pop(dialogContext, true),
-              child: const Text('Remove'),
+              child: Text(copy.text('Remove', 'Usuń')),
             ),
           ],
         );
@@ -249,12 +274,20 @@ class _TwoFactorAuthenticationScreenState
       final factors = await _client.getFactors();
       if (!mounted) return;
       setState(() => _factors = factors);
-      _notify('Authenticator removed.');
+      _notify(
+        AppLocalizations.of(context).text(
+          'Authenticator removed.',
+          'Usunięto aplikację uwierzytelniającą.',
+        ),
+      );
     } on FirebaseAuthException catch (error) {
       if (error.code == 'user-token-expired') {
         if (mounted) {
           _notify(
-            'Authenticator removed. Firebase ended this session; sign in again.',
+            AppLocalizations.of(context).text(
+              'Authenticator removed. Firebase ended this session; sign in again.',
+              'Usunięto aplikację uwierzytelniającą. Firebase zakończył tę sesję — zaloguj się ponownie.',
+            ),
           );
         }
         await _signOutForExpiredSession();
@@ -286,29 +319,66 @@ class _TwoFactorAuthenticationScreenState
   }
 
   String _messageFor(Object error) {
-    if (error is FormatException) return error.message;
-    if (error is StateError) return error.message;
-    if (error is UnsupportedError) return error.message ?? 'Not supported.';
+    final copy = AppLocalizations.of(context);
+    if (error is FormatException) {
+      return copy.text(
+        error.message,
+        'Wprowadzone dane mają nieprawidłowy format.',
+      );
+    }
+    if (error is StateError) {
+      return copy.text(
+        error.message,
+        'Nie można teraz wykonać tej operacji. Spróbuj ponownie.',
+      );
+    }
+    if (error is UnsupportedError) {
+      return copy.text(
+        error.message ?? 'Not supported.',
+        'Ta funkcja nie jest obsługiwana.',
+      );
+    }
     if (error is FirebaseAuthException) {
       return switch (error.code) {
-        'email-not-verified' =>
+        'email-not-verified' => copy.text(
           'Verify your email before enabling two-factor authentication.',
-        'invalid-verification-code' || 'invalid-credential' =>
+          'Zweryfikuj adres e-mail przed włączeniem uwierzytelniania dwuskładnikowego.',
+        ),
+        'invalid-verification-code' || 'invalid-credential' => copy.text(
           'That code is not valid. Wait for a new code and try again.',
-        'wrong-password' => 'The password is not correct.',
-        'too-many-requests' => 'Too many attempts. Please try again later.',
-        'session-expired' =>
+          'Ten kod jest nieprawidłowy. Poczekaj na nowy kod i spróbuj ponownie.',
+        ),
+        'wrong-password' => copy.text(
+          'The password is not correct.',
+          'Hasło jest nieprawidłowe.',
+        ),
+        'too-many-requests' => copy.text(
+          'Too many attempts. Please try again later.',
+          'Zbyt wiele prób. Spróbuj ponownie później.',
+        ),
+        'session-expired' => copy.text(
           'This setup expired. Start again to create a new secret.',
-        'operation-not-allowed' =>
+          'Ta konfiguracja wygasła. Rozpocznij ponownie, aby utworzyć nowy klucz.',
+        ),
+        'operation-not-allowed' => copy.text(
           'Two-factor authentication is not enabled for this app yet.',
-        _ => error.message ?? 'Two-factor authentication could not be updated.',
+          'Uwierzytelnianie dwuskładnikowe nie jest jeszcze włączone dla tej aplikacji.',
+        ),
+        _ => copy.text(
+          'Two-factor authentication could not be updated.',
+          'Nie udało się zaktualizować uwierzytelniania dwuskładnikowego.',
+        ),
       };
     }
-    return 'Two-factor authentication could not be updated.';
+    return copy.text(
+      'Two-factor authentication could not be updated.',
+      'Nie udało się zaktualizować uwierzytelniania dwuskładnikowego.',
+    );
   }
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final factors = _factors;
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
@@ -318,7 +388,12 @@ class _TwoFactorAuthenticationScreenState
           ? null
           : AppBar(
               backgroundColor: Colors.transparent,
-              title: const Text('Two-factor authentication'),
+              title: Text(
+                copy.text(
+                  'Two-factor authentication',
+                  'Uwierzytelnianie dwuskładnikowe',
+                ),
+              ),
             ),
       body: SafeArea(
         child: ResponsiveContentFrame(
@@ -328,7 +403,10 @@ class _TwoFactorAuthenticationScreenState
             padding: const EdgeInsets.fromLTRB(18, 22, 18, 64),
             children: [
               Text(
-                'Two-factor authentication',
+                copy.text(
+                  'Two-factor authentication',
+                  'Uwierzytelnianie dwuskładnikowe',
+                ),
                 style: TextStyle(
                   color: palette.textPrimary,
                   fontSize: 28,
@@ -337,7 +415,10 @@ class _TwoFactorAuthenticationScreenState
               ),
               const SizedBox(height: 8),
               Text(
-                'Protect your account with a changing 6-digit code from an authenticator app. YO Voice never asks for your authenticator secret.',
+                copy.text(
+                  'Protect your account with a changing 6-digit code from an authenticator app. YO Voice never asks for your authenticator secret.',
+                  'Chroń konto zmieniającym się, 6-cyfrowym kodem z aplikacji uwierzytelniającej. YO Voice nigdy nie prosi o podanie tajnego klucza uwierzytelniającego.',
+                ),
                 style: TextStyle(color: palette.textSecondary, height: 1.45),
               ),
               const SizedBox(height: 24),
@@ -386,8 +467,14 @@ class _TwoFactorAuthenticationScreenState
                     icon: const Icon(Icons.add_moderator_rounded),
                     label: Text(
                       factors.isEmpty
-                          ? 'Set up authenticator'
-                          : 'Add another authenticator',
+                          ? copy.text(
+                              'Set up authenticator',
+                              'Skonfiguruj aplikację uwierzytelniającą',
+                            )
+                          : copy.text(
+                              'Add another authenticator',
+                              'Dodaj kolejną aplikację uwierzytelniającą',
+                            ),
                       textAlign: TextAlign.center,
                     ),
                   )
@@ -402,7 +489,14 @@ class _TwoFactorAuthenticationScreenState
                       await Clipboard.setData(
                         ClipboardData(text: _draft!.secretKey),
                       );
-                      if (mounted) _notify('Secret copied.');
+                      if (mounted) {
+                        _notify(
+                          copy.text(
+                            'Secret copied.',
+                            'Skopiowano klucz konfiguracji.',
+                          ),
+                        );
+                      }
                     },
                     onComplete: _completeSetup,
                     onCancel: _busy ? null : _cancelSetup,
@@ -421,6 +515,7 @@ class _UnsupportedPlatformCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
     return Semantics(
       liveRegion: true,
@@ -441,7 +536,10 @@ class _UnsupportedPlatformCard extends StatelessWidget {
             const SizedBox(width: 14),
             Expanded(
               child: Text(
-                'Authenticator-based two-factor authentication is not supported by Firebase on Windows or Linux. Set it up from YO Voice on the web, Android, iPhone, iPad or Mac.',
+                copy.text(
+                  'Authenticator-based two-factor authentication is not supported by Firebase on Windows or Linux. Set it up from YO Voice on the web, Android, iPhone, iPad or Mac.',
+                  'Firebase nie obsługuje uwierzytelniania dwuskładnikowego z aplikacją uwierzytelniającą w systemach Windows i Linux. Skonfiguruj je w YO Voice w przeglądarce, na Androidzie, iPhonie, iPadzie lub Macu.',
+                ),
                 style: TextStyle(color: palette.textSecondary, height: 1.4),
               ),
             ),
@@ -458,6 +556,7 @@ class _StatusCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
     final color = enabled ? _twoFactorSuccess(context) : palette.textSecondary;
     return Container(
@@ -482,7 +581,15 @@ class _StatusCard extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  enabled ? '2FA is enabled' : '2FA is not enabled',
+                  enabled
+                      ? copy.text(
+                          '2FA is enabled',
+                          'Weryfikacja 2FA jest włączona',
+                        )
+                      : copy.text(
+                          '2FA is not enabled',
+                          'Weryfikacja 2FA nie jest włączona',
+                        ),
                   style: TextStyle(
                     color: palette.textPrimary,
                     fontWeight: FontWeight.w800,
@@ -491,8 +598,14 @@ class _StatusCard extends StatelessWidget {
                 const SizedBox(height: 3),
                 Text(
                   enabled
-                      ? 'A code is required after your password or social sign-in.'
-                      : 'Add an authenticator to protect future sign-ins.',
+                      ? copy.text(
+                          'A code is required after your password or social sign-in.',
+                          'Po podaniu hasła lub zalogowaniu przez usługę zewnętrzną wymagany jest kod.',
+                        )
+                      : copy.text(
+                          'Add an authenticator to protect future sign-ins.',
+                          'Dodaj aplikację uwierzytelniającą, aby chronić kolejne logowania.',
+                        ),
                   style: TextStyle(color: palette.textSecondary, height: 1.35),
                 ),
               ],
@@ -516,6 +629,7 @@ class _FactorCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
     return Container(
@@ -542,14 +656,20 @@ class _FactorCard extends StatelessWidget {
                 ),
                 const SizedBox(height: 3),
                 Text(
-                  'Added ${_formatDate(factor.enrolledAt)}',
+                  copy.text(
+                    'Added ${_formatDate(factor.enrolledAt)}',
+                    'Dodano ${_formatDate(factor.enrolledAt)}',
+                  ),
                   style: TextStyle(color: palette.textSecondary),
                 ),
               ],
             ),
           ),
           IconButton(
-            tooltip: 'Remove authenticator',
+            tooltip: copy.text(
+              'Remove authenticator',
+              'Usuń aplikację uwierzytelniającą',
+            ),
             onPressed: busy ? null : onRemove,
             icon: Icon(Icons.delete_outline_rounded, color: colors.error),
           ),
@@ -581,6 +701,7 @@ class _EnrollmentCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
     return Container(
@@ -594,7 +715,10 @@ class _EnrollmentCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Text(
-            'Connect your authenticator',
+            copy.text(
+              'Connect your authenticator',
+              'Połącz aplikację uwierzytelniającą',
+            ),
             style: TextStyle(
               color: palette.textPrimary,
               fontSize: 18,
@@ -603,13 +727,19 @@ class _EnrollmentCard extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           Text(
-            'Scan this QR code with your authenticator app. You can also enter the setup key manually. Then enter the current 6-digit code.',
+            copy.text(
+              'Scan this QR code with your authenticator app. You can also enter the setup key manually. Then enter the current 6-digit code.',
+              'Zeskanuj kod QR w aplikacji uwierzytelniającej. Możesz też ręcznie wpisać klucz konfiguracji. Następnie wprowadź aktualny 6-cyfrowy kod.',
+            ),
             style: TextStyle(color: palette.textSecondary, height: 1.4),
           ),
           const SizedBox(height: 16),
           Center(
             child: Semantics(
-              label: 'Authenticator setup QR code',
+              label: copy.text(
+                'Authenticator setup QR code',
+                'Kod QR do konfiguracji aplikacji uwierzytelniającej',
+              ),
               image: true,
               child: ExcludeSemantics(
                 child: Container(
@@ -639,7 +769,7 @@ class _EnrollmentCard extends StatelessWidget {
           ),
           const SizedBox(height: 10),
           Text(
-            'Manual setup key',
+            copy.text('Manual setup key', 'Klucz do ręcznej konfiguracji'),
             style: TextStyle(
               color: palette.textSecondary,
               fontWeight: FontWeight.w700,
@@ -647,7 +777,10 @@ class _EnrollmentCard extends StatelessWidget {
           ),
           const SizedBox(height: 6),
           Semantics(
-            label: 'Manual authenticator setup key',
+            label: copy.text(
+              'Manual authenticator setup key',
+              'Klucz do ręcznej konfiguracji aplikacji uwierzytelniającej',
+            ),
             child: SelectableText(
               draft.secretKey,
               style: TextStyle(
@@ -661,20 +794,30 @@ class _EnrollmentCard extends StatelessWidget {
           OutlinedButton.icon(
             onPressed: busy ? null : onCopySecret,
             icon: const Icon(Icons.copy_rounded),
-            label: const Text('Copy setup secret'),
+            label: Text(
+              copy.text('Copy setup secret', 'Skopiuj klucz konfiguracji'),
+            ),
           ),
           if (canOpenAuthenticatorApp) ...[
             const SizedBox(height: 10),
             OutlinedButton.icon(
               onPressed: busy ? null : onOpenAuthenticator,
               icon: const Icon(Icons.open_in_new_rounded),
-              label: const Text('Open authenticator app'),
+              label: Text(
+                copy.text(
+                  'Open authenticator app',
+                  'Otwórz aplikację uwierzytelniającą',
+                ),
+              ),
             ),
           ],
           if (draft.expiresAt != null) ...[
             const SizedBox(height: 12),
             Text(
-              'Finish setup before ${_formatDeadline(draft.expiresAt!)}.',
+              copy.text(
+                'Finish setup before ${_formatDeadline(draft.expiresAt!)}.',
+                'Dokończ konfigurację przed ${_formatDeadline(draft.expiresAt!)}.',
+              ),
               style: TextStyle(color: palette.textSecondary),
             ),
           ],
@@ -685,15 +828,25 @@ class _EnrollmentCard extends StatelessWidget {
             keyboardType: TextInputType.number,
             maxLength: 6,
             autofillHints: const [AutofillHints.oneTimeCode],
-            decoration: const InputDecoration(labelText: '6-digit code'),
+            decoration: InputDecoration(
+              labelText: copy.text('6-digit code', 'Kod 6-cyfrowy'),
+            ),
             onSubmitted: (_) => onComplete(),
           ),
           const SizedBox(height: 8),
           FilledButton(
             onPressed: busy ? null : onComplete,
-            child: const Text('Enable two-factor authentication'),
+            child: Text(
+              copy.text(
+                'Enable two-factor authentication',
+                'Włącz uwierzytelnianie dwuskładnikowe',
+              ),
+            ),
           ),
-          TextButton(onPressed: onCancel, child: const Text('Cancel setup')),
+          TextButton(
+            onPressed: onCancel,
+            child: Text(copy.text('Cancel setup', 'Anuluj konfigurację')),
+          ),
         ],
       ),
     );

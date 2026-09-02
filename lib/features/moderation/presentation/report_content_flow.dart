@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/helpers/error_messages.dart';
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/moderation/data/services/content_report_service.dart';
 import 'package:yovoice/features/moderation/presentation/widgets/report_reason_sheet.dart';
@@ -31,6 +32,7 @@ Future<bool> reportContent({
   // say. The messenger outlives it.
   final messenger = ScaffoldMessenger.maybeOf(context);
   final palette = context.appPalette;
+  final copy = AppLocalizations.of(context);
 
   final reason = await showReportReasonSheet(
     context: context,
@@ -44,23 +46,78 @@ Future<bool> reportContent({
       content: content,
       reason: reason,
     );
-    _say(messenger, palette, 'Thanks — your report is with our team.');
+    _say(
+      messenger,
+      palette,
+      copy.text(
+        'Thanks — your report is with our team.',
+        'Dziękujemy — Twoje zgłoszenie trafiło do naszego zespołu.',
+      ),
+    );
     return true;
   } catch (error) {
     // ContentReportException is a StateError carrying deliberate copy,
     // so this surfaces the specific reason; anything unexpected is
     // laundered instead of being pasted into the UI raw.
+    final englishMessage = intentionalOrFriendly(
+      error,
+      fallback: 'Your report could not be sent. Please try again.',
+    );
     _say(
       messenger,
       palette,
-      intentionalOrFriendly(
-        error,
-        fallback: 'Your report could not be sent. Please try again.',
-      ),
+      copy.text(englishMessage, _polishReportFailure(error, content)),
       isError: true,
     );
     return false;
   }
+}
+
+String _polishReportFailure(Object error, ReportedContent content) {
+  if (error is! ContentReportException) {
+    return 'Nie udało się wysłać zgłoszenia. Spróbuj ponownie.';
+  }
+
+  final object = switch (content.type) {
+    ReportedContentType.directMessage => 'tej wiadomości',
+    ReportedContentType.voiceMoment => 'tego Voice Momentu',
+    ReportedContentType.voiceMomentComment => 'tego komentarza',
+  };
+
+  return switch (error.failure) {
+    ContentReportFailure.alreadyReported => switch (content.type) {
+      ReportedContentType.directMessage =>
+        'Ta wiadomość została już przez Ciebie zgłoszona. '
+            'Nasz zespół nadal ma to zgłoszenie.',
+      ReportedContentType.voiceMoment =>
+        'Ten Voice Moment został już przez Ciebie zgłoszony. '
+            'Nasz zespół nadal ma to zgłoszenie.',
+      ReportedContentType.voiceMomentComment =>
+        'Ten komentarz został już przez Ciebie zgłoszony. '
+            'Nasz zespół nadal ma to zgłoszenie.',
+    },
+    ContentReportFailure.tooManyReports =>
+      'Wysłano teraz wiele zgłoszeń. Odczekaj kilka minut i spróbuj ponownie.',
+    ContentReportFailure.contentGone => switch (content.type) {
+      ReportedContentType.directMessage =>
+        'Ta wiadomość nie jest już dostępna, więc nie było czego zgłosić.',
+      ReportedContentType.voiceMoment =>
+        'Ten Voice Moment nie jest już dostępny, więc nie było czego zgłosić.',
+      ReportedContentType.voiceMomentComment =>
+        'Ten komentarz nie jest już dostępny, więc nie było czego zgłosić.',
+    },
+    ContentReportFailure.notAllowed => 'Nie możesz zgłosić $object.',
+    ContentReportFailure.emailUnverified =>
+      'Aby zgłaszać treści, zweryfikuj swój adres e-mail.',
+    ContentReportFailure.signedOut =>
+      'Aby wysłać zgłoszenie, zaloguj się ponownie.',
+    ContentReportFailure.offline =>
+      'Sprawdź połączenie z internetem i spróbuj ponownie.',
+    ContentReportFailure.unavailable =>
+      'Zgłaszanie jest teraz niedostępne. Spróbuj ponownie później.',
+    ContentReportFailure.unknown =>
+      'Nie udało się wysłać zgłoszenia. Spróbuj ponownie.',
+  };
 }
 
 /// The outcome, said once, legibly.

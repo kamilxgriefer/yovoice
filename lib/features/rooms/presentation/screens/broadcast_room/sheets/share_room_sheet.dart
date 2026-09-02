@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/features/rooms/presentation/screens/broadcast_room/broadcast_colors.dart';
 import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
 
@@ -21,6 +22,7 @@ class ShareRoomSheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     return SafeArea(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(20, 4, 20, 26),
@@ -28,13 +30,13 @@ class ShareRoomSheet extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const YoModalSheetChrome(
-              sheetLabel: 'share podcast',
+            YoModalSheetChrome(
+              sheetLabel: copy.text('share podcast', 'udostępnianie podcastu'),
               surfaceColor: BroadcastRoomColors.surface,
             ),
-            const Text(
-              'Share podcast',
-              style: TextStyle(
+            Text(
+              copy.text('Share podcast', 'Udostępnij podcast'),
+              style: const TextStyle(
                 color: Colors.white,
                 fontSize: 22,
                 fontWeight: FontWeight.w900,
@@ -50,7 +52,7 @@ class ShareRoomSheet extends StatelessWidget {
             const SizedBox(height: 18),
             CopyValueTile(
               icon: Icons.link_rounded,
-              title: 'Invite link',
+              title: copy.text('Invite link', 'Link z zaproszeniem'),
               value: shareLink,
               onTap: () async {
                 await onCopyLink();
@@ -60,7 +62,7 @@ class ShareRoomSheet extends StatelessWidget {
             const SizedBox(height: 10),
             CopyValueTile(
               icon: Icons.key_rounded,
-              title: 'Room ID',
+              title: copy.text('Room ID', 'Identyfikator pokoju'),
               value: roomId,
               onTap: () async {
                 await onCopyRoomId();

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/space_identity.dart';
 import 'package:yovoice/shared/widgets/identity/official_role_badge.dart';
@@ -46,8 +47,9 @@ class StageSpeaker {
 ///
 /// Desktop (>= [desktopBreakpoint] of usable width) keeps the voice stage
 /// readable on the left and gives chat a permanent, bounded rail on the
-/// right. Compact layouts show either the stage or a full-width chat
-/// surface, so neither side is squeezed into an unusable mini-column.
+/// right. Compact layouts keep the stage mounted and present chat as a
+/// bounded bottom dock. The dock can be dismissed and reopened without
+/// turning the whole room into a chat-only screen.
 class RoomWorkspace extends StatelessWidget {
   const RoomWorkspace({
     required this.stage,
@@ -74,15 +76,46 @@ class RoomWorkspace extends StatelessWidget {
       builder: (context, constraints) {
         final desktop = constraints.maxWidth >= desktopBreakpoint;
         if (!desktop) {
+          final availableHeight = constraints.hasBoundedHeight
+              ? constraints.maxHeight
+              : 720.0;
+          final textScale = MediaQuery.textScalerOf(context).scale(1);
+          // Keep the conversation present without letting accessibility text
+          // turn the room into a chat-only screen. The dock itself scrolls, so
+          // a shorter bounded surface is more useful than hiding the stage.
+          final chatHeight = textScale >= 1.75
+              ? (availableHeight * .36).clamp(230.0, 300.0)
+              : textScale >= 1.35
+              ? (availableHeight * .42).clamp(240.0, 330.0)
+              : (availableHeight * .46).clamp(220.0, 380.0);
           return Padding(
             padding: const EdgeInsets.symmetric(horizontal: 12),
-            child: SizedBox.expand(
-              child: KeyedSubtree(
-                key: ValueKey(
-                  showCompactChat ? 'room-chat-pane' : 'room-stage-pane',
+            child: Stack(
+              alignment: Alignment.bottomCenter,
+              children: [
+                Positioned.fill(
+                  child: KeyedSubtree(
+                    key: const ValueKey('room-stage-pane'),
+                    child: stage,
+                  ),
                 ),
-                child: showCompactChat ? chat : stage,
-              ),
+                if (showCompactChat)
+                  Align(
+                    alignment: Alignment.bottomCenter,
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 560),
+                      child: SizedBox(
+                        key: const ValueKey('room-compact-chat-dock'),
+                        width: double.infinity,
+                        height: chatHeight,
+                        child: KeyedSubtree(
+                          key: const ValueKey('room-chat-pane'),
+                          child: chat,
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
             ),
           );
         }
@@ -188,6 +221,7 @@ class _SpeakerTileState extends State<SpeakerTile>
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final speaker = widget.speaker;
     final identity = widget.identity;
     final accent = identity.primary;
@@ -200,17 +234,30 @@ class _SpeakerTileState extends State<SpeakerTile>
       excludeSemantics: widget.onTap != null,
       label: widget.onTap == null
           ? null
-          : '${speaker.displayName}, '
-                '${speaker.isHost
-                    ? 'host'
-                    : speaker.isModerator
-                    ? 'moderator'
-                    : (speaker.roleLabel ?? 'speaker').toLowerCase()}, '
-                '${speaker.isMuted
-                    ? 'muted'
-                    : speaker.isSpeaking
-                    ? 'speaking'
-                    : 'not speaking'}. Open profile',
+          : copy.text(
+              '${speaker.displayName}, '
+                  '${speaker.isHost
+                      ? 'host'
+                      : speaker.isModerator
+                      ? 'moderator'
+                      : (speaker.roleLabel ?? 'speaker').toLowerCase()}, '
+                  '${speaker.isMuted
+                      ? 'muted'
+                      : speaker.isSpeaking
+                      ? 'speaking'
+                      : 'not speaking'}. Open profile',
+              '${speaker.displayName}, '
+                  '${speaker.isHost
+                      ? 'gospodarz'
+                      : speaker.isModerator
+                      ? 'moderator'
+                      : 'mówca'}, '
+                  '${speaker.isMuted
+                      ? 'wyciszony'
+                      : speaker.isSpeaking
+                      ? 'mówi'
+                      : 'nie mówi'}. Otwórz profil',
+            ),
       child: InkWell(
         onTap: widget.onTap,
         borderRadius: BorderRadius.circular(20),
@@ -376,10 +423,10 @@ class _SpeakerTileState extends State<SpeakerTile>
               const SizedBox(height: 1),
               Text(
                 speaker.isHost
-                    ? 'Host'
+                    ? copy.text('Host', 'Gospodarz')
                     : speaker.isModerator
                     ? 'Moderator'
-                    : speaker.roleLabel ?? 'Speaker',
+                    : speaker.roleLabel ?? copy.text('Speaker', 'Mówca'),
                 style: TextStyle(
                   color: Colors.white.withValues(alpha: .45),
                   fontSize: 10,
@@ -515,11 +562,15 @@ class _OverflowTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final accent = identity.primary;
     return Semantics(
       button: true,
       excludeSemantics: true,
-      label: '$count more people on stage. Open everyone',
+      label: copy.text(
+        '$count more people on stage. Open everyone',
+        '$count dodatkowych osób na scenie. Otwórz pełną listę',
+      ),
       child: InkWell(
         onTap: onTap,
         borderRadius: BorderRadius.circular(20),
@@ -555,16 +606,16 @@ class _OverflowTile extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 9),
-              const Text(
-                'On stage',
-                style: TextStyle(
+              Text(
+                copy.text('On stage', 'Na scenie'),
+                style: const TextStyle(
                   color: Colors.white,
                   fontSize: 12.5,
                   fontWeight: FontWeight.w700,
                 ),
               ),
               Text(
-                'View all',
+                copy.text('View all', 'Zobacz wszystkich'),
                 style: TextStyle(
                   color: Colors.white.withValues(alpha: .45),
                   fontSize: 10,
@@ -605,6 +656,7 @@ class AudienceStrip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final accent = identity.primary;
     final previews = previewPhotoUrls.take(6).toList();
     final more = count - previews.length;
@@ -612,7 +664,10 @@ class AudienceStrip extends StatelessWidget {
     return Semantics(
       button: true,
       excludeSemantics: true,
-      label: '$count listening. Open people',
+      label: copy.text(
+        '$count listening. Open people',
+        '$count słucha. Otwórz listę osób',
+      ),
       child: Material(
         key: ValueKey('room-listeners-${identity.kind.name}'),
         color: const Color(0xFF0D0813).withValues(alpha: .92),
@@ -634,9 +689,9 @@ class AudienceStrip extends StatelessWidget {
                     Icon(Icons.headphones_rounded, color: accent, size: 19),
                     if (showLabel) ...[
                       const SizedBox(width: 9),
-                      const Text(
-                        'Audience',
-                        style: TextStyle(
+                      Text(
+                        copy.text('Audience', 'Publiczność'),
+                        style: const TextStyle(
                           color: Colors.white,
                           fontWeight: FontWeight.w800,
                           fontSize: 13.5,
@@ -714,7 +769,12 @@ class AudienceStrip extends StatelessWidget {
                     const SizedBox(width: 11),
                     Expanded(
                       child: Text(
-                        count == 1 ? '1 listening' : '$count listening',
+                        count == 1
+                            ? copy.text('1 listening', '1 osoba słucha')
+                            : copy.text(
+                                '$count listening',
+                                '$count osób słucha',
+                              ),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         textAlign: TextAlign.end,
@@ -730,7 +790,7 @@ class AudienceStrip extends StatelessWidget {
                     if (previews.isEmpty) ...[
                       const SizedBox(width: 10),
                       Text(
-                        'People',
+                        copy.text('People', 'Osoby'),
                         style: TextStyle(
                           color: Colors.white.withValues(alpha: .8),
                           fontWeight: FontWeight.w700,
@@ -792,6 +852,15 @@ class RoomStagePanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
+    final resolvedTitle = copy.isPolish && title == 'On stage'
+        ? 'Na scenie'
+        : title;
+    final resolvedEmptyMessage =
+        copy.isPolish &&
+            emptyMessage == 'The stage is ready for the first voice.'
+        ? 'Scena czeka na pierwszy głos.'
+        : emptyMessage;
     return Container(
       key: ValueKey('room-stage-${identity.kind.name}'),
       padding: const EdgeInsets.fromLTRB(16, 15, 16, 18),
@@ -809,7 +878,7 @@ class RoomStagePanel extends StatelessWidget {
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  title,
+                  resolvedTitle,
                   style: const TextStyle(
                     color: Colors.white,
                     fontSize: 15,
@@ -838,21 +907,23 @@ class RoomStagePanel extends StatelessWidget {
           ),
           const SizedBox(height: 14),
           if (fill)
-            Expanded(child: Center(child: _speakerArea(context)))
+            Expanded(
+              child: Center(child: _speakerArea(context, resolvedEmptyMessage)),
+            )
           else
-            _speakerArea(context),
+            _speakerArea(context, resolvedEmptyMessage),
         ],
       ),
     );
   }
 
-  Widget _speakerArea(BuildContext context) {
+  Widget _speakerArea(BuildContext context, String resolvedEmptyMessage) {
     if (speakers.isEmpty) {
       return Padding(
         padding: const EdgeInsets.symmetric(vertical: 26),
         child: Center(
           child: Text(
-            emptyMessage,
+            resolvedEmptyMessage,
             textAlign: TextAlign.center,
             style: TextStyle(
               color: Colors.white.withValues(alpha: .62),

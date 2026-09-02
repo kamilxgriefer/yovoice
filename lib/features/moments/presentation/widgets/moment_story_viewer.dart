@@ -5,6 +5,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_immersive_colors.dart';
 import 'package:yovoice/features/home/data/services/home_feed_service.dart';
@@ -209,6 +210,8 @@ class _MomentStoryViewerState extends State<MomentStoryViewer> {
   final FocusNode _storyFocus = FocusNode(debugLabel: 'Voice Moment story');
   final MomentExpiryAnnouncer _expiryAnnouncer = MomentExpiryAnnouncer();
 
+  AppLocalizations get _copy => AppLocalizations.of(context);
+
   String get _uid {
     try {
       return (widget.auth ?? FirebaseAuth.instance).currentUser?.uid ?? '';
@@ -407,7 +410,10 @@ class _MomentStoryViewerState extends State<MomentStoryViewer> {
       _expiryAnnouncer.announce(
         context,
         transition: 'story-expiry-${deadline.microsecondsSinceEpoch}',
-        message: 'Voice Moment expired. Closing story.',
+        message: _copy.text(
+          'Voice Moment expired. Closing story.',
+          'Voice Moment wygasł. Zamykamy relację.',
+        ),
       );
       _closeEmptyViewer();
       return;
@@ -417,11 +423,23 @@ class _MomentStoryViewerState extends State<MomentStoryViewer> {
       transition: 'story-expiry-${deadline.microsecondsSinceEpoch}',
       message: currentSurvives
           ? expiredCount == 1
-                ? 'One Voice Moment expired.'
-                : '$expiredCount Voice Moments expired.'
+                ? _copy.text(
+                    'One Voice Moment expired.',
+                    'Jeden Voice Moment wygasł.',
+                  )
+                : _copy.text(
+                    '$expiredCount Voice Moments expired.',
+                    'Wygasły Voice Momenty. Liczba: $expiredCount.',
+                  )
           : widget.autoPlay
-          ? 'Voice Moment expired. Playing the next Moment.'
-          : 'Voice Moment expired. The next Moment is ready.',
+          ? _copy.text(
+              'Voice Moment expired. Playing the next Moment.',
+              'Voice Moment wygasł. Odtwarzamy następny.',
+            )
+          : _copy.text(
+              'Voice Moment expired. The next Moment is ready.',
+              'Voice Moment wygasł. Następny Moment jest gotowy.',
+            ),
     );
     recoverMomentExpiryFocusAfterFrame(
       context: context,
@@ -459,7 +477,10 @@ class _MomentStoryViewerState extends State<MomentStoryViewer> {
     if (moments == null || !moment.hasMediaReference) {
       setState(() {
         _isPlaying = false;
-        _playbackError = 'This Moment has no audio to play.';
+        _playbackError = _copy.text(
+          'This Moment has no audio to play.',
+          'Ten Moment nie zawiera nagrania do odtworzenia.',
+        );
       });
       return;
     }
@@ -487,11 +508,14 @@ class _MomentStoryViewerState extends State<MomentStoryViewer> {
         return;
       }
       await player.play(UrlSource(uri.toString()));
-    } catch (error) {
+    } catch (_) {
       if (!mounted) return;
       setState(() {
         _isPlaying = false;
-        _playbackError = 'This Moment could not be played. ($error)';
+        _playbackError = _copy.text(
+          'This Moment could not be played. Try again.',
+          'Nie udało się odtworzyć tego Momentu. Spróbuj ponownie.',
+        );
       });
     }
   }
@@ -556,15 +580,19 @@ class _MomentStoryViewerState extends State<MomentStoryViewer> {
   }
 
   Future<void> _report(VoiceMoment moment) async {
+    final copy = _copy;
     await reportContent(
       context: context,
       service: widget.contentReportService,
       content: ReportedContent.voiceMoment(momentId: moment.id),
-      title: 'Report this Voice Moment',
-      subtitle:
-          'Your report goes to the YO Voice moderation team with this '
-          'Moment attached. ${moment.authorName} is not told who reported '
-          'it.',
+      title: copy.text('Report this Voice Moment', 'Zgłoś ten Voice Moment'),
+      subtitle: copy.text(
+        'Your report goes to the YO Voice moderation team with this '
+            'Moment attached. ${moment.authorName} is not told who reported '
+            'it.',
+        'Zgłoszenie wraz z tym Momentem trafi do zespołu moderacji YO Voice. '
+            '${moment.authorName} nie dowie się, kto je wysłał.',
+      ),
     );
   }
 
@@ -597,30 +625,36 @@ class _MomentStoryViewerState extends State<MomentStoryViewer> {
     final navigator = Navigator.of(context);
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        backgroundColor: AppImmersiveColors.surfaceRaised,
-        title: const Text(
-          'Delete this moment?',
-          style: TextStyle(color: AppImmersiveColors.textPrimary),
-        ),
-        content: const Text(
-          'This cannot be undone.',
-          style: TextStyle(color: AppImmersiveColors.textSecondary),
-        ),
-        actions: [
-          TextButton(
-            key: const ValueKey('story-delete-cancel'),
-            onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: const Text('Cancel'),
+      builder: (dialogContext) {
+        final copy = AppLocalizations.of(dialogContext);
+        return AlertDialog(
+          backgroundColor: AppImmersiveColors.surfaceRaised,
+          title: Text(
+            copy.text('Delete this moment?', 'Usunąć ten Moment?'),
+            style: const TextStyle(color: AppImmersiveColors.textPrimary),
           ),
-          FilledButton(
-            key: const ValueKey('story-delete-confirm'),
-            style: FilledButton.styleFrom(backgroundColor: AppColors.error),
-            onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: const Text('Delete'),
+          content: Text(
+            copy.text(
+              'This cannot be undone.',
+              'Tej operacji nie można cofnąć.',
+            ),
+            style: const TextStyle(color: AppImmersiveColors.textSecondary),
           ),
-        ],
-      ),
+          actions: [
+            TextButton(
+              key: const ValueKey('story-delete-cancel'),
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: Text(copy.text('Cancel', 'Anuluj')),
+            ),
+            FilledButton(
+              key: const ValueKey('story-delete-confirm'),
+              style: FilledButton.styleFrom(backgroundColor: AppColors.error),
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: Text(copy.text('Delete', 'Usuń')),
+            ),
+          ],
+        );
+      },
     );
     if (confirmed != true || !mounted) return;
 
@@ -641,9 +675,14 @@ class _MomentStoryViewerState extends State<MomentStoryViewer> {
       messenger
         ?..hideCurrentSnackBar()
         ..showSnackBar(
-          const SnackBar(
+          SnackBar(
             behavior: SnackBarBehavior.floating,
-            content: Text('The Moment could not be deleted. Try again.'),
+            content: Text(
+              _copy.text(
+                'The Moment could not be deleted. Try again.',
+                'Nie udało się usunąć Momentu. Spróbuj ponownie.',
+              ),
+            ),
           ),
         );
       return;
@@ -654,9 +693,11 @@ class _MomentStoryViewerState extends State<MomentStoryViewer> {
     messenger
       ?..hideCurrentSnackBar()
       ..showSnackBar(
-        const SnackBar(
+        SnackBar(
           behavior: SnackBarBehavior.floating,
-          content: Text('Voice Moment deleted.'),
+          content: Text(
+            _copy.text('Voice Moment deleted.', 'Voice Moment usunięty.'),
+          ),
         ),
       );
 
@@ -875,10 +916,11 @@ class _StoryHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final age = momentRelativeAge(moment.createdAt);
+    final copy = AppLocalizations.of(context);
+    final age = momentRelativeAge(moment.createdAt, copy: copy);
     final expiry = isOwn
-        ? momentAvailabilityLabel(moment.expiresAt)
-        : momentExpiryLabel(moment.expiresAt);
+        ? momentAvailabilityLabel(moment.expiresAt, copy: copy)
+        : momentExpiryLabel(moment.expiresAt, copy: copy);
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(14, 10, 6, 4),
@@ -945,7 +987,7 @@ class _StoryHeader extends StatelessWidget {
           ),
           const SizedBox(width: 8),
           Text(
-            '${position + 1} of $total',
+            copy.text('${position + 1} of $total', '${position + 1} z $total'),
             key: const ValueKey('story-position-indicator'),
             style: const TextStyle(
               color: AppImmersiveColors.textSecondary,
@@ -957,7 +999,7 @@ class _StoryHeader extends StatelessWidget {
             IconButton(
               key: const ValueKey('story-open-detail'),
               onPressed: onOpenDetail,
-              tooltip: 'Moment details',
+              tooltip: copy.text('Moment details', 'Szczegóły Momentu'),
               icon: const Icon(
                 Icons.info_outline_rounded,
                 color: AppImmersiveColors.textSecondary,
@@ -966,7 +1008,7 @@ class _StoryHeader extends StatelessWidget {
           IconButton(
             key: const ValueKey('story-close'),
             onPressed: onClose,
-            tooltip: 'Close',
+            tooltip: copy.text('Close', 'Zamknij'),
             icon: const Icon(
               Icons.close_rounded,
               color: AppImmersiveColors.textPrimary,
@@ -1004,6 +1046,7 @@ class _StoryStage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final totalSeconds = duration?.inSeconds ?? moment.durationSeconds;
     final hasTotal = totalSeconds > 0;
     final progress = hasTotal
@@ -1036,7 +1079,9 @@ class _StoryStage extends StatelessWidget {
         const SizedBox(height: 22),
         Semantics(
           button: true,
-          label: isPlaying ? 'Pause this Moment' : 'Play this Moment',
+          label: isPlaying
+              ? copy.text('Pause this Moment', 'Wstrzymaj ten Moment')
+              : copy.text('Play this Moment', 'Odtwórz ten Moment'),
           child: Material(
             color: AppColors.primary,
             shape: const CircleBorder(),
@@ -1221,6 +1266,7 @@ class _StoryActions extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final service = feedService;
+    final copy = AppLocalizations.of(context);
     return Padding(
       padding: const EdgeInsets.fromLTRB(14, 4, 14, 12),
       child: Row(
@@ -1228,14 +1274,14 @@ class _StoryActions extends StatelessWidget {
           IconButton.filledTonal(
             key: const ValueKey('story-previous'),
             onPressed: onPrevious,
-            tooltip: 'Previous Moment',
+            tooltip: copy.text('Previous Moment', 'Poprzedni Moment'),
             icon: const Icon(Icons.chevron_left_rounded),
           ),
           const SizedBox(width: 6),
           IconButton.filledTonal(
             key: const ValueKey('story-next'),
             onPressed: onNext,
-            tooltip: 'Next Moment',
+            tooltip: copy.text('Next Moment', 'Następny Moment'),
             icon: const Icon(Icons.chevron_right_rounded),
           ),
           // One Expanded cluster aligned right — NOT a Spacer next to
@@ -1254,7 +1300,7 @@ class _StoryActions extends StatelessWidget {
                     child: _ActionChip(
                       icon: Icons.favorite_border_rounded,
                       label: moment.likeCount == 0
-                          ? 'Like'
+                          ? copy.text('Like', 'Lubię to')
                           : '${moment.likeCount}',
                       active: false,
                       onTap: null,
@@ -1274,12 +1320,18 @@ class _StoryActions extends StatelessWidget {
                               ? Icons.favorite_rounded
                               : Icons.favorite_border_rounded,
                           label: moment.likeCount == 0
-                              ? 'Like'
+                              ? copy.text('Like', 'Lubię to')
                               : '${moment.likeCount}',
                           active: liked,
                           semanticLabel: liked
-                              ? 'Unlike this Moment'
-                              : 'Like this Moment',
+                              ? copy.text(
+                                  'Unlike this Moment',
+                                  'Usuń polubienie tego Momentu',
+                                )
+                              : copy.text(
+                                  'Like this Moment',
+                                  'Polub ten Moment',
+                                ),
                           onTap: () => unawaited(_toggleLike(context, service)),
                         );
                       },
@@ -1291,10 +1343,13 @@ class _StoryActions extends StatelessWidget {
                     key: const ValueKey('story-comments'),
                     icon: Icons.mode_comment_outlined,
                     label: moment.commentCount == 0
-                        ? 'Comment'
+                        ? copy.text('Comment', 'Komentarz')
                         : '${moment.commentCount}',
                     active: false,
-                    semanticLabel: 'Open comments for this Moment',
+                    semanticLabel: copy.text(
+                      'Open comments for this Moment',
+                      'Otwórz komentarze do tego Momentu',
+                    ),
                     onTap: onComments,
                   ),
                 ),
@@ -1303,7 +1358,10 @@ class _StoryActions extends StatelessWidget {
                   IconButton(
                     key: ValueKey('story-report-${moment.id}'),
                     onPressed: onReport,
-                    tooltip: 'Report this Voice Moment',
+                    tooltip: copy.text(
+                      'Report this Voice Moment',
+                      'Zgłoś ten Voice Moment',
+                    ),
                     icon: const Icon(
                       Icons.flag_outlined,
                       size: 20,
@@ -1316,7 +1374,10 @@ class _StoryActions extends StatelessWidget {
                   IconButton(
                     key: ValueKey('story-delete-${moment.id}'),
                     onPressed: onDelete,
-                    tooltip: 'Delete this Voice Moment',
+                    tooltip: copy.text(
+                      'Delete this Voice Moment',
+                      'Usuń ten Voice Moment',
+                    ),
                     icon: const Icon(
                       Icons.delete_outline_rounded,
                       size: 20,
@@ -1337,15 +1398,21 @@ class _StoryActions extends StatelessWidget {
     HomeFeedService service,
   ) async {
     final messenger = ScaffoldMessenger.maybeOf(context);
+    final copy = AppLocalizations.of(context);
     try {
       await service.toggleLike(moment.id);
-    } catch (error) {
+    } catch (_) {
       messenger
         ?..hideCurrentSnackBar()
         ..showSnackBar(
-          const SnackBar(
+          SnackBar(
             behavior: SnackBarBehavior.floating,
-            content: Text('Your like could not be saved.'),
+            content: Text(
+              copy.text(
+                'Your like could not be saved. Try again.',
+                'Nie udało się zapisać polubienia. Spróbuj ponownie.',
+              ),
+            ),
           ),
         );
     }

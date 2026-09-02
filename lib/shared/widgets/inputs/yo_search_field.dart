@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/shared/widgets/inputs/yo_text_field.dart';
 
 class YoSearchField extends StatelessWidget {
@@ -7,7 +8,7 @@ class YoSearchField extends StatelessWidget {
     super.key,
     this.controller,
     this.focusNode,
-    this.hint = 'Search',
+    this.hint,
     this.onChanged,
     this.onSubmitted,
     this.onClear,
@@ -17,7 +18,7 @@ class YoSearchField extends StatelessWidget {
 
   final TextEditingController? controller;
   final FocusNode? focusNode;
-  final String hint;
+  final String? hint;
   final ValueChanged<String>? onChanged;
   final ValueChanged<String>? onSubmitted;
   final VoidCallback? onClear;
@@ -26,14 +27,15 @@ class YoSearchField extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     return YoTextField(
       controller: controller,
       focusNode: focusNode,
-      hint: hint,
+      hint: hint ?? copy.text('Search', 'Szukaj'),
       prefixIcon: const Icon(Icons.search_rounded),
       suffixIcon: controller != null && controller!.text.isNotEmpty
           ? IconButton(
-              tooltip: 'Clear search',
+              tooltip: copy.text('Clear search', 'Wyczyść wyszukiwanie'),
               onPressed: () {
                 controller!.clear();
                 onChanged?.call('');

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/helpers/error_messages.dart';
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_motion.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_spacing.dart';
@@ -30,7 +31,8 @@ class YoErrorState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final String text = message ?? friendlyErrorMessage(error!);
+    final copy = AppLocalizations.of(context);
+    final String text = message ?? friendlyErrorMessage(error!, copy: copy);
     final palette = context.appPalette;
     final duration = AppMotion.resolve(context, AppMotion.entrance);
 
@@ -58,7 +60,8 @@ class YoErrorState extends StatelessWidget {
             Semantics(
               container: true,
               liveRegion: true,
-              label: 'Something went wrong. $text',
+              label:
+                  '${copy.text('Something went wrong.', 'Coś poszło nie tak.')} $text',
               excludeSemantics: true,
               child: Column(
                 children: <Widget>[
@@ -77,7 +80,7 @@ class YoErrorState extends StatelessWidget {
                   ),
                   const SizedBox(height: AppSpacing.lg),
                   Text(
-                    'Something went wrong',
+                    copy.text('Something went wrong', 'Coś poszło nie tak'),
                     textAlign: TextAlign.center,
                     style: AppTypography.titleLarge.copyWith(
                       color: palette.textPrimary,
@@ -97,7 +100,7 @@ class YoErrorState extends StatelessWidget {
             if (onRetry != null) ...<Widget>[
               const SizedBox(height: AppSpacing.lg),
               YoButton(
-                label: 'Try again',
+                label: copy.text('Try again', 'Spróbuj ponownie'),
                 onPressed: onRetry,
                 variant: YoButtonVariant.secondary,
                 fullWidth: false,

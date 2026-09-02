@@ -132,6 +132,7 @@ class ProfileMediaService {
   Future<Uri?> resolve({
     required String userId,
     required ProfileMediaKind kind,
+    Object? revision,
   }) {
     final viewerId = _auth.currentUser?.uid ?? '';
     final targetId = userId.trim();
@@ -141,7 +142,7 @@ class ProfileMediaService {
     if (targetId.isEmpty || targetId.contains('/') || targetId.length > 128) {
       throw const FormatException('The profile-media user id is invalid.');
     }
-    final key = '$viewerId:$targetId:${kind.name}';
+    final key = '$viewerId:$targetId:${kind.name}:${_revisionKey(revision)}';
     final now = DateTime.now().toUtc();
     final cached = _cache[key];
     if (cached != null &&
@@ -215,6 +216,22 @@ class ProfileMediaService {
         _pending.remove(key);
       }
     });
+  }
+
+  static String _revisionKey(Object? revision) {
+    if (revision == null) return 'legacy';
+    if (revision case DateTime value) {
+      return 'date-${value.toUtc().microsecondsSinceEpoch}';
+    }
+    if (revision case int value) return 'int-$value';
+    if (revision case num value when value.isFinite) {
+      return 'num-${value.toString()}';
+    }
+    final value = revision.toString();
+    // Revisions only namespace an in-memory cache entry; they are never sent
+    // to the server. Bounding the value prevents an accidental large object
+    // from becoming retained cache-key data.
+    return 'value-${value.length <= 96 ? value : value.substring(0, 96)}';
   }
 
   Future<Map<Object?, Object?>> _call(

@@ -8,16 +8,17 @@
 // be an isolated tap target and a disabled control must swallow its tap.
 
 import 'dart:async';
-import 'dart:ui' show SemanticsAction;
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:yovoice/features/calls/data/services/voice_call_service.dart';
+import 'package:yovoice/features/permissions/data/permission_readiness_service.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_mute_coordinator.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
@@ -41,6 +42,8 @@ class FakeVoiceService extends VoiceCallService {
   int participantsReadCount = 0;
   int participantCountReadCount = 0;
   int disconnectCalls = 0;
+  int microphonePermissionRequests = 0;
+  AppPermissionAccess microphonePermission = AppPermissionAccess.granted;
   final List<bool> setMutedCalls = [];
 
   @override
@@ -108,6 +111,16 @@ class FakeVoiceService extends VoiceCallService {
     setMutedCalls.add(muted);
     mutedValue = muted;
     notifyListeners();
+  }
+
+  @override
+  Future<PermissionReadinessSnapshot> prepareMediaPermissionsFromUserGesture({
+    bool includeCamera = false,
+  }) async {
+    microphonePermissionRequests++;
+    return PermissionReadinessSnapshot({
+      AppPermissionKind.microphone: microphonePermission,
+    });
   }
 
   void poke() => notifyListeners();
@@ -707,6 +720,30 @@ void main() {
       expect(harness.voice.disconnectCalls, 0);
     });
 
+    testWidgets('promoted listener denial leaves roster and microphone muted', (
+      tester,
+    ) async {
+      final harness = _Harness();
+      harness.voice
+        ..mutedValue = true
+        ..microphonePermission = AppPermissionAccess.denied;
+      await _pump(tester, harness);
+
+      await tester.tap(find.byKey(const ValueKey('mini-player-mute')));
+      await tester.pumpAndSettle();
+
+      expect(harness.voice.microphonePermissionRequests, 1);
+      expect(harness.rooms.mutePersistCalls, isEmpty);
+      expect(harness.voice.setMutedCalls, isEmpty);
+      expect(harness.voice.isMuted, isTrue);
+      expect(
+        find.text(
+          'Microphone access is needed to speak. Enable it and try again.',
+        ),
+        findsOneWidget,
+      );
+    });
+
     testWidgets(
       'THE REPORTED BUG: tapping a DISABLED/busy Mute must swallow the tap '
       '— no navigation, no toggle',
@@ -844,6 +881,43 @@ void main() {
         expect(inkWell.customBorder, isA<CircleBorder>());
       }
 
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('320px at 200% reflows identity above compact controls', (
+      tester,
+    ) async {
+      final harness = _Harness();
+      await _pump(
+        tester,
+        harness,
+        viewport: const Size(320, 844),
+        textScale: 2,
+      );
+
+      expect(
+        find.byKey(const ValueKey('mini-player-accessibility-reflow')),
+        findsOneWidget,
+      );
+      final title = tester.renderObject<RenderParagraph>(
+        find.byKey(const ValueKey('mini-player-room-title')),
+      );
+      final metadata = tester.renderObject<RenderParagraph>(
+        find.byKey(const ValueKey('mini-player-room-metadata')),
+      );
+      expect(
+        title.didExceedMaxLines,
+        isFalse,
+        reason: 'The room identity must remain readable at 200% text.',
+      );
+      expect(metadata.didExceedMaxLines, isFalse);
+      expect(
+        tester
+            .getSize(find.byKey(const ValueKey('mini-player-compact-surface')))
+            .height,
+        lessThanOrEqualTo(220),
+        reason: 'Accessibility reflow must stay a compact two-row capsule.',
+      );
       expect(tester.takeException(), isNull);
     });
 

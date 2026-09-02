@@ -3,7 +3,9 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/features/auth/data/auth_service.dart';
+import 'package:yovoice/features/auth/presentation/auth_error_localizer.dart';
 import 'package:yovoice/features/auth/presentation/screens/login_screen.dart';
 import 'package:yovoice/features/auth/presentation/widgets/startup_loading_screen.dart';
 import 'package:yovoice/features/auth/providers/auth_provider.dart';
@@ -26,7 +28,7 @@ class AuthGate extends ConsumerWidget {
 
   /// Preserves an auth-stream failure while the route stack is replaced, so a
   /// private screen cannot remain above the boundary during an auth error.
-  final String? initialAuthError;
+  final Object? initialAuthError;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -46,7 +48,7 @@ class AuthGate extends ConsumerWidget {
       AsyncLoading() when initialAuthError != null => KeyedSubtree(
         key: const ValueKey('auth-error'),
         child: _AuthErrorScreen(
-          message: initialAuthError!,
+          error: initialAuthError!,
           onRetry: () => ref.invalidate(authStateChangesProvider),
         ),
       ),
@@ -63,7 +65,7 @@ class AuthGate extends ConsumerWidget {
             return KeyedSubtree(
               key: const ValueKey('auth-error'),
               child: _AuthErrorScreen(
-                message: error.toString(),
+                error: error,
                 onRetry: () {
                   ref.invalidate(authStateChangesProvider);
                 },
@@ -228,6 +230,7 @@ class _ProfileBootstrapErrorScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final content = Scaffold(
       backgroundColor: const Color(0xFF0D0618),
       body: SafeArea(
@@ -245,8 +248,11 @@ class _ProfileBootstrapErrorScreen extends StatelessWidget {
                     size: 58,
                   ),
                   const SizedBox(height: 20),
-                  const Text(
-                    'Finishing your profile',
+                  Text(
+                    copy.text(
+                      'Finishing your profile',
+                      'Kończymy konfigurację profilu',
+                    ),
                     textAlign: TextAlign.center,
                     style: TextStyle(
                       color: Colors.white,
@@ -255,9 +261,13 @@ class _ProfileBootstrapErrorScreen extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(height: 10),
-                  const Text(
-                    'Your account is secure. Check your connection and try '
-                    'again to finish setting up YO Voice.',
+                  Text(
+                    copy.text(
+                      'Your account is secure. Check your connection and try '
+                          'again to finish setting up YO Voice.',
+                      'Twoje konto jest bezpieczne. Sprawdź połączenie i spróbuj '
+                          'ponownie, aby dokończyć konfigurację YO Voice.',
+                    ),
                     textAlign: TextAlign.center,
                     style: TextStyle(
                       color: Color(0xFFB8B1C8),
@@ -275,16 +285,18 @@ class _ProfileBootstrapErrorScreen extends StatelessWidget {
                         backgroundColor: const Color(0xFFA02BFF),
                         foregroundColor: Colors.white,
                       ),
-                      child: const Text(
-                        'TRY AGAIN',
-                        style: TextStyle(fontWeight: FontWeight.w800),
+                      child: Text(
+                        copy.text('TRY AGAIN', 'SPRÓBUJ PONOWNIE'),
+                        style: const TextStyle(fontWeight: FontWeight.w800),
                       ),
                     ),
                   ),
                   const SizedBox(height: 8),
                   TextButton(
                     onPressed: () => unawaited(onSignOut()),
-                    child: const Text('Use another account'),
+                    child: Text(
+                      copy.text('Use another account', 'Użyj innego konta'),
+                    ),
                   ),
                 ],
               ),
@@ -298,13 +310,15 @@ class _ProfileBootstrapErrorScreen extends StatelessWidget {
 }
 
 class _AuthErrorScreen extends StatelessWidget {
-  const _AuthErrorScreen({required this.message, required this.onRetry});
+  const _AuthErrorScreen({required this.error, required this.onRetry});
 
-  final String message;
+  final Object error;
   final VoidCallback onRetry;
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
+    final message = localizedAuthError(context, error);
     final content = Scaffold(
       backgroundColor: const Color(0xFF0D0618),
       body: SafeArea(
@@ -320,8 +334,8 @@ class _AuthErrorScreen extends StatelessWidget {
                   color: Color(0xFFC026FF),
                 ),
                 const SizedBox(height: 20),
-                const Text(
-                  'Something went wrong',
+                Text(
+                  copy.text('Something went wrong', 'Coś poszło nie tak'),
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     color: Colors.white,
@@ -364,9 +378,9 @@ class _AuthErrorScreen extends StatelessWidget {
                           borderRadius: BorderRadius.circular(18),
                         ),
                       ),
-                      child: const Text(
-                        'TRY AGAIN',
-                        style: TextStyle(
+                      child: Text(
+                        copy.text('TRY AGAIN', 'SPRÓBUJ PONOWNIE'),
+                        style: const TextStyle(
                           fontSize: 14,
                           fontWeight: FontWeight.w700,
                           letterSpacing: 1,

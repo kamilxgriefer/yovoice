@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
 import 'package:yovoice/core/helpers/error_messages.dart';
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 
@@ -13,6 +14,7 @@ import 'package:yovoice/features/calls/data/services/direct_call_service.dart';
 import 'package:yovoice/features/calls/data/models/direct_call.dart';
 import 'package:yovoice/features/calls/data/services/voice_call_service.dart';
 import 'package:yovoice/features/calls/presentation/screens/direct_call_screen.dart';
+import 'package:yovoice/features/permissions/data/permission_readiness_service.dart';
 import 'package:yovoice/features/messages/data/models/message.dart';
 import 'package:yovoice/features/messages/data/services/active_conversation_registry.dart';
 import 'package:yovoice/features/messages/data/services/direct_attachment_outbox.dart';
@@ -38,10 +40,12 @@ class ChatScreen extends StatefulWidget {
     required this.otherDisplayName,
     required this.otherEmail,
     required this.otherPhotoUrl,
+    this.otherProfileUpdatedAt,
     this.messageService,
     this.auth,
     this.contentReportService,
     this.directCallService,
+    this.voiceCallService,
     this.profileService,
     super.key,
   });
@@ -51,6 +55,7 @@ class ChatScreen extends StatefulWidget {
   final String otherDisplayName;
   final String otherEmail;
   final String otherPhotoUrl;
+  final DateTime? otherProfileUpdatedAt;
 
   /// Optional injection seams, matching the established pattern on
   /// FriendProfileScreen and NotificationsScreen: production passes
@@ -60,6 +65,7 @@ class ChatScreen extends StatefulWidget {
   final FirebaseAuth? auth;
   final ContentReportService? contentReportService;
   final DirectCallGateway? directCallService;
+  final VoiceCallService? voiceCallService;
   final ProfileService? profileService;
 
   @override
@@ -71,6 +77,8 @@ class _ChatScreenState extends State<ChatScreen> {
       widget.messageService ?? MessageService.live;
   late final DirectCallGateway _calls =
       widget.directCallService ?? DirectCallService();
+  late final VoiceCallService _voice =
+      widget.voiceCallService ?? VoiceCallService.instance;
   final TextEditingController _controller = TextEditingController();
   final FocusNode _focusNode = FocusNode();
 
@@ -113,6 +121,7 @@ class _ChatScreenState extends State<ChatScreen> {
   late final String _registeredConversationId;
   late String _otherDisplayName;
   late String _otherPhotoUrl;
+  DateTime? _otherProfileUpdatedAt;
 
   String get _currentUserId =>
       (widget.auth ?? FirebaseAuth.instance).currentUser?.uid ?? '';
@@ -123,6 +132,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _registeredConversationId = widget.conversationId;
     _otherDisplayName = widget.otherDisplayName;
     _otherPhotoUrl = widget.otherPhotoUrl;
+    _otherProfileUpdatedAt = widget.otherProfileUpdatedAt;
     ActiveConversationRegistry.instance.enter(_registeredConversationId);
     try {
       final profiles = widget.profileService ?? ProfileService();
@@ -184,6 +194,9 @@ class _ChatScreenState extends State<ChatScreen> {
   void dispose() {
     ActiveConversationRegistry.instance.leave(_registeredConversationId);
     _typingTimer?.cancel();
+    final shouldClearTyping = _typingAnnounced;
+    _typingAnnounced = false;
+    _lastTypingHeartbeat = null;
     _markReadRetryTimer?.cancel();
     unawaited(_messagesSubscription?.cancel());
     unawaited(_profileSubscription?.cancel());
@@ -197,8 +210,10 @@ class _ChatScreenState extends State<ChatScreen> {
     // Keep teardown in the same single-flight coalescer as ordinary typing.
     // Otherwise an older slow `true` can arrive after a parallel `false` and
     // leave this user shown as typing after the route is gone.
-    _pendingTypingState = false;
-    unawaited(_queueTypingUpdate(false));
+    if (shouldClearTyping) {
+      _pendingTypingState = false;
+      unawaited(_queueTypingUpdate(false));
+    }
     super.dispose();
   }
 
@@ -210,10 +225,16 @@ class _ChatScreenState extends State<ChatScreen> {
     // null is authoritative: it means the user deliberately removed their
     // avatar, not that the profile failed to load.
     final photoUrl = profile.photoUrl?.trim() ?? '';
-    if (name == _otherDisplayName && photoUrl == _otherPhotoUrl) return;
+    final profileUpdatedAt = profile.profileUpdatedAt;
+    if (name == _otherDisplayName &&
+        photoUrl == _otherPhotoUrl &&
+        profileUpdatedAt == _otherProfileUpdatedAt) {
+      return;
+    }
     setState(() {
       _otherDisplayName = name;
       _otherPhotoUrl = photoUrl;
+      _otherProfileUpdatedAt = profileUpdatedAt;
     });
   }
 
@@ -332,10 +353,14 @@ class _ChatScreenState extends State<ChatScreen> {
       );
     } catch (error) {
       if (mounted) {
+        final copy = AppLocalizations.of(context);
         _showMessage(
           intentionalOrFriendly(
             error,
-            fallback: 'Could not update your reaction.',
+            fallback: copy.text(
+              'Could not update your reaction.',
+              'Nie udało się zmienić reakcji.',
+            ),
           ),
         );
       }
@@ -436,15 +461,43 @@ class _ChatScreenState extends State<ChatScreen> {
     DirectCallMediaType mediaType = DirectCallMediaType.audio,
   }) async {
     if (_startingCall) return;
-    final voice = VoiceCallService.instance;
+    final voice = _voice;
     if (voice.status != VoiceCallStatus.disconnected &&
         voice.status != VoiceCallStatus.failed) {
-      _showMessage('Leave your current voice session before starting a call.');
+      _showMessage(
+        AppLocalizations.of(context).text(
+          'Leave your current voice session before starting a call.',
+          'Opuść bieżącą rozmowę głosową, zanim rozpoczniesz połączenie.',
+        ),
+      );
       return;
     }
     setState(() => _startingCall = true);
     String? callId;
     try {
+      final permissionSnapshot = await voice
+          .prepareMediaPermissionsFromUserGesture(
+            includeCamera: mediaType == DirectCallMediaType.video,
+          );
+      if (!mounted) return;
+      if (!permissionSnapshot[AppPermissionKind.microphone].isUsable) {
+        _showMessage(
+          AppLocalizations.of(context).text(
+            'Allow microphone access in system settings before starting a call.',
+            'Zezwól na dostęp do mikrofonu w ustawieniach systemowych, zanim rozpoczniesz połączenie.',
+          ),
+        );
+        return;
+      }
+      if (mediaType == DirectCallMediaType.video &&
+          !permissionSnapshot[AppPermissionKind.camera].isUsable) {
+        _showMessage(
+          AppLocalizations.of(context).text(
+            'Camera access is off. The call will start with audio only.',
+            'Dostęp do aparatu jest wyłączony. Połączenie rozpocznie się tylko z dźwiękiem.',
+          ),
+        );
+      }
       callId = await _calls.startCall(
         calleeId: widget.otherUserId,
         conversationId: widget.conversationId,
@@ -471,7 +524,9 @@ class _ChatScreenState extends State<ChatScreen> {
                       .currentUser
                       ?.displayName ??
                   (widget.auth ?? FirebaseAuth.instance).currentUser?.email ??
-                  'YO Voice user',
+                  AppLocalizations.of(
+                    context,
+                  ).text('YO Voice user', 'Użytkownik YO Voice'),
             ),
           ),
         );
@@ -482,12 +537,19 @@ class _ChatScreenState extends State<ChatScreen> {
       }
     } catch (error) {
       if (!mounted) return;
+      final copy = AppLocalizations.of(context);
       _showMessage(
         friendlyErrorMessage(
           error,
           fallback: mediaType == DirectCallMediaType.video
-              ? 'Could not start this private video call.'
-              : 'Could not start this private voice call.',
+              ? copy.text(
+                  'Could not start this private video call.',
+                  'Nie udało się rozpocząć prywatnego połączenia wideo.',
+                )
+              : copy.text(
+                  'Could not start this private voice call.',
+                  'Nie udało się rozpocząć prywatnego połączenia głosowego.',
+                ),
         ),
       );
     } finally {
@@ -505,9 +567,12 @@ class _ChatScreenState extends State<ChatScreen> {
 
     final reply = _replyTo;
     _typingTimer?.cancel();
+    final shouldClearTyping = _typingAnnounced;
     _typingAnnounced = false;
     _lastTypingHeartbeat = null;
-    unawaited(_queueTypingUpdate(false));
+    if (shouldClearTyping) {
+      unawaited(_queueTypingUpdate(false));
+    }
     _suppressTypingListener = true;
     _controller.clear();
     _suppressTypingListener = false;
@@ -651,6 +716,7 @@ class _ChatScreenState extends State<ChatScreen> {
   /// of the two participants, so this cannot be used to report a
   /// conversation the caller is not in.
   Future<void> _reportMessage(Message message) async {
+    final copy = AppLocalizations.of(context);
     await reportContent(
       context: context,
       service: widget.contentReportService,
@@ -658,17 +724,19 @@ class _ChatScreenState extends State<ChatScreen> {
         conversationId: widget.conversationId,
         messageId: message.id,
       ),
-      title: 'Report this message',
-      subtitle:
-          'Your report goes to the YO Voice moderation team with this '
-          'message attached. $_otherDisplayName is not told who '
-          'reported it.',
+      title: copy.text('Report this message', 'Zgłoś tę wiadomość'),
+      subtitle: copy.template(
+        'Your report goes to the YO Voice moderation team with this message attached. {displayName} is not told who reported it.',
+        'Zgłoszenie wraz z tą wiadomością trafi do zespołu moderacji YO Voice. {displayName} nie dowie się, kto wysłał zgłoszenie.',
+        values: {'displayName': _otherDisplayName},
+      ),
     );
   }
 
   Future<void> _editMessage(Message message) async {
     final editController = TextEditingController(text: message.content);
     final palette = context.appPalette;
+    final copy = AppLocalizations.of(context);
 
     final result = await showDialog<String>(
       context: context,
@@ -676,7 +744,7 @@ class _ChatScreenState extends State<ChatScreen> {
         return AlertDialog(
           backgroundColor: palette.surfaceRaised,
           title: Text(
-            'Edit message',
+            copy.text('Edit message', 'Edytuj wiadomość'),
             style: TextStyle(color: palette.textPrimary),
           ),
           content: TextField(
@@ -686,7 +754,7 @@ class _ChatScreenState extends State<ChatScreen> {
             minLines: 1,
             style: TextStyle(color: palette.textPrimary),
             decoration: InputDecoration(
-              hintText: 'Message',
+              hintText: copy.text('Message', 'Wiadomość'),
               hintStyle: TextStyle(color: palette.textTertiary),
               filled: true,
               fillColor: palette.surfaceMuted,
@@ -699,12 +767,12 @@ class _ChatScreenState extends State<ChatScreen> {
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(dialogContext),
-              child: const Text('Cancel'),
+              child: Text(copy.text('Cancel', 'Anuluj')),
             ),
             FilledButton(
               onPressed: () =>
                   Navigator.pop(dialogContext, editController.text),
-              child: const Text('Save'),
+              child: Text(copy.text('Save', 'Zapisz')),
             ),
           ],
         );
@@ -733,28 +801,32 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<void> _deleteMessage(Message message) async {
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
+    final copy = AppLocalizations.of(context);
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) {
         return AlertDialog(
           backgroundColor: palette.surfaceRaised,
           title: Text(
-            'Delete message?',
+            copy.text('Delete message?', 'Usunąć wiadomość?'),
             style: TextStyle(color: palette.textPrimary),
           ),
           content: Text(
-            'The message will be replaced with “Message deleted”.',
+            copy.text(
+              'The message will be replaced with “Message deleted”.',
+              'Wiadomość zostanie zastąpiona tekstem „Wiadomość usunięta”.',
+            ),
             style: TextStyle(color: palette.textSecondary),
           ),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(dialogContext, false),
-              child: const Text('Cancel'),
+              child: Text(copy.text('Cancel', 'Anuluj')),
             ),
             TextButton(
               onPressed: () => Navigator.pop(dialogContext, true),
               child: Text(
-                'Delete',
+                copy.text('Delete', 'Usuń'),
                 style: TextStyle(color: colors.onErrorContainer),
               ),
             ),
@@ -788,13 +860,27 @@ class _ChatScreenState extends State<ChatScreen> {
 
       if (mounted) {
         setState(() => _isMuted = !_isMuted);
+        final copy = AppLocalizations.of(context);
         _showMessage(
-          _isMuted ? 'Conversation muted.' : 'Notifications turned on.',
+          _isMuted
+              ? copy.text(
+                  'Conversation muted.',
+                  'Powiadomienia dla rozmowy zostały wyciszone.',
+                )
+              : copy.text(
+                  'Notifications turned on.',
+                  'Powiadomienia zostały włączone.',
+                ),
         );
       }
     } catch (_) {
       if (mounted) {
-        _showMessage('Could not update notifications.');
+        _showMessage(
+          AppLocalizations.of(context).text(
+            'Could not update notifications.',
+            'Nie udało się zmienić ustawień powiadomień.',
+          ),
+        );
       }
     }
   }
@@ -808,7 +894,12 @@ class _ChatScreenState extends State<ChatScreen> {
       }
     } catch (_) {
       if (mounted) {
-        _showMessage('Could not archive this conversation.');
+        _showMessage(
+          AppLocalizations.of(context).text(
+            'Could not archive this conversation.',
+            'Nie udało się zarchiwizować tej rozmowy.',
+          ),
+        );
       }
     }
   }
@@ -830,12 +921,16 @@ class _ChatScreenState extends State<ChatScreen> {
       );
     } catch (error) {
       if (mounted) {
+        final copy = AppLocalizations.of(context);
         _showMessage(
           error is VoiceRecordingException
               ? [error.message, error.action].whereType<String>().join(' ')
               : intentionalOrFriendly(
                   error,
-                  fallback: 'Your photo could not be sent. Try again.',
+                  fallback: copy.text(
+                    'Your photo could not be sent. Try again.',
+                    'Nie udało się wysłać zdjęcia. Spróbuj ponownie.',
+                  ),
                 ),
         );
       }
@@ -891,6 +986,7 @@ class _ChatScreenState extends State<ChatScreen> {
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final copy = AppLocalizations.of(context);
 
     return Scaffold(
       key: const ValueKey('chat-screen'),
@@ -923,6 +1019,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   userId: widget.otherUserId,
                   displayName: _otherDisplayName,
                   photoUrl: _otherPhotoUrl,
+                  mediaRevision: _otherProfileUpdatedAt,
                   presenceStream: _presence,
                   muted: _isMuted,
                   callBusy: _startingCall,
@@ -963,7 +1060,10 @@ class _ChatScreenState extends State<ChatScreen> {
                           queuedMedia.isEmpty) {
                         return Center(
                           child: Text(
-                            'Could not load this conversation.',
+                            copy.text(
+                              'Could not load this conversation.',
+                              'Nie udało się wczytać tej rozmowy.',
+                            ),
                             style: TextStyle(color: palette.textSecondary),
                           ),
                         );
@@ -978,6 +1078,7 @@ class _ChatScreenState extends State<ChatScreen> {
                           userId: widget.otherUserId,
                           name: _otherDisplayName,
                           photoUrl: _otherPhotoUrl,
+                          mediaRevision: _otherProfileUpdatedAt,
                         );
                       }
 
@@ -1102,6 +1203,7 @@ class _ChatHeader extends StatelessWidget {
     required this.userId,
     required this.displayName,
     required this.photoUrl,
+    required this.mediaRevision,
     required this.presenceStream,
     required this.muted,
     required this.callBusy,
@@ -1116,6 +1218,7 @@ class _ChatHeader extends StatelessWidget {
   final String userId;
   final String displayName;
   final String photoUrl;
+  final Object? mediaRevision;
   final Stream<ChatPresence> presenceStream;
   final bool muted;
   final bool callBusy;
@@ -1133,6 +1236,7 @@ class _ChatHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
+    final copy = AppLocalizations.of(context);
 
     return Container(
       key: const ValueKey('chat-header'),
@@ -1145,7 +1249,7 @@ class _ChatHeader extends StatelessWidget {
         children: [
           IconButton(
             onPressed: onBack,
-            tooltip: 'Back to chats',
+            tooltip: copy.text('Back to chats', 'Wróć do czatów'),
             icon: Icon(
               Icons.arrow_back_ios_new_rounded,
               color: palette.textPrimary,
@@ -1155,7 +1259,11 @@ class _ChatHeader extends StatelessWidget {
           Expanded(
             child: Semantics(
               button: true,
-              label: 'Open $displayName profile',
+              label: copy.template(
+                'Open {displayName} profile',
+                'Otwórz profil: {displayName}',
+                values: {'displayName': displayName},
+              ),
               child: InkWell(
                 onTap: onProfileTap,
                 borderRadius: BorderRadius.circular(14),
@@ -1167,6 +1275,7 @@ class _ChatHeader extends StatelessWidget {
                         userId: userId,
                         name: displayName,
                         url: photoUrl,
+                        mediaRevision: mediaRevision,
                         radius: 20,
                       ),
                       const SizedBox(width: 11),
@@ -1198,7 +1307,10 @@ class _ChatHeader extends StatelessWidget {
                                 ),
                                 const SizedBox(height: 2),
                                 Text(
-                                  _presenceText(presence),
+                                  _presenceText(
+                                    presence,
+                                    AppLocalizations.of(context),
+                                  ),
                                   style: TextStyle(
                                     color: presence?.isOnline == true
                                         ? const Color(0xFF50DF86)
@@ -1219,7 +1331,15 @@ class _ChatHeader extends StatelessWidget {
           ),
           IconButton(
             onPressed: callBusy ? null : onCall,
-            tooltip: callBusy ? 'Starting voice call' : 'Start voice call',
+            tooltip: callBusy
+                ? copy.text(
+                    'Starting voice call',
+                    'Rozpoczynanie połączenia głosowego',
+                  )
+                : copy.text(
+                    'Start voice call',
+                    'Rozpocznij połączenie głosowe',
+                  ),
             icon: callBusy
                 ? SizedBox.square(
                     dimension: 20,
@@ -1232,14 +1352,16 @@ class _ChatHeader extends StatelessWidget {
           ),
           IconButton(
             onPressed: callBusy ? null : onVideoCall,
-            tooltip: callBusy ? 'Starting call' : 'Start video call',
+            tooltip: callBusy
+                ? copy.text('Starting call', 'Rozpoczynanie połączenia')
+                : copy.text('Start video call', 'Rozpocznij połączenie wideo'),
             icon: Icon(
               Icons.videocam_rounded,
               color: callBusy ? palette.textTertiary : palette.textPrimary,
             ),
           ),
           PopupMenuButton<String>(
-            tooltip: 'Conversation options',
+            tooltip: copy.text('Conversation options', 'Opcje rozmowy'),
             color: palette.surfaceRaised,
             icon: Icon(Icons.more_horiz_rounded, color: palette.textPrimary),
             onSelected: (value) {
@@ -1262,7 +1384,9 @@ class _ChatHeader extends StatelessWidget {
                     ),
                     const SizedBox(width: 12),
                     Text(
-                      muted ? 'Unmute' : 'Mute',
+                      muted
+                          ? copy.text('Unmute', 'Włącz powiadomienia')
+                          : copy.text('Mute', 'Wycisz'),
                       style: TextStyle(color: palette.textPrimary),
                     ),
                   ],
@@ -1275,7 +1399,7 @@ class _ChatHeader extends StatelessWidget {
                     Icon(Icons.archive_outlined, color: palette.textPrimary),
                     const SizedBox(width: 12),
                     Text(
-                      'Archive',
+                      copy.text('Archive', 'Archiwizuj'),
                       style: TextStyle(color: palette.textPrimary),
                     ),
                   ],
@@ -1288,32 +1412,17 @@ class _ChatHeader extends StatelessWidget {
     );
   }
 
-  static String _presenceText(ChatPresence? presence) {
+  static String _presenceText(ChatPresence? presence, AppLocalizations copy) {
     if (presence?.isOnline == true) {
-      return 'Active now';
+      return copy.text('Active now', 'Aktywny teraz');
     }
 
     final lastSeen = presence?.lastSeen;
 
     if (lastSeen == null) {
-      return 'Offline';
+      return copy.text('Offline', 'Nieaktywny');
     }
-
-    final difference = DateTime.now().difference(lastSeen);
-
-    if (difference.inMinutes < 1) {
-      return 'Active just now';
-    }
-
-    if (difference.inMinutes < 60) {
-      return 'Active ${difference.inMinutes}m ago';
-    }
-
-    if (difference.inHours < 24) {
-      return 'Active ${difference.inHours}h ago';
-    }
-
-    return 'Active ${difference.inDays}d ago';
+    return copy.activeTime(lastSeen);
   }
 }
 
@@ -1322,15 +1431,18 @@ class _EmptyConversation extends StatelessWidget {
     required this.userId,
     required this.name,
     required this.photoUrl,
+    required this.mediaRevision,
   });
 
   final String userId;
   final String name;
   final String photoUrl;
+  final Object? mediaRevision;
 
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
+    final copy = AppLocalizations.of(context);
 
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -1349,6 +1461,7 @@ class _EmptyConversation extends StatelessWidget {
                     userId: userId,
                     name: name,
                     url: photoUrl,
+                    mediaRevision: mediaRevision,
                     radius: 43,
                   ),
                   const SizedBox(height: 17),
@@ -1365,7 +1478,10 @@ class _EmptyConversation extends StatelessWidget {
                   ),
                   const SizedBox(height: 6),
                   Text(
-                    'You are friends on YO Voice',
+                    copy.text(
+                      'You are friends on YO Voice',
+                      'Jesteście znajomymi w YO Voice',
+                    ),
                     textAlign: TextAlign.center,
                     style: TextStyle(
                       color: palette.textSecondary,
@@ -1374,7 +1490,7 @@ class _EmptyConversation extends StatelessWidget {
                   ),
                   const SizedBox(height: 18),
                   Text(
-                    'Say hello 👋',
+                    copy.text('Say hello 👋', 'Przywitaj się 👋'),
                     textAlign: TextAlign.center,
                     style: TextStyle(
                       color: palette.focus,
@@ -1399,13 +1515,14 @@ class _DateDivider extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
+    final copy = AppLocalizations.of(context);
     final now = DateTime.now();
     final yesterday = now.subtract(const Duration(days: 1));
     final label = _sameDate(date, now)
-        ? 'Today'
+        ? copy.today
         : _sameDate(date, yesterday)
-        ? 'Yesterday'
-        : '${date.day}/${date.month}/${date.year}';
+        ? copy.yesterday
+        : copy.calendarDate(date);
 
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 16),
@@ -1433,6 +1550,7 @@ class _TypingIndicator extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
+    final copy = AppLocalizations.of(context);
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(18, 4, 18, 8),
@@ -1457,7 +1575,7 @@ class _TypingIndicator extends StatelessWidget {
           ),
           const SizedBox(width: 9),
           Text(
-            'typing…',
+            copy.text('typing…', 'pisze…'),
             style: TextStyle(color: palette.textSecondary, fontSize: 11),
           ),
         ],
@@ -1532,6 +1650,7 @@ class _ReplyPreview extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
+    final copy = AppLocalizations.of(context);
 
     return Container(
       width: double.infinity,
@@ -1558,7 +1677,7 @@ class _ReplyPreview extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Replying to message',
+                  copy.text('Replying to message', 'Odpowiadasz na wiadomość'),
                   style: TextStyle(
                     color: palette.focus,
                     fontSize: 11,
@@ -1567,7 +1686,7 @@ class _ReplyPreview extends StatelessWidget {
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  message.previewText(),
+                  _localizedMessagePreview(message, copy),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(color: palette.textSecondary, fontSize: 12),
@@ -1577,7 +1696,7 @@ class _ReplyPreview extends StatelessWidget {
           ),
           IconButton(
             onPressed: onClose,
-            tooltip: 'Close reply',
+            tooltip: copy.text('Close reply', 'Anuluj odpowiedź'),
             icon: Icon(Icons.close_rounded, color: palette.textSecondary),
           ),
         ],
@@ -1600,12 +1719,15 @@ class _QueuedTextMessageBubble extends StatelessWidget {
   final VoidCallback onRetry;
   final VoidCallback onDiscard;
 
-  String get _status {
-    if (accepted) return 'Sent';
+  String _status(AppLocalizations copy) {
+    if (accepted) return copy.text('Sent', 'Wysłano');
     return switch (entry.state) {
-      OutboxState.pending => 'Sending…',
-      OutboxState.retrying => 'Waiting for connection',
-      OutboxState.failed => 'Not sent',
+      OutboxState.pending => copy.text('Sending…', 'Wysyłanie…'),
+      OutboxState.retrying => copy.text(
+        'Waiting for connection',
+        'Oczekiwanie na połączenie',
+      ),
+      OutboxState.failed => copy.text('Not sent', 'Nie wysłano'),
     };
   }
 
@@ -1618,17 +1740,107 @@ class _QueuedTextMessageBubble extends StatelessWidget {
     };
   }
 
+  String _failureGuidance(AppLocalizations copy) {
+    final error = (entry.lastError ?? '').trim().toLowerCase();
+    bool containsAny(Iterable<String> fragments) =>
+        fragments.any(error.contains);
+
+    if (containsAny(const ['unauthenticated', 'signed in', 'session'])) {
+      return copy.text(
+        'Your session needs to be refreshed. Sign in again, then retry.',
+        'Sesja wymaga odświeżenia. Zaloguj się ponownie i spróbuj jeszcze raz.',
+      );
+    }
+    if (containsAny(const [
+      'resource-exhausted',
+      'rate limit',
+      'too many',
+      'quota',
+    ])) {
+      return copy.text(
+        'Too many messages were sent at once. Wait a moment, then retry.',
+        'Wysłano zbyt wiele wiadomości naraz. Odczekaj chwilę i spróbuj ponownie.',
+      );
+    }
+    if (containsAny(const [
+      'not-found',
+      'conversation does not exist',
+      'conversation is missing',
+      'recipient does not exist',
+    ])) {
+      return copy.text(
+        'This conversation is no longer available. Return to Chats and start a new one.',
+        'Ta rozmowa nie jest już dostępna. Wróć do czatów i rozpocznij nową.',
+      );
+    }
+    if (containsAny(const [
+      'invalid-argument',
+      'message cannot be empty',
+      'message is too long',
+      'malformed',
+    ])) {
+      return copy.text(
+        "This message can't be sent as written. Copy it, remove it, then send a shorter message.",
+        'Nie można wysłać tej wiadomości w tej formie. Skopiuj ją, usuń i wyślij krótszą wersję.',
+      );
+    }
+    if (containsAny(const [
+      'permission-denied',
+      'permission denied',
+      'failed-precondition',
+      'blocked',
+      'privacy',
+      'restricted',
+      'not friends',
+    ])) {
+      return copy.text(
+        "Messaging isn't available for this conversation. Check the person's profile or remove this message.",
+        'W tej rozmowie wiadomości są niedostępne. Sprawdź profil tej osoby lub usuń wiadomość.',
+      );
+    }
+    if (containsAny(const [
+      'unavailable',
+      'deadline-exceeded',
+      'timeout',
+      'timed out',
+      'connection',
+      'network',
+      'offline',
+      'socket',
+      'dns',
+      'internal',
+      'aborted',
+      'cancelled',
+    ])) {
+      return copy.text(
+        "YO Voice couldn't reach the messaging service. Check your connection, then retry.",
+        'YO Voice nie może teraz połączyć się z usługą wiadomości. Sprawdź internet i spróbuj ponownie.',
+      );
+    }
+    return copy.text(
+      "YO Voice couldn't send this message. Check your connection, then retry or remove it.",
+      'YO Voice nie może wysłać tej wiadomości. Sprawdź internet, a następnie spróbuj ponownie lub ją usuń.',
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final failed = !accepted && entry.state == OutboxState.failed;
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
+    final copy = AppLocalizations.of(context);
+    final status = _status(copy);
+    final failureGuidance = failed ? _failureGuidance(copy) : null;
     final statusColor = failed ? colors.onErrorContainer : palette.focus;
 
     return Semantics(
       container: true,
       explicitChildNodes: true,
-      label: 'Your message: ${entry.text}.',
+      label: copy.template(
+        'Your message: {message}.',
+        'Twoja wiadomość: {message}.',
+        values: {'message': entry.text},
+      ),
       child: Align(
         alignment: Alignment.centerRight,
         child: Padding(
@@ -1671,7 +1883,11 @@ class _QueuedTextMessageBubble extends StatelessWidget {
               const SizedBox(height: 4),
               Semantics(
                 liveRegion: true,
-                label: 'Message status: $_status',
+                label: copy.template(
+                  'Message status: {status}',
+                  'Status wiadomości: {status}',
+                  values: {'status': status},
+                ),
                 child: ExcludeSemantics(
                   child: Wrap(
                     alignment: WrapAlignment.end,
@@ -1697,7 +1913,7 @@ class _QueuedTextMessageBubble extends StatelessWidget {
                           const SizedBox(width: 3),
                           Flexible(
                             child: Text(
-                              _status,
+                              status,
                               style: TextStyle(
                                 color: statusColor,
                                 fontSize: 10.5,
@@ -1712,9 +1928,35 @@ class _QueuedTextMessageBubble extends StatelessWidget {
                 ),
               ),
               if (failed) ...[
+                const SizedBox(height: 6),
+                Semantics(
+                  liveRegion: true,
+                  label: copy.template(
+                    'Why it was not sent: {guidance}',
+                    'Dlaczego nie wysłano: {guidance}',
+                    values: {'guidance': failureGuidance!},
+                  ),
+                  child: ExcludeSemantics(
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 310),
+                      child: Text(
+                        failureGuidance,
+                        textAlign: TextAlign.right,
+                        style: TextStyle(
+                          color: palette.textSecondary,
+                          fontSize: 11.5,
+                          height: 1.3,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
                 const SizedBox(height: 2),
-                Row(
-                  mainAxisSize: MainAxisSize.min,
+                Wrap(
+                  alignment: WrapAlignment.end,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  spacing: 4,
+                  runSpacing: 2,
                   children: [
                     TextButton(
                       onPressed: onDiscard,
@@ -1722,7 +1964,7 @@ class _QueuedTextMessageBubble extends StatelessWidget {
                         foregroundColor: palette.textSecondary,
                         minimumSize: const Size(64, 44),
                       ),
-                      child: const Text('Remove'),
+                      child: Text(copy.text('Remove', 'Usuń')),
                     ),
                     TextButton(
                       onPressed: onRetry,
@@ -1730,7 +1972,7 @@ class _QueuedTextMessageBubble extends StatelessWidget {
                         foregroundColor: palette.focus,
                         minimumSize: const Size(64, 44),
                       ),
-                      child: const Text('Retry'),
+                      child: Text(copy.text('Retry', 'Spróbuj ponownie')),
                     ),
                   ],
                 ),
@@ -1755,13 +1997,17 @@ class _QueuedMediaMessageCard extends StatelessWidget {
   final VoidCallback onRetry;
   final VoidCallback onDiscard;
 
-  String get _kind =>
-      entry.type == MessageType.voice ? 'Voice message' : 'Photo';
+  String _kind(AppLocalizations copy) => entry.type == MessageType.voice
+      ? copy.text('Voice message', 'Wiadomość głosowa')
+      : copy.text('Photo', 'Zdjęcie');
 
-  String get _status => switch (entry.status) {
-    DirectAttachmentOutboxStatus.queued => 'Sending…',
-    DirectAttachmentOutboxStatus.retrying => 'Waiting for connection',
-    DirectAttachmentOutboxStatus.failed => 'Not sent',
+  String _status(AppLocalizations copy) => switch (entry.status) {
+    DirectAttachmentOutboxStatus.queued => copy.text('Sending…', 'Wysyłanie…'),
+    DirectAttachmentOutboxStatus.retrying => copy.text(
+      'Waiting for connection',
+      'Oczekiwanie na połączenie',
+    ),
+    DirectAttachmentOutboxStatus.failed => copy.text('Not sent', 'Nie wysłano'),
   };
 
   IconData get _kindIcon => entry.type == MessageType.voice
@@ -1773,6 +2019,12 @@ class _QueuedMediaMessageCard extends StatelessWidget {
     final failed = entry.status == DirectAttachmentOutboxStatus.failed;
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
+    final copy = AppLocalizations.of(context);
+    final kind = _kind(copy);
+    final status = _status(copy);
+    final semanticSubject = entry.type == MessageType.voice
+        ? copy.text('Your voice message', 'Twoja wiadomość głosowa')
+        : copy.text('Your photo', 'Twoje zdjęcie');
     final statusColor = failed ? colors.onErrorContainer : palette.focus;
     final maxWidth = (MediaQuery.sizeOf(context).width * 0.82).clamp(
       220.0,
@@ -1781,7 +2033,11 @@ class _QueuedMediaMessageCard extends StatelessWidget {
 
     return Semantics(
       container: true,
-      label: 'Your $_kind. Status: $_status.',
+      label: copy.template(
+        '{subject}. Status: {status}.',
+        '{subject}. Status: {status}.',
+        values: {'subject': semanticSubject, 'status': status},
+      ),
       child: Align(
         alignment: Alignment.centerRight,
         child: Container(
@@ -1821,7 +2077,7 @@ class _QueuedMediaMessageCard extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          _kind,
+                          kind,
                           style: TextStyle(
                             color: palette.textPrimary,
                             fontWeight: FontWeight.w700,
@@ -1829,7 +2085,7 @@ class _QueuedMediaMessageCard extends StatelessWidget {
                         ),
                         const SizedBox(height: 2),
                         Text(
-                          _status,
+                          status,
                           style: TextStyle(
                             color: statusColor,
                             fontSize: 12,
@@ -1855,7 +2111,7 @@ class _QueuedMediaMessageCard extends StatelessWidget {
                         foregroundColor: palette.textSecondary,
                         minimumSize: const Size(84, 44),
                       ),
-                      child: const Text('Discard'),
+                      child: Text(copy.text('Discard', 'Odrzuć')),
                     ),
                     FilledButton(
                       key: ValueKey('retry-media-${entry.id}'),
@@ -1865,7 +2121,7 @@ class _QueuedMediaMessageCard extends StatelessWidget {
                         foregroundColor: colors.onPrimary,
                         minimumSize: const Size(84, 44),
                       ),
-                      child: const Text('Retry'),
+                      child: Text(copy.text('Retry', 'Spróbuj ponownie')),
                     ),
                   ],
                 ],
@@ -1901,6 +2157,7 @@ class _Composer extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
+    final copy = AppLocalizations.of(context);
 
     return Container(
       key: const ValueKey('chat-composer'),
@@ -1919,7 +2176,9 @@ class _Composer extends StatelessWidget {
         children: [
           IconButton(
             onPressed: sendingMedia ? null : onPhoto,
-            tooltip: sendingMedia ? 'Sending attachment' : 'Add photo',
+            tooltip: sendingMedia
+                ? copy.text('Sending attachment', 'Wysyłanie załącznika')
+                : copy.text('Add photo', 'Dodaj zdjęcie'),
             style: IconButton.styleFrom(
               backgroundColor: palette.surfaceMuted,
               foregroundColor: palette.textPrimary,
@@ -1956,7 +2215,7 @@ class _Composer extends StatelessWidget {
                       textCapitalization: TextCapitalization.sentences,
                       style: TextStyle(color: palette.textPrimary),
                       decoration: InputDecoration(
-                        hintText: 'Message…',
+                        hintText: copy.text('Message…', 'Wiadomość…'),
                         hintStyle: TextStyle(color: palette.textTertiary),
                         border: InputBorder.none,
                         contentPadding: const EdgeInsets.fromLTRB(
@@ -1988,7 +2247,10 @@ class _Composer extends StatelessWidget {
                             ? IconButton(
                                 key: const ValueKey('saving'),
                                 onPressed: null,
-                                tooltip: 'Saving message',
+                                tooltip: copy.text(
+                                  'Saving message',
+                                  'Zapisywanie wiadomości',
+                                ),
                                 icon: SizedBox(
                                   width: 20,
                                   height: 20,
@@ -2002,7 +2264,7 @@ class _Composer extends StatelessWidget {
                             ? IconButton(
                                 key: const ValueKey('send'),
                                 onPressed: onSend,
-                                tooltip: 'Send',
+                                tooltip: copy.text('Send', 'Wyślij'),
                                 icon: Icon(
                                   Icons.send_rounded,
                                   color: colors.primary,
@@ -2011,7 +2273,10 @@ class _Composer extends StatelessWidget {
                             : IconButton(
                                 key: const ValueKey('voice'),
                                 onPressed: sendingMedia ? null : onVoice,
-                                tooltip: 'Record voice message',
+                                tooltip: copy.text(
+                                  'Record voice message',
+                                  'Nagraj wiadomość głosową',
+                                ),
                                 icon: Icon(
                                   Icons.mic_none_rounded,
                                   color: palette.textPrimary,
@@ -2035,8 +2300,11 @@ class _ConversationHistoryErrorBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const label =
-        'Could not load this conversation. Your unsent messages are still shown.';
+    final copy = AppLocalizations.of(context);
+    final label = copy.text(
+      'Could not load this conversation. Your unsent messages are still shown.',
+      'Nie udało się wczytać tej rozmowy. Niewysłane wiadomości są nadal widoczne.',
+    );
     final colors = Theme.of(context).colorScheme;
 
     return Semantics(
@@ -2066,7 +2334,10 @@ class _ConversationHistoryErrorBanner extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Could not load this conversation.',
+                      copy.text(
+                        'Could not load this conversation.',
+                        'Nie udało się wczytać tej rozmowy.',
+                      ),
                       style: TextStyle(
                         color: colors.onErrorContainer,
                         fontWeight: FontWeight.w700,
@@ -2074,7 +2345,10 @@ class _ConversationHistoryErrorBanner extends StatelessWidget {
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      'Your unsent messages are still shown.',
+                      copy.text(
+                        'Your unsent messages are still shown.',
+                        'Niewysłane wiadomości są nadal widoczne.',
+                      ),
                       style: TextStyle(color: colors.onErrorContainer),
                     ),
                   ],
@@ -2155,7 +2429,12 @@ class _VoiceMessageRecorderSheetState
       }
     } catch (_) {
       if (mounted) {
-        setState(() => _error = 'Recording could not be started. Try again.');
+        setState(
+          () => _error = AppLocalizations.of(context).text(
+            'Recording could not be started. Try again.',
+            'Nie udało się rozpocząć nagrywania. Spróbuj ponownie.',
+          ),
+        );
       }
     }
   }
@@ -2225,7 +2504,10 @@ class _VoiceMessageRecorderSheetState
     } catch (_) {
       if (mounted) {
         setState(() {
-          _error = 'This recording could not be previewed. Record it again.';
+          _error = AppLocalizations.of(context).text(
+            'This recording could not be previewed. Record it again.',
+            'Nie udało się odtworzyć nagrania. Nagraj je ponownie.',
+          );
         });
       }
     }
@@ -2253,11 +2535,15 @@ class _VoiceMessageRecorderSheetState
       }
     } catch (error) {
       if (mounted) {
+        final copy = AppLocalizations.of(context);
         setState(() {
           _publishing = false;
           _error = intentionalOrFriendly(
             error,
-            fallback: 'Your voice message could not be sent. Try again.',
+            fallback: copy.text(
+              'Your voice message could not be sent. Try again.',
+              'Nie udało się wysłać wiadomości głosowej. Spróbuj ponownie.',
+            ),
           );
         });
       }
@@ -2269,9 +2555,13 @@ class _VoiceMessageRecorderSheetState
     final hasTake = _audio != null;
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
+    final copy = AppLocalizations.of(context);
     return Semantics(
       namesRoute: true,
-      label: 'Voice message recorder',
+      label: copy.text(
+        'Voice message recorder',
+        'Nagrywanie wiadomości głosowej',
+      ),
       child: Container(
         padding: EdgeInsets.fromLTRB(
           22,
@@ -2290,16 +2580,28 @@ class _VoiceMessageRecorderSheetState
             mainAxisSize: MainAxisSize.min,
             children: [
               YoModalSheetChrome(
-                sheetLabel: 'voice message recorder',
+                sheetLabel: copy.text(
+                  'voice message recorder',
+                  'nagrywanie wiadomości głosowej',
+                ),
                 surfaceColor: palette.surfaceRaised,
               ),
               const SizedBox(height: 4),
               Text(
                 _recording
-                    ? 'Recording voice message…'
+                    ? copy.text(
+                        'Recording voice message…',
+                        'Nagrywanie wiadomości głosowej…',
+                      )
                     : hasTake
-                    ? 'Voice message ready'
-                    : 'Record a voice message',
+                    ? copy.text(
+                        'Voice message ready',
+                        'Wiadomość głosowa jest gotowa',
+                      )
+                    : copy.text(
+                        'Record a voice message',
+                        'Nagraj wiadomość głosową',
+                      ),
                 style: TextStyle(
                   color: palette.textPrimary,
                   fontSize: 21,
@@ -2329,10 +2631,10 @@ class _VoiceMessageRecorderSheetState
               Semantics(
                 button: true,
                 label: _recording
-                    ? 'Stop recording'
+                    ? copy.text('Stop recording', 'Zatrzymaj nagrywanie')
                     : hasTake
-                    ? 'Record again'
-                    : 'Start recording',
+                    ? copy.text('Record again', 'Nagraj ponownie')
+                    : copy.text('Start recording', 'Rozpocznij nagrywanie'),
                 child: IconButton.filled(
                   onPressed: _publishing ? null : _toggleRecording,
                   style: IconButton.styleFrom(
@@ -2363,10 +2665,13 @@ class _VoiceMessageRecorderSheetState
                     ),
                     label: Text(
                       _previewState == PlayerState.playing
-                          ? 'Pause preview'
+                          ? copy.text('Pause preview', 'Wstrzymaj odsłuch')
                           : _previewState == PlayerState.paused
-                          ? 'Resume preview'
-                          : 'Preview voice message',
+                          ? copy.text('Resume preview', 'Wznów odsłuch')
+                          : copy.text(
+                              'Preview voice message',
+                              'Odsłuchaj wiadomość głosową',
+                            ),
                     ),
                   ),
                 ),
@@ -2385,7 +2690,12 @@ class _VoiceMessageRecorderSheetState
                           )
                         : const Icon(Icons.send_rounded),
                     label: Text(
-                      _publishing ? 'Sending…' : 'Send voice message',
+                      _publishing
+                          ? copy.text('Sending…', 'Wysyłanie…')
+                          : copy.text(
+                              'Send voice message',
+                              'Wyślij wiadomość głosową',
+                            ),
                     ),
                   ),
                 ),
@@ -2422,6 +2732,7 @@ class _MessageActionsSheet extends StatelessWidget {
     const reactions = ['❤️', '😂', '🔥', '😮', '😢', '👍'];
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
+    final copy = AppLocalizations.of(context);
     final warning = Theme.of(context).brightness == Brightness.dark
         ? const Color(0xFFFFB547)
         : const Color(0xFF754A00);
@@ -2447,7 +2758,7 @@ class _MessageActionsSheet extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             YoModalSheetChrome(
-              sheetLabel: 'message actions',
+              sheetLabel: copy.text('message actions', 'opcje wiadomości'),
               surfaceColor: palette.surfaceRaised,
             ),
             const SizedBox(height: 1),
@@ -2474,7 +2785,7 @@ class _MessageActionsSheet extends StatelessWidget {
               onTap: onReply,
               leading: Icon(Icons.reply_rounded, color: palette.textPrimary),
               title: Text(
-                'Reply',
+                copy.text('Reply', 'Odpowiedz'),
                 style: TextStyle(color: palette.textPrimary),
               ),
             ),
@@ -2483,7 +2794,7 @@ class _MessageActionsSheet extends StatelessWidget {
                 onTap: onEdit,
                 leading: Icon(Icons.edit_outlined, color: palette.textPrimary),
                 title: Text(
-                  'Edit',
+                  copy.text('Edit', 'Edytuj'),
                   style: TextStyle(color: palette.textPrimary),
                 ),
               ),
@@ -2495,7 +2806,7 @@ class _MessageActionsSheet extends StatelessWidget {
                   color: colors.onErrorContainer,
                 ),
                 title: Text(
-                  'Delete',
+                  copy.text('Delete', 'Usuń'),
                   style: TextStyle(color: colors.onErrorContainer),
                 ),
               ),
@@ -2507,7 +2818,10 @@ class _MessageActionsSheet extends StatelessWidget {
                 key: const ValueKey('report-message'),
                 onTap: onReport,
                 leading: Icon(Icons.flag_outlined, color: warning),
-                title: Text('Report message', style: TextStyle(color: warning)),
+                title: Text(
+                  copy.text('Report message', 'Zgłoś wiadomość'),
+                  style: TextStyle(color: warning),
+                ),
               ),
           ],
         ),
@@ -2521,12 +2835,14 @@ class _Avatar extends StatelessWidget {
     required this.userId,
     required this.name,
     required this.url,
+    required this.mediaRevision,
     required this.radius,
   });
 
   final String userId;
   final String name;
   final String url;
+  final Object? mediaRevision;
   final double radius;
 
   @override
@@ -2536,7 +2852,19 @@ class _Avatar extends StatelessWidget {
       userId: userId,
       backgroundColor: const Color(0xFF7B25E8),
       photoUrl: url,
+      mediaRevision: mediaRevision,
       displayName: name,
     );
   }
+}
+
+String _localizedMessagePreview(Message message, AppLocalizations copy) {
+  if (message.isDeleted) {
+    return copy.text('Message deleted', 'Wiadomość usunięta');
+  }
+  return switch (message.type) {
+    MessageType.voice => copy.text('Voice message', 'Wiadomość głosowa'),
+    MessageType.image => copy.text('Photo', 'Zdjęcie'),
+    MessageType.text => message.content,
+  };
 }

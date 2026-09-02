@@ -70,8 +70,7 @@ class AppearanceLanguageSettingsSection extends StatelessWidget {
     AppLanguagePreference language,
   ) => switch (language) {
     AppLanguagePreference.system => copy.systemLanguage,
-    AppLanguagePreference.english => 'English',
-    AppLanguagePreference.polish => 'Polski · Beta',
+    _ => language.nativeName,
   };
 }
 

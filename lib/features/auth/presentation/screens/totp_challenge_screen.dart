@@ -6,6 +6,7 @@ import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_radius.dart';
@@ -107,15 +108,18 @@ class _TotpChallengeScreenState extends State<TotpChallengeScreen> {
     Navigator.of(context).pop();
   }
 
-  String get _verifyButtonLabel {
-    if (!_locked) return 'Verify and continue';
-    if (_verified) return 'Verified';
+  String _verifyButtonLabel(BuildContext context) {
+    final copy = AppLocalizations.of(context);
+    if (!_locked) {
+      return copy.text('Verify and continue', 'Zweryfikuj i kontynuuj');
+    }
+    if (_verified) return copy.text('Verified', 'Zweryfikowano');
     if (_error != null) {
       return _errorKind == _ChallengeErrorKind.invalid
-          ? 'Code not accepted'
-          : 'Could not verify';
+          ? copy.text('Code not accepted', 'Kod odrzucony')
+          : copy.text('Could not verify', 'Weryfikacja nieudana');
     }
-    return 'Verification in progress';
+    return copy.text('Verification in progress', 'Trwa weryfikacja');
   }
 
   Future<void> _submit() async {
@@ -123,9 +127,13 @@ class _TotpChallengeScreenState extends State<TotpChallengeScreen> {
     if (_locked) return;
     final selectedFactorUid = _selectedFactorUid;
     if (selectedFactorUid == null) return;
+    final copy = AppLocalizations.of(context);
     final code = _codeController.text;
     if (!RegExp(r'^\d{6}$').hasMatch(code)) {
-      const message = 'Enter all 6 digits.';
+      final message = copy.text(
+        'Enter all 6 digits.',
+        'Wpisz wszystkie 6 cyfr.',
+      );
       _motionKey.currentState?.resetEditing();
       setState(() {
         _error = message;
@@ -163,7 +171,10 @@ class _TotpChallengeScreenState extends State<TotpChallengeScreen> {
       Navigator.of(context).pop(true);
     } on FormatException {
       await _showFailure(
-        'Two-factor verification could not be completed. Try again.',
+        copy.text(
+          'Two-factor verification could not be completed. Try again.',
+          'Nie udało się ukończyć weryfikacji dwuetapowej. Spróbuj ponownie.',
+        ),
         kind: _ChallengeErrorKind.warning,
       );
     } on FirebaseAuthException catch (error) {
@@ -171,32 +182,47 @@ class _TotpChallengeScreenState extends State<TotpChallengeScreen> {
         case 'invalid-verification-code':
         case 'invalid-credential':
           await _showFailure(
-            'That code is not valid. Enter a new code and try again.',
+            copy.text(
+              'That code is not valid. Enter a new code and try again.',
+              'Ten kod jest nieprawidłowy. Wpisz nowy kod i spróbuj ponownie.',
+            ),
             kind: _ChallengeErrorKind.invalid,
             clearCode: true,
           );
           return;
         case 'too-many-requests':
           await _showFailure(
-            'Too many attempts. Wait a moment before trying again.',
+            copy.text(
+              'Too many attempts. Wait a moment before trying again.',
+              'Zbyt wiele prób. Odczekaj chwilę i spróbuj ponownie.',
+            ),
             kind: _ChallengeErrorKind.warning,
           );
           return;
         case 'network-request-failed':
           await _showFailure(
-            'Two-factor verification could not be completed. Check your connection and try again.',
+            copy.text(
+              'Two-factor verification could not be completed. Check your connection and try again.',
+              'Nie udało się ukończyć weryfikacji dwuetapowej. Sprawdź połączenie i spróbuj ponownie.',
+            ),
             kind: _ChallengeErrorKind.warning,
           );
           return;
         default:
           await _showFailure(
-            'Two-factor verification could not be completed. Try again.',
+            copy.text(
+              'Two-factor verification could not be completed. Try again.',
+              'Nie udało się ukończyć weryfikacji dwuetapowej. Spróbuj ponownie.',
+            ),
             kind: _ChallengeErrorKind.warning,
           );
       }
     } catch (_) {
       await _showFailure(
-        'Two-factor verification could not be completed. Check your connection and try again.',
+        copy.text(
+          'Two-factor verification could not be completed. Check your connection and try again.',
+          'Nie udało się ukończyć weryfikacji dwuetapowej. Sprawdź połączenie i spróbuj ponownie.',
+        ),
         kind: _ChallengeErrorKind.warning,
       );
     }
@@ -256,6 +282,7 @@ class _TotpChallengeScreenState extends State<TotpChallengeScreen> {
       child: Builder(
         builder: (context) {
           final palette = context.appPalette;
+          final copy = AppLocalizations.of(context);
           return PopScope<bool>(
             canPop: false,
             onPopInvokedWithResult: _handlePopInvoked,
@@ -310,7 +337,10 @@ class _TotpChallengeScreenState extends State<TotpChallengeScreen> {
                                 Semantics(
                                   header: true,
                                   child: Text(
-                                    'Confirm it’s you',
+                                    copy.text(
+                                      'Confirm it’s you',
+                                      'Potwierdź swoją tożsamość',
+                                    ),
                                     textAlign: TextAlign.center,
                                     style: AppTypography.headlineLarge.copyWith(
                                       color: palette.textPrimary,
@@ -319,7 +349,10 @@ class _TotpChallengeScreenState extends State<TotpChallengeScreen> {
                                 ),
                                 const SizedBox(height: AppSpacing.sm),
                                 Text(
-                                  'Enter the current code from the authenticator app connected to your YO Voice account.',
+                                  copy.text(
+                                    'Enter the current code from the authenticator app connected to your YO Voice account.',
+                                    'Wpisz aktualny kod z aplikacji uwierzytelniającej połączonej z Twoim kontem YO Voice.',
+                                  ),
                                   textAlign: TextAlign.center,
                                   style: AppTypography.bodyMedium.copyWith(
                                     color: palette.textSecondary,
@@ -327,9 +360,11 @@ class _TotpChallengeScreenState extends State<TotpChallengeScreen> {
                                 ),
                                 const SizedBox(height: AppSpacing.lg),
                                 if (widget.challenge.factors.isEmpty)
-                                  const _ChallengeErrorCard(
-                                    message:
-                                        'No supported authenticator is available for this account. Contact support.',
+                                  _ChallengeErrorCard(
+                                    message: copy.text(
+                                      'No supported authenticator is available for this account. Contact support.',
+                                      'Dla tego konta nie ma obsługiwanej aplikacji uwierzytelniającej. Skontaktuj się z pomocą techniczną.',
+                                    ),
                                     kind: _ChallengeErrorKind.warning,
                                   )
                                 else ...[
@@ -381,7 +416,7 @@ class _TotpChallengeScreenState extends State<TotpChallengeScreen> {
                                         ),
                                       ),
                                       child: Text(
-                                        _verifyButtonLabel,
+                                        _verifyButtonLabel(context),
                                         textAlign: TextAlign.center,
                                         style: AppTypography.labelLarge,
                                       ),
@@ -421,12 +456,13 @@ class _Header extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
+    final copy = AppLocalizations.of(context);
     return Row(
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
         IconButton(
           onPressed: locked ? null : onBack,
-          tooltip: 'Back',
+          tooltip: copy.text('Back', 'Wstecz'),
           constraints: const BoxConstraints.tightFor(width: 48, height: 48),
           color: palette.textPrimary,
           disabledColor: palette.textTertiary,
@@ -437,7 +473,7 @@ class _Header extends StatelessWidget {
           child: Semantics(
             header: true,
             child: Text(
-              'Two-factor verification',
+              copy.text('Two-factor verification', 'Weryfikacja dwuetapowa'),
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
               style: AppTypography.titleLarge.copyWith(
@@ -467,6 +503,7 @@ class _FactorSelector extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
+    final copy = AppLocalizations.of(context);
     Widget label(TotpSignInFactor factor) => Text(
       factor.displayName,
       maxLines: 1,
@@ -479,7 +516,9 @@ class _FactorSelector extends StatelessWidget {
       initialValue: value,
       isExpanded: true,
       dropdownColor: palette.surfaceRaised,
-      decoration: const InputDecoration(labelText: 'Authenticator'),
+      decoration: InputDecoration(
+        labelText: copy.text('Authenticator', 'Aplikacja uwierzytelniająca'),
+      ),
       items: factors
           .map(
             (factor) => DropdownMenuItem<String>(

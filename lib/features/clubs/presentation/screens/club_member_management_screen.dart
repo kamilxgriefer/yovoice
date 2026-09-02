@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/helpers/error_messages.dart';
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/clubs/data/models/club_member.dart';
 import 'package:yovoice/features/clubs/data/services/club_service.dart';
@@ -36,9 +38,16 @@ class _ClubMemberManagementScreenState
         role: role,
       );
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Role changed to ${role.label}.')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            AppLocalizations.of(context).text(
+              'Role changed to ${role.label}.',
+              'Zmieniono rolę na ${_roleLabel(role, AppLocalizations.of(context))}.',
+            ),
+          ),
+        ),
+      );
       Navigator.of(context).pop();
     } catch (error) {
       if (!mounted) return;
@@ -56,21 +65,26 @@ class _ClubMemberManagementScreenState
       builder: (dialogContext) {
         final palette = dialogContext.appPalette;
         final colors = Theme.of(dialogContext).colorScheme;
+        final copy = AppLocalizations.of(dialogContext);
         return AlertDialog(
           backgroundColor: palette.surfaceRaised,
           title: Text(
-            'Transfer ownership?',
+            copy.text('Transfer ownership?', 'Przekazać własność klubu?'),
             style: TextStyle(color: palette.textPrimary),
           ),
           content: Text(
-            '${widget.member.displayName} will become the club owner. You will '
-            'be demoted to Co-owner. This cannot be undone by you alone.',
+            copy.text(
+              '${widget.member.displayName} will become the club owner. You will '
+                  'be demoted to Co-owner. This cannot be undone by you alone.',
+              '${widget.member.displayName} zostanie właścicielem klubu, a Twoja rola '
+                  'zmieni się na współwłaściciela. Nie cofniesz tej zmiany samodzielnie.',
+            ),
             style: TextStyle(color: palette.textSecondary),
           ),
           actions: [
             TextButton(
               onPressed: () => Navigator.of(dialogContext).pop(false),
-              child: const Text('Cancel'),
+              child: Text(copy.text('Cancel', 'Anuluj')),
             ),
             FilledButton(
               onPressed: () => Navigator.of(dialogContext).pop(true),
@@ -78,7 +92,7 @@ class _ClubMemberManagementScreenState
                 backgroundColor: colors.error,
                 foregroundColor: colors.onError,
               ),
-              child: const Text('Transfer'),
+              child: Text(copy.text('Transfer', 'Przekaż')),
             ),
           ],
         );
@@ -95,7 +109,12 @@ class _ClubMemberManagementScreenState
       Navigator.of(context).pop();
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('${widget.member.displayName} is now the club owner.'),
+          content: Text(
+            AppLocalizations.of(context).text(
+              '${widget.member.displayName} is now the club owner.',
+              '${widget.member.displayName} jest teraz właścicielem klubu.',
+            ),
+          ),
         ),
       );
     } catch (error) {
@@ -114,20 +133,24 @@ class _ClubMemberManagementScreenState
       builder: (dialogContext) {
         final palette = dialogContext.appPalette;
         final colors = Theme.of(dialogContext).colorScheme;
+        final copy = AppLocalizations.of(dialogContext);
         return AlertDialog(
           backgroundColor: palette.surfaceRaised,
           title: Text(
-            'Remove member?',
+            copy.text('Remove member?', 'Usunąć członka?'),
             style: TextStyle(color: palette.textPrimary),
           ),
           content: Text(
-            '${widget.member.displayName} will lose access to this club, its chat and Club Lounge.',
+            copy.text(
+              '${widget.member.displayName} will lose access to this club, its chat and Club Lounge.',
+              '${widget.member.displayName} straci dostęp do klubu, czatu i klubowego pokoju głosowego.',
+            ),
             style: TextStyle(color: palette.textSecondary),
           ),
           actions: [
             TextButton(
               onPressed: () => Navigator.of(dialogContext).pop(false),
-              child: const Text('Cancel'),
+              child: Text(copy.text('Cancel', 'Anuluj')),
             ),
             FilledButton(
               onPressed: () => Navigator.of(dialogContext).pop(true),
@@ -135,7 +158,7 @@ class _ClubMemberManagementScreenState
                 backgroundColor: colors.error,
                 foregroundColor: colors.onError,
               ),
-              child: const Text('Remove'),
+              child: Text(copy.text('Remove', 'Usuń')),
             ),
           ],
         );
@@ -151,7 +174,14 @@ class _ClubMemberManagementScreenState
       if (!mounted) return;
       Navigator.of(context).pop();
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Member removed from the club.')),
+        SnackBar(
+          content: Text(
+            AppLocalizations.of(context).text(
+              'Member removed from the club.',
+              'Usunięto członka z klubu.',
+            ),
+          ),
+        ),
       );
     } catch (error) {
       if (!mounted) return;
@@ -167,13 +197,14 @@ class _ClubMemberManagementScreenState
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
+    final copy = AppLocalizations.of(context);
     return Scaffold(
       key: const ValueKey('club-member-management-screen'),
       backgroundColor: palette.background,
       appBar: AppBar(
         backgroundColor: palette.background,
         foregroundColor: palette.textPrimary,
-        title: const Text('Member role'),
+        title: Text(copy.text('Member role', 'Rola członka')),
       ),
       body: ResponsiveContentFrame(
         width: ResponsiveContentWidth.form,
@@ -204,7 +235,7 @@ class _ClubMemberManagementScreenState
                 _MemberHeader(member: widget.member),
                 const SizedBox(height: 22),
                 Text(
-                  'CLUB ROLE',
+                  copy.text('CLUB ROLE', 'ROLA W KLUBIE'),
                   style: TextStyle(
                     color: palette.textTertiary,
                     fontSize: 11,
@@ -228,7 +259,10 @@ class _ClubMemberManagementScreenState
                 if (!canManage) ...[
                   const SizedBox(height: 14),
                   Text(
-                    'Only a higher-ranking Owner or Co-owner can change this member’s role.',
+                    copy.text(
+                      'Only a higher-ranking Owner or Co-owner can change this member’s role.',
+                      'Rolę tej osoby może zmienić tylko właściciel lub współwłaściciel o wyższych uprawnieniach.',
+                    ),
                     style: TextStyle(
                       color: palette.textTertiary,
                       fontSize: 12,
@@ -246,7 +280,9 @@ class _ClubMemberManagementScreenState
                       minimumSize: const Size.fromHeight(52),
                     ),
                     icon: const Icon(Icons.workspace_premium_rounded),
-                    label: const Text('TRANSFER OWNERSHIP'),
+                    label: Text(
+                      copy.text('TRANSFER OWNERSHIP', 'PRZEKAŻ WŁASNOŚĆ'),
+                    ),
                   ),
                 ],
                 if (canRemove) ...[
@@ -259,7 +295,7 @@ class _ClubMemberManagementScreenState
                       minimumSize: const Size.fromHeight(52),
                     ),
                     icon: const Icon(Icons.person_remove_rounded),
-                    label: const Text('REMOVE FROM CLUB'),
+                    label: Text(copy.text('REMOVE FROM CLUB', 'USUŃ Z KLUBU')),
                   ),
                 ],
                 if (_saving) ...[
@@ -276,10 +312,28 @@ class _ClubMemberManagementScreenState
     );
   }
 
-  static String _message(Object error) => error
-      .toString()
-      .replaceFirst('Bad state: ', '')
-      .replaceFirst('Invalid argument(s): ', '');
+  String _message(Object error) {
+    final copy = AppLocalizations.of(context);
+    return friendlyErrorMessage(
+      error,
+      copy: copy,
+      fallback: copy.text(
+        'That action could not be completed. Please try again.',
+        'Nie udało się wykonać tej czynności. Spróbuj ponownie.',
+      ),
+    );
+  }
+
+  static String _roleLabel(ClubRole role, AppLocalizations copy) {
+    return switch (role) {
+      ClubRole.owner => copy.text('Owner', 'Właściciel'),
+      ClubRole.coOwner => copy.text('Co-owner', 'Współwłaściciel'),
+      ClubRole.admin => copy.text('Admin', 'Administrator'),
+      ClubRole.moderator => copy.text('Moderator', 'Moderator'),
+      ClubRole.member => copy.text('Member', 'Członek'),
+      ClubRole.guest => copy.text('Guest', 'Gość'),
+    };
+  }
 }
 
 class _MemberHeader extends StatelessWidget {
@@ -290,6 +344,7 @@ class _MemberHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
+    final copy = AppLocalizations.of(context);
     return Container(
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
@@ -320,7 +375,10 @@ class _MemberHeader extends StatelessWidget {
                 ),
                 const SizedBox(height: 5),
                 Text(
-                  member.role.label,
+                  _ClubMemberManagementScreenState._roleLabel(
+                    member.role,
+                    copy,
+                  ),
                   style: TextStyle(
                     color: colors.primary,
                     fontWeight: FontWeight.w700,
@@ -351,13 +409,29 @@ class _RoleTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
+    final copy = AppLocalizations.of(context);
     final subtitle = switch (role) {
-      ClubRole.coOwner => 'Manage roles, club settings and channels',
-      ClubRole.admin => 'Manage channels and club operations',
-      ClubRole.moderator => 'Invite and moderate members',
-      ClubRole.member => 'Standard club access',
-      ClubRole.guest => 'Limited club access',
-      ClubRole.owner => 'Full ownership',
+      ClubRole.coOwner => copy.text(
+        'Manage roles, club settings and channels',
+        'Zarządzanie rolami, ustawieniami i kanałami',
+      ),
+      ClubRole.admin => copy.text(
+        'Manage channels and club operations',
+        'Zarządzanie kanałami i działaniem klubu',
+      ),
+      ClubRole.moderator => copy.text(
+        'Invite and moderate members',
+        'Zapraszanie i moderowanie członków',
+      ),
+      ClubRole.member => copy.text(
+        'Standard club access',
+        'Standardowy dostęp do klubu',
+      ),
+      ClubRole.guest => copy.text(
+        'Limited club access',
+        'Ograniczony dostęp do klubu',
+      ),
+      ClubRole.owner => copy.text('Full ownership', 'Pełne uprawnienia'),
     };
     return Padding(
       padding: const EdgeInsets.only(bottom: 9),
@@ -376,7 +450,7 @@ class _RoleTile extends StatelessWidget {
               : palette.navigationInactive,
         ),
         title: Text(
-          role.label,
+          _ClubMemberManagementScreenState._roleLabel(role, copy),
           style: TextStyle(
             color: enabled || selected
                 ? palette.textPrimary

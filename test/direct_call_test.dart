@@ -10,6 +10,7 @@ import 'package:yovoice/features/calls/data/models/direct_call.dart';
 import 'package:yovoice/features/calls/data/models/voice_connection_info.dart';
 import 'package:yovoice/features/calls/data/services/direct_call_service.dart';
 import 'package:yovoice/features/calls/data/services/voice_call_service.dart';
+import 'package:yovoice/features/permissions/data/permission_readiness_service.dart';
 import 'package:yovoice/features/calls/presentation/direct_call_route_registry.dart';
 import 'package:yovoice/features/calls/presentation/widgets/direct_call_coordinator.dart';
 import 'package:yovoice/core/audio/ui_sound_service.dart';
@@ -428,6 +429,7 @@ void main() {
           otherPhotoUrl: '',
           messageService: messages,
           directCallService: calls,
+          voiceCallService: _FakeVoiceCallService(),
           auth: auth,
         ),
       ),
@@ -467,6 +469,7 @@ void main() {
           otherPhotoUrl: '',
           messageService: messages,
           directCallService: calls,
+          voiceCallService: _FakeVoiceCallService(),
           auth: auth,
         ),
       ),
@@ -503,6 +506,7 @@ void main() {
           otherPhotoUrl: '',
           messageService: messages,
           directCallService: calls,
+          voiceCallService: _FakeVoiceCallService(),
           auth: auth,
         ),
       ),
@@ -960,6 +964,16 @@ class _FakeVoiceCallService extends VoiceCallService {
     _testStatus = VoiceCallStatus.connected;
     notifyListeners();
   }
+
+  @override
+  Future<PermissionReadinessSnapshot> prepareMediaPermissionsFromUserGesture({
+    bool includeCamera = false,
+  }) async =>
+      PermissionReadinessSnapshot(<AppPermissionKind, AppPermissionAccess>{
+        AppPermissionKind.microphone: AppPermissionAccess.granted,
+        if (includeCamera)
+          AppPermissionKind.camera: AppPermissionAccess.granted,
+      });
 
   @override
   Future<void> toggleMute() async {

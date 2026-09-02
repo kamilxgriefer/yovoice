@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/helpers/error_messages.dart';
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/features/rooms/data/models/room_metadata.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
@@ -76,18 +78,29 @@ class _BroadcastSettingsSheetState extends State<BroadcastSettingsSheet> {
 
   Future<void> _save() async {
     if (_saving) return;
+    final copy = AppLocalizations.of(context);
 
     final capacityText = _capacity.text.trim();
     final capacity = capacityText.isEmpty ? null : int.tryParse(capacityText);
     final slowMode = int.tryParse(_slowMode.text.trim()) ?? 0;
 
     if (capacityText.isNotEmpty && (capacity == null || capacity <= 0)) {
-      _showError('Capacity must be a positive number.');
+      _showError(
+        copy.text(
+          'Capacity must be a positive number.',
+          'Limit uczestników musi być liczbą dodatnią.',
+        ),
+      );
       return;
     }
 
     if (slowMode < 0) {
-      _showError('Slow mode cannot be negative.');
+      _showError(
+        copy.text(
+          'Slow mode cannot be negative.',
+          'Czas trybu spowolnionego nie może być ujemny.',
+        ),
+      );
       return;
     }
 
@@ -122,10 +135,14 @@ class _BroadcastSettingsSheetState extends State<BroadcastSettingsSheet> {
       if (!mounted) return;
       setState(() => _saving = false);
       _showError(
-        error
-            .toString()
-            .replaceFirst('Bad state: ', '')
-            .replaceFirst('Invalid argument(s): ', ''),
+        friendlyErrorMessage(
+          error,
+          copy: copy,
+          fallback: copy.text(
+            'Could not save podcast settings. Please try again.',
+            'Nie udało się zapisać ustawień podcastu. Spróbuj ponownie.',
+          ),
+        ),
       );
     }
   }
@@ -138,13 +155,14 @@ class _BroadcastSettingsSheetState extends State<BroadcastSettingsSheet> {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     return Padding(
       padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const YoModalSheetChrome(
-            sheetLabel: 'podcast settings',
+          YoModalSheetChrome(
+            sheetLabel: copy.text('podcast settings', 'ustawienia podcastu'),
             surfaceColor: BroadcastRoomColors.surface,
           ),
           Flexible(
@@ -153,35 +171,38 @@ class _BroadcastSettingsSheetState extends State<BroadcastSettingsSheet> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text(
-                    'Podcast settings',
-                    style: TextStyle(
+                  Text(
+                    copy.text('Podcast settings', 'Ustawienia podcastu'),
+                    style: const TextStyle(
                       color: Colors.white,
                       fontSize: 23,
                       fontWeight: FontWeight.w900,
                     ),
                   ),
                   const SizedBox(height: 5),
-                  const Text(
-                    'Shape the episode, the stage and the listener experience.',
-                    style: TextStyle(color: BroadcastRoomColors.muted),
+                  Text(
+                    copy.text(
+                      'Shape the episode, the stage and the listener experience.',
+                      'Dostosuj odcinek, scenę i wrażenia słuchaczy.',
+                    ),
+                    style: const TextStyle(color: BroadcastRoomColors.muted),
                   ),
                   const SizedBox(height: 20),
                   SettingsField(
                     controller: _name,
-                    label: 'Show name',
+                    label: copy.text('Show name', 'Nazwa audycji'),
                     maxLength: 80,
                   ),
                   const SizedBox(height: 12),
                   SettingsField(
                     controller: _topic,
-                    label: 'Episode topic',
+                    label: copy.text('Episode topic', 'Temat odcinka'),
                     maxLength: RoomMetadataLimits.maxPodcastTopicLength,
                   ),
                   const SizedBox(height: 12),
                   SettingsField(
                     controller: _description,
-                    label: 'Episode description',
+                    label: copy.text('Episode description', 'Opis odcinka'),
                     maxLines: 3,
                     maxLength: 300,
                   ),
@@ -189,13 +210,15 @@ class _BroadcastSettingsSheetState extends State<BroadcastSettingsSheet> {
                   DropdownButtonFormField<ShowFormat>(
                     initialValue: _showFormat,
                     dropdownColor: BroadcastRoomColors.surfaceSoft,
-                    decoration: settingsDecoration('Show format'),
+                    decoration: settingsDecoration(
+                      copy.text('Show format', 'Format audycji'),
+                    ),
                     style: const TextStyle(color: Colors.white),
                     items: [
                       for (final format in ShowFormat.values)
                         DropdownMenuItem(
                           value: format,
-                          child: Text(format.label),
+                          child: Text(_formatLabel(format, copy)),
                         ),
                     ],
                     onChanged: (value) {
@@ -205,24 +228,33 @@ class _BroadcastSettingsSheetState extends State<BroadcastSettingsSheet> {
                   const SizedBox(height: 12),
                   SettingsField(
                     controller: _guidelines,
-                    label: 'Guest guidelines',
+                    label: copy.text('Guest guidelines', 'Wskazówki dla gości'),
                     maxLines: 3,
                     maxLength: RoomMetadataLimits.maxGuidelinesLength,
                   ),
                   const SizedBox(height: 4),
                   SettingsSwitch(
-                    title: 'Listener stage requests',
+                    title: copy.text(
+                      'Listener stage requests',
+                      'Zgłoszenia słuchaczy na scenę',
+                    ),
                     subtitle: _handRaisingEnabled
-                        ? 'Listeners can ask to join the live conversation.'
-                        : 'The audience stays in listening mode for this episode.',
+                        ? copy.text(
+                            'Listeners can ask to join the live conversation.',
+                            'Słuchacze mogą poprosić o dołączenie do rozmowy na żywo.',
+                          )
+                        : copy.text(
+                            'The audience stays in listening mode for this episode.',
+                            'W tym odcinku publiczność pozostaje w trybie słuchania.',
+                          ),
                     value: _handRaisingEnabled,
                     onChanged: (value) =>
                         setState(() => _handRaisingEnabled = value),
                   ),
                   const SizedBox(height: 8),
-                  const Text(
-                    'DISTRIBUTION',
-                    style: TextStyle(
+                  Text(
+                    copy.text('DISTRIBUTION', 'DOSTĘPNOŚĆ'),
+                    style: const TextStyle(
                       color: BroadcastRoomColors.accentSoft,
                       fontSize: 10.5,
                       fontWeight: FontWeight.w900,
@@ -233,13 +265,18 @@ class _BroadcastSettingsSheetState extends State<BroadcastSettingsSheet> {
                   DropdownButtonFormField<String>(
                     initialValue: _visibility,
                     dropdownColor: BroadcastRoomColors.surfaceSoft,
-                    decoration: settingsDecoration('Visibility'),
+                    decoration: settingsDecoration(
+                      copy.text('Visibility', 'Widoczność'),
+                    ),
                     style: const TextStyle(color: Colors.white),
-                    items: const [
-                      DropdownMenuItem(value: 'public', child: Text('Public')),
+                    items: [
+                      DropdownMenuItem(
+                        value: 'public',
+                        child: Text(copy.text('Public', 'Publiczny')),
+                      ),
                       DropdownMenuItem(
                         value: 'private',
-                        child: Text('Private'),
+                        child: Text(copy.text('Private', 'Prywatny')),
                       ),
                     ],
                     onChanged: (value) {
@@ -257,16 +294,22 @@ class _BroadcastSettingsSheetState extends State<BroadcastSettingsSheet> {
                       childrenPadding: const EdgeInsets.only(bottom: 4),
                       iconColor: BroadcastRoomColors.accentSoft,
                       collapsedIconColor: BroadcastRoomColors.muted,
-                      title: const Text(
-                        'Advanced controls',
-                        style: TextStyle(
+                      title: Text(
+                        copy.text(
+                          'Advanced controls',
+                          'Ustawienia zaawansowane',
+                        ),
+                        style: const TextStyle(
                           color: Colors.white,
                           fontWeight: FontWeight.w800,
                         ),
                       ),
-                      subtitle: const Text(
-                        'Capacity, chat pacing and compatibility settings.',
-                        style: TextStyle(
+                      subtitle: Text(
+                        copy.text(
+                          'Capacity, chat pacing and compatibility settings.',
+                          'Limit uczestników, tempo czatu i ustawienia zgodności.',
+                        ),
+                        style: const TextStyle(
                           color: BroadcastRoomColors.muted,
                           fontSize: 12,
                         ),
@@ -277,14 +320,14 @@ class _BroadcastSettingsSheetState extends State<BroadcastSettingsSheet> {
                             Expanded(
                               child: SettingsField(
                                 controller: _category,
-                                label: 'Category',
+                                label: copy.text('Category', 'Kategoria'),
                               ),
                             ),
                             const SizedBox(width: 10),
                             Expanded(
                               child: SettingsField(
                                 controller: _language,
-                                label: 'Language',
+                                label: copy.text('Language', 'Język'),
                               ),
                             ),
                           ],
@@ -295,7 +338,10 @@ class _BroadcastSettingsSheetState extends State<BroadcastSettingsSheet> {
                             Expanded(
                               child: SettingsField(
                                 controller: _capacity,
-                                label: 'Capacity',
+                                label: copy.text(
+                                  'Capacity',
+                                  'Limit uczestników',
+                                ),
                                 keyboardType: TextInputType.number,
                               ),
                             ),
@@ -303,7 +349,10 @@ class _BroadcastSettingsSheetState extends State<BroadcastSettingsSheet> {
                             Expanded(
                               child: SettingsField(
                                 controller: _slowMode,
-                                label: 'Chat slow mode (sec)',
+                                label: copy.text(
+                                  'Chat slow mode (sec)',
+                                  'Tryb spowolniony czatu (s)',
+                                ),
                                 keyboardType: TextInputType.number,
                               ),
                             ),
@@ -311,24 +360,40 @@ class _BroadcastSettingsSheetState extends State<BroadcastSettingsSheet> {
                         ),
                         const SizedBox(height: 4),
                         SettingsSwitch(
-                          title: 'Auto-mute new listeners',
-                          subtitle:
-                              'Everyone enters without a live microphone.',
+                          title: copy.text(
+                            'Auto-mute new listeners',
+                            'Automatycznie wyciszaj nowych słuchaczy',
+                          ),
+                          subtitle: copy.text(
+                            'Everyone enters without a live microphone.',
+                            'Każdy dołącza z wyłączonym mikrofonem.',
+                          ),
                           value: _autoMuteNewUsers,
                           onChanged: (value) =>
                               setState(() => _autoMuteNewUsers = value),
                         ),
                         SettingsSwitch(
-                          title: 'Approval required',
-                          subtitle: 'Reserved for invite approval workflows.',
+                          title: copy.text(
+                            'Approval required',
+                            'Wymagane zatwierdzenie',
+                          ),
+                          subtitle: copy.text(
+                            'Reserved for invite approval workflows.',
+                            'Przeznaczone dla zaproszeń wymagających akceptacji.',
+                          ),
                           value: _approvalRequired,
                           onChanged: (value) =>
                               setState(() => _approvalRequired = value),
                         ),
                         SettingsSwitch(
-                          title: 'Members can start voice',
-                          subtitle:
-                              'Compatibility control for persistent rooms.',
+                          title: copy.text(
+                            'Members can start voice',
+                            'Członkowie mogą uruchamiać rozmowę',
+                          ),
+                          subtitle: copy.text(
+                            'Compatibility control for persistent rooms.',
+                            'Ustawienie zgodności dla stałych pokoi.',
+                          ),
                           value: _membersCanStartVoice,
                           onChanged: (value) =>
                               setState(() => _membersCanStartVoice = value),
@@ -356,7 +421,11 @@ class _BroadcastSettingsSheetState extends State<BroadcastSettingsSheet> {
                             ),
                           )
                         : const Icon(Icons.save_rounded),
-                    label: Text(_saving ? 'Saving…' : 'Update podcast'),
+                    label: Text(
+                      _saving
+                          ? copy.text('Saving…', 'Zapisywanie…')
+                          : copy.text('Update podcast', 'Zaktualizuj podcast'),
+                    ),
                   ),
                 ],
               ),
@@ -365,6 +434,17 @@ class _BroadcastSettingsSheetState extends State<BroadcastSettingsSheet> {
         ],
       ),
     );
+  }
+
+  String _formatLabel(ShowFormat format, AppLocalizations copy) {
+    if (!copy.isPolish) return format.label;
+    return switch (format) {
+      ShowFormat.solo => 'Solo',
+      ShowFormat.interview => 'Wywiad',
+      ShowFormat.panel => 'Panel',
+      ShowFormat.qAndA => 'Pytania i odpowiedzi',
+      ShowFormat.openDiscussion => 'Otwarta dyskusja',
+    };
   }
 }
 

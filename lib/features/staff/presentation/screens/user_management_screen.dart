@@ -2,8 +2,11 @@ import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/helpers/error_messages.dart';
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/role_identity.dart';
 import 'package:yovoice/features/staff/data/staff_capabilities.dart';
+import 'package:yovoice/features/staff/presentation/staff_localized_copy.dart';
 import 'package:yovoice/features/staff/presentation/widgets/user_actions_menu.dart';
 import 'package:yovoice/shared/identity/public_identity_repository.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
@@ -129,7 +132,7 @@ class StaffUserLookup {
       uid: resolvedUid,
       displayName: (data['displayName'] as String?)?.trim().isNotEmpty == true
           ? (data['displayName'] as String).trim()
-          : 'YO Voice user',
+          : '',
       username: (data['username'] as String?)?.trim() ?? '',
       role: data['role'] as String? ?? 'user',
       banned: data['banned'] == true,
@@ -241,7 +244,10 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
         _user = user;
         _selectedRole = user?.role;
         if (user == null) {
-          _message = 'No account matches that uid, email or username.';
+          _message = AppLocalizations.of(context).text(
+            'No account matches that uid, email or username.',
+            'Nie znaleziono konta z takim UID, adresem e-mail ani pseudonimem.',
+          );
           _messageIsError = true;
         }
       });
@@ -256,10 +262,17 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
     }
   }
 
-  String _readable(Object error) => error
-      .toString()
-      .replaceFirst(RegExp(r'^\[[^\]]*\]\s*'), '')
-      .replaceFirst('Exception: ', '');
+  String _readable(Object error) {
+    final copy = AppLocalizations.of(context);
+    return friendlyErrorMessage(
+      error,
+      copy: copy,
+      fallback: copy.text(
+        'That operation could not be completed. Check your connection and try again.',
+        'Nie udało się wykonać tej operacji. Sprawdź połączenie i spróbuj ponownie.',
+      ),
+    );
+  }
 
   Future<void> _confirmAndAssign() async {
     final user = _user;
@@ -296,10 +309,13 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
       _lookup.identities.invalidate(user.uid);
       await _runLookup();
       if (!mounted) return;
+      final copy = AppLocalizations.of(context);
+      final displayName = _managedUserName(copy, user);
       setState(() {
-        _message =
-            '${user.displayName} is now ${_roleLabel(newRole)}. They may '
-            'need to sign in again before the change fully applies.';
+        _message = copy.text(
+          '$displayName is now ${newRole == 'user' ? 'an ordinary user' : RoleIdentity.labelFor(newRole)}. They may need to sign in again before the change fully applies.',
+          '$displayName ma teraz rolę: ${localizedStaffRole(copy, newRole)}. Pełne zastosowanie zmiany może wymagać ponownego zalogowania.',
+        );
         _messageIsError = false;
       });
     } catch (error) {
@@ -313,13 +329,12 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
     }
   }
 
-  static String _roleLabel(String role) =>
-      role == 'user' ? 'an ordinary user' : RoleIdentity.labelFor(role);
-
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final user = _user;
     final isSelf = user != null && user.uid == _myUid;
+    final displayName = user == null ? '' : _managedUserName(copy, user);
 
     final content = Scaffold(
       backgroundColor: _background,
@@ -327,9 +342,9 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
         backgroundColor: _background,
         foregroundColor: Colors.white,
         centerTitle: true,
-        title: const Text(
-          'User Management',
-          style: TextStyle(fontWeight: FontWeight.w900),
+        title: Text(
+          copy.text('User Management', 'Zarządzanie użytkownikami'),
+          style: const TextStyle(fontWeight: FontWeight.w900),
         ),
       ),
       body: Center(
@@ -338,11 +353,16 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
           child: ListView(
             padding: const EdgeInsets.fromLTRB(18, 14, 18, 32),
             children: [
-              const Text(
-                'Look up an account by exact uid, email or username, then '
-                'assign or revoke a staff role. Every change is verified '
-                'and recorded server-side.',
-                style: TextStyle(color: _muted, fontSize: 13, height: 1.45),
+              Text(
+                copy.text(
+                  'Look up an account by exact uid, email or username, then assign or revoke a staff role. Every change is verified and recorded server-side.',
+                  'Znajdź konto po dokładnym UID, adresie e-mail lub pseudonimie, a następnie nadaj albo odbierz rolę zespołu. Każda zmiana jest weryfikowana i zapisywana na serwerze.',
+                ),
+                style: const TextStyle(
+                  color: _muted,
+                  fontSize: 13,
+                  height: 1.45,
+                ),
               ),
               const SizedBox(height: 14),
               Row(
@@ -354,7 +374,10 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                       onSubmitted: (_) => _runLookup(),
                       style: const TextStyle(color: Colors.white),
                       decoration: InputDecoration(
-                        labelText: 'uid, email or username',
+                        labelText: copy.text(
+                          'uid, email or username',
+                          'UID, e-mail lub pseudonim',
+                        ),
                         labelStyle: const TextStyle(color: Color(0xFFB8AFC2)),
                         filled: true,
                         fillColor: _surface,
@@ -373,12 +396,20 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                         backgroundColor: RoleIdentity.ownerColor,
                       ),
                       child: _searching
-                          ? const SizedBox(
-                              width: 16,
-                              height: 16,
-                              child: CircularProgressIndicator(strokeWidth: 2),
+                          ? Semantics(
+                              label: copy.text(
+                                'Looking up user',
+                                'Wyszukiwanie użytkownika',
+                              ),
+                              child: const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              ),
                             )
-                          : const Text('Look up'),
+                          : Text(copy.text('Look up', 'Wyszukaj')),
                     ),
                   ),
                 ],
@@ -414,7 +445,7 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                             radius: 22,
                             userId: user.uid,
                             photoUrl: user.photoUrl,
-                            displayName: user.displayName,
+                            displayName: displayName,
                           ),
                           const SizedBox(width: 12),
                           Expanded(
@@ -422,7 +453,7 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Text(
-                                  user.displayName,
+                                  displayName,
                                   style: const TextStyle(
                                     color: Colors.white,
                                     fontSize: 15.5,
@@ -441,7 +472,10 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                             ),
                           ),
                           _StatusChip(
-                            label: user.banned ? 'BANNED' : 'ACTIVE',
+                            label: localizedStaffStatus(
+                              copy,
+                              user.banned ? 'BANNED' : 'ACTIVE',
+                            ),
                             color: user.banned
                                 ? RoleIdentity.ownerColor
                                 : const Color(0xFF22C55E),
@@ -450,7 +484,7 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                           // uses — one matrix, two surfaces.
                           UserActionsMenu(
                             targetUid: user.uid,
-                            targetName: user.displayName,
+                            targetName: displayName,
                             capabilities: _capabilities,
                             currentUid: _myUid,
                             functions: widget.functions,
@@ -465,8 +499,8 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                         children: [
                           _StatusChip(
                             label: user.role == 'user'
-                                ? 'ROLE: USER'
-                                : RoleIdentity.labelFor(user.role),
+                                ? copy.text('ROLE: USER', 'ROLA: UŻYTKOWNIK')
+                                : localizedStaffRole(copy, user.role),
                             color: RoleIdentity.colorFor(user.role),
                           ),
                           // VIP is an entitlement, shown SEPARATELY from
@@ -492,14 +526,17 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                 ),
                 const SizedBox(height: 18),
                 if (isSelf)
-                  const Text(
-                    'You cannot change your own role.',
-                    style: TextStyle(color: _muted, fontSize: 13),
+                  Text(
+                    copy.text(
+                      'You cannot change your own role.',
+                      'Nie możesz zmienić własnej roli.',
+                    ),
+                    style: const TextStyle(color: _muted, fontSize: 13),
                   )
                 else ...[
-                  const Text(
-                    'Assign role',
-                    style: TextStyle(
+                  Text(
+                    copy.text('Assign role', 'Przypisz rolę'),
+                    style: const TextStyle(
                       color: Colors.white,
                       fontSize: 15,
                       fontWeight: FontWeight.w800,
@@ -518,8 +555,11 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                       activeColor: RoleIdentity.colorFor(role),
                       title: Text(
                         role == 'user'
-                            ? 'User (no staff role)'
-                            : RoleIdentity.labelFor(role),
+                            ? copy.text(
+                                'User (no staff role)',
+                                'Użytkownik (bez roli zespołu)',
+                              )
+                            : localizedStaffRole(copy, role),
                         style: TextStyle(
                           color: role == 'user'
                               ? Colors.white
@@ -544,14 +584,21 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                         backgroundColor: RoleIdentity.ownerColor,
                       ),
                       child: _assigning
-                          ? const SizedBox(
-                              width: 18,
-                              height: 18,
-                              child: CircularProgressIndicator(strokeWidth: 2),
+                          ? Semantics(
+                              label: copy.text('Changing role', 'Zmiana roli'),
+                              child: const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              ),
                             )
-                          : const Text(
-                              'Change role',
-                              style: TextStyle(fontWeight: FontWeight.w800),
+                          : Text(
+                              copy.text('Change role', 'Zmień rolę'),
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w800,
+                              ),
                             ),
                     ),
                   ),
@@ -615,24 +662,22 @@ class _ConfirmRoleDialogState extends State<_ConfirmRoleDialog> {
     super.dispose();
   }
 
-  String _label(String role) =>
-      role == 'user' ? 'User' : RoleIdentity.labelFor(role);
-
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     return AlertDialog(
       backgroundColor: const Color(0xFF171121),
-      title: const Text(
-        'Confirm role change',
-        style: TextStyle(color: Colors.white, fontSize: 17),
+      title: Text(
+        copy.text('Confirm role change', 'Potwierdź zmianę roli'),
+        style: const TextStyle(color: Colors.white, fontSize: 17),
       ),
       content: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            '${widget.user.displayName}: '
-            '${_label(widget.user.role)} → ${_label(widget.newRole)}',
+            '${_managedUserName(copy, widget.user)}: '
+            '${localizedStaffRole(copy, widget.user.role)} → ${localizedStaffRole(copy, widget.newRole)}',
             style: const TextStyle(
               color: Color(0xFFE4DEED),
               fontSize: 14,
@@ -645,9 +690,9 @@ class _ConfirmRoleDialogState extends State<_ConfirmRoleDialog> {
             maxLength: 500,
             onChanged: (_) => setState(() {}),
             style: const TextStyle(color: Colors.white),
-            decoration: const InputDecoration(
-              labelText: 'Reason (required)',
-              labelStyle: TextStyle(color: Color(0xFFB8AFC2)),
+            decoration: InputDecoration(
+              labelText: copy.text('Reason (required)', 'Powód (wymagany)'),
+              labelStyle: const TextStyle(color: Color(0xFFB8AFC2)),
             ),
           ),
         ],
@@ -655,7 +700,7 @@ class _ConfirmRoleDialogState extends State<_ConfirmRoleDialog> {
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Cancel'),
+          child: Text(copy.text('Cancel', 'Anuluj')),
         ),
         FilledButton(
           onPressed: _reason.text.trim().length < 3
@@ -664,9 +709,14 @@ class _ConfirmRoleDialogState extends State<_ConfirmRoleDialog> {
           style: FilledButton.styleFrom(
             backgroundColor: RoleIdentity.ownerColor,
           ),
-          child: const Text('Confirm change'),
+          child: Text(copy.text('Confirm change', 'Potwierdź zmianę')),
         ),
       ],
     );
   }
 }
+
+String _managedUserName(AppLocalizations copy, ManagedUser user) =>
+    user.displayName.trim().isEmpty
+    ? copy.text('YO Voice user', 'Użytkownik YO Voice')
+    : user.displayName;

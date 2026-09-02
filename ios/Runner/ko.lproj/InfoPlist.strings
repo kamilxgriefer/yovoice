@@ -1,0 +1,3 @@
+"NSCameraUsageDescription" = "YO Voice는 비공개 영상 통화, 채팅 사진 촬영 또는 프로필·룸·클럽 이미지를 만들도록 선택한 경우 카메라를 사용합니다.";
+"NSMicrophoneUsageDescription" = "YO Voice는 음성 룸에서 말하거나 오디오를 녹음하거나 비공개 통화를 하도록 선택한 경우 마이크를 사용합니다.";
+"NSPhotoLibraryUsageDescription" = "YO Voice는 채팅 및 프로필·룸·클럽 이미지에 사용하도록 직접 선택한 사진만 사용합니다.";

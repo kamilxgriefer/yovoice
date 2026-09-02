@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/profile/presentation/widgets/profile_vibe_link.dart';
 
@@ -59,10 +60,16 @@ class _ProfileVibeHeadlineState extends State<ProfileVibeHeadline> {
     }
 
     if (!mounted) return;
+    final copy = AppLocalizations.of(context);
     setState(() {
       _opening = false;
       _coolingDown = opened;
-      _openError = opened ? null : "Couldn't open this link.";
+      _openError = opened
+          ? null
+          : copy.text(
+              "Couldn't open this link.",
+              'Nie udało się otworzyć tego linku.',
+            );
     });
 
     if (opened) {
@@ -76,6 +83,7 @@ class _ProfileVibeHeadlineState extends State<ProfileVibeHeadline> {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
@@ -136,7 +144,10 @@ class _ProfileVibeHeadlineState extends State<ProfileVibeHeadline> {
                       if (description.isNotEmpty) ...[
                         const SizedBox(height: 4),
                         Semantics(
-                          label: 'Vibe: $description',
+                          label: copy.text(
+                            'Vibe: $description',
+                            'Vibe: $description',
+                          ),
                           child: ExcludeSemantics(
                             child: Text(
                               description,
@@ -221,6 +232,7 @@ class _VibeLinkRowState extends State<_VibeLinkRow> {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
@@ -233,8 +245,16 @@ class _VibeLinkRowState extends State<_VibeLinkRow> {
       container: true,
       link: true,
       linkUrl: widget.link.uri,
-      label: widget.link.semanticLabel,
-      hint: 'Opens in another app',
+      label: widget.link.provider == null
+          ? copy.text(
+              'Open external link, ${widget.link.hostLabel}',
+              'Otwórz link zewnętrzny: ${widget.link.hostLabel}',
+            )
+          : copy.text(
+              'Open in ${widget.link.provider}, ${widget.link.hostLabel}',
+              'Otwórz w ${widget.link.provider}: ${widget.link.hostLabel}',
+            ),
+      hint: copy.text('Opens in another app', 'Otwiera się w innej aplikacji'),
       onTap: widget.enabled ? widget.onOpen : null,
       child: ExcludeSemantics(
         child: Material(
@@ -289,7 +309,13 @@ class _VibeLinkRowState extends State<_VibeLinkRow> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            widget.busy ? 'Opening…' : widget.link.actionLabel,
+                            widget.busy
+                                ? copy.text('Opening…', 'Otwieranie…')
+                                : widget.link.provider ??
+                                      copy.text(
+                                        'External link',
+                                        'Link zewnętrzny',
+                                      ),
                             maxLines: 2,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(

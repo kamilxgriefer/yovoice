@@ -55,7 +55,7 @@ void main() {
         expect(find.text('Room chat'), findsOneWidget);
         final titleContext = tester.element(find.text('Room chat'));
         expect(MediaQuery.textScalerOf(titleContext).scale(17), 34);
-        expect(find.text('Say something…'), findsOneWidget);
+        expect(find.text('Write…'), findsOneWidget);
         expect(
           tester.getSize(find.byType(TextField)).height,
           greaterThanOrEqualTo(44),

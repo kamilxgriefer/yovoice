@@ -954,7 +954,12 @@ class RoomService {
     return getRoom(reference.id);
   }
 
-  Future<VoiceRoom> enterClubLounge({
+  /// Resolves a member's Club Lounge for a passive prejoin preview.
+  ///
+  /// This intentionally performs no voice-start write and creates no roster
+  /// row. `RoomEntryScreen` owns that consent boundary through the shared
+  /// entry coordinator, just like every other room surface.
+  Future<VoiceRoom> prepareClubLounge({
     required String clubId,
     required String clubName,
     required String clubDescription,
@@ -988,6 +993,34 @@ class RoomService {
     if (!room.isActive || room.deletionInProgress) {
       throw StateError('This lounge is not available right now.');
     }
+
+    return room;
+  }
+
+  /// Legacy programmatic entry retained for non-UI callers.
+  ///
+  /// Product navigation uses [prepareClubLounge] and lets RoomEntryScreen
+  /// perform the actual start/join only after explicit consent.
+  Future<VoiceRoom> enterClubLounge({
+    required String clubId,
+    required String clubName,
+    required String clubDescription,
+    required String language,
+    required String ownerId,
+    required String ownerName,
+    String? ownerPhotoUrl,
+    String? imageUrl,
+  }) async {
+    final room = await prepareClubLounge(
+      clubId: clubId,
+      clubName: clubName,
+      clubDescription: clubDescription,
+      language: language,
+      ownerId: ownerId,
+      ownerName: ownerName,
+      ownerPhotoUrl: ownerPhotoUrl,
+      imageUrl: imageUrl,
+    );
 
     if (!room.isLive) {
       // Same single-purpose write every other room type uses, so the shape

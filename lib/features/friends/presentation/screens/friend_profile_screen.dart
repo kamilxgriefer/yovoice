@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/helpers/error_messages.dart';
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/friends/data/models/friend_user.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
@@ -11,6 +12,7 @@ import 'package:yovoice/features/creator/presentation/widgets/creator_pinned_mom
 import 'package:yovoice/features/creator/presentation/screens/creator_pinned_moment_screen.dart';
 import 'package:yovoice/features/profile/data/models/user_profile.dart';
 import 'package:yovoice/features/profile/data/services/follow_service.dart';
+import 'package:yovoice/features/profile/data/services/profile_media_service.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
 import 'package:yovoice/features/profile/presentation/screens/follow_list_screen.dart';
 import 'package:yovoice/features/profile/presentation/widgets/profile_vibe_headline.dart';
@@ -18,6 +20,8 @@ import 'package:yovoice/shared/widgets/identity/official_role_badge.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
+import 'package:yovoice/shared/widgets/profile/profile_photo_viewer.dart';
+import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
 class FriendProfileScreen extends StatefulWidget {
   const FriendProfileScreen({
@@ -27,6 +31,7 @@ class FriendProfileScreen extends StatefulWidget {
     this.profileService,
     this.followService,
     this.socialGraphService,
+    this.profileMediaService,
     super.key,
   });
 
@@ -39,6 +44,7 @@ class FriendProfileScreen extends StatefulWidget {
   final ProfileService? profileService;
   final FollowService? followService;
   final SocialGraphService? socialGraphService;
+  final ProfileMediaService? profileMediaService;
 
   @override
   State<FriendProfileScreen> createState() => _FriendProfileScreenState();
@@ -91,6 +97,7 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
             otherDisplayName: friend.displayName,
             otherEmail: friend.email,
             otherPhotoUrl: friend.photoUrl ?? '',
+            otherProfileUpdatedAt: friend.profileUpdatedAt,
           ),
         ),
       );
@@ -99,10 +106,12 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
       // this handler instead of being swallowed into a client-side write.
       if (mounted) {
         _showError(
-          intentionalOrFriendly(
-            error,
-            fallback: 'Could not open this conversation.',
-          ),
+          AppLocalizations.of(context).isPolish
+              ? 'Nie udało się otworzyć rozmowy.'
+              : intentionalOrFriendly(
+                  error,
+                  fallback: 'Could not open this conversation.',
+                ),
         );
       }
     } finally {
@@ -133,20 +142,24 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
       builder: (dialogContext) {
         final palette = dialogContext.appPalette;
         final colors = Theme.of(dialogContext).colorScheme;
+        final copy = AppLocalizations.of(dialogContext);
         return AlertDialog(
           backgroundColor: palette.surfaceRaised,
           title: Text(
-            'Remove friend?',
+            copy.text('Remove friend?', 'Usunąć ze znajomych?'),
             style: TextStyle(color: palette.textPrimary),
           ),
           content: Text(
-            '${widget.friend.displayName} will be removed from your friends list.',
+            copy.text(
+              '${widget.friend.displayName} will be removed from your friends list.',
+              '${widget.friend.displayName} zniknie z Twojej listy znajomych.',
+            ),
             style: TextStyle(color: palette.textSecondary),
           ),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(dialogContext, false),
-              child: const Text('Cancel'),
+              child: Text(copy.text('Cancel', 'Anuluj')),
             ),
             FilledButton(
               onPressed: () => Navigator.pop(dialogContext, true),
@@ -154,7 +167,7 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
                 backgroundColor: colors.error,
                 foregroundColor: colors.onError,
               ),
-              child: const Text('Remove'),
+              child: Text(copy.text('Remove', 'Usuń')),
             ),
           ],
         );
@@ -180,22 +193,28 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
       builder: (dialogContext) {
         final palette = dialogContext.appPalette;
         final colors = Theme.of(dialogContext).colorScheme;
+        final copy = AppLocalizations.of(dialogContext);
         return AlertDialog(
           backgroundColor: palette.surfaceRaised,
           title: Text(
-            'Block user?',
+            copy.text('Block user?', 'Zablokować użytkownika?'),
             style: TextStyle(color: palette.textPrimary),
           ),
           content: Text(
-            '${widget.friend.displayName} will be removed as a friend and '
-            "won't be able to message, follow, or send you requests. You can "
-            'unblock them anytime from Blocked users.',
+            copy.text(
+              '${widget.friend.displayName} will be removed as a friend and '
+                  "won't be able to message, follow, or send you requests. You can "
+                  'unblock them anytime from Blocked users.',
+              '${widget.friend.displayName} zostanie usunięty ze znajomych i nie będzie '
+                  'mógł wysyłać Ci wiadomości, obserwować Cię ani zapraszać do znajomych. '
+                  'Możesz go odblokować w dowolnej chwili.',
+            ),
             style: TextStyle(color: palette.textSecondary),
           ),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(dialogContext, false),
-              child: const Text('Cancel'),
+              child: Text(copy.text('Cancel', 'Anuluj')),
             ),
             FilledButton(
               onPressed: () => Navigator.pop(dialogContext, true),
@@ -203,7 +222,7 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
                 backgroundColor: colors.error,
                 foregroundColor: colors.onError,
               ),
-              child: const Text('Block'),
+              child: Text(copy.text('Block', 'Zablokuj')),
             ),
           ],
         );
@@ -224,14 +243,21 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
 
   void _showError(String message) {
     final palette = context.appPalette;
+    final copy = AppLocalizations.of(context);
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(
         SnackBar(
           content: Text(
             message.contains('permission-denied')
-                ? 'Your account is not allowed to do that right now.'
-                : 'Something went wrong. Please try again.',
+                ? copy.text(
+                    'Your account is not allowed to do that right now.',
+                    'Twoje konto nie może teraz wykonać tej czynności.',
+                  )
+                : copy.text(
+                    'Something went wrong. Please try again.',
+                    'Coś poszło nie tak. Spróbuj ponownie.',
+                  ),
             style: TextStyle(color: palette.dangerForeground),
           ),
           behavior: SnackBarBehavior.floating,
@@ -269,6 +295,7 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
             final palette = context.appPalette;
             final colors = Theme.of(context).colorScheme;
             final isDark = Theme.of(context).brightness == Brightness.dark;
+            final copy = AppLocalizations.of(context);
             return Scaffold(
               backgroundColor: palette.background,
               body: Container(
@@ -390,8 +417,11 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
                                     : const Icon(Icons.person_remove_outlined),
                                 label: Text(
                                   _removingFriend
-                                      ? 'Removing...'
-                                      : 'Remove friend',
+                                      ? copy.text('Removing...', 'Usuwanie...')
+                                      : copy.text(
+                                          'Remove friend',
+                                          'Usuń ze znajomych',
+                                        ),
                                 ),
                                 style: TextButton.styleFrom(
                                   foregroundColor: palette.dangerForeground,
@@ -410,7 +440,15 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
                                       )
                                     : const Icon(Icons.block_rounded),
                                 label: Text(
-                                  _blocking ? 'Blocking...' : 'Block user',
+                                  _blocking
+                                      ? copy.text(
+                                          'Blocking...',
+                                          'Blokowanie...',
+                                        )
+                                      : copy.text(
+                                          'Block user',
+                                          'Zablokuj użytkownika',
+                                        ),
                                 ),
                                 style: TextButton.styleFrom(
                                   foregroundColor: palette.dangerForeground,
@@ -434,13 +472,14 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
 
   Widget _header() {
     final palette = context.appPalette;
+    final copy = AppLocalizations.of(context);
     return Padding(
       padding: const EdgeInsets.fromLTRB(8, 8, 18, 4),
       child: Row(
         children: [
           IconButton(
             onPressed: () => Navigator.pop(context),
-            tooltip: 'Back',
+            tooltip: copy.text('Back', 'Wstecz'),
             icon: Icon(
               Icons.arrow_back_ios_new_rounded,
               color: palette.textPrimary,
@@ -448,7 +487,7 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
           ),
           Expanded(
             child: Text(
-              'Profile',
+              copy.text('Profile', 'Profil'),
               style: TextStyle(
                 color: palette.textPrimary,
                 fontSize: 22,
@@ -462,39 +501,32 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
   }
 
   Widget _avatar(UserProfile? profile) {
-    final photo = profile?.photoUrl ?? widget.friend.photoUrl;
     final name = profile?.displayName ?? widget.friend.displayName;
-    final palette = context.appPalette;
-    return Semantics(
-      image: true,
-      label: 'Profile photo of $name',
-      child: ExcludeSemantics(
-        child: Center(
-          child: Container(
-            padding: const EdgeInsets.all(4),
-            decoration: const BoxDecoration(
-              shape: BoxShape.circle,
-              gradient: LinearGradient(
-                colors: [Color(0xFF6A00FF), Color(0xFFD12CFF)],
-              ),
+    final revision =
+        profile?.profileUpdatedAt ?? widget.friend.profileUpdatedAt;
+    return Center(
+      child: ProfilePhotoButton(
+        userId: widget.friend.id,
+        displayName: name,
+        mediaRevision: revision,
+        mediaService: widget.profileMediaService,
+        minimumSize: const Size(124, 124),
+        child: Container(
+          padding: const EdgeInsets.all(4),
+          decoration: const BoxDecoration(
+            shape: BoxShape.circle,
+            gradient: LinearGradient(
+              colors: [Color(0xFF6A00FF), Color(0xFFD12CFF)],
             ),
-            child: CircleAvatar(
-              radius: 58,
-              backgroundColor: palette.surfaceSunken,
-              backgroundImage: photo?.isNotEmpty == true
-                  ? NetworkImage(photo!)
-                  : null,
-              child: photo?.isNotEmpty == true
-                  ? null
-                  : Text(
-                      name.isEmpty ? '?' : name[0].toUpperCase(),
-                      style: TextStyle(
-                        color: palette.textPrimary,
-                        fontSize: 42,
-                        fontWeight: FontWeight.w900,
-                      ),
-                    ),
-            ),
+          ),
+          child: UserAvatar(
+            radius: 58,
+            userId: widget.friend.id,
+            mediaRevision: revision,
+            mediaService: widget.profileMediaService,
+            displayName: name,
+            backgroundColor: context.appPalette.surfaceSunken,
+            premium: profile?.premiumIdentity ?? widget.friend.premiumIdentity,
           ),
         ),
       ),
@@ -539,7 +571,9 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
       borderRadius: BorderRadius.circular(12),
     ),
     child: Text(
-      widget.friend.isOnline ? 'Online now' : 'Offline',
+      widget.friend.isOnline
+          ? AppLocalizations.of(context).text('Online now', 'Teraz online')
+          : AppLocalizations.of(context).text('Offline', 'Offline'),
       style: TextStyle(
         color: widget.friend.isOnline
             ? context.appPalette.successForeground
@@ -553,19 +587,27 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
   Widget _socialStats(UserProfile? profile) => LayoutBuilder(
     builder: (context, constraints) {
       final palette = context.appPalette;
+      final copy = AppLocalizations.of(context);
       final scaledBodySize = MediaQuery.textScalerOf(context).scale(14);
       final shouldStack = constraints.maxWidth < 360 || scaledBodySize >= 21;
       final stats = [
-        _stat(profile?.friendCount ?? 0, 'Friends', null),
+        _stat(
+          profile?.friendCount ?? 0,
+          copy.text('Friends', 'Znajomi'),
+          null,
+          keyName: 'friends',
+        ),
         _stat(
           profile?.followerCount ?? 0,
-          'Followers',
+          copy.text('Followers', 'Obserwujący'),
           () => _openList(FollowListType.followers),
+          keyName: 'followers',
         ),
         _stat(
           profile?.followingCount ?? 0,
-          'Following',
+          copy.text('Following', 'Obserwowani'),
           () => _openList(FollowListType.following),
+          keyName: 'following',
         ),
       ];
 
@@ -592,7 +634,12 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
     },
   );
 
-  Widget _stat(int value, String label, VoidCallback? onTap) {
+  Widget _stat(
+    int value,
+    String label,
+    VoidCallback? onTap, {
+    required String keyName,
+  }) {
     final content = ExcludeSemantics(
       child: ConstrainedBox(
         constraints: const BoxConstraints(minHeight: 52),
@@ -620,7 +667,7 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
         ),
       ),
     );
-    final key = ValueKey('friend-profile-stat-${label.toLowerCase()}');
+    final key = ValueKey('friend-profile-stat-$keyName');
     if (onTap == null) {
       return Semantics(key: key, label: '$label: $value', child: content);
     }
@@ -638,6 +685,7 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
       future: _mutualFriendsFuture,
       builder: (context, snapshot) {
         final palette = context.appPalette;
+        final copy = AppLocalizations.of(context);
         final summary = snapshot.data;
         if (summary == null || summary.count == 0) {
           return const SizedBox.shrink();
@@ -669,8 +717,11 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
               Expanded(
                 child: Text(
                   summary.count == 1
-                      ? '1 mutual friend'
-                      : '${summary.count} mutual friends',
+                      ? copy.text('1 mutual friend', '1 wspólny znajomy')
+                      : copy.text(
+                          '${summary.count} mutual friends',
+                          '${summary.count} wspólnych znajomych',
+                        ),
                   style: TextStyle(
                     color: palette.textPrimary,
                     fontSize: 13,
@@ -688,6 +739,7 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
   Widget _followButton(bool isFollowing) {
     final colors = Theme.of(context).colorScheme;
     final palette = context.appPalette;
+    final copy = AppLocalizations.of(context);
     return ConstrainedBox(
       constraints: const BoxConstraints(minHeight: 52),
       child: FilledButton.icon(
@@ -718,7 +770,9 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
                     : Icons.person_add_alt_1_rounded,
               ),
         label: Text(
-          isFollowing ? 'Following' : 'Follow',
+          isFollowing
+              ? copy.text('Following', 'Obserwujesz')
+              : copy.text('Follow', 'Obserwuj'),
           style: const TextStyle(fontWeight: FontWeight.w800),
         ),
       ),
@@ -727,6 +781,7 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
 
   Widget _messageButton() {
     final palette = context.appPalette;
+    final copy = AppLocalizations.of(context);
     return ConstrainedBox(
       constraints: const BoxConstraints(minHeight: 52),
       child: OutlinedButton.icon(
@@ -747,9 +802,9 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
                 child: CircularProgressIndicator(strokeWidth: 2),
               )
             : const Icon(Icons.chat_bubble_outline_rounded),
-        label: const Text(
-          'Message',
-          style: TextStyle(fontWeight: FontWeight.w800),
+        label: Text(
+          copy.text('Message', 'Wiadomość'),
+          style: const TextStyle(fontWeight: FontWeight.w800),
         ),
       ),
     );
@@ -757,6 +812,7 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
 
   Widget _voiceIdentity(UserProfile? profile) {
     final palette = context.appPalette;
+    final copy = AppLocalizations.of(context);
     final vibe = profile?.statusMessage.trim() ?? '';
     final languages = <String>{
       if ((profile?.nativeLanguage ?? '').isNotEmpty) profile!.nativeLanguage,
@@ -783,7 +839,7 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
               const SizedBox(width: 12),
               Expanded(
                 child: Text(
-                  'Voice identity',
+                  copy.text('Voice identity', 'Tożsamość głosowa'),
                   style: TextStyle(
                     color: palette.textPrimary,
                     fontSize: 18,
@@ -813,7 +869,10 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
           ] else if (vibe.isEmpty) ...[
             const SizedBox(height: 13),
             Text(
-              'Voice identity not added yet.',
+              copy.text(
+                'Voice identity not added yet.',
+                'Tożsamość głosowa nie została jeszcze uzupełniona.',
+              ),
               style: TextStyle(color: palette.textSecondary),
             ),
           ],
@@ -848,6 +907,7 @@ class _UnavailableProfile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
+    final copy = AppLocalizations.of(context);
     return Scaffold(
       backgroundColor: palette.background,
       body: SafeArea(
@@ -860,7 +920,7 @@ class _UnavailableProfile extends StatelessWidget {
               Align(
                 alignment: Alignment.centerLeft,
                 child: IconButton(
-                  tooltip: 'Back',
+                  tooltip: copy.text('Back', 'Wstecz'),
                   onPressed: onBack,
                   icon: Icon(
                     Icons.arrow_back_ios_new_rounded,
@@ -894,7 +954,10 @@ class _UnavailableProfile extends StatelessWidget {
                           ),
                           const SizedBox(height: 18),
                           Text(
-                            'This profile isn\'t available',
+                            copy.text(
+                              'This profile isn\'t available',
+                              'Ten profil jest niedostępny',
+                            ),
                             textAlign: TextAlign.center,
                             style: TextStyle(
                               color: palette.textPrimary,
@@ -904,7 +967,10 @@ class _UnavailableProfile extends StatelessWidget {
                           ),
                           const SizedBox(height: 8),
                           Text(
-                            'The person may have changed who can view their profile.',
+                            copy.text(
+                              'The person may have changed who can view their profile.',
+                              'Ta osoba mogła zmienić ustawienia widoczności profilu.',
+                            ),
                             textAlign: TextAlign.center,
                             style: TextStyle(
                               color: palette.textSecondary,

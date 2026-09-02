@@ -1,0 +1,3 @@
+"NSCameraUsageDescription" = "YO Voice käyttää kameraa, kun soitat yksityisiä videopuheluja, otat kuvia keskusteluissa tai luot profiili-, huone- tai klubikuvan.";
+"NSMicrophoneUsageDescription" = "YO Voice käyttää mikrofonia, kun puhut äänihuoneissa, tallennat ääntä tai soitat yksityisiä puheluja.";
+"NSPhotoLibraryUsageDescription" = "YO Voice käyttää valitsemiasi kuvia keskusteluissa sekä profiili-, huone- ja klubikuvina.";

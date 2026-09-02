@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/theme/yo_immersive_dark_surface.dart';
 
@@ -7,6 +8,7 @@ import '../../../profile/data/services/profile_service.dart';
 import '../../data/achievement_catalog.dart';
 import '../../data/models/achievement_definition.dart';
 import '../../data/services/achievement_service.dart';
+import '../achievement_localized_copy.dart';
 
 /// Self-contained entry point for the Awards / achievements hub reached
 /// from the More sheet — streams the current profile itself so callers
@@ -39,13 +41,17 @@ class _AwardsHubScreenState extends State<AwardsHubScreen> {
       stream: _profiles.watchCurrentProfile(),
       builder: (context, snapshot) {
         if (snapshot.hasError) {
+          final copy = AppLocalizations.of(context);
           return Scaffold(
             backgroundColor: const Color(0xFF09050F),
             body: Center(
               child: Padding(
                 padding: const EdgeInsets.all(24),
                 child: Text(
-                  '${snapshot.error}',
+                  copy.text(
+                    'Could not load achievements. Try again.',
+                    'Nie udało się wczytać osiągnięć. Spróbuj ponownie.',
+                  ),
                   textAlign: TextAlign.center,
                   style: const TextStyle(color: Colors.white),
                 ),
@@ -78,12 +84,13 @@ const Map<AchievementCategory, Set<String>> _categoryMetrics = {
   AchievementCategory.friends: {'friends', 'followers'},
 };
 
-String _categoryLabel(AchievementCategory category) => switch (category) {
-  AchievementCategory.creator => 'Creator',
-  AchievementCategory.community => 'Community',
-  AchievementCategory.voice => 'Voice',
-  AchievementCategory.friends => 'Friends',
-};
+String _categoryLabel(AppLocalizations copy, AchievementCategory category) =>
+    switch (category) {
+      AchievementCategory.creator => copy.text('Creator', 'Twórczość'),
+      AchievementCategory.community => copy.text('Community', 'Społeczność'),
+      AchievementCategory.voice => copy.text('Voice', 'Głos'),
+      AchievementCategory.friends => copy.text('Friends', 'Znajomi'),
+    };
 
 IconData _categoryIcon(AchievementCategory category) => switch (category) {
   AchievementCategory.creator => Icons.auto_awesome_rounded,
@@ -180,6 +187,7 @@ class _AchievementsScreenState extends State<AchievementsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final unlockedIds = widget.profile.unlockedTitleIds.toSet();
     final awardsProgress = AwardsProgress(widget.profile);
     final category = _selectedCategory;
@@ -205,13 +213,19 @@ class _AchievementsScreenState extends State<AchievementsScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              '${unlockedIds.length}/100 titles',
+              copy.text(
+                '${unlockedIds.length}/${awardsProgress.totalCount} titles',
+                '${unlockedIds.length}/${awardsProgress.totalCount} tytułów',
+              ),
               style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w900),
             ),
             const SizedBox(height: 2),
-            const Text(
-              'Your progress across YO Voice',
-              style: TextStyle(
+            Text(
+              copy.text(
+                'Your progress across YO Voice',
+                'Twoje postępy w YO Voice',
+              ),
+              style: const TextStyle(
                 color: Color(0xFFA79CAD),
                 fontSize: 12,
                 fontWeight: FontWeight.w500,
@@ -250,7 +264,7 @@ class _AchievementsScreenState extends State<AchievementsScreen> {
                   sliver: SliverGrid(
                     gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
                       maxCrossAxisExtent: isWide ? 560 : 520,
-                      mainAxisExtent: 250 + ((textScale - 1) * 150),
+                      mainAxisExtent: 270 + ((textScale - 1) * 150),
                       crossAxisSpacing: 16,
                       mainAxisSpacing: 16,
                     ),
@@ -315,6 +329,7 @@ class _AwardsHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     return Padding(
       padding: EdgeInsets.fromLTRB(isWide ? 24 : 16, 10, isWide ? 24 : 16, 6),
       child: Column(
@@ -324,9 +339,9 @@ class _AwardsHeader extends StatelessWidget {
           const SizedBox(height: 14),
           _StatsRow(progress: progress),
           const SizedBox(height: 18),
-          const Text(
-            'Categories',
-            style: TextStyle(
+          Text(
+            copy.text('Categories', 'Kategorie'),
+            style: const TextStyle(
               color: Colors.white,
               fontSize: 15,
               fontWeight: FontWeight.w800,
@@ -343,7 +358,7 @@ class _AwardsHeader extends StatelessWidget {
               scrollDirection: Axis.horizontal,
               children: [
                 _CategoryChip(
-                  label: 'All',
+                  label: copy.text('All', 'Wszystkie'),
                   icon: Icons.grid_view_rounded,
                   count: '${progress.unlockedCount}/${progress.totalCount}',
                   selected: selectedCategory == null,
@@ -352,7 +367,7 @@ class _AwardsHeader extends StatelessWidget {
                 for (final category in AchievementCategory.values) ...[
                   const SizedBox(width: 8),
                   _CategoryChip(
-                    label: _categoryLabel(category),
+                    label: _categoryLabel(copy, category),
                     icon: _categoryIcon(category),
                     count:
                         '${progress.countForCategory(category)}/${progress.totalForCategory(category)}',
@@ -378,6 +393,7 @@ class _LevelCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
@@ -422,7 +438,10 @@ class _LevelCard extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Level ${progress.level}',
+                  copy.text(
+                    'Level ${progress.level}',
+                    'Poziom ${progress.level}',
+                  ),
                   style: const TextStyle(
                     color: Colors.white,
                     fontSize: 18,
@@ -441,7 +460,10 @@ class _LevelCard extends StatelessWidget {
                 ),
                 const SizedBox(height: 6),
                 Text(
-                  '${progress.xpIntoLevel} / $_xpPerLevel XP to level ${progress.level + 1}',
+                  copy.text(
+                    '${progress.xpIntoLevel} / $_xpPerLevel XP to level ${progress.level + 1}',
+                    '${progress.xpIntoLevel} / $_xpPerLevel XP do poziomu ${progress.level + 1}',
+                  ),
                   style: const TextStyle(
                     color: Color(0xFFC7BBD1),
                     fontSize: 11.5,
@@ -462,29 +484,30 @@ class _StatsRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final tiles = [
       _StatTile(
         icon: Icons.lock_open_rounded,
         value: '${progress.unlockedCount}',
-        label: 'Unlocked',
+        label: copy.text('Unlocked', 'Odblokowane'),
         color: const Color(0xFF4DE09E),
       ),
       _StatTile(
         icon: Icons.lock_rounded,
         value: '${progress.lockedCount}',
-        label: 'Locked',
+        label: copy.text('Locked', 'Zablokowane'),
         color: const Color(0xFF9F95A6),
       ),
       _StatTile(
         icon: Icons.donut_large_rounded,
         value: '${(progress.completionRatio * 100).round()}%',
-        label: 'Complete',
+        label: copy.text('Complete', 'Ukończono'),
         color: const Color(0xFFD28AFF),
       ),
       _StatTile(
         icon: Icons.bolt_rounded,
         value: '${progress.totalXp}',
-        label: 'Total XP',
+        label: copy.text('Total XP', 'Łącznie XP'),
         color: const Color(0xFFFFA52B),
       ),
     ];
@@ -618,14 +641,15 @@ class _RecentUnlocks extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final dated = progress.recentUnlocks;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
-          'Recent unlocks',
-          style: TextStyle(
+        Text(
+          copy.text('Recent unlocks', 'Ostatnio odblokowane'),
+          style: const TextStyle(
             color: Colors.white,
             fontSize: 15,
             fontWeight: FontWeight.w800,
@@ -641,10 +665,14 @@ class _RecentUnlocks extends StatelessWidget {
               borderRadius: BorderRadius.circular(18),
               border: Border.all(color: const Color(0xFF382741)),
             ),
-            child: const Text(
-              'No achievements unlocked yet. Chat, host rooms and connect with '
-              'friends to earn your first title.',
-              style: TextStyle(
+            child: Text(
+              copy.text(
+                'No achievements unlocked yet. Chat, host rooms and connect with '
+                    'friends to earn your first title.',
+                'Nie masz jeszcze odblokowanych osiągnięć. Rozmawiaj, prowadź '
+                    'pokoje i poznawaj ludzi, aby zdobyć pierwszy tytuł.',
+              ),
+              style: const TextStyle(
                 color: Color(0xFFA99DB3),
                 fontSize: 12.5,
                 height: 1.4,
@@ -654,7 +682,7 @@ class _RecentUnlocks extends StatelessWidget {
         else
           SizedBox(
             height:
-                96 +
+                116 +
                 ((MediaQuery.textScalerOf(context).scale(1).clamp(1.0, 2.0) -
                         1) *
                     54),
@@ -683,7 +711,7 @@ class _RecentUnlocks extends StatelessWidget {
                       ),
                       const Spacer(),
                       Text(
-                        achievement.title,
+                        localizedAchievementTitle(copy, achievement),
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
@@ -693,7 +721,7 @@ class _RecentUnlocks extends StatelessWidget {
                         ),
                       ),
                       Text(
-                        _relativeTime(unlockedAt),
+                        _relativeTime(copy, unlockedAt),
                         style: TextStyle(color: palette.accent, fontSize: 10),
                       ),
                     ],
@@ -726,6 +754,7 @@ class _AchievementCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final palette = _RarityPalette.forRarity(achievement.rarity);
     final safeThreshold = achievement.threshold <= 0
         ? 1
@@ -823,7 +852,10 @@ class _AchievementCard extends StatelessWidget {
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
                                     Text(
-                                      achievement.title,
+                                      localizedAchievementTitle(
+                                        copy,
+                                        achievement,
+                                      ),
                                       maxLines: largeText ? 3 : 2,
                                       overflow: TextOverflow.ellipsis,
                                       style: TextStyle(
@@ -837,7 +869,10 @@ class _AchievementCard extends StatelessWidget {
                                     ),
                                     const SizedBox(height: 8),
                                     _RarityChip(
-                                      label: palette.label,
+                                      label: localizedAchievementRarity(
+                                        copy,
+                                        achievement.rarity,
+                                      ),
                                       color: palette.accent,
                                     ),
                                   ],
@@ -854,7 +889,7 @@ class _AchievementCard extends StatelessWidget {
                         ),
                         const SizedBox(height: 18),
                         Text(
-                          achievement.description,
+                          localizedAchievementDescription(copy, achievement),
                           maxLines: largeText ? 3 : 2,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
@@ -912,9 +947,9 @@ class _AchievementCard extends StatelessWidget {
                               ),
                             ),
                             if (selected)
-                              const Text(
-                                'ACTIVE',
-                                style: TextStyle(
+                              Text(
+                                copy.text('ACTIVE', 'AKTYWNY'),
+                                style: const TextStyle(
                                   color: Colors.white,
                                   fontSize: 11,
                                   fontWeight: FontWeight.w900,
@@ -923,7 +958,7 @@ class _AchievementCard extends StatelessWidget {
                               )
                             else if (unlocked)
                               Text(
-                                'TAP TO USE',
+                                copy.text('TAP TO USE', 'DOTKNIJ, ABY UŻYĆ'),
                                 style: TextStyle(
                                   color: palette.accent,
                                   fontSize: 11,
@@ -932,9 +967,9 @@ class _AchievementCard extends StatelessWidget {
                                 ),
                               )
                             else
-                              const Text(
-                                'LOCKED',
-                                style: TextStyle(
+                              Text(
+                                copy.text('LOCKED', 'ZABLOKOWANE'),
+                                style: const TextStyle(
                                   color: Color(0xFF8E8397),
                                   fontSize: 11,
                                   fontWeight: FontWeight.w900,
@@ -1130,14 +1165,12 @@ class _StatusIcon extends StatelessWidget {
 
 class _RarityPalette {
   const _RarityPalette({
-    required this.label,
     required this.accent,
     required this.border,
     required this.surfaceStart,
     required this.surfaceEnd,
   });
 
-  final String label;
   final Color accent;
   final Color border;
   final Color surfaceStart;
@@ -1146,42 +1179,36 @@ class _RarityPalette {
   static _RarityPalette forRarity(AchievementRarity rarity) {
     return switch (rarity) {
       AchievementRarity.common => const _RarityPalette(
-        label: 'Common',
         accent: Color(0xFFB8ADBF),
         border: Color(0xFF594A62),
         surfaceStart: Color(0xFF211827),
         surfaceEnd: Color(0xFF15101B),
       ),
       AchievementRarity.uncommon => const _RarityPalette(
-        label: 'Uncommon',
         accent: Color(0xFF4DE09E),
         border: Color(0xFF267A5D),
         surfaceStart: Color(0xFF122A22),
         surfaceEnd: Color(0xFF0E1815),
       ),
       AchievementRarity.rare => const _RarityPalette(
-        label: 'Rare',
         accent: Color(0xFF4B9DFF),
         border: Color(0xFF2B65A9),
         surfaceStart: Color(0xFF12253C),
         surfaceEnd: Color(0xFF0C1624),
       ),
       AchievementRarity.epic => const _RarityPalette(
-        label: 'Epic',
         accent: Color(0xFFC466FF),
         border: Color(0xFF7B35A6),
         surfaceStart: Color(0xFF2B1538),
         surfaceEnd: Color(0xFF180D21),
       ),
       AchievementRarity.legendary => const _RarityPalette(
-        label: 'Legendary',
         accent: Color(0xFFFFA52B),
         border: Color(0xFFB2651C),
         surfaceStart: Color(0xFF342010),
         surfaceEnd: Color(0xFF1A100A),
       ),
       AchievementRarity.mythic => const _RarityPalette(
-        label: 'Mythic',
         accent: Color(0xFFFF6DDA),
         border: Color(0xFFB53AA8),
         surfaceStart: Color(0xFF341437),
@@ -1191,14 +1218,20 @@ class _RarityPalette {
   }
 }
 
-String _relativeTime(DateTime date) {
+String _relativeTime(AppLocalizations copy, DateTime date) {
   final diff = DateTime.now().difference(date);
-  if (diff.inMinutes < 1) return 'Just now';
-  if (diff.inHours < 1) return '${diff.inMinutes}m ago';
-  if (diff.inDays < 1) return '${diff.inHours}h ago';
-  if (diff.inDays < 30) return '${diff.inDays}d ago';
+  if (diff.inMinutes < 1) return copy.text('Just now', 'Przed chwilą');
+  if (diff.inHours < 1) {
+    return copy.text('${diff.inMinutes}m ago', '${diff.inMinutes} min temu');
+  }
+  if (diff.inDays < 1) {
+    return copy.text('${diff.inHours}h ago', '${diff.inHours} godz. temu');
+  }
+  if (diff.inDays < 30) {
+    return copy.text('${diff.inDays}d ago', '${diff.inDays} dni temu');
+  }
   final months = diff.inDays ~/ 30;
-  return '${months}mo ago';
+  return copy.text('${months}mo ago', '$months mies. temu');
 }
 
 IconData _iconForMetric(String metric) {

@@ -4,8 +4,10 @@ import 'dart:collection';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_theme.dart';
 import 'package:yovoice/features/auth/data/totp_mfa_service.dart';
 import 'package:yovoice/features/auth/presentation/screens/totp_challenge_screen.dart';
@@ -158,8 +160,17 @@ Widget totpTestApp(
   bool accessibleNavigation = false,
   TextScaler textScaler = TextScaler.noScaling,
   EdgeInsets viewInsets = EdgeInsets.zero,
+  Locale locale = const Locale('en'),
 }) => MaterialApp(
   theme: theme ?? AppTheme.darkTheme,
+  locale: locale,
+  localizationsDelegates: const <LocalizationsDelegate<dynamic>>[
+    AppLocalizationsDelegate(),
+    GlobalMaterialLocalizations.delegate,
+    GlobalWidgetsLocalizations.delegate,
+    GlobalCupertinoLocalizations.delegate,
+  ],
+  supportedLocales: AppLocalizations.supportedLocales,
   builder: (context, child) => MediaQuery(
     data: MediaQuery.of(context).copyWith(
       disableAnimations: disableAnimations,
@@ -180,8 +191,17 @@ Widget totpRouteTestApp(
   bool accessibleNavigation = false,
   TextScaler textScaler = TextScaler.noScaling,
   EdgeInsets viewInsets = EdgeInsets.zero,
+  Locale locale = const Locale('en'),
 }) => MaterialApp(
   theme: theme ?? AppTheme.darkTheme,
+  locale: locale,
+  localizationsDelegates: const <LocalizationsDelegate<dynamic>>[
+    AppLocalizationsDelegate(),
+    GlobalMaterialLocalizations.delegate,
+    GlobalWidgetsLocalizations.delegate,
+    GlobalCupertinoLocalizations.delegate,
+  ],
+  supportedLocales: AppLocalizations.supportedLocales,
   navigatorObservers: <NavigatorObserver>[_TotpNavigatorObserver(probe)],
   builder: (context, child) => MediaQuery(
     data: MediaQuery.of(context).copyWith(

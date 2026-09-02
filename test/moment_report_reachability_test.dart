@@ -328,11 +328,7 @@ void main() {
     testWidgets('the desktop detail panel offers Report beside Like and '
         'Share, and files it', (tester) async {
       final functions = _RecordingFunctions();
-      await pumpFeed(
-        tester,
-        functions: functions,
-        size: const Size(1440, 900),
-      );
+      await pumpFeed(tester, functions: functions, size: const Size(1440, 900));
 
       expect(find.byKey(const ValueKey('detail-like')), findsOneWidget);
       expect(find.byKey(const ValueKey('detail-share')), findsOneWidget);
@@ -404,8 +400,10 @@ void main() {
       await pumpThread(tester, await seedComments(), functions);
 
       // Only the other person's comment carries the control.
-      expect(find.byKey(const ValueKey('report-comment-c-theirs')),
-          findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('report-comment-c-theirs')),
+        findsOneWidget,
+      );
       expect(find.byKey(const ValueKey('report-comment-c-mine')), findsNothing);
 
       await tester.tap(find.byKey(const ValueKey('report-comment-c-theirs')));

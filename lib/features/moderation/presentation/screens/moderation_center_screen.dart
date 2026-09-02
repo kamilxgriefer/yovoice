@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_immersive_colors.dart';
 import 'package:yovoice/features/messages/data/models/global_message.dart';
@@ -100,11 +101,11 @@ class _ModerationCenterScreenState extends State<ModerationCenterScreen> {
 
   /// The role as a PERSON reads it — internal claim vocabulary never
   /// reaches the interface.
-  String get _roleLabel => switch (_role) {
-    'moderator' => 'Moderator',
-    'superModerator' => 'Super Moderator',
-    'superAdmin' => 'Admin',
-    _ => 'Staff',
+  String _roleLabel(AppLocalizations copy) => switch (_role) {
+    'moderator' => copy.text('Moderator', 'Moderator'),
+    'superModerator' => copy.text('Super Moderator', 'Supermoderator'),
+    'superAdmin' => copy.text('Admin', 'Administrator'),
+    _ => copy.text('Staff', 'Zespół'),
   };
 
   @override
@@ -147,6 +148,7 @@ class _ModerationCenterScreenState extends State<ModerationCenterScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     // The desktop shell slot owns navigation and draws no app bar; a
     // pushed route (mobile, and any direct entry) carries a real app bar
     // with Back and Home so Moderation is never a dead end. This was the
@@ -169,7 +171,7 @@ class _ModerationCenterScreenState extends State<ModerationCenterScreen> {
           key: ValueKey('workspace-$_refreshTick'),
           service: _service!,
           role: _role,
-          roleLabel: _roleLabel,
+          roleLabel: _roleLabel(copy),
           showHeader: inShellSlot,
           status: _status,
           targetFilter: _targetFilter,
@@ -233,9 +235,9 @@ class _ModerationCenterScreenState extends State<ModerationCenterScreen> {
                     color: Color(0xFFD3A5FF),
                   ),
                   const SizedBox(width: 8),
-                  const Flexible(
+                  Flexible(
                     child: Text(
-                      'Moderation',
+                      copy.text('Moderation', 'Moderacja'),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
@@ -246,13 +248,13 @@ class _ModerationCenterScreenState extends State<ModerationCenterScreen> {
                   ),
                   if (_isStaff == true) ...[
                     const SizedBox(width: 8),
-                    _RoleBadge(label: _roleLabel),
+                    _RoleBadge(label: _roleLabel(copy)),
                   ],
                 ],
               ),
               actions: [
                 IconButton(
-                  tooltip: 'Home',
+                  tooltip: copy.text('Home', 'Strona główna'),
                   onPressed: () =>
                       Navigator.of(context).popUntil((route) => route.isFirst),
                   icon: const Icon(Icons.home_rounded),
@@ -300,6 +302,7 @@ class _AccessDenied extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     return Center(
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 380),
@@ -324,22 +327,33 @@ class _AccessDenied extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 16),
-            const Text(
-              'Moderation is staff only',
-              semanticsLabel: 'Moderation is staff only',
-              style: TextStyle(
+            Text(
+              copy.text(
+                'Moderation is staff only',
+                'Moderacja jest dostępna tylko dla zespołu',
+              ),
+              semanticsLabel: copy.text(
+                'Moderation is staff only',
+                'Moderacja jest dostępna tylko dla zespołu',
+              ),
+              style: const TextStyle(
                 color: Colors.white,
                 fontSize: 18,
                 fontWeight: FontWeight.w800,
               ),
             ),
             const SizedBox(height: 8),
-            const Text(
-              'This area is limited to accounts with a moderator role. '
-              'If your access changed while you were working, sign out '
-              'and back in to refresh it.',
+            Text(
+              copy.text(
+                'This area is limited to accounts with a moderator role. '
+                    'If your access changed while you were working, sign out '
+                    'and back in to refresh it.',
+                'Ten obszar jest dostępny wyłącznie dla kont z rolą '
+                    'moderatora. Jeśli Twoje uprawnienia zmieniły się podczas '
+                    'pracy, wyloguj się i zaloguj ponownie.',
+              ),
               textAlign: TextAlign.center,
-              style: TextStyle(
+              style: const TextStyle(
                 color: Color(0xFF9A90AC),
                 fontSize: 13,
                 height: 1.45,
@@ -403,7 +417,10 @@ class _ModerationWorkspace extends StatelessWidget {
 
   /// Client-side narrowing of the LOADED page only — bounded, and
   /// clearly scoped: it never claims to search the whole collection.
-  List<ModerationReport> _searched(List<ModerationReport> reports) {
+  List<ModerationReport> _searched(
+    List<ModerationReport> reports,
+    AppLocalizations copy,
+  ) {
     final query = searchQuery.trim().toLowerCase();
     if (query.isEmpty) return reports;
     return [
@@ -414,6 +431,7 @@ class _ModerationWorkspace extends StatelessWidget {
             (report.reason != null &&
                 reportReasonLabel(
                   report.reason!,
+                  copy: copy,
                 ).toLowerCase().contains(query)))
           report,
     ];
@@ -421,6 +439,7 @@ class _ModerationWorkspace extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     // Every filter is a server-side clause. The key ties this
     // StreamBuilder to the EXACT active query, so when a filter changes
     // Flutter tears down the old subscription and its state — a late
@@ -441,7 +460,7 @@ class _ModerationWorkspace extends StatelessWidget {
       ),
       builder: (context, snapshot) {
         final loaded = snapshot.data ?? const <ModerationReport>[];
-        final reports = _searched(loaded);
+        final reports = _searched(loaded, copy);
         final selected = reports.where((r) => r.id == selectedId).firstOrNull;
 
         return LayoutBuilder(
@@ -645,12 +664,16 @@ class _WorkspaceHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
-          'Staff tools / Moderation',
-          style: TextStyle(
+        Text(
+          copy.text(
+            'Staff tools / Moderation',
+            'Narzędzia zespołu / Moderacja',
+          ),
+          style: const TextStyle(
             color: Color(0xFF7E7895),
             fontSize: 10.5,
             fontWeight: FontWeight.w700,
@@ -666,9 +689,9 @@ class _WorkspaceHeader extends StatelessWidget {
               color: Color(0xFFD3A5FF),
             ),
             const SizedBox(width: 10),
-            const Text(
-              'Moderation',
-              style: TextStyle(
+            Text(
+              copy.text('Moderation', 'Moderacja'),
+              style: const TextStyle(
                 color: Colors.white,
                 fontSize: 22,
                 fontWeight: FontWeight.w800,
@@ -679,16 +702,19 @@ class _WorkspaceHeader extends StatelessWidget {
             _RoleBadge(label: roleLabel),
             const Spacer(),
             IconButton(
-              tooltip: 'Refresh',
+              tooltip: copy.text('Refresh', 'Odśwież'),
               onPressed: onRefresh,
               icon: const Icon(Icons.refresh_rounded, color: Color(0xFFA69CAF)),
             ),
           ],
         ),
         const SizedBox(height: 2),
-        const Text(
-          'Review community reports and take action.',
-          style: TextStyle(color: Color(0xFFA69CAF), fontSize: 12.5),
+        Text(
+          copy.text(
+            'Review community reports and take action.',
+            'Weryfikuj zgłoszenia społeczności i podejmuj działania.',
+          ),
+          style: const TextStyle(color: Color(0xFFA69CAF), fontSize: 12.5),
         ),
       ],
     );
@@ -714,21 +740,25 @@ class _SummaryStrip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final cards = <Widget>[
       if (statusCounts[ReportStatus.open] != null)
         _SummaryCard(
-          label: 'Open',
+          label: _Filters.statusLabel(ReportStatus.open, copy: copy),
           value: '${statusCounts[ReportStatus.open]}',
           color: const Color(0xFFFFB547),
         ),
       if (statusCounts[ReportStatus.inReview] != null)
         _SummaryCard(
-          label: 'In review',
+          label: _Filters.statusLabel(ReportStatus.inReview, copy: copy),
           value: '${statusCounts[ReportStatus.inReview]}',
           color: const Color(0xFF8D5BFF),
         ),
       _SummaryCard(
-        label: 'Loaded · ${_Filters.statusLabel(status)}',
+        label: copy.text(
+          'Loaded · ${_Filters.statusLabel(status)}',
+          'Wczytane · ${_Filters.statusLabel(status, copy: copy)}',
+        ),
         value: '$loadedCount',
         color: const Color(0xFF35D07F),
       ),
@@ -807,6 +837,7 @@ class _StatusTabs extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final tabs = Container(
       padding: const EdgeInsets.all(3),
       decoration: BoxDecoration(
@@ -821,7 +852,7 @@ class _StatusTabs extends StatelessWidget {
             Padding(
               padding: const EdgeInsets.only(right: 2),
               child: _StatusTab(
-                label: _Filters.statusLabel(value),
+                label: _Filters.statusLabel(value, copy: copy),
                 count: statusCounts[value],
                 selected: status == value,
                 onTap: () => onStatus(value),
@@ -920,6 +951,7 @@ class _Toolbar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     return Row(
       children: [
         Expanded(
@@ -930,7 +962,10 @@ class _Toolbar extends StatelessWidget {
               controller: null,
               style: const TextStyle(color: Colors.white, fontSize: 13),
               decoration: InputDecoration(
-                hintText: 'Search loaded reports…',
+                hintText: copy.text(
+                  'Search loaded reports…',
+                  'Szukaj we wczytanych zgłoszeniach…',
+                ),
                 hintStyle: const TextStyle(
                   color: Color(0xFF7E7895),
                   fontSize: 12.5,
@@ -970,14 +1005,19 @@ class _Toolbar extends StatelessWidget {
           ),
           icon: const Icon(Icons.tune_rounded, size: 16),
           label: Text(
-            activeFilterCount == 0 ? 'Filters' : 'Filters · $activeFilterCount',
+            activeFilterCount == 0
+                ? copy.text('Filters', 'Filtry')
+                : copy.text(
+                    'Filters · $activeFilterCount',
+                    'Filtry · $activeFilterCount',
+                  ),
             style: const TextStyle(fontSize: 12.5),
           ),
         ),
         if (narrow) ...[
           const SizedBox(width: 4),
           IconButton(
-            tooltip: 'Refresh',
+            tooltip: copy.text('Refresh', 'Odśwież'),
             onPressed: onRefresh,
             icon: const Icon(
               Icons.refresh_rounded,
@@ -1006,13 +1046,14 @@ class _ActiveFilterChips extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     return Wrap(
       spacing: 6,
       runSpacing: 6,
       children: [
         if (targetFilter != null)
           InputChip(
-            label: Text(_Filters.targetLabel(targetFilter!)),
+            label: Text(_Filters.targetLabel(targetFilter!, copy: copy)),
             labelStyle: const TextStyle(color: Colors.white, fontSize: 11.5),
             deleteIconColor: const Color(0xFFA69CAF),
             backgroundColor: AppColors.primary.withValues(alpha: .2),
@@ -1021,7 +1062,7 @@ class _ActiveFilterChips extends StatelessWidget {
           ),
         if (reasonFilter != null)
           InputChip(
-            label: Text(reportReasonLabel(reasonFilter!)),
+            label: Text(reportReasonLabel(reasonFilter!, copy: copy)),
             labelStyle: const TextStyle(color: Colors.white, fontSize: 11.5),
             deleteIconColor: const Color(0xFFA69CAF),
             backgroundColor: AppColors.primary.withValues(alpha: .2),
@@ -1056,16 +1097,17 @@ class _FilterPanelState extends State<_FilterPanel> {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final body = Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(
           children: [
-            const Expanded(
+            Expanded(
               child: Text(
-                'Filter reports',
-                style: TextStyle(
+                copy.text('Filter reports', 'Filtruj zgłoszenia'),
+                style: const TextStyle(
                   color: Colors.white,
                   fontSize: 16,
                   fontWeight: FontWeight.w900,
@@ -1077,14 +1119,14 @@ class _FilterPanelState extends State<_FilterPanel> {
                 _target = null;
                 _reason = null;
               }),
-              child: const Text('Clear all'),
+              child: Text(copy.text('Clear all', 'Wyczyść wszystko')),
             ),
           ],
         ),
         const SizedBox(height: 10),
-        const Text(
-          'TARGET TYPE',
-          style: TextStyle(
+        Text(
+          copy.text('TARGET TYPE', 'TYP CELU'),
+          style: const TextStyle(
             color: Color(0xFF7E7895),
             fontSize: 10.5,
             fontWeight: FontWeight.w800,
@@ -1096,19 +1138,27 @@ class _FilterPanelState extends State<_FilterPanel> {
           spacing: 6,
           runSpacing: 6,
           children: [
-            _draftChip('All targets', _target == null, () {
-              setState(() => _target = null);
-            }),
+            _draftChip(
+              copy.text('All targets', 'Wszystkie cele'),
+              _target == null,
+              () {
+                setState(() => _target = null);
+              },
+            ),
             for (final value in ReportTargetType.values)
-              _draftChip(_Filters.targetLabel(value), _target == value, () {
-                setState(() => _target = value);
-              }),
+              _draftChip(
+                _Filters.targetLabel(value, copy: copy),
+                _target == value,
+                () {
+                  setState(() => _target = value);
+                },
+              ),
           ],
         ),
         const SizedBox(height: 14),
-        const Text(
-          'REASON',
-          style: TextStyle(
+        Text(
+          copy.text('REASON', 'POWÓD'),
+          style: const TextStyle(
             color: Color(0xFF7E7895),
             fontSize: 10.5,
             fontWeight: FontWeight.w800,
@@ -1120,13 +1170,21 @@ class _FilterPanelState extends State<_FilterPanel> {
           spacing: 6,
           runSpacing: 6,
           children: [
-            _draftChip('All reasons', _reason == null, () {
-              setState(() => _reason = null);
-            }),
+            _draftChip(
+              copy.text('All reasons', 'Wszystkie powody'),
+              _reason == null,
+              () {
+                setState(() => _reason = null);
+              },
+            ),
             for (final value in ReportReason.values)
-              _draftChip(reportReasonLabel(value), _reason == value, () {
-                setState(() => _reason = value);
-              }),
+              _draftChip(
+                reportReasonLabel(value, copy: copy),
+                _reason == value,
+                () {
+                  setState(() => _reason = value);
+                },
+              ),
           ],
         ),
         const SizedBox(height: 16),
@@ -1135,13 +1193,13 @@ class _FilterPanelState extends State<_FilterPanel> {
           children: [
             TextButton(
               onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Cancel'),
+              child: Text(copy.text('Cancel', 'Anuluj')),
             ),
             const SizedBox(width: 6),
             FilledButton(
               style: FilledButton.styleFrom(backgroundColor: AppColors.primary),
               onPressed: () => Navigator.of(context).pop((_target, _reason)),
-              child: const Text('Apply filters'),
+              child: Text(copy.text('Apply filters', 'Zastosuj filtry')),
             ),
           ],
         ),
@@ -1153,8 +1211,8 @@ class _FilterPanelState extends State<_FilterPanel> {
         mainAxisSize: MainAxisSize.min,
         children: [
           if (widget.asSheet)
-            const YoModalSheetChrome(
-              sheetLabel: 'report filters',
+            YoModalSheetChrome(
+              sheetLabel: copy.text('report filters', 'filtry zgłoszeń'),
               surfaceColor: Color(0xFF151020),
             ),
           Flexible(
@@ -1195,17 +1253,33 @@ class _FilterPanelState extends State<_FilterPanel> {
 /// Label helpers shared by the tabs, chips, queue rows and the detail
 /// outcome line.
 abstract final class _Filters {
-  static String statusLabel(ReportStatus status) => switch (status) {
-    ReportStatus.open => 'Open',
-    ReportStatus.inReview => 'In review',
-    ReportStatus.resolved => 'Resolved',
-    ReportStatus.dismissed => 'Dismissed',
-  };
+  static String statusLabel(ReportStatus status, {AppLocalizations? copy}) {
+    final english = switch (status) {
+      ReportStatus.open => 'Open',
+      ReportStatus.inReview => 'In review',
+      ReportStatus.resolved => 'Resolved',
+      ReportStatus.dismissed => 'Dismissed',
+    };
+    final polish = switch (status) {
+      ReportStatus.open => 'Otwarte',
+      ReportStatus.inReview => 'W trakcie weryfikacji',
+      ReportStatus.resolved => 'Rozstrzygnięte',
+      ReportStatus.dismissed => 'Odrzucone',
+    };
+    return copy?.text(english, polish) ?? english;
+  }
 
-  static String targetLabel(ReportTargetType target) => switch (target) {
-    ReportTargetType.globalMessage => 'Message',
-    ReportTargetType.user => 'Account',
-  };
+  static String targetLabel(ReportTargetType target, {AppLocalizations? copy}) {
+    final english = switch (target) {
+      ReportTargetType.globalMessage => 'Message',
+      ReportTargetType.user => 'Account',
+    };
+    final polish = switch (target) {
+      ReportTargetType.globalMessage => 'Wiadomość',
+      ReportTargetType.user => 'Konto',
+    };
+    return copy?.text(english, polish) ?? english;
+  }
 }
 
 class _Queue extends StatelessWidget {
@@ -1242,17 +1316,29 @@ class _Queue extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     if (snapshot.hasError) {
       final denied = snapshot.error.toString().toLowerCase().contains(
         'permission',
       );
       return _QueueState(
         icon: denied ? Icons.lock_outline_rounded : Icons.error_outline_rounded,
-        title: denied ? 'Access removed' : 'Reports could not be loaded',
+        title: denied
+            ? copy.text('Access removed', 'Dostęp odebrany')
+            : copy.text(
+                'Reports could not be loaded',
+                'Nie udało się wczytać zgłoszeń',
+              ),
         text: denied
-            ? 'Your moderator access has been removed.'
-            : 'Check your connection and try again.',
-        actionLabel: denied ? null : 'Retry',
+            ? copy.text(
+                'Your moderator access has been removed.',
+                'Twoje uprawnienia moderatorskie zostały odebrane.',
+              )
+            : copy.text(
+                'Check your connection and try again.',
+                'Sprawdź połączenie z internetem i spróbuj ponownie.',
+              ),
+        actionLabel: denied ? null : copy.text('Retry', 'Spróbuj ponownie'),
         onAction: denied ? null : onRetry,
       );
     }
@@ -1279,16 +1365,22 @@ class _Queue extends StatelessWidget {
       if (loadedCount > 0 || searchActive || filtersActive) {
         return _QueueState(
           icon: Icons.filter_alt_off_rounded,
-          title: 'No matching reports',
-          text: 'Try changing or clearing your filters.',
-          actionLabel: 'Clear filters',
+          title: copy.text('No matching reports', 'Brak pasujących zgłoszeń'),
+          text: copy.text(
+            'Try changing or clearing your filters.',
+            'Zmień lub wyczyść filtry.',
+          ),
+          actionLabel: copy.text('Clear filters', 'Wyczyść filtry'),
           onAction: onClearFilters,
         );
       }
-      return const _QueueState(
+      return _QueueState(
         icon: Icons.inbox_outlined,
-        title: 'No reports here',
-        text: 'New community reports will appear here.',
+        title: copy.text('No reports here', 'Brak zgłoszeń'),
+        text: copy.text(
+          'New community reports will appear here.',
+          'Nowe zgłoszenia społeczności pojawią się tutaj.',
+        ),
       );
     }
 
@@ -1305,9 +1397,9 @@ class _Queue extends StatelessWidget {
           return Center(
             child: TextButton(
               onPressed: onLoadMore,
-              child: const Text(
-                'Load more',
-                style: TextStyle(
+              child: Text(
+                copy.text('Load more', 'Wczytaj więcej'),
+                style: const TextStyle(
                   color: Color(0xFFD3A5FF),
                   fontSize: 12,
                   fontWeight: FontWeight.w700,
@@ -1357,16 +1449,27 @@ class _QueueRowState extends State<_QueueRow> {
     super.dispose();
   }
 
-  static String age(DateTime? at) {
+  static String age(DateTime? at, {AppLocalizations? copy}) {
     if (at == null) return '';
     final diff = DateTime.now().difference(at);
-    if (diff.inMinutes < 60) return '${diff.inMinutes.clamp(1, 59)}m';
-    if (diff.inHours < 24) return '${diff.inHours}h';
+    if (diff.inMinutes < 60) {
+      final minutes = diff.inMinutes.clamp(1, 59);
+      return copy?.isPolish == true ? '$minutes min' : '${minutes}m';
+    }
+    if (diff.inHours < 24) {
+      return copy?.isPolish == true
+          ? '${diff.inHours} godz.'
+          : '${diff.inHours}h';
+    }
+    if (copy?.isPolish == true) {
+      return diff.inDays == 1 ? '1 dzień' : '${diff.inDays} dni';
+    }
     return '${diff.inDays}d';
   }
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final report = widget.report;
     final reason = report.reason;
 
@@ -1374,8 +1477,8 @@ class _QueueRowState extends State<_QueueRow> {
       button: true,
       selected: widget.selected,
       label:
-          '${reason == null ? 'Report' : reportReasonLabel(reason)}, '
-          '${_Filters.statusLabel(report.status)}',
+          '${reason == null ? copy.text('Report', 'Zgłoszenie') : reportReasonLabel(reason, copy: copy)}, '
+          '${_Filters.statusLabel(report.status, copy: copy)}',
       child: MouseRegion(
         onEnter: (_) => setState(() => _hover = true),
         onExit: (_) => setState(() => _hover = false),
@@ -1411,7 +1514,9 @@ class _QueueRowState extends State<_QueueRow> {
                     children: [
                       Expanded(
                         child: Text(
-                          reason == null ? 'Report' : reportReasonLabel(reason),
+                          reason == null
+                              ? copy.text('Report', 'Zgłoszenie')
+                              : reportReasonLabel(reason, copy: copy),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(
@@ -1423,7 +1528,7 @@ class _QueueRowState extends State<_QueueRow> {
                       ),
                       const SizedBox(width: 8),
                       Text(
-                        age(report.createdAt),
+                        age(report.createdAt, copy: copy),
                         style: const TextStyle(
                           color: Color(0xFF7E7895),
                           fontSize: 10.5,
@@ -1435,7 +1540,7 @@ class _QueueRowState extends State<_QueueRow> {
                   Text(
                     report.targetType == null
                         ? report.targetId
-                        : _Filters.targetLabel(report.targetType!),
+                        : _Filters.targetLabel(report.targetType!, copy: copy),
                     style: const TextStyle(
                       color: Color(0xFF9A90AC),
                       fontSize: 11.5,
@@ -1493,6 +1598,7 @@ class _StatusChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final color = switch (status) {
       ReportStatus.open => const Color(0xFFFFB547),
       ReportStatus.inReview => const Color(0xFF5CE1E6),
@@ -1507,7 +1613,7 @@ class _StatusChip extends StatelessWidget {
         border: Border.all(color: color.withValues(alpha: .4)),
       ),
       child: Text(
-        _Filters.statusLabel(status),
+        _Filters.statusLabel(status, copy: copy),
         style: TextStyle(
           color: color,
           fontSize: 9.5,
@@ -1585,10 +1691,14 @@ class _NothingSelected extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const _QueueState(
+    final copy = AppLocalizations.of(context);
+    return _QueueState(
       icon: Icons.touch_app_outlined,
-      title: 'Select a report',
-      text: 'Choose a report from the queue to review its details.',
+      title: copy.text('Select a report', 'Wybierz zgłoszenie'),
+      text: copy.text(
+        'Choose a report from the queue to review its details.',
+        'Wybierz zgłoszenie z kolejki, aby sprawdzić jego szczegóły.',
+      ),
     );
   }
 }
@@ -1645,6 +1755,7 @@ class _DetailState extends State<_Detail> {
     String? confirmBody,
   }) async {
     if (_busy) return;
+    final copy = AppLocalizations.of(context);
 
     if (confirmTitle != null) {
       final confirmed = await showDialog<bool>(
@@ -1669,15 +1780,30 @@ class _DetailState extends State<_Detail> {
         _requestId = null;
         _auditRefresh++;
         _success = result.replayed
-            ? 'Already applied.'
+            ? copy.text('Already applied.', 'Ta czynność została już wykonana.')
             : switch (result.status) {
-                ReportStatus.inReview => 'Claimed. It is yours to review.',
-                ReportStatus.open => 'Released back to the queue.',
+                ReportStatus.inReview => copy.text(
+                  'Claimed. It is yours to review.',
+                  'Zgłoszenie przejęte. Możesz rozpocząć weryfikację.',
+                ),
+                ReportStatus.open => copy.text(
+                  'Released back to the queue.',
+                  'Zgłoszenie wróciło do kolejki.',
+                ),
                 ReportStatus.resolved =>
                   result.contentRemoved
-                      ? 'Message removed and report resolved.'
-                      : 'Report resolved.',
-                ReportStatus.dismissed => 'Report dismissed.',
+                      ? copy.text(
+                          'Message removed and report resolved.',
+                          'Wiadomość usunięta, a zgłoszenie rozstrzygnięte.',
+                        )
+                      : copy.text(
+                          'Report resolved.',
+                          'Zgłoszenie rozstrzygnięte.',
+                        ),
+                ReportStatus.dismissed => copy.text(
+                  'Report dismissed.',
+                  'Zgłoszenie odrzucone.',
+                ),
               };
       });
     } on ModerationException catch (error) {
@@ -1686,7 +1812,12 @@ class _DetailState extends State<_Detail> {
         widget.onAccessExpired();
         return;
       }
-      setState(() => _error = error.message);
+      setState(
+        () => _error = copy.text(
+          _englishModerationFailure(error.failure),
+          _polishModerationFailure(error.failure),
+        ),
+      );
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -1694,6 +1825,7 @@ class _DetailState extends State<_Detail> {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final report = widget.report;
     final service = widget.service;
 
@@ -1705,15 +1837,15 @@ class _DetailState extends State<_Detail> {
             if (widget.onBack != null)
               IconButton(
                 onPressed: widget.onBack,
-                tooltip: 'Back to the queue',
+                tooltip: copy.text('Back to the queue', 'Wróć do kolejki'),
                 icon: const Icon(Icons.arrow_back_rounded, size: 18),
                 color: Colors.white,
               ),
             Expanded(
               child: Text(
                 report.reason == null
-                    ? 'Report'
-                    : reportReasonLabel(report.reason!),
+                    ? copy.text('Report', 'Zgłoszenie')
+                    : reportReasonLabel(report.reason!, copy: copy),
                 style: const TextStyle(
                   color: Colors.white,
                   fontSize: 16.5,
@@ -1731,11 +1863,14 @@ class _DetailState extends State<_Detail> {
         ),
         const SizedBox(height: 14),
         if (report.note.isNotEmpty) ...[
-          _Field(label: 'Reporter note', value: report.note),
+          _Field(
+            label: copy.text('Reporter note', 'Notatka osoby zgłaszającej'),
+            value: report.note,
+          ),
           const SizedBox(height: 12),
         ],
         _Field(
-          label: 'Filed',
+          label: copy.text('Filed', 'Zgłoszono'),
           value: report.createdAt?.toLocal().toString().split('.').first ?? '—',
         ),
         const SizedBox(height: 12),
@@ -1747,15 +1882,18 @@ class _DetailState extends State<_Detail> {
         if (report.isClosed) ...[
           const SizedBox(height: 12),
           _Field(
-            label: 'Outcome',
+            label: copy.text('Outcome', 'Wynik'),
             value:
-                '${_Filters.statusLabel(report.status)}'
-                '${report.resolution == null ? '' : ' · ${resolutionLabel(report.resolution!)}'}'
-                '${report.contentRemoved ? ' · content removed' : ''}',
+                '${_Filters.statusLabel(report.status, copy: copy)}'
+                '${report.resolution == null ? '' : ' · ${resolutionLabel(report.resolution!, copy: copy)}'}'
+                '${report.contentRemoved ? ' · ${copy.text('content removed', 'treść usunięta')}' : ''}',
           ),
           if ((report.resolutionNote ?? '').isNotEmpty) ...[
             const SizedBox(height: 12),
-            _Field(label: 'Moderator note', value: report.resolutionNote!),
+            _Field(
+              label: copy.text('Moderator note', 'Notatka moderatora'),
+              value: report.resolutionNote!,
+            ),
           ],
         ],
         const SizedBox(height: 18),
@@ -1792,6 +1930,7 @@ class _DetailState extends State<_Detail> {
   }
 
   Widget _actions(ModerationReport report) {
+    final copy = AppLocalizations.of(context);
     final service = widget.service;
     final canRemove = report.targetType == ReportTargetType.globalMessage;
 
@@ -1800,7 +1939,7 @@ class _DetailState extends State<_Detail> {
       children: [
         if (report.status == ReportStatus.open)
           _ActionButton(
-            label: 'Claim and review',
+            label: copy.text('Claim and review', 'Przejmij i zweryfikuj'),
             icon: Icons.how_to_reg_rounded,
             busy: _busy,
             onPressed: () =>
@@ -1808,7 +1947,7 @@ class _DetailState extends State<_Detail> {
           )
         else
           _ActionButton(
-            label: 'Release claim',
+            label: copy.text('Release claim', 'Zwolnij przypisanie'),
             icon: Icons.undo_rounded,
             subtle: true,
             busy: _busy,
@@ -1816,9 +1955,9 @@ class _DetailState extends State<_Detail> {
                 _run((id) => service.release(report.id, requestId: id)),
           ),
         const SizedBox(height: 14),
-        const Text(
-          'Resolution',
-          style: TextStyle(
+        Text(
+          copy.text('Resolution', 'Rozstrzygnięcie'),
+          style: const TextStyle(
             color: Color(0xFF9A90AC),
             fontSize: 11,
             fontWeight: FontWeight.w700,
@@ -1831,7 +1970,7 @@ class _DetailState extends State<_Detail> {
           children: [
             for (final value in ReportResolution.values)
               ChoiceChip(
-                label: Text(resolutionLabel(value)),
+                label: Text(resolutionLabel(value, copy: copy)),
                 selected: _resolution == value,
                 onSelected: (_) => setState(() => _resolution = value),
                 labelStyle: TextStyle(
@@ -1855,7 +1994,10 @@ class _DetailState extends State<_Detail> {
           style: const TextStyle(color: Colors.white, fontSize: 12.5),
           decoration: InputDecoration(
             counterText: '',
-            hintText: 'Internal note (optional)',
+            hintText: copy.text(
+              'Internal note (optional)',
+              'Notatka wewnętrzna (opcjonalnie)',
+            ),
             hintStyle: const TextStyle(
               color: Color(0xFF7E7895),
               fontSize: 12.5,
@@ -1879,7 +2021,7 @@ class _DetailState extends State<_Detail> {
           runSpacing: 8,
           children: [
             _ActionButton(
-              label: 'Resolve',
+              label: copy.text('Resolve', 'Rozstrzygnij'),
               icon: Icons.check_rounded,
               busy: _busy,
               onPressed: () => _run(
@@ -1893,7 +2035,10 @@ class _DetailState extends State<_Detail> {
             ),
             if (canRemove)
               _ActionButton(
-                label: 'Remove message and resolve',
+                label: copy.text(
+                  'Remove message and resolve',
+                  'Usuń wiadomość i rozstrzygnij',
+                ),
                 icon: Icons.delete_outline_rounded,
                 danger: true,
                 busy: _busy,
@@ -1903,15 +2048,22 @@ class _DetailState extends State<_Detail> {
                     requestId: id,
                     note: _note.text,
                   ),
-                  confirmTitle: 'Remove this message?',
-                  confirmBody:
-                      'The message is hidden from the community and kept '
-                      'as evidence. This is recorded against your account '
-                      'in the moderation audit log.',
+                  confirmTitle: copy.text(
+                    'Remove this message?',
+                    'Usunąć tę wiadomość?',
+                  ),
+                  confirmBody: copy.text(
+                    'The message is hidden from the community and kept '
+                        'as evidence. This is recorded against your account '
+                        'in the moderation audit log.',
+                    'Wiadomość zostanie ukryta przed społecznością i zachowana '
+                        'jako dowód. Ta czynność zostanie przypisana do Twojego '
+                        'konta w dzienniku audytu moderacji.',
+                  ),
                 ),
               ),
             _ActionButton(
-              label: 'Dismiss',
+              label: copy.text('Dismiss', 'Odrzuć'),
               icon: Icons.close_rounded,
               subtle: true,
               busy: _busy,
@@ -1927,10 +2079,14 @@ class _DetailState extends State<_Detail> {
           ],
         ),
         const SizedBox(height: 6),
-        const Text(
-          'Dismissing requires a resolution reason — one is always '
-          'selected above.',
-          style: TextStyle(color: Color(0xFF7E7895), fontSize: 10.5),
+        Text(
+          copy.text(
+            'Dismissing requires a resolution reason — one is always '
+                'selected above.',
+            'Odrzucenie wymaga wskazania powodu rozstrzygnięcia — jeden '
+                'z powodów jest zawsze wybrany powyżej.',
+          ),
+          style: const TextStyle(color: Color(0xFF7E7895), fontSize: 10.5),
         ),
         // Account actions are ADMIN-only server-side (setUserBan is
         // gated to admin/superAdmin). Rather than offering a button that
@@ -1940,10 +2096,14 @@ class _DetailState extends State<_Detail> {
           _Banner(
             icon: Icons.info_outline_rounded,
             color: const Color(0xFF5CE1E6),
-            text:
-                'Banning or suspending an account is an administrator '
-                'action. Resolve the content here and escalate the '
-                'account to an admin.',
+            text: copy.text(
+              'Banning or suspending an account is an administrator '
+                  'action. Resolve the content here and escalate the '
+                  'account to an admin.',
+              'Zablokowanie lub zawieszenie konta wymaga uprawnień '
+                  'administratora. Rozpatrz treść tutaj, a sprawę konta '
+                  'przekaż administratorowi.',
+            ),
           ),
         ],
       ],
@@ -1951,13 +2111,50 @@ class _DetailState extends State<_Detail> {
   }
 }
 
-String resolutionLabel(ReportResolution resolution) => switch (resolution) {
-  ReportResolution.contentRemoved => 'Content removed',
-  ReportResolution.warningIssued => 'Warning issued',
-  ReportResolution.noActionNeeded => 'No action needed',
-  ReportResolution.notAViolation => 'Not a violation',
-  ReportResolution.duplicate => 'Duplicate',
-  ReportResolution.insufficientEvidence => 'Insufficient evidence',
+String resolutionLabel(ReportResolution resolution, {AppLocalizations? copy}) {
+  final english = switch (resolution) {
+    ReportResolution.contentRemoved => 'Content removed',
+    ReportResolution.warningIssued => 'Warning issued',
+    ReportResolution.noActionNeeded => 'No action needed',
+    ReportResolution.notAViolation => 'Not a violation',
+    ReportResolution.duplicate => 'Duplicate',
+    ReportResolution.insufficientEvidence => 'Insufficient evidence',
+  };
+  final polish = switch (resolution) {
+    ReportResolution.contentRemoved => 'Treść usunięta',
+    ReportResolution.warningIssued => 'Wydano ostrzeżenie',
+    ReportResolution.noActionNeeded => 'Brak potrzeby działania',
+    ReportResolution.notAViolation => 'Brak naruszenia',
+    ReportResolution.duplicate => 'Duplikat',
+    ReportResolution.insufficientEvidence => 'Niewystarczające dowody',
+  };
+  return copy?.text(english, polish) ?? english;
+}
+
+String _polishModerationFailure(ModerationFailure failure) => switch (failure) {
+  ModerationFailure.conflict =>
+    'To zgłoszenie jest teraz obsługiwane przez inną osobę. Odśwież kolejkę.',
+  ModerationFailure.alreadyHandled => 'To zgłoszenie zostało już rozpatrzone.',
+  ModerationFailure.accessExpired =>
+    'Dostęp moderatorski wygasł. Zaloguj się ponownie.',
+  ModerationFailure.missing =>
+    'Nie znaleziono tego zgłoszenia lub zgłoszonej treści.',
+  ModerationFailure.unknown =>
+    'Nie udało się wykonać tej czynności. Sprawdź połączenie i spróbuj ponownie.',
+};
+
+String _englishModerationFailure(
+  ModerationFailure failure,
+) => switch (failure) {
+  ModerationFailure.conflict =>
+    'Another moderator is handling this report. Refresh the queue.',
+  ModerationFailure.alreadyHandled => 'This report has already been handled.',
+  ModerationFailure.accessExpired =>
+    'Your moderation access expired. Sign in again.',
+  ModerationFailure.missing =>
+    'This report or its reported content could not be found.',
+  ModerationFailure.unknown =>
+    'That action could not be completed. Check your connection and try again.',
 };
 
 /// The reported account's PUBLIC summary only. No email, no phone, no
@@ -1972,14 +2169,18 @@ class _ReportedAccount extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     return FutureBuilder<({String? displayName, String? photoUrl})?>(
       future: service.publicProfile(userId),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.done &&
             snapshot.data == null) {
-          return const _Field(
-            label: 'Reported account',
-            value: 'This account no longer exists.',
+          return _Field(
+            label: copy.text('Reported account', 'Zgłoszone konto'),
+            value: copy.text(
+              'This account no longer exists.',
+              'To konto już nie istnieje.',
+            ),
           );
         }
         final profile = snapshot.data;
@@ -2010,7 +2211,7 @@ class _ReportedAccount extends StatelessWidget {
                         Text(
                           profile?.displayName?.isNotEmpty == true
                               ? profile!.displayName!
-                              : 'Loading…',
+                              : copy.text('Loading…', 'Wczytywanie…'),
                           style: const TextStyle(
                             color: Colors.white,
                             fontSize: 13,
@@ -2049,29 +2250,42 @@ class _TargetMessage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     return FutureBuilder<GlobalMessage?>(
       future: service.targetMessage(messageId),
       builder: (context, snapshot) {
         if (snapshot.connectionState != ConnectionState.done) {
-          return const _Field(label: 'Reported message', value: 'Loading…');
+          return _Field(
+            label: copy.text('Reported message', 'Zgłoszona wiadomość'),
+            value: copy.text('Loading…', 'Wczytywanie…'),
+          );
         }
         final message = snapshot.data;
         if (message == null) {
-          return const _Field(
-            label: 'Reported message',
-            value: 'This message is no longer available.',
+          return _Field(
+            label: copy.text('Reported message', 'Zgłoszona wiadomość'),
+            value: copy.text(
+              'This message is no longer available.',
+              'Ta wiadomość nie jest już dostępna.',
+            ),
           );
         }
         if (message.isDeleted) {
           return _Field(
-            label: 'Reported message',
+            label: copy.text('Reported message', 'Zgłoszona wiadomość'),
             value: message.removedByModerator
-                ? 'Already removed by a moderator.'
-                : 'Deleted by its author.',
+                ? copy.text(
+                    'Already removed by a moderator.',
+                    'Wiadomość została już usunięta przez moderatora.',
+                  )
+                : copy.text(
+                    'Deleted by its author.',
+                    'Wiadomość została usunięta przez autora.',
+                  ),
           );
         }
         return _Field(
-          label: 'Reported message',
+          label: copy.text('Reported message', 'Zgłoszona wiadomość'),
           value: message.content,
           meta: message.sentAt?.toLocal().toString().split('.').first,
         );
@@ -2224,6 +2438,7 @@ class _ConfirmDialog extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     return AlertDialog(
       backgroundColor: const Color(0xFF120C1D),
       shape: RoundedRectangleBorder(
@@ -2249,9 +2464,9 @@ class _ConfirmDialog extends StatelessWidget {
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(false),
-          child: const Text(
-            'Cancel',
-            style: TextStyle(color: Color(0xFF9A90AC)),
+          child: Text(
+            copy.text('Cancel', 'Anuluj'),
+            style: const TextStyle(color: Color(0xFF9A90AC)),
           ),
         ),
         FilledButton(
@@ -2262,9 +2477,12 @@ class _ConfirmDialog extends StatelessWidget {
               borderRadius: BorderRadius.circular(999),
             ),
           ),
-          child: const Text(
-            'Remove message',
-            style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800),
+          child: Text(
+            copy.text('Remove message', 'Usuń wiadomość'),
+            style: const TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.w800,
+            ),
           ),
         ),
       ],

@@ -5,6 +5,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/home/data/services/home_feed_service.dart';
 import 'package:yovoice/features/moderation/data/services/content_report_service.dart';
@@ -118,9 +119,14 @@ class _MomentsScreenState extends State<MomentsScreen> {
       MaterialPageRoute<bool>(builder: (_) => const RecordVoiceMomentScreen()),
     );
     if (created == true && mounted) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Voice Moment posted.')));
+      final copy = AppLocalizations.of(context);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            copy.text('Voice Moment posted.', 'Voice Moment opublikowany.'),
+          ),
+        ),
+      );
     }
   }
 
@@ -184,6 +190,7 @@ class _MomentsHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
+    final copy = AppLocalizations.of(context);
     return LayoutBuilder(
       builder: (context, constraints) {
         // Compact is measured in TEXT-SCALED space, not raw pixels: at a
@@ -211,7 +218,7 @@ class _MomentsHeader extends StatelessWidget {
                     onPressed: () => Navigator.of(context).pop(),
                     icon: const Icon(Icons.arrow_back_rounded),
                     color: palette.textPrimary,
-                    tooltip: 'Back',
+                    tooltip: copy.text('Back', 'Wstecz'),
                   ),
                 ),
               Expanded(
@@ -219,7 +226,7 @@ class _MomentsHeader extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Voice Moments',
+                      copy.text('Voice Moments', 'Voice Moments'),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
@@ -230,7 +237,10 @@ class _MomentsHeader extends StatelessWidget {
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      'Real voices. Real moments.',
+                      copy.text(
+                        'Real voices. Real moments.',
+                        'Prawdziwe głosy. Prawdziwe chwile.',
+                      ),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
@@ -260,6 +270,7 @@ class _CreateMomentButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final colors = Theme.of(context).colorScheme;
     if (compact) {
       // On a phone the title block and a full label cannot share the row;
@@ -267,7 +278,7 @@ class _CreateMomentButton extends StatelessWidget {
       return IconButton.filled(
         key: const ValueKey('moments-create-cta'),
         onPressed: onTap,
-        tooltip: 'Create your Moment',
+        tooltip: copy.text('Create your Moment', 'Utwórz swój Voice Moment'),
         style: IconButton.styleFrom(backgroundColor: colors.primary),
         icon: Icon(Icons.mic_rounded, color: colors.onPrimary),
       );
@@ -283,7 +294,7 @@ class _CreateMomentButton extends StatelessWidget {
       ),
       icon: Icon(Icons.mic_rounded, size: 18, color: colors.onPrimary),
       label: Text(
-        'Create your Moment',
+        copy.text('Create your Moment', 'Utwórz Voice Moment'),
         style: TextStyle(color: colors.onPrimary, fontWeight: FontWeight.w800),
       ),
     );

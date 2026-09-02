@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/home/data/services/home_feed_service.dart';
 import 'package:yovoice/features/moderation/data/services/content_report_service.dart';
@@ -74,6 +75,7 @@ Future<void> showMomentSheet(
   final live = moments?.watchMoment(moment.id);
 
   final navigator = Navigator.of(context);
+  final copy = AppLocalizations.of(context);
   final palette = context.appPalette;
   final expiryAnnouncer = MomentExpiryAnnouncer();
   var expiryHandled = false;
@@ -100,7 +102,7 @@ Future<void> showMomentSheet(
             mainAxisSize: MainAxisSize.min,
             children: [
               YoModalSheetChrome(
-                sheetLabel: 'Moment',
+                sheetLabel: copy.text('Moment', 'Moment'),
                 surfaceColor: palette.surfaceRaised,
               ),
               Flexible(
@@ -124,7 +126,10 @@ Future<void> showMomentSheet(
                             expiryAnnouncer.announce(
                               sheetContext,
                               transition: 'sheet-gone-${current.id}',
-                              message: 'Voice Moment expired. Closing player.',
+                              message: copy.text(
+                                'Voice Moment expired. Closing player.',
+                                'Voice Moment wygasł. Odtwarzacz zostanie zamknięty.',
+                              ),
                             );
                             final navigator = Navigator.of(sheetContext);
                             final sheetRoute = ModalRoute.of(sheetContext);

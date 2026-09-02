@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 
 /// A width-independent summary of the member's activity on YO Voice.
@@ -23,30 +24,31 @@ class ProfileJourneyCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
     final items = <_JourneyItem>[
       _JourneyItem(
         icon: Icons.hub_rounded,
-        label: 'Communities',
+        label: copy.text('Communities', 'Społeczności'),
         value: '$communitiesCount',
         keyName: 'communities',
       ),
       _JourneyItem(
         icon: Icons.forum_rounded,
-        label: 'Messages',
+        label: copy.text('Messages', 'Wiadomości'),
         value: '$messageCount',
         keyName: 'messages',
       ),
       _JourneyItem(
         icon: Icons.graphic_eq_rounded,
-        label: 'Voice time',
-        value: _formatVoiceTime(voiceMinutes),
+        label: copy.text('Voice time', 'Czas rozmów'),
+        value: _formatVoiceTime(voiceMinutes, copy),
         keyName: 'voice-time',
       ),
       _JourneyItem(
         icon: Icons.meeting_room_rounded,
-        label: 'Rooms created',
+        label: copy.text('Rooms created', 'Utworzone pokoje'),
         value: '$roomCount',
         keyName: 'rooms-created',
       ),
@@ -71,7 +73,10 @@ class ProfileJourneyCard extends StatelessWidget {
                 const SizedBox(width: 10),
                 Expanded(
                   child: Text(
-                    'Your YO Voice journey',
+                    copy.text(
+                      'Your YO Voice journey',
+                      'Twoja historia w YO Voice',
+                    ),
                     style: TextStyle(
                       color: palette.textPrimary,
                       fontSize: 16,
@@ -93,11 +98,14 @@ class ProfileJourneyCard extends StatelessWidget {
     );
   }
 
-  static String _formatVoiceTime(int minutes) {
-    if (minutes < 60) return '${minutes}m';
+  static String _formatVoiceTime(int minutes, AppLocalizations copy) {
+    if (minutes < 60) {
+      return copy.text('${minutes}m', '$minutes min');
+    }
     final hours = minutes ~/ 60;
     final rest = minutes % 60;
-    return rest == 0 ? '${hours}h' : '${hours}h ${rest}m';
+    if (rest == 0) return copy.text('${hours}h', '$hours godz.');
+    return copy.text('${hours}h ${rest}m', '$hours godz. $rest min');
   }
 }
 

@@ -3,9 +3,11 @@ import 'dart:async';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_immersive_colors.dart';
 import 'package:yovoice/features/auth/data/auth_service.dart';
+import 'package:yovoice/features/auth/presentation/auth_error_localizer.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
 
@@ -98,7 +100,11 @@ class _CheckInboxSheetState extends State<_CheckInboxSheet> {
       // the form which ones have accounts.
       if (error.code != 'user-not-found' && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(_authService.getErrorMessage(error))),
+          SnackBar(
+            content: Text(
+              localizedAuthError(context, error, authService: _authService),
+            ),
+          ),
         );
         setState(() => _sending = false);
         return;
@@ -106,7 +112,14 @@ class _CheckInboxSheetState extends State<_CheckInboxSheet> {
     } catch (_) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Could not send the email. Try again.')),
+          SnackBar(
+            content: Text(
+              AppLocalizations.of(context).text(
+                'Could not send the email. Try again.',
+                'Nie udało się wysłać wiadomości. Spróbuj ponownie.',
+              ),
+            ),
+          ),
         );
         setState(() => _sending = false);
         return;
@@ -119,6 +132,14 @@ class _CheckInboxSheetState extends State<_CheckInboxSheet> {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
+    final confirmation = copy
+        .text(
+          'If an account exists for {email}, we\'ve sent instructions to reset your password.',
+          'Jeśli istnieje konto przypisane do adresu {email}, wysłaliśmy instrukcję resetowania hasła.',
+        )
+        .replaceAll('{email}', widget.email);
+
     return Material(
       color: AppImmersiveColors.surface,
       clipBehavior: Clip.antiAlias,
@@ -130,8 +151,11 @@ class _CheckInboxSheetState extends State<_CheckInboxSheet> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const YoModalSheetChrome(
-                sheetLabel: 'check your inbox',
+              YoModalSheetChrome(
+                sheetLabel: copy.text(
+                  'check your inbox',
+                  'sprawdź skrzynkę odbiorczą',
+                ),
                 surfaceColor: AppImmersiveColors.surface,
               ),
               const SizedBox(height: 6),
@@ -153,9 +177,9 @@ class _CheckInboxSheetState extends State<_CheckInboxSheet> {
                 ),
               ),
               const SizedBox(height: 18),
-              const Text(
-                'Check your inbox',
-                style: TextStyle(
+              Text(
+                copy.text('Check your inbox', 'Sprawdź skrzynkę odbiorczą'),
+                style: const TextStyle(
                   color: AppImmersiveColors.textPrimary,
                   fontSize: 22,
                   fontWeight: FontWeight.w900,
@@ -163,8 +187,7 @@ class _CheckInboxSheetState extends State<_CheckInboxSheet> {
               ),
               const SizedBox(height: 8),
               Text(
-                'If an account exists for ${widget.email}, we\'ve sent '
-                'instructions to reset your password.',
+                confirmation,
                 textAlign: TextAlign.center,
                 style: const TextStyle(
                   color: AppImmersiveColors.textSecondary,
@@ -174,7 +197,7 @@ class _CheckInboxSheetState extends State<_CheckInboxSheet> {
               ),
               const SizedBox(height: 24),
               Text(
-                "Didn't receive it?",
+                copy.text("Didn't receive it?", 'Wiadomość nie dotarła?'),
                 style: const TextStyle(
                   color: AppImmersiveColors.textSecondary,
                   fontSize: 13,
@@ -195,10 +218,18 @@ class _CheckInboxSheetState extends State<_CheckInboxSheet> {
                   ),
                   child: Text(
                     _sending
-                        ? 'Sending…'
+                        ? copy.text('Sending…', 'Wysyłanie…')
                         : _cooldownSeconds > 0
-                        ? 'Resend email (${_cooldownSeconds}s)'
-                        : 'Resend email',
+                        ? copy
+                              .text(
+                                'Resend email ({seconds}s)',
+                                'Wyślij ponownie ({seconds} s)',
+                              )
+                              .replaceAll('{seconds}', '$_cooldownSeconds')
+                        : copy.text(
+                            'Resend email',
+                            'Wyślij wiadomość ponownie',
+                          ),
                     style: const TextStyle(fontWeight: FontWeight.w700),
                   ),
                 ),
@@ -215,9 +246,9 @@ class _CheckInboxSheetState extends State<_CheckInboxSheet> {
                       borderRadius: BorderRadius.circular(16),
                     ),
                   ),
-                  child: const Text(
-                    'Back to log in',
-                    style: TextStyle(
+                  child: Text(
+                    copy.backToLogin,
+                    style: const TextStyle(
                       fontWeight: FontWeight.w800,
                       color: AppImmersiveColors.textPrimary,
                     ),

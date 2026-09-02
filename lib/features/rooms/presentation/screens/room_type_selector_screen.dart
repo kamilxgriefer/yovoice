@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/space_identity.dart';
 
 import 'package:yovoice/features/clubs/data/models/club.dart' show ClubType;
@@ -67,54 +68,99 @@ class RoomTypeSelectorScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final choices = <Widget>[
       _RoomChoice(
-        title: 'Community Room',
-        eyebrow: 'OPEN CONVERSATION',
-        subtitle: 'A relaxed live room where everyone can speak.',
+        title: copy.text('Community Room', 'Pokój społecznościowy'),
+        eyebrow: copy.text('OPEN CONVERSATION', 'OTWARTA ROZMOWA'),
+        subtitle: copy.text(
+          'A relaxed live room where everyone can speak.',
+          'Swobodny pokój na żywo, w którym każdy może zabrać głos.',
+        ),
         identity: SpaceIdentity.community,
-        features: const [
-          'Free-flowing voice conversation',
-          'Live chat and reactions',
-          'Calm stage with speaker tiles',
+        features: [
+          copy.text(
+            'Free-flowing voice conversation',
+            'Swobodna rozmowa głosowa',
+          ),
+          copy.text('Live chat and reactions', 'Czat na żywo i reakcje'),
+          copy.text(
+            'Calm stage with speaker tiles',
+            'Przejrzysta scena z mówcami',
+          ),
         ],
         onTap: () => _openRoom(context, RoomExperience.community),
       ),
       _RoomChoice(
-        title: 'Podcast Room',
-        eyebrow: 'HOST + AUDIENCE',
-        subtitle: 'A hosted show with a stage, audience and requests.',
+        title: copy.text('Podcast Room', 'Pokój podcastowy'),
+        eyebrow: copy.text('HOST + AUDIENCE', 'GOSPODARZ + PUBLICZNOŚĆ'),
+        subtitle: copy.text(
+          'A hosted show with a stage, audience and requests.',
+          'Prowadzona audycja ze sceną, publicznością i zgłoszeniami.',
+        ),
         identity: SpaceIdentity.podcast,
-        features: const [
-          'Host and speaker stage',
-          'Audience raise-hand queue',
-          'Invite to stage and moderation',
+        features: [
+          copy.text('Host and speaker stage', 'Scena dla gospodarza i mówców'),
+          copy.text(
+            'Audience raise-hand queue',
+            'Kolejka zgłoszeń od publiczności',
+          ),
+          copy.text(
+            'Invite to stage and moderation',
+            'Zapraszanie na scenę i moderacja',
+          ),
         ],
         onTap: () => _openRoom(context, RoomExperience.broadcast),
       ),
       _RoomChoice(
-        title: 'Club',
-        eyebrow: 'PERMANENT COMMUNITY',
-        subtitle: 'Members, roles, chat, announcements and a Club Lounge.',
+        title: copy.text('Club', 'Klub'),
+        eyebrow: copy.text('PERMANENT COMMUNITY', 'STAŁA SPOŁECZNOŚĆ'),
+        subtitle: copy.text(
+          'Members, roles, chat, announcements and a Club Lounge.',
+          'Członkowie, role, czat, ogłoszenia i klubowy pokój głosowy.',
+        ),
         identity: SpaceIdentity.club,
         highlighted: true,
-        features: const [
-          'Invite friends and manage members',
-          'Owner, Co-owner, Admin and more',
-          'Persistent chat and private voice lounge',
+        features: [
+          copy.text(
+            'Invite friends and manage members',
+            'Zaproś znajomych i zarządzaj członkami',
+          ),
+          copy.text(
+            'Owner, Co-owner, Admin and more',
+            'Właściciel, współwłaściciel, administrator i inne role',
+          ),
+          copy.text(
+            'Persistent chat and private voice lounge',
+            'Stały czat i prywatny pokój głosowy',
+          ),
         ],
         onTap: () => _openClub(context),
       ),
       _RoomChoice(
-        title: 'Family Room',
-        eyebrow: 'PRIVATE FAMILY SPACE',
-        subtitle:
-            'A permanent, invite-only space for the people closest to you.',
+        title: copy.text('Family Room', 'Pokój rodzinny'),
+        eyebrow: copy.text(
+          'PRIVATE FAMILY SPACE',
+          'PRYWATNA PRZESTRZEŃ RODZINNA',
+        ),
+        subtitle: copy.text(
+          'A permanent, invite-only space for the people closest to you.',
+          'Stała przestrzeń tylko na zaproszenie dla najbliższych Ci osób.',
+        ),
         identity: SpaceIdentity.family,
-        features: const [
-          'Always-open family voice lounge',
-          'Private chat, announcements and quick check-ins',
-          'Organizer and Member roles',
+        features: [
+          copy.text(
+            'Always-open family voice lounge',
+            'Zawsze dostępny rodzinny pokój głosowy',
+          ),
+          copy.text(
+            'Private chat, announcements and quick check-ins',
+            'Prywatny czat, ogłoszenia i szybkie meldunki',
+          ),
+          copy.text(
+            'Organizer and Member roles',
+            'Role organizatora i członka',
+          ),
         ],
         onTap: () => _openFamilyRoom(context),
       ),
@@ -125,9 +171,9 @@ class RoomTypeSelectorScreen extends StatelessWidget {
       appBar: AppBar(
         backgroundColor: _background,
         foregroundColor: Colors.white,
-        title: const Text(
-          'Create',
-          style: TextStyle(fontWeight: FontWeight.w900),
+        title: Text(
+          copy.text('Create', 'Utwórz'),
+          style: const TextStyle(fontWeight: FontWeight.w900),
         ),
         centerTitle: true,
       ),
@@ -151,9 +197,12 @@ class RoomTypeSelectorScreen extends StatelessWidget {
                 40,
               ),
               children: [
-                const Text(
-                  'What do you want to build?',
-                  style: TextStyle(
+                Text(
+                  copy.text(
+                    'What do you want to build?',
+                    'Co chcesz utworzyć?',
+                  ),
+                  style: const TextStyle(
                     color: Colors.white,
                     fontSize: 27,
                     fontWeight: FontWeight.w900,
@@ -161,9 +210,12 @@ class RoomTypeSelectorScreen extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 8),
-                const Text(
-                  'Start a conversation, host an audience or build a permanent home for your people.',
-                  style: TextStyle(color: _muted, height: 1.45),
+                Text(
+                  copy.text(
+                    'Start a conversation, host an audience or build a permanent home for your people.',
+                    'Rozpocznij rozmowę, poprowadź audycję lub stwórz stałą przestrzeń dla swoich osób.',
+                  ),
+                  style: const TextStyle(color: _muted, height: 1.45),
                 ),
                 const SizedBox(height: 26),
                 Wrap(
@@ -210,6 +262,7 @@ class _RoomChoice extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     return Material(
       color: identity.surface,
       borderRadius: BorderRadius.circular(26),
@@ -262,7 +315,7 @@ class _RoomChoice extends StatelessWidget {
                         ),
                       ),
                       child: Text(
-                        'NEW',
+                        copy.text('NEW', 'NOWOŚĆ'),
                         style: TextStyle(
                           color: identity.onSurfaceAccent,
                           fontSize: 11,

@@ -6,6 +6,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
+import 'package:yovoice/core/localization/document_language.dart';
+import 'package:yovoice/core/localization/firebase_auth_language_sync.dart';
 import 'package:yovoice/core/navigation/app_route_observer.dart';
 import 'package:yovoice/core/audio/ui_sound.dart';
 import 'package:yovoice/core/audio/ui_sound_service.dart';
@@ -43,6 +45,7 @@ SnackBar buildForegroundNotificationBanner({
   required NotificationType type,
   required String? targetId,
   required String? actorId,
+  required String openLabel,
   String? notificationId,
   double bottomClearance = 104,
   AppPalette? palette,
@@ -165,7 +168,7 @@ SnackBar buildForegroundNotificationBanner({
       ],
     ),
     action: SnackBarAction(
-      label: 'Open',
+      label: openLabel,
       textColor: semanticPalette.interactiveForeground,
       onPressed: () => NotificationRouter.route(
         type: type,
@@ -396,6 +399,7 @@ class _YoVoiceAppState extends State<YoVoiceApp> {
   late final AuthEpochRouteResetter _authRouteResetter;
   StreamSubscription<User?>? _authRouteSubscription;
   bool _foregroundRetryScheduled = false;
+  Locale _resolvedLocale = const Locale('en');
 
   @override
   void initState() {
@@ -464,7 +468,7 @@ class _YoVoiceAppState extends State<YoVoiceApp> {
 
   Widget _authBoundary({
     bool initiallySignedOut = false,
-    String? initialAuthError,
+    Object? initialAuthError,
   }) {
     return DirectCallCoordinator(
       child: PresenceLifecycle(
@@ -494,7 +498,7 @@ class _YoVoiceAppState extends State<YoVoiceApp> {
             ),
             AuthRouteResetReason.principalChanged => _authBoundary(),
             AuthRouteResetReason.authError => _authBoundary(
-              initialAuthError: target.error.toString(),
+              initialAuthError: target.error,
             ),
           },
     );
@@ -539,6 +543,9 @@ class _YoVoiceAppState extends State<YoVoiceApp> {
       return false;
     }
     final navigatorContext = notificationNavigatorKey.currentContext;
+    final copy = navigatorContext == null
+        ? AppLocalizations(_resolvedLocale)
+        : AppLocalizations.of(navigatorContext);
     // Voice-room control docks grow with accessibility text scaling.
     // Keep foreground notifications above them instead of covering the
     // microphone, people, chat or leave actions.
@@ -557,6 +564,7 @@ class _YoVoiceAppState extends State<YoVoiceApp> {
             type: type,
             targetId: targetId,
             actorId: actorId,
+            openLabel: copy.text('Open', 'Otwórz'),
             notificationId: notificationId,
             bottomClearance: bottomClearance,
             palette: navigatorContext?.appPalette,
@@ -605,6 +613,7 @@ class _YoVoiceAppState extends State<YoVoiceApp> {
           themeMode: controller.value.theme.themeMode,
           locale: controller.value.language.locale,
           supportedLocales: AppLocalizations.supportedLocales,
+          localeListResolutionCallback: resolveAppLocale,
           localizationsDelegates: const [
             AppLocalizationsDelegate(),
             GlobalMaterialLocalizations.delegate,
@@ -612,6 +621,10 @@ class _YoVoiceAppState extends State<YoVoiceApp> {
             GlobalCupertinoLocalizations.delegate,
           ],
           builder: (context, child) {
+            final locale = Localizations.localeOf(context);
+            _resolvedLocale = locale;
+            unawaited(FirebaseAuthLanguageSync.instance.synchronize(locale));
+            updateDocumentLanguage(locale);
             final theme = Theme.of(context);
             final palette = context.appPalette;
             return AnnotatedRegion<SystemUiOverlayStyle>(

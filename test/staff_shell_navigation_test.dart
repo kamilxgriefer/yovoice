@@ -33,7 +33,10 @@ void useSize(WidgetTester tester, Size size) {
   final db = FakeFirebaseFirestore();
   final auth = MockFirebaseAuth(
     signedIn: true,
-    mockUser: MockUser(uid: 'mod-uid', customClaim: const {'role': 'moderator'}),
+    mockUser: MockUser(
+      uid: 'mod-uid',
+      customClaim: const {'role': 'moderator'},
+    ),
   );
   db.collection('users').doc('mod-uid').set({'role': 'moderator'});
   return (service: ModerationService(firestore: db, auth: auth), db: db);
@@ -104,8 +107,10 @@ void main() {
 
       expect(find.byType(AppBar), findsNothing);
       expect(find.text('Staff tools / Moderation'), findsOneWidget);
-      expect(find.text('Review community reports and take action.'),
-          findsOneWidget);
+      expect(
+        find.text('Review community reports and take action.'),
+        findsOneWidget,
+      );
       expect(tester.takeException(), isNull);
     });
   });
@@ -182,8 +187,11 @@ void main() {
       expect(find.byTooltip('Home'), findsOneWidget);
       expect(find.text('Moderation'), findsOneWidget);
       expect(find.text('Moderator'), findsOneWidget);
-      expect(find.text('moderator'), findsNothing,
-          reason: 'internal claim names never reach the interface');
+      expect(
+        find.text('moderator'),
+        findsNothing,
+        reason: 'internal claim names never reach the interface',
+      );
 
       // Home pops to the first route.
       await tester.tap(find.byTooltip('Home'));

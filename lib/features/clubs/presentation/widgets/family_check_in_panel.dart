@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/clubs/data/models/family_check_in.dart';
 import 'package:yovoice/features/clubs/data/services/club_service.dart';
@@ -50,7 +51,14 @@ class _FamilyCheckInPanelState extends State<FamilyCheckInPanel> {
     } catch (_) {
       if (!mounted) return;
       ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-        const SnackBar(content: Text('Could not send that check-in.')),
+        SnackBar(
+          content: Text(
+            AppLocalizations.of(context).text(
+              'Could not send that check-in.',
+              'Nie udało się wysłać meldunku.',
+            ),
+          ),
+        ),
       );
     } finally {
       if (mounted) setState(() => _busy = false);
@@ -66,24 +74,53 @@ class _FamilyCheckInPanelState extends State<FamilyCheckInPanel> {
     } catch (_) {
       if (!mounted) return;
       ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-        const SnackBar(content: Text('Could not remove that check-in.')),
+        SnackBar(
+          content: Text(
+            AppLocalizations.of(context).text(
+              'Could not remove that check-in.',
+              'Nie udało się usunąć meldunku.',
+            ),
+          ),
+        ),
       );
     }
   }
 
   String _when(DateTime? at) {
-    if (at == null) return 'just now';
+    final copy = AppLocalizations.of(context);
+    if (at == null) return copy.text('just now', 'przed chwilą');
     final elapsed = DateTime.now().difference(at);
-    if (elapsed.inMinutes < 1) return 'just now';
-    if (elapsed.inMinutes < 60) return '${elapsed.inMinutes}m ago';
-    if (elapsed.inHours < 24) return '${elapsed.inHours}h ago';
-    return '${elapsed.inDays}d ago';
+    if (elapsed.inMinutes < 1) return copy.text('just now', 'przed chwilą');
+    if (elapsed.inMinutes < 60) {
+      return copy.text(
+        '${elapsed.inMinutes}m ago',
+        '${elapsed.inMinutes} min temu',
+      );
+    }
+    if (elapsed.inHours < 24) {
+      return copy.text(
+        '${elapsed.inHours}h ago',
+        '${elapsed.inHours} godz. temu',
+      );
+    }
+    return copy.text('${elapsed.inDays}d ago', '${elapsed.inDays} dni temu');
+  }
+
+  String _statusLabel(FamilyCheckInStatus status) {
+    final copy = AppLocalizations.of(context);
+    return switch (status) {
+      FamilyCheckInStatus.home => copy.text("I'm home", 'Jestem w domu'),
+      FamilyCheckInStatus.onMyWay => copy.text('On my way', 'Jestem w drodze'),
+      FamilyCheckInStatus.allGood => copy.text('All good', 'Wszystko dobrze'),
+      FamilyCheckInStatus.callMe => copy.text('Call me', 'Zadzwoń do mnie'),
+    };
   }
 
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     final accent = palette.successForeground;
+    final copy = AppLocalizations.of(context);
     return Container(
       key: const ValueKey('family-check-in-panel'),
       padding: const EdgeInsets.all(16),
@@ -102,7 +139,7 @@ class _FamilyCheckInPanelState extends State<FamilyCheckInPanel> {
               SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  'Quick check-ins',
+                  copy.text('Quick check-ins', 'Szybkie meldunki'),
                   style: TextStyle(
                     color: palette.textPrimary,
                     fontSize: 15.5,
@@ -114,8 +151,10 @@ class _FamilyCheckInPanelState extends State<FamilyCheckInPanel> {
           ),
           const SizedBox(height: 4),
           Text(
-            'A quick note to the family. Not an emergency feature, and no '
-            'location is ever shared.',
+            copy.text(
+              'A quick note to the family. Not an emergency feature, and no location is ever shared.',
+              'Krótka wiadomość dla rodziny. To nie jest funkcja alarmowa i nigdy nie udostępnia lokalizacji.',
+            ),
             style: TextStyle(
               color: palette.textSecondary,
               fontSize: 12,
@@ -129,7 +168,7 @@ class _FamilyCheckInPanelState extends State<FamilyCheckInPanel> {
             children: [
               for (final status in FamilyCheckInStatus.values)
                 _CheckInChip(
-                  label: status.label,
+                  label: _statusLabel(status),
                   enabled: !_busy,
                   onTap: () => _post(status),
                 ),
@@ -141,7 +180,10 @@ class _FamilyCheckInPanelState extends State<FamilyCheckInPanel> {
             builder: (context, snapshot) {
               if (snapshot.hasError) {
                 return Text(
-                  'Check-ins are unavailable right now.',
+                  copy.text(
+                    'Check-ins are unavailable right now.',
+                    'Meldunki są teraz niedostępne.',
+                  ),
                   style: TextStyle(
                     color: palette.textSecondary,
                     fontSize: 12.5,
@@ -151,7 +193,7 @@ class _FamilyCheckInPanelState extends State<FamilyCheckInPanel> {
               final checkIns = snapshot.data ?? const <FamilyCheckIn>[];
               if (checkIns.isEmpty) {
                 return Text(
-                  'No check-ins yet.',
+                  copy.text('No check-ins yet.', 'Nie ma jeszcze meldunków.'),
                   style: TextStyle(
                     color: palette.textSecondary,
                     fontSize: 12.5,
@@ -176,7 +218,7 @@ class _FamilyCheckInPanelState extends State<FamilyCheckInPanel> {
                           Expanded(
                             child: Text(
                               '${checkIn.displayName} · '
-                              '${checkIn.status!.label}',
+                              '${_statusLabel(checkIn.status!)}',
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: TextStyle(
@@ -203,7 +245,10 @@ class _FamilyCheckInPanelState extends State<FamilyCheckInPanel> {
                               onPressed: () => _delete(checkIn),
                               iconSize: 16,
                               visualDensity: VisualDensity.compact,
-                              tooltip: 'Remove check-in',
+                              tooltip: copy.text(
+                                'Remove check-in',
+                                'Usuń meldunek',
+                              ),
                               icon: Icon(
                                 Icons.close_rounded,
                                 color: palette.textTertiary,

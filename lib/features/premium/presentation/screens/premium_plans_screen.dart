@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/premium/data/models/premium_billing_context.dart';
@@ -10,6 +11,7 @@ import 'package:yovoice/features/premium/data/models/subscription_entitlements.d
 import 'package:yovoice/features/premium/data/premium_plans.dart';
 import 'package:yovoice/features/premium/data/services/entitlement_service.dart';
 import 'package:yovoice/features/premium/data/services/premium_billing_service.dart';
+import 'package:yovoice/features/premium/presentation/premium_localized_copy.dart';
 import 'package:yovoice/features/premium/presentation/widgets/premium_badge_pill.dart';
 import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
 
@@ -51,6 +53,8 @@ class _PremiumPlansScreenState extends State<PremiumPlansScreen> {
   bool _checkedInitial = false;
   bool _popScheduled = false;
 
+  AppLocalizations get _copy => AppLocalizations.of(context);
+
   @override
   void initState() {
     super.initState();
@@ -76,7 +80,12 @@ class _PremiumPlansScreenState extends State<PremiumPlansScreen> {
     } on FirebaseFunctionsException catch (error) {
       _showBillingError(error);
     } catch (_) {
-      _showMessage('We couldn\'t open checkout. Please try again.');
+      _showMessage(
+        _copy.text(
+          'We couldn\'t open checkout. Please try again.',
+          'Nie udało się otworzyć płatności. Spróbuj ponownie.',
+        ),
+      );
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -102,7 +111,10 @@ class _PremiumPlansScreenState extends State<PremiumPlansScreen> {
       _showBillingError(error);
     } catch (_) {
       _showMessage(
-        'We couldn\'t open subscription management. Please try again.',
+        _copy.text(
+          'We couldn\'t open subscription management. Please try again.',
+          'Nie udało się otworzyć zarządzania subskrypcją. Spróbuj ponownie.',
+        ),
       );
     } finally {
       if (mounted) setState(() => _busy = false);
@@ -110,20 +122,34 @@ class _PremiumPlansScreenState extends State<PremiumPlansScreen> {
   }
 
   void _showBillingError(FirebaseFunctionsException error) {
+    final copy = _copy;
     final details = error.details;
     final reason = details is Map ? details['reason'] : null;
     final message = switch (reason) {
-      'billing-managed-elsewhere' =>
+      'billing-managed-elsewhere' => copy.text(
         'This subscription is managed by your app store. Open your store subscription settings to make changes.',
-      'stripe-customer-missing' =>
+        'Subskrypcją zarządza sklep z aplikacjami. Aby wprowadzić zmiany, otwórz ustawienia subskrypcji w sklepie.',
+      ),
+      'stripe-customer-missing' => copy.text(
         'We couldn\'t find a billing profile for this subscription. Contact support if this keeps happening.',
-      'billing-not-configured' =>
+        'Nie znaleźliśmy profilu rozliczeniowego tej subskrypcji. Jeśli problem się powtarza, skontaktuj się z pomocą techniczną.',
+      ),
+      'billing-not-configured' => copy.text(
         'Billing is temporarily unavailable. Please try again later.',
-      'stripe-subscription-exists' =>
+        'Płatności są chwilowo niedostępne. Spróbuj ponownie później.',
+      ),
+      'stripe-subscription-exists' => copy.text(
         'You already have a web subscription. Open subscription management to change it.',
-      'checkout-in-progress' =>
+        'Masz już subskrypcję internetową. Aby ją zmienić, otwórz zarządzanie subskrypcją.',
+      ),
+      'checkout-in-progress' => copy.text(
         'A checkout is already in progress. Finish it or try again in a moment.',
-      _ => 'We couldn\'t open billing. Please try again.',
+        'Płatność jest już w toku. Dokończ ją albo spróbuj ponownie za chwilę.',
+      ),
+      _ => copy.text(
+        'We couldn\'t open billing. Please try again.',
+        'Nie udało się otworzyć płatności. Spróbuj ponownie.',
+      ),
     };
     _showMessage(message);
   }
@@ -136,13 +162,28 @@ class _PremiumPlansScreenState extends State<PremiumPlansScreen> {
   }
 
   Future<void> _openUrl(String url) async {
-    await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+    try {
+      if (!await launchUrl(
+        Uri.parse(url),
+        mode: LaunchMode.externalApplication,
+      )) {
+        throw StateError('External link could not be opened.');
+      }
+    } catch (_) {
+      _showMessage(
+        _copy.text(
+          'We couldn\'t open this link. Please try again.',
+          'Nie udało się otworzyć tego linku. Spróbuj ponownie.',
+        ),
+      );
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
+    final copy = AppLocalizations.of(context);
     return Scaffold(
       backgroundColor: palette.background,
       appBar: AppBar(
@@ -179,7 +220,13 @@ class _PremiumPlansScreenState extends State<PremiumPlansScreen> {
             builder: (context, billingSnapshot) {
               if (billingSnapshot.connectionState != ConnectionState.done) {
                 return Center(
-                  child: CircularProgressIndicator(color: colors.primary),
+                  child: Semantics(
+                    label: copy.text(
+                      'Loading Premium plans',
+                      'Wczytywanie planów Premium',
+                    ),
+                    child: CircularProgressIndicator(color: colors.primary),
+                  ),
                 );
               }
               if (billingSnapshot.hasError || !billingSnapshot.hasData) {
@@ -198,10 +245,16 @@ class _PremiumPlansScreenState extends State<PremiumPlansScreen> {
                       const SizedBox(height: 16),
                       Text(
                         entitlements.isPremium
-                            ? 'Manage your plan'
+                            ? copy.text(
+                                'Manage your plan',
+                                'Zarządzaj swoim planem',
+                              )
                             : billingRecoveryAvailable
-                            ? 'Review your billing'
-                            : 'Choose your plan',
+                            ? copy.text(
+                                'Review your billing',
+                                'Sprawdź rozliczenia',
+                              )
+                            : copy.text('Choose your plan', 'Wybierz plan'),
                         textAlign: TextAlign.center,
                         style: TextStyle(
                           color: palette.textPrimary,
@@ -213,10 +266,19 @@ class _PremiumPlansScreenState extends State<PremiumPlansScreen> {
                       const SizedBox(height: 8),
                       Text(
                         entitlements.isPremium
-                            ? 'See your current plan, compare options or manage billing.'
+                            ? copy.text(
+                                'See your current plan, compare options or manage billing.',
+                                'Sprawdź bieżący plan, porównaj opcje lub zarządzaj płatnościami.',
+                              )
                             : billingRecoveryAvailable
-                            ? 'A web billing profile is linked to this account. Check its status securely in Stripe.'
-                            : 'Unlock the full YO Voice experience',
+                            ? copy.text(
+                                'A web billing profile is linked to this account. Check its status securely in Stripe.',
+                                'Z tym kontem jest powiązany internetowy profil rozliczeniowy. Sprawdź jego stan bezpiecznie w Stripe.',
+                              )
+                            : copy.text(
+                                'Unlock the full YO Voice experience',
+                                'Odblokuj pełne możliwości YO Voice',
+                              ),
                         textAlign: TextAlign.center,
                         style: TextStyle(
                           color: palette.textSecondary,
@@ -262,14 +324,22 @@ class _PremiumPlansScreenState extends State<PremiumPlansScreen> {
                               PremiumBillingManager.admin) ...[
                         const SizedBox(height: 12),
                         Text(
-                          'To start or change a web subscription, continue on yovoice.app. App Store and Google Play purchases stay managed by their store.',
+                          copy.text(
+                            'To start or change a web subscription, continue on yovoice.app. App Store and Google Play purchases stay managed by their store.',
+                            'Aby rozpocząć lub zmienić subskrypcję internetową, przejdź do yovoice.app. Subskrypcjami kupionymi w App Store lub Google Play nadal zarządza odpowiedni sklep.',
+                          ),
                           textAlign: TextAlign.center,
                           style: TextStyle(color: palette.textSecondary),
                         ),
                       ],
                       const SizedBox(height: 14),
                       Text(
-                        billing.taxNotice,
+                        copy.text(
+                          billing.taxNotice,
+                          'Cena bazowa uwzględnia wymagany podatek. '
+                          'Ostateczną walutę i kwotę podatku zobaczysz '
+                          'przed płatnością.',
+                        ),
                         textAlign: TextAlign.center,
                         style: TextStyle(
                           color: palette.textSecondary,
@@ -279,7 +349,10 @@ class _PremiumPlansScreenState extends State<PremiumPlansScreen> {
                       ),
                       const SizedBox(height: 28),
                       Text(
-                        'Everything Premium includes:',
+                        copy.text(
+                          'Everything Premium includes:',
+                          'Premium obejmuje:',
+                        ),
                         style: TextStyle(
                           color: palette.textPrimary,
                           fontSize: 15,
@@ -298,7 +371,7 @@ class _PremiumPlansScreenState extends State<PremiumPlansScreen> {
                             onPressed: () =>
                                 _openUrl('https://yovoice.app/terms'),
                             child: Text(
-                              'Terms',
+                              copy.text('Terms', 'Regulamin'),
                               style: TextStyle(
                                 color: palette.textSecondary,
                                 fontSize: 12,
@@ -313,7 +386,7 @@ class _PremiumPlansScreenState extends State<PremiumPlansScreen> {
                             onPressed: () =>
                                 _openUrl('https://yovoice.app/privacy'),
                             child: Text(
-                              'Privacy',
+                              copy.text('Privacy', 'Prywatność'),
                               style: TextStyle(
                                 color: palette.textSecondary,
                                 fontSize: 12,
@@ -341,6 +414,7 @@ class _BillingLoadError extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
     return SingleChildScrollView(
@@ -354,7 +428,10 @@ class _BillingLoadError extends StatelessWidget {
               Icon(Icons.cloud_off_rounded, color: colors.primary, size: 38),
               const SizedBox(height: 14),
               Text(
-                'Plans are temporarily unavailable',
+                copy.text(
+                  'Plans are temporarily unavailable',
+                  'Plany są chwilowo niedostępne',
+                ),
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   color: palette.textPrimary,
@@ -364,7 +441,10 @@ class _BillingLoadError extends StatelessWidget {
               ),
               const SizedBox(height: 8),
               Text(
-                'We couldn\'t load plan pricing. Check your connection and try again.',
+                copy.text(
+                  'We couldn\'t load plan pricing. Check your connection and try again.',
+                  'Nie udało się wczytać cen planów. Sprawdź połączenie i spróbuj ponownie.',
+                ),
                 textAlign: TextAlign.center,
                 style: TextStyle(color: palette.textSecondary, height: 1.45),
               ),
@@ -372,7 +452,7 @@ class _BillingLoadError extends StatelessWidget {
               FilledButton.icon(
                 onPressed: onRetry,
                 icon: const Icon(Icons.refresh_rounded),
-                label: const Text('Try again'),
+                label: Text(copy.text('Try again', 'Spróbuj ponownie')),
               ),
             ],
           ),
@@ -398,9 +478,13 @@ class _BillingRecoveryCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
+    final copy = AppLocalizations.of(context);
     return Semantics(
       container: true,
-      label: 'Stripe billing management',
+      label: copy.text(
+        'Stripe billing management',
+        'Zarządzanie płatnościami Stripe',
+      ),
       child: Container(
         width: double.infinity,
         padding: const EdgeInsets.all(18),
@@ -422,7 +506,7 @@ class _BillingRecoveryCard extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Text(
-                    'Billing management',
+                    copy.text('Billing management', 'Zarządzanie płatnościami'),
                     style: TextStyle(
                       color: colors.primary,
                       fontSize: 12,
@@ -431,7 +515,10 @@ class _BillingRecoveryCard extends StatelessWidget {
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    'Stripe billing portal',
+                    copy.text(
+                      'Stripe billing portal',
+                      'Portal płatności Stripe',
+                    ),
                     style: TextStyle(
                       color: palette.textPrimary,
                       fontSize: 18,
@@ -440,7 +527,10 @@ class _BillingRecoveryCard extends StatelessWidget {
                   ),
                   const SizedBox(height: 5),
                   Text(
-                    'Review billing status, invoices and cancellation options. Premium access may still be syncing.',
+                    copy.text(
+                      'Review billing status, invoices and cancellation options. Premium access may still be syncing.',
+                      'Sprawdź stan płatności, faktury i opcje anulowania. Dostęp Premium może być jeszcze synchronizowany.',
+                    ),
                     style: TextStyle(color: palette.textSecondary, height: 1.4),
                   ),
                 ],
@@ -449,7 +539,9 @@ class _BillingRecoveryCard extends StatelessWidget {
             FilledButton.icon(
               onPressed: busy ? null : onManage,
               icon: const Icon(Icons.open_in_new_rounded, size: 18),
-              label: const Text('Open billing portal'),
+              label: Text(
+                copy.text('Open billing portal', 'Otwórz portal płatności'),
+              ),
             ),
           ],
         ),
@@ -475,26 +567,52 @@ class _CurrentPlanCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
+    final copy = AppLocalizations.of(context);
     final end = billing.currentPeriodEnd;
     final periodText = billing.billingManagedBy == PremiumBillingManager.admin
-        ? 'Complimentary Premium access'
+        ? copy.text('Complimentary Premium access', 'Bezpłatny dostęp Premium')
         : billing.renewalBehavior == 'ends' && end != null
-        ? 'Ends ${end.day}.${end.month}.${end.year}'
+        ? copy.text(
+            'Ends ${copy.calendarDate(end)}',
+            'Kończy się ${copy.calendarDate(end)}',
+          )
         : billing.renewalBehavior == 'renews' && end != null
-        ? 'Renews ${end.day}.${end.month}.${end.year}'
+        ? copy.text(
+            'Renews ${copy.calendarDate(end)}',
+            'Odnowi się ${copy.calendarDate(end)}',
+          )
         : end == null
-        ? 'Premium active'
-        : 'Premium active';
+        ? copy.text('Premium active', 'Premium aktywne')
+        : copy.text('Premium active', 'Premium aktywne');
     final manager = switch (billing.billingManagedBy) {
-      PremiumBillingManager.apple => 'Managed in the App Store',
-      PremiumBillingManager.google => 'Managed in Google Play',
-      PremiumBillingManager.admin => 'Complimentary access',
-      PremiumBillingManager.stripe => 'Managed securely by Stripe',
-      PremiumBillingManager.none => 'Billing details unavailable',
+      PremiumBillingManager.apple => copy.text(
+        'Managed in the App Store',
+        'Zarządzane w App Store',
+      ),
+      PremiumBillingManager.google => copy.text(
+        'Managed in Google Play',
+        'Zarządzane w Google Play',
+      ),
+      PremiumBillingManager.admin => copy.text(
+        'Complimentary access',
+        'Bezpłatny dostęp',
+      ),
+      PremiumBillingManager.stripe => copy.text(
+        'Managed securely by Stripe',
+        'Zarządzane bezpiecznie przez Stripe',
+      ),
+      PremiumBillingManager.none => copy.text(
+        'Billing details unavailable',
+        'Dane rozliczeniowe są niedostępne',
+      ),
     };
+    final planLabel = localizedPremiumPlanLabel(copy, entitlements.plan);
     return Semantics(
       container: true,
-      label: 'Current Premium subscription',
+      label: copy.text(
+        'Current Premium subscription',
+        'Bieżąca subskrypcja Premium',
+      ),
       child: Container(
         width: double.infinity,
         padding: const EdgeInsets.all(18),
@@ -516,7 +634,7 @@ class _CurrentPlanCard extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Text(
-                    'Current plan',
+                    copy.text('Current plan', 'Bieżący plan'),
                     style: TextStyle(
                       color: colors.primary,
                       fontSize: 12,
@@ -525,7 +643,10 @@ class _CurrentPlanCard extends StatelessWidget {
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    'YO Voice Premium · ${entitlements.plan.label}',
+                    copy.text(
+                      'YO Voice Premium · ${entitlements.plan.label}',
+                      'YO Voice Premium · $planLabel',
+                    ),
                     style: TextStyle(
                       color: palette.textPrimary,
                       fontSize: 18,
@@ -546,7 +667,7 @@ class _CurrentPlanCard extends StatelessWidget {
               FilledButton.icon(
                 onPressed: busy ? null : onManage,
                 icon: const Icon(Icons.open_in_new_rounded, size: 18),
-                label: const Text('Change or cancel'),
+                label: Text(copy.text('Change or cancel', 'Zmień lub anuluj')),
               ),
           ],
         ),
@@ -570,6 +691,7 @@ class _PlanToggle extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
+    final copy = AppLocalizations.of(context);
     return Container(
       // Four pixels of inset on each side still leaves a 48px target for
       // both keyboard- and touch-selectable segments.
@@ -586,12 +708,12 @@ class _PlanToggle extends StatelessWidget {
           children: [
             _segment(
               context: context,
-              label: 'Monthly',
+              label: localizedPremiumPlanLabel(copy, PremiumPlan.monthly),
               plan: PremiumPlan.monthly,
             ),
             _segment(
               context: context,
-              label: 'Yearly',
+              label: localizedPremiumPlanLabel(copy, PremiumPlan.yearly),
               plan: PremiumPlan.yearly,
               chip: yearlySavingsPercent > 0 ? '-$yearlySavingsPercent%' : null,
             ),
@@ -608,12 +730,19 @@ class _PlanToggle extends StatelessWidget {
     String? chip,
   }) {
     final palette = context.appPalette;
+    final copy = AppLocalizations.of(context);
     final active = selected == plan;
     return Expanded(
       child: AccessibleTapRegion(
         onTap: () => onChanged(plan),
-        semanticLabel: 'Select $label billing plan',
-        tooltip: 'Select $label billing',
+        semanticLabel: copy.text(
+          'Select ${plan.label} billing plan',
+          'Wybierz plan rozliczeniowy: $label',
+        ),
+        tooltip: copy.text(
+          'Select ${plan.label} billing',
+          'Wybierz rozliczenie: $label',
+        ),
         selected: active,
         borderRadius: 999,
         child: AnimatedContainer(
@@ -765,11 +894,18 @@ class _PlanCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
+    final copy = AppLocalizations.of(context);
+    final planLabel = localizedPremiumPlanLabel(copy, product.plan);
     final card = AccessibleTapRegion(
       onTap: () => onSelect(product.plan),
-      semanticLabel:
-          'Select ${product.plan.label} plan, ${product.formattedPrice}',
-      tooltip: 'Select ${product.plan.label} plan',
+      semanticLabel: copy.text(
+        'Select ${product.plan.label} plan, ${product.formattedPrice}',
+        'Wybierz plan $planLabel, ${product.formattedPrice}',
+      ),
+      tooltip: copy.text(
+        'Select ${product.plan.label} plan',
+        'Wybierz plan $planLabel',
+      ),
       selected: selected,
       borderRadius: 22,
       child: AnimatedContainer(
@@ -799,7 +935,7 @@ class _PlanCard extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              product.plan.label,
+              planLabel,
               style: TextStyle(
                 color: palette.textPrimary,
                 fontSize: 15,
@@ -818,12 +954,17 @@ class _PlanCard extends StatelessWidget {
             ),
             const SizedBox(height: 2),
             Text(
-              product.interval == 'month' ? '/ month' : '/ year',
+              product.interval == 'month'
+                  ? copy.text('/ month', '/ miesiąc')
+                  : copy.text('/ year', '/ rok'),
               style: TextStyle(color: palette.textSecondary, fontSize: 12),
             ),
             const SizedBox(height: 3),
             Text(
-              'Base price · final local price at checkout',
+              copy.text(
+                'Base price · final local price at checkout',
+                'Cena bazowa · ostateczna cena lokalna przy płatności',
+              ),
               style: TextStyle(
                 color: palette.textSecondary,
                 fontSize: 11,
@@ -833,7 +974,10 @@ class _PlanCard extends StatelessWidget {
             if (product.formattedEquivalent != null) ...[
               const SizedBox(height: 4),
               Text(
-                '${product.formattedEquivalent!} / month',
+                copy.text(
+                  '${product.formattedEquivalent!} / month',
+                  '${product.formattedEquivalent!} / miesiąc',
+                ),
                 style: TextStyle(color: palette.textSecondary, fontSize: 12),
               ),
             ],
@@ -851,7 +995,10 @@ class _PlanCard extends StatelessWidget {
                   ),
                 ),
                 child: Text(
-                  'Save ${product.savingsPercent}%',
+                  copy.text(
+                    'Save ${product.savingsPercent}%',
+                    'Oszczędzasz ${product.savingsPercent}%',
+                  ),
                   style: const TextStyle(
                     color: Colors.white,
                     fontSize: 11,
@@ -870,7 +1017,7 @@ class _PlanCard extends StatelessWidget {
                     const SizedBox(width: 7),
                     Expanded(
                       child: Text(
-                        item,
+                        localizedPremiumChecklistItem(copy, item),
                         style: TextStyle(
                           color: palette.textSecondary,
                           fontSize: 12.3,
@@ -920,18 +1067,18 @@ class _PlanCard extends StatelessWidget {
                       ),
                     ],
                   ),
-                  child: const Row(
+                  child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Icon(
+                      const Icon(
                         Icons.workspace_premium_rounded,
                         size: 12,
                         color: Colors.white,
                       ),
-                      SizedBox(width: 5),
+                      const SizedBox(width: 5),
                       Text(
-                        'Best value',
-                        style: TextStyle(
+                        copy.text('Best value', 'Najlepsza oferta'),
+                        style: const TextStyle(
                           color: Colors.white,
                           fontSize: 11,
                           fontWeight: FontWeight.w800,
@@ -949,7 +1096,12 @@ class _PlanCard extends StatelessWidget {
 
   Widget _chooseButton(BuildContext context) {
     final palette = context.appPalette;
-    final label = 'Choose\n${product.plan.label.toLowerCase()}';
+    final copy = AppLocalizations.of(context);
+    final localizedPlan = localizedPremiumPlanLabel(copy, product.plan);
+    final label = copy.text(
+      'Choose\n${product.plan.label.toLowerCase()}',
+      'Wybierz plan\n${localizedPlan.toLowerCase()}',
+    );
 
     if (selected) {
       return SizedBox(
@@ -1050,6 +1202,7 @@ class _EverythingIncluded extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
+    final copy = AppLocalizations.of(context);
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 6),
       decoration: BoxDecoration(
@@ -1068,7 +1221,10 @@ class _EverythingIncluded extends StatelessWidget {
                   const SizedBox(width: 13),
                   Expanded(
                     child: Text(
-                      PremiumPlans.everythingIncluded[i],
+                      localizedPremiumIncludedItem(
+                        copy,
+                        PremiumPlans.everythingIncluded[i],
+                      ),
                       style: TextStyle(
                         color: palette.textPrimary,
                         fontSize: 13.3,
@@ -1091,6 +1247,7 @@ class _TrustFooter extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
+    final copy = AppLocalizations.of(context);
     return Center(
       child: Wrap(
         alignment: WrapAlignment.center,
@@ -1108,7 +1265,7 @@ class _TrustFooter extends StatelessWidget {
               ),
               const SizedBox(width: 5),
               Text(
-                'Secure checkout',
+                copy.text('Secure checkout', 'Bezpieczna płatność'),
                 style: TextStyle(color: palette.textSecondary, fontSize: 12),
               ),
             ],
@@ -1123,7 +1280,7 @@ class _TrustFooter extends StatelessWidget {
               ),
               const SizedBox(width: 5),
               Text(
-                'Cancel anytime',
+                copy.text('Cancel anytime', 'Anuluj w każdej chwili'),
                 style: TextStyle(color: palette.textSecondary, fontSize: 12),
               ),
             ],

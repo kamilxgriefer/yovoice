@@ -200,7 +200,7 @@ void main() {
         expect(tester.takeException(), isNull);
       }
 
-      expect(find.text('Więcej — jedno dotknięcie'), findsOneWidget);
+      expect(find.text('Wszystko inne pod ręką'), findsOneWidget);
       expect(find.text('Gotowe'), findsOneWidget);
       await _tapControl(tester, const ValueKey('guided-tour-next'));
       expect(find.text('Outcome: completed'), findsOneWidget);

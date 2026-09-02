@@ -21,8 +21,10 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/home/data/services/home_feed_service.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/desktop_moments_strip.dart';
@@ -69,13 +71,13 @@ UserProfile _profile({String? photoUrl}) => UserProfile(
   profileVisibility: ProfileVisibility.public,
 );
 
-VoiceMoment _mine({String? authorPhotoUrl}) => VoiceMoment(
-  id: 'mine',
+VoiceMoment _mine({String? authorPhotoUrl, String id = 'mine'}) => VoiceMoment(
+  id: id,
   authorId: _me,
   authorName: 'Kamil',
   authorPhotoUrl: authorPhotoUrl,
   caption: 'hello',
-  audioUrl: 'https://cdn.example/mine.m4a',
+  audioUrl: 'https://cdn.example/$id.m4a',
   durationSeconds: 2,
   likeCount: 1,
   commentCount: 1,
@@ -139,6 +141,7 @@ void main() {
       bool openChains = false,
       bool includeProfile = true,
       Stream<List<FollowUser>>? followingStream,
+      Locale locale = const Locale('en'),
     }) async {
       final db = FakeFirebaseFirestore();
       final auth = MockFirebaseAuth(
@@ -168,6 +171,14 @@ void main() {
 
       await tester.pumpWidget(
         MaterialApp(
+          locale: locale,
+          supportedLocales: AppLocalizations.supportedLocales,
+          localizationsDelegates: const [
+            AppLocalizationsDelegate(),
+            GlobalMaterialLocalizations.delegate,
+            GlobalWidgetsLocalizations.delegate,
+            GlobalCupertinoLocalizations.delegate,
+          ],
           home: Scaffold(
             body: DesktopMomentsStrip(
               profile: includeProfile
@@ -237,6 +248,29 @@ void main() {
         isEmpty,
         reason: 'the nested badge must win its own area',
       );
+    });
+
+    testWidgets('Polish chain count uses the correct plural for five Moments', (
+      tester,
+    ) async {
+      await pumpStrip(
+        tester,
+        moments: [for (var i = 0; i < 5; i++) _mine(id: 'mine-$i')],
+        locale: const Locale('pl'),
+      );
+
+      expect(find.text('5 Momentów'), findsOneWidget);
+      final semanticLabels = find
+          .ancestor(
+            of: find.byKey(const ValueKey('home-your-moment')),
+            matching: find.byType(Semantics),
+          )
+          .evaluate()
+          .map((element) => element.widget)
+          .whereType<Semantics>()
+          .map((widget) => widget.properties.label)
+          .whereType<String>();
+      expect(semanticLabels, contains('Odtwórz swoich 5 Voice Momentów'));
     });
 
     testWidgets(

@@ -46,10 +46,7 @@ void main() {
         });
 
     expect(
-      await service().isParticipantRemovedOnServer(
-        roomId: roomId,
-        userId: uid,
-      ),
+      await service().isParticipantRemovedOnServer(roomId: roomId, userId: uid),
       isFalse,
     );
   });
@@ -65,10 +62,7 @@ void main() {
         .set({'userId': 'someone-else', 'displayName': 'Other'});
 
     expect(
-      await service().isParticipantRemovedOnServer(
-        roomId: roomId,
-        userId: uid,
-      ),
+      await service().isParticipantRemovedOnServer(roomId: roomId, userId: uid),
       isTrue,
     );
   });

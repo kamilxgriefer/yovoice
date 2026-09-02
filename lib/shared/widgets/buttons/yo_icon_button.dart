@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_motion.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_radius.dart';
@@ -47,18 +48,26 @@ class _YoIconButtonState extends State<YoIconButton> {
 
   bool get _enabled => widget.onPressed != null && !widget.isLoading;
 
-  String? get _inferredLabel {
+  String? _inferredLabel(AppLocalizations copy) {
     if (widget.icon == Icons.arrow_back_rounded ||
         widget.icon == Icons.arrow_back_ios_new_rounded) {
-      return 'Back';
+      return copy.text('Back', 'Wstecz');
     }
-    if (widget.icon == Icons.close_rounded) return 'Close';
-    if (widget.icon == Icons.settings_rounded) return 'Settings';
-    if (widget.icon == Icons.search_rounded) return 'Search';
-    if (widget.icon == Icons.add_rounded) return 'Add';
+    if (widget.icon == Icons.close_rounded) {
+      return copy.text('Close', 'Zamknij');
+    }
+    if (widget.icon == Icons.settings_rounded) {
+      return copy.text('Settings', 'Ustawienia');
+    }
+    if (widget.icon == Icons.search_rounded) {
+      return copy.text('Search', 'Szukaj');
+    }
+    if (widget.icon == Icons.add_rounded) {
+      return copy.text('Add', 'Dodaj');
+    }
     if (widget.icon == Icons.more_horiz_rounded ||
         widget.icon == Icons.more_vert_rounded) {
-      return 'More options';
+      return copy.text('More options', 'Więcej opcji');
     }
     return null;
   }
@@ -99,6 +108,7 @@ class _YoIconButtonState extends State<YoIconButton> {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
     final targetSize = widget.size < AppSizing.minimumTouchTarget
         ? AppSizing.minimumTouchTarget
@@ -106,7 +116,14 @@ class _YoIconButtonState extends State<YoIconButton> {
     final quickDuration = AppMotion.resolve(context, AppMotion.quick);
     final standardDuration = AppMotion.resolve(context, AppMotion.standard);
     final effectiveLabel =
-        widget.semanticLabel ?? widget.tooltip ?? _inferredLabel;
+        widget.semanticLabel ?? widget.tooltip ?? _inferredLabel(copy);
+    final loadingLabel = effectiveLabel == null
+        ? null
+        : copy.template(
+            '{label}, loading',
+            '{label}, trwa ładowanie',
+            values: <String, Object>{'label': effectiveLabel},
+          );
     final foreground = _enabled
         ? widget.foregroundColor ?? palette.textPrimary
         : palette.textTertiary;
@@ -187,9 +204,7 @@ class _YoIconButtonState extends State<YoIconButton> {
       child: Semantics(
         button: true,
         enabled: _enabled,
-        label: widget.isLoading && effectiveLabel != null
-            ? '$effectiveLabel, loading'
-            : effectiveLabel,
+        label: widget.isLoading ? loadingLabel : effectiveLabel,
         onTap: _enabled ? widget.onPressed : null,
         excludeSemantics: true,
         child: MouseRegion(

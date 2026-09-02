@@ -13,14 +13,22 @@ const {
 const { createStageBIntegrityRuntime } = require("./stage_b_runtime");
 
 const REGION = "europe-west1";
+const LATENCY_CRITICAL_USER_CALLABLES = Object.freeze([
+  "sendDirectMessage",
+  "sendRoomMessage",
+]);
 
-function callableOptions({ enforceAppCheck, privileged = false }) {
+function callableOptions({
+  enforceAppCheck,
+  privileged = false,
+  minInstances = 0,
+}) {
   return {
     region: REGION,
     memory: privileged ? "1GiB" : "256MiB",
     timeoutSeconds: privileged ? 540 : 60,
     maxInstances: privileged ? 1 : 50,
-    minInstances: 0,
+    minInstances,
     enforceAppCheck: enforceAppCheck === true,
     consumeAppCheckToken: enforceAppCheck === true,
   };
@@ -76,13 +84,16 @@ function createStageBFunctions({
     cleanupBatchSize,
     expiryBatchSize,
   });
-  const userOptions = callableOptions({ enforceAppCheck: enforceUserAppCheck });
   const privilegedOptions = callableOptions({
     enforceAppCheck: enforceMigrationAppCheck,
     privileged: true,
   });
   const exportsMap = {};
   for (const [name, handler] of Object.entries(userHandlers)) {
+    const userOptions = callableOptions({
+      enforceAppCheck: enforceUserAppCheck,
+      minInstances: LATENCY_CRITICAL_USER_CALLABLES.includes(name) ? 1 : 0,
+    });
     exportsMap[name] = registrars.onCall(userOptions, handler);
   }
   exportsMap.scanDirectIntegrityMigration = registrars.onCall(
@@ -160,6 +171,7 @@ function createStageBFunctions({
 }
 
 module.exports = {
+  LATENCY_CRITICAL_USER_CALLABLES,
   REGION,
   callableOptions,
   createStageBFunctions,

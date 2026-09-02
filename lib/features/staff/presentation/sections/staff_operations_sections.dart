@@ -1,13 +1,14 @@
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
 import 'package:yovoice/features/staff/data/staff_audit_service.dart';
 import 'package:yovoice/features/staff/data/staff_capabilities.dart';
 import 'package:yovoice/features/staff/data/staff_directory_service.dart';
 import 'package:yovoice/features/staff/presentation/sections/staff_section_shared.dart';
+import 'package:yovoice/features/staff/presentation/staff_localized_copy.dart';
 import 'package:yovoice/features/staff/presentation/widgets/room_staff_menu.dart';
-import 'package:yovoice/shared/identity/public_identity.dart';
 import 'package:yovoice/shared/widgets/identity/official_role_badge.dart';
 import 'package:yovoice/shared/widgets/identity/vip_badge.dart';
 
@@ -25,33 +26,49 @@ class StaffRoomsSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final service = roomService ?? RoomService();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const StaffSectionHeader(
-          title: 'Rooms & Spaces',
-          subtitle:
-              'Live rooms across the platform. Staff room controls are the '
-              'same tiered menu rooms show in place.',
+        StaffSectionHeader(
+          title: copy.text('Rooms & Spaces', 'Pokoje i przestrzenie'),
+          subtitle: copy.text(
+            'Live rooms across the platform. Staff room controls use the same tiered menu shown inside rooms.',
+            'Pokoje nadawane na żywo na całej platformie. Narzędzia zespołu są dostępne w tym samym menu co w pokojach.',
+          ),
         ),
         Expanded(
           child: StreamBuilder<List<VoiceRoom>>(
             stream: service.watchLivePublicRooms(),
             builder: (context, snapshot) {
               if (snapshot.hasError) {
-                return const StaffEmptyState(
+                return StaffEmptyState(
                   icon: Icons.error_outline_rounded,
-                  message: 'Live rooms could not be loaded.',
+                  message: copy.text(
+                    'Live rooms could not be loaded.',
+                    'Nie udało się wczytać pokojów na żywo.',
+                  ),
                 );
               }
               if (!snapshot.hasData) {
-                return const Center(child: CircularProgressIndicator());
+                return Center(
+                  child: Semantics(
+                    label: copy.text(
+                      'Loading live rooms',
+                      'Wczytywanie pokojów na żywo',
+                    ),
+                    child: const CircularProgressIndicator(),
+                  ),
+                );
               }
               final rooms = snapshot.data!;
               if (rooms.isEmpty) {
-                return const StaffEmptyState(
-                  message: 'Nothing is live right now.',
+                return StaffEmptyState(
+                  message: copy.text(
+                    'Nothing is live right now.',
+                    'Teraz nic nie jest nadawane na żywo.',
+                  ),
                 );
               }
               return ListView.separated(
@@ -89,8 +106,10 @@ class StaffRoomsSection extends StatelessWidget {
                                 ),
                               ),
                               Text(
-                                'Hosted by ${room.hostName} · '
-                                '${room.participantCount} in room',
+                                copy.text(
+                                  'Hosted by ${room.hostName} · ${room.participantCount} in room',
+                                  'Prowadzący: ${room.hostName} · ${localizedStaffParticipantCount(copy, room.participantCount)}',
+                                ),
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                                 style: const TextStyle(
@@ -180,18 +199,19 @@ class _StaffSanctionsSectionState extends State<StaffSanctionsSection> {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final entries = _entries;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         StaffSectionHeader(
-          title: 'Sanctions',
-          subtitle:
-              'Warnings, communication mutes, lifts and bans as the audit '
-              'log recorded them. Apply or lift sanctions from a user\'s '
-              'detail view.',
+          title: copy.text('Sanctions', 'Sankcje'),
+          subtitle: copy.text(
+            'Warnings, communication mutes, lifts and bans as recorded in the audit log. Apply or lift sanctions from a user\'s detail view.',
+            'Ostrzeżenia, wyciszenia komunikacji, zdjęte ograniczenia i blokady zapisane w dzienniku audytu. Sankcje nakładaj lub zdejmuj w szczegółach użytkownika.',
+          ),
           trailing: IconButton(
-            tooltip: 'Refresh',
+            tooltip: copy.text('Refresh', 'Odśwież'),
             onPressed: _load,
             icon: const Icon(
               Icons.refresh_rounded,
@@ -202,15 +222,29 @@ class _StaffSanctionsSectionState extends State<StaffSanctionsSection> {
         Expanded(
           child: _failed
               ? StaffErrorState(
-                  message:
-                      'Sanction history could not be loaded. It is part of '
-                      'the owner\'s audit access.',
+                  message: copy.text(
+                    'Sanction history could not be loaded. It is part of the owner\'s audit access.',
+                    'Nie udało się wczytać historii sankcji. Dostęp do niej ma właściciel aplikacji.',
+                  ),
                   onRetry: _load,
                 )
               : entries == null
-              ? const Center(child: CircularProgressIndicator())
+              ? Center(
+                  child: Semantics(
+                    label: copy.text(
+                      'Loading sanction history',
+                      'Wczytywanie historii sankcji',
+                    ),
+                    child: const CircularProgressIndicator(),
+                  ),
+                )
               : entries.isEmpty
-              ? const StaffEmptyState(message: 'No sanctions recorded.')
+              ? StaffEmptyState(
+                  message: copy.text(
+                    'No sanctions recorded.',
+                    'Nie zarejestrowano żadnych sankcji.',
+                  ),
+                )
               : ListView.separated(
                   itemCount: entries.length,
                   separatorBuilder: (_, __) => const SizedBox(height: 8),
@@ -241,7 +275,7 @@ class _StaffSanctionsSectionState extends State<StaffSanctionsSection> {
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Text(
-                                  entry.action.replaceAll('_', ' '),
+                                  localizedStaffAuditAction(copy, entry.action),
                                   style: const TextStyle(
                                     color: Colors.white,
                                     fontSize: 13,
@@ -264,7 +298,7 @@ class _StaffSanctionsSectionState extends State<StaffSanctionsSection> {
                             ),
                           ),
                           Text(
-                            staffStamp(entry.createdAt),
+                            staffStamp(copy, entry.createdAt),
                             style: const TextStyle(
                               color: StaffCenterStyle.faint,
                               fontSize: 10.5,
@@ -279,9 +313,9 @@ class _StaffSanctionsSectionState extends State<StaffSanctionsSection> {
                                 foregroundColor: const Color(0xFFD3A5FF),
                                 minimumSize: const Size(44, 34),
                               ),
-                              child: const Text(
-                                'User',
-                                style: TextStyle(fontSize: 12),
+                              child: Text(
+                                copy.text('User', 'Użytkownik'),
+                                style: const TextStyle(fontSize: 12),
                               ),
                             ),
                           ],
@@ -353,18 +387,19 @@ class _StaffRolesSectionState extends State<StaffRolesSection> {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final staff = _staff;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         StaffSectionHeader(
-          title: 'Staff & Roles',
-          subtitle:
-              'Every account holding a staff role, and the recorded role '
-              'changes. Assignments happen in a user\'s detail view and are '
-              'owner-only.',
+          title: copy.text('Staff & Roles', 'Zespół i role'),
+          subtitle: copy.text(
+            'Every account holding a staff role and every recorded role change. Only the owner can assign roles from a user\'s detail view.',
+            'Wszystkie konta z rolą zespołu oraz zarejestrowane zmiany ról. Role może nadawać wyłącznie właściciel w szczegółach użytkownika.',
+          ),
           trailing: IconButton(
-            tooltip: 'Refresh',
+            tooltip: copy.text('Refresh', 'Odśwież'),
             onPressed: _load,
             icon: const Icon(
               Icons.refresh_rounded,
@@ -375,16 +410,30 @@ class _StaffRolesSectionState extends State<StaffRolesSection> {
         Expanded(
           child: _failed
               ? StaffErrorState(
-                  message: 'Staff membership could not be loaded.',
+                  message: copy.text(
+                    'Staff membership could not be loaded.',
+                    'Nie udało się wczytać członków zespołu.',
+                  ),
                   onRetry: _load,
                 )
               : staff == null
-              ? const Center(child: CircularProgressIndicator())
+              ? Center(
+                  child: Semantics(
+                    label: copy.text(
+                      'Loading staff members',
+                      'Wczytywanie członków zespołu',
+                    ),
+                    child: const CircularProgressIndicator(),
+                  ),
+                )
               : ListView(
                   children: [
                     if (staff.isEmpty)
-                      const StaffEmptyState(
-                        message: 'No staff roles are assigned.',
+                      StaffEmptyState(
+                        message: copy.text(
+                          'No staff roles are assigned.',
+                          'Nie przypisano żadnych ról zespołu.',
+                        ),
                       )
                     else
                       for (final member in staff)
@@ -405,7 +454,10 @@ class _StaffRolesSectionState extends State<StaffRolesSection> {
                                     children: [
                                       Text(
                                         member.displayName.isEmpty
-                                            ? 'YO Voice user'
+                                            ? copy.text(
+                                                'YO Voice user',
+                                                'Użytkownik YO Voice',
+                                              )
                                             : member.displayName,
                                         style: const TextStyle(
                                           color: Colors.white,
@@ -413,10 +465,8 @@ class _StaffRolesSectionState extends State<StaffRolesSection> {
                                           fontWeight: FontWeight.w800,
                                         ),
                                       ),
-                                      OfficialRoleBadge(
-                                        role: OfficialRole.fromWire(
-                                          member.staffRole,
-                                        ),
+                                      StaffOfficialRoleBadge(
+                                        role: member.staffRole,
                                         variant: IdentityBadgeVariant.compact,
                                       ),
                                       if (member.isVip)
@@ -431,7 +481,7 @@ class _StaffRolesSectionState extends State<StaffRolesSection> {
                                   style: TextButton.styleFrom(
                                     foregroundColor: const Color(0xFFD3A5FF),
                                   ),
-                                  child: const Text('View'),
+                                  child: Text(copy.text('View', 'Wyświetl')),
                                 ),
                               ],
                             ),
@@ -442,11 +492,19 @@ class _StaffRolesSectionState extends State<StaffRolesSection> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const StaffPanelTitle(title: 'Recent role changes'),
+                          StaffPanelTitle(
+                            title: copy.text(
+                              'Recent role changes',
+                              'Ostatnie zmiany ról',
+                            ),
+                          ),
                           if ((_changes ?? const []).isEmpty)
-                            const Text(
-                              'No role changes recorded.',
-                              style: TextStyle(
+                            Text(
+                              copy.text(
+                                'No role changes recorded.',
+                                'Nie zarejestrowano żadnych zmian ról.',
+                              ),
+                              style: const TextStyle(
                                 color: StaffCenterStyle.muted,
                                 fontSize: 12,
                               ),
@@ -467,8 +525,8 @@ class _StaffRolesSectionState extends State<StaffRolesSection> {
                                     const SizedBox(width: 8),
                                     Expanded(
                                       child: Text(
-                                        '${change.details['previousRole'] ?? '?'}'
-                                        ' → ${change.details['role'] ?? '?'}',
+                                        '${localizedStaffRole(copy, (change.details['previousRole'] ?? '?').toString())}'
+                                        ' → ${localizedStaffRole(copy, (change.details['role'] ?? '?').toString())}',
                                         style: const TextStyle(
                                           color: Colors.white,
                                           fontSize: 12,
@@ -476,7 +534,7 @@ class _StaffRolesSectionState extends State<StaffRolesSection> {
                                       ),
                                     ),
                                     Text(
-                                      staffStamp(change.createdAt),
+                                      staffStamp(copy, change.createdAt),
                                       style: const TextStyle(
                                         color: StaffCenterStyle.faint,
                                         fontSize: 10.5,
@@ -564,14 +622,16 @@ class _StaffAuditSectionState extends State<StaffAuditSection> {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const StaffSectionHeader(
-          title: 'Audit Log',
-          subtitle:
-              'Every privileged action and every refused attempt, exactly '
-              'as recorded. Owner access.',
+        StaffSectionHeader(
+          title: copy.text('Audit Log', 'Dziennik audytu'),
+          subtitle: copy.text(
+            'Every privileged action and every refused attempt, exactly as recorded. Owner access.',
+            'Wszystkie działania uprzywilejowane i odrzucone próby — dokładnie tak, jak je zarejestrowano. Dostęp ma właściciel.',
+          ),
         ),
         SingleChildScrollView(
           scrollDirection: Axis.horizontal,
@@ -579,7 +639,7 @@ class _StaffAuditSectionState extends State<StaffAuditSection> {
             children: [
               for (final (value, label) in actionFilters) ...[
                 ChoiceChip(
-                  label: Text(label),
+                  label: Text(_localizedAuditFilter(copy, value, label)),
                   selected: _action == value,
                   onSelected: (_) {
                     setState(() => _action = value);
@@ -605,13 +665,29 @@ class _StaffAuditSectionState extends State<StaffAuditSection> {
         Expanded(
           child: _failed
               ? StaffErrorState(
-                  message: 'The audit log could not be loaded.',
+                  message: copy.text(
+                    'The audit log could not be loaded.',
+                    'Nie udało się wczytać dziennika audytu.',
+                  ),
                   onRetry: _load,
                 )
               : _loading && _entries.isEmpty
-              ? const Center(child: CircularProgressIndicator())
+              ? Center(
+                  child: Semantics(
+                    label: copy.text(
+                      'Loading audit log',
+                      'Wczytywanie dziennika audytu',
+                    ),
+                    child: const CircularProgressIndicator(),
+                  ),
+                )
               : _entries.isEmpty
-              ? const StaffEmptyState(message: 'No entries for this filter.')
+              ? StaffEmptyState(
+                  message: copy.text(
+                    'No entries for this filter.',
+                    'Brak wpisów dla wybranego filtra.',
+                  ),
+                )
               : ListView.separated(
                   itemCount: _entries.length + (_cursor == null ? 0 : 1),
                   separatorBuilder: (_, __) => const SizedBox(height: 6),
@@ -626,7 +702,7 @@ class _StaffAuditSectionState extends State<StaffAuditSection> {
                               color: StaffCenterStyle.border,
                             ),
                           ),
-                          child: const Text('Load more'),
+                          child: Text(copy.text('Load more', 'Wczytaj więcej')),
                         ),
                       );
                     }
@@ -655,7 +731,7 @@ class _StaffAuditSectionState extends State<StaffAuditSection> {
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Text(
-                                  entry.action.replaceAll('_', ' '),
+                                  localizedStaffAuditAction(copy, entry.action),
                                   style: TextStyle(
                                     color: isAlert
                                         ? StaffCenterStyle.bad
@@ -667,9 +743,15 @@ class _StaffAuditSectionState extends State<StaffAuditSection> {
                                 Text(
                                   [
                                     if (entry.actorRole != null)
-                                      'by ${entry.actorRole}',
+                                      copy.text(
+                                        'by ${entry.actorRole}',
+                                        'przez: ${localizedStaffRole(copy, entry.actorRole!)}',
+                                      ),
                                     if (entry.targetType != null)
-                                      'on ${entry.targetType} ${entry.targetId ?? ''}',
+                                      copy.text(
+                                        'on ${entry.targetType} ${entry.targetId ?? ''}',
+                                        'cel: ${entry.targetType} ${entry.targetId ?? ''}',
+                                      ),
                                   ].join(' · '),
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
@@ -682,7 +764,7 @@ class _StaffAuditSectionState extends State<StaffAuditSection> {
                             ),
                           ),
                           Text(
-                            staffStamp(entry.createdAt),
+                            staffStamp(copy, entry.createdAt),
                             style: const TextStyle(
                               color: StaffCenterStyle.faint,
                               fontSize: 10.5,
@@ -698,3 +780,20 @@ class _StaffAuditSectionState extends State<StaffAuditSection> {
     );
   }
 }
+
+String _localizedAuditFilter(
+  AppLocalizations copy,
+  String? value,
+  String english,
+) => switch (value) {
+  null => copy.text(english, 'Wszystko'),
+  'assign_user_role' => copy.text(english, 'Zmiany ról'),
+  'communication_mute' => copy.text(english, 'Wyciszenia'),
+  'ban_user' => copy.text(english, 'Blokady'),
+  'security_alert_non_owner_super_admin' => copy.text(
+    english,
+    'Alerty bezpieczeństwa',
+  ),
+  'denied_sanction_attempt' => copy.text(english, 'Odrzucone próby'),
+  _ => english,
+};

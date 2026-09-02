@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/helpers/error_messages.dart';
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/friends/data/models/friend_user.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
@@ -35,12 +36,16 @@ class _BlockedUsersScreenState extends State<BlockedUsersScreen> {
       await _friendService.unblockUser(user.id);
       if (mounted) {
         final palette = context.appPalette;
+        final copy = AppLocalizations.of(context);
         ScaffoldMessenger.of(context)
           ..hideCurrentSnackBar()
           ..showSnackBar(
             SnackBar(
               content: Text(
-                '${user.displayName} unblocked.',
+                copy.text(
+                  '${user.displayName} unblocked.',
+                  'Odblokowano użytkownika ${user.displayName}.',
+                ),
                 style: TextStyle(color: palette.successForeground),
               ),
               backgroundColor: palette.successSurface,
@@ -51,12 +56,16 @@ class _BlockedUsersScreenState extends State<BlockedUsersScreen> {
     } catch (_) {
       if (mounted) {
         final palette = context.appPalette;
+        final copy = AppLocalizations.of(context);
         ScaffoldMessenger.of(context)
           ..hideCurrentSnackBar()
           ..showSnackBar(
             SnackBar(
               content: Text(
-                'Something went wrong. Please try again.',
+                copy.text(
+                  'Something went wrong. Please try again.',
+                  'Coś poszło nie tak. Spróbuj ponownie.',
+                ),
                 style: TextStyle(color: palette.dangerForeground),
               ),
               backgroundColor: palette.dangerSurface,
@@ -72,6 +81,7 @@ class _BlockedUsersScreenState extends State<BlockedUsersScreen> {
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
+    final copy = AppLocalizations.of(context);
     return Scaffold(
       key: const ValueKey('blocked-users-screen'),
       backgroundColor: palette.background,
@@ -87,7 +97,7 @@ class _BlockedUsersScreenState extends State<BlockedUsersScreen> {
                   children: [
                     IconButton(
                       onPressed: () => Navigator.of(context).pop(),
-                      tooltip: 'Back',
+                      tooltip: copy.text('Back', 'Wstecz'),
                       icon: Icon(
                         Icons.arrow_back_ios_new_rounded,
                         color: palette.textPrimary,
@@ -97,7 +107,7 @@ class _BlockedUsersScreenState extends State<BlockedUsersScreen> {
                     const SizedBox(width: 4),
                     Expanded(
                       child: Text(
-                        'Blocked users',
+                        copy.text('Blocked users', 'Zablokowani użytkownicy'),
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
@@ -138,7 +148,10 @@ class _BlockedUsersScreenState extends State<BlockedUsersScreen> {
                               ),
                               const SizedBox(height: 16),
                               Text(
-                                'Could not load blocked users',
+                                copy.text(
+                                  'Could not load blocked users',
+                                  'Nie udało się wczytać zablokowanych osób',
+                                ),
                                 textAlign: TextAlign.center,
                                 style: TextStyle(
                                   color: palette.textPrimary,
@@ -148,7 +161,9 @@ class _BlockedUsersScreenState extends State<BlockedUsersScreen> {
                               ),
                               const SizedBox(height: 8),
                               Text(
-                                friendlyErrorMessage(snapshot.error!),
+                                copy.isPolish
+                                    ? 'Sprawdź połączenie i spróbuj ponownie.'
+                                    : friendlyErrorMessage(snapshot.error!),
                                 textAlign: TextAlign.center,
                                 style: TextStyle(
                                   color: palette.textSecondary,
@@ -176,7 +191,10 @@ class _BlockedUsersScreenState extends State<BlockedUsersScreen> {
                               ),
                               const SizedBox(height: 16),
                               Text(
-                                'No blocked users',
+                                copy.text(
+                                  'No blocked users',
+                                  'Brak zablokowanych osób',
+                                ),
                                 style: TextStyle(
                                   color: palette.textPrimary,
                                   fontSize: 18,
@@ -185,7 +203,10 @@ class _BlockedUsersScreenState extends State<BlockedUsersScreen> {
                               ),
                               const SizedBox(height: 8),
                               Text(
-                                'People you block will appear here.',
+                                copy.text(
+                                  'People you block will appear here.',
+                                  'Zablokowane osoby pojawią się tutaj.',
+                                ),
                                 textAlign: TextAlign.center,
                                 style: TextStyle(
                                   color: palette.textSecondary,
@@ -221,6 +242,7 @@ class _BlockedUsersScreenState extends State<BlockedUsersScreen> {
                                   UserAvatar(
                                     radius: 24,
                                     userId: user.id,
+                                    mediaRevision: user.profileUpdatedAt,
                                     displayName: user.displayName,
                                     backgroundColor: palette.surfaceSunken,
                                   ),
@@ -261,7 +283,7 @@ class _BlockedUsersScreenState extends State<BlockedUsersScreen> {
                                           strokeWidth: 2,
                                         ),
                                       )
-                                    : const Text('Unblock'),
+                                    : Text(copy.text('Unblock', 'Odblokuj')),
                               );
                               final stackAction =
                                   constraints.maxWidth < 300 ||

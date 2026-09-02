@@ -1,5 +1,6 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/achievements/presentation/screens/achievements_screen.dart';
@@ -184,6 +185,7 @@ Future<MoreDestination?> showDesktopMoreMenu(
 }) {
   final palette = context.appPalette;
   final colors = Theme.of(context).colorScheme;
+  final copy = AppLocalizations.of(context);
   final lockColor = palette.warningForeground;
   // Moments is deliberately absent: it is a rail item now, and listing
   // it here as well would show the same destination twice.
@@ -191,46 +193,55 @@ Future<MoreDestination?> showDesktopMoreMenu(
     (
       MoreDestination.clubs,
       Icons.groups_2_rounded,
-      'Clubs',
-      'Communities you belong to',
+      copy.text('Clubs', 'Kluby'),
+      copy.text(
+        'Communities you belong to',
+        'Społeczności, do których należysz',
+      ),
     ),
     (
       MoreDestination.creatorStudio,
       Icons.auto_graph_rounded,
-      'Creator Studio',
-      'Your rooms, clubs and Moments',
+      copy.text('Creator Studio', 'Studio twórcy'),
+      copy.text(
+        'Your rooms, clubs and Moments',
+        'Twoje pokoje, kluby i Momenty',
+      ),
     ),
     (
       MoreDestination.achievements,
       Icons.emoji_events_rounded,
-      'Awards',
-      'Titles and progress',
+      copy.text('Awards', 'Nagrody'),
+      copy.text('Titles and progress', 'Tytuły i postępy'),
     ),
     (
       MoreDestination.notifications,
       Icons.notifications_active_rounded,
-      'Alerts',
-      'Notification preferences',
+      copy.text('Alerts', 'Powiadomienia'),
+      copy.text('Notification preferences', 'Ustawienia powiadomień'),
     ),
     (
       MoreDestination.settings,
       Icons.settings_rounded,
-      'Settings',
-      'Privacy, account and app',
+      copy.settings,
+      copy.text('Privacy, account and app', 'Prywatność, konto i aplikacja'),
     ),
     if (isStaff)
       (
         MoreDestination.moderation,
         Icons.shield_rounded,
-        'Moderation',
-        'Review reported content',
+        copy.text('Moderation', 'Moderacja'),
+        copy.text('Review reported content', 'Przeglądaj zgłoszone treści'),
       ),
     if (isOwner)
       (
         MoreDestination.staffCenter,
         Icons.admin_panel_settings_rounded,
-        'Staff Center',
-        'Roles and user management',
+        copy.text('Staff Center', 'Panel zespołu'),
+        copy.text(
+          'Roles and user management',
+          'Role i zarządzanie użytkownikami',
+        ),
       ),
   ];
 
@@ -428,58 +439,59 @@ class _MoreSheetState extends State<MoreSheet> {
   Widget build(BuildContext context) {
     final isVeryNarrow = MediaQuery.sizeOf(context).width <= 350;
     final palette = context.appPalette;
+    final copy = AppLocalizations.of(context);
     final productEntries = <_MoreEntry>[
-      const _MoreEntry(
+      _MoreEntry(
         destination: MoreDestination.friends,
         icon: Icons.people_rounded,
-        label: 'Friends',
-        subtitle: 'Your circle',
+        label: copy.friends,
+        subtitle: copy.text('Your circle', 'Twój krąg'),
       ),
-      const _MoreEntry(
+      _MoreEntry(
         destination: MoreDestination.profile,
         icon: Icons.person_rounded,
-        label: 'Profile',
-        subtitle: 'You',
+        label: copy.profile,
+        subtitle: copy.text('You', 'Ty'),
       ),
-      const _MoreEntry(
+      _MoreEntry(
         destination: MoreDestination.discover,
         icon: Icons.explore_rounded,
-        label: 'Discover',
-        subtitle: 'Find rooms',
+        label: copy.discover,
+        subtitle: copy.text('Find rooms', 'Znajdź pokoje'),
       ),
-      const _MoreEntry(
+      _MoreEntry(
         destination: MoreDestination.findCreators,
         icon: Icons.person_search_rounded,
-        label: 'Find creators',
-        subtitle: 'People to follow',
+        label: copy.findCreators,
+        subtitle: copy.text('People to follow', 'Osoby warte obserwowania'),
       ),
       _MoreEntry(
         destination: MoreDestination.clubs,
         icon: Icons.groups_2_rounded,
-        label: 'Clubs',
-        subtitle: 'Communities',
+        label: copy.text('Clubs', 'Kluby'),
+        subtitle: copy.text('Communities', 'Społeczności'),
         isLocked: moreDestinationIsLocked(
           MoreDestination.clubs,
           widget.entitlements,
         ),
       ),
-      const _MoreEntry(
+      _MoreEntry(
         destination: MoreDestination.notifications,
         icon: Icons.notifications_rounded,
-        label: 'Alerts',
-        subtitle: 'Updates',
+        label: copy.text('Alerts', 'Powiadomienia'),
+        subtitle: copy.text('Updates', 'Aktualizacje'),
       ),
-      const _MoreEntry(
+      _MoreEntry(
         destination: MoreDestination.achievements,
         icon: Icons.emoji_events_rounded,
-        label: 'Awards',
-        subtitle: 'Progress',
+        label: copy.text('Awards', 'Nagrody'),
+        subtitle: copy.text('Progress', 'Postępy'),
       ),
       _MoreEntry(
         destination: MoreDestination.creatorStudio,
         icon: Icons.auto_graph_rounded,
-        label: 'Creator',
-        subtitle: 'Studio',
+        label: copy.text('Creator', 'Twórca'),
+        subtitle: copy.text('Studio', 'Studio'),
         isLocked: moreDestinationIsLocked(
           MoreDestination.creatorStudio,
           widget.entitlements,
@@ -498,7 +510,7 @@ class _MoreSheetState extends State<MoreSheet> {
         children: [
           YoModalSheetChrome(
             key: ValueKey('more-sheet-drag-handle'),
-            sheetLabel: 'More menu',
+            sheetLabel: copy.text('More menu', 'Menu Więcej'),
             surfaceColor: palette.surfaceRaised,
           ),
           Flexible(
@@ -521,7 +533,7 @@ class _MoreSheetState extends State<MoreSheet> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              'More',
+                              copy.more,
                               style: TextStyle(
                                 color: palette.textPrimary,
                                 fontSize: 27,
@@ -531,7 +543,10 @@ class _MoreSheetState extends State<MoreSheet> {
                             if (!isVeryNarrow) ...[
                               const SizedBox(height: 3),
                               Text(
-                                'Everything else, kept one tap away.',
+                                copy.text(
+                                  'Everything else, kept one tap away.',
+                                  'Wszystkie pozostałe funkcje pod ręką.',
+                                ),
                                 style: TextStyle(
                                   color: palette.textSecondary,
                                   fontSize: 13,
@@ -609,11 +624,14 @@ class _MoreSheetState extends State<MoreSheet> {
                   // this sheet always had.
                   ..._staffSection(),
                   const SizedBox(height: 8),
-                  const _WideMoreTile(
+                  _WideMoreTile(
                     destination: MoreDestination.settings,
                     icon: Icons.settings_rounded,
-                    label: 'Settings',
-                    subtitle: 'Privacy, account and application preferences',
+                    label: copy.settings,
+                    subtitle: copy.text(
+                      'Privacy, account and application preferences',
+                      'Prywatność, konto i ustawienia aplikacji',
+                    ),
                   ),
                 ],
               ),
@@ -642,6 +660,7 @@ class _MoreSheetState extends State<MoreSheet> {
     final entries = staffEntriesFor(_capabilities);
     if (entries.isEmpty) return const [];
     final uid = _currentUid;
+    final copy = AppLocalizations.of(context);
     return [
       const SizedBox(height: 12),
       Align(
@@ -652,7 +671,7 @@ class _MoreSheetState extends State<MoreSheet> {
           crossAxisAlignment: WrapCrossAlignment.center,
           children: [
             Text(
-              'Staff',
+              copy.text('Staff', 'Zespół'),
               style: TextStyle(
                 color: context.appPalette.textPrimary,
                 fontSize: 13,
@@ -674,8 +693,20 @@ class _MoreSheetState extends State<MoreSheet> {
           icon: entries[index].destination == MoreDestination.staffCenter
               ? Icons.admin_panel_settings_rounded
               : Icons.shield_rounded,
-          label: entries[index].label,
-          subtitle: entries[index].subtitle,
+          label: copy.text(
+            entries[index].label,
+            entries[index].destination == MoreDestination.moderation
+                ? 'Moderacja'
+                : 'Panel zespołu',
+          ),
+          subtitle: copy.text(
+            entries[index].subtitle,
+            entries[index].destination == MoreDestination.moderation
+                ? 'Przeglądaj zgłoszone treści'
+                : entries[index].subtitle.startsWith('Owner')
+                ? 'Panel właściciela — wszystkie sekcje'
+                : 'Zgłoszenia, pokoje i sankcje',
+          ),
           accentColor: entries[index].color,
         ),
       ],
@@ -719,10 +750,11 @@ class _MoreTile extends StatelessWidget {
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
     final lockColor = palette.warningForeground;
+    final copy = AppLocalizations.of(context);
     final semanticLabel = [
       label,
       subtitle,
-      if (isLocked) 'Premium required',
+      if (isLocked) copy.text('Premium required', 'Wymagane Premium'),
     ].join(', ');
     void open() => Navigator.pop(context, destination);
 
@@ -835,10 +867,11 @@ class _WideMoreTile extends StatelessWidget {
     final colors = Theme.of(context).colorScheme;
     final accent = accentColor ?? colors.primary;
     final lockColor = palette.warningForeground;
+    final copy = AppLocalizations.of(context);
     final semanticLabel = [
       label,
       subtitle,
-      if (isLocked) 'Premium required',
+      if (isLocked) copy.text('Premium required', 'Wymagane Premium'),
     ].join(', ');
     void open() => Navigator.pop(context, destination);
 

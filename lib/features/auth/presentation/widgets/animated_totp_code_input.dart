@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_typography.dart';
@@ -874,15 +875,24 @@ class AnimatedTotpCodeInputState extends State<AnimatedTotpCodeInput>
     return _lerp(values[index], values[index + 1], scaled - index);
   }
 
-  String get _statusText => switch (_phase) {
-    TotpChallengePhase.submitting ||
-    TotpChallengePhase.orbitEntry ||
-    TotpChallengePhase.orbitLoop => 'Verifying code',
-    TotpChallengePhase.success ||
-    TotpChallengePhase.successHold ||
-    TotpChallengePhase.exit => 'Code verified',
-    _ => '',
-  };
+  String _statusText(BuildContext context) {
+    final copy = AppLocalizations.of(context);
+    return switch (_phase) {
+      TotpChallengePhase.submitting ||
+      TotpChallengePhase.orbitEntry ||
+      TotpChallengePhase.orbitLoop => copy.text(
+        'Verifying code',
+        'Weryfikowanie kodu',
+      ),
+      TotpChallengePhase.success ||
+      TotpChallengePhase.successHold ||
+      TotpChallengePhase.exit => copy.text(
+        'Code verified',
+        'Kod zweryfikowany',
+      ),
+      _ => '',
+    };
+  }
 
   bool get _showSuccess =>
       _phase == TotpChallengePhase.success ||
@@ -915,6 +925,7 @@ class AnimatedTotpCodeInputState extends State<AnimatedTotpCodeInput>
                 child: _buildRealInput(geometry, palette),
                 builder: (context, realInput) {
                   final frame = debugFrame;
+                  final statusText = _statusText(context);
                   final exitProgress = ((_successElapsed - 840) / 200).clamp(
                     0.0,
                     1.0,
@@ -1007,7 +1018,7 @@ class AnimatedTotpCodeInputState extends State<AnimatedTotpCodeInput>
                               ),
                               container: true,
                               liveRegion: true,
-                              label: _statusText,
+                              label: statusText,
                               child: ExcludeSemantics(
                                 child: Center(
                                   child: AnimatedSwitcher(
@@ -1015,11 +1026,11 @@ class AnimatedTotpCodeInputState extends State<AnimatedTotpCodeInput>
                                         ? Duration.zero
                                         : const Duration(milliseconds: 180),
                                     child: Text(
-                                      _statusText,
-                                      key: ValueKey<String>(_statusText),
+                                      statusText,
+                                      key: ValueKey<String>(statusText),
                                       textAlign: TextAlign.center,
                                       style: AppTypography.labelLarge.copyWith(
-                                        color: _statusText == 'Code verified'
+                                        color: _showSuccess
                                             ? palette.successForeground
                                             : palette.textSecondary,
                                       ),
@@ -1169,7 +1180,10 @@ class AnimatedTotpCodeInputState extends State<AnimatedTotpCodeInput>
       height: geometry.fieldSize.height,
       child: Semantics(
         container: true,
-        label: '6-digit authenticator code',
+        label: AppLocalizations.of(context).text(
+          '6-digit authenticator code',
+          'Sześciocyfrowy kod z aplikacji uwierzytelniającej',
+        ),
         child: TextField(
           key: const ValueKey<String>('totp-code-input'),
           controller: widget.controller,

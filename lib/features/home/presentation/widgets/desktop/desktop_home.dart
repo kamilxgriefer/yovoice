@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import 'package:firebase_auth/firebase_auth.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/rooms/presentation/screens/room_settings_screen.dart';
 import 'package:yovoice/features/home/presentation/widgets/shared/home_room_board.dart';
@@ -243,7 +244,12 @@ class _DesktopHomeState extends State<DesktopHome> {
   Future<void> _deleteOwnedRoom(VoiceRoom room) async {
     final service = _rooms;
     if (service == null) {
-      throw StateError('Room management is temporarily unavailable.');
+      throw StateError(
+        AppLocalizations.of(context).text(
+          'Room management is temporarily unavailable.',
+          'Zarządzanie pokojem jest chwilowo niedostępne.',
+        ),
+      );
     }
     await service.deleteRoom(room.id);
   }
@@ -264,6 +270,7 @@ class _DesktopHomeState extends State<DesktopHome> {
 
         return Builder(
           builder: (context) {
+            final copy = AppLocalizations.of(context);
             // ONE room list. Live around you, Featured Live and For
             // you were three presentations over overlapping streams, so
             // the same room could appear three times on one screen.
@@ -307,21 +314,28 @@ class _DesktopHomeState extends State<DesktopHome> {
                 gap,
                 // 2. Which rooms can I join?
                 _HomeSectionTitle(
-                  'Rooms for you',
+                  copy.text('Rooms for you', 'Pokoje dla Ciebie'),
                   onViewAll: widget.onSeeAllRooms,
                 ),
                 if (roomsUnavailable)
                   YoErrorState(
-                    message:
-                        'Live rooms could not be loaded. Check your connection '
-                        'and try again.',
+                    message: copy.text(
+                      'Live rooms could not be loaded. Check your connection '
+                          'and try again.',
+                      'Nie udało się wczytać pokojów na żywo. Sprawdź '
+                          'połączenie i spróbuj ponownie.',
+                    ),
                     onRetry: _retryLiveRooms,
                     compact: true,
                   )
                 else if (board.isEmpty)
-                  const _HomeSectionNote(
-                    'No rooms to show yet — start one and your community '
-                    'will see it here.',
+                  _HomeSectionNote(
+                    copy.text(
+                      'No rooms to show yet — start one and your community '
+                          'will see it here.',
+                      'Nie ma jeszcze żadnych pokojów — utwórz pierwszy, '
+                          'a zobaczy go Twoja społeczność.',
+                    ),
                   )
                 else
                   for (final room in board)
@@ -337,7 +351,7 @@ class _DesktopHomeState extends State<DesktopHome> {
                 gap,
                 // 3. Which rooms belong to me?
                 _HomeSectionTitle(
-                  'Your active rooms',
+                  copy.text('Your active rooms', 'Twoje aktywne pokoje'),
                   onViewAll: widget.onSeeAllRooms,
                 ),
                 StreamBuilder<List<VoiceRoom>>(
@@ -354,7 +368,7 @@ class _DesktopHomeState extends State<DesktopHome> {
                 gap,
                 // 4. Who did I speak with most recently?
                 _HomeSectionTitle(
-                  'Your recent chats',
+                  copy.text('Your recent chats', 'Ostatnie czaty'),
                   onViewAll: widget.onSeeAllChats,
                 ),
                 StreamBuilder<List<Conversation>>(
@@ -391,16 +405,17 @@ class _GreetingHeader extends StatelessWidget {
 
   final Stream<UserProfile>? profile;
 
-  static String _partOfDay() {
+  static String _partOfDay(AppLocalizations copy) {
     final hour = DateTime.now().hour;
-    if (hour < 12) return 'Good morning';
-    if (hour < 18) return 'Good afternoon';
-    return 'Good evening';
+    if (hour < 12) return copy.text('Good morning', 'Dzień dobry');
+    if (hour < 18) return copy.text('Good afternoon', 'Dzień dobry');
+    return copy.text('Good evening', 'Dobry wieczór');
   }
 
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
+    final copy = AppLocalizations.of(context);
     return StreamBuilder<UserProfile>(
       stream: profile,
       builder: (context, snapshot) {
@@ -409,7 +424,7 @@ class _GreetingHeader extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              name.isEmpty ? _partOfDay() : '${_partOfDay()}, $name',
+              name.isEmpty ? _partOfDay(copy) : '${_partOfDay(copy)}, $name',
               style: TextStyle(
                 color: palette.textPrimary,
                 fontSize: 24,
@@ -419,7 +434,10 @@ class _GreetingHeader extends StatelessWidget {
             ),
             const SizedBox(height: 4),
             Text(
-              'Here is what sounds good right now.',
+              copy.text(
+                'Here is what sounds good right now.',
+                'Sprawdź, czego warto teraz posłuchać.',
+              ),
               style: TextStyle(color: palette.textSecondary, fontSize: 13.5),
             ),
           ],
@@ -549,21 +567,29 @@ class _RosterListState extends State<RoomRosterList> {
   String get hostId => widget.hostId;
   VoidCallback get onDismiss => widget.onDismiss;
 
-  String _role(RoomParticipant participant) {
-    if (participant.isHost || participant.userId == hostId) return 'Host';
-    if (participant.role == 'moderator') return 'Moderator';
-    if (participant.isSpeaker) return 'Speaker';
-    return 'Listening';
+  String _role(RoomParticipant participant, AppLocalizations copy) {
+    if (participant.isHost || participant.userId == hostId) {
+      return copy.text('Host', 'Prowadzący');
+    }
+    if (participant.role == 'moderator') {
+      return copy.text('Moderator', 'Moderator');
+    }
+    if (participant.isSpeaker) return copy.text('Speaker', 'Mówca');
+    return copy.text('Listening', 'Słucha');
   }
 
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
+    final copy = AppLocalizations.of(context);
     if (participants.isEmpty) {
       return Padding(
         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 10),
         child: Text(
-          'Nobody is in this room yet.',
+          copy.text(
+            'Nobody is in this room yet.',
+            'W tym pokoju nikogo jeszcze nie ma.',
+          ),
           style: TextStyle(color: palette.textSecondary, fontSize: 12),
         ),
       );
@@ -576,7 +602,10 @@ class _RosterListState extends State<RoomRosterList> {
         Padding(
           padding: const EdgeInsets.fromLTRB(6, 2, 6, 8),
           child: Text(
-            '${participants.length} in the room',
+            copy.text(
+              '${participants.length} in the room',
+              '${participants.length} w pokoju',
+            ),
             style: TextStyle(
               color: palette.textSecondary,
               fontSize: 11,
@@ -633,7 +662,7 @@ class _RosterListState extends State<RoomRosterList> {
                                   ),
                                 ),
                                 Text(
-                                  _role(participant),
+                                  _role(participant, copy),
                                   style: TextStyle(
                                     color: palette.textTertiary,
                                     fontSize: 10.5,
@@ -676,6 +705,7 @@ class _HomeSectionTitle extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
+    final copy = AppLocalizations.of(context);
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: Row(
@@ -701,15 +731,18 @@ class _HomeSectionTitle extends StatelessWidget {
                 padding: const EdgeInsets.symmetric(horizontal: 8),
                 foregroundColor: colors.primary,
               ),
-              child: const Row(
+              child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Text(
-                    'View all',
-                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+                    copy.text('View all', 'Zobacz wszystkie'),
+                    style: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
-                  SizedBox(width: 2),
-                  Icon(Icons.chevron_right_rounded, size: 19),
+                  const SizedBox(width: 2),
+                  const Icon(Icons.chevron_right_rounded, size: 19),
                 ],
               ),
             ),

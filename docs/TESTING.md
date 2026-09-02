@@ -6,7 +6,7 @@ exist; know which one you're relying on before trusting it.
 
 ## Current counts
 
-**As of 2026-09-01.** One table, so there is a single place to correct when
+**As of 2026-09-02.** One table, so there is a single place to correct when
 these move. Every figure is a suite run, not an estimate; file counts are
 `find`. *(The date used to live in the heading; it moved into the body on
 2026-08-20 because three other docs deep-link to this section and every
@@ -17,20 +17,34 @@ correction silently broke all three anchors.)*
 | Firestore rules | `npm --prefix firestore-tests test` | **522** checks |
 | Storage rules | `npm --prefix firestore-tests run test:storage` | **60** checks |
 | Family media (combined) | `npm --prefix firestore-tests run test:family-media` | **11** checks |
-| Cloud Functions | `npm --prefix functions test` | **1098** tests (118 suites) |
-| Flutter VM | `flutter test` | **1925** tests |
+| Cloud Functions | `npm --prefix functions test` | **1100** tests (118 suites) |
+| Flutter VM | `flutter test` | **2044** tests |
 | Flutter browser | `flutter test --platform chrome test/web_audio_capture_browser_test.dart test/image_crop_test.dart test/room_cover_editor_test.dart` | **18** tests (3 files) |
 
 **Where these numbers came from.** Every current row was re-measured on
-2026-09-01 against the coordinated build-16 release candidate, not inferred
-from an older release. Flutter VM passed **1925/1925** in one invocation and
+2026-09-02 against the coordinated build-18 release candidate, not inferred
+from an older release. Flutter VM passed **2044/2044** in one invocation and
 `flutter analyze --no-pub` reported no issues. Cloud Functions passed
-**1098/1098** across 118 suites under Node 22 on fresh Auth/Firestore
+**1100/1100** across 118 suites under Node 22 on fresh Auth/Firestore
 emulators. Firestore Rules passed **522/522**; isolated Storage and combined
 Family-media gates passed **60/60** and **11/11**. The three real-Chrome
-media/crop files remain **18/18**. Syntax validation passed for all **95**
-changed/new JavaScript files and the Functions production-dependency audit
+media/crop files remain **18/18**; the compiled production Web artifact also
+passed **2/2** Playwright smoke checks, and the room-state visual harness
+rendered **55/55** frames/states. The Functions production-dependency audit
 reported **0 vulnerabilities**. Historical count movement remains below.
+
+> **Movement, 2026-09-02 (build-18 coordinated tester candidate).** Flutter VM
+> **1925 → 2044** covers the merged friends/avatar revision path, actionable
+> verification banner, passive room prejoin, default-visible compact room
+> chat, permission readiness, safe localized failures, direct-message retry,
+> promoted-listener microphone consent across the room and mini-player,
+> production Polish and 41 additional locale catalogs. Functions
+> **1098 → 1100** adds exact latency-critical warm-instance configuration
+> coverage. Firestore **522/522**, Storage **60/60**, Family media **11/11**,
+> Chrome **18/18**, Playwright **2/2**, sound generation, release Web build,
+> `git diff --check` and static analysis are green. Store availability and the
+> physical two-device matrix are separate release gates and are not claimed by
+> these source results.
 
 > **Movement, 2026-09-01 (build-16 final release gate).** Flutter VM
 > **1867 → 1925** includes the integrated private-media, direct-call,

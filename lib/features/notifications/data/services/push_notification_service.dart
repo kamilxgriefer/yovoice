@@ -93,23 +93,22 @@ bool shouldSuppressForegroundNotification({
   return isConversationActivity && activeConversations.contains(targetId);
 }
 
-/// Runs only the native-permission phase and always releases the UI barrier.
-/// Kept platform-free so sequencing can be pinned in VM tests without loading
-/// Firebase or local-notification channels.
+/// Initializes notification plumbing and inspects the current OS state without
+/// ever presenting a system permission dialog. Kept platform-free so this
+/// startup contract can be pinned in VM tests.
 @visibleForTesting
-Future<T> runInitialNotificationPermissionPhase<T>({
+Future<T> runInitialNotificationInspectionPhase<T>({
   required Future<void> Function() initializeLocalNotifications,
-  required Future<T> Function() requestPermission,
+  required Future<T> Function() inspectPermission,
   required void Function() onSettled,
   required Duration timeout,
 }) async {
   try {
     // Bound each await separately. If local setup times out, execution leaves
-    // this block and never starts a late permission request. If the already
-    // issued OS request times out, its eventual result is deliberately ignored
-    // and the service retries only after a process restart.
+    // this block and never starts a late platform inspection. Neither phase is
+    // allowed to block authenticated startup indefinitely.
     await initializeLocalNotifications().timeout(timeout);
-    return await requestPermission().timeout(timeout);
+    return await inspectPermission().timeout(timeout);
   } finally {
     onSettled();
   }
@@ -136,7 +135,7 @@ Future<void> resolveInitialNotificationNavigation<T>({
   }
 }
 
-/// Owns the FCM lifecycle end-to-end: permission request, token
+/// Owns the FCM lifecycle end-to-end: permission inspection, token
 /// register/refresh/unregister, foreground local-notification display, and
 /// routing a tap back into the app. Every entry point is wrapped so a
 /// missing platform config (no APNs key yet, no web VAPID key, an emulator
@@ -155,7 +154,7 @@ class PushNotificationService {
   static const String _rotationPendingPreference =
       'push_token_rotation_pending_v1';
   static const Duration _signOutCleanupTimeout = Duration(seconds: 4);
-  static const Duration _initialPermissionPhaseTimeout = Duration(seconds: 60);
+  static const Duration _initialInspectionTimeout = Duration(seconds: 60);
   static const Duration _initialMessageTimeout = Duration(seconds: 5);
 
   /// Web push needs a VAPID public key, and there is no safe default for
@@ -223,17 +222,18 @@ class PushNotificationService {
   Future<void> _registrationTail = Future<void>.value();
   Future<void> _initialPermissionPromptSettled = Future<void>.value();
   Future<void> _initialOnboardingReadiness = Future<void>.value();
+  Future<void>? _initializationInFlight;
   bool _initialized = false;
+  bool _notificationsAuthorized = false;
   bool _warnedAboutVapid = false;
 
-  /// Completes as soon as the first native notification permission prompt has
-  /// been resolved (or skipped/failed). Token and network work deliberately
-  /// continue afterward so UI such as the first-run guide waits only for the
-  /// competing system modal, never for push registration.
+  /// Backward-compatible startup barrier. It now completes after local
+  /// notification setup and a non-interactive OS status inspection; startup
+  /// never owns a permission prompt.
   Future<void> get initialPermissionPromptSettled =>
       _initialPermissionPromptSettled;
 
-  /// Completes after both the native prompt and a cold-start notification
+  /// Completes after notification initialization and a cold-start notification
   /// route have settled. Token registration/network work is never part of it.
   Future<void> get initialOnboardingReadiness => _initialOnboardingReadiness;
 
@@ -275,20 +275,33 @@ class PushNotificationService {
   )?
   onInAppForegroundNotification;
 
-  /// Call once, after the user is signed in — token registration needs a
-  /// uid to write `users/{uid}/fcmTokens/{token}` under, and requesting
-  /// permission before there's any account to attach it to would just mean
-  /// asking twice.
-  Future<void> initialize() async {
+  /// Call once after sign-in. This method never opens an OS permission prompt;
+  /// [activateAfterNotificationPermission] is the explicit post-gesture path.
+  Future<void> initialize() {
+    final active = _initializationInFlight;
+    if (active != null) return active;
+
+    late Future<void> tracked;
+    tracked = _initialize().whenComplete(() {
+      if (identical(_initializationInFlight, tracked)) {
+        _initializationInFlight = null;
+      }
+    });
+    _initializationInFlight = tracked;
+    return tracked;
+  }
+
+  Future<void> _initialize() async {
     if (_initialized) {
       // Listeners and OS permission are device-scoped and must not be added
       // twice, but token ownership is account-scoped. After A signs out and
       // B signs in, bind a freshly rotated token to B instead of treating the
       // already-initialised device as finished forever.
-      if (shouldRebindPushIdentity(
-        registeredUserId: _registeredUserId,
-        currentUserId: _auth.currentUser?.uid,
-      )) {
+      if (_notificationsAuthorized &&
+          shouldRebindPushIdentity(
+            registeredUserId: _registeredUserId,
+            currentUserId: _auth.currentUser?.uid,
+          )) {
         if (!await _bindCurrentIdentity()) {
           debugPrint(
             'PushNotificationService: account switch token rotation is '
@@ -344,19 +357,15 @@ class PushNotificationService {
 
       NotificationSettings? settings;
       try {
-        settings = await runInitialNotificationPermissionPhase(
+        settings = await runInitialNotificationInspectionPhase(
           initializeLocalNotifications: _initLocalNotifications,
-          requestPermission: () => messaging.requestPermission(
-            alert: true,
-            badge: true,
-            sound: true,
-          ),
+          inspectPermission: messaging.getNotificationSettings,
           onSettled: settlePermissionPrompt,
-          timeout: _initialPermissionPhaseTimeout,
+          timeout: _initialInspectionTimeout,
         );
       } catch (error) {
         debugPrint(
-          'PushNotificationService: notification permission phase failed '
+          'PushNotificationService: notification status inspection failed '
           '(${error.runtimeType}); token registration is skipped this session.',
         );
       }
@@ -370,23 +379,14 @@ class PushNotificationService {
         ).whenComplete(settleStartupNavigation),
       );
 
-      if (settings == null ||
-          settings.authorizationStatus == AuthorizationStatus.denied) {
+      _notificationsAuthorized = _isAuthorized(settings);
+      if (!_notificationsAuthorized) {
         return;
       }
 
       // Cold-start routing is resolved before any token/network work so it can
       // never arrive late over the first-run guide.
-      await _bindCurrentIdentity();
-      _tokenRefreshSubscription = messaging.onTokenRefresh.listen(
-        _handleTokenRefresh,
-        onError: (_) {},
-      );
-
-      _foregroundSubscription = FirebaseMessaging.onMessage.listen(
-        _showLocalNotification,
-        onError: (_) {},
-      );
+      await _activateAuthorizedMessaging(messaging);
     } catch (error, stackTrace) {
       debugPrint(
         'PushNotificationService.initialize failed (push will be '
@@ -398,6 +398,46 @@ class PushNotificationService {
       settlePermissionPrompt();
       if (!startupResolutionStarted) settleStartupNavigation();
     }
+  }
+
+  /// Finishes push registration after a permission dialog initiated by an
+  /// in-app user gesture. This method only inspects Firebase's OS-backed state;
+  /// it never requests permission itself.
+  Future<bool> activateAfterNotificationPermission() async {
+    if (kIsWeb && webVapidKey.isEmpty) return false;
+    await initialize();
+    try {
+      final messaging = FirebaseMessaging.instance;
+      final settings = await messaging.getNotificationSettings();
+      _notificationsAuthorized = _isAuthorized(settings);
+      if (!_notificationsAuthorized) return false;
+      await _activateAuthorizedMessaging(messaging);
+      return true;
+    } catch (error) {
+      debugPrint(
+        'PushNotificationService: explicit permission activation failed '
+        '(${error.runtimeType}); in-app notifications remain available.',
+      );
+      return false;
+    }
+  }
+
+  static bool _isAuthorized(NotificationSettings? settings) {
+    final status = settings?.authorizationStatus;
+    return status == AuthorizationStatus.authorized ||
+        status == AuthorizationStatus.provisional;
+  }
+
+  Future<void> _activateAuthorizedMessaging(FirebaseMessaging messaging) async {
+    await _bindCurrentIdentity();
+    _tokenRefreshSubscription ??= messaging.onTokenRefresh.listen(
+      _handleTokenRefresh,
+      onError: (_) {},
+    );
+    _foregroundSubscription ??= FirebaseMessaging.onMessage.listen(
+      _showLocalNotification,
+      onError: (_) {},
+    );
   }
 
   /// Call on sign-out, BEFORE the auth session actually clears — deleting
@@ -493,6 +533,11 @@ class PushNotificationService {
     await _tokenRefreshSubscription?.cancel();
     await _foregroundSubscription?.cancel();
     await _openedAppSubscription?.cancel();
+    _tokenRefreshSubscription = null;
+    _foregroundSubscription = null;
+    _openedAppSubscription = null;
+    _initializationInFlight = null;
+    _notificationsAuthorized = false;
     _initialized = false;
   }
 

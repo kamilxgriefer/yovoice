@@ -2,6 +2,7 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/space_identity.dart';
 import 'package:yovoice/features/rooms/data/models/room_participant.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
@@ -39,6 +40,7 @@ class PodcastEpisodeHero extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final episodeTitle = room.topic.trim().isNotEmpty
         ? room.topic.trim()
         : room.name;
@@ -104,15 +106,20 @@ class PodcastEpisodeHero extends StatelessWidget {
                     crossAxisAlignment: WrapCrossAlignment.center,
                     children: [
                       _StatusChip(live: live),
-                      _FormatChip(label: room.showFormat?.label ?? 'Live show'),
+                      _FormatChip(
+                        label: _podcastFormatLabel(
+                          room.showFormat?.label ?? 'Live show',
+                          copy,
+                        ),
+                      ),
                       if (room.visibility == 'private')
-                        const _FormatChip(label: 'Private'),
+                        _FormatChip(label: copy.text('Private', 'Prywatny')),
                     ],
                   ),
                   const SizedBox(height: 15),
-                  const Text(
-                    'TODAY’S EPISODE',
-                    style: TextStyle(
+                  Text(
+                    copy.text('TODAY’S EPISODE', 'DZISIEJSZY ODCINEK'),
+                    style: const TextStyle(
                       color: BroadcastRoomColors.accentSoft,
                       fontSize: 10.5,
                       fontWeight: FontWeight.w900,
@@ -171,7 +178,10 @@ class PodcastEpisodeHero extends StatelessWidget {
                       const SizedBox(width: 9),
                       Flexible(
                         child: Text(
-                          'Hosted by $hostName',
+                          copy.text(
+                            'Hosted by $hostName',
+                            'Prowadzi $hostName',
+                          ),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(
@@ -191,11 +201,20 @@ class PodcastEpisodeHero extends StatelessWidget {
                   const SizedBox(height: 14),
                   Row(
                     children: [
-                      _Metric(value: '$onStage', label: 'on stage'),
+                      _Metric(
+                        value: '$onStage',
+                        label: copy.text('on stage', 'na scenie'),
+                      ),
                       const _MetricDivider(),
-                      _Metric(value: '$speakingNow', label: 'speaking now'),
+                      _Metric(
+                        value: '$speakingNow',
+                        label: copy.text('speaking now', 'mówi teraz'),
+                      ),
                       const _MetricDivider(),
-                      _Metric(value: '$listeners', label: 'listening'),
+                      _Metric(
+                        value: '$listeners',
+                        label: copy.text('listening', 'słucha'),
+                      ),
                     ],
                   ),
                   if (live) ...[
@@ -235,6 +254,7 @@ class PodcastProducerDesk extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     return Container(
       key: const ValueKey('podcast-producer-desk'),
       padding: const EdgeInsets.fromLTRB(14, 13, 14, 12),
@@ -266,21 +286,24 @@ class PodcastProducerDesk extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 10),
-              const Expanded(
+              Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Producer desk',
-                      style: TextStyle(
+                      copy.text('Producer desk', 'Panel prowadzącego'),
+                      style: const TextStyle(
                         color: Colors.white,
                         fontSize: 14.5,
                         fontWeight: FontWeight.w900,
                       ),
                     ),
                     Text(
-                      'Run the show without leaving the stage.',
-                      style: TextStyle(
+                      copy.text(
+                        'Run the show without leaving the stage.',
+                        'Prowadź audycję bez opuszczania sceny.',
+                      ),
+                      style: const TextStyle(
                         color: BroadcastRoomColors.muted,
                         fontSize: 11.5,
                       ),
@@ -297,7 +320,9 @@ class PodcastProducerDesk extends StatelessWidget {
                 child: _DeskAction(
                   icon: Icons.back_hand_rounded,
                   value: '$requests',
-                  label: requests == 1 ? 'request' : 'requests',
+                  label: requests == 1
+                      ? copy.text('request', 'zgłoszenie')
+                      : copy.text('requests', 'zgłoszenia'),
                   highlighted: requests > 0,
                   onTap: onRequests,
                 ),
@@ -307,7 +332,7 @@ class PodcastProducerDesk extends StatelessWidget {
                 child: _DeskAction(
                   icon: Icons.mic_rounded,
                   value: '$onStage/$stageLimit',
-                  label: 'stage',
+                  label: copy.text('stage', 'scena'),
                   onTap: onGuests,
                 ),
               ),
@@ -315,8 +340,8 @@ class PodcastProducerDesk extends StatelessWidget {
               Expanded(
                 child: _DeskAction(
                   icon: Icons.settings_rounded,
-                  value: 'Edit',
-                  label: 'show',
+                  value: copy.text('Edit', 'Edytuj'),
+                  label: copy.text('show', 'audycję'),
                   onTap: onSettings,
                 ),
               ),
@@ -342,28 +367,41 @@ class PodcastListenerStatus extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final (icon, title, detail) = onStage
         ? (
             Icons.mic_rounded,
-            'You’re on stage',
-            'Your microphone control is in the dock below.',
+            copy.text('You’re on stage', 'Jesteś na scenie'),
+            copy.text(
+              'Your microphone control is in the dock below.',
+              'Sterowanie mikrofonem znajdziesz w panelu poniżej.',
+            ),
           )
         : handRaised
         ? (
             Icons.pan_tool_alt_rounded,
-            'Request sent',
-            'The host can bring you on stage when ready.',
+            copy.text('Request sent', 'Zgłoszenie wysłane'),
+            copy.text(
+              'The host can bring you on stage when ready.',
+              'Gospodarz może zaprosić Cię na scenę, gdy będzie gotowy.',
+            ),
           )
         : requestsEnabled
         ? (
             Icons.headphones_rounded,
-            'You’re in the audience',
-            'Listen freely or request the stage from the dock below.',
+            copy.text('You’re in the audience', 'Jesteś wśród publiczności'),
+            copy.text(
+              'Listen freely or request the stage from the dock below.',
+              'Słuchaj swobodnie lub poproś o wejście na scenę w panelu poniżej.',
+            ),
           )
         : (
             Icons.headphones_rounded,
-            'Listening mode',
-            'Stage requests are closed for this episode.',
+            copy.text('Listening mode', 'Tryb słuchania'),
+            copy.text(
+              'Stage requests are closed for this episode.',
+              'Zgłoszenia na scenę są wyłączone w tym odcinku.',
+            ),
           );
     return Semantics(
       liveRegion: handRaised,
@@ -440,6 +478,7 @@ class PodcastStudioRail extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (!queueAvailable) return chat;
+    final copy = AppLocalizations.of(context);
     return Container(
       decoration: BoxDecoration(
         color: BroadcastRoomColors.surface,
@@ -456,7 +495,7 @@ class PodcastStudioRail extends StatelessWidget {
                 Expanded(
                   child: _RailTab(
                     icon: Icons.forum_rounded,
-                    label: 'Live chat',
+                    label: copy.text('Live chat', 'Czat na żywo'),
                     selected: !showQueue,
                     onTap: onChat,
                   ),
@@ -465,7 +504,12 @@ class PodcastStudioRail extends StatelessWidget {
                 Expanded(
                   child: _RailTab(
                     icon: Icons.back_hand_rounded,
-                    label: requests > 0 ? 'Requests $requests' : 'Requests',
+                    label: requests > 0
+                        ? copy.text(
+                            'Requests $requests',
+                            'Zgłoszenia $requests',
+                          )
+                        : copy.text('Requests', 'Zgłoszenia'),
                     selected: showQueue,
                     highlighted: requests > 0,
                     onTap: onQueue,
@@ -502,16 +546,17 @@ class PodcastRequestQueue extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     return Column(
       key: const ValueKey('podcast-request-queue'),
       children: [
-        const Padding(
-          padding: EdgeInsets.fromLTRB(18, 14, 18, 10),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(18, 14, 18, 10),
           child: Align(
             alignment: Alignment.centerLeft,
             child: Text(
-              'Stage requests',
-              style: TextStyle(
+              copy.text('Stage requests', 'Zgłoszenia na scenę'),
+              style: const TextStyle(
                 color: Colors.white,
                 fontSize: 18,
                 fontWeight: FontWeight.w900,
@@ -576,13 +621,19 @@ class PodcastRequestQueue extends StatelessWidget {
                             )
                           else ...[
                             IconButton(
-                              tooltip: 'Decline ${person.displayName}',
+                              tooltip: copy.text(
+                                'Decline ${person.displayName}',
+                                'Odrzuć zgłoszenie: ${person.displayName}',
+                              ),
                               onPressed: () => onDecline(person),
                               icon: const Icon(Icons.close_rounded),
                               color: BroadcastRoomColors.muted,
                             ),
                             IconButton.filled(
-                              tooltip: 'Bring ${person.displayName} to stage',
+                              tooltip: copy.text(
+                                'Bring ${person.displayName} to stage',
+                                'Zaproś na scenę: ${person.displayName}',
+                              ),
                               onPressed: () => onAccept(person),
                               style: IconButton.styleFrom(
                                 backgroundColor: BroadcastRoomColors.accent,
@@ -609,6 +660,7 @@ class _StatusChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
@@ -635,7 +687,9 @@ class _StatusChip extends StatelessWidget {
           ),
           const SizedBox(width: 7),
           Text(
-            live ? 'LIVE' : 'NOT LIVE',
+            live
+                ? copy.text('LIVE', 'NA ŻYWO')
+                : copy.text('NOT LIVE', 'NIE NA ŻYWO'),
             style: const TextStyle(
               color: Colors.white,
               fontSize: 10,
@@ -867,6 +921,7 @@ class _EmptyQueue extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(24),
@@ -886,19 +941,22 @@ class _EmptyQueue extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 13),
-            const Text(
-              'The queue is clear',
-              style: TextStyle(
+            Text(
+              copy.text('The queue is clear', 'Brak oczekujących zgłoszeń'),
+              style: const TextStyle(
                 color: Colors.white,
                 fontSize: 14,
                 fontWeight: FontWeight.w900,
               ),
             ),
             const SizedBox(height: 4),
-            const Text(
-              'New stage requests will appear here in real time.',
+            Text(
+              copy.text(
+                'New stage requests will appear here in real time.',
+                'Nowe zgłoszenia na scenę pojawią się tutaj na żywo.',
+              ),
               textAlign: TextAlign.center,
-              style: TextStyle(
+              style: const TextStyle(
                 color: BroadcastRoomColors.muted,
                 fontSize: 12,
                 height: 1.35,
@@ -909,4 +967,15 @@ class _EmptyQueue extends StatelessWidget {
       ),
     );
   }
+}
+
+String _podcastFormatLabel(String label, AppLocalizations copy) {
+  if (!copy.isPolish) return label;
+  return switch (label) {
+    'Interview' => 'Wywiad',
+    'Open discussion' => 'Otwarta dyskusja',
+    'Q&A' => 'Pytania i odpowiedzi',
+    'Live show' => 'Audycja na żywo',
+    _ => label,
+  };
 }

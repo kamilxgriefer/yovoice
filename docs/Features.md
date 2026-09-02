@@ -300,19 +300,30 @@ and authenticator-app two-factor authentication are implemented in source and
 covered by responsive/security tests; they require their coordinated Firebase
 configuration, Functions/Rules and client rollout before being called live.
 
-The following Settings additions were deployed to the web/PWA client on
-2026-08-18 from commit `8fa0192`; native stores require their own signed
-release. Appearance and app language have real device-local contracts.
-Appearance offers System, Dark and Light (Pearl); Language offers System, English
-and Polish Beta. Both persist through `shared_preferences`, update the root
-`MaterialApp`, and fall back to Dark/English when stored state is missing,
-malformed or unavailable so legacy installs do not enter a Beta implicitly.
+The original Settings additions were deployed to the web/PWA client on
+2026-08-18 from commit `8fa0192`; the 2026-09-01 language expansion is complete
+in source and still requires a coordinated tester release. Appearance and app
+language have real device-local contracts. Appearance offers System, Dark and
+Light (Pearl). Language offers System plus 43 selectable locale variants:
+English, production Polish and 41 additional languages/region variants,
+including the requested German, Spanish, Portuguese, Italian, Ukrainian,
+Russian, Czech, Slovak and Bulgarian coverage. Portuguese distinguishes
+Portugal/Brazil and Chinese distinguishes Simplified/Traditional. Both
+preferences persist through `shared_preferences` and update the root
+`MaterialApp`. A new installation defaults to System; malformed or unreadable
+legacy state falls back to English.
 Pearl uses the semantic `AppPalette` across the shell, Home, Chats, Friends,
 Moments, Profile, Settings, Notifications and Premium; voice rooms, calls,
 recording/review and image-led viewers remain deliberately immersive dark
-surfaces instead of accidental theme leaks. Polish remains explicitly Beta
-because product copy is not yet fully localized. These preferences do not
-create Firestore data and do not sync between devices. See ADR-072 and ADR-127.
+surfaces instead of accidental theme leaks. Polish has graduated from Beta
+after the full product-copy pass and source guard. The additional locales own
+an exact, placeholder-checked core catalog covering navigation,
+authentication, onboarding, Settings and system controls; specialist feature
+phrases outside that contract fall back explicitly to English until they
+receive editorial translation. Firebase Auth, Android/iOS locale metadata,
+localized native permission prompts and the web document language follow the
+same resolved locale. These preferences do not create Firestore data and do
+not sync between devices. See ADR-136 and ADR-127.
 
 Devices & sessions shows the current Firebase token session and offers one
 real remote-security action: account-wide refresh-token revocation followed by

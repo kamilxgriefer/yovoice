@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/friends/data/services/social_graph_service.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
@@ -103,7 +104,10 @@ class _VoiceTrendingCardState extends State<VoiceTrendingCard> {
     _expiryAnnouncer.announce(
       context,
       transition: 'trending-expiry-${deadline.microsecondsSinceEpoch}',
-      message: 'Voice Moment expired and was removed from Most liked.',
+      message: AppLocalizations.of(context).text(
+        'Voice Moment expired and was removed from Most liked.',
+        'Voice Moment wygasł i został usunięty z najpopularniejszych.',
+      ),
     );
     recoverMomentExpiryFocusAfterFrame(
       context: context,
@@ -114,6 +118,7 @@ class _VoiceTrendingCardState extends State<VoiceTrendingCard> {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
     return Container(
       key: const ValueKey('desktop-voice-trending-card'),
@@ -133,7 +138,7 @@ class _VoiceTrendingCardState extends State<VoiceTrendingCard> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Voice Trending',
+            copy.text('Voice Trending', 'Popularne głosy'),
             style: TextStyle(
               color: palette.textPrimary,
               fontSize: 17,
@@ -158,17 +163,30 @@ class _VoiceTrendingCardState extends State<VoiceTrendingCard> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   _SectionHeader(
-                    label: 'Live rooms',
-                    actionLabel: 'See all rooms',
+                    label: copy.text('Live rooms', 'Pokoje na żywo'),
+                    actionLabel: copy.text(
+                      'See all rooms',
+                      'Zobacz wszystkie pokoje',
+                    ),
                     onAction: widget.onSeeAllRooms,
                   ),
                   const SizedBox(height: 8),
                   if (waiting)
                     const _RowPlaceholder(count: 2)
                   else if (snapshot.hasError)
-                    const _SectionNote('Live moments are unavailable.')
+                    _SectionNote(
+                      copy.text(
+                        'Live rooms are unavailable.',
+                        'Pokoje na żywo są niedostępne.',
+                      ),
+                    )
                   else if (live.isEmpty)
-                    const _SectionNote('No one is live right now.')
+                    _SectionNote(
+                      copy.text(
+                        'No one is live right now.',
+                        'Teraz nikt nie prowadzi pokoju na żywo.',
+                      ),
+                    )
                   else
                     for (final room in live)
                       _RoomRow(
@@ -183,13 +201,20 @@ class _VoiceTrendingCardState extends State<VoiceTrendingCard> {
           // A REAL Moments section. Without it, "View all → Moments"
           // would sit under a list of rooms, which is the mislabel this
           // change exists to remove, only inverted.
-          const _SectionLabel('Most liked Moments'),
+          _SectionLabel(
+            copy.text('Most liked Moments', 'Najbardziej lubiane Momenty'),
+          ),
           const SizedBox(height: 8),
           FutureBuilder<List<VoiceMoment>>(
             future: _topMoments,
             builder: (context, snapshot) {
               if (_topMoments == null) {
-                return const _SectionNote('Voice Moments are unavailable.');
+                return _SectionNote(
+                  copy.text(
+                    'Voice Moments are unavailable.',
+                    'Voice Momenty są niedostępne.',
+                  ),
+                );
               }
               if (snapshot.connectionState == ConnectionState.waiting) {
                 return const _RowPlaceholder(count: 2);
@@ -199,11 +224,21 @@ class _VoiceTrendingCardState extends State<VoiceTrendingCard> {
               // it were folded into the empty case it would read as
               // "nobody has posted" forever.
               if (snapshot.hasError) {
-                return const _SectionNote('Moments could not be loaded.');
+                return _SectionNote(
+                  copy.text(
+                    'Moments could not be loaded.',
+                    'Nie udało się wczytać Momentów.',
+                  ),
+                );
               }
               final moments = snapshot.data ?? const <VoiceMoment>[];
               if (moments.isEmpty) {
-                return const _SectionNote('No Voice Moments published yet.');
+                return _SectionNote(
+                  copy.text(
+                    'No Voice Moments published yet.',
+                    'Nie opublikowano jeszcze żadnych Voice Momentów.',
+                  ),
+                );
               }
               return MomentExpiryListBuilder(
                 moments: moments,
@@ -213,8 +248,11 @@ class _VoiceTrendingCardState extends State<VoiceTrendingCard> {
                       .where((moment) => moment.isActiveAt(now))
                       .toList(growable: false);
                   if (live.isEmpty) {
-                    return const _SectionNote(
-                      'No live Voice Moments right now.',
+                    return _SectionNote(
+                      copy.text(
+                        'No live Voice Moments right now.',
+                        'Teraz nie ma aktywnych Voice Momentów.',
+                      ),
                     );
                   }
                   return Column(
@@ -240,7 +278,7 @@ class _VoiceTrendingCardState extends State<VoiceTrendingCard> {
                 tapTargetSize: MaterialTapTargetSize.shrinkWrap,
               ),
               child: Text(
-                'View all',
+                copy.text('View all', 'Zobacz wszystkie'),
                 style: TextStyle(
                   color: Theme.of(context).colorScheme.primary,
                   fontSize: 12.5,
@@ -325,6 +363,7 @@ class _MomentRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final caption = moment.caption.trim();
     final palette = context.appPalette;
     return InkWell(
@@ -360,8 +399,11 @@ class _MomentRow extends StatelessWidget {
                     caption.isNotEmpty
                         ? caption
                         : (moment.durationSeconds > 0
-                              ? 'Voice Moment · ${moment.durationLabel}'
-                              : 'Voice Moment'),
+                              ? copy.text(
+                                  'Voice Moment · ${moment.durationLabel}',
+                                  'Voice Moment · ${moment.durationLabel}',
+                                )
+                              : copy.text('Voice Moment', 'Voice Moment')),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
@@ -536,6 +578,7 @@ class _LivePill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final colors = Theme.of(context).colorScheme;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
@@ -550,7 +593,7 @@ class _LivePill extends StatelessWidget {
           Icon(Icons.circle, size: 6, color: colors.error),
           const SizedBox(width: 5),
           Text(
-            'Live',
+            copy.text('Live', 'Na żywo'),
             style: TextStyle(
               color: colors.onErrorContainer,
               fontSize: 10.5,

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/helpers/error_messages.dart';
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/features/rooms/data/models/room_participant.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
 import 'package:yovoice/features/rooms/presentation/screens/broadcast_room/broadcast_colors.dart';
@@ -95,13 +96,16 @@ class _BroadcastParticipantsSheetState
       if (mounted) Navigator.of(context).pop();
     } catch (error) {
       if (!mounted) return;
+      final copy = AppLocalizations.of(context);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            intentionalOrFriendly(
-              error,
-              fallback: "That didn't work. Please try again.",
-            ),
+            copy.isPolish
+                ? 'Nie udało się wykonać tej operacji. Spróbuj ponownie.'
+                : intentionalOrFriendly(
+                    error,
+                    fallback: "That didn't work. Please try again.",
+                  ),
           ),
         ),
       );
@@ -110,29 +114,39 @@ class _BroadcastParticipantsSheetState
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final items = _visible;
+    final filters = [
+      ('all', copy.text('All', 'Wszyscy')),
+      ('speakers', copy.text('Stage', 'Scena')),
+      ('listeners', copy.text('Audience', 'Publiczność')),
+      ('hands', copy.text('Raised hands', 'Zgłoszenia')),
+    ];
 
     return Column(
       children: [
-        const YoModalSheetChrome(
-          sheetLabel: 'podcast participants',
+        YoModalSheetChrome(
+          sheetLabel: copy.text('podcast participants', 'uczestnicy podcastu'),
           surfaceColor: BroadcastRoomColors.surface,
         ),
-        const Padding(
-          padding: EdgeInsets.fromLTRB(20, 2, 20, 8),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 2, 20, 8),
           child: Row(
             children: [
               Expanded(
                 child: Text(
-                  'Podcast participants',
-                  style: TextStyle(
+                  copy.text('Podcast participants', 'Uczestnicy podcastu'),
+                  style: const TextStyle(
                     color: Colors.white,
                     fontSize: 22,
                     fontWeight: FontWeight.w900,
                   ),
                 ),
               ),
-              Icon(Icons.groups_rounded, color: BroadcastRoomColors.accentSoft),
+              const Icon(
+                Icons.groups_rounded,
+                color: BroadcastRoomColors.accentSoft,
+              ),
             ],
           ),
         ),
@@ -141,12 +155,7 @@ class _BroadcastParticipantsSheetState
           padding: const EdgeInsets.symmetric(horizontal: 16),
           child: Row(
             children: [
-              for (final filter in const [
-                ('all', 'All'),
-                ('speakers', 'Stage'),
-                ('listeners', 'Audience'),
-                ('hands', 'Raised hands'),
-              ])
+              for (final filter in filters)
                 Padding(
                   padding: const EdgeInsets.only(right: 8),
                   child: ChoiceChip(
@@ -165,10 +174,10 @@ class _BroadcastParticipantsSheetState
         const SizedBox(height: 10),
         Expanded(
           child: items.isEmpty
-              ? const Center(
+              ? Center(
                   child: Text(
-                    'Nobody here yet.',
-                    style: TextStyle(color: BroadcastRoomColors.muted),
+                    copy.text('Nobody here yet.', 'Nikogo tu jeszcze nie ma.'),
+                    style: const TextStyle(color: BroadcastRoomColors.muted),
                   ),
                 )
               : ListView.separated(
@@ -217,12 +226,18 @@ class _BroadcastParticipantsSheetState
                       ),
                       subtitle: Text(
                         person.isHost
-                            ? 'Host'
+                            ? copy.text('Host', 'Gospodarz')
                             : person.isSpeaker
-                            ? 'Speaker${person.isMuted ? ' • muted' : ''}'
+                            ? copy.text(
+                                'Speaker${person.isMuted ? ' • muted' : ''}',
+                                'Mówca${person.isMuted ? ' • wyciszony' : ''}',
+                              )
                             : person.isHandRaised
-                            ? 'Listener • hand raised'
-                            : 'Listener',
+                            ? copy.text(
+                                'Listener • hand raised',
+                                'Słuchacz • prosi o głos',
+                              )
+                            : copy.text('Listener', 'Słuchacz'),
                         style: TextStyle(
                           color: person.isHandRaised
                               ? BroadcastRoomColors.accentSoft
@@ -247,7 +262,10 @@ class _BroadcastParticipantsSheetState
                               mainAxisSize: MainAxisSize.min,
                               children: [
                                 IconButton(
-                                  tooltip: 'Bring to stage',
+                                  tooltip: copy.text(
+                                    'Bring to stage',
+                                    'Zaproś na scenę',
+                                  ),
                                   onPressed: () => _action(
                                     () => widget.service
                                         .setParticipantSpeakerStatus(
@@ -263,7 +281,7 @@ class _BroadcastParticipantsSheetState
                                   ),
                                 ),
                                 IconButton(
-                                  tooltip: 'Decline',
+                                  tooltip: copy.text('Decline', 'Odrzuć'),
                                   onPressed: () => _action(
                                     () => widget.service.moderateHandLowered(
                                       roomId: widget.roomId,
@@ -330,42 +348,67 @@ class _BroadcastParticipantsSheetState
                               },
                               itemBuilder: (_) => [
                                 if (!person.isSpeaker)
-                                  const PopupMenuItem(
+                                  PopupMenuItem(
                                     value: 'stage',
                                     child: Text(
-                                      'Invite to stage',
-                                      style: TextStyle(color: Colors.white),
+                                      copy.text(
+                                        'Invite to stage',
+                                        'Zaproś na scenę',
+                                      ),
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                      ),
                                     ),
                                   ),
                                 if (person.isSpeaker)
-                                  const PopupMenuItem(
+                                  PopupMenuItem(
                                     value: 'audience',
                                     child: Text(
-                                      'Move to audience',
-                                      style: TextStyle(color: Colors.white),
+                                      copy.text(
+                                        'Move to audience',
+                                        'Przenieś do publiczności',
+                                      ),
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                      ),
                                     ),
                                   ),
                                 if (person.isSpeaker && !person.isMuted)
-                                  const PopupMenuItem(
+                                  PopupMenuItem(
                                     value: 'mute',
                                     child: Text(
-                                      'Mute participant',
-                                      style: TextStyle(color: Colors.white),
+                                      copy.text(
+                                        'Mute participant',
+                                        'Wycisz uczestnika',
+                                      ),
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                      ),
                                     ),
                                   ),
                                 if (person.isSpeaker && person.isMuted)
-                                  const PopupMenuItem(
+                                  PopupMenuItem(
                                     value: 'unmute',
                                     child: Text(
-                                      'Allow microphone',
-                                      style: TextStyle(color: Colors.white),
+                                      copy.text(
+                                        'Allow microphone',
+                                        'Zezwól na mikrofon',
+                                      ),
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                      ),
                                     ),
                                   ),
-                                const PopupMenuItem(
+                                PopupMenuItem(
                                   value: 'remove',
                                   child: Text(
-                                    'Remove from room',
-                                    style: TextStyle(color: Color(0xFFFF6A76)),
+                                    copy.text(
+                                      'Remove from room',
+                                      'Usuń z pokoju',
+                                    ),
+                                    style: const TextStyle(
+                                      color: Color(0xFFFF6A76),
+                                    ),
                                   ),
                                 ),
                               ],

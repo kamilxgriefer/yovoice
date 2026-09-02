@@ -2,6 +2,8 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
+
 /// A subtle waveform driven by the REAL room audio meter
 /// (`VoiceCallService.roomEnergy`, 0..1). When the room is silent the bars
 /// rest flat — the wave never invents activity, it only renders the
@@ -21,8 +23,9 @@ class RoomEnergyWave extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     return Semantics(
-      label: 'Live audio level',
+      label: copy.text('Live audio level', 'Poziom dźwięku na żywo'),
       child: TweenAnimationBuilder<double>(
         // Eases between meter emissions so the bars breathe instead of
         // snapping; the TARGET is always the real value.

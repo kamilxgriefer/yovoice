@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/features/creator/data/models/creator_pinned_post.dart';
 import 'package:yovoice/features/creator/data/services/creator_pinned_post_service.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
@@ -85,6 +86,7 @@ class _CreatorPinnedMomentCardState extends State<CreatorPinnedMomentCard> {
   }
 
   void _handleExpired(VoiceMoment moment) {
+    final copy = AppLocalizations.of(context);
     final previousFocus = FocusManager.instance.primaryFocus;
     final recoverFocus = momentExpiryFocusIsWithin(context, previousFocus);
     final player = _playButtonKey.currentState;
@@ -92,7 +94,10 @@ class _CreatorPinnedMomentCardState extends State<CreatorPinnedMomentCard> {
     _expiryAnnouncer.announce(
       context,
       transition: 'public-pin-${moment.id}',
-      message: 'Pinned Voice Moment expired.',
+      message: copy.text(
+        'Pinned Voice Moment expired.',
+        'Przypięty Voice Moment wygasł.',
+      ),
     );
     if (!recoverFocus || previousFocus == null) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -107,6 +112,7 @@ class _CreatorPinnedMomentCardState extends State<CreatorPinnedMomentCard> {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     return StreamBuilder<PinnedVoiceMoment?>(
       stream: _stream,
       builder: (context, snapshot) {
@@ -140,9 +146,12 @@ class _CreatorPinnedMomentCardState extends State<CreatorPinnedMomentCard> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text(
-                      'PINNED VOICE MOMENT',
-                      style: TextStyle(
+                    Text(
+                      copy.text(
+                        'PINNED VOICE MOMENT',
+                        'PRZYPIĘTY VOICE MOMENT',
+                      ),
+                      style: const TextStyle(
                         color: _pinAccent,
                         fontSize: 10,
                         fontWeight: FontWeight.w900,
@@ -152,7 +161,7 @@ class _CreatorPinnedMomentCardState extends State<CreatorPinnedMomentCard> {
                     const SizedBox(height: 5),
                     Text(
                       moment.caption.trim().isEmpty
-                          ? 'Voice Moment'
+                          ? copy.text('Voice Moment', 'Voice Moment')
                           : moment.caption,
                       maxLines: widget.compact ? 1 : 2,
                       overflow: TextOverflow.ellipsis,
@@ -171,14 +180,26 @@ class _CreatorPinnedMomentCardState extends State<CreatorPinnedMomentCard> {
                         _MomentMeta(
                           icon: Icons.graphic_eq_rounded,
                           label: moment.durationLabel,
+                          semanticLabel: copy.text(
+                            'Duration ${moment.durationLabel}',
+                            'Czas trwania: ${moment.durationLabel}',
+                          ),
                         ),
                         _MomentMeta(
                           icon: Icons.favorite_border_rounded,
                           label: '${moment.likeCount}',
+                          semanticLabel: _localizedLikeCount(
+                            moment.likeCount,
+                            copy,
+                          ),
                         ),
                         _MomentMeta(
                           icon: Icons.chat_bubble_outline_rounded,
                           label: '${moment.commentCount}',
+                          semanticLabel: _localizedCommentCount(
+                            moment.commentCount,
+                            copy,
+                          ),
                         ),
                       ],
                     ),
@@ -189,7 +210,10 @@ class _CreatorPinnedMomentCardState extends State<CreatorPinnedMomentCard> {
                 const SizedBox(width: 8),
                 Semantics(
                   button: true,
-                  label: 'Open pinned Voice Moment details',
+                  label: copy.text(
+                    'Open pinned Voice Moment details',
+                    'Otwórz szczegóły przypiętego materiału Voice Moment',
+                  ),
                   onTap: () => _openDetails(moment),
                   excludeSemantics: true,
                   child: IconButton(
@@ -297,7 +321,21 @@ class _PinnedMomentPlayButtonState extends State<_PinnedMomentPlayButton> {
       }
       if (mounted) setState(() => _playing = !_playing);
     } catch (_) {
-      if (mounted) setState(() => _playing = false);
+      if (mounted) {
+        setState(() => _playing = false);
+        ScaffoldMessenger.maybeOf(context)
+          ?..hideCurrentSnackBar()
+          ..showSnackBar(
+            SnackBar(
+              content: Text(
+                AppLocalizations.of(context).text(
+                  'This Voice Moment could not be played. Try again.',
+                  'Nie udało się odtworzyć tego materiału Voice Moment. Spróbuj ponownie.',
+                ),
+              ),
+            ),
+          );
+      }
     } finally {
       if (mounted) setState(() => _changingPlayback = false);
     }
@@ -305,12 +343,24 @@ class _PinnedMomentPlayButtonState extends State<_PinnedMomentPlayButton> {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     return Semantics(
       button: true,
       enabled: !_changingPlayback,
-      label: _playing
-          ? 'Pause pinned Voice Moment'
-          : 'Play pinned Voice Moment',
+      label: _changingPlayback
+          ? copy.text(
+              'Preparing pinned Voice Moment',
+              'Przygotowywanie przypiętego Voice Moment',
+            )
+          : _playing
+          ? copy.text(
+              'Pause pinned Voice Moment',
+              'Wstrzymaj przypięty Voice Moment',
+            )
+          : copy.text(
+              'Play pinned Voice Moment',
+              'Odtwórz przypięty Voice Moment',
+            ),
       onTap: _changingPlayback ? null : _togglePlayback,
       excludeSemantics: true,
       child: IconButton.filledTonal(
@@ -333,27 +383,56 @@ class _PinnedMomentPlayButtonState extends State<_PinnedMomentPlayButton> {
 }
 
 class _MomentMeta extends StatelessWidget {
-  const _MomentMeta({required this.icon, required this.label});
+  const _MomentMeta({
+    required this.icon,
+    required this.label,
+    required this.semanticLabel,
+  });
 
   final IconData icon;
   final String label;
+  final String semanticLabel;
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(icon, size: 13, color: _pinMuted),
-        const SizedBox(width: 4),
-        Text(
-          label,
-          style: const TextStyle(
-            color: _pinMuted,
-            fontSize: 11,
-            fontWeight: FontWeight.w600,
+    return Semantics(
+      label: semanticLabel,
+      excludeSemantics: true,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 13, color: _pinMuted),
+          const SizedBox(width: 4),
+          Text(
+            label,
+            style: const TextStyle(
+              color: _pinMuted,
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+            ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
+}
+
+String _localizedLikeCount(int count, AppLocalizations copy) {
+  if (!copy.isPolish) return '$count likes';
+  return '$count ${_polishPlural(count, 'polubienie', 'polubienia', 'polubień')}';
+}
+
+String _localizedCommentCount(int count, AppLocalizations copy) {
+  if (!copy.isPolish) return '$count comments';
+  return '$count ${_polishPlural(count, 'komentarz', 'komentarze', 'komentarzy')}';
+}
+
+String _polishPlural(int count, String one, String few, String many) {
+  if (count == 1) return one;
+  final tens = count % 100;
+  final units = count % 10;
+  if (tens < 12 || tens > 14) {
+    if (units >= 2 && units <= 4) return few;
+  }
+  return many;
 }

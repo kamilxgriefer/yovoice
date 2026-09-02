@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/helpers/error_messages.dart';
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 
 import 'package:yovoice/features/premium/premium_gates.dart';
@@ -12,6 +13,23 @@ import 'package:yovoice/features/clubs/presentation/screens/club_overview_screen
 import 'package:yovoice/features/clubs/presentation/screens/create_club_screen.dart';
 import 'package:yovoice/shared/widgets/buttons/yo_icon_button.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
+
+String _clubLanguageLabel(String language, AppLocalizations copy) {
+  if (!copy.isPolish) return language;
+  return switch (language) {
+    'English' => 'Angielski',
+    'Polish' => 'Polski',
+    'Dutch' => 'Niderlandzki',
+    'German' => 'Niemiecki',
+    'Spanish' => 'Hiszpański',
+    'French' => 'Francuski',
+    'Italian' => 'Włoski',
+    'Portuguese' => 'Portugalski',
+    'Japanese' => 'Japoński',
+    'Korean' => 'Koreański',
+    _ => language,
+  };
+}
 
 class ClubsScreen extends StatefulWidget {
   const ClubsScreen({this.isRootTab = false, super.key});
@@ -37,9 +55,15 @@ class _ClubsScreenState extends State<ClubsScreen> {
       MaterialPageRoute<bool>(builder: (_) => const CreateClubScreen()),
     );
     if (!mounted || created != true) return;
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(const SnackBar(content: Text('Club created successfully.')));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          AppLocalizations.of(
+            context,
+          ).text('Club created successfully.', 'Klub został utworzony.'),
+        ),
+      ),
+    );
   }
 
   Future<void> _openClub(Club club) async {
@@ -63,15 +87,32 @@ class _ClubsScreenState extends State<ClubsScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            accept ? 'You joined ${invite.clubName}.' : 'Invitation declined.',
+            accept
+                ? AppLocalizations.of(context).text(
+                    'You joined ${invite.clubName}.',
+                    'Dołączono do ${invite.clubName}.',
+                  )
+                : AppLocalizations.of(
+                    context,
+                  ).text('Invitation declined.', 'Odrzucono zaproszenie.'),
           ),
         ),
       );
     } catch (error) {
       if (!mounted) return;
+      final copy = AppLocalizations.of(context);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(error.toString().replaceFirst('Bad state: ', '')),
+          content: Text(
+            friendlyErrorMessage(
+              error,
+              fallback: copy.text(
+                'Could not respond to the invitation. Please try again.',
+                'Nie udało się odpowiedzieć na zaproszenie. Spróbuj ponownie.',
+              ),
+              copy: copy,
+            ),
+          ),
         ),
       );
     } finally {
@@ -85,6 +126,7 @@ class _ClubsScreenState extends State<ClubsScreen> {
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
+    final copy = AppLocalizations.of(context);
     return Scaffold(
       key: const ValueKey('clubs-screen'),
       backgroundColor: palette.background,
@@ -118,10 +160,12 @@ class _ClubsScreenState extends State<ClubsScreen> {
                         }
                         if (clubSnapshot.hasError) {
                           return _ErrorState(
-                            message: friendlyErrorMessage(
-                              clubSnapshot.error ?? 'unknown',
-                              fallback: 'Could not load your clubs.',
-                            ),
+                            message: copy.isPolish
+                                ? 'Sprawdź połączenie i spróbuj ponownie.'
+                                : friendlyErrorMessage(
+                                    clubSnapshot.error ?? 'unknown',
+                                    fallback: 'Could not load your clubs.',
+                                  ),
                             onRetry: () => setState(() {}),
                           );
                         }
@@ -141,7 +185,10 @@ class _ClubsScreenState extends State<ClubsScreen> {
                             children: [
                               if (invites.isNotEmpty) ...[
                                 Text(
-                                  'Club invitations',
+                                  copy.text(
+                                    'Club invitations',
+                                    'Zaproszenia do klubów',
+                                  ),
                                   style: TextStyle(
                                     color: palette.textPrimary,
                                     fontSize: 19,
@@ -168,7 +215,7 @@ class _ClubsScreenState extends State<ClubsScreen> {
                                 _SummaryCard(clubCount: clubs.length),
                                 const SizedBox(height: 18),
                                 Text(
-                                  'Your clubs',
+                                  copy.text('Your clubs', 'Twoje kluby'),
                                   style: TextStyle(
                                     color: palette.textPrimary,
                                     fontSize: 19,
@@ -218,6 +265,7 @@ class ClubInviteCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
+    final copy = AppLocalizations.of(context);
     final hasAvatar = invite.clubAvatarUrl?.isNotEmpty == true;
     return Container(
       padding: const EdgeInsets.all(15),
@@ -262,7 +310,10 @@ class ClubInviteCard extends StatelessWidget {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  'Invited by ${invite.inviterName}',
+                  copy.text(
+                    'Invited by ${invite.inviterName}',
+                    'Zaprasza: ${invite.inviterName}',
+                  ),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(color: palette.textSecondary),
@@ -287,7 +338,7 @@ class ClubInviteCard extends StatelessWidget {
                               height: 16,
                               child: CircularProgressIndicator(strokeWidth: 2),
                             )
-                          : const Text('Accept'),
+                          : Text(copy.text('Accept', 'Akceptuj')),
                     );
                     final decline = OutlinedButton(
                       key: const ValueKey('club-invite-decline'),
@@ -295,7 +346,7 @@ class ClubInviteCard extends StatelessWidget {
                       style: OutlinedButton.styleFrom(
                         minimumSize: const Size.fromHeight(48),
                       ),
-                      child: const Text('Decline'),
+                      child: Text(copy.text('Decline', 'Odrzuć')),
                     );
 
                     if (stackActions) {
@@ -333,6 +384,7 @@ class _Header extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
+    final copy = AppLocalizations.of(context);
     return Padding(
       padding: const EdgeInsets.fromLTRB(14, 18, 16, 8),
       child: Row(
@@ -353,7 +405,7 @@ class _Header extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Clubs',
+                  copy.text('Clubs', 'Kluby'),
                   style: TextStyle(
                     color: palette.textPrimary,
                     fontSize: 30,
@@ -363,7 +415,10 @@ class _Header extends StatelessWidget {
                 ),
                 SizedBox(height: 3),
                 Text(
-                  'Your permanent communities',
+                  copy.text(
+                    'Your permanent communities',
+                    'Twoje stałe społeczności',
+                  ),
                   style: TextStyle(
                     color: palette.textSecondary,
                     fontSize: 13,
@@ -375,7 +430,7 @@ class _Header extends StatelessWidget {
           ),
           IconButton.filled(
             onPressed: onCreatePressed,
-            tooltip: 'Create club',
+            tooltip: copy.text('Create club', 'Utwórz klub'),
             style: IconButton.styleFrom(
               backgroundColor: colors.primary,
               foregroundColor: colors.onPrimary,
@@ -398,6 +453,7 @@ class _SummaryCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
+    final copy = AppLocalizations.of(context);
     return Container(
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
@@ -437,7 +493,12 @@ class _SummaryCard extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  clubCount == 1 ? '1 club joined' : '$clubCount clubs joined',
+                  clubCount == 1
+                      ? copy.text('1 club joined', '1 klub')
+                      : copy.text(
+                          '$clubCount clubs joined',
+                          '$clubCount klubów',
+                        ),
                   style: TextStyle(
                     color: palette.textPrimary,
                     fontSize: 18,
@@ -446,7 +507,10 @@ class _SummaryCard extends StatelessWidget {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  'Chat, voice rooms and people that stay together.',
+                  copy.text(
+                    'Chat, voice rooms and people that stay together.',
+                    'Czat, pokoje głosowe i społeczność w jednym miejscu.',
+                  ),
                   style: TextStyle(
                     color: palette.textSecondary,
                     fontSize: 12,
@@ -472,6 +536,7 @@ class _ClubCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
+    final copy = AppLocalizations.of(context);
     final hasBanner = club.bannerUrl?.isNotEmpty ?? false;
     final hasAvatar = club.avatarUrl?.isNotEmpty ?? false;
 
@@ -564,8 +629,11 @@ class _ClubCard extends StatelessWidget {
                             ),
                             child: Text(
                               club.onlineCount > 0
-                                  ? '${club.onlineCount} online'
-                                  : 'Quiet now',
+                                  ? copy.text(
+                                      '${club.onlineCount} online',
+                                      '${club.onlineCount} online',
+                                    )
+                                  : copy.text('Quiet now', 'Teraz cisza'),
                               style: TextStyle(
                                 color: club.onlineCount > 0
                                     ? palette.successForeground
@@ -606,7 +674,10 @@ class _ClubCard extends StatelessWidget {
                           const SizedBox(height: 5),
                           Text(
                             club.description.isEmpty
-                                ? 'A YO Voice club.'
+                                ? copy.text(
+                                    'A YO Voice club.',
+                                    'Klub w YO Voice.',
+                                  )
                                 : club.description,
                             maxLines: 2,
                             overflow: TextOverflow.ellipsis,
@@ -621,12 +692,20 @@ class _ClubCard extends StatelessWidget {
                             children: [
                               _MetaChip(
                                 icon: Icons.people_alt_rounded,
-                                text: '${club.memberCount} members',
+                                text: club.memberCount == 1
+                                    ? copy.text('1 member', '1 członek')
+                                    : copy.text(
+                                        '${club.memberCount} members',
+                                        '${club.memberCount} członków',
+                                      ),
                               ),
                               const SizedBox(width: 8),
                               _MetaChip(
                                 icon: Icons.language_rounded,
-                                text: club.defaultLanguage,
+                                text: _clubLanguageLabel(
+                                  club.defaultLanguage,
+                                  copy,
+                                ),
                               ),
                             ],
                           ),
@@ -693,6 +772,7 @@ class _EmptyState extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
+    final copy = AppLocalizations.of(context);
     return ListView(
       physics: const AlwaysScrollableScrollPhysics(),
       padding: const EdgeInsets.fromLTRB(24, 60, 24, 130),
@@ -718,7 +798,7 @@ class _EmptyState extends StatelessWidget {
         ),
         const SizedBox(height: 28),
         Text(
-          'Find your people',
+          copy.text('Find your people', 'Znajdź swoją społeczność'),
           textAlign: TextAlign.center,
           style: TextStyle(
             color: palette.textPrimary,
@@ -728,7 +808,10 @@ class _EmptyState extends StatelessWidget {
         ),
         const SizedBox(height: 10),
         Text(
-          'Create a permanent club with members, roles, chat and a private voice lounge.',
+          copy.text(
+            'Create a permanent club with members, roles, chat and a private voice lounge.',
+            'Utwórz stały klub z członkami, rolami, czatem i prywatnym pokojem głosowym.',
+          ),
           textAlign: TextAlign.center,
           style: TextStyle(
             color: palette.textSecondary,
@@ -748,9 +831,12 @@ class _EmptyState extends StatelessWidget {
             ),
           ),
           icon: const Icon(Icons.add_rounded),
-          label: const Text(
-            'CREATE CLUB',
-            style: TextStyle(fontWeight: FontWeight.w900, letterSpacing: 0.7),
+          label: Text(
+            copy.text('CREATE CLUB', 'UTWÓRZ KLUB'),
+            style: const TextStyle(
+              fontWeight: FontWeight.w900,
+              letterSpacing: 0.7,
+            ),
           ),
         ),
       ],
@@ -768,6 +854,7 @@ class _ErrorState extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
+    final copy = AppLocalizations.of(context);
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(24),
@@ -777,7 +864,10 @@ class _ErrorState extends StatelessWidget {
             Icon(Icons.cloud_off_rounded, color: colors.error, size: 46),
             const SizedBox(height: 14),
             Text(
-              'Could not load your clubs',
+              copy.text(
+                'Could not load your clubs',
+                'Nie udało się wczytać klubów',
+              ),
               style: TextStyle(
                 color: palette.textPrimary,
                 fontSize: 18,
@@ -796,7 +886,7 @@ class _ErrorState extends StatelessWidget {
             OutlinedButton.icon(
               onPressed: onRetry,
               icon: const Icon(Icons.refresh_rounded),
-              label: const Text('Try again'),
+              label: Text(copy.text('Try again', 'Spróbuj ponownie')),
             ),
           ],
         ),

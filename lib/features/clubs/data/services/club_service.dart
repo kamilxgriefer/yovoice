@@ -806,8 +806,8 @@ class ClubService {
         'clubId': clubId,
         'inviteeId': friendId,
       });
-    } on FirebaseFunctionsException catch (error) {
-      throw StateError(error.message ?? 'The invitation could not be sent.');
+    } on FirebaseFunctionsException {
+      throw StateError('The invitation could not be sent.');
     }
   }
 

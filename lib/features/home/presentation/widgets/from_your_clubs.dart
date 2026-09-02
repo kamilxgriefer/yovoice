@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/helpers/error_messages.dart';
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/clubs/data/models/club.dart';
 import 'package:yovoice/features/clubs/data/services/club_service.dart';
@@ -32,6 +33,7 @@ class _FromYourClubsState extends State<FromYourClubs> {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
     return StreamBuilder<List<Club>>(
       stream: _myClubs,
@@ -49,7 +51,7 @@ class _FromYourClubsState extends State<FromYourClubs> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'From your Clubs',
+                  copy.text('From your Clubs', 'Z Twoich klubów'),
                   style: TextStyle(
                     color: palette.textPrimary,
                     fontSize: 20,
@@ -76,8 +78,8 @@ class _FromYourClubsState extends State<FromYourClubs> {
                       const SizedBox(width: 10),
                       Expanded(
                         child: Text(
-                          'Your clubs could not be loaded. '
-                          '${friendlyErrorMessage(snapshot.error!, fallback: 'Check your connection and try again.')}',
+                          '${copy.text('Your clubs could not be loaded.', 'Nie udało się wczytać Twoich klubów.')} '
+                          '${friendlyErrorMessage(snapshot.error!, fallback: copy.text('Check your connection and try again.', 'Sprawdź połączenie i spróbuj ponownie.'))}',
                           style: TextStyle(
                             color: palette.textSecondary,
                             fontSize: 12.5,
@@ -102,7 +104,7 @@ class _FromYourClubsState extends State<FromYourClubs> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'From your Clubs',
+                copy.text('From your Clubs', 'Z Twoich klubów'),
                 style: TextStyle(
                   color: palette.textPrimary,
                   fontSize: 20,
@@ -148,6 +150,7 @@ class _ClubActivityCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
     return StreamBuilder<VoiceRoom?>(
@@ -213,10 +216,16 @@ class _ClubActivityCard extends StatelessWidget {
                         const SizedBox(height: 3),
                         Text(
                           live
-                              ? 'Live now · ${lounge.participantCount} in the lounge'
+                              ? copy.text(
+                                  'Live now · ${lounge.participantCount} in the lounge',
+                                  'Na żywo · ${lounge.participantCount} w pokoju',
+                                )
                               : club.memberCount == 1
-                              ? '1 member'
-                              : '${club.memberCount} members',
+                              ? copy.text('1 member', '1 członek')
+                              : copy.text(
+                                  '${club.memberCount} members',
+                                  '${club.memberCount} członków',
+                                ),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
@@ -247,9 +256,9 @@ class _ClubActivityCard extends StatelessWidget {
                           borderRadius: BorderRadius.circular(14),
                         ),
                       ),
-                      child: const Text(
-                        'Join room',
-                        style: TextStyle(
+                      child: Text(
+                        copy.text('Join room', 'Dołącz do pokoju'),
+                        style: const TextStyle(
                           fontWeight: FontWeight.w800,
                           fontSize: 12.5,
                         ),

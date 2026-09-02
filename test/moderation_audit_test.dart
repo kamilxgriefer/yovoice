@@ -256,10 +256,7 @@ void main() {
       await tester.tap(find.text('Load earlier activity'));
       await tester.pumpAndSettle();
 
-      expect(service.calls, [
-        'r1|first',
-        'r1|2026-08-11T12:00:00.000Z',
-      ]);
+      expect(service.calls, ['r1|first', 'r1|2026-08-11T12:00:00.000Z']);
       expect(find.text('Claim released'), findsOneWidget);
       expect(find.text('Claimed for review'), findsOneWidget);
       // Exhausted: no button offering a page that does not exist.
@@ -280,7 +277,7 @@ void main() {
         if (++attempt == 1) {
           throw const ModerationException(
             ModerationFailure.unknown,
-            'The activity history could not be loaded.',
+            'SQLSTATE 42P01 at private_audit_table',
           );
         }
         return page([
@@ -301,9 +298,10 @@ void main() {
       // The page that failed must not take the history down with it.
       expect(find.text('Resolved'), findsOneWidget);
       expect(
-        find.text('The activity history could not be loaded.'),
+        find.text('Moderation history could not be loaded. Please try again.'),
         findsOneWidget,
       );
+      expect(find.textContaining('SQLSTATE'), findsNothing);
       expect(find.text('Retry'), findsOneWidget);
 
       await tester.tap(find.text('Retry'));
@@ -370,18 +368,17 @@ void main() {
     testWidgets('a slow response for the previous report cannot repaint '
         'under the new one', (tester) async {
       final slow = Completer<ModerationAuditPage>();
-      service.handler = (reportId, _) =>
-          reportId == 'r1'
-              ? slow.future
-              : Future.value(
-                  page([
-                    workflowEvent(
-                      id: 'r2-event',
-                      at: '2026-08-11T12:00:00.000Z',
-                      note: 'note for r2',
-                    ),
-                  ]),
-                );
+      service.handler = (reportId, _) => reportId == 'r1'
+          ? slow.future
+          : Future.value(
+              page([
+                workflowEvent(
+                  id: 'r2-event',
+                  at: '2026-08-11T12:00:00.000Z',
+                  note: 'note for r2',
+                ),
+              ]),
+            );
 
       await tester.pumpWidget(timeline('r1'));
       await tester.pump();
@@ -498,16 +495,26 @@ void main() {
 
       // A full page of noise in front, and one match hiding behind it.
       for (var i = 0; i < ModerationService.pageSize; i++) {
-        await seed(id: 'noise-$i', age: Duration(minutes: i + 1));
+        await seed(
+          id: 'noise-$i',
+          age: Duration(minutes: i + 1),
+        );
       }
     });
 
     test('a reason filter finds a match that sits behind a full page of '
         'other reports', () async {
-      await seed(id: 'old-harassment', reason: 'harassment', age: const Duration(days: 3));
+      await seed(
+        id: 'old-harassment',
+        reason: 'harassment',
+        age: const Duration(days: 3),
+      );
 
       final results = await service
-          .watchQueue(status: ReportStatus.open, reason: ReportReason.harassment)
+          .watchQueue(
+            status: ReportStatus.open,
+            reason: ReportReason.harassment,
+          )
           .first;
 
       // Client-side filtering of the newest 20 would return nothing here.
@@ -564,25 +571,27 @@ void main() {
       expect(results.map((r) => r.id), ['wanted']);
     });
 
-    test('the page window is a real limit, and raising it returns more',
-        () async {
-      await seed(id: 'extra', age: const Duration(days: 1));
+    test(
+      'the page window is a real limit, and raising it returns more',
+      () async {
+        await seed(id: 'extra', age: const Duration(days: 1));
 
-      final firstPage = await service
-          .watchQueue(status: ReportStatus.open)
-          .first;
-      expect(firstPage, hasLength(ModerationService.pageSize));
-      expect(firstPage.map((r) => r.id), isNot(contains('extra')));
+        final firstPage = await service
+            .watchQueue(status: ReportStatus.open)
+            .first;
+        expect(firstPage, hasLength(ModerationService.pageSize));
+        expect(firstPage.map((r) => r.id), isNot(contains('extra')));
 
-      final widened = await service
-          .watchQueue(
-            status: ReportStatus.open,
-            limit: ModerationService.pageSize * 2,
-          )
-          .first;
-      expect(widened, hasLength(ModerationService.pageSize + 1));
-      expect(widened.map((r) => r.id), contains('extra'));
-    });
+        final widened = await service
+            .watchQueue(
+              status: ReportStatus.open,
+              limit: ModerationService.pageSize * 2,
+            )
+            .first;
+        expect(widened, hasLength(ModerationService.pageSize + 1));
+        expect(widened.map((r) => r.id), contains('extra'));
+      },
+    );
 
     test('every filter combination the UI can produce has a declared '
         'composite index', () async {
@@ -701,8 +710,9 @@ void main() {
       await tester.pumpAndSettle();
     }
 
-    testWidgets('every visible filter reaches watchQueue as a real argument',
-        (tester) async {
+    testWidgets('every visible filter reaches watchQueue as a real argument', (
+      tester,
+    ) async {
       await seedReports(2);
       await open(tester);
 

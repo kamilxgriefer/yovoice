@@ -5,6 +5,7 @@ import 'package:audioplayers/audioplayers.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/messages/data/models/message.dart';
 import 'package:yovoice/shared/widgets/interactions/accessible_context_action.dart';
@@ -33,6 +34,7 @@ class MessageBubble extends StatelessWidget {
     final reactionSummary = _reactionSummary(message.reactions.values);
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
+    final copy = AppLocalizations.of(context);
     final bubbleForeground = isMine ? Colors.white : palette.textPrimary;
     // Outgoing metadata is small text on the brightest gradient stop. Keep it
     // opaque so the worst-case pair remains AA-readable in both themes.
@@ -43,8 +45,14 @@ class MessageBubble extends StatelessWidget {
       child: AccessibleContextAction(
         onOpen: onLongPress,
         semanticLabel: isMine
-            ? 'Open actions for your message'
-            : 'Open actions for this message',
+            ? copy.text(
+                'Open actions for your message',
+                'Otwórz opcje swojej wiadomości',
+              )
+            : copy.text(
+                'Open actions for this message',
+                'Otwórz opcje tej wiadomości',
+              ),
         borderRadius: 22,
         child: Padding(
           padding: EdgeInsets.only(
@@ -105,7 +113,7 @@ class MessageBubble extends StatelessWidget {
                           ),
                         ),
                         child: Text(
-                          message.replyToContent!,
+                          _localizedReplyPreview(message.replyToContent!, copy),
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(color: bubbleMuted, fontSize: 12),
@@ -159,7 +167,7 @@ class MessageBubble extends StatelessWidget {
                   if (message.editedAt != null) ...[
                     const SizedBox(width: 4),
                     Text(
-                      'edited',
+                      copy.text('edited', 'edytowano'),
                       style: TextStyle(
                         color: palette.textTertiary,
                         fontSize: 10,
@@ -230,6 +238,7 @@ class _MessageContent extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     if (message.isDeleted) {
       return Row(
         mainAxisSize: MainAxisSize.min,
@@ -237,7 +246,7 @@ class _MessageContent extends StatelessWidget {
           Icon(Icons.block_rounded, color: mutedForegroundColor, size: 16),
           const SizedBox(width: 7),
           Text(
-            'Message deleted',
+            copy.text('Message deleted', 'Wiadomość usunięta'),
             style: TextStyle(
               color: mutedForegroundColor,
               fontSize: 14,
@@ -386,14 +395,21 @@ class _VoiceMessageContentState extends State<_VoiceMessageContent> {
   @override
   Widget build(BuildContext context) {
     final duration = widget.message.durationSeconds ?? 0;
+    final copy = AppLocalizations.of(context);
 
     return Semantics(
       button: true,
       label: _failed
-          ? 'Voice message unavailable. Tap to retry.'
+          ? copy.text(
+              'Voice message unavailable. Tap to retry.',
+              'Wiadomość głosowa jest niedostępna. Dotknij, aby spróbować ponownie.',
+            )
           : _playing
-          ? 'Pause voice message'
-          : 'Play voice message, $duration seconds',
+          ? copy.text('Pause voice message', 'Wstrzymaj wiadomość głosową')
+          : copy.text(
+              'Play voice message, $duration seconds',
+              'Odtwórz wiadomość głosową, $duration s',
+            ),
       child: InkWell(
         onTap: _toggle,
         borderRadius: BorderRadius.circular(12),
@@ -503,6 +519,7 @@ class _ImageMessageContentState extends State<_ImageMessageContent> {
   @override
   Widget build(BuildContext context) {
     final mediaUrl = widget.message.mediaUrl?.trim() ?? '';
+    final copy = AppLocalizations.of(context);
 
     if (mediaUrl.isEmpty) {
       return Row(
@@ -510,7 +527,10 @@ class _ImageMessageContentState extends State<_ImageMessageContent> {
         children: [
           Icon(Icons.image_outlined, color: widget.mutedForegroundColor),
           const SizedBox(width: 8),
-          Text('Photo', style: TextStyle(color: widget.foregroundColor)),
+          Text(
+            copy.text('Photo', 'Zdjęcie'),
+            style: TextStyle(color: widget.foregroundColor),
+          ),
         ],
       );
     }
@@ -523,7 +543,7 @@ class _ImageMessageContentState extends State<_ImageMessageContent> {
           width: 210,
           height: 230,
           fit: BoxFit.cover,
-          semanticLabel: 'Photo message',
+          semanticLabel: copy.text('Photo message', 'Wiadomość ze zdjęciem'),
           errorBuilder: (_, _, _) => SizedBox(
             width: 210,
             height: 130,
@@ -562,12 +582,17 @@ class _ImageMessageContentState extends State<_ImageMessageContent> {
               foregroundColor: widget.foregroundColor,
             ),
             icon: const Icon(Icons.refresh_rounded),
-            label: const Text('Photo unavailable — retry'),
+            label: Text(
+              copy.text(
+                'Photo unavailable — retry',
+                'Zdjęcie jest niedostępne — spróbuj ponownie',
+              ),
+            ),
           );
         }
         return Semantics(
           image: true,
-          label: 'Photo message',
+          label: copy.text('Photo message', 'Wiadomość ze zdjęciem'),
           child: ClipRRect(
             borderRadius: BorderRadius.circular(14),
             child: Image.memory(
@@ -591,4 +616,13 @@ Future<Uint8List?> _privateMediaBytes(
   final value = reference?.trim() ?? '';
   if (!value.startsWith('gs://')) return null;
   return FirebaseStorage.instance.refFromURL(value).getData(maxBytes);
+}
+
+String _localizedReplyPreview(String value, AppLocalizations copy) {
+  return switch (value.trim()) {
+    'Message deleted' => copy.text('Message deleted', 'Wiadomość usunięta'),
+    'Voice message' => copy.text('Voice message', 'Wiadomość głosowa'),
+    'Photo' => copy.text('Photo', 'Zdjęcie'),
+    _ => value,
+  };
 }

@@ -681,6 +681,46 @@ void main() {
       );
     }
 
+    testWidgets(
+      'Polish invalid-code state shows red X localized copy and clears input',
+      (tester) async {
+        final challenge = FakeTotpChallenge();
+        final invalid = challenge.enqueuePending();
+        await tester.pumpWidget(
+          totpTestApp(challenge, locale: const Locale('pl')),
+        );
+        await tester.pump();
+
+        expect(find.text('Potwierdź swoją tożsamość'), findsOneWidget);
+        expect(find.text('Weryfikacja dwuetapowa'), findsOneWidget);
+
+        await tester.enterText(codeInput(), '123456');
+        await tester.tap(find.byKey(totpVerifyButtonKey));
+        await tester.pump();
+        invalid.completeError(
+          FirebaseAuthException(code: 'invalid-verification-code'),
+        );
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 100));
+
+        expect(find.byKey(totpInvalidXKey), findsOneWidget);
+        expect(
+          find.text(
+            'Ten kod jest nieprawidłowy. Wpisz nowy kod i spróbuj ponownie.',
+          ),
+          findsOneWidget,
+        );
+        expect(find.text('Kod odrzucony'), findsOneWidget);
+        expect(editableText(tester).controller.text, '123456');
+
+        await tester.pump(const Duration(milliseconds: 500));
+        await tester.pump();
+        expect(editableText(tester).controller.text, isEmpty);
+        expect(editableText(tester).focusNode.hasFocus, isTrue);
+        expect(find.byKey(totpInvalidXKey), findsNothing);
+      },
+    );
+
     for (final failure in <({String name, Object error})>[
       (
         name: 'too-many-requests',

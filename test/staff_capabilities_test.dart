@@ -308,7 +308,11 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 100));
       expect(functions.calls, hasLength(1));
-      expect(find.textContaining('rejected'), findsOneWidget);
+      expect(
+        find.text('Could not permanently delete the room. Please try again.'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('rejected'), findsNothing);
       expect(find.byType(OwnerDeleteRoomDialog), findsOneWidget);
 
       // Retry succeeds; the payload carries the id contract and the

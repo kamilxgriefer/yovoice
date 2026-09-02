@@ -660,14 +660,14 @@ void main() {
         'A longer preview that must remain readable at increased text scale.';
     expect(
       find.bySemanticsLabel(
-        'Otwórz czat z A very long display name for a close friend number 0. '
+        'Otwórz czat: A very long display name for a close friend number 0. '
         '2 nieprzeczytane wiadomości. Ostatnia wiadomość: $preview',
       ),
       findsOneWidget,
     );
     expect(
       find.bySemanticsLabel(
-        'Otwórz czat z A very long display name for a close friend number 1. '
+        'Otwórz czat: A very long display name for a close friend number 1. '
         '12 nieprzeczytanych wiadomości. Ostatnia wiadomość: $preview',
       ),
       findsOneWidget,

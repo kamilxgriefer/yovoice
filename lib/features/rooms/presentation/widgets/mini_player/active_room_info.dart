@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_immersive_colors.dart';
 
@@ -34,7 +35,10 @@ class ActiveRoomInfo extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final statusLine = reconnecting ? 'Reconnecting…' : 'Live now';
+    final copy = AppLocalizations.of(context);
+    final statusLine = reconnecting
+        ? copy.text('Reconnecting…', 'Ponowne łączenie…')
+        : copy.text('Live now', 'Teraz na żywo');
     final statusColor = reconnecting
         ? AppColors.warning
         : Color.lerp(AppColors.secondary, Colors.white, .25)!;
@@ -62,9 +66,14 @@ class ActiveRoomInfo extends StatelessWidget {
                   ),
                 ),
                 if (!reconnecting)
-                  const TextSpan(
-                    text: ' · tap to return',
-                    style: TextStyle(color: AppImmersiveColors.textSecondary),
+                  TextSpan(
+                    text: copy.text(
+                      ' · tap to return',
+                      ' · dotknij, aby wrócić',
+                    ),
+                    style: const TextStyle(
+                      color: AppImmersiveColors.textSecondary,
+                    ),
                   ),
               ],
             ),
@@ -86,7 +95,7 @@ class ActiveRoomInfo extends StatelessWidget {
       ),
     );
     final chip = participantCount > 0
-        ? _InsideChip(count: participantCount, narrow: narrow)
+        ? _InsideChip(count: participantCount, narrow: narrow, copy: copy)
         : null;
 
     // COMPACT stacks status and chip UNDER the badge row so they get the
@@ -132,7 +141,7 @@ class ActiveRoomInfo extends StatelessWidget {
 
     return Semantics(
       button: true,
-      label: 'Return to $roomName',
+      label: copy.text('Return to $roomName', 'Wróć do pokoju $roomName'),
       child: InkWell(
         key: const ValueKey('mini-player-room-info'),
         borderRadius: BorderRadius.circular(14),
@@ -183,10 +192,15 @@ class _WaveformBadge extends StatelessWidget {
 }
 
 class _InsideChip extends StatelessWidget {
-  const _InsideChip({required this.count, required this.narrow});
+  const _InsideChip({
+    required this.count,
+    required this.narrow,
+    required this.copy,
+  });
 
   final int count;
   final bool narrow;
+  final AppLocalizations copy;
 
   @override
   Widget build(BuildContext context) {
@@ -195,11 +209,16 @@ class _InsideChip extends StatelessWidget {
     // never an ellipsized "3 ins…". (No LayoutBuilder here: the desktop
     // dock measures this subtree through IntrinsicHeight, and
     // LayoutBuilder has no intrinsic dimensions.)
-    final label = narrow ? '$count' : '$count inside';
+    final label = narrow
+        ? '$count'
+        : copy.text('$count inside', '$count w pokoju');
     // The VISUAL string degrades on narrow widths; the accessible one never
     // does — a screen reader was hearing a bare "3".
     return Semantics(
-      label: '$count ${count == 1 ? 'person' : 'people'} inside',
+      label: copy.text(
+        '$count ${count == 1 ? 'person' : 'people'} inside',
+        count == 1 ? '1 osoba w pokoju' : '$count osób w pokoju',
+      ),
       excludeSemantics: true,
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),

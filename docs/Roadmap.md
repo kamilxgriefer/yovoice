@@ -124,7 +124,8 @@ someone decide what to pick up next.
   icons follow brightness. Voice rooms, calls, room creation/settings/entry,
   recording/review, story viewing, cropping, achievements and creator/staff
   workspaces remain explicitly immersive dark with matching system chrome.
-  Light no longer carries a Beta label; Polish still does. Contrast contracts,
+  Light no longer carries a Beta label. Polish's later production graduation
+  and the expanded locale registry are recorded in ADR-136. Contrast contracts,
   a real desktop sidebar/right-column gate, dark-route tests, 320/768/1440 at
   200% text, responsive journeys and real-font light/dark Home PNGs guard the
   result.
@@ -2106,22 +2107,28 @@ regression test pinning the contract.
 
 ### 10. App language switcher
 
-- **Status**: Foundation and bounded Polish Beta complete in source on
-  2026-08-18; not deployed. System, English and Polish Beta are selectable and
-  saved on the current device.
+- **Status**: Expanded and source-complete on 2026-09-01; coordinated tester
+  release pending. System plus 43 explicit locale variants are selectable and
+  saved on the current device. Polish has graduated from Beta.
 - **Description**: This controls UI language, distinct from a user's
   spoken/native content-language fields. `flutter_localizations` supplies
-  framework delegates and the YO Voice delegate covers migrated navigation,
-  authentication and Settings copy. The interface states that other product
-  screens remain English while migration continues.
-- **Dependencies**: No backend or Firestore schema. Completing Polish requires
-  moving remaining raw English literals into the localization contract and
-  performing linguistic/visual QA at every breakpoint.
-- **Priority**: Low-Medium continuation. The switcher and honest Beta are
-  usable; complete-app translation is still substantial work.
-- **Future considerations**: Add a translation-maintenance workflow before
-  declaring Polish stable, then evaluate ARB/code generation if the catalog
-  grows beyond the deliberately small delegate. See ADR-072.
+  framework delegates; YO Voice owns a strict 179-key multi-language core for
+  navigation, authentication, onboarding, Settings and system controls.
+  Polish additionally receives the complete product-copy migration and a
+  source guard against raw English regressions. Region/script resolution is
+  explicit for Portuguese and Chinese. Native permission prompts, Firebase
+  Auth and web document metadata follow the resolved locale.
+- **Dependencies**: No backend or Firestore schema. Catalog completeness,
+  placeholders, plurals, date formatting, RTL direction, platform bundles and
+  direct-copy regression checks are automated. Physical-device visual review
+  remains a release gate.
+- **Priority**: High release verification. Source is implemented; native and
+  Hosting publication is intentionally deferred until the current combined
+  tester build is requested.
+- **Future considerations**: Grow specialist feature dictionaries from the
+  guarded core only with native-speaker editorial review; do not describe an
+  English fallback screen as fully translated. Re-evaluate ARB/code generation
+  if catalog maintenance stops being tractable. See ADR-136.
 
 ### 11. Value-level counter validation
 
@@ -2210,10 +2217,15 @@ regression test pinning the contract.
   conversation and notification listeners; older message pagination past the
   current 250-message live window; production latency traces/dashboards; and a
   synthetic two-account canary.
-- **Cost decision deferred**: keeping `sendDirectMessage` and
-  `startDirectCall` warm with `minInstances=1` removes measured 2–3 second
-  scale-to-zero starts but creates recurring infrastructure cost. Do not turn
-  it on implicitly; approve cost and monitoring together.
+- **Cost decision for build 18 (2026-09-02)**: the tester release keeps exactly
+  one warm instance for the five latency-critical entry points
+  (`sendDirectMessage`, `sendRoomMessage`, `createLiveKitToken`,
+  `startDirectCall`, `createDirectCallToken`). Search and suggestion callables
+  remain at zero. This is a deliberate recurring-cost tradeoff for the
+  product's critical chat/join/call latency work, guarded by an exact export
+  configuration test. Monitor invocation latency, instance count and spend
+  during the tester cycle; rollback is `minInstances: 0` for those five
+  endpoints if the measured benefit does not justify the cost.
 
 ---
 

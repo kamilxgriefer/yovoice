@@ -4,6 +4,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/helpers/error_messages.dart';
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/friends/data/models/friend_request.dart';
 import 'package:yovoice/features/friends/data/models/friend_user.dart';
@@ -14,6 +15,7 @@ import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/messages/presentation/screens/chat_screen.dart';
 import 'package:yovoice/features/profile/data/models/user_profile.dart';
 import 'package:yovoice/features/profile/data/services/follow_service.dart';
+import 'package:yovoice/features/profile/data/services/profile_media_service.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
 import 'package:yovoice/features/profile/presentation/widgets/profile_vibe_headline.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -24,6 +26,8 @@ import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
+import 'package:yovoice/shared/widgets/profile/profile_media_image.dart';
+import 'package:yovoice/shared/widgets/profile/profile_photo_viewer.dart';
 
 /// The one way to open "who is this person?" from anywhere in the app —
 /// a tap on any avatar or name (participant lists, chats, friends,
@@ -41,6 +45,8 @@ Future<void> showProfilePreview(
   FirebaseAuth? auth,
   FriendService? friendService,
   MessageService? messageService,
+  ProfileMediaService? profileMediaService,
+  ProfileMediaImageProvider? profileMediaImageProvider,
 }) async {
   if (messageService != null && auth == null) {
     throw ArgumentError(
@@ -80,6 +86,8 @@ Future<void> showProfilePreview(
         auth: resolvedAuth,
         friendService: friendService,
         messageService: resolvedMessageService,
+        profileMediaService: profileMediaService,
+        profileMediaImageProvider: profileMediaImageProvider,
       ),
     );
 
@@ -95,6 +103,7 @@ Future<void> showProfilePreview(
               otherDisplayName: destination.profile.displayName,
               otherEmail: destination.profile.email,
               otherPhotoUrl: destination.profile.photoUrl ?? '',
+              otherProfileUpdatedAt: destination.profile.profileUpdatedAt,
               messageService: destination.messageService,
               auth: destination.auth,
             ),
@@ -145,6 +154,8 @@ class ProfilePreviewSheet extends StatefulWidget {
     required this.auth,
     this.friendService,
     required this.messageService,
+    this.profileMediaService,
+    this.profileMediaImageProvider,
     super.key,
   });
 
@@ -161,6 +172,8 @@ class ProfilePreviewSheet extends StatefulWidget {
   final FirebaseAuth auth;
   final FriendService? friendService;
   final MessageService messageService;
+  final ProfileMediaService? profileMediaService;
+  final ProfileMediaImageProvider? profileMediaImageProvider;
 
   @override
   State<ProfilePreviewSheet> createState() => _ProfilePreviewSheetState();
@@ -245,6 +258,8 @@ class _ProfilePreviewSheetState extends State<ProfilePreviewSheet> {
     photoUrl: profile.photoUrl,
     isOnline: false,
     lastSeen: null,
+    profileUpdatedAt: profile.profileUpdatedAt,
+    premiumIdentity: profile.premiumIdentity,
   );
 
   void _snack(Object error, String fallback) {
@@ -287,7 +302,10 @@ class _ProfilePreviewSheetState extends State<ProfilePreviewSheet> {
         setState(
           () => _messageError = intentionalOrFriendly(
             error,
-            fallback: "Couldn't open this chat. Please try again.",
+            fallback: AppLocalizations.of(context).text(
+              "Couldn't open this chat. Please try again.",
+              'Nie udało się otworzyć czatu. Spróbuj ponownie.',
+            ),
           ),
         );
       }
@@ -299,7 +317,22 @@ class _ProfilePreviewSheetState extends State<ProfilePreviewSheet> {
   Future<void> _friendAction(UserProfile profile) async {
     final status = _relationship;
     if (status == null || _busyFriend) return;
-    setState(() => _busyFriend = true);
+    final failureMessage = AppLocalizations.of(context).text(
+      "Couldn't update your friend request. Please try again.",
+      'Nie udało się zaktualizować zaproszenia. Spróbuj ponownie.',
+    );
+    final optimistic = switch (status) {
+      FriendRelationshipStatus.none => FriendRelationshipStatus.requestSent,
+      FriendRelationshipStatus.requestSent => FriendRelationshipStatus.none,
+      FriendRelationshipStatus.requestReceived =>
+        FriendRelationshipStatus.friends,
+      FriendRelationshipStatus.friends ||
+      FriendRelationshipStatus.blocked => status,
+    };
+    setState(() {
+      _busyFriend = true;
+      _relationship = optimistic;
+    });
     try {
       switch (status) {
         case FriendRelationshipStatus.none:
@@ -326,7 +359,8 @@ class _ProfilePreviewSheetState extends State<ProfilePreviewSheet> {
           break;
       }
     } catch (error) {
-      _snack(error, "Couldn't update your friend request. Please try again.");
+      if (mounted) setState(() => _relationship = status);
+      _snack(error, failureMessage);
     } finally {
       if (mounted) setState(() => _busyFriend = false);
     }
@@ -334,6 +368,10 @@ class _ProfilePreviewSheetState extends State<ProfilePreviewSheet> {
 
   Future<void> _toggleFollow(bool isFollowing, UserProfile profile) async {
     if (_busyFollow) return;
+    final failureMessage = AppLocalizations.of(context).text(
+      "Couldn't update follow. Please try again.",
+      'Nie udało się zmienić obserwowania. Spróbuj ponownie.',
+    );
     setState(() => _busyFollow = true);
     try {
       if (isFollowing) {
@@ -342,7 +380,7 @@ class _ProfilePreviewSheetState extends State<ProfilePreviewSheet> {
         await _follows.follow(profile.uid);
       }
     } catch (error) {
-      _snack(error, "Couldn't update follow. Please try again.");
+      _snack(error, failureMessage);
     } finally {
       if (mounted) setState(() => _busyFollow = false);
     }
@@ -385,7 +423,9 @@ class _ProfilePreviewSheetState extends State<ProfilePreviewSheet> {
                   alignment: Alignment.topCenter,
                   children: [
                     YoModalSheetChrome(
-                      sheetLabel: 'profile preview',
+                      sheetLabel: AppLocalizations.of(
+                        context,
+                      ).text('profile preview', 'podgląd profilu'),
                       surfaceColor: palette.surface,
                     ),
                     if (!_isSelf)
@@ -435,6 +475,9 @@ class _ProfilePreviewSheetState extends State<ProfilePreviewSheet> {
                           followStream: _isSelf
                               ? null
                               : _follows.watchIsFollowing(widget.userId),
+                          profileMediaService: widget.profileMediaService,
+                          profileMediaImageProvider:
+                              widget.profileMediaImageProvider,
                           onOpenFull: _openFullProfile,
                           onMessage: _message,
                           onFriend: _friendAction,
@@ -483,6 +526,8 @@ class _Body extends StatelessWidget {
     required this.messageError,
     required this.busyFollow,
     required this.followStream,
+    required this.profileMediaService,
+    required this.profileMediaImageProvider,
     required this.onOpenFull,
     required this.onMessage,
     required this.onFriend,
@@ -501,6 +546,8 @@ class _Body extends StatelessWidget {
   final String? messageError;
   final bool busyFollow;
   final Stream<bool>? followStream;
+  final ProfileMediaService? profileMediaService;
+  final ProfileMediaImageProvider? profileMediaImageProvider;
   final ValueChanged<UserProfile> onOpenFull;
   final ValueChanged<UserProfile> onMessage;
   final ValueChanged<UserProfile> onFriend;
@@ -508,6 +555,7 @@ class _Body extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
     final name = profile?.displayName ?? seedDisplayName ?? '…';
     final photo = profile?.photoUrl ?? seedPhotoUrl;
@@ -521,21 +569,30 @@ class _Body extends StatelessWidget {
         Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Container(
-              padding: const EdgeInsets.all(3),
-              decoration: const BoxDecoration(
-                shape: BoxShape.circle,
-                gradient: LinearGradient(
-                  colors: [Color(0xFF6A00FF), Color(0xFFD12CFF)],
+            ProfilePhotoButton(
+              userId: userId,
+              displayName: name,
+              mediaRevision: profile?.profileUpdatedAt,
+              mediaService: profileMediaService,
+              imageProvider: profileMediaImageProvider,
+              minimumSize: const Size(74, 74),
+              child: Container(
+                padding: const EdgeInsets.all(3),
+                decoration: const BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: LinearGradient(
+                    colors: [Color(0xFF6A00FF), Color(0xFFD12CFF)],
+                  ),
                 ),
-              ),
-              child: UserAvatar(
-                radius: 34,
-                userId: userId,
-                photoUrl: photo,
-                mediaRevision: profile?.profileUpdatedAt,
-                displayName: name,
-                premium: profile?.premiumIdentity ?? false,
+                child: UserAvatar(
+                  radius: 34,
+                  userId: userId,
+                  photoUrl: photo,
+                  mediaRevision: profile?.profileUpdatedAt,
+                  mediaService: profileMediaService,
+                  displayName: name,
+                  premium: profile?.premiumIdentity ?? false,
+                ),
               ),
             ),
             const SizedBox(width: 14),
@@ -585,21 +642,21 @@ class _Body extends StatelessWidget {
                       // are account/social facts, not roles.
                       UserIdentityBadges(uid: userId),
                       if (profile?.accountType == AccountType.creator)
-                        const _Chip(
+                        _Chip(
                           icon: Icons.auto_awesome_rounded,
-                          label: 'Creator',
+                          label: copy.text('Creator', 'Twórca'),
                           kind: _ProfileFactChipKind.creator,
                         ),
                       if (profile?.accountType == AccountType.official)
-                        const _Chip(
+                        _Chip(
                           icon: Icons.verified_rounded,
-                          label: 'Official',
+                          label: copy.text('Official', 'Oficjalny'),
                           kind: _ProfileFactChipKind.official,
                         ),
                       if (relationship == FriendRelationshipStatus.friends)
-                        const _Chip(
+                        _Chip(
                           icon: Icons.people_alt_rounded,
-                          label: 'Friends',
+                          label: copy.text('Friends', 'Znajomi'),
                           kind: _ProfileFactChipKind.friends,
                         ),
                     ],
@@ -629,8 +686,11 @@ class _Body extends StatelessWidget {
           const SizedBox(height: 10),
           Text(
             mutuals!.count == 1
-                ? '1 mutual friend'
-                : '${mutuals!.count} mutual friends',
+                ? copy.text('1 mutual friend', '1 wspólny znajomy')
+                : copy.text(
+                    '${mutuals!.count} mutual friends',
+                    '${mutuals!.count} wspólnych znajomych',
+                  ),
             style: TextStyle(
               color: palette.textSecondary,
               fontSize: 12.5,
@@ -646,18 +706,21 @@ class _Body extends StatelessWidget {
         if (busyMessage)
           Semantics(
             liveRegion: true,
-            label: 'Opening chat…',
+            label: copy.text('Opening chat…', 'Otwieranie czatu…'),
             child: const SizedBox.shrink(),
           ),
         if (isSelf)
           _SecondaryButton(
             icon: Icons.person_rounded,
-            label: 'This is you',
+            label: copy.text('This is you', 'To Ty'),
             onPressed: null,
           )
         else if (relationship == FriendRelationshipStatus.blocked)
           Text(
-            'You have blocked this user.',
+            copy.text(
+              'You have blocked this user.',
+              'Ta osoba jest przez Ciebie zablokowana.',
+            ),
             style: TextStyle(color: palette.textSecondary, fontSize: 13),
           )
         else ...[
@@ -668,7 +731,9 @@ class _Body extends StatelessWidget {
                   MediaQuery.textScalerOf(context).scale(1) >= 1.5;
               final message = _PrimaryButton(
                 icon: Icons.chat_bubble_rounded,
-                label: busyMessage ? 'Opening…' : 'Message',
+                label: busyMessage
+                    ? copy.text('Opening…', 'Otwieranie…')
+                    : copy.text('Message', 'Wiadomość'),
                 busy: busyMessage,
                 onPressed: profile == null ? null : () => onMessage(profile!),
               );
@@ -679,7 +744,7 @@ class _Body extends StatelessWidget {
                   children: [
                     message,
                     const SizedBox(height: 8),
-                    _friendButton(),
+                    _friendButton(context),
                     if (followStream != null) ...[
                       const SizedBox(height: 8),
                       _followButton(),
@@ -692,7 +757,7 @@ class _Body extends StatelessWidget {
                 children: [
                   Expanded(child: message),
                   const SizedBox(width: 10),
-                  Expanded(child: _friendButton()),
+                  Expanded(child: _friendButton(context)),
                   if (followStream != null) ...[
                     const SizedBox(width: 10),
                     Expanded(child: _followButton()),
@@ -707,7 +772,7 @@ class _Body extends StatelessWidget {
           child: TextButton(
             onPressed: profile == null ? null : () => onOpenFull(profile!),
             child: Text(
-              'View full profile',
+              copy.text('View full profile', 'Zobacz pełny profil'),
               style: TextStyle(
                 color: Theme.of(context).colorScheme.primary,
                 fontWeight: FontWeight.w700,
@@ -719,31 +784,32 @@ class _Body extends StatelessWidget {
     );
   }
 
-  Widget _friendButton() {
+  Widget _friendButton(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final (label, icon, enabled) = switch (relationship) {
       null => ('…', Icons.person_add_alt_1_rounded, false),
       FriendRelationshipStatus.none => (
-        'Add friend',
+        copy.text('Add friend', 'Dodaj znajomego'),
         Icons.person_add_alt_1_rounded,
         true,
       ),
       FriendRelationshipStatus.requestSent => (
-        'Requested',
+        copy.text('Requested', 'Wysłano zaproszenie'),
         Icons.hourglass_top_rounded,
         true,
       ),
       FriendRelationshipStatus.requestReceived => (
-        'Accept',
+        copy.text('Accept', 'Akceptuj'),
         Icons.check_circle_rounded,
         true,
       ),
       FriendRelationshipStatus.friends => (
-        'Friends',
+        copy.text('Friends', 'Znajomi'),
         Icons.people_alt_rounded,
         false,
       ),
       FriendRelationshipStatus.blocked => (
-        'Blocked',
+        copy.text('Blocked', 'Zablokowano'),
         Icons.block_rounded,
         false,
       ),
@@ -760,12 +826,15 @@ class _Body extends StatelessWidget {
     return StreamBuilder<bool>(
       stream: followStream,
       builder: (context, snapshot) {
+        final copy = AppLocalizations.of(context);
         final following = snapshot.data ?? false;
         return _SecondaryButton(
           icon: following
               ? Icons.notifications_active_rounded
               : Icons.rss_feed_rounded,
-          label: following ? 'Following' : 'Follow',
+          label: following
+              ? copy.text('Following', 'Obserwujesz')
+              : copy.text('Follow', 'Obserwuj'),
           busy: busyFollow,
           onPressed: profile == null || !snapshot.hasData
               ? null
@@ -828,6 +897,7 @@ class _PresenceDot extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
     return Row(
       mainAxisSize: MainAxisSize.min,
@@ -844,7 +914,9 @@ class _PresenceDot extends StatelessWidget {
         ),
         const SizedBox(width: 5),
         Text(
-          online ? 'Online' : 'Offline',
+          online
+              ? copy.text('Online', 'Online')
+              : copy.text('Offline', 'Offline'),
           style: TextStyle(
             color: palette.textSecondary,
             fontSize: 11.5,
@@ -1026,6 +1098,7 @@ class _ErrorBody extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 24),
@@ -1033,7 +1106,10 @@ class _ErrorBody extends StatelessWidget {
         child: Text(
           intentionalOrFriendly(
             error,
-            fallback: "Couldn't load this profile. Please try again.",
+            fallback: copy.text(
+              "Couldn't load this profile. Please try again.",
+              'Nie udało się wczytać profilu. Spróbuj ponownie.',
+            ),
           ),
           textAlign: TextAlign.center,
           style: TextStyle(color: palette.textSecondary, fontSize: 14),

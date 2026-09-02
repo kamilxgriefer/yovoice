@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/helpers/error_messages.dart';
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
@@ -24,6 +26,7 @@ class FollowListScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
     final isFollowers = type == FollowListType.followers;
@@ -36,7 +39,11 @@ class FollowListScreen extends StatelessWidget {
       appBar: AppBar(
         backgroundColor: palette.background,
         foregroundColor: palette.textPrimary,
-        title: Text(isFollowers ? 'Followers' : 'Following'),
+        title: Text(
+          isFollowers
+              ? copy.text('Followers', 'Obserwujący')
+              : copy.text('Following', 'Obserwowani'),
+        ),
       ),
       body: ResponsiveContentFrame(
         width: ResponsiveContentWidth.list,
@@ -49,7 +56,14 @@ class FollowListScreen extends StatelessWidget {
                 child: Padding(
                   padding: const EdgeInsets.all(24),
                   child: Text(
-                    'Could not load this list.\n${snapshot.error}',
+                    friendlyErrorMessage(
+                      snapshot.error!,
+                      fallback: copy.text(
+                        'Could not load this list. Please try again.',
+                        'Nie udało się wczytać listy. Spróbuj ponownie.',
+                      ),
+                      copy: copy,
+                    ),
                     textAlign: TextAlign.center,
                     style: TextStyle(color: palette.textSecondary),
                   ),
@@ -64,8 +78,14 @@ class FollowListScreen extends StatelessWidget {
               return Center(
                 child: Text(
                   isFollowers
-                      ? 'No followers yet.'
-                      : 'Not following anyone yet.',
+                      ? copy.text(
+                          'No followers yet.',
+                          'Nikt Cię jeszcze nie obserwuje.',
+                        )
+                      : copy.text(
+                          'Not following anyone yet.',
+                          'Nikogo jeszcze nie obserwujesz.',
+                        ),
                   style: TextStyle(color: palette.textSecondary, fontSize: 16),
                 ),
               );

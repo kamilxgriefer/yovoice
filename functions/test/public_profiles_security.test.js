@@ -97,6 +97,18 @@ async function wipe() {
         .collection("friends")
         .doc(CALLER)
         .delete(),
+      db
+        .collection("users")
+        .doc(CALLER)
+        .collection("friendRequests")
+        .doc(uid)
+        .delete(),
+      db
+        .collection("users")
+        .doc(uid)
+        .collection("friendRequests")
+        .doc(CALLER)
+        .delete(),
     ]),
     ...unrelatedBlocked.map((uid) =>
       db
@@ -510,7 +522,7 @@ describe("public profile search", () => {
             isOnline: true,
             role: "moderator",
           }),
-          updatedAt: Timestamp.now(),
+          updatedAt: Timestamp.fromMillis(1_780_000_000_000),
           // Even a poisoned stored projection must not widen the response.
           email: `${uid}@leaked.invalid`,
           role: "moderator",
@@ -549,7 +561,75 @@ describe("public profile search", () => {
       accountType: "personal",
       premiumIdentity: false,
       followerCount: 0,
+      relationshipStatus: "none",
+      profileUpdatedAtMillis: 1_780_000_000_000,
     });
+  });
+
+  test("returns canonical relationship state in the bounded search response", async () => {
+    await seedSearchWorld();
+    const request = {
+      auth: { uid: CALLER, token: { email_verified: true } },
+      data: { query: "@voice", limit: 20 },
+    };
+
+    await db
+      .collection("users")
+      .doc(VISIBLE)
+      .collection("friendRequests")
+      .doc(CALLER)
+      .set({ senderId: CALLER, createdAt: Timestamp.now() });
+    let response = await runSearch(request);
+    assert.equal(response.profiles[0].relationshipStatus, "requestSent");
+
+    await db
+      .collection("users")
+      .doc(VISIBLE)
+      .collection("friendRequests")
+      .doc(CALLER)
+      .delete();
+    await db
+      .collection("users")
+      .doc(CALLER)
+      .collection("friendRequests")
+      .doc(VISIBLE)
+      .set({ senderId: VISIBLE, createdAt: Timestamp.now() });
+    response = await runSearch(request);
+    assert.equal(response.profiles[0].relationshipStatus, "requestReceived");
+
+    await db
+      .collection("users")
+      .doc(CALLER)
+      .collection("friendRequests")
+      .doc(VISIBLE)
+      .delete();
+    const establishedAt = Timestamp.now();
+    await Promise.all([
+      db
+        .collection("friendshipGuards")
+        .doc(CALLER)
+        .collection("friends")
+        .doc(VISIBLE)
+        .set({
+          ownerId: CALLER,
+          friendId: VISIBLE,
+          schemaVersion: 1,
+          establishedAt,
+        }),
+      db
+        .collection("friendshipGuards")
+        .doc(VISIBLE)
+        .collection("friends")
+        .doc(CALLER)
+        .set({
+          ownerId: VISIBLE,
+          friendId: CALLER,
+          schemaVersion: 1,
+          establishedAt,
+        }),
+    ]);
+    response = await runSearch(request);
+    assert.equal(response.profiles[0].relationshipStatus, "friends");
   });
 
   test("visibility filters discovery from private source state, not the stale projection", async () => {

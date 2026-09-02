@@ -1,0 +1,3 @@
+"NSCameraUsageDescription" = "YO Voice używa aparatu, gdy prowadzisz prywatne rozmowy wideo, robisz zdjęcia na czacie albo tworzysz zdjęcie profilowe lub grafikę pokoju bądź klubu.";
+"NSMicrophoneUsageDescription" = "YO Voice używa mikrofonu, gdy zabierasz głos w pokojach głosowych, nagrywasz dźwięk lub prowadzisz prywatne rozmowy.";
+"NSPhotoLibraryUsageDescription" = "YO Voice używa wybranych przez Ciebie zdjęć na czacie oraz jako zdjęć profilowych lub grafik pokoi i klubów.";

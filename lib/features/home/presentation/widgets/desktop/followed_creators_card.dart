@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/home/data/services/home_feed_service.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
@@ -104,6 +105,7 @@ class _FollowedCreatorsCardState extends State<FollowedCreatorsCard> {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     return StreamBuilder<List<FollowUser>>(
       stream: _following,
       builder: (context, followSnapshot) {
@@ -159,7 +161,10 @@ class _FollowedCreatorsCardState extends State<FollowedCreatorsCard> {
                         children: [
                           Expanded(
                             child: Text(
-                              'Top creators you follow',
+                              copy.text(
+                                'Top creators you follow',
+                                'Obserwowani twórcy',
+                              ),
                               style: TextStyle(
                                 color: palette.textPrimary,
                                 fontSize: 15.5,
@@ -219,6 +224,7 @@ class _ViewAllButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final colors = Theme.of(context).colorScheme;
     return TextButton(
       onPressed: onTap,
@@ -231,7 +237,7 @@ class _ViewAllButton extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           Text(
-            'View all',
+            copy.text('View all', 'Zobacz wszystkie'),
             style: TextStyle(
               color: colors.primary,
               fontSize: 12.5,
@@ -283,6 +289,7 @@ class _CreatorRowState extends State<_CreatorRow> {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final colors = Theme.of(context).colorScheme;
     final palette = context.appPalette;
     final room = widget.hostedRoom;
@@ -294,8 +301,14 @@ class _CreatorRowState extends State<_CreatorRow> {
 
     return AccessibleTapRegion(
       onTap: widget.onTap,
-      semanticLabel: 'Open profile for ${widget.creator.displayName}',
-      tooltip: 'Open ${widget.creator.displayName}\'s profile',
+      semanticLabel: copy.text(
+        'Open profile for ${widget.creator.displayName}',
+        'Otwórz profil: ${widget.creator.displayName}',
+      ),
+      tooltip: copy.text(
+        'Open ${widget.creator.displayName}\'s profile',
+        'Otwórz profil: ${widget.creator.displayName}',
+      ),
       borderRadius: 14,
       onHover: (hovering) {
         if (_hover != hovering) setState(() => _hover = hovering);
@@ -353,7 +366,10 @@ class _CreatorRowState extends State<_CreatorRow> {
                     _LiveSignal(roomName: room.name)
                   else if (recent)
                     Text(
-                      'New Moment · ${_age(moment.createdAt!)}',
+                      copy.text(
+                        'New Moment · ${_age(moment.createdAt!)}',
+                        'Nowy Moment · ${_age(moment.createdAt!)}',
+                      ),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
@@ -399,6 +415,7 @@ class _LiveSignal extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final colors = Theme.of(context).colorScheme;
     return Row(
       children: [
@@ -413,7 +430,7 @@ class _LiveSignal extends StatelessWidget {
         const SizedBox(width: 5),
         Flexible(
           child: Text(
-            'Live · $roomName',
+            copy.text('Live · $roomName', 'Na żywo · $roomName'),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
@@ -435,6 +452,7 @@ class _NoCreatorsState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
     return Container(
       width: double.infinity,
@@ -449,8 +467,12 @@ class _NoCreatorsState extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'The creators you follow will appear here — with what they '
-            'are hosting and their latest Moments.',
+            copy.text(
+              'The creators you follow will appear here — with what they '
+                  'are hosting and their latest Moments.',
+              'Obserwowani twórcy pojawią się tutaj wraz z prowadzonymi '
+                  'pokojami i najnowszymi Momentami.',
+            ),
             style: TextStyle(
               color: palette.textSecondary,
               fontSize: 12.5,

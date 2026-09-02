@@ -3,6 +3,8 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 
+import 'package:yovoice/core/helpers/error_messages.dart';
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/space_identity.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:image_picker/image_picker.dart';
@@ -156,20 +158,43 @@ class _CreateClubScreenState extends State<CreateClubScreen> {
   }
 
   String _readableError(Object error) {
+    final copy = AppLocalizations.of(context);
     final message = error
         .toString()
         .replaceFirst('Bad state: ', '')
         .replaceFirst('Invalid argument(s): ', '');
+    if (message.contains('smaller than 8 MB')) {
+      return copy.text(
+        'The selected image must be smaller than 8 MB.',
+        'Wybrane zdjęcie musi mieć mniej niż 8 MB.',
+      );
+    }
     if (message.contains('permission-denied')) {
-      return 'Your account is not allowed to create this space right now. Refresh your session and try again.';
+      return copy.text(
+        'Your account is not allowed to create this space right now. Refresh your session and try again.',
+        'Twoje konto nie może teraz utworzyć tej przestrzeni. Odśwież sesję i spróbuj ponownie.',
+      );
     }
     if (message.contains('object-not-found')) {
-      return 'The uploaded image could not be found.';
+      return copy.text(
+        'The uploaded image could not be found.',
+        'Nie znaleziono przesłanego zdjęcia.',
+      );
     }
     if (message.contains('unauthorized')) {
-      return 'The image upload was not authorized. Refresh your session and try again.';
+      return copy.text(
+        'The image upload was not authorized. Refresh your session and try again.',
+        'Nie udało się przesłać zdjęcia. Odśwież sesję i spróbuj ponownie.',
+      );
     }
-    return message;
+    return friendlyErrorMessage(
+      error,
+      copy: copy,
+      fallback: copy.text(
+        'Could not create this space. Please try again.',
+        'Nie udało się utworzyć przestrzeni. Spróbuj ponownie.',
+      ),
+    );
   }
 
   void _showError(String message) {
@@ -198,6 +223,7 @@ class _CreateClubScreenState extends State<CreateClubScreen> {
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
     final identityVisuals = _identity.resolve(colors.brightness);
+    final copy = AppLocalizations.of(context);
     return Scaffold(
       key: const ValueKey('create-club-screen'),
       backgroundColor: palette.background,
@@ -206,7 +232,9 @@ class _CreateClubScreenState extends State<CreateClubScreen> {
         foregroundColor: palette.textPrimary,
         centerTitle: true,
         title: Text(
-          widget.isFamily ? 'Create Family Room' : 'Create Club',
+          widget.isFamily
+              ? copy.text('Create Family Room', 'Utwórz pokój rodzinny')
+              : copy.text('Create Club', 'Utwórz klub'),
           style: const TextStyle(fontWeight: FontWeight.w900),
         ),
       ),
@@ -220,10 +248,18 @@ class _CreateClubScreenState extends State<CreateClubScreen> {
               _HeroCard(identity: _identity, isFamily: widget.isFamily),
               const SizedBox(height: 24),
               _SectionTitle(
-                title: widget.isFamily ? 'Family identity' : 'Club identity',
+                title: widget.isFamily
+                    ? copy.text('Family identity', 'Tożsamość rodziny')
+                    : copy.text('Club identity', 'Tożsamość klubu'),
                 subtitle: widget.isFamily
-                    ? 'Name the space your family will recognize.'
-                    : 'Give your people a place they will recognize.',
+                    ? copy.text(
+                        'Name the space your family will recognize.',
+                        'Nadaj przestrzeni nazwę rozpoznawalną dla rodziny.',
+                      )
+                    : copy.text(
+                        'Give your people a place they will recognize.',
+                        'Stwórz miejsce, które rozpozna Twoja społeczność.',
+                      ),
               ),
               const SizedBox(height: 14),
               if (!widget.isFamily)
@@ -232,10 +268,13 @@ class _CreateClubScreenState extends State<CreateClubScreen> {
                     Expanded(
                       child: _MediaPickerCard(
                         icon: Icons.groups_2_rounded,
-                        label: 'Club avatar',
+                        label: copy.text('Club avatar', 'Avatar klubu'),
                         helper: _avatarBytes == null
-                            ? 'Choose image'
-                            : 'Tap to replace',
+                            ? copy.text('Choose image', 'Wybierz zdjęcie')
+                            : copy.text(
+                                'Tap to replace',
+                                'Dotknij, aby zmienić',
+                              ),
                         bytes: _avatarBytes,
                         circularPreview: true,
                         onTap: () => _pickImage(avatar: true),
@@ -251,10 +290,13 @@ class _CreateClubScreenState extends State<CreateClubScreen> {
                     Expanded(
                       child: _MediaPickerCard(
                         icon: Icons.image_rounded,
-                        label: 'Club banner',
+                        label: copy.text('Club banner', 'Baner klubu'),
                         helper: _bannerBytes == null
-                            ? 'Choose image'
-                            : 'Tap to replace',
+                            ? copy.text('Choose image', 'Wybierz zdjęcie')
+                            : copy.text(
+                                'Tap to replace',
+                                'Dotknij, aby zmienić',
+                              ),
                         bytes: _bannerBytes,
                         onTap: () => _pickImage(avatar: false),
                         onRemove: _bannerBytes == null
@@ -271,20 +313,33 @@ class _CreateClubScreenState extends State<CreateClubScreen> {
               const SizedBox(height: 16),
               _Field(
                 controller: _nameController,
-                label: widget.isFamily ? 'Family name' : 'Club name',
-                hint: 'e.g. YO Voice Founders',
+                label: widget.isFamily
+                    ? copy.text('Family name', 'Nazwa rodziny')
+                    : copy.text('Club name', 'Nazwa klubu'),
+                hint: copy.text(
+                  'e.g. YO Voice Founders',
+                  'np. Założyciele YO Voice',
+                ),
                 maxLength: 40,
                 validator: (value) {
                   final length = value?.trim().length ?? 0;
-                  if (length < 3) return 'Enter at least 3 characters';
+                  if (length < 3) {
+                    return copy.text(
+                      'Enter at least 3 characters',
+                      'Wpisz co najmniej 3 znaki',
+                    );
+                  }
                   return null;
                 },
               ),
               const SizedBox(height: 14),
               _Field(
                 controller: _descriptionController,
-                label: 'Description',
-                hint: 'What brings this club together?',
+                label: copy.text('Description', 'Opis'),
+                hint: copy.text(
+                  'What brings this club together?',
+                  'Co łączy tę społeczność?',
+                ),
                 maxLength: 220,
                 maxLines: 4,
               ),
@@ -293,14 +348,20 @@ class _CreateClubScreenState extends State<CreateClubScreen> {
               // nothing to choose: offering "Public" on a space defined as
               // private would be a lie the service would then ignore.
               if (!widget.isFamily) ...[
-                const _SectionTitle(
-                  title: 'Privacy',
-                  subtitle: 'Choose how new members can enter.',
+                _SectionTitle(
+                  title: copy.text('Privacy', 'Prywatność'),
+                  subtitle: copy.text(
+                    'Choose how new members can enter.',
+                    'Wybierz sposób dołączania nowych członków.',
+                  ),
                 ),
                 const SizedBox(height: 14),
                 _PrivacyChoice(
-                  title: 'Public',
-                  subtitle: 'Anyone can discover and join the club.',
+                  title: copy.text('Public', 'Publiczny'),
+                  subtitle: copy.text(
+                    'Anyone can discover and join the club.',
+                    'Każdy może znaleźć klub i do niego dołączyć.',
+                  ),
                   icon: Icons.public_rounded,
                   value: ClubPrivacy.public,
                   selectedValue: _privacy,
@@ -308,9 +369,11 @@ class _CreateClubScreenState extends State<CreateClubScreen> {
                 ),
                 const SizedBox(height: 10),
                 _PrivacyChoice(
-                  title: 'Private',
-                  subtitle:
-                      'The club is hidden and members join by invitation.',
+                  title: copy.text('Private', 'Prywatny'),
+                  subtitle: copy.text(
+                    'The club is hidden and members join by invitation.',
+                    'Klub jest ukryty, a członkowie dołączają z zaproszenia.',
+                  ),
                   icon: Icons.lock_rounded,
                   value: ClubPrivacy.private,
                   selectedValue: _privacy,
@@ -318,8 +381,11 @@ class _CreateClubScreenState extends State<CreateClubScreen> {
                 ),
                 const SizedBox(height: 10),
                 _PrivacyChoice(
-                  title: 'Invite only',
-                  subtitle: 'Visible club, but every member needs an invite.',
+                  title: copy.text('Invite only', 'Tylko na zaproszenie'),
+                  subtitle: copy.text(
+                    'Visible club, but every member needs an invite.',
+                    'Klub jest widoczny, ale dołączenie wymaga zaproszenia.',
+                  ),
                   icon: Icons.mail_rounded,
                   value: ClubPrivacy.inviteOnly,
                   selectedValue: _privacy,
@@ -329,11 +395,20 @@ class _CreateClubScreenState extends State<CreateClubScreen> {
               const SizedBox(height: 26),
               _SectionTitle(
                 title: widget.isFamily
-                    ? 'Primary family language'
-                    : 'Default language',
+                    ? copy.text(
+                        'Primary family language',
+                        'Główny język rodziny',
+                      )
+                    : copy.text('Default language', 'Domyślny język'),
                 subtitle: widget.isFamily
-                    ? 'Everyone can still speak any language here.'
-                    : 'Members can still use any language in the club.',
+                    ? copy.text(
+                        'Everyone can still speak any language here.',
+                        'Każdy nadal może mówić tutaj w dowolnym języku.',
+                      )
+                    : copy.text(
+                        'Members can still use any language in the club.',
+                        'Członkowie nadal mogą używać w klubie dowolnego języka.',
+                      ),
               ),
               const SizedBox(height: 14),
               DropdownButtonFormField<String>(
@@ -364,7 +439,7 @@ class _CreateClubScreenState extends State<CreateClubScreen> {
                     .map(
                       (language) => DropdownMenuItem<String>(
                         value: language,
-                        child: Text(language),
+                        child: Text(_languageLabel(language, copy)),
                       ),
                     )
                     .toList(growable: false),
@@ -421,11 +496,20 @@ class _CreateClubScreenState extends State<CreateClubScreen> {
                   label: Text(
                     _busy
                         ? (widget.isFamily
-                              ? 'Creating Family Room...'
-                              : 'Creating club...')
+                              ? copy.text(
+                                  'Creating Family Room...',
+                                  'Tworzenie pokoju rodzinnego...',
+                                )
+                              : copy.text(
+                                  'Creating club...',
+                                  'Tworzenie klubu...',
+                                ))
                         : (widget.isFamily
-                              ? 'Create Family Room'
-                              : 'Create Club'),
+                              ? copy.text(
+                                  'Create Family Room',
+                                  'Utwórz pokój rodzinny',
+                                )
+                              : copy.text('Create Club', 'Utwórz klub')),
                     style: const TextStyle(
                       fontSize: 17,
                       fontWeight: FontWeight.w900,
@@ -439,6 +523,23 @@ class _CreateClubScreenState extends State<CreateClubScreen> {
       ),
     );
   }
+
+  String _languageLabel(String language, AppLocalizations copy) {
+    if (!copy.isPolish) return language;
+    return switch (language) {
+      'English' => 'Angielski',
+      'Polish' => 'Polski',
+      'Dutch' => 'Niderlandzki',
+      'German' => 'Niemiecki',
+      'Spanish' => 'Hiszpański',
+      'French' => 'Francuski',
+      'Italian' => 'Włoski',
+      'Portuguese' => 'Portugalski',
+      'Japanese' => 'Japoński',
+      'Korean' => 'Koreański',
+      _ => language,
+    };
+  }
 }
 
 class _HeroCard extends StatelessWidget {
@@ -450,6 +551,7 @@ class _HeroCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
+    final copy = AppLocalizations.of(context);
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
@@ -469,7 +571,10 @@ class _HeroCard extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Build your home on YO Voice',
+                  copy.text(
+                    'Build your home on YO Voice',
+                    'Zbuduj swoje miejsce w YO Voice',
+                  ),
                   style: TextStyle(
                     color: palette.textPrimary,
                     fontSize: 21,
@@ -479,10 +584,14 @@ class _HeroCard extends StatelessWidget {
                 SizedBox(height: 8),
                 Text(
                   isFamily
-                      ? 'A private, invite-only space for the people '
-                            'closest to you.'
-                      : 'A Club is permanent: members, roles, a main chat, '
-                            'announcements and a private voice lounge.',
+                      ? copy.text(
+                          'A private, invite-only space for the people closest to you.',
+                          'Prywatna przestrzeń na zaproszenie dla najbliższych osób.',
+                        )
+                      : copy.text(
+                          'A Club is permanent: members, roles, a main chat, announcements and a private voice lounge.',
+                          'Klub jest stały: członkowie, role, główny czat, ogłoszenia i prywatny pokój głosowy.',
+                        ),
                   style: TextStyle(color: palette.textSecondary, height: 1.42),
                 ),
               ],
@@ -501,6 +610,7 @@ class _PrivateFamilyMediaNotice extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     final accent = palette.successForeground;
+    final copy = AppLocalizations.of(context);
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -515,7 +625,10 @@ class _PrivateFamilyMediaNotice extends StatelessWidget {
           const SizedBox(width: 12),
           Expanded(
             child: Text(
-              'Family Rooms use private initials for now. Photos stay unavailable until they can be loaded through authenticated private media.',
+              copy.text(
+                'Family Rooms use private initials for now. Photos stay unavailable until they can be loaded through authenticated private media.',
+                'Pokoje rodzinne używają obecnie prywatnych inicjałów. Zdjęcia będą dostępne, gdy możliwe będzie ich bezpieczne wczytywanie jako prywatnych multimediów.',
+              ),
               style: TextStyle(color: palette.textSecondary, height: 1.4),
             ),
           ),
@@ -656,7 +769,9 @@ class _MediaPickerCard extends StatelessWidget {
                   top: 0,
                   right: 0,
                   child: IconButton.filledTonal(
-                    tooltip: 'Remove image',
+                    tooltip: AppLocalizations.of(
+                      context,
+                    ).text('Remove image', 'Usuń zdjęcie'),
                     visualDensity: VisualDensity.compact,
                     onPressed: onRemove,
                     icon: const Icon(Icons.close_rounded, size: 17),
@@ -816,6 +931,7 @@ class _WhatGetsCreatedCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
+    final copy = AppLocalizations.of(context);
     return Container(
       padding: const EdgeInsets.all(17),
       decoration: BoxDecoration(
@@ -827,7 +943,7 @@ class _WhatGetsCreatedCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Created automatically',
+            copy.text('Created automatically', 'Utworzymy automatycznie'),
             style: TextStyle(
               color: palette.textPrimary,
               fontWeight: FontWeight.w900,
@@ -836,26 +952,41 @@ class _WhatGetsCreatedCard extends StatelessWidget {
           const SizedBox(height: 12),
           _CreatedItem(
             icon: Icons.tag_rounded,
-            text: isFamily ? 'Family chat' : 'General chat',
+            text: isFamily
+                ? copy.text('Family chat', 'Czat rodzinny')
+                : copy.text('General chat', 'Czat ogólny'),
           ),
           _CreatedItem(
             icon: Icons.campaign_rounded,
-            text: isFamily ? 'Announcements' : 'Announcements channel',
+            text: isFamily
+                ? copy.text('Announcements', 'Ogłoszenia')
+                : copy.text('Announcements channel', 'Kanał ogłoszeń'),
           ),
           _CreatedItem(
             icon: Icons.graphic_eq_rounded,
-            text: isFamily ? 'Family Lounge' : 'Private Club Lounge',
+            text: isFamily
+                ? copy.text('Family Lounge', 'Rodzinny pokój głosowy')
+                : copy.text(
+                    'Private Club Lounge',
+                    'Prywatny klubowy pokój głosowy',
+                  ),
           ),
           if (isFamily)
             _CreatedItem(
               icon: Icons.waving_hand_rounded,
-              text: 'Quick check-ins',
+              text: copy.text('Quick check-ins', 'Szybkie meldunki'),
             ),
           _CreatedItem(
             icon: Icons.admin_panel_settings_rounded,
             text: isFamily
-                ? 'Organizer role and membership'
-                : 'Owner role and membership',
+                ? copy.text(
+                    'Organizer role and membership',
+                    'Rola organizatora i członkostwo',
+                  )
+                : copy.text(
+                    'Owner role and membership',
+                    'Rola właściciela i członkostwo',
+                  ),
           ),
         ],
       ),

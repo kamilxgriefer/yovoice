@@ -362,7 +362,7 @@ const onAuthUserDeleted = functionsV1
     await handleAuthUserDeleted(user.uid);
   });
 
-function searchResult(snapshot, authority = {}) {
+function searchResult(snapshot, authority = {}, relationshipStatus = "none") {
   const data = snapshot.data() ?? {};
   const accountType = ["personal", "creator", "official"].includes(
     authority.accountType,
@@ -379,7 +379,15 @@ function searchResult(snapshot, authority = {}) {
     accountType,
     premiumIdentity: authority.premiumIdentity === true,
     followerCount: safeCount(data.followerCount),
+    relationshipStatus,
+    // This is an opaque cache revision, not a media URL. The client still
+    // exchanges the uid for a short-lived viewer-authorized media grant.
+    profileUpdatedAtMillis: timestampMillis(data.updatedAt, null),
   };
+}
+
+function exactPendingRequest(snapshot, senderId) {
+  return snapshot?.exists && snapshot.data()?.senderId === senderId;
 }
 
 function exactFriendshipGuard(snapshot, ownerId, friendId) {
@@ -596,9 +604,11 @@ const searchPublicProfiles = onCall(
       entitlements,
       forwardFriendships,
       reverseFriendships,
+      outgoingRequests,
+      incomingRequests,
     ] =
       candidateIds.length === 0
-        ? [[], [], [], [], [], []]
+        ? [[], [], [], [], [], [], [], []]
         : await Promise.all([
             // Never enumerate the caller's whole block list. A caller controls
             // its size, so doing that would make every search arbitrarily costly.
@@ -647,6 +657,18 @@ const searchPublicProfiles = onCall(
                   .doc(uid)
                   .collection("friends")
                   .doc(auth.uid),
+              ),
+            ),
+            // The bounded candidate set lets search return relationship
+            // state without the client issuing four extra reads per row.
+            db.getAll(
+              ...candidateIds.map((uid) =>
+                db.doc(`users/${uid}/friendRequests/${auth.uid}`),
+              ),
+            ),
+            db.getAll(
+              ...candidateIds.map((uid) =>
+                db.doc(`users/${auth.uid}/friendRequests/${uid}`),
               ),
             ),
           ]);
@@ -701,9 +723,31 @@ const searchPublicProfiles = onCall(
       });
     }
 
+    const relationshipByUid = new Map();
+    for (let index = 0; index < candidateIds.length; index += 1) {
+      const uid = candidateIds[index];
+      const friends =
+        exactFriendshipGuard(forwardFriendships[index], auth.uid, uid) &&
+        exactFriendshipGuard(reverseFriendships[index], uid, auth.uid);
+      const status = friends
+        ? "friends"
+        : exactPendingRequest(outgoingRequests[index], auth.uid)
+          ? "requestSent"
+          : exactPendingRequest(incomingRequests[index], uid)
+            ? "requestReceived"
+            : "none";
+      relationshipByUid.set(uid, status);
+    }
+
     const results = candidateIds
       .filter((uid) => !hidden.has(uid))
-      .map((uid) => searchResult(candidates.get(uid), authorityByUid.get(uid)))
+      .map((uid) =>
+        searchResult(
+          candidates.get(uid),
+          authorityByUid.get(uid),
+          relationshipByUid.get(uid),
+        ),
+      )
       .sort((left, right) => {
         const leftUsername = normalizeSearchText(left.username);
         const rightUsername = normalizeSearchText(right.username);

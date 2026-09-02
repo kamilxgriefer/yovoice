@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/helpers/error_messages.dart';
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/clubs/data/models/club.dart';
@@ -70,6 +71,7 @@ class DiscoverClubsRail extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
     final waiting =
         snapshot.connectionState == ConnectionState.waiting &&
@@ -86,7 +88,7 @@ class DiscoverClubsRail extends StatelessWidget {
             child: Semantics(
               header: true,
               child: Text(
-                'Discover clubs',
+                copy.text('Discover clubs', 'Odkrywaj kluby'),
                 style: TextStyle(
                   color: palette.textPrimary,
                   fontSize: 20,
@@ -120,12 +122,20 @@ class DiscoverClubsRail extends StatelessWidget {
                     icon: Icons.cloud_off_rounded,
                     tone: palette.dangerForeground,
                     liveRegion: true,
-                    title: 'Clubs could not be loaded.',
+                    title: copy.text(
+                      'Clubs could not be loaded.',
+                      'Nie udało się wczytać klubów.',
+                    ),
                     message: friendlyErrorMessage(
                       snapshot.error!,
-                      fallback: 'Check your connection and try again.',
+                      fallback: copy.text(
+                        'Check your connection and try again.',
+                        'Sprawdź połączenie i spróbuj ponownie.',
+                      ),
                     ),
-                    actionLabel: onRetry == null ? null : 'Try again',
+                    actionLabel: onRetry == null
+                        ? null
+                        : copy.text('Try again', 'Spróbuj ponownie'),
                     onAction: onRetry,
                   ),
                 );
@@ -134,13 +144,17 @@ class DiscoverClubsRail extends StatelessWidget {
               if (clubs.isEmpty) {
                 return Padding(
                   padding: EdgeInsets.symmetric(horizontal: gutter),
-                  child: const _RailNote(
+                  child: _RailNote(
                     icon: Icons.groups_2_rounded,
                     tone: AppColors.accent,
-                    title: 'No public clubs yet.',
-                    message:
-                        'Community clubs show up here as soon as someone '
-                        'opens one to everyone.',
+                    title: copy.text(
+                      'No public clubs yet.',
+                      'Nie ma jeszcze publicznych klubów.',
+                    ),
+                    message: copy.text(
+                      'Community clubs show up here as soon as someone opens one to everyone.',
+                      'Kluby społeczności pojawią się tutaj, gdy ktoś otworzy pierwszy z nich dla wszystkich.',
+                    ),
                   ),
                 );
               }
@@ -226,10 +240,14 @@ class _ClubCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
     final members = club.memberCount == 1
-        ? '1 member'
-        : '${club.memberCount} members';
+        ? copy.text('1 member', '1 członek')
+        : copy.text(
+            '${club.memberCount} members',
+            '${club.memberCount} członków',
+          );
 
     return Material(
       key: ValueKey('discover-club-card-${club.id}'),
@@ -277,7 +295,7 @@ class _ClubCard extends StatelessWidget {
               ),
               const SizedBox(height: 10),
               Text(
-                'View club',
+                copy.text('View club', 'Zobacz klub'),
                 style: TextStyle(
                   color: palette.interactiveForeground,
                   fontWeight: FontWeight.w800,
@@ -301,6 +319,7 @@ class _ClubCardSkeleton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
     Widget block(double width, double height) => Container(
       width: width,
@@ -313,7 +332,7 @@ class _ClubCardSkeleton extends StatelessWidget {
 
     return Semantics(
       key: const ValueKey('discover-club-skeleton'),
-      label: 'Loading clubs',
+      label: copy.text('Loading clubs', 'Wczytywanie klubów'),
       child: Container(
         padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(

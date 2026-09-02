@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/features/rooms/presentation/screens/broadcast_room/broadcast_colors.dart';
 import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
 
@@ -25,12 +26,13 @@ class OwnerMenuSheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     return SafeArea(
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const YoModalSheetChrome(
-            sheetLabel: 'manage podcast',
+          YoModalSheetChrome(
+            sheetLabel: copy.text('manage podcast', 'zarządzanie podcastem'),
             surfaceColor: BroadcastRoomColors.surface,
           ),
           Flexible(
@@ -39,13 +41,13 @@ class OwnerMenuSheet extends StatelessWidget {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Align(
+                  Align(
                     alignment: Alignment.centerLeft,
                     child: Padding(
                       padding: EdgeInsets.fromLTRB(6, 0, 6, 10),
                       child: Text(
-                        'Manage podcast',
-                        style: TextStyle(
+                        copy.text('Manage podcast', 'Zarządzaj podcastem'),
+                        style: const TextStyle(
                           color: Colors.white,
                           fontSize: 22,
                           fontWeight: FontWeight.w900,
@@ -55,46 +57,70 @@ class OwnerMenuSheet extends StatelessWidget {
                   ),
                   OwnerMenuItem(
                     icon: Icons.ios_share_rounded,
-                    title: 'Share room',
-                    subtitle: 'Copy the invitation link or room ID',
+                    title: copy.text('Share room', 'Udostępnij pokój'),
+                    subtitle: copy.text(
+                      'Copy the invitation link or room ID',
+                      'Skopiuj link z zaproszeniem lub identyfikator pokoju',
+                    ),
                     onTap: onShare,
                   ),
                   OwnerMenuItem(
                     icon: Icons.groups_rounded,
-                    title: 'Participants',
-                    subtitle: 'Manage stage, audience, mute and removal',
+                    title: copy.text('Participants', 'Uczestnicy'),
+                    subtitle: copy.text(
+                      'Manage stage, audience, mute and removal',
+                      'Zarządzaj sceną, publicznością, wyciszeniem i usuwaniem',
+                    ),
                     onTap: onParticipants,
                   ),
                   OwnerMenuItem(
                     icon: Icons.back_hand_rounded,
-                    title: 'Raised hands',
-                    subtitle: 'Review listeners requesting the stage',
+                    title: copy.text('Raised hands', 'Zgłoszenia do głosu'),
+                    subtitle: copy.text(
+                      'Review listeners requesting the stage',
+                      'Sprawdź osoby proszące o wejście na scenę',
+                    ),
                     onTap: onHands,
                   ),
                   OwnerMenuItem(
                     icon: Icons.settings_rounded,
-                    title: 'Podcast settings',
-                    subtitle: 'Edit the episode, format and stage requests',
+                    title: copy.text('Podcast settings', 'Ustawienia podcastu'),
+                    subtitle: copy.text(
+                      'Edit the episode, format and stage requests',
+                      'Edytuj odcinek, format i zgłoszenia na scenę',
+                    ),
                     onTap: onSettings,
                   ),
                   OwnerMenuItem(
                     icon: Icons.analytics_rounded,
-                    title: 'Live analytics',
-                    subtitle: 'View the current podcast snapshot',
+                    title: copy.text('Live analytics', 'Statystyki na żywo'),
+                    subtitle: copy.text(
+                      'View the current podcast snapshot',
+                      'Zobacz bieżące statystyki podcastu',
+                    ),
                     onTap: onAnalytics,
                   ),
                   const Divider(color: Color(0xFF3B171E), height: 22),
                   OwnerMenuItem(
                     icon: Icons.stop_circle_rounded,
-                    title: 'End podcast',
-                    subtitle: 'Disconnect everyone and close this podcast',
+                    title: copy.text('End podcast', 'Zakończ podcast'),
+                    subtitle: copy.text(
+                      'Disconnect everyone and close this podcast',
+                      'Rozłącz wszystkich i zamknij podcast',
+                    ),
                     onTap: onEnd,
                     destructive: true,
                   ),
                   OwnerMenuItem(
                     icon: Icons.delete_forever_rounded,
-                    title: 'Delete room permanently',
-                    subtitle: 'Remove the room and its messages from YO Voice',
+                    title: copy.text(
+                      'Delete room permanently',
+                      'Usuń pokój na stałe',
+                    ),
+                    subtitle: copy.text(
+                      'Remove the room and its messages from YO Voice',
+                      'Usuń pokój i jego wiadomości z YO Voice',
+                    ),
                     onTap: onDelete,
                     destructive: true,
                   ),

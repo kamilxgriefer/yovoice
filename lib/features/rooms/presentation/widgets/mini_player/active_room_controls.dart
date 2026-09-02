@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_immersive_colors.dart';
 import 'package:yovoice/features/calls/data/services/voice_call_service.dart';
@@ -124,23 +125,26 @@ class MiniPlayerMuteButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final muted = micState == MicState.muted;
     final listenOnly = micState == MicState.listenOnly;
 
     final String title;
     final String subtitle;
     if (listenOnly) {
-      title = 'Listening';
-      subtitle = 'Listen-only';
+      title = copy.text('Listening', 'Słuchasz');
+      subtitle = copy.text('Listen-only', 'Tylko słuchanie');
     } else if (busy || micState == MicState.connecting) {
-      title = muted ? 'Unmute mic' : 'Mute mic';
-      subtitle = 'One moment…';
+      title = muted
+          ? copy.text('Unmute mic', 'Włącz mikrofon')
+          : copy.text('Mute mic', 'Wycisz mikrofon');
+      subtitle = copy.text('One moment…', 'Chwileczkę…');
     } else if (muted) {
-      title = 'Unmute mic';
-      subtitle = 'Microphone muted';
+      title = copy.text('Unmute mic', 'Włącz mikrofon');
+      subtitle = copy.text('Microphone muted', 'Mikrofon wyciszony');
     } else {
-      title = 'Mute mic';
-      subtitle = 'You are live';
+      title = copy.text('Mute mic', 'Wycisz mikrofon');
+      subtitle = copy.text('You are live', 'Jesteś na żywo');
     }
 
     return _ControlTile(
@@ -175,11 +179,14 @@ class MiniPlayerReturnButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     return _ControlTile(
       key: const ValueKey('mini-player-return'),
       icon: Icons.arrow_forward_rounded,
-      title: 'Return to room',
-      subtitle: horizontal ? 'Go to room' : 'Go back to live room',
+      title: copy.text('Return to room', 'Wróć do pokoju'),
+      subtitle: horizontal
+          ? copy.text('Go to room', 'Przejdź do pokoju')
+          : copy.text('Go back to live room', 'Wróć do pokoju na żywo'),
       accent: miniPlayerReturnAccent,
       horizontal: horizontal,
       onTap: onReturnToRoom,
@@ -203,13 +210,18 @@ class MiniPlayerLeaveButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     return _ControlTile(
       key: const ValueKey('mini-player-leave'),
       icon: Icons.logout_rounded,
       title: authorityResolved
-          ? (isHost ? 'End room' : 'Leave room')
-          : 'Leave / end room',
-      subtitle: authorityResolved ? 'End session' : 'Confirmation required',
+          ? (isHost
+                ? copy.text('End room', 'Zakończ pokój')
+                : copy.text('Leave room', 'Opuść pokój'))
+          : copy.text('Leave / end room', 'Opuść lub zakończ pokój'),
+      subtitle: authorityResolved
+          ? copy.text('End session', 'Zakończ sesję')
+          : copy.text('Confirmation required', 'Wymagane potwierdzenie'),
       accent: AppColors.error,
       horizontal: horizontal,
       onTap: onLeave,

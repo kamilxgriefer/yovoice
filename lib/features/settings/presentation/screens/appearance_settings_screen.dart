@@ -89,7 +89,7 @@ class _AppearanceSettingsScreenState extends State<AppearanceSettingsScreen> {
                 title: copy.lightTheme,
                 subtitle: copy.text(
                   'Pearl surfaces, ink contrast and the signature YO glow for daytime.',
-                  'Perłowe powierzchnie, czytelny atrament i charakterystyczny blask YO na dzień.',
+                  'Jasne perłowe powierzchnie, wysoki kontrast i charakterystyczny blask YO.',
                 ),
                 selected: selected == AppThemePreference.light,
                 saving: _saving == AppThemePreference.light,

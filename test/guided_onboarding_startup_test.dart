@@ -30,31 +30,28 @@ void main() {
     },
   );
 
-  test(
-    'eligibility waits for the native-permission readiness barrier',
-    () async {
-      final readiness = Completer<void>();
-      var evaluated = false;
-      var completed = false;
+  test('eligibility waits for notification startup readiness', () async {
+    final readiness = Completer<void>();
+    var evaluated = false;
+    var completed = false;
 
-      final result = evaluateGuidedOnboardingAfterReadiness(
-        readiness: readiness.future,
-        evaluate: () async {
-          evaluated = true;
-          return true;
-        },
-      )..then((_) => completed = true);
+    final result = evaluateGuidedOnboardingAfterReadiness(
+      readiness: readiness.future,
+      evaluate: () async {
+        evaluated = true;
+        return true;
+      },
+    )..then((_) => completed = true);
 
-      await Future<void>.delayed(Duration.zero);
-      expect(evaluated, isFalse);
-      expect(completed, isFalse);
+    await Future<void>.delayed(Duration.zero);
+    expect(evaluated, isFalse);
+    expect(completed, isFalse);
 
-      readiness.complete();
-      expect(await result, isTrue);
-      expect(evaluated, isTrue);
-      expect(completed, isTrue);
-    },
-  );
+    readiness.complete();
+    expect(await result, isTrue);
+    expect(evaluated, isTrue);
+    expect(completed, isTrue);
+  });
 
   test(
     'a readiness failure fails open and still evaluates eligibility',

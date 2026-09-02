@@ -51,8 +51,11 @@ void main() {
     sanctionStaff: true,
   );
 
-  Future<void> open(WidgetTester tester, StaffCapabilities caps,
-      {FirebaseFunctions? functions}) async {
+  Future<void> open(
+    WidgetTester tester,
+    StaffCapabilities caps, {
+    FirebaseFunctions? functions,
+  }) async {
     await tester.pumpWidget(
       host(
         UserActionsMenu(
@@ -160,7 +163,9 @@ void main() {
 
   group('duration bounds', () {
     Future<void> openMuteDialog(
-        WidgetTester tester, StaffCapabilities caps) async {
+      WidgetTester tester,
+      StaffCapabilities caps,
+    ) async {
       await open(tester, caps);
       await tester.tap(find.text('Mute communication…'));
       await tester.pumpAndSettle();
@@ -258,7 +263,11 @@ void main() {
       await tester.tap(confirm);
       await tester.pump(const Duration(milliseconds: 120));
 
-      expect(find.textContaining('rejected by the server'), findsOneWidget);
+      expect(
+        find.text('Could not complete this action. Please try again.'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('rejected by the server'), findsNothing);
       expect(find.byType(SanctionDialog), findsOneWidget);
 
       await tester.tap(confirm);

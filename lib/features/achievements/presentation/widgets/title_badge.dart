@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:yovoice/core/localization/app_localizations.dart';
 
 import '../../data/models/achievement_definition.dart';
+import '../achievement_localized_copy.dart';
 
 class TitleBadge extends StatelessWidget {
   const TitleBadge({
@@ -14,6 +16,7 @@ class TitleBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final palette = _BadgePalette.forRarity(achievement.rarity);
     final highRarity = achievement.rarity.index >= AchievementRarity.epic.index;
 
@@ -57,7 +60,7 @@ class TitleBadge extends StatelessWidget {
           ],
           Flexible(
             child: Text(
-              achievement.title,
+              localizedAchievementTitle(copy, achievement),
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(

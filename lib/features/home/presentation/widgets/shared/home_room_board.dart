@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/helpers/error_messages.dart';
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/clubs/data/models/club.dart';
@@ -85,6 +87,33 @@ String compactCount(int count) {
   return '${text.endsWith('.0') ? text.substring(0, text.length - 2) : text}K';
 }
 
+String _polishPeopleCount(int count) {
+  if (count == 1) return '1 osoba';
+  final lastTwo = count % 100;
+  final last = count % 10;
+  if (last >= 2 && last <= 4 && (lastTwo < 12 || lastTwo > 14)) {
+    return '$count osoby';
+  }
+  return '$count osób';
+}
+
+String _polishListeningCount(int count) {
+  final people = _polishPeopleCount(count);
+  if (count == 1 || people.endsWith('osób')) return '$people słucha';
+  return '$people słuchają';
+}
+
+String _polishCompactPeopleCount(int count) {
+  if (count < 1000) return _polishPeopleCount(count);
+  final thousands = count / 1000;
+  final raw = thousands >= 10
+      ? thousands.round().toString()
+      : thousands.toStringAsFixed(1);
+  final value = (raw.endsWith('.0') ? raw.substring(0, raw.length - 2) : raw)
+      .replaceAll('.', ',');
+  return '$value tys. osób';
+}
+
 /// A wide room banner: the room's own cover IS the card, and one primary
 /// action sits on it.
 ///
@@ -143,6 +172,7 @@ class HomeRoomBanner extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
+    final copy = AppLocalizations.of(context);
     final ownsRoom =
         currentUserId != null &&
         currentUserId!.isNotEmpty &&
@@ -152,15 +182,18 @@ class HomeRoomBanner extends StatelessWidget {
     final hasStaffActions = staffCapabilities?.hasRoomModeration ?? false;
     final tags = <String>[
       room.category.trim(),
-      if (room.isBroadcast) 'Broadcast',
+      if (room.isBroadcast) copy.text('Broadcast', 'Transmisja'),
       room.language.trim(),
     ].where((tag) => tag.isNotEmpty).toList(growable: false);
 
     return Semantics(
       container: true,
-      label:
-          '${room.name}. ${room.isLive ? 'Live' : 'Not live'}. '
-          '${room.participantCount} listening.',
+      label: copy.text(
+        '${room.name}. ${room.isLive ? 'Live' : 'Not live'}. '
+            '${room.participantCount} listening.',
+        '${room.name}. ${room.isLive ? 'Na żywo' : 'Poza transmisją'}. '
+            '${_polishListeningCount(room.participantCount)}.',
+      ),
       child: Container(
         margin: EdgeInsets.only(bottom: compact ? 14 : 12),
         constraints: BoxConstraints(minHeight: compact ? 168 : 140),
@@ -389,13 +422,14 @@ class _OwnedRoomMenuState extends State<_OwnedRoomMenu> {
     required Club? deleteClub,
   }) {
     final palette = context.appPalette;
+    final copy = AppLocalizations.of(context);
     final onManage = widget.onManage;
     if (onManage == null && deleteRoom == null && deleteClub == null) {
       // Nothing to offer; an empty popup would render as a blank sheet.
       return const SizedBox.shrink();
     }
     return PopupMenuButton<_OwnedRoomAction>(
-      tooltip: 'Manage your room',
+      tooltip: copy.text('Manage your room', 'Zarządzaj pokojem'),
       icon: const Icon(Icons.more_horiz_rounded, color: Colors.white, size: 22),
       color: palette.surfaceRaised,
       shape: RoundedRectangleBorder(
@@ -404,28 +438,28 @@ class _OwnedRoomMenuState extends State<_OwnedRoomMenu> {
       ),
       itemBuilder: (context) => [
         if (onManage != null)
-          const PopupMenuItem(
+          PopupMenuItem(
             value: _OwnedRoomAction.settings,
             child: _OwnedMenuRow(
               icon: Icons.settings_rounded,
-              label: 'Room settings',
+              label: copy.text('Room settings', 'Ustawienia pokoju'),
             ),
           ),
         if (deleteClub != null)
-          const PopupMenuItem(
+          PopupMenuItem(
             value: _OwnedRoomAction.delete,
             child: _OwnedMenuRow(
               icon: Icons.delete_forever_rounded,
-              label: 'Delete club…',
+              label: copy.text('Delete club…', 'Usuń klub…'),
               danger: true,
             ),
           )
         else if (deleteRoom != null)
-          const PopupMenuItem(
+          PopupMenuItem(
             value: _OwnedRoomAction.delete,
             child: _OwnedMenuRow(
               icon: Icons.delete_forever_rounded,
-              label: 'Delete room…',
+              label: copy.text('Delete room…', 'Usuń pokój…'),
               danger: true,
             ),
           ),
@@ -446,18 +480,31 @@ class _OwnedRoomMenuState extends State<_OwnedRoomMenu> {
               barrierDismissible: false,
               builder: (_) => deleteClub != null
                   ? _ConfirmDeleteDialog(
-                      title: 'Delete the Club "${deleteClub.name}"?',
-                      body:
-                          'This deletes the whole Club — its lounge, chat, '
-                          'channels, members and invites. This cannot be '
-                          'undone.',
+                      title: copy.text(
+                        'Delete the Club "${deleteClub.name}"?',
+                        'Usunąć klub „${deleteClub.name}”?',
+                      ),
+                      body: copy.text(
+                        'This deletes the whole Club — its lounge, chat, '
+                            'channels, members and invites. This cannot be '
+                            'undone.',
+                        'Spowoduje to usunięcie całego klubu — pokoju, '
+                            'czatu, kanałów, członków i zaproszeń. Tej '
+                            'operacji nie można cofnąć.',
+                      ),
                       onDelete: () => _clubService!.deleteClub(deleteClub.id),
                     )
                   : _ConfirmDeleteDialog(
-                      title: 'Delete "${widget.room.name}"?',
-                      body:
-                          'Messages, members and room settings will be '
-                          'permanently removed. This cannot be undone.',
+                      title: copy.text(
+                        'Delete "${widget.room.name}"?',
+                        'Usunąć pokój „${widget.room.name}”?',
+                      ),
+                      body: copy.text(
+                        'Messages, members and room settings will be '
+                            'permanently removed. This cannot be undone.',
+                        'Wiadomości, uczestnicy i ustawienia pokoju zostaną '
+                            'trwale usunięte. Tej operacji nie można cofnąć.',
+                      ),
                       onDelete: deleteRoom!,
                     ),
             );
@@ -533,9 +580,17 @@ class _ConfirmDeleteDialogState extends State<_ConfirmDeleteDialog> {
       if (mounted) Navigator.of(context).pop();
     } catch (error) {
       if (!mounted) return;
+      final copy = AppLocalizations.of(context);
       setState(() {
         _busy = false;
-        _error = error.toString().replaceFirst(RegExp(r'^\[[^\]]*\]\s*'), '');
+        _error = friendlyErrorMessage(
+          error,
+          fallback: copy.text(
+            'Could not delete this room. Please try again.',
+            'Nie udało się usunąć pokoju. Spróbuj ponownie.',
+          ),
+          copy: copy,
+        );
       });
     }
   }
@@ -544,6 +599,7 @@ class _ConfirmDeleteDialogState extends State<_ConfirmDeleteDialog> {
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
+    final copy = AppLocalizations.of(context);
     return AlertDialog(
       backgroundColor: palette.surfaceRaised,
       title: Text(widget.title, style: TextStyle(color: palette.textPrimary)),
@@ -567,7 +623,7 @@ class _ConfirmDeleteDialogState extends State<_ConfirmDeleteDialog> {
       actions: [
         TextButton(
           onPressed: _busy ? null : () => Navigator.of(context).pop(),
-          child: const Text('Cancel'),
+          child: Text(copy.text('Cancel', 'Anuluj')),
         ),
         FilledButton(
           onPressed: _busy ? null : _submit,
@@ -581,7 +637,7 @@ class _ConfirmDeleteDialogState extends State<_ConfirmDeleteDialog> {
                   height: 18,
                   child: CircularProgressIndicator(strokeWidth: 2),
                 )
-              : const Text('Delete'),
+              : Text(copy.text('Delete', 'Usuń')),
         ),
       ],
     );
@@ -674,6 +730,7 @@ class _StatusBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     // "Not live" rather than "Scheduled": rooms carry no start time in
     // Firestore, so a schedule badge would be claiming something the
     // backend cannot answer.
@@ -686,7 +743,9 @@ class _StatusBadge extends StatelessWidget {
             : Colors.black.withValues(alpha: .58),
       ),
       child: Text(
-        live ? 'LIVE' : 'NOT LIVE',
+        live
+            ? copy.text('LIVE', 'NA ŻYWO')
+            : copy.text('NOT LIVE', 'NIE NA ŻYWO'),
         style: const TextStyle(
           color: Colors.white,
           fontSize: 10,
@@ -762,9 +821,12 @@ class _JoinButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     return YoButton(
       key: const ValueKey('home-room-join'),
-      label: compact ? 'Join' : 'Join room',
+      label: compact
+          ? copy.text('Join', 'Dołącz')
+          : copy.text('Join room', 'Dołącz do pokoju'),
       onPressed: onTap,
       fullWidth: false,
       height: 44,
@@ -810,6 +872,7 @@ class HomeActiveRooms extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     // A room mid-deletion must never come back as a tile — the server
     // marked it closed and its teardown finishes (or is retried) without
     // the host's involvement. Discover already excludes these; showing
@@ -835,7 +898,10 @@ class HomeActiveRooms extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(
-              'You have no rooms yet.',
+              copy.text(
+                'You have no rooms yet.',
+                'Nie masz jeszcze żadnych pokojów.',
+              ),
               style: TextStyle(
                 color: palette.textSecondary,
                 fontSize: 13.5,
@@ -848,7 +914,7 @@ class HomeActiveRooms extends StatelessWidget {
               child: OutlinedButton.icon(
                 onPressed: onCreateRoom,
                 icon: const Icon(Icons.add_rounded, size: 18),
-                label: const Text('Create Room'),
+                label: Text(copy.text('Create Room', 'Utwórz pokój')),
                 style: OutlinedButton.styleFrom(
                   foregroundColor: colors.primary,
                   side: BorderSide(
@@ -914,6 +980,7 @@ class _CreateRoomTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
+    final copy = AppLocalizations.of(context);
     return SizedBox(
       width: side,
       child: Material(
@@ -934,7 +1001,7 @@ class _CreateRoomTile extends StatelessWidget {
                   Icon(Icons.add_rounded, color: colors.primary, size: 28),
                   const SizedBox(height: 8),
                   Text(
-                    'Create room',
+                    copy.text('Create room', 'Utwórz pokój'),
                     style: TextStyle(
                       color: colors.primary,
                       fontSize: 13,
@@ -1009,6 +1076,7 @@ class _OwnedRoomCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
+    final copy = AppLocalizations.of(context);
     return SizedBox(
       width: side,
       child: Column(
@@ -1053,10 +1121,14 @@ class _OwnedRoomCard extends StatelessWidget {
           ),
           Text(
             !room.isActive
-                ? 'Ended'
+                ? copy.text('Ended', 'Zakończony')
                 : room.isLive
-                ? 'Live · ${compactCount(room.participantCount)} here'
-                : 'Not live',
+                ? copy.text(
+                    'Live · ${compactCount(room.participantCount)} here',
+                    'Na żywo · '
+                        '${_polishCompactPeopleCount(room.participantCount)}',
+                  )
+                : copy.text('Not live', 'Poza transmisją'),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(color: palette.textSecondary, fontSize: 11.5),
@@ -1078,10 +1150,10 @@ class _OwnedRoomCard extends StatelessWidget {
               ),
               child: Text(
                 !room.isActive
-                    ? 'Ended'
+                    ? copy.text('Ended', 'Zakończony')
                     : room.isLive
-                    ? 'Enter'
-                    : 'Start',
+                    ? copy.text('Enter', 'Wejdź')
+                    : copy.text('Start', 'Uruchom'),
                 style: const TextStyle(
                   fontSize: 13,
                   fontWeight: FontWeight.w800,
@@ -1134,6 +1206,7 @@ class _FacePile extends StatelessWidget {
     final service = roomService;
     if (service == null) return const SizedBox.shrink();
 
+    final copy = AppLocalizations.of(context);
     final radius = compact ? 15.0 : 16.0;
     return StreamBuilder<List<RoomParticipant>>(
       stream: service.watchParticipants(room.id),
@@ -1143,11 +1216,18 @@ class _FacePile extends StatelessWidget {
 
         return Semantics(
           button: true,
-          label:
-              '${room.participantCount} in ${room.name}. '
-              'Open the participant list',
+          label: copy.text(
+            '${room.participantCount} in ${room.name}. '
+                'Open the participant list',
+            '${_polishPeopleCount(room.participantCount)} w pokoju '
+                '${room.name}. '
+                'Otwórz listę uczestników',
+          ),
           child: Tooltip(
-            message: 'See who is in the room',
+            message: copy.text(
+              'See who is in the room',
+              'Zobacz, kto jest w pokoju',
+            ),
             child: InkWell(
               onTap: () => _openRoster(context, room, service, compact),
               customBorder: const StadiumBorder(),
@@ -1196,6 +1276,7 @@ void _openRoster(
   bool compact,
 ) {
   final palette = context.appPalette;
+  final copy = AppLocalizations.of(context);
   if (compact) {
     showModalBottomSheet<void>(
       context: context,
@@ -1209,7 +1290,7 @@ void _openRoster(
         mainAxisSize: MainAxisSize.min,
         children: [
           YoModalSheetChrome(
-            sheetLabel: 'room roster',
+            sheetLabel: copy.text('room roster', 'lista uczestników pokoju'),
             surfaceColor: palette.surface,
           ),
           Flexible(
@@ -1268,6 +1349,7 @@ class _RosterLoader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
+    final copy = AppLocalizations.of(context);
     return StreamBuilder<List<RoomParticipant>>(
       stream: service.watchParticipants(room.id),
       builder: (context, snapshot) {
@@ -1288,7 +1370,10 @@ class _RosterLoader extends StatelessWidget {
           return Padding(
             padding: const EdgeInsets.symmetric(vertical: 18, horizontal: 6),
             child: Text(
-              'That room is no longer available.',
+              copy.text(
+                'That room is no longer available.',
+                'Ten pokój nie jest już dostępny.',
+              ),
               style: TextStyle(color: palette.textSecondary, fontSize: 12.5),
             ),
           );

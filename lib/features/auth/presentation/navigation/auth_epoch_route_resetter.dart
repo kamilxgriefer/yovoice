@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 enum AuthRouteResetReason { signedOut, principalChanged, authError }
@@ -73,6 +74,14 @@ class AuthEpochRouteResetter {
   }
 
   void handleError(Object error, StackTrace stackTrace) {
+    // Keep the original exception in diagnostics while the presentation layer
+    // receives the typed object and maps it to safe localized copy. Never
+    // stringify this value into a widget: provider/backend messages can carry
+    // implementation details that are useful in logs but not safe in UI.
+    if (kDebugMode) {
+      debugPrint('AuthEpochRouteResetter: auth stream failed: $error');
+      debugPrintStack(stackTrace: stackTrace);
+    }
     if (_currentUserId != null) _runPrincipalExitCleanup();
     _replaceStack(AuthRouteResetTarget.authError(error));
   }

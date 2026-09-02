@@ -125,10 +125,8 @@ class FollowService {
     }
     try {
       await _functions.httpsCallable('setFollow').call(data);
-    } on FirebaseFunctionsException catch (error) {
-      throw StateError(
-        error.message ?? 'The follow action could not be completed.',
-      );
+    } on FirebaseFunctionsException {
+      throw StateError('The follow action could not be completed.');
     }
   }
 }

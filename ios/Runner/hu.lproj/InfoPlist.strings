@@ -1,0 +1,3 @@
+"NSCameraUsageDescription" = "A YO Voice a kamerát privát videohívásokhoz, csevegésben küldött fényképekhez, valamint az általad készíteni kívánt profil-, szoba- vagy klubképekhez használja.";
+"NSMicrophoneUsageDescription" = "A YO Voice akkor használja a mikrofonodat, amikor hangszobákban beszélni, hangot rögzíteni vagy privát hívást indítani szeretnél.";
+"NSPhotoLibraryUsageDescription" = "A YO Voice az általad kiválasztott fényképeket csevegésekhez, valamint profil-, szoba- vagy klubképként használja.";

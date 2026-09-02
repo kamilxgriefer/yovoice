@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/settings/data/models/message_privacy.dart';
 import 'package:yovoice/features/settings/data/services/message_privacy_service.dart';
@@ -24,16 +25,20 @@ class _MessagePrivacySettingsTileState
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
     return StreamBuilder<MessagePrivacyOption>(
       stream: _service.watchCurrent(),
       builder: (context, snapshot) {
         final subtitle = snapshot.hasError
-            ? 'Could not load this preference'
+            ? copy.text(
+                'Could not load this preference',
+                'Nie udało się wczytać tego ustawienia',
+              )
             : snapshot.hasData
-            ? snapshot.data!.label
-            : 'Loading…';
+            ? _localizedOptionLabel(copy, snapshot.data!)
+            : copy.text('Loading…', 'Wczytywanie…');
         return ListTile(
           key: const ValueKey('message-privacy-settings-tile'),
           onTap: snapshot.hasData
@@ -58,7 +63,7 @@ class _MessagePrivacySettingsTileState
             ),
           ),
           title: Text(
-            'Who can message you',
+            copy.text('Who can message you', 'Kto może do Ciebie pisać'),
             style: TextStyle(
               color: palette.textPrimary,
               fontWeight: FontWeight.w700,
@@ -80,3 +85,16 @@ class _MessagePrivacySettingsTileState
     );
   }
 }
+
+String _localizedOptionLabel(
+  AppLocalizations copy,
+  MessagePrivacyOption option,
+) => switch (option) {
+  MessagePrivacyOption.everyone => copy.text('Everyone', 'Wszyscy'),
+  MessagePrivacyOption.peopleYouFollow => copy.text(
+    'People you follow',
+    'Obserwowane osoby',
+  ),
+  MessagePrivacyOption.friends => copy.text('Friends only', 'Tylko znajomi'),
+  MessagePrivacyOption.nobody => copy.text('Nobody', 'Nikt'),
+};

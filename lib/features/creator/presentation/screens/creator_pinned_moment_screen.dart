@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
 import 'package:yovoice/features/moments/presentation/screens/moment_comments_screen.dart';
 import 'package:yovoice/features/moments/presentation/screens/moments_screen.dart';
@@ -24,6 +25,7 @@ class CreatorPinnedMomentScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final content = Scaffold(
       backgroundColor: _background,
       body: SafeArea(
@@ -40,24 +42,32 @@ class CreatorPinnedMomentScreen extends StatelessWidget {
                     size: 48,
                     backgroundColor: _surface,
                     borderColor: _border,
+                    tooltip: copy.text('Back', 'Wróć'),
+                    semanticLabel: copy.text('Back', 'Wróć'),
                     onPressed: () => Navigator.of(context).pop(),
                   ),
                   const SizedBox(width: 12),
-                  const Expanded(
+                  Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          'Pinned Voice Moment',
-                          style: TextStyle(
+                          copy.text(
+                            'Pinned Voice Moment',
+                            'Przypięty Voice Moment',
+                          ),
+                          style: const TextStyle(
                             color: Colors.white,
                             fontSize: 23,
                             fontWeight: FontWeight.w900,
                           ),
                         ),
                         Text(
-                          'Listen first, then join the conversation.',
-                          style: TextStyle(color: _muted, fontSize: 12.5),
+                          copy.text(
+                            'Listen first, then join the conversation.',
+                            'Najpierw posłuchaj, a potem dołącz do rozmowy.',
+                          ),
+                          style: const TextStyle(color: _muted, fontSize: 12.5),
                         ),
                       ],
                     ),
@@ -97,12 +107,16 @@ class _ExpiringPinnedMomentState extends State<_ExpiringPinnedMoment> {
   }
 
   void _handleExpired() {
+    final copy = AppLocalizations.of(context);
     final previousFocus = FocusManager.instance.primaryFocus;
     final recoverFocus = momentExpiryFocusIsWithin(context, previousFocus);
     _expiryAnnouncer.announce(
       context,
       transition: 'pinned-detail-${widget.moment.id}',
-      message: 'Pinned Voice Moment expired.',
+      message: copy.text(
+        'Pinned Voice Moment expired.',
+        'Przypięty Voice Moment wygasł.',
+      ),
     );
     recoverMomentExpiryFocusAfterFrame(
       context: context,
@@ -113,6 +127,7 @@ class _ExpiringPinnedMomentState extends State<_ExpiringPinnedMoment> {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final moment = widget.moment;
     return MomentExpiryBoundary(
       moment: moment,
@@ -123,17 +138,20 @@ class _ExpiringPinnedMomentState extends State<_ExpiringPinnedMoment> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Text(
-                'This pinned Voice Moment is no longer available.',
+              Text(
+                copy.text(
+                  'This pinned Voice Moment is no longer available.',
+                  'Ten przypięty Voice Moment nie jest już dostępny.',
+                ),
                 textAlign: TextAlign.center,
-                style: TextStyle(color: _muted),
+                style: const TextStyle(color: _muted),
               ),
               const SizedBox(height: 16),
               FilledButton(
                 key: const ValueKey('pinned-moment-gone-back'),
                 focusNode: _goneBackFocus,
                 onPressed: () => Navigator.of(context).maybePop(),
-                child: const Text('Back to profile'),
+                child: Text(copy.text('Back to profile', 'Wróć do profilu')),
               ),
             ],
           ),

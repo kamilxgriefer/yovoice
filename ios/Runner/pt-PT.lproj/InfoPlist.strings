@@ -1,0 +1,3 @@
+"NSCameraUsageDescription" = "O YO Voice utiliza a câmara para videochamadas privadas, fotografias nas conversas e imagens de perfil, sala ou clube que decidas criar.";
+"NSMicrophoneUsageDescription" = "O YO Voice utiliza o microfone quando optas por falar em salas de voz, gravar áudio ou fazer chamadas privadas.";
+"NSPhotoLibraryUsageDescription" = "O YO Voice utiliza as fotografias que selecionares para conversas e como imagens de perfil, sala ou clube.";

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/features/rooms/presentation/screens/room_settings_screen.dart';
 import 'package:yovoice/features/home/presentation/widgets/shared/home_room_board.dart';
 import 'package:yovoice/features/home/presentation/widgets/shared/recent_chats.dart';
@@ -228,6 +229,7 @@ class _MobileHomeState extends State<MobileHome> {
     return StreamBuilder<List<VoiceRoom>>(
       stream: _liveRooms,
       builder: (context, snapshot) {
+        final copy = AppLocalizations.of(context);
         final live = snapshot.data ?? const <VoiceRoom>[];
         // A failed room query is NOT an empty room list — see the same
         // split in DesktopHome. Without it, "start one and your community
@@ -295,21 +297,24 @@ class _MobileHomeState extends State<MobileHome> {
               },
             ),
             MobileSectionHeader(
-              title: 'Rooms for you',
+              title: copy.text('Rooms for you', 'Pokoje dla Ciebie'),
               onSeeAll: widget.onOpenDiscover,
             ),
             if (roomsUnavailable)
               YoErrorState(
-                message:
-                    'Live rooms could not be loaded. Check your connection '
-                    'and try again.',
+                message: copy.text(
+                  'Live rooms could not be loaded. Check your connection and try again.',
+                  'Nie udało się wczytać pokojów na żywo. Sprawdź połączenie i spróbuj ponownie.',
+                ),
                 onRetry: _retryLiveRooms,
                 compact: true,
               )
             else if (rankRoomsForHome(live: live, recommended: live).isEmpty)
-              const _MobileNote(
-                'No rooms to show yet — start one and your community '
-                'will see it here.',
+              _MobileNote(
+                copy.text(
+                  'No rooms to show yet — start one and your community will see it here.',
+                  'Nie ma jeszcze żadnych pokojów — utwórz pierwszy, a zobaczy go Twoja społeczność.',
+                ),
               )
             else
               for (final room in rankRoomsForHome(
@@ -327,7 +332,7 @@ class _MobileHomeState extends State<MobileHome> {
                   staffCapabilities: _capabilities,
                 ),
             MobileSectionHeader(
-              title: 'Your active rooms',
+              title: copy.text('Your active rooms', 'Twoje aktywne pokoje'),
               onSeeAll: widget.onOpenDiscover,
             ),
             StreamBuilder<List<VoiceRoom>>(
@@ -343,7 +348,7 @@ class _MobileHomeState extends State<MobileHome> {
               ),
             ),
             MobileSectionHeader(
-              title: 'Your recent chats',
+              title: copy.text('Your recent chats', 'Ostatnie czaty'),
               onSeeAll: widget.onSeeAllChats,
             ),
             StreamBuilder<List<Conversation>>(
@@ -381,16 +386,17 @@ class _MobileHeader extends StatelessWidget {
   final VoidCallback onProfile;
   final int unreadNotificationCount;
 
-  static String _partOfDay() {
+  static String _partOfDay(AppLocalizations copy) {
     final hour = DateTime.now().hour;
-    if (hour < 12) return 'Good morning,';
-    if (hour < 18) return 'Good afternoon,';
-    return 'Good evening,';
+    if (hour < 12) return copy.text('Good morning,', 'Dzień dobry,');
+    if (hour < 18) return copy.text('Good afternoon,', 'Dzień dobry,');
+    return copy.text('Good evening,', 'Dobry wieczór,');
   }
 
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
+    final copy = AppLocalizations.of(context);
     return StreamBuilder<UserProfile>(
       stream: profile,
       builder: (context, snapshot) {
@@ -398,9 +404,9 @@ class _MobileHeader extends StatelessWidget {
         final enlargedText = MediaQuery.textScalerOf(context).scale(1) >= 1.6;
         final displayName = data?.displayName.trim().isNotEmpty == true
             ? data!.displayName.trim()
-            : 'Welcome';
+            : copy.text('Welcome', 'Witaj');
         final greeting = Text(
-          _partOfDay(),
+          _partOfDay(copy),
           style: TextStyle(color: palette.textSecondary, fontSize: 14),
         );
         final name = Text(
@@ -418,14 +424,17 @@ class _MobileHeader extends StatelessWidget {
           icon: Icons.notifications_none_rounded,
           onTap: onNotifications,
           tooltip: unreadNotificationCount > 0
-              ? 'Notifications, $unreadNotificationCount unread'
-              : 'Notifications',
+              ? copy.text(
+                  'Notifications, $unreadNotificationCount unread',
+                  'Powiadomienia: $unreadNotificationCount nieprzeczytanych',
+                )
+              : copy.notifications,
           badgeCount: unreadNotificationCount,
         );
         final avatar = AccessibleTapRegion(
           onTap: onProfile,
-          semanticLabel: 'Open your profile',
-          tooltip: 'Profile',
+          semanticLabel: copy.text('Open your profile', 'Otwórz swój profil'),
+          tooltip: copy.profile,
           circular: true,
           child: Container(
             padding: const EdgeInsets.all(2),

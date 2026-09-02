@@ -46,6 +46,7 @@ class RecentChats extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final textScale = MediaQuery.textScalerOf(context).scale(1).clamp(1.0, 2.0);
     // The desktop backdrop is compact at ordinary scale, but gives enlarged
     // names/previews real space rather than capping accessibility text. The
@@ -64,9 +65,12 @@ class RecentChats extends StatelessWidget {
     }
 
     if (snapshot.hasError) {
-      return const _RecentChatsMessage(
+      return _RecentChatsMessage(
         icon: Icons.cloud_off_rounded,
-        text: 'Your recent chats could not be loaded.',
+        text: copy.text(
+          'Your recent chats could not be loaded.',
+          'Nie udało się wczytać ostatnich czatów.',
+        ),
       );
     }
 
@@ -76,8 +80,11 @@ class RecentChats extends StatelessWidget {
     if (conversations.isEmpty) {
       return _RecentChatsMessage(
         icon: Icons.chat_bubble_outline_rounded,
-        text: 'Your latest chats with friends will appear here.',
-        actionLabel: 'Find friends',
+        text: copy.text(
+          'Your latest chats with friends will appear here.',
+          'Tutaj pojawią się Twoje ostatnie czaty ze znajomymi.',
+        ),
+        actionLabel: copy.text('Find friends', 'Znajdź znajomych'),
         onAction: onFindFriends,
       );
     }
@@ -313,28 +320,9 @@ class _BackdropRecentChatCard extends StatelessWidget {
     final conversationPhotoUrl = conversation.photoUrlFor(otherUserId);
     final preview = conversation.previewFor(currentUserId);
     final copy = AppLocalizations.of(context);
-    final openLabel = copy.text(
-      'Open chat with $displayName',
-      'Otwórz czat z $displayName',
-    );
-    final polishFew =
-        unread % 10 >= 2 &&
-        unread % 10 <= 4 &&
-        (unread % 100 < 12 || unread % 100 > 14);
-    final unreadLabel = unread == 0
-        ? ''
-        : unread == 1
-        ? copy.text('1 unread message', '1 nieprzeczytana wiadomość')
-        : copy.text(
-            '$unread unread messages',
-            polishFew
-                ? '$unread nieprzeczytane wiadomości'
-                : '$unread nieprzeczytanych wiadomości',
-          );
-    final previewLabel = copy.text(
-      'Last message: $preview',
-      'Ostatnia wiadomość: $preview',
-    );
+    final openLabel = copy.openChatWith(displayName);
+    final unreadLabel = unread == 0 ? '' : copy.unreadMessages(unread);
+    final previewLabel = copy.lastMessage(preview);
     final semanticLabel = [
       openLabel,
       if (unreadLabel.isNotEmpty) unreadLabel,

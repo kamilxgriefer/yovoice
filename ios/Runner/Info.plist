@@ -6,6 +6,52 @@
 	<true/>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
+	<key>CFBundleLocalizations</key>
+	<array>
+		<string>en</string>
+		<string>pl</string>
+		<string>de</string>
+		<string>es</string>
+		<string>pt-PT</string>
+		<string>pt-BR</string>
+		<string>fr</string>
+		<string>it</string>
+		<string>uk</string>
+		<string>ru</string>
+		<string>cs</string>
+		<string>sk</string>
+		<string>bg</string>
+		<string>nl</string>
+		<string>ro</string>
+		<string>tr</string>
+		<string>el</string>
+		<string>hu</string>
+		<string>hr</string>
+		<string>sr</string>
+		<string>sv</string>
+		<string>da</string>
+		<string>nb</string>
+		<string>fi</string>
+		<string>lt</string>
+		<string>lv</string>
+		<string>et</string>
+		<string>id</string>
+		<string>vi</string>
+		<string>zh-Hans</string>
+		<string>zh-Hant</string>
+		<string>ja</string>
+		<string>ko</string>
+		<string>ar</string>
+		<string>hi</string>
+		<string>bn</string>
+		<string>ur</string>
+		<string>th</string>
+		<string>ms</string>
+		<string>fil</string>
+		<string>he</string>
+		<string>fa</string>
+		<string>sw</string>
+	</array>
 	<key>CFBundleDisplayName</key>
 	<string>Yo Voice</string>
 	<key>CFBundleExecutable</key>

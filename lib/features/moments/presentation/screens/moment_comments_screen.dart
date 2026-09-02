@@ -3,6 +3,8 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/helpers/error_messages.dart';
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/moderation/data/services/content_report_service.dart';
 import 'package:yovoice/features/moderation/presentation/report_content_flow.dart';
@@ -92,12 +94,16 @@ class _MomentCommentsScreenState extends State<MomentCommentsScreen> {
   }
 
   void _handleExpired() {
+    final copy = AppLocalizations.of(context);
     final previousFocus = FocusManager.instance.primaryFocus;
     final recoverFocus = momentExpiryFocusIsWithin(context, previousFocus);
     _expiryAnnouncer.announce(
       context,
       transition: 'comments-gone-${widget.moment.id}',
-      message: 'Voice Moment expired. Comments are now unavailable.',
+      message: copy.text(
+        'Voice Moment expired. Comments are now unavailable.',
+        'Voice Moment wygasł. Komentarze nie są już dostępne.',
+      ),
     );
     recoverMomentExpiryFocusAfterFrame(
       context: context,
@@ -125,10 +131,22 @@ class _MomentCommentsScreenState extends State<MomentCommentsScreen> {
       _controller.clear();
     } catch (error) {
       if (!mounted) return;
+      final copy = AppLocalizations.of(context);
       ScaffoldMessenger.of(context)
         ..hideCurrentSnackBar()
         ..showSnackBar(
-          SnackBar(content: Text('Could not post comment: $error')),
+          SnackBar(
+            content: Text(
+              friendlyErrorMessage(
+                error,
+                fallback: copy.text(
+                  'Could not post the comment. Please try again.',
+                  'Nie udało się opublikować komentarza. Spróbuj ponownie.',
+                ),
+                copy: copy,
+              ),
+            ),
+          ),
         );
     } finally {
       if (mounted) setState(() => _sending = false);
@@ -137,6 +155,7 @@ class _MomentCommentsScreenState extends State<MomentCommentsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
     return Scaffold(
@@ -145,7 +164,7 @@ class _MomentCommentsScreenState extends State<MomentCommentsScreen> {
       appBar: AppBar(
         backgroundColor: palette.background,
         foregroundColor: palette.textPrimary,
-        title: const Text('Comments'),
+        title: Text(copy.text('Comments', 'Komentarze')),
       ),
       body: SafeArea(
         child: MomentExpiryBoundary(
@@ -161,7 +180,10 @@ class _MomentCommentsScreenState extends State<MomentCommentsScreen> {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Text(
-                    'This Voice Moment is no longer available.',
+                    copy.text(
+                      'This Voice Moment is no longer available.',
+                      'Ten Voice Moment nie jest już dostępny.',
+                    ),
                     textAlign: TextAlign.center,
                     style: TextStyle(color: palette.textSecondary),
                   ),
@@ -170,7 +192,9 @@ class _MomentCommentsScreenState extends State<MomentCommentsScreen> {
                     key: const ValueKey('moment-comments-gone-back'),
                     focusNode: _goneBackFocus,
                     onPressed: () => Navigator.of(context).maybePop(),
-                    child: const Text('Back to Moments'),
+                    child: Text(
+                      copy.text('Back to Moments', 'Wróć do Momentów'),
+                    ),
                   ),
                 ],
               ),
@@ -189,7 +213,10 @@ class _MomentCommentsScreenState extends State<MomentCommentsScreen> {
                       if (snapshot.hasError) {
                         return Center(
                           child: Text(
-                            'Could not load comments.',
+                            copy.text(
+                              'Could not load comments.',
+                              'Nie udało się wczytać komentarzy.',
+                            ),
                             style: TextStyle(color: palette.textSecondary),
                           ),
                         );
@@ -205,7 +232,10 @@ class _MomentCommentsScreenState extends State<MomentCommentsScreen> {
                       if (comments.isEmpty) {
                         return Center(
                           child: Text(
-                            'Be the first to comment.',
+                            copy.text(
+                              'Be the first to comment.',
+                              'Napisz pierwszy komentarz.',
+                            ),
                             style: TextStyle(color: palette.textSecondary),
                           ),
                         );
@@ -217,7 +247,8 @@ class _MomentCommentsScreenState extends State<MomentCommentsScreen> {
                         itemBuilder: (context, index) {
                           final data = comments[index].data();
                           final name =
-                              data['authorName'] as String? ?? 'YO Voice user';
+                              data['authorName'] as String? ??
+                              copy.text('YO Voice user', 'Użytkownik YO Voice');
                           final photo = data['authorPhotoUrl'] as String?;
                           final type = data['type'] as String? ?? 'text';
                           final authorId = data['authorId'] as String? ?? '';
@@ -256,7 +287,10 @@ class _MomentCommentsScreenState extends State<MomentCommentsScreen> {
                           onSubmitted: (_) => _sendComment(),
                           style: TextStyle(color: palette.textPrimary),
                           decoration: InputDecoration(
-                            hintText: 'Write a comment...',
+                            hintText: copy.text(
+                              'Write a comment...',
+                              'Napisz komentarz…',
+                            ),
                             hintStyle: TextStyle(color: palette.textTertiary),
                             filled: true,
                             fillColor: palette.surfaceSunken,
@@ -270,6 +304,10 @@ class _MomentCommentsScreenState extends State<MomentCommentsScreen> {
                       const SizedBox(width: 10),
                       IconButton.filled(
                         onPressed: _sending ? null : _sendComment,
+                        tooltip: copy.text(
+                          'Post comment',
+                          'Opublikuj komentarz',
+                        ),
                         style: IconButton.styleFrom(
                           backgroundColor: colors.primary,
                           foregroundColor: colors.onPrimary,
@@ -366,12 +404,18 @@ class _CommentCardState extends State<_CommentCard> {
     } catch (_) {
       if (!mounted) return;
       setState(() => _playing = false);
+      final copy = AppLocalizations.of(context);
       ScaffoldMessenger.of(context)
         ..hideCurrentSnackBar()
         ..showSnackBar(
-          const SnackBar(
+          SnackBar(
             behavior: SnackBarBehavior.floating,
-            content: Text('This voice reply is unavailable right now.'),
+            content: Text(
+              copy.text(
+                'This voice reply is unavailable right now.',
+                'Ta odpowiedź głosowa jest teraz niedostępna.',
+              ),
+            ),
           ),
         );
     }
@@ -384,6 +428,7 @@ class _CommentCardState extends State<_CommentCard> {
   /// comment id — "report the person" would leave a moderator hunting
   /// through a thread for which clip was meant.
   Future<void> _report() async {
+    final copy = AppLocalizations.of(context);
     await reportContent(
       context: context,
       service: widget.contentReportService,
@@ -391,15 +436,19 @@ class _CommentCardState extends State<_CommentCard> {
         momentId: widget.momentId,
         commentId: widget.commentId,
       ),
-      title: 'Report this comment',
-      subtitle:
-          'Your report goes to the YO Voice moderation team with this '
-          'comment attached. ${widget.name} is not told who reported it.',
+      title: copy.text('Report this comment', 'Zgłoś ten komentarz'),
+      subtitle: copy.text(
+        'Your report goes to the YO Voice moderation team with this '
+            'comment attached. ${widget.name} is not told who reported it.',
+        'Zgłoszenie wraz z komentarzem trafi do zespołu moderacji YO Voice. '
+            '${widget.name} nie dowie się, kto dokonał zgłoszenia.',
+      ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final text = widget.data['text'] as String? ?? '';
     final duration = widget.data['durationSeconds'] as int? ?? 0;
     final palette = context.appPalette;
@@ -473,7 +522,7 @@ class _CommentCardState extends State<_CommentCard> {
                           const SizedBox(width: 8),
                           Expanded(
                             child: Text(
-                              'Voice reply',
+                              copy.text('Voice reply', 'Odpowiedź głosowa'),
                               style: TextStyle(
                                 color: colors.onSecondaryContainer,
                                 fontWeight: FontWeight.w700,
@@ -515,7 +564,7 @@ class _CommentCardState extends State<_CommentCard> {
               key: ValueKey('report-comment-${widget.commentId}'),
               constraints: const BoxConstraints.tightFor(width: 40, height: 40),
               padding: EdgeInsets.zero,
-              tooltip: 'Report this comment',
+              tooltip: copy.text('Report this comment', 'Zgłoś ten komentarz'),
               onPressed: _report,
               icon: Icon(
                 Icons.flag_outlined,

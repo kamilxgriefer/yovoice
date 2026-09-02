@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io' show Platform;
 
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
@@ -17,11 +18,13 @@ import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/friends/presentation/screens/blocked_users_screen.dart';
 import 'package:yovoice/features/marketing/data/services/public_showcase_consent_service.dart';
 import 'package:yovoice/features/notifications/presentation/screens/notification_preferences_screen.dart';
+import 'package:yovoice/features/permissions/presentation/permission_setup_sheet.dart';
 import 'package:yovoice/features/premium/data/models/subscription_entitlements.dart';
 import 'package:yovoice/features/premium/data/services/entitlement_service.dart';
 import 'package:yovoice/features/premium/presentation/screens/premium_plans_screen.dart';
 import 'package:yovoice/features/premium/presentation/screens/premium_screen.dart';
 import 'package:yovoice/features/profile/data/models/user_profile.dart';
+import 'package:yovoice/features/profile/data/models/profile_visibility.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
 import 'package:yovoice/features/profile/presentation/screens/profile_screen.dart';
 import 'package:yovoice/features/settings/presentation/screens/profile_visibility_screen.dart';
@@ -84,6 +87,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     required bool showActivity,
   }) async {
     if (_updatingShowcaseConsent) return;
+    final copy = AppLocalizations.of(context);
     setState(() => _updatingShowcaseConsent = true);
     try {
       await _showcaseConsentService.setProfileConsent(
@@ -93,11 +97,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
       );
       _notify(
         showProfile
-            ? 'Your public website showcase preferences were saved.'
-            : 'Your profile will no longer appear in the website showcase.',
+            ? copy.text(
+                'Your public website showcase preferences were saved.',
+                'Zapisano ustawienia prezentacji profilu na stronie.',
+              )
+            : copy.text(
+                'Your profile will no longer appear in the website showcase.',
+                'Twój profil nie będzie już wyświetlany na stronie.',
+              ),
       );
     } catch (error) {
-      _notify(friendlyErrorMessage(error), isError: true);
+      _notify(
+        copy.text(
+          friendlyErrorMessage(error),
+          'Nie udało się zapisać ustawień prezentacji profilu.',
+        ),
+        isError: true,
+      );
     } finally {
       if (mounted) setState(() => _updatingShowcaseConsent = false);
     }
@@ -148,38 +164,49 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _setSoundEffectsEnabled(bool enabled) async {
+    final copy = AppLocalizations.of(context);
     try {
       await AppPreferencesScope.of(context).setSoundEffectsEnabled(enabled);
     } catch (_) {
-      _notify('Could not save the sound preference.', isError: true);
+      _notify(
+        copy.text(
+          'Could not save the sound preference.',
+          'Nie udało się zapisać ustawienia dźwięków.',
+        ),
+        isError: true,
+      );
     }
   }
 
-  Future<void> _requestOrOpenPermission(Permission permission) async {
-    final current = _permissionStatus[permission];
-    if (current != null && (current.isDenied || current.isRestricted)) {
-      final result = await permission.request();
-      if (!mounted) return;
-      setState(() => _permissionStatus[permission] = result);
-      return;
-    }
-    if (current != null && current.isPermanentlyDenied) {
-      await openAppSettings();
-      return;
-    }
-    final result = await permission.request();
-    if (!mounted) return;
-    setState(() => _permissionStatus[permission] = result);
+  Future<void> _openPermissionSetup() async {
+    await showPermissionSetupSheet(
+      context,
+      userId: FirebaseAuth.instance.currentUser?.uid ?? '',
+      recordSkip: false,
+    );
+    if (mounted) await _loadPermissionStatuses();
   }
 
   Future<void> _sendPasswordReset(String email) async {
     if (_sendingReset || email.isEmpty) return;
+    final copy = AppLocalizations.of(context);
     setState(() => _sendingReset = true);
     try {
       await _authService.sendPasswordResetEmail(email);
-      _notify('Password reset email sent to $email.');
+      _notify(
+        copy.text(
+          'Password reset email sent to $email.',
+          'Wiadomość z linkiem do zmiany hasła wysłano na $email.',
+        ),
+      );
     } catch (error) {
-      _notify(friendlyErrorMessage(error), isError: true);
+      _notify(
+        copy.text(
+          friendlyErrorMessage(error),
+          'Nie udało się wysłać wiadomości do zmiany hasła. Spróbuj ponownie.',
+        ),
+        isError: true,
+      );
     } finally {
       if (mounted) setState(() => _sendingReset = false);
     }
@@ -187,12 +214,24 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _resendVerification() async {
     if (_resendingVerification) return;
+    final copy = AppLocalizations.of(context);
     setState(() => _resendingVerification = true);
     try {
       await _authService.resendVerificationEmail();
-      _notify('Verification email sent. Check your inbox.');
+      _notify(
+        copy.text(
+          'Verification email sent. Check your inbox.',
+          'Wysłano wiadomość weryfikacyjną. Sprawdź skrzynkę odbiorczą.',
+        ),
+      );
     } catch (error) {
-      _notify(friendlyErrorMessage(error), isError: true);
+      _notify(
+        copy.text(
+          friendlyErrorMessage(error),
+          'Nie udało się wysłać wiadomości weryfikacyjnej. Spróbuj ponownie.',
+        ),
+        isError: true,
+      );
     } finally {
       if (mounted) setState(() => _resendingVerification = false);
     }
@@ -200,18 +239,31 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _refreshVerification() async {
     if (_refreshingVerification) return;
+    final copy = AppLocalizations.of(context);
     setState(() => _refreshingVerification = true);
     try {
       final verified = await _authService.reloadCurrentUser();
       _notify(
         verified
-            ? 'Your email is verified.'
-            : 'Still not verified — check your inbox for the link.',
+            ? copy.text(
+                'Your email is verified.',
+                'Adres e-mail jest zweryfikowany.',
+              )
+            : copy.text(
+                'Still not verified — check your inbox for the link.',
+                'Adres nadal nie jest zweryfikowany — sprawdź wiadomość z linkiem.',
+              ),
         isError: !verified,
       );
       if (mounted) setState(() {});
     } catch (error) {
-      _notify(friendlyErrorMessage(error), isError: true);
+      _notify(
+        copy.text(
+          friendlyErrorMessage(error),
+          'Nie udało się sprawdzić weryfikacji adresu e-mail. Spróbuj ponownie.',
+        ),
+        isError: true,
+      );
     } finally {
       if (mounted) setState(() => _refreshingVerification = false);
     }
@@ -219,6 +271,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _clearImageCache() async {
     if (_clearingCache) return;
+    final copy = AppLocalizations.of(context);
     setState(() => _clearingCache = true);
     try {
       final bytesBefore = PaintingBinding.instance.imageCache.currentSizeBytes;
@@ -227,8 +280,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
       await Future.delayed(const Duration(milliseconds: 300));
       _notify(
         bytesBefore > 0
-            ? 'Cleared ${_formatBytes(bytesBefore)} of cached images.'
-            : 'Image cache was already empty.',
+            ? copy.text(
+                'Cleared ${_formatByteSize(bytesBefore)} of cached images.',
+                'Usunięto ${_formatByteSize(bytesBefore)} obrazów z pamięci podręcznej.',
+              )
+            : copy.text(
+                'Image cache was already empty.',
+                'Pamięć podręczna obrazów była już pusta.',
+              ),
       );
     } finally {
       if (mounted) setState(() => _clearingCache = false);
@@ -236,10 +295,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _openUrl(String url) async {
+    final copy = AppLocalizations.of(context);
     final uri = Uri.parse(url);
     final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
     if (!launched && mounted) {
-      _notify('Could not open $url', isError: true);
+      _notify(
+        copy.text('Could not open $url', 'Nie udało się otworzyć $url'),
+        isError: true,
+      );
     }
   }
 
@@ -247,19 +310,26 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final shouldSignOut = await showDialog<bool>(
       context: context,
       builder: (dialogContext) {
+        final copy = AppLocalizations.of(dialogContext);
         final palette = dialogContext.appPalette;
         final colors = Theme.of(dialogContext).colorScheme;
         return AlertDialog(
           backgroundColor: palette.surfaceRaised,
-          title: Text('Log out?', style: TextStyle(color: palette.textPrimary)),
+          title: Text(
+            copy.text('Log out?', 'Wylogować się?'),
+            style: TextStyle(color: palette.textPrimary),
+          ),
           content: Text(
-            'You will need to sign in again to use YO Voice.',
+            copy.text(
+              'You will need to sign in again to use YO Voice.',
+              'Aby ponownie korzystać z YO Voice, musisz się zalogować.',
+            ),
             style: TextStyle(color: palette.textSecondary),
           ),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(dialogContext, false),
-              child: const Text('Cancel'),
+              child: Text(copy.text('Cancel', 'Anuluj')),
             ),
             FilledButton(
               style: FilledButton.styleFrom(
@@ -267,7 +337,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 foregroundColor: colors.onErrorContainer,
               ),
               onPressed: () => Navigator.pop(dialogContext, true),
-              child: const Text('Log out'),
+              child: Text(copy.text('Log out', 'Wyloguj się')),
             ),
           ],
         );
@@ -279,6 +349,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _openDeleteAccountRequest() async {
+    final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
     await showModalBottomSheet<void>(
@@ -299,7 +370,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             YoModalSheetChrome(
-              sheetLabel: 'delete account request',
+              sheetLabel: copy.text(
+                'delete account request',
+                'prośba o usunięcie konta',
+              ),
               surfaceColor: palette.surfaceRaised,
             ),
             Container(
@@ -317,7 +391,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
             const SizedBox(height: 16),
             Text(
-              'Delete your account',
+              copy.text('Delete your account', 'Usuń swoje konto'),
               style: TextStyle(
                 color: palette.textPrimary,
                 fontSize: 20,
@@ -326,8 +400,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
             const SizedBox(height: 8),
             Text(
-              'Self-service account deletion isn\'t available yet. Email support and '
-              'we\'ll permanently delete your account, profile and content by hand.',
+              copy.text(
+                'Self-service account deletion isn\'t available yet. Email support and '
+                    'we\'ll permanently delete your account, profile and content by hand.',
+                'Samodzielne usuwanie konta nie jest jeszcze dostępne. Napisz do pomocy technicznej, '
+                    'a trwale usuniemy Twoje konto, profil i treści.',
+              ),
               style: TextStyle(
                 color: palette.textSecondary,
                 height: 1.45,
@@ -350,8 +428,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   );
                 },
                 icon: const Icon(Icons.mail_outline_rounded),
-                label: const Text(
-                  'Email support to delete my account',
+                label: Text(
+                  copy.text(
+                    'Email support to delete my account',
+                    'Napisz do pomocy technicznej, aby usunąć konto',
+                  ),
                   maxLines: 2,
                   textAlign: TextAlign.center,
                 ),
@@ -365,6 +446,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
     return Scaffold(
       backgroundColor: palette.background,
@@ -390,7 +472,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       const SizedBox(width: 6),
                     ],
                     Text(
-                      'Settings',
+                      copy.text('Settings', 'Ustawienia'),
                       style: TextStyle(
                         color: palette.textPrimary,
                         fontSize: 26,
@@ -407,14 +489,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   builder: (context, snapshot) {
                     if (snapshot.hasError) {
                       return YoErrorState(
-                        message: friendlyErrorMessage(snapshot.error!),
+                        message: copy.text(
+                          friendlyErrorMessage(snapshot.error!),
+                          'Nie udało się wczytać ustawień. Spróbuj ponownie.',
+                        ),
                         compact: true,
                       );
                     }
                     final profile = snapshot.data;
                     if (profile == null) {
-                      return const YoLoadingIndicator.fullscreen(
-                        message: 'Loading settings…',
+                      return YoLoadingIndicator.fullscreen(
+                        message: copy.text(
+                          'Loading settings…',
+                          'Ładowanie ustawień…',
+                        ),
                       );
                     }
                     return _buildContent(context, profile);
@@ -449,7 +537,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
         const SizedBox(height: 22),
 
-        const _GroupLabel('Account'),
+        _GroupLabel(copy.text('Account', 'Konto')),
         _SettingsGroup(
           children: [
             // Username and account type are read-only summaries here —
@@ -457,26 +545,29 @@ class _SettingsScreenState extends State<SettingsScreen> {
             // identity-editing surface.
             _SettingsTile(
               icon: Icons.alternate_email_rounded,
-              title: 'Username',
+              title: copy.text('Username', 'Nazwa użytkownika'),
               subtitle: profile.username.isEmpty
-                  ? 'Not set'
+                  ? copy.text('Not set', 'Nie ustawiono')
                   : '@${profile.username}',
             ),
             _SettingsTile(
               icon: Icons.mail_outline_rounded,
-              title: 'Email',
+              title: copy.text('Email', 'E-mail'),
               subtitle: profile.email,
               trailing: _VerifiedChip(verified: emailVerified),
             ),
             _SettingsTile(
               icon: Icons.workspace_premium_outlined,
-              title: 'Account type',
-              subtitle: profile.accountType.label,
+              title: copy.text('Account type', 'Typ konta'),
+              subtitle: copy.text(
+                profile.accountType.label,
+                _polishAccountType(profile.accountType.label),
+              ),
             ),
             _SettingsTile(
               icon: Icons.event_available_outlined,
-              title: 'Member since',
-              subtitle: _formatJoinDate(profile.createdAt),
+              title: copy.text('Member since', 'Użytkownik od'),
+              subtitle: _formatJoinDate(context, profile.createdAt),
             ),
           ],
         ),
@@ -494,9 +585,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 children: [
                   _SettingsTile(
                     icon: Icons.workspace_premium_outlined,
-                    title: 'Upgrade to Premium',
-                    subtitle:
-                        'Creator profile, Club creation and premium identity',
+                    title: copy.text(
+                      'Upgrade to Premium',
+                      'Przejdź na Premium',
+                    ),
+                    subtitle: copy.text(
+                      'Creator profile, Club creation and premium identity',
+                      'Profil twórcy, tworzenie Klubów i wyjątkowy wygląd profilu',
+                    ),
                     onTap: () => Navigator.of(context).push(
                       MaterialPageRoute<void>(
                         builder: (_) => const PremiumScreen(),
@@ -511,13 +607,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
               children: [
                 _SettingsTile(
                   icon: Icons.workspace_premium_rounded,
-                  title: 'YO Voice Premium — ${entitlements.plan.label}',
+                  title: copy.text(
+                    'YO Voice Premium — ${entitlements.plan.label}',
+                    'YO Voice Premium — ${_polishPlanLabel(entitlements.plan.label)}',
+                  ),
                   subtitle: entitlements.inGracePeriod
-                      ? 'Payment issue — check your billing details'
+                      ? copy.text(
+                          'Payment issue — check your billing details',
+                          'Problem z płatnością — sprawdź dane rozliczeniowe',
+                        )
                       : periodEnd == null
-                      ? 'Active'
-                      : 'Active through '
-                            '${periodEnd.day}.${periodEnd.month}.${periodEnd.year}',
+                      ? copy.text('Active', 'Aktywne')
+                      : copy.text(
+                          'Active through ${periodEnd.day}.${periodEnd.month}.${periodEnd.year}',
+                          'Aktywne do ${periodEnd.day}.${periodEnd.month}.${periodEnd.year}',
+                        ),
                   onTap: () => Navigator.of(context).push(
                     MaterialPageRoute<void>(
                       builder: (_) => const PremiumScreen(),
@@ -526,12 +630,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
                 _SettingsTile(
                   icon: Icons.manage_accounts_outlined,
-                  title: 'Manage subscription',
+                  title: copy.text(
+                    'Manage subscription',
+                    'Zarządzaj subskrypcją',
+                  ),
                   // The unified manager decides from trusted billing state
                   // whether this is Stripe, App Store, Play or an admin grant.
                   subtitle: kIsWeb
-                      ? 'Purchases and billing management'
-                      : 'View your plan and billing options',
+                      ? copy.text(
+                          'Purchases and billing management',
+                          'Zakupy i ustawienia płatności',
+                        )
+                      : copy.text(
+                          'View your plan and billing options',
+                          'Sprawdź plan i opcje płatności',
+                        ),
                   onTap: () {
                     Navigator.of(context).push(
                       MaterialPageRoute<void>(
@@ -546,7 +659,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
         const SizedBox(height: 22),
 
-        const _GroupLabel('Privacy'),
+        _GroupLabel(copy.text('Privacy', 'Prywatność')),
         _SettingsGroup(
           children: [
             StreamBuilder<List<Object?>>(
@@ -555,12 +668,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 final count = snapshot.data?.length;
                 return _SettingsTile(
                   icon: Icons.block_rounded,
-                  title: 'Blocked users',
+                  title: copy.text('Blocked users', 'Zablokowane osoby'),
                   subtitle: count == null
-                      ? 'People you\'ve blocked'
+                      ? copy.text(
+                          'People you\'ve blocked',
+                          'Osoby zablokowane przez Ciebie',
+                        )
                       : count == 0
-                      ? 'No one blocked'
-                      : '$count blocked',
+                      ? copy.text('No one blocked', 'Brak zablokowanych osób')
+                      : copy.text(
+                          '$count blocked',
+                          'Zablokowane osoby: $count',
+                        ),
                   onTap: () => Navigator.of(context).push(
                     MaterialPageRoute<void>(
                       builder: (_) => const BlockedUsersScreen(),
@@ -571,8 +690,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
             _SettingsTile(
               icon: Icons.visibility_outlined,
-              title: 'Profile visibility',
-              subtitle: profile.profileVisibility.label,
+              title: copy.text('Profile visibility', 'Widoczność profilu'),
+              subtitle: _profileVisibilityLabel(
+                context,
+                profile.profileVisibility,
+              ),
               onTap: () => Navigator.of(context).push(
                 MaterialPageRoute<void>(
                   builder: (_) => ProfileVisibilityScreen(
@@ -592,9 +714,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   children: [
                     _SettingsTile(
                       icon: Icons.public_rounded,
-                      title: 'Appear on the YO Voice website',
-                      subtitle:
-                          'Show your display name and profile type on the public internet, including to signed-out visitors and people you have blocked.',
+                      title: copy.text(
+                        'Appear on the YO Voice website',
+                        'Pokazuj profil na stronie YO Voice',
+                      ),
+                      subtitle: copy.text(
+                        'Show your display name and profile type on the public internet, including to signed-out visitors and people you have blocked.',
+                        'Wyświetlaj nazwę i typ profilu publicznie — także osobom niezalogowanym oraz zablokowanym przez Ciebie.',
+                      ),
                       trailing: Switch.adaptive(
                         value: consent.showProfile,
                         onChanged: _updatingShowcaseConsent
@@ -608,9 +735,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ),
                     _SettingsTile(
                       icon: Icons.circle,
-                      title: 'Show my recent activity',
-                      subtitle:
-                          'May show “Active recently” after a fresh app heartbeat — never your last-seen time.',
+                      title: copy.text(
+                        'Show my recent activity',
+                        'Pokazuj ostatnią aktywność',
+                      ),
+                      subtitle: copy.text(
+                        'May show “Active recently” after a fresh app heartbeat — never your last-seen time.',
+                        'Może wyświetlać status „Ostatnio aktywny” po użyciu aplikacji — bez ujawniania dokładnego czasu aktywności.',
+                      ),
                       trailing: Switch.adaptive(
                         value: consent.showActivity,
                         onChanged:
@@ -632,16 +764,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
         const SizedBox(height: 22),
 
-        const _GroupLabel('Security'),
+        _GroupLabel(copy.text('Security', 'Bezpieczeństwo')),
         _SettingsGroup(
           children: [
             _SettingsTile(
               icon: Icons.lock_reset_rounded,
-              title: 'Reset password',
-              subtitle: 'Send a reset link to ${profile.email}',
+              title: copy.text('Reset password', 'Zmień hasło'),
+              subtitle: copy.text(
+                'Send a reset link to ${profile.email}',
+                'Wyślij link do zmiany hasła na ${profile.email}',
+              ),
               trailing: _sendingReset
-                  ? const _MiniSpinner(
-                      semanticLabel: 'Sending password reset email',
+                  ? _MiniSpinner(
+                      semanticLabel: copy.text(
+                        'Sending password reset email',
+                        'Wysyłanie wiadomości do zmiany hasła',
+                      ),
                     )
                   : Icon(
                       Icons.chevron_right_rounded,
@@ -655,15 +793,24 @@ class _SettingsScreenState extends State<SettingsScreen> {
               icon: emailVerified
                   ? Icons.verified_user_rounded
                   : Icons.gpp_maybe_rounded,
-              title: 'Email verification',
+              title: copy.text('Email verification', 'Weryfikacja e-maila'),
               subtitle: emailVerified
-                  ? 'Your email is verified'
-                  : 'Verify your email to unlock posting and rooms',
+                  ? copy.text(
+                      'Your email is verified',
+                      'Adres e-mail jest zweryfikowany',
+                    )
+                  : copy.text(
+                      'Verify your email to unlock posting and rooms',
+                      'Zweryfikuj adres e-mail, aby publikować i tworzyć pokoje',
+                    ),
               trailing: emailVerified
                   ? Icon(Icons.check_circle_rounded, color: success)
                   : (_resendingVerification || _refreshingVerification)
-                  ? const _MiniSpinner(
-                      semanticLabel: 'Updating email verification',
+                  ? _MiniSpinner(
+                      semanticLabel: copy.text(
+                        'Updating email verification',
+                        'Aktualizowanie stanu weryfikacji e-maila',
+                      ),
                     )
                   : Icon(
                       Icons.chevron_right_rounded,
@@ -675,8 +822,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
             _SettingsTile(
               icon: Icons.security_rounded,
-              title: 'Two-factor authentication',
-              subtitle: 'Use an authenticator code when you sign in',
+              title: copy.text(
+                'Two-factor authentication',
+                'Uwierzytelnianie dwuskładnikowe',
+              ),
+              subtitle: copy.text(
+                'Use an authenticator code when you sign in',
+                'Podczas logowania używaj kodu z aplikacji uwierzytelniającej',
+              ),
               onTap: () => Navigator.of(context).push(
                 MaterialPageRoute<void>(
                   builder: (_) => const TwoFactorAuthenticationScreen(),
@@ -687,13 +840,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
         const SizedBox(height: 22),
 
-        const _GroupLabel('Notifications'),
+        _GroupLabel(copy.text('Notifications', 'Powiadomienia')),
         _SettingsGroup(
           children: [
             _SettingsTile(
               icon: Icons.notifications_active_outlined,
-              title: 'Notification preferences',
-              subtitle: 'Choose what sends you a push notification',
+              title: copy.text(
+                'Notification preferences',
+                'Ustawienia powiadomień',
+              ),
+              subtitle: copy.text(
+                'Choose what sends you a push notification',
+                'Wybierz zdarzenia, o których chcesz otrzymywać powiadomienia',
+              ),
               onTap: () => Navigator.of(context).push(
                 MaterialPageRoute<void>(
                   builder: (_) => const NotificationPreferencesScreen(),
@@ -702,14 +861,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
             _PermissionTile(
               icon: Icons.campaign_outlined,
-              title: 'System notifications',
+              title: copy.text(
+                'System notifications',
+                'Powiadomienia systemowe',
+              ),
               status: _permissionStatus[Permission.notification],
-              onTap: () => _requestOrOpenPermission(Permission.notification),
+              onTap: _openPermissionSetup,
             ),
             _SettingsTile(
               icon: Icons.graphic_eq_rounded,
-              title: 'Sound effects',
-              subtitle: 'Room, microphone and in-app activity cues',
+              title: copy.text('Sound effects', 'Dźwięki aplikacji'),
+              subtitle: copy.text(
+                'Room, microphone and in-app activity cues',
+                'Sygnały dźwiękowe pokoi, mikrofonu i aktywności w aplikacji',
+              ),
               trailing: Switch.adaptive(
                 value: AppPreferencesScope.of(
                   context,
@@ -724,19 +889,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
         const AppearanceLanguageSettingsSection(),
 
-        const _GroupLabel('Devices'),
+        _GroupLabel(copy.text('Devices', 'Urządzenia')),
         _SettingsGroup(
           children: [
             _SettingsTile(
               icon: Icons.devices_rounded,
-              title: 'This device',
-              subtitle: _deviceLabel(),
+              title: copy.text('This device', 'To urządzenie'),
+              subtitle: _deviceLabel(context),
               trailing: Icon(Icons.check_circle_rounded, color: success),
             ),
             _SettingsTile(
               icon: Icons.important_devices_outlined,
-              title: 'Devices & sessions',
-              subtitle: 'Review this device or sign out everywhere',
+              title: copy.text('Devices & sessions', 'Urządzenia i sesje'),
+              subtitle: copy.text(
+                'Review this device or sign out everywhere',
+                'Sprawdź to urządzenie lub wyloguj się wszędzie',
+              ),
               onTap: () => Navigator.of(context).push(
                 MaterialPageRoute<void>(
                   builder: (_) => const DeviceSessionsScreen(),
@@ -747,17 +915,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
         const SizedBox(height: 22),
 
-        const _GroupLabel('Storage'),
+        _GroupLabel(copy.text('Storage', 'Pamięć')),
         _SettingsGroup(
           children: [
             _SettingsTile(
               icon: Icons.cleaning_services_outlined,
-              title: 'Clear image cache',
-              subtitle: _formatBytes(
+              title: copy.text('Clear image cache', 'Wyczyść pamięć obrazów'),
+              subtitle: _formatCacheSize(
+                context,
                 PaintingBinding.instance.imageCache.currentSizeBytes,
               ),
               trailing: _clearingCache
-                  ? const _MiniSpinner(semanticLabel: 'Clearing image cache')
+                  ? _MiniSpinner(
+                      semanticLabel: copy.text(
+                        'Clearing image cache',
+                        'Czyszczenie pamięci obrazów',
+                      ),
+                    )
                   : Icon(
                       Icons.chevron_right_rounded,
                       color: palette.textTertiary,
@@ -766,8 +940,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
             _SettingsTile(
               icon: Icons.download_for_offline_outlined,
-              title: 'Downloaded audio',
-              subtitle: 'Manage offline Voice Moments',
+              title: copy.text('Downloaded audio', 'Pobrane nagrania'),
+              subtitle: copy.text(
+                'Manage offline Voice Moments',
+                'Zarządzaj Voice Moments dostępnymi offline',
+              ),
               onTap: () => Navigator.of(context).push(
                 MaterialPageRoute<void>(
                   builder: (_) => const DownloadedAudioScreen(),
@@ -778,26 +955,38 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
         const SizedBox(height: 22),
 
-        const _GroupLabel('Permissions'),
+        _GroupLabel(copy.text('Permissions', 'Uprawnienia')),
         _SettingsGroup(
           children: [
+            _SettingsTile(
+              icon: Icons.privacy_tip_outlined,
+              title: copy.text(
+                'Calls and alerts access',
+                'Dostęp do połączeń i powiadomień',
+              ),
+              subtitle: copy.text(
+                'Review notification, microphone and camera access',
+                'Sprawdź dostęp do powiadomień, mikrofonu i aparatu',
+              ),
+              onTap: _openPermissionSetup,
+            ),
             _PermissionTile(
               icon: Icons.mic_none_rounded,
-              title: 'Microphone',
+              title: copy.text('Microphone', 'Mikrofon'),
               status: _permissionStatus[Permission.microphone],
-              onTap: () => _requestOrOpenPermission(Permission.microphone),
+              onTap: _openPermissionSetup,
             ),
             _PermissionTile(
               icon: Icons.photo_camera_outlined,
-              title: 'Camera',
+              title: copy.text('Camera', 'Aparat'),
               status: _permissionStatus[Permission.camera],
-              onTap: () => _requestOrOpenPermission(Permission.camera),
+              onTap: _openPermissionSetup,
             ),
           ],
         ),
         const SizedBox(height: 22),
 
-        const _GroupLabel('Help'),
+        _GroupLabel(copy.text('Help', 'Pomoc')),
         _SettingsGroup(
           children: [
             if (widget.onReplayGuidedOnboarding != null)
@@ -812,13 +1001,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
             _SettingsTile(
               icon: Icons.help_outline_rounded,
-              title: 'Help center',
-              subtitle: 'Guides and answers to common questions',
+              title: copy.text('Help center', 'Centrum pomocy'),
+              subtitle: copy.text(
+                'Guides and answers to common questions',
+                'Poradniki i odpowiedzi na najczęstsze pytania',
+              ),
               onTap: () => _openUrl('https://yovoice.app/help-center'),
             ),
             _SettingsTile(
               icon: Icons.support_agent_rounded,
-              title: 'Contact support',
+              title: copy.text('Contact support', 'Skontaktuj się z pomocą'),
               subtitle: 'support@yovoice.app',
               onTap: () => _openUrl('mailto:support@yovoice.app'),
             ),
@@ -826,57 +1018,63 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
         const SizedBox(height: 22),
 
-        const _GroupLabel('About'),
+        _GroupLabel(copy.text('About', 'O aplikacji')),
         _SettingsGroup(
           children: [
             _SettingsTile(
               icon: Icons.info_outline_rounded,
-              title: 'Version',
+              title: copy.text('Version', 'Wersja'),
               subtitle: _packageInfo == null
-                  ? 'Loading…'
+                  ? copy.text('Loading…', 'Ładowanie…')
                   : '${_packageInfo!.version} (${_packageInfo!.buildNumber})',
             ),
             _SettingsTile(
               icon: Icons.language_rounded,
-              title: 'Visit yovoice.app',
-              subtitle: 'Our website',
+              title: copy.text('Visit yovoice.app', 'Odwiedź yovoice.app'),
+              subtitle: copy.text('Our website', 'Nasza strona internetowa'),
               onTap: () => _openUrl('https://yovoice.app'),
             ),
           ],
         ),
         const SizedBox(height: 22),
 
-        const _GroupLabel('Legal'),
+        _GroupLabel(copy.text('Legal', 'Informacje prawne')),
         _SettingsGroup(
           children: [
             _SettingsTile(
               icon: Icons.privacy_tip_outlined,
-              title: 'Privacy policy',
+              title: copy.text('Privacy policy', 'Polityka prywatności'),
               onTap: () => _openUrl('https://yovoice.app/privacy'),
             ),
             _SettingsTile(
               icon: Icons.gavel_rounded,
-              title: 'Terms of service',
+              title: copy.text('Terms of service', 'Warunki korzystania'),
               onTap: () => _openUrl('https://yovoice.app/terms'),
             ),
           ],
         ),
         const SizedBox(height: 22),
 
-        const _GroupLabel('Danger zone', danger: true),
+        _GroupLabel(
+          copy.text('Danger zone', 'Strefa niebezpieczna'),
+          danger: true,
+        ),
         _SettingsGroup(
           danger: true,
           children: [
             _SettingsTile(
               icon: Icons.logout_rounded,
-              title: 'Log out',
+              title: copy.text('Log out', 'Wyloguj się'),
               danger: true,
               onTap: _confirmSignOut,
             ),
             _SettingsTile(
               icon: Icons.delete_forever_rounded,
-              title: 'Delete account',
-              subtitle: 'Permanently remove your account and data',
+              title: copy.text('Delete account', 'Usuń konto'),
+              subtitle: copy.text(
+                'Permanently remove your account and data',
+                'Trwale usuń konto i wszystkie dane',
+              ),
               danger: true,
               onTap: _openDeleteAccountRequest,
             ),
@@ -887,6 +1085,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   void _showVerificationSheet(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
     showModalBottomSheet<void>(
@@ -908,7 +1107,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               YoModalSheetChrome(
-                sheetLabel: 'email verification',
+                sheetLabel: copy.text(
+                  'email verification',
+                  'weryfikacja adresu e-mail',
+                ),
                 surfaceColor: palette.surfaceRaised,
               ),
               Container(
@@ -926,7 +1128,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
               const SizedBox(height: 16),
               Text(
-                'Verify your email',
+                copy.text('Verify your email', 'Zweryfikuj adres e-mail'),
                 style: TextStyle(
                   color: palette.textPrimary,
                   fontSize: 20,
@@ -935,7 +1137,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
               const SizedBox(height: 8),
               Text(
-                'Check your inbox for the verification link, then come back and refresh.',
+                copy.text(
+                  'Check your inbox for the verification link, then come back and refresh.',
+                  'Sprawdź wiadomość z linkiem weryfikacyjnym, a następnie wróć tutaj i odśwież status.',
+                ),
                 style: TextStyle(
                   color: palette.textSecondary,
                   height: 1.45,
@@ -960,10 +1165,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       padding: const EdgeInsets.symmetric(vertical: 14),
                     ),
                     child: _resendingVerification
-                        ? const _MiniSpinner(
-                            semanticLabel: 'Resending verification email',
+                        ? _MiniSpinner(
+                            semanticLabel: copy.text(
+                              'Resending verification email',
+                              'Ponowne wysyłanie wiadomości weryfikacyjnej',
+                            ),
                           )
-                        : const Text('Resend email'),
+                        : Text(copy.text('Resend email', 'Wyślij ponownie')),
                   );
                   final verified = FilledButton(
                     onPressed: _refreshingVerification
@@ -980,9 +1188,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     child: _refreshingVerification
                         ? _MiniSpinner(
                             color: colors.onPrimary,
-                            semanticLabel: 'Checking email verification',
+                            semanticLabel: copy.text(
+                              'Checking email verification',
+                              'Sprawdzanie weryfikacji adresu e-mail',
+                            ),
                           )
-                        : const Text('I\'ve verified'),
+                        : Text(
+                            copy.text('I\'ve verified', 'Adres zweryfikowany'),
+                          ),
                   );
                   if (vertical) {
                     return Column(
@@ -1006,42 +1219,84 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  String _formatJoinDate(DateTime? date) {
-    if (date == null) return 'Unknown';
-    const months = [
-      'January',
-      'February',
-      'March',
-      'April',
-      'May',
-      'June',
-      'July',
-      'August',
-      'September',
-      'October',
-      'November',
-      'December',
+  String _formatJoinDate(BuildContext context, DateTime? date) {
+    final copy = AppLocalizations.of(context);
+    if (date == null) return copy.text('Unknown', 'Nieznana data');
+    final months = [
+      copy.text('January', 'stycznia'),
+      copy.text('February', 'lutego'),
+      copy.text('March', 'marca'),
+      copy.text('April', 'kwietnia'),
+      copy.text('May', 'maja'),
+      copy.text('June', 'czerwca'),
+      copy.text('July', 'lipca'),
+      copy.text('August', 'sierpnia'),
+      copy.text('September', 'września'),
+      copy.text('October', 'października'),
+      copy.text('November', 'listopada'),
+      copy.text('December', 'grudnia'),
     ];
     return '${months[date.month - 1]} ${date.year}';
   }
 
-  String _deviceLabel() {
-    if (kIsWeb) return 'Web browser';
-    if (Platform.isIOS) return 'iOS device';
-    if (Platform.isAndroid) return 'Android device';
-    if (Platform.isMacOS) return 'macOS device';
-    if (Platform.isWindows) return 'Windows device';
-    if (Platform.isLinux) return 'Linux device';
-    return 'This device';
+  String _deviceLabel(BuildContext context) {
+    final copy = AppLocalizations.of(context);
+    if (kIsWeb) return copy.text('Web browser', 'Przeglądarka internetowa');
+    if (Platform.isIOS) return copy.text('iOS device', 'Urządzenie z iOS');
+    if (Platform.isAndroid) {
+      return copy.text('Android device', 'Urządzenie z Androidem');
+    }
+    if (Platform.isMacOS) return copy.text('macOS device', 'Komputer Mac');
+    if (Platform.isWindows) {
+      return copy.text('Windows device', 'Komputer z Windows');
+    }
+    if (Platform.isLinux) {
+      return copy.text('Linux device', 'Komputer z Linuxem');
+    }
+    return copy.text('This device', 'To urządzenie');
   }
 
-  String _formatBytes(int bytes) {
-    if (bytes <= 0) return 'Nothing cached';
-    if (bytes < 1024 * 1024) {
-      return '${(bytes / 1024).toStringAsFixed(0)} KB cached';
+  String _formatCacheSize(BuildContext context, int bytes) {
+    final copy = AppLocalizations.of(context);
+    if (bytes <= 0) {
+      return copy.text('Nothing cached', 'Pamięć podręczna jest pusta');
     }
-    return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB cached';
+    final size = _formatByteSize(bytes);
+    return copy.text('$size cached', 'W pamięci podręcznej: $size');
   }
+}
+
+String _formatByteSize(int bytes) {
+  if (bytes < 1024 * 1024) {
+    return '${(bytes / 1024).toStringAsFixed(0)} KB';
+  }
+  return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+}
+
+String _polishAccountType(String label) => switch (label.toLowerCase()) {
+  'creator' => 'Twórca',
+  'business' => 'Firma',
+  'user' || 'member' => 'Użytkownik',
+  _ => label,
+};
+
+String _polishPlanLabel(String label) => switch (label.toLowerCase()) {
+  'monthly' => 'miesięczny',
+  'annual' || 'yearly' => 'roczny',
+  'lifetime' => 'dożywotni',
+  _ => label,
+};
+
+String _profileVisibilityLabel(
+  BuildContext context,
+  ProfileVisibility visibility,
+) {
+  final copy = AppLocalizations.of(context);
+  return switch (visibility) {
+    ProfileVisibility.public => copy.text('Everyone', 'Wszyscy'),
+    ProfileVisibility.friends => copy.text('Friends only', 'Tylko znajomi'),
+    ProfileVisibility.private => copy.text('Only me', 'Tylko ja'),
+  };
 }
 
 class _ProfileHeroCard extends StatelessWidget {
@@ -1052,14 +1307,17 @@ class _ProfileHeroCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
     final avatar = profile.photoUrl?.trim();
     final expanded = MediaQuery.textScalerOf(context).scale(1) >= 1.6;
     return Semantics(
       button: true,
-      label:
-          'Open profile for ${profile.displayName}. Edit profile details and photos.',
+      label: copy.text(
+        'Open profile for ${profile.displayName}. Edit profile details and photos.',
+        'Otwórz profil użytkownika ${profile.displayName}. Edytuj dane profilu i zdjęcia.',
+      ),
       onTap: onTap,
       excludeSemantics: true,
       child: Material(
@@ -1126,7 +1384,10 @@ class _ProfileHeroCard extends StatelessWidget {
                       ),
                       const SizedBox(height: 3),
                       Text(
-                        'Edit profile details and photos',
+                        copy.text(
+                          'Edit profile details and photos',
+                          'Edytuj dane profilu i zdjęcia',
+                        ),
                         maxLines: expanded ? null : 2,
                         overflow: expanded
                             ? TextOverflow.visible
@@ -1312,6 +1573,7 @@ class _VerifiedChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
     final foreground = verified
         ? _successForeground(context)
@@ -1330,7 +1592,9 @@ class _VerifiedChip extends StatelessWidget {
         ),
       ),
       child: Text(
-        verified ? 'VERIFIED' : 'UNVERIFIED',
+        verified
+            ? copy.text('VERIFIED', 'ZWERYFIKOWANO')
+            : copy.text('UNVERIFIED', 'NIEZWERYFIKOWANO'),
         style: TextStyle(
           color: foreground,
           fontSize: 9.5,
@@ -1357,14 +1621,19 @@ class _PermissionTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
     final label = switch (status) {
-      null => 'Checking…',
-      PermissionStatus.granted || PermissionStatus.limited => 'Allowed',
-      PermissionStatus.permanentlyDenied => 'Denied — open settings',
-      PermissionStatus.denied => 'Not allowed',
-      PermissionStatus.restricted => 'Restricted',
-      PermissionStatus.provisional => 'Provisional',
+      null => copy.text('Checking…', 'Sprawdzanie…'),
+      PermissionStatus.granted ||
+      PermissionStatus.limited => copy.text('Allowed', 'Zezwolono'),
+      PermissionStatus.permanentlyDenied => copy.text(
+        'Denied — open settings',
+        'Odmówiono — otwórz ustawienia',
+      ),
+      PermissionStatus.denied => copy.text('Not allowed', 'Brak zezwolenia'),
+      PermissionStatus.restricted => copy.text('Restricted', 'Ograniczono'),
+      PermissionStatus.provisional => copy.text('Provisional', 'Tymczasowo'),
     };
     final granted =
         status == PermissionStatus.granted ||

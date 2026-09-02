@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
@@ -32,6 +33,7 @@ class ExpandedMiniChat extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final isSheet = scrollController != null;
     final panel = RoomChatPanel(
       key: const ValueKey('mini-player-expanded-chat'),
@@ -56,7 +58,7 @@ class ExpandedMiniChat extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           YoModalSheetChrome(
-            sheetLabel: 'room chat',
+            sheetLabel: copy.text('room chat', 'czat pokoju'),
             surfaceColor: const Color(0xFF110B19),
             onClose: onCollapse,
           ),

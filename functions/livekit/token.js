@@ -604,6 +604,7 @@ const createLiveKitToken = onCall(
     memory: "256MiB",
     timeoutSeconds: 30,
     maxInstances: 50,
+    minInstances: 1,
     secrets: [livekitApiKey, livekitApiSecret],
   },
   (request) => createLiveKitTokenHandler(request),

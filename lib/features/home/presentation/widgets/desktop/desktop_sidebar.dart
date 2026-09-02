@@ -252,7 +252,7 @@ class DesktopSidebar extends StatelessWidget {
                     SizedBox(height: useCompactCreateActions ? 8 : 12),
                     if (showSectionLabels)
                       _SectionLabel(
-                        copy.text('CREATE', 'TWORZENIE'),
+                        copy.text('CREATE', 'UTWÓRZ'),
                         compact: useCompactCreateActions,
                       ),
                     _tourCreateAnchor(

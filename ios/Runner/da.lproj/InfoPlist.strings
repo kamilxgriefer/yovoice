@@ -1,0 +1,3 @@
+"NSCameraUsageDescription" = "YO Voice bruger kameraet, når du foretager private videoopkald, tager billeder i chats eller opretter et profil-, rum- eller klubbillede.";
+"NSMicrophoneUsageDescription" = "YO Voice bruger mikrofonen, når du taler i talerum, optager lyd eller foretager private opkald.";
+"NSPhotoLibraryUsageDescription" = "YO Voice bruger billeder, du vælger, i chats og som profil-, rum- eller klubbilleder.";

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/features/rooms/data/models/room_experience.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
@@ -209,6 +210,12 @@ class _TypeChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
+    final label = switch (identity) {
+      RoomCardIdentity.community => copy.text('COMMUNITY', 'SPOŁECZNOŚĆ'),
+      RoomCardIdentity.podcast => 'PODCAST',
+      RoomCardIdentity.club => copy.text('CLUB', 'KLUB'),
+    };
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
@@ -222,7 +229,7 @@ class _TypeChip extends StatelessWidget {
           Icon(identity.icon, size: 11, color: identity.accent),
           const SizedBox(width: 4),
           Text(
-            identity.label,
+            label,
             style: TextStyle(
               color: identity.accent,
               fontSize: 8.5,
@@ -241,15 +248,16 @@ class _LivePill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
       decoration: BoxDecoration(
         color: const Color(0xFFFF416C),
         borderRadius: BorderRadius.circular(8),
       ),
-      child: const Text(
-        'LIVE',
-        style: TextStyle(
+      child: Text(
+        copy.text('LIVE', 'NA ŻYWO'),
+        style: const TextStyle(
           color: Colors.white,
           fontSize: 9,
           fontWeight: FontWeight.w900,

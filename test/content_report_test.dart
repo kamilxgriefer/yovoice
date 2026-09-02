@@ -362,7 +362,10 @@ void main() {
           ),
         ),
       });
-      expect(find.text('Thanks — your report is with our team.'), findsOneWidget);
+      expect(
+        find.text('Thanks — your report is with our team.'),
+        findsOneWidget,
+      );
     });
 
     testWidgets('backing out of the picker files nothing', (tester) async {
@@ -499,9 +502,7 @@ void main() {
                 signedIn: true,
                 mockUser: MockUser(uid: currentUserId),
               ),
-              contentReportService: ContentReportService(
-                functions: functions,
-              ),
+              contentReportService: ContentReportService(functions: functions),
             ),
           ),
         ),

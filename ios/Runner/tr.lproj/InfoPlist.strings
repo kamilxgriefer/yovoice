@@ -1,0 +1,3 @@
+"NSCameraUsageDescription" = "YO Voice; özel görüntülü aramalar, sohbet fotoğrafları ve oluşturmayı seçtiğin profil, oda veya kulüp görselleri için kamerayı kullanır.";
+"NSMicrophoneUsageDescription" = "YO Voice; sesli odalarda konuşmayı, ses kaydetmeyi veya özel arama yapmayı seçtiğinde mikrofonunu kullanır.";
+"NSPhotoLibraryUsageDescription" = "YO Voice, sohbetler ile profil, oda veya kulüp görselleri için seçtiğin fotoğrafları kullanır.";

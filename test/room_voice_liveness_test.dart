@@ -88,6 +88,44 @@ void main() {
     }
   });
 
+  test(
+    'Club Lounge preparation creates only a dormant preview, never a roster row',
+    () async {
+      await db.collection('clubs').doc('family_host').set({
+        'ownerId': 'host',
+        'name': 'The Family',
+        'status': 'active',
+      });
+      await db
+          .collection('clubs')
+          .doc('family_host')
+          .collection('members')
+          .doc('relative')
+          .set({'userId': 'relative', 'role': 'member'});
+
+      final room = await serviceFor('relative').prepareClubLounge(
+        clubId: 'family_host',
+        clubName: 'The Family',
+        clubDescription: 'A private family space.',
+        language: 'English',
+        ownerId: 'host',
+        ownerName: 'Host',
+      );
+
+      expect(room.id, 'club_lounge_family_host');
+      expect(room.isLive, isFalse);
+      expect(room.participantCount, 0);
+      final participants = await db
+          .collection('rooms')
+          .doc(room.id)
+          .collection('participants')
+          .get();
+      expect(participants.docs, isEmpty);
+      final data = await readRoom(room.id);
+      expect(data.containsKey('voiceSessionId'), isFalse);
+    },
+  );
+
   group('starting voice', () {
     test('a Family Room member opens the mics — the reported bug: no '
         'membersCanStartVoice, no roomType and no experience, and the caller '

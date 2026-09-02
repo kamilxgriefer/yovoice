@@ -1,0 +1,3 @@
+"NSCameraUsageDescription" = "YO Voice izmanto kameru, kad veicat privātus videozvanus, fotografējat tērzēšanā vai veidojat profila, istabas vai kluba attēlu.";
+"NSMicrophoneUsageDescription" = "YO Voice izmanto mikrofonu, kad runājat balss istabās, ierakstāt audio vai veicat privātus zvanus.";
+"NSPhotoLibraryUsageDescription" = "YO Voice izmanto jūsu izvēlētos fotoattēlus tērzēšanā un kā profila, istabas vai kluba attēlus.";

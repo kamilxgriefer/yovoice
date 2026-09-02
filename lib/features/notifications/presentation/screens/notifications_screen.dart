@@ -2,6 +2,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/friends/data/models/friend_request.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
@@ -74,18 +75,20 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   }
 
   Future<void> _acceptRequest(FriendRequest request) async {
+    final copy = AppLocalizations.of(context);
     await _processRequest(
       request,
       () => _friendService.acceptFriendRequest(request),
-      'Friend request accepted.',
+      copy.text('Friend request accepted.', 'Zaproszenie zostało przyjęte.'),
     );
   }
 
   Future<void> _declineRequest(FriendRequest request) async {
+    final copy = AppLocalizations.of(context);
     await _processRequest(
       request,
       () => _friendService.declineFriendRequest(request.senderId),
-      'Friend request declined.',
+      copy.text('Friend request declined.', 'Zaproszenie zostało odrzucone.'),
     );
   }
 
@@ -184,17 +187,27 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   }
 
   String _readableError(Object error) {
+    final copy = AppLocalizations.of(context);
     final message = error.toString();
 
     if (message.contains('permission-denied')) {
-      return 'Firestore permission denied. Check your security rules.';
+      return copy.text(
+        "You don't have permission to do that.",
+        'Brak uprawnień do wykonania tej operacji.',
+      );
     }
 
     if (message.contains('unavailable')) {
-      return 'Service is temporarily unavailable.';
+      return copy.text(
+        'Service is temporarily unavailable.',
+        'Usługa jest chwilowo niedostępna.',
+      );
     }
 
-    return 'Something went wrong. Please try again.';
+    return copy.text(
+      'Something went wrong. Please try again.',
+      'Coś poszło nie tak. Spróbuj ponownie.',
+    );
   }
 
   @override
@@ -235,6 +248,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   }
 
   Widget _buildHeader() {
+    final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
     return Padding(
       padding: const EdgeInsets.fromLTRB(10, 10, 18, 10),
@@ -243,7 +257,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
           if (!widget.isRootTab) ...[
             IconButton(
               onPressed: () => Navigator.of(context).pop(),
-              tooltip: 'Back',
+              tooltip: copy.text('Back', 'Wróć'),
               icon: Icon(
                 Icons.arrow_back_ios_new_rounded,
                 color: palette.textPrimary,
@@ -257,7 +271,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Notifications',
+                  copy.notifications,
                   style: TextStyle(
                     color: palette.textPrimary,
                     fontSize: 23,
@@ -267,7 +281,10 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                 ),
                 const SizedBox(height: 3),
                 Text(
-                  'Friend requests, messages and activity',
+                  copy.text(
+                    'Friend requests, messages and activity',
+                    'Zaproszenia, wiadomości i aktywność',
+                  ),
                   style: TextStyle(
                     color: palette.textSecondary,
                     fontSize: 13,
@@ -283,6 +300,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   }
 
   Widget _buildContent() {
+    final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
     return StreamBuilder<List<FriendRequest>>(
@@ -334,11 +352,21 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                     icon: denied
                         ? Icons.lock_outline_rounded
                         : Icons.error_outline_rounded,
-                    title: 'Could not load your activity',
+                    title: copy.text(
+                      'Could not load your activity',
+                      'Nie udało się wczytać aktywności',
+                    ),
                     subtitle: denied
-                        ? 'This account is not allowed to read its activity '
-                              'feed. Sign out and back in to refresh it.'
-                        : 'Check your connection and try again.',
+                        ? copy.text(
+                            'This account is not allowed to read its activity '
+                                'feed. Sign out and back in to refresh it.',
+                            'To konto nie może odczytać swojej aktywności. '
+                                'Wyloguj się i zaloguj ponownie.',
+                          )
+                        : copy.text(
+                            'Check your connection and try again.',
+                            'Sprawdź połączenie i spróbuj ponownie.',
+                          ),
                     onRetry: () => setState(() {}),
                   );
                 }
@@ -371,12 +399,17 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                     unreadConversations.isEmpty &&
                     notifications.isEmpty &&
                     !auxiliaryFailed) {
-                  return const _EmptyState(
+                  return _EmptyState(
                     icon: Icons.notifications_none_rounded,
-                    title: 'You are all caught up',
-                    subtitle:
-                        'New friend requests, messages and activity will '
-                        'appear here.',
+                    title: copy.text(
+                      'You are all caught up',
+                      'Wszystko jest już sprawdzone',
+                    ),
+                    subtitle: copy.text(
+                      'New friend requests, messages and activity will '
+                          'appear here.',
+                      'Nowe zaproszenia, wiadomości i aktywność pojawią się tutaj.',
+                    ),
                   );
                 }
 
@@ -389,7 +422,10 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                     ],
                     if (requests.isNotEmpty) ...[
                       _SectionHeader(
-                        title: 'Friend requests',
+                        title: copy.text(
+                          'Friend requests',
+                          'Zaproszenia do znajomych',
+                        ),
                         count: requests.length,
                       ),
                       const SizedBox(height: 10),
@@ -408,7 +444,10 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                     if (unreadConversations.isNotEmpty) ...[
                       if (requests.isNotEmpty) const SizedBox(height: 14),
                       _SectionHeader(
-                        title: 'Unread messages',
+                        title: copy.text(
+                          'Unread messages',
+                          'Nieprzeczytane wiadomości',
+                        ),
                         count: unreadConversations.fold<int>(
                           0,
                           (sum, conversation) =>
@@ -464,7 +503,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                             onPressed: () =>
                                 setState(() => _notificationsLimit += 50),
                             child: Text(
-                              'Load more',
+                              copy.text('Load more', 'Wczytaj więcej'),
                               style: TextStyle(
                                 color: palette.textSecondary,
                                 fontSize: 12,
@@ -487,6 +526,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   Map<String, List<AppNotification>> _groupByDay(
     List<AppNotification> notifications,
   ) {
+    final copy = AppLocalizations.of(context);
     final grouped = <String, List<AppNotification>>{};
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
@@ -496,17 +536,15 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       final createdAt = notification.createdAt;
       final String label;
       if (createdAt == null) {
-        label = 'Earlier';
+        label = copy.earlier;
       } else {
         final day = DateTime(createdAt.year, createdAt.month, createdAt.day);
         if (day == today) {
-          label = 'Today';
+          label = copy.today;
         } else if (day == yesterday) {
-          label = 'Yesterday';
+          label = copy.yesterday;
         } else {
-          label =
-              '${day.day.toString().padLeft(2, '0')}/'
-              '${day.month.toString().padLeft(2, '0')}/${day.year}';
+          label = copy.calendarDate(day);
         }
       }
       grouped.putIfAbsent(label, () => []).add(notification);
@@ -565,6 +603,7 @@ class _ActivityHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final colors = Theme.of(context).colorScheme;
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -577,7 +616,10 @@ class _ActivityHeader extends StatelessWidget {
                 onPressed: onMarkAllRead,
                 style: TextButton.styleFrom(minimumSize: const Size(48, 48)),
                 child: Text(
-                  'Mark all read',
+                  copy.text(
+                    'Mark all read',
+                    'Oznacz wszystkie jako przeczytane',
+                  ),
                   style: TextStyle(
                     color: colors.primary,
                     fontSize: 12,
@@ -590,7 +632,10 @@ class _ActivityHeader extends StatelessWidget {
           return Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              _SectionHeader(title: 'Activity', count: count),
+              _SectionHeader(
+                title: copy.text('Activity', 'Aktywność'),
+                count: count,
+              ),
               ?markAllButton,
             ],
           );
@@ -599,7 +644,10 @@ class _ActivityHeader extends StatelessWidget {
         return Row(
           children: [
             Expanded(
-              child: _SectionHeader(title: 'Activity', count: count),
+              child: _SectionHeader(
+                title: copy.text('Activity', 'Aktywność'),
+                count: count,
+              ),
             ),
             ?markAllButton,
           ],
@@ -624,11 +672,12 @@ class _FriendRequestCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
     final name = request.senderName.trim().isNotEmpty
         ? request.senderName.trim()
-        : 'YO Voice user';
+        : copy.text('YO Voice user', 'Użytkownik YO Voice');
 
     final identity = Row(
       children: [
@@ -659,7 +708,10 @@ class _FriendRequestCard extends StatelessWidget {
               ),
               const SizedBox(height: 4),
               Text(
-                'Sent you a friend request',
+                copy.text(
+                  'Sent you a friend request',
+                  'Wysyła Ci zaproszenie do znajomych',
+                ),
                 style: TextStyle(color: palette.textSecondary, fontSize: 12),
               ),
             ],
@@ -686,12 +738,12 @@ class _FriendRequestCard extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             children: [
               IconButton(
-                tooltip: 'Decline',
+                tooltip: copy.text('Decline', 'Odrzuć'),
                 onPressed: onDecline,
                 icon: Icon(Icons.close_rounded, color: colors.error),
               ),
               IconButton(
-                tooltip: 'Accept',
+                tooltip: copy.text('Accept', 'Przyjmij'),
                 onPressed: onAccept,
                 icon: Icon(
                   Icons.check_rounded,
@@ -749,13 +801,14 @@ class _UnreadMessageCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
     final otherUserId = conversation.otherUserId(currentUserId);
     final name = conversation.displayNameFor(otherUserId);
     final unreadCount = conversation.unreadCountFor(currentUserId);
     final preview = conversation.lastMessage.trim().isEmpty
-        ? 'New message'
+        ? copy.text('New message', 'Nowa wiadomość')
         : conversation.lastMessage.trim();
 
     return Material(
@@ -852,7 +905,10 @@ class _NotificationCard extends StatelessWidget {
     NotificationType.clubInviteAccepted: Icons.groups_rounded,
     NotificationType.roomInvite: Icons.mic_rounded,
     NotificationType.broadcastInvite: Icons.campaign_rounded,
+    NotificationType.liveStarted: Icons.sensors_rounded,
     NotificationType.directMessage: Icons.chat_bubble_rounded,
+    NotificationType.directCall: Icons.call_rounded,
+    NotificationType.missedCall: Icons.call_missed_rounded,
     NotificationType.mention: Icons.alternate_email_rounded,
     NotificationType.reply: Icons.reply_rounded,
     NotificationType.achievementUnlocked: Icons.emoji_events_rounded,
@@ -860,23 +916,161 @@ class _NotificationCard extends StatelessWidget {
     NotificationType.system: Icons.info_rounded,
   };
 
-  String _relativeTime(DateTime? time) {
+  String _relativeTime(BuildContext context, DateTime? time) {
     if (time == null) return '';
-    final diff = DateTime.now().difference(time);
-    if (diff.inMinutes < 1) return 'Just now';
-    if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
-    if (diff.inHours < 24) return '${diff.inHours}h ago';
-    if (diff.inDays < 7) return '${diff.inDays}d ago';
-    return '${time.day.toString().padLeft(2, '0')}/'
-        '${time.month.toString().padLeft(2, '0')}';
+    return AppLocalizations.of(context).relativeCompactTime(time);
+  }
+
+  String _localizedTitle(BuildContext context) {
+    final copy = AppLocalizations.of(context);
+    final actor = notification.actorName.trim().isEmpty
+        ? copy.text('YO Voice user', 'Użytkownik YO Voice')
+        : notification.actorName.trim();
+    final label = notification.targetLabel?.trim();
+    final hasLabel = label != null && label.isNotEmpty;
+
+    return switch (notification.type) {
+      NotificationType.friendRequest => copy.template(
+        '{actor} sent you a friend request',
+        '{actor} wysyła Ci zaproszenie do znajomych',
+        values: {'actor': actor},
+      ),
+      NotificationType.friendAccepted => copy.template(
+        '{actor} accepted your friend request',
+        '{actor} przyjmuje Twoje zaproszenie do znajomych',
+        values: {'actor': actor},
+      ),
+      NotificationType.follow => copy.template(
+        '{actor} started following you',
+        '{actor} zaczyna Cię obserwować',
+        values: {'actor': actor},
+      ),
+      NotificationType.clubInvite =>
+        hasLabel
+            ? copy.template(
+                '{actor} invited you to {label}',
+                '{actor} zaprasza Cię do klubu {label}',
+                values: {'actor': actor, 'label': label},
+              )
+            : copy.template(
+                '{actor} invited you to a club',
+                '{actor} zaprasza Cię do klubu',
+                values: {'actor': actor},
+              ),
+      NotificationType.clubInviteAccepted =>
+        hasLabel
+            ? copy.template(
+                '{actor} joined {label}',
+                '{actor} dołącza do klubu {label}',
+                values: {'actor': actor, 'label': label},
+              )
+            : copy.template(
+                '{actor} accepted your club invitation',
+                '{actor} przyjmuje Twoje zaproszenie do klubu',
+                values: {'actor': actor},
+              ),
+      NotificationType.roomInvite =>
+        hasLabel
+            ? copy.template(
+                '{actor} invited you to {label}',
+                '{actor} zaprasza Cię do pokoju {label}',
+                values: {'actor': actor, 'label': label},
+              )
+            : copy.template(
+                '{actor} invited you to a room',
+                '{actor} zaprasza Cię do pokoju',
+                values: {'actor': actor},
+              ),
+      NotificationType.broadcastInvite =>
+        hasLabel
+            ? copy.template(
+                '{actor} invited you to {label}',
+                '{actor} zaprasza Cię do transmisji {label}',
+                values: {'actor': actor, 'label': label},
+              )
+            : copy.template(
+                '{actor} invited you to a broadcast',
+                '{actor} zaprasza Cię do transmisji',
+                values: {'actor': actor},
+              ),
+      NotificationType.liveStarted =>
+        hasLabel
+            ? copy.template(
+                '{actor} is live: {label}',
+                '{actor} prowadzi teraz: {label}',
+                values: {'actor': actor, 'label': label},
+              )
+            : copy.template(
+                '{actor} is live now',
+                '{actor} jest teraz na żywo',
+                values: {'actor': actor},
+              ),
+      NotificationType.directMessage => copy.template(
+        '{actor} sent you a message request',
+        '{actor} wysyła Ci prośbę o wiadomość',
+        values: {'actor': actor},
+      ),
+      NotificationType.directCall => copy.template(
+        '{actor} is calling you',
+        '{actor} dzwoni do Ciebie',
+        values: {'actor': actor},
+      ),
+      NotificationType.missedCall => copy.template(
+        'Missed call from {actor}',
+        'Nieodebrane połączenie od {actor}',
+        values: {'actor': actor},
+      ),
+      NotificationType.mention =>
+        hasLabel
+            ? copy.template(
+                '{actor} mentioned you in {label}',
+                '{actor} wspomina o Tobie w {label}',
+                values: {'actor': actor, 'label': label},
+              )
+            : copy.template(
+                '{actor} mentioned you',
+                '{actor} wspomina o Tobie',
+                values: {'actor': actor},
+              ),
+      NotificationType.reply =>
+        hasLabel
+            ? copy.template(
+                '{actor} replied to you in {label}',
+                '{actor} odpowiada Ci w {label}',
+                values: {'actor': actor, 'label': label},
+              )
+            : copy.template(
+                '{actor} replied to you',
+                '{actor} odpowiada Ci',
+                values: {'actor': actor},
+              ),
+      NotificationType.achievementUnlocked =>
+        hasLabel
+            ? copy.template(
+                'Achievement unlocked: {label}',
+                'Odblokowano osiągnięcie: {label}',
+                values: {'label': label},
+              )
+            : copy.text('Achievement unlocked', 'Odblokowano osiągnięcie'),
+      NotificationType.moderation =>
+        hasLabel
+            ? label
+            : copy.text(
+                'A moderator took action on your account',
+                'Moderator wykonał działanie na Twoim koncie',
+              ),
+      NotificationType.system => hasLabel ? label : 'YO Voice',
+    };
   }
 
   @override
   Widget build(BuildContext context) {
+    final localizations = AppLocalizations.of(context);
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
     final scaledBodySize = MediaQuery.textScalerOf(context).scale(14);
     final usesLargeText = scaledBodySize >= 21;
+    final localizedTitle = _localizedTitle(context);
 
     final avatar = Stack(
       children: [
@@ -903,7 +1097,7 @@ class _NotificationCard extends StatelessWidget {
         ),
       ],
     );
-    final copy = Column(
+    final notificationCopy = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Wrap(
@@ -915,11 +1109,19 @@ class _NotificationCard extends StatelessWidget {
               key: ValueKey('notification-state-${notification.id}'),
               container: true,
               label: notification.isRead
-                  ? 'Read notification. ${notification.title}'
-                  : 'Unread notification. ${notification.title}',
+                  ? localizations.template(
+                      'Read notification. {title}',
+                      'Przeczytane powiadomienie. {title}',
+                      values: {'title': localizedTitle},
+                    )
+                  : localizations.template(
+                      'Unread notification. {title}',
+                      'Nieprzeczytane powiadomienie. {title}',
+                      values: {'title': localizedTitle},
+                    ),
               child: ExcludeSemantics(
                 child: Text(
-                  notification.title,
+                  localizedTitle,
                   key: ValueKey('notification-title-${notification.id}'),
                   style: TextStyle(
                     color: palette.textPrimary,
@@ -936,7 +1138,7 @@ class _NotificationCard extends StatelessWidget {
         ),
         const SizedBox(height: 4),
         Text(
-          _relativeTime(notification.createdAt),
+          _relativeTime(context, notification.createdAt),
           style: TextStyle(color: palette.textSecondary, fontSize: 11.5),
         ),
       ],
@@ -955,7 +1157,10 @@ class _NotificationCard extends StatelessWidget {
           );
     final actions = PopupMenuButton<_NotificationMenuAction>(
       key: ValueKey('notification-actions-${notification.id}'),
-      tooltip: 'Notification actions',
+      tooltip: localizations.text(
+        'Notification actions',
+        'Działania powiadomienia',
+      ),
       icon: Icon(Icons.more_vert_rounded, color: palette.textSecondary),
       onSelected: (action) {
         if (action == _NotificationMenuAction.delete) onDismissed();
@@ -967,7 +1172,14 @@ class _NotificationCard extends StatelessWidget {
             children: [
               Icon(Icons.delete_outline_rounded, color: colors.error),
               const SizedBox(width: 10),
-              const Expanded(child: Text('Delete notification')),
+              Expanded(
+                child: Text(
+                  localizations.text(
+                    'Delete notification',
+                    'Usuń powiadomienie',
+                  ),
+                ),
+              ),
             ],
           ),
         ),
@@ -976,7 +1188,12 @@ class _NotificationCard extends StatelessWidget {
 
     return Semantics(
       customSemanticsActions: {
-        CustomSemanticsAction(label: 'Delete notification'): onDismissed,
+        CustomSemanticsAction(
+          label: localizations.text(
+            'Delete notification',
+            'Usuń powiadomienie',
+          ),
+        ): onDismissed,
       },
       child: Dismissible(
         key: ValueKey(notification.id),
@@ -1028,7 +1245,7 @@ class _NotificationCard extends StatelessWidget {
                           ],
                         ),
                         const SizedBox(height: 12),
-                        copy,
+                        notificationCopy,
                       ],
                     );
                   }
@@ -1037,7 +1254,7 @@ class _NotificationCard extends StatelessWidget {
                     children: [
                       avatar,
                       const SizedBox(width: 12),
-                      Expanded(child: copy),
+                      Expanded(child: notificationCopy),
                       const SizedBox(width: 4),
                       unreadIndicator,
                       actions,
@@ -1096,6 +1313,7 @@ class _DegradedNotice extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
     return Container(
       key: const ValueKey('notifications-degraded-notice'),
@@ -1120,8 +1338,12 @@ class _DegradedNotice extends StatelessWidget {
           const SizedBox(width: 9),
           Expanded(
             child: Text(
-              'Friend requests and unread messages could not be loaded. '
-              'Your activity below is up to date.',
+              copy.text(
+                'Friend requests and unread messages could not be loaded. '
+                    'Your activity below is up to date.',
+                'Nie udało się wczytać zaproszeń i nieprzeczytanych wiadomości. '
+                    'Aktywność poniżej jest aktualna.',
+              ),
               style: TextStyle(
                 color: palette.warningForeground,
                 fontSize: 12,
@@ -1153,6 +1375,7 @@ class _EmptyState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
     return Center(
@@ -1195,7 +1418,7 @@ class _EmptyState extends StatelessWidget {
               TextButton(
                 onPressed: onRetry,
                 child: Text(
-                  'Try again',
+                  copy.text('Try again', 'Spróbuj ponownie'),
                   style: TextStyle(
                     color: colors.primary,
                     fontSize: 13,

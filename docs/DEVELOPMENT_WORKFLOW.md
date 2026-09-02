@@ -99,7 +99,19 @@ order:
    the screen you're touching already uses, the "Coming soon" pattern for
    anything without real backend support yet, the quality bar from
    [Vision.md](Vision.md#what-done-looks-like-for-a-feature)).
-5. **Tests** — see [TESTING.md](TESTING.md) for what's realistic to add
+5. **Language is part of the feature, not a later cleanup** — every new or
+   changed piece of user-facing copy (including errors, empty/loading states,
+   accessibility labels, tooltips and notifications) goes through
+   `AppLocalizations` in the same change. Polish copy must be complete and
+   editorially reviewed before the feature is called done. Phrases that belong
+   to the production multi-language core must also be added to the canonical
+   translation catalog with identical placeholders in every supported locale;
+   canonical lookup text uses stable placeholders such as `{name}` or
+   `{count}` and substitutes runtime values only after localization — never
+   interpolate a name, date, price or count into the catalog lookup key;
+   an intentional English fallback boundary must stay explicit elsewhere.
+   Never ship a raw string first and plan to translate it after release.
+6. **Tests** — see [TESTING.md](TESTING.md) for what's realistic to add
    given current coverage. At minimum, a rules change needs a
    `firestore-tests` case; a non-trivial service method is a good
    candidate for a unit test in the style of
@@ -121,6 +133,11 @@ order:
    not just that it compiles. If a screen genuinely can't be visually
    verified (no test credentials available, for example), say so
    explicitly rather than claiming it was checked.
+4. For user-facing copy: run `flutter test
+   test/localization_source_guard_test.dart test/localization_catalog_test.dart`
+   and inspect the changed surface in Polish. Language selection, long text,
+   plural forms and right-to-left layout must be included when the affected
+   component is part of the production multi-language core.
 
 ## After finishing a feature
 

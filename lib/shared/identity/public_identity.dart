@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
 
 /// The official-role vocabulary as the PUBLIC badge mirror publishes it.
@@ -35,6 +36,27 @@ enum OfficialRole {
 
   /// The exact badge label. Never abbreviated, never re-cased.
   final String label;
+
+  /// Localized presentation copy for the badge.
+  ///
+  /// [label] deliberately remains the stable English vocabulary used by
+  /// diagnostics and compatibility tests. Surfaces render this value instead,
+  /// keeping role authorization/wire data entirely separate from UI language.
+  String localizedLabel(AppLocalizations copy) => switch (this) {
+    OfficialRole.user => copy.text('USER', 'UŻYTKOWNIK'),
+    OfficialRole.guideMaster => copy.text('GUIDE MASTER', 'GŁÓWNY PRZEWODNIK'),
+    OfficialRole.support => copy.text('SUPPORT', 'WSPARCIE'),
+    OfficialRole.auditor => copy.text('AUDITOR', 'AUDYTOR'),
+    OfficialRole.moderator => copy.text('MODERATOR', 'MODERATOR'),
+    OfficialRole.superModerator => copy.text(
+      'SUPER MODERATOR',
+      'SUPER MODERATOR',
+    ),
+    OfficialRole.ownerSuperAdmin => copy.text(
+      'OWNER · SUPER ADMIN',
+      'WŁAŚCICIEL · SUPERADMIN',
+    ),
+  };
 
   /// The authoritative badge color, defined once in the theme.
   Color get color => switch (this) {

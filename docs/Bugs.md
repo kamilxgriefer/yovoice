@@ -1671,13 +1671,16 @@ permission flags).
   responsive/200% text and real light/dark render checks cover the release;
   see ADR-127.
 
-- **OPEN migration limit — Polish is a bounded Beta, not a claim of complete
-  localization.** Framework controls plus migrated navigation,
-  authentication and Settings copy switch between English and Polish, while
-  product screens with raw English literals remain English. The language
-  screen discloses the mixed-language state. A complete translation still
-  needs catalog extraction, Polish linguistic QA, long-copy wrapping and
-  accessibility verification at every breakpoint.
+- **FIXED IN SOURCE 2026-09-01 — Polish no longer stops at a mixed-language
+  Beta boundary.** User-facing product copy, errors, loading/empty states,
+  tooltips and accessibility labels now pass through `AppLocalizations`, and
+  migrated feature roots are protected by a raw-copy source guard. Polish is
+  presented as a production language. System plus 43 explicit locale variants
+  are available; the additional variants own a strict core catalog and retain
+  an honest English fallback outside that boundary. Catalog completeness,
+  placeholders, plural/date smoke tests, RTL direction and platform locale
+  bundles are automated. Coordinated tester release and physical-device visual
+  verification are still pending; see ADR-136.
 
 - **Known platform limitation in the not-yet-deployed source implementation —
   downloaded audio is durable only for as long as this device keeps app/site
@@ -2758,3 +2761,11 @@ permission flags).
   shown, cancellation performs no join, and confirmed external entry connects
   muted until the user explicitly unmutes. Regression coverage pins ID
   validation and muted propagation through both Community and Podcast rooms.
+- **Fixed in source 2026-09-01 — auth-stream failures could expose raw backend
+  exception text on the session-isolation screen.** Both the in-place
+  `StreamProvider` error state and the root-route reset stringified the original
+  exception directly into a widget. The route boundary now preserves the typed
+  error only for diagnostics and sends it through the shared authentication
+  error localizer before rendering. English and Polish widget regressions pin
+  the actionable fallback and assert that backend codes, messages and secret-
+  shaped test values never reach the UI.

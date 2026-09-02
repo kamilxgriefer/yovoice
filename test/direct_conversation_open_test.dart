@@ -66,15 +66,15 @@ void main() {
   );
 
   Future<List<QueryDocumentSnapshot<Map<String, dynamic>>>>
-  conversationDocs() async =>
-      (await db.collection('conversations').get()).docs;
+  conversationDocs() async => (await db.collection('conversations').get()).docs;
 
-  Future<String> open(MessageService service) => service.openOrCreateConversation(
-    otherUserId: otherUserId,
-    otherDisplayName: 'Other Person',
-    otherEmail: 'other@yovoice.app',
-    otherPhotoUrl: 'https://cdn.example/other.jpg',
-  );
+  Future<String> open(MessageService service) =>
+      service.openOrCreateConversation(
+        otherUserId: otherUserId,
+        otherDisplayName: 'Other Person',
+        otherEmail: 'other@yovoice.app',
+        otherPhotoUrl: 'https://cdn.example/other.jpg',
+      );
 
   setUp(() {
     db = FakeFirebaseFirestore();
@@ -150,7 +150,8 @@ void main() {
         expect(
           await conversationDocs(),
           isEmpty,
-          reason: 'a refused open must not leave a root the server will '
+          reason:
+              'a refused open must not leave a root the server will '
               'reject forever',
         );
       });
@@ -173,7 +174,10 @@ void main() {
         ),
       );
 
-      await expectLater(open(service), throwsA(isA<FirebaseFunctionsException>()));
+      await expectLater(
+        open(service),
+        throwsA(isA<FirebaseFunctionsException>()),
+      );
 
       expect(await conversationDocs(), isEmpty);
       expect(
@@ -201,7 +205,8 @@ void main() {
         expect(
           await conversationDocs(),
           isEmpty,
-          reason: 'a malformed answer is still an answer — not a licence to '
+          reason:
+              'a malformed answer is still an answer — not a licence to '
               'write the root locally',
         );
       });
@@ -304,17 +309,14 @@ void main() {
         isNot(equals(canonicalConversationKeys)),
         reason: 'and it must not pretend to be canonical either',
       );
-      expect(
-        canonicalConversationKeys.difference(keys),
-        <String>{
-          'pairKey',
-          'schemaVersion',
-          'readSequences',
-          'participantEmails',
-          'lastMessageId',
-          'lastMessageSequence',
-        },
-      );
+      expect(canonicalConversationKeys.difference(keys), <String>{
+        'pairKey',
+        'schemaVersion',
+        'readSequences',
+        'participantEmails',
+        'lastMessageId',
+        'lastMessageSequence',
+      });
     });
   });
 
@@ -339,17 +341,19 @@ void main() {
       expect(await conversationDocs(), isEmpty);
     });
 
-    test('a signed-out caller is refused before any callable or write',
-        () async {
-      final service = MessageService(
-        firestore: db,
-        auth: MockFirebaseAuth(),
-        functions: _ThrowingFunctions('permission-denied'),
-      );
+    test(
+      'a signed-out caller is refused before any callable or write',
+      () async {
+        final service = MessageService(
+          firestore: db,
+          auth: MockFirebaseAuth(),
+          functions: _ThrowingFunctions('permission-denied'),
+        );
 
-      await expectLater(open(service), throwsA(isA<StateError>()));
-      expect(await conversationDocs(), isEmpty);
-    });
+        await expectLater(open(service), throwsA(isA<StateError>()));
+        expect(await conversationDocs(), isEmpty);
+      },
+    );
   });
 }
 

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/premium/data/premium_plans.dart';
@@ -24,6 +25,7 @@ class PremiumDesktopCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final colors = Theme.of(context).colorScheme;
     final palette = context.appPalette;
     final iconColors = <Color>[
@@ -57,8 +59,28 @@ class PremiumDesktopCard extends StatelessWidget {
                     child: _BenefitTile(
                       icon: _icons[i],
                       iconColor: iconColors[i],
-                      title: PremiumPlans.benefits[i].$1,
-                      subtitle: PremiumPlans.benefits[i].$2,
+                      title: switch (i) {
+                        0 => copy.text('Become a Creator', 'Zostań twórcą'),
+                        1 => copy.text(
+                          'Create your own Clubs',
+                          'Twórz własne kluby',
+                        ),
+                        _ => copy.text('Stand out', 'Wyróżnij się'),
+                      },
+                      subtitle: switch (i) {
+                        0 => copy.text(
+                          'Unlock real Creator tools',
+                          'Odblokuj narzędzia dla twórców',
+                        ),
+                        1 => copy.text(
+                          'Build spaces for your people',
+                          'Buduj miejsca dla swojej społeczności',
+                        ),
+                        _ => copy.text(
+                          'Premium look across YO Voice',
+                          'Wygląd Premium w całym YO Voice',
+                        ),
+                      },
                     ),
                   ),
                 ],
@@ -148,6 +170,7 @@ class _CheckPlansButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final colors = Theme.of(context).colorScheme;
     return SizedBox(
       width: double.infinity,
@@ -174,7 +197,7 @@ class _CheckPlansButton extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Text(
-                    'Check plans',
+                    copy.text('Check plans', 'Sprawdź plany'),
                     style: TextStyle(
                       color: colors.onPrimary,
                       fontSize: 15,

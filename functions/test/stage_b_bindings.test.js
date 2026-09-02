@@ -6,6 +6,7 @@ const {
   createUserCallableHandlers,
 } = require("../integrity/stage_b_handlers");
 const {
+  LATENCY_CRITICAL_USER_CALLABLES,
   REGION,
   createStageBFunctions,
 } = require("../integrity/stage_b_functions");
@@ -160,6 +161,23 @@ test("Stage B export map registers every callable, schedule and trigger", () => 
   for (const name of callableNames) {
     assert.equal(functions[name].options.region, REGION);
     assert.equal(functions[name].options.enforceAppCheck, false);
+  }
+  for (const name of Object.keys(USER_CALLABLE_METHODS)) {
+    assert.equal(
+      functions[name].options.minInstances,
+      LATENCY_CRITICAL_USER_CALLABLES.includes(name) ? 1 : 0,
+      `${name} must ${LATENCY_CRITICAL_USER_CALLABLES.includes(name)
+        ? "remain warm"
+        : "scale to zero"}`,
+    );
+  }
+  assert.deepEqual(
+    LATENCY_CRITICAL_USER_CALLABLES,
+    ["sendDirectMessage", "sendRoomMessage"],
+  );
+  for (const name of callableNames.filter((name) =>
+    !Object.hasOwn(USER_CALLABLE_METHODS, name))) {
+    assert.equal(functions[name].options.minInstances, 0);
   }
   assert.equal(functions.migrateIntegrityMoment.options.maxInstances, 1);
   assert.equal(

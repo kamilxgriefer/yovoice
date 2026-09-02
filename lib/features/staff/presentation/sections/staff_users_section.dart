@@ -4,14 +4,16 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/helpers/error_messages.dart';
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/role_identity.dart';
 import 'package:yovoice/features/staff/data/staff_audit_service.dart';
 import 'package:yovoice/features/staff/data/staff_capabilities.dart';
 import 'package:yovoice/features/staff/data/staff_directory_service.dart';
 import 'package:yovoice/features/staff/presentation/screens/user_management_screen.dart';
 import 'package:yovoice/features/staff/presentation/sections/staff_section_shared.dart';
+import 'package:yovoice/features/staff/presentation/staff_localized_copy.dart';
 import 'package:yovoice/features/staff/presentation/widgets/user_actions_menu.dart';
-import 'package:yovoice/shared/identity/public_identity.dart';
 import 'package:yovoice/shared/identity/public_identity_repository.dart';
 import 'package:yovoice/shared/widgets/identity/decorated_user_avatar.dart';
 import 'package:yovoice/shared/widgets/identity/official_role_badge.dart';
@@ -202,26 +204,40 @@ class _StaffUsersSectionState extends State<StaffUsersSection> {
     );
   }
 
-  String _errorMessage(DirectorySearchException error) => switch (error.kind) {
-    DirectorySearchErrorKind.permission =>
-      'User search is reserved for the application owner.',
-    DirectorySearchErrorKind.network =>
-      'The server could not be reached. Check your connection.',
-    DirectorySearchErrorKind.invalidQuery => error.message,
-    DirectorySearchErrorKind.server =>
-      'The search failed on the server. Try again.',
-  };
+  String _errorMessage(DirectorySearchException error) {
+    final copy = AppLocalizations.of(context);
+    return switch (error.kind) {
+      DirectorySearchErrorKind.permission => copy.text(
+        'User search is reserved for the application owner.',
+        'Wyszukiwanie użytkowników jest dostępne wyłącznie dla właściciela aplikacji.',
+      ),
+      DirectorySearchErrorKind.network => copy.text(
+        'The server could not be reached. Check your connection.',
+        'Nie udało się połączyć z serwerem. Sprawdź połączenie.',
+      ),
+      DirectorySearchErrorKind.invalidQuery => copy.text(
+        'Enter a valid name, username, email address or account ID.',
+        'Zapytanie jest nieprawidłowe. Sprawdź wpisane dane.',
+      ),
+      DirectorySearchErrorKind.server => copy.text(
+        'The search failed on the server. Try again.',
+        'Wyszukiwanie na serwerze nie powiodło się. Spróbuj ponownie.',
+      ),
+    };
+  }
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const StaffSectionHeader(
-          title: 'Users',
-          subtitle:
-              'Search by name, @username, email or uid — case and spacing '
-              'never matter. Every action here is verified server-side.',
+        StaffSectionHeader(
+          title: copy.text('Users', 'Użytkownicy'),
+          subtitle: copy.text(
+            'Search by name, @username, email or uid — case and spacing never matter. Every action here is verified server-side.',
+            'Szukaj po nazwie, @pseudonimie, adresie e-mail lub UID — wielkość liter i odstępy nie mają znaczenia. Każde działanie jest weryfikowane na serwerze.',
+          ),
         ),
         _searchField(),
         const SizedBox(height: 10),
@@ -233,6 +249,7 @@ class _StaffUsersSectionState extends State<StaffUsersSection> {
   }
 
   Widget _searchField() {
+    final copy = AppLocalizations.of(context);
     return TextField(
       controller: _searchController,
       focusNode: _searchFocus,
@@ -241,7 +258,10 @@ class _StaffUsersSectionState extends State<StaffUsersSection> {
       textInputAction: TextInputAction.search,
       style: const TextStyle(color: Colors.white, fontSize: 15),
       decoration: InputDecoration(
-        hintText: 'Search users — Sieeema, @sieeema, email or uid…',
+        hintText: copy.text(
+          'Search users — Sieeema, @sieeema, email or uid…',
+          'Szukaj — Sieeema, @sieeema, e-mail lub UID…',
+        ),
         hintStyle: const TextStyle(color: StaffCenterStyle.faint, fontSize: 14),
         prefixIcon: const Icon(
           Icons.search_rounded,
@@ -250,7 +270,7 @@ class _StaffUsersSectionState extends State<StaffUsersSection> {
         suffixIcon: _query.isEmpty
             ? null
             : IconButton(
-                tooltip: 'Clear',
+                tooltip: copy.text('Clear', 'Wyczyść'),
                 onPressed: _clear,
                 icon: const Icon(
                   Icons.close_rounded,
@@ -260,7 +280,10 @@ class _StaffUsersSectionState extends State<StaffUsersSection> {
         filled: true,
         fillColor: StaffCenterStyle.surfaceRaised,
         helperText: _shortQueryHint
-            ? 'Type at least 2 characters to search by name.'
+            ? copy.text(
+                'Type at least 2 characters to search by name.',
+                'Wpisz co najmniej 2 znaki, aby wyszukać po nazwie.',
+              )
             : null,
         helperStyle: const TextStyle(
           color: StaffCenterStyle.warn,
@@ -283,13 +306,14 @@ class _StaffUsersSectionState extends State<StaffUsersSection> {
   }
 
   Widget _filterChips() {
+    final copy = AppLocalizations.of(context);
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
       child: Row(
         children: [
           for (final (value, label) in StaffUsersSection.filters) ...[
             ChoiceChip(
-              label: Text(label),
+              label: Text(_localizedUserFilter(copy, value, label)),
               selected: _filter == value,
               onSelected: (_) {
                 setState(() => _filter = value);
@@ -312,9 +336,15 @@ class _StaffUsersSectionState extends State<StaffUsersSection> {
   }
 
   Widget _resultsArea() {
+    final copy = AppLocalizations.of(context);
     final error = _error;
     if (_loading) {
-      return const Center(child: CircularProgressIndicator());
+      return Center(
+        child: Semantics(
+          label: copy.text('Searching users', 'Wyszukiwanie użytkowników'),
+          child: const CircularProgressIndicator(),
+        ),
+      );
     }
     if (error != null) {
       return StaffErrorState(
@@ -327,9 +357,14 @@ class _StaffUsersSectionState extends State<StaffUsersSection> {
       return StaffEmptyState(
         icon: Icons.person_search_rounded,
         message: _query.isEmpty
-            ? 'No accounts match this filter yet.'
-            : 'No account matches "$_query". Uid, email, @username, or a '
-                  'name of at least two characters all work.',
+            ? copy.text(
+                'No accounts match this filter yet.',
+                'Żadne konto nie pasuje jeszcze do tego filtra.',
+              )
+            : copy.text(
+                'No account matches "$_query". Uid, email, @username, or a name of at least two characters all work.',
+                'Nie znaleziono konta pasującego do „$_query”. Możesz użyć UID, adresu e-mail, @pseudonimu albo nazwy zawierającej co najmniej dwa znaki.',
+              ),
       );
     }
 
@@ -337,9 +372,11 @@ class _StaffUsersSectionState extends State<StaffUsersSection> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          _nextCursor == null
-              ? '${_results.length} result${_results.length == 1 ? '' : 's'}'
-              : '${_results.length} results — more available',
+          localizedStaffResultCount(
+            copy,
+            _results.length,
+            moreAvailable: _nextCursor != null,
+          ),
           style: const TextStyle(
             color: StaffCenterStyle.faint,
             fontSize: 11.5,
@@ -361,12 +398,18 @@ class _StaffUsersSectionState extends State<StaffUsersSection> {
                       side: const BorderSide(color: StaffCenterStyle.border),
                     ),
                     child: _loadingMore
-                        ? const SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(strokeWidth: 2),
+                        ? Semantics(
+                            label: copy.text(
+                              'Loading more users',
+                              'Wczytywanie kolejnych użytkowników',
+                            ),
+                            child: const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            ),
                           )
-                        : const Text('Load more'),
+                        : Text(copy.text('Load more', 'Wczytaj więcej')),
                   ),
                 );
               }
@@ -388,13 +431,14 @@ class _UserRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     return StaffPanel(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
       child: LayoutBuilder(
         builder: (context, constraints) {
           final stacksActions = constraints.maxWidth < 560;
           final showsUid = constraints.maxWidth >= 700;
-          final identity = Expanded(child: _identity(showsUid: showsUid));
+          final identity = Expanded(child: _identity(copy, showsUid: showsUid));
 
           if (stacksActions) {
             return Column(
@@ -405,7 +449,10 @@ class _UserRow extends StatelessWidget {
                   children: [_avatar(), const SizedBox(width: 12), identity],
                 ),
                 const SizedBox(height: 9),
-                Align(alignment: Alignment.centerRight, child: _viewButton()),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: _viewButton(copy),
+                ),
               ],
             );
           }
@@ -416,7 +463,7 @@ class _UserRow extends StatelessWidget {
               const SizedBox(width: 12),
               identity,
               const SizedBox(width: 8),
-              _viewButton(),
+              _viewButton(copy),
             ],
           );
         },
@@ -430,7 +477,7 @@ class _UserRow extends StatelessWidget {
     displayName: user.displayName,
   );
 
-  Widget _identity({required bool showsUid}) {
+  Widget _identity(AppLocalizations copy, {required bool showsUid}) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -440,7 +487,9 @@ class _UserRow extends StatelessWidget {
           crossAxisAlignment: WrapCrossAlignment.center,
           children: [
             Text(
-              user.displayName.isEmpty ? 'YO Voice user' : user.displayName,
+              user.displayName.isEmpty
+                  ? copy.text('YO Voice user', 'Użytkownik YO Voice')
+                  : user.displayName,
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(
@@ -449,8 +498,8 @@ class _UserRow extends StatelessWidget {
                 fontWeight: FontWeight.w800,
               ),
             ),
-            OfficialRoleBadge(
-              role: OfficialRole.fromWire(user.staffRole),
+            StaffOfficialRoleBadge(
+              role: user.staffRole,
               variant: IdentityBadgeVariant.compact,
             ),
             if (user.isVip)
@@ -475,7 +524,9 @@ class _UserRow extends StatelessWidget {
             if (showsUid) CopyableUid(uid: user.uid),
             if (user.createdAt != null)
               Text(
-                'joined ${staffStamp(user.createdAt)}',
+                copy
+                    .text('joined {time}', 'Dołączenie: {time}')
+                    .replaceAll('{time}', staffStamp(copy, user.createdAt)),
                 style: const TextStyle(
                   color: StaffCenterStyle.faint,
                   fontSize: 10.5,
@@ -487,7 +538,7 @@ class _UserRow extends StatelessWidget {
     );
   }
 
-  Widget _viewButton() {
+  Widget _viewButton(AppLocalizations copy) {
     return FilledButton.tonal(
       onPressed: onView,
       style: FilledButton.styleFrom(
@@ -495,7 +546,10 @@ class _UserRow extends StatelessWidget {
         foregroundColor: Colors.white,
         minimumSize: const Size(64, 44),
       ),
-      child: const Text('View', style: TextStyle(fontSize: 12.5)),
+      child: Text(
+        copy.text('View', 'Wyświetl'),
+        style: const TextStyle(fontSize: 12.5),
+      ),
     );
   }
 }
@@ -515,11 +569,15 @@ Future<void> showUserDetailDrawer(
   FirebaseFirestore? firestore,
   Future<void> Function(String uid)? onUserChanged,
 }) {
+  final copy = AppLocalizations.of(context);
   final width = MediaQuery.sizeOf(context).width;
   return showGeneralDialog<void>(
     context: context,
     barrierDismissible: true,
-    barrierLabel: 'Close user detail',
+    barrierLabel: copy.text(
+      'Close user detail',
+      'Zamknij szczegóły użytkownika',
+    ),
     barrierColor: Colors.black.withValues(alpha: .6),
     transitionDuration: const Duration(milliseconds: 220),
     transitionBuilder: (context, animation, _, child) => SlideTransition(
@@ -597,6 +655,10 @@ class _UserDetailDrawerState extends State<UserDetailDrawer> {
 
   bool get _isSelf => _user.uid == widget.currentUid;
 
+  String _displayName(AppLocalizations copy) => _user.displayName.isEmpty
+      ? copy.text('YO Voice user', 'Użytkownik YO Voice')
+      : _user.displayName;
+
   @override
   void initState() {
     super.initState();
@@ -637,7 +699,7 @@ class _UserDetailDrawerState extends State<UserDetailDrawer> {
               for (final doc in snapshot.docs)
                 (
                   id: doc.id,
-                  name: doc.data()['name'] as String? ?? 'Room',
+                  name: (doc.data()['name'] as String?)?.trim() ?? '',
                   isLive: doc.data()['isLive'] == true,
                 ),
             ],
@@ -700,15 +762,18 @@ class _UserDetailDrawerState extends State<UserDetailDrawer> {
     );
     if (selected == null || selected == authoritative.role || !mounted) return;
 
+    final copy = AppLocalizations.of(context);
+    final displayName = _displayName(copy);
     final roleLabel = selected == 'user'
-        ? 'an ordinary user'
-        : RoleIdentity.labelFor(selected);
+        ? copy.text('an ordinary user', 'zwykły użytkownik')
+        : localizedStaffRole(copy, selected);
     final reason = await _confirmWithReason(
-      title: 'Change role',
-      description:
-          '${_user.displayName}: ${authoritative.role} → $selected. The '
-          'change is verified and recorded server-side.',
-      confirmLabel: 'Confirm change',
+      title: copy.text('Change role', 'Zmień rolę'),
+      description: copy.text(
+        '$displayName: ${authoritative.role} → $selected. The change is verified and recorded server-side.',
+        '$displayName: ${localizedStaffRole(copy, authoritative.role)} → ${localizedStaffRole(copy, selected)}. Zmiana zostanie zweryfikowana i zapisana na serwerze.',
+      ),
+      confirmLabel: copy.text('Confirm change', 'Potwierdź zmianę'),
     );
     if (reason == null || !mounted) return;
 
@@ -728,7 +793,12 @@ class _UserDetailDrawerState extends State<UserDetailDrawer> {
             'expectedRole': authoritative.role,
           });
       if (!mounted) return;
-      await _afterChange('${_user.displayName} is now $roleLabel.');
+      await _afterChange(
+        copy.text(
+          '$displayName is now $roleLabel.',
+          '$displayName ma teraz rolę: $roleLabel.',
+        ),
+      );
     } catch (error) {
       if (!mounted) return;
       setState(() {
@@ -742,13 +812,24 @@ class _UserDetailDrawerState extends State<UserDetailDrawer> {
 
   Future<void> _setBan(bool banned) async {
     if (_busy) return;
+    final copy = AppLocalizations.of(context);
+    final displayName = _displayName(copy);
     final reason = await _confirmWithReason(
-      title: banned ? 'Ban account' : 'Lift ban',
+      title: banned
+          ? copy.text('Ban account', 'Zablokuj konto')
+          : copy.text('Lift ban', 'Zdejmij blokadę'),
       description: banned
-          ? '${_user.displayName} will be banned. Their session tokens are '
-                'revoked server-side.'
-          : '${_user.displayName} will be unbanned and may sign in again.',
-      confirmLabel: banned ? 'Ban' : 'Unban',
+          ? copy.text(
+              '$displayName will be banned. Their session tokens are revoked server-side.',
+              'Konto $displayName zostanie zablokowane, a tokeny sesji zostaną unieważnione na serwerze.',
+            )
+          : copy.text(
+              '$displayName will be unbanned and may sign in again.',
+              'Blokada konta $displayName zostanie zdjęta. Użytkownik będzie mógł zalogować się ponownie.',
+            ),
+      confirmLabel: banned
+          ? copy.text('Ban', 'Zablokuj')
+          : copy.text('Unban', 'Odblokuj'),
       confirmColor: banned ? StaffCenterStyle.bad : StaffCenterStyle.good,
     );
     if (reason == null || !mounted) return;
@@ -766,8 +847,14 @@ class _UserDetailDrawerState extends State<UserDetailDrawer> {
       if (!mounted) return;
       await _afterChange(
         banned
-            ? '${_user.displayName} is banned.'
-            : 'The ban on ${_user.displayName} was lifted.',
+            ? copy.text(
+                '$displayName is banned.',
+                'Konto $displayName zostało zablokowane.',
+              )
+            : copy.text(
+                'The ban on $displayName was lifted.',
+                'Zdjęto blokadę konta $displayName.',
+              ),
       );
     } catch (error) {
       if (!mounted) return;
@@ -780,13 +867,21 @@ class _UserDetailDrawerState extends State<UserDetailDrawer> {
     }
   }
 
-  String _readable(Object error) => error
-      .toString()
-      .replaceFirst(RegExp(r'^\[[^\]]*\]\s*'), '')
-      .replaceFirst('Exception: ', '');
+  String _readable(Object error) {
+    final copy = AppLocalizations.of(context);
+    return friendlyErrorMessage(
+      error,
+      copy: copy,
+      fallback: copy.text(
+        'That action could not be completed. Please try again.',
+        'Nie udało się wykonać działania. Spróbuj ponownie.',
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final capabilities = widget.capabilities;
     return Material(
       color: StaffCenterStyle.background,
@@ -798,10 +893,10 @@ class _UserDetailDrawerState extends State<UserDetailDrawer> {
               padding: const EdgeInsets.fromLTRB(18, 14, 10, 0),
               child: Row(
                 children: [
-                  const Expanded(
+                  Expanded(
                     child: Text(
-                      'User detail',
-                      style: TextStyle(
+                      copy.text('User detail', 'Szczegóły użytkownika'),
+                      style: const TextStyle(
                         color: Colors.white,
                         fontSize: 16,
                         fontWeight: FontWeight.w900,
@@ -809,7 +904,7 @@ class _UserDetailDrawerState extends State<UserDetailDrawer> {
                     ),
                   ),
                   IconButton(
-                    tooltip: 'Close',
+                    tooltip: copy.text('Close', 'Zamknij'),
                     onPressed: () => Navigator.of(context).pop(),
                     icon: const Icon(Icons.close_rounded, color: Colors.white),
                   ),
@@ -833,11 +928,13 @@ class _UserDetailDrawerState extends State<UserDetailDrawer> {
                     const SizedBox(height: 12),
                   ],
                   if (_isSelf)
-                    const StaffPanel(
+                    StaffPanel(
                       child: Text(
-                        'This is your own account. The owner cannot target '
-                        'themselves — protections apply server-side too.',
-                        style: TextStyle(
+                        copy.text(
+                          'This is your own account. The owner cannot target themselves — protections apply server-side too.',
+                          'To Twoje konto. Właściciel nie może wykonywać działań wobec siebie — zabezpieczenia obowiązują również na serwerze.',
+                        ),
+                        style: const TextStyle(
                           color: StaffCenterStyle.muted,
                           fontSize: 12.5,
                           height: 1.4,
@@ -858,6 +955,7 @@ class _UserDetailDrawerState extends State<UserDetailDrawer> {
   }
 
   Widget _identityHeader() {
+    final copy = AppLocalizations.of(context);
     return StaffPanel(
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -874,7 +972,7 @@ class _UserDetailDrawerState extends State<UserDetailDrawer> {
               children: [
                 Text(
                   _user.displayName.isEmpty
-                      ? 'YO Voice user'
+                      ? copy.text('YO Voice user', 'Użytkownik YO Voice')
                       : _user.displayName,
                   style: const TextStyle(
                     color: Colors.white,
@@ -896,8 +994,8 @@ class _UserDetailDrawerState extends State<UserDetailDrawer> {
                   runSpacing: 5,
                   crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
-                    OfficialRoleBadge(
-                      role: OfficialRole.fromWire(_user.staffRole),
+                    StaffOfficialRoleBadge(
+                      role: _user.staffRole,
                       variant: IdentityBadgeVariant.compact,
                     ),
                     if (_user.isVip)
@@ -914,13 +1012,13 @@ class _UserDetailDrawerState extends State<UserDetailDrawer> {
             UserActionsMenu(
               targetUid: _user.uid,
               targetName: _user.displayName.isEmpty
-                  ? 'this user'
+                  ? copy.text('this user', 'ten użytkownik')
                   : _user.displayName,
               capabilities: widget.capabilities,
               currentUid: widget.currentUid,
               functions: widget.functions,
               firestore: widget.firestore,
-              onChanged: () => _afterChange('Done.'),
+              onChanged: () => _afterChange(copy.text('Done.', 'Gotowe.')),
             ),
         ],
       ),
@@ -951,40 +1049,67 @@ class _UserDetailDrawerState extends State<UserDetailDrawer> {
   }
 
   Widget _authoritativePanel() {
+    final copy = AppLocalizations.of(context);
     final authoritative = _authoritative;
     return StaffPanel(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const StaffPanelTitle(title: 'Authoritative status'),
+          StaffPanelTitle(
+            title: copy.text(
+              'Authoritative status',
+              'Stan potwierdzony przez serwer',
+            ),
+          ),
           if (authoritative == null && !_authoritativeFailed)
-            const Text(
-              'Loading from the server…',
-              style: TextStyle(color: StaffCenterStyle.faint, fontSize: 12),
+            Text(
+              copy.text('Loading from the server…', 'Wczytywanie z serwera…'),
+              style: const TextStyle(
+                color: StaffCenterStyle.faint,
+                fontSize: 12,
+              ),
             )
           else if (_authoritativeFailed)
-            const Text(
-              'The authoritative record could not be loaded. Actions stay '
-              'available and are re-verified server-side.',
-              style: TextStyle(color: StaffCenterStyle.warn, fontSize: 12),
+            Text(
+              copy.text(
+                'The authoritative record could not be loaded. Actions stay available and are re-verified server-side.',
+                'Nie udało się wczytać potwierdzonego rekordu. Działania pozostają dostępne i będą ponownie zweryfikowane na serwerze.',
+              ),
+              style: const TextStyle(
+                color: StaffCenterStyle.warn,
+                fontSize: 12,
+              ),
             )
           else ...[
             _factRow(
-              'Role (server record)',
+              copy.text('Role (server record)', 'Rola (rekord serwera)'),
               authoritative!.role == 'user'
-                  ? 'user (ordinary account)'
-                  : authoritative.role,
+                  ? copy.text(
+                      'user (ordinary account)',
+                      'użytkownik (zwykłe konto)',
+                    )
+                  : localizedStaffRole(copy, authoritative.role),
             ),
             _factRow(
-              'VIP entitlement',
-              authoritative.isVip ? 'active' : 'none',
+              copy.text('VIP entitlement', 'Uprawnienie VIP'),
+              authoritative.isVip
+                  ? copy.text('active', 'aktywne')
+                  : copy.text('none', 'brak'),
             ),
             _factRow(
-              'Account',
-              authoritative.banned ? 'BANNED' : 'in good standing',
+              copy.text('Account', 'Konto'),
+              authoritative.banned
+                  ? copy.text('BANNED', 'ZABLOKOWANE')
+                  : copy.text('in good standing', 'bez ograniczeń'),
             ),
             if (_user.restricted)
-              _factRow('Restriction', 'communication mute active'),
+              _factRow(
+                copy.text('Restriction', 'Ograniczenie'),
+                copy.text(
+                  'communication mute active',
+                  'aktywne wyciszenie komunikacji',
+                ),
+              ),
           ],
         ],
       ),
@@ -1023,12 +1148,15 @@ class _UserDetailDrawerState extends State<UserDetailDrawer> {
   }
 
   Widget _ownerActionsPanel() {
+    final copy = AppLocalizations.of(context);
     final banned = _authoritative?.banned ?? _user.banned;
     return StaffPanel(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const StaffPanelTitle(title: 'Owner actions'),
+          StaffPanelTitle(
+            title: copy.text('Owner actions', 'Działania właściciela'),
+          ),
           Wrap(
             spacing: 8,
             runSpacing: 8,
@@ -1036,7 +1164,9 @@ class _UserDetailDrawerState extends State<UserDetailDrawer> {
               OutlinedButton.icon(
                 onPressed: _busy || _authoritative == null ? null : _changeRole,
                 icon: const Icon(Icons.badge_rounded, size: 16),
-                label: const Text('Change staff role'),
+                label: Text(
+                  copy.text('Change staff role', 'Zmień rolę zespołu'),
+                ),
                 style: OutlinedButton.styleFrom(
                   foregroundColor: Colors.white,
                   side: const BorderSide(color: StaffCenterStyle.border),
@@ -1048,7 +1178,11 @@ class _UserDetailDrawerState extends State<UserDetailDrawer> {
                   banned ? Icons.lock_open_rounded : Icons.gavel_rounded,
                   size: 16,
                 ),
-                label: Text(banned ? 'Unban account' : 'Ban account'),
+                label: Text(
+                  banned
+                      ? copy.text('Unban account', 'Odblokuj konto')
+                      : copy.text('Ban account', 'Zablokuj konto'),
+                ),
                 style: OutlinedButton.styleFrom(
                   foregroundColor: banned
                       ? StaffCenterStyle.good
@@ -1059,11 +1193,12 @@ class _UserDetailDrawerState extends State<UserDetailDrawer> {
             ],
           ),
           const SizedBox(height: 6),
-          const Text(
-            'Warnings, mutes and lifting restrictions live in the ••• menu '
-            'above — the same tiered menu every staff surface uses. VIP is '
-            'an entitlement and is never touched by a role change.',
-            style: TextStyle(
+          Text(
+            copy.text(
+              'Warnings, mutes and lifting restrictions live in the ••• menu above — the same tiered menu every staff surface uses. VIP is an entitlement and is never touched by a role change.',
+              'Ostrzeżenia, wyciszenia i zdejmowanie ograniczeń znajdziesz w menu ••• powyżej — tym samym na każdej powierzchni zespołu. VIP jest uprawnieniem i zmiana roli nigdy go nie modyfikuje.',
+            ),
+            style: const TextStyle(
               color: StaffCenterStyle.faint,
               fontSize: 11,
               height: 1.4,
@@ -1075,21 +1210,33 @@ class _UserDetailDrawerState extends State<UserDetailDrawer> {
   }
 
   Widget _hostedRoomsPanel() {
+    final copy = AppLocalizations.of(context);
     final rooms = _hostedRooms;
     return StaffPanel(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const StaffPanelTitle(title: 'Public rooms hosted'),
+          StaffPanelTitle(
+            title: copy.text(
+              'Public rooms hosted',
+              'Prowadzone pokoje publiczne',
+            ),
+          ),
           if (rooms == null)
-            const Text(
-              'Loading…',
-              style: TextStyle(color: StaffCenterStyle.faint, fontSize: 12),
+            Text(
+              copy.text('Loading…', 'Wczytywanie…'),
+              style: const TextStyle(
+                color: StaffCenterStyle.faint,
+                fontSize: 12,
+              ),
             )
           else if (rooms.isEmpty)
-            const Text(
-              'No public rooms.',
-              style: TextStyle(color: StaffCenterStyle.muted, fontSize: 12),
+            Text(
+              copy.text('No public rooms.', 'Brak pokojów publicznych.'),
+              style: const TextStyle(
+                color: StaffCenterStyle.muted,
+                fontSize: 12,
+              ),
             )
           else
             for (final room in rooms)
@@ -1109,7 +1256,9 @@ class _UserDetailDrawerState extends State<UserDetailDrawer> {
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
-                        room.name,
+                        room.name.isEmpty
+                            ? copy.text('Room', 'Pokój')
+                            : room.name,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
@@ -1119,9 +1268,9 @@ class _UserDetailDrawerState extends State<UserDetailDrawer> {
                       ),
                     ),
                     if (room.isLive)
-                      const Text(
-                        'LIVE',
-                        style: TextStyle(
+                      Text(
+                        copy.text('LIVE', 'NA ŻYWO'),
+                        style: const TextStyle(
                           color: StaffCenterStyle.good,
                           fontSize: 10,
                           fontWeight: FontWeight.w900,
@@ -1136,26 +1285,47 @@ class _UserDetailDrawerState extends State<UserDetailDrawer> {
   }
 
   Widget _historyPanel() {
+    final copy = AppLocalizations.of(context);
     final history = _history;
     return StaffPanel(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const StaffPanelTitle(title: 'Moderation & role history'),
+          StaffPanelTitle(
+            title: copy.text(
+              'Moderation & role history',
+              'Historia moderacji i ról',
+            ),
+          ),
           if (history == null && !_historyFailed)
-            const Text(
-              'Loading…',
-              style: TextStyle(color: StaffCenterStyle.faint, fontSize: 12),
+            Text(
+              copy.text('Loading…', 'Wczytywanie…'),
+              style: const TextStyle(
+                color: StaffCenterStyle.faint,
+                fontSize: 12,
+              ),
             )
           else if (_historyFailed)
-            const Text(
-              'History is available to the application owner only.',
-              style: TextStyle(color: StaffCenterStyle.muted, fontSize: 12),
+            Text(
+              copy.text(
+                'History is available to the application owner only.',
+                'Historia jest dostępna wyłącznie dla właściciela aplikacji.',
+              ),
+              style: const TextStyle(
+                color: StaffCenterStyle.muted,
+                fontSize: 12,
+              ),
             )
           else if (history!.isEmpty)
-            const Text(
-              'No recorded moderation or role events.',
-              style: TextStyle(color: StaffCenterStyle.muted, fontSize: 12),
+            Text(
+              copy.text(
+                'No recorded moderation or role events.',
+                'Brak zarejestrowanych zdarzeń moderacji lub zmian ról.',
+              ),
+              style: const TextStyle(
+                color: StaffCenterStyle.muted,
+                fontSize: 12,
+              ),
             )
           else
             for (final entry in history)
@@ -1168,7 +1338,7 @@ class _UserDetailDrawerState extends State<UserDetailDrawer> {
                       children: [
                         Expanded(
                           child: Text(
-                            entry.action.replaceAll('_', ' '),
+                            localizedStaffAuditAction(copy, entry.action),
                             style: const TextStyle(
                               color: Colors.white,
                               fontSize: 12,
@@ -1177,7 +1347,7 @@ class _UserDetailDrawerState extends State<UserDetailDrawer> {
                           ),
                         ),
                         Text(
-                          staffStamp(entry.createdAt),
+                          staffStamp(copy, entry.createdAt),
                           style: const TextStyle(
                             color: StaffCenterStyle.faint,
                             fontSize: 10.5,
@@ -1219,11 +1389,15 @@ class _RolePickerDialogState extends State<_RolePickerDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     return AlertDialog(
       backgroundColor: StaffCenterStyle.surface,
-      title: const Text(
-        'Assign role',
-        style: TextStyle(color: Colors.white, fontWeight: FontWeight.w900),
+      title: Text(
+        copy.text('Assign role', 'Przypisz rolę'),
+        style: const TextStyle(
+          color: Colors.white,
+          fontWeight: FontWeight.w900,
+        ),
       ),
       content: SizedBox(
         width: 360,
@@ -1241,8 +1415,11 @@ class _RolePickerDialogState extends State<_RolePickerDialog> {
                 activeColor: RoleIdentity.colorFor(role),
                 title: Text(
                   role == 'user'
-                      ? 'User (no staff role)'
-                      : RoleIdentity.labelFor(role),
+                      ? copy.text(
+                          'User (no staff role)',
+                          'Użytkownik (bez roli zespołu)',
+                        )
+                      : localizedStaffRole(copy, role),
                   style: TextStyle(
                     color: role == 'user'
                         ? Colors.white
@@ -1258,13 +1435,13 @@ class _RolePickerDialogState extends State<_RolePickerDialog> {
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Cancel'),
+          child: Text(copy.text('Cancel', 'Anuluj')),
         ),
         FilledButton(
           onPressed: _selected == widget.currentRole
               ? null
               : () => Navigator.of(context).pop(_selected),
-          child: const Text('Continue'),
+          child: Text(copy.text('Continue', 'Dalej')),
         ),
       ],
     );
@@ -1301,6 +1478,7 @@ class _ReasonDialogState extends State<_ReasonDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     return AlertDialog(
       backgroundColor: StaffCenterStyle.surface,
       title: Text(
@@ -1330,10 +1508,10 @@ class _ReasonDialogState extends State<_ReasonDialog> {
               onChanged: (_) => setState(() {}),
               maxLength: 300,
               style: const TextStyle(color: Colors.white, fontSize: 13.5),
-              decoration: const InputDecoration(
-                labelText: 'Reason (required)',
-                labelStyle: TextStyle(color: StaffCenterStyle.muted),
-                counterStyle: TextStyle(color: StaffCenterStyle.faint),
+              decoration: InputDecoration(
+                labelText: copy.text('Reason (required)', 'Powód (wymagany)'),
+                labelStyle: const TextStyle(color: StaffCenterStyle.muted),
+                counterStyle: const TextStyle(color: StaffCenterStyle.faint),
               ),
             ),
           ],
@@ -1342,7 +1520,7 @@ class _ReasonDialogState extends State<_ReasonDialog> {
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Cancel'),
+          child: Text(copy.text('Cancel', 'Anuluj')),
         ),
         FilledButton(
           style: FilledButton.styleFrom(backgroundColor: widget.confirmColor),
@@ -1355,3 +1533,17 @@ class _ReasonDialogState extends State<_ReasonDialog> {
     );
   }
 }
+
+String _localizedUserFilter(
+  AppLocalizations copy,
+  String value,
+  String english,
+) => switch (value) {
+  'all' => copy.text(english, 'Wszyscy'),
+  'staff' => copy.text(english, 'Zespół'),
+  'vip' => copy.text(english, 'VIP'),
+  'restricted' => copy.text(english, 'Ograniczone'),
+  'banned' => copy.text(english, 'Zablokowane'),
+  'recent' => copy.text(english, 'Ostatnio dołączyli'),
+  _ => english,
+};

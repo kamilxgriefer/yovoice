@@ -1,0 +1,3 @@
+"NSCameraUsageDescription" = "YO Voice folosește camera pentru apeluri video private, fotografii în conversații și imagini de profil, cameră sau club pe care alegi să le creezi.";
+"NSMicrophoneUsageDescription" = "YO Voice folosește microfonul atunci când alegi să vorbești în camere vocale, să înregistrezi conținut audio sau să efectuezi apeluri private.";
+"NSPhotoLibraryUsageDescription" = "YO Voice folosește fotografiile pe care le selectezi pentru conversații și ca imagini de profil, cameră sau club.";

@@ -44,6 +44,9 @@ class RoomHeroBanner extends StatelessWidget {
   Widget build(BuildContext context) {
     final accent = identity.primary;
     final image = imageUrl?.trim();
+    final accessibilityReflow =
+        MediaQuery.sizeOf(context).width <= 360 &&
+        MediaQuery.textScalerOf(context).scale(1) >= 1.75;
 
     return ClipRRect(
       key: ValueKey('room-hero-${identity.kind.name}'),
@@ -99,11 +102,11 @@ class RoomHeroBanner extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.center,
-                    children: [
-                      Flexible(
-                        child: Wrap(
+                  if (accessibilityReflow)
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Wrap(
                           spacing: 8,
                           runSpacing: 6,
                           crossAxisAlignment: WrapCrossAlignment.center,
@@ -112,19 +115,45 @@ class RoomHeroBanner extends StatelessWidget {
                             ?statusPill,
                           ],
                         ),
-                      ),
-                      if (action != null) ...[
-                        const Spacer(),
-                        const SizedBox(width: 8),
-                        action!,
+                        if (action != null) ...[
+                          const SizedBox(height: 8),
+                          Align(
+                            alignment: Alignment.centerRight,
+                            child: action!,
+                          ),
+                        ],
                       ],
-                    ],
-                  ),
+                    )
+                  else
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        Flexible(
+                          child: Wrap(
+                            spacing: 8,
+                            runSpacing: 6,
+                            crossAxisAlignment: WrapCrossAlignment.center,
+                            children: [
+                              RoomTypeChip(identity: identity),
+                              ?statusPill,
+                            ],
+                          ),
+                        ),
+                        if (action != null) ...[
+                          const Spacer(),
+                          const SizedBox(width: 8),
+                          action!,
+                        ],
+                      ],
+                    ),
                   const SizedBox(height: 13),
                   Text(
+                    key: const ValueKey('room-hero-title'),
                     title,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
+                    maxLines: accessibilityReflow ? null : 2,
+                    overflow: accessibilityReflow
+                        ? null
+                        : TextOverflow.ellipsis,
                     style: const TextStyle(
                       color: Colors.white,
                       fontSize: 23,
@@ -136,9 +165,12 @@ class RoomHeroBanner extends StatelessWidget {
                   if (topic.trim().isNotEmpty) ...[
                     const SizedBox(height: 5),
                     Text(
+                      key: const ValueKey('room-hero-topic'),
                       topic,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
+                      maxLines: accessibilityReflow ? null : 2,
+                      overflow: accessibilityReflow
+                          ? null
+                          : TextOverflow.ellipsis,
                       style: TextStyle(
                         color: Colors.white.withValues(alpha: .74),
                         fontSize: 13.5,
@@ -165,6 +197,9 @@ class RoomTypeChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final accessibilityReflow =
+        MediaQuery.sizeOf(context).width <= 360 &&
+        MediaQuery.textScalerOf(context).scale(1) >= 1.75;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
       decoration: BoxDecoration(
@@ -180,8 +215,9 @@ class RoomTypeChip extends StatelessWidget {
           Flexible(
             child: Text(
               identity.label.toUpperCase(),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
+              maxLines: accessibilityReflow ? null : 1,
+              softWrap: accessibilityReflow,
+              overflow: accessibilityReflow ? null : TextOverflow.ellipsis,
               style: TextStyle(
                 color: Colors.white.withValues(alpha: .9),
                 fontSize: 10,

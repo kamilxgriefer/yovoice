@@ -1,0 +1,3 @@
+"NSCameraUsageDescription" = "YO Voice verwendet die Kamera für private Videoanrufe, Fotos in Chats sowie Profil-, Raum- oder Clubbilder, die du selbst aufnehmen möchtest.";
+"NSMicrophoneUsageDescription" = "YO Voice verwendet dein Mikrofon, wenn du in Sprachräumen sprechen, Audio aufnehmen oder private Anrufe tätigen möchtest.";
+"NSPhotoLibraryUsageDescription" = "YO Voice verwendet von dir ausgewählte Fotos für Chats sowie als Profil-, Raum- oder Clubbilder.";

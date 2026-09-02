@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/premium/data/models/subscription_entitlements.dart';
 import 'package:yovoice/features/premium/data/services/entitlement_service.dart';
@@ -119,11 +120,18 @@ class _PremiumFeatureGateState extends State<PremiumFeatureGate> {
         if (snapshot.connectionState == ConnectionState.waiting &&
             !snapshot.hasData) {
           final palette = context.appPalette;
+          final copy = AppLocalizations.of(context);
           return Scaffold(
             backgroundColor: palette.background,
             body: Center(
-              child: CircularProgressIndicator(
-                color: Theme.of(context).colorScheme.primary,
+              child: Semantics(
+                label: copy.text(
+                  'Checking Premium access',
+                  'Sprawdzamy dostęp Premium',
+                ),
+                child: CircularProgressIndicator(
+                  color: Theme.of(context).colorScheme.primary,
+                ),
               ),
             ),
           );
@@ -158,8 +166,32 @@ class _PremiumLockedDestination extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
+    final (featureLabel, lockedDescription) = switch (feature) {
+      PremiumFeature.creatorAccount => (
+        copy.text('Creator', 'Twórca'),
+        copy.text(
+          'A Premium identity is required to turn this profile into a Creator profile.',
+          'Aby zmienić ten profil w profil twórcy, potrzebujesz tożsamości Premium.',
+        ),
+      ),
+      PremiumFeature.creatorStudio => (
+        copy.text('Creator Studio', 'Studio twórcy'),
+        copy.text(
+          'Activate Premium to use your creator dashboard and publishing tools.',
+          'Aktywuj Premium, aby korzystać z panelu twórcy i narzędzi publikowania.',
+        ),
+      ),
+      PremiumFeature.clubs => (
+        copy.text('Clubs', 'Kluby'),
+        copy.text(
+          'Activate Premium to open the Clubs hub and build communities.',
+          'Aktywuj Premium, aby otworzyć centrum klubów i budować społeczności.',
+        ),
+      ),
+    };
     return Scaffold(
       backgroundColor: palette.background,
       appBar: isRootTab
@@ -200,7 +232,10 @@ class _PremiumLockedDestination extends StatelessWidget {
                   ),
                   const SizedBox(height: 20),
                   Text(
-                    '${feature.label} requires Premium',
+                    copy.text(
+                      '${feature.label} requires Premium',
+                      '$featureLabel wymaga Premium',
+                    ),
                     textAlign: TextAlign.center,
                     style: TextStyle(
                       color: palette.textPrimary,
@@ -210,7 +245,7 @@ class _PremiumLockedDestination extends StatelessWidget {
                   ),
                   const SizedBox(height: 9),
                   Text(
-                    feature.lockedDescription,
+                    lockedDescription,
                     textAlign: TextAlign.center,
                     style: TextStyle(
                       color: palette.textSecondary,
@@ -228,7 +263,9 @@ class _PremiumLockedDestination extends StatelessWidget {
                         ),
                       ),
                       icon: const Icon(Icons.workspace_premium_rounded),
-                      label: const Text('Explore Premium'),
+                      label: Text(
+                        copy.text('Explore Premium', 'Poznaj Premium'),
+                      ),
                       style: FilledButton.styleFrom(
                         backgroundColor: colors.primary,
                         foregroundColor: colors.onPrimary,

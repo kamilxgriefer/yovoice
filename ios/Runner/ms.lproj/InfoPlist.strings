@@ -1,0 +1,3 @@
+"NSCameraUsageDescription" = "YO Voice menggunakan kamera apabila anda memilih untuk membuat panggilan video peribadi, mengambil foto sembang atau mencipta imej profil, bilik atau kelab.";
+"NSMicrophoneUsageDescription" = "YO Voice menggunakan mikrofon apabila anda memilih untuk bercakap dalam bilik suara, merakam audio atau membuat panggilan peribadi.";
+"NSPhotoLibraryUsageDescription" = "YO Voice hanya menggunakan foto yang anda pilih untuk sembang atau imej profil, bilik atau kelab anda.";

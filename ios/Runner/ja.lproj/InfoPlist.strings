@@ -1,0 +1,3 @@
+"NSCameraUsageDescription" = "YO Voiceは、プライベートビデオ通話、チャット用の写真撮影、またはプロフィール・ルーム・クラブ用の画像を作成するときにカメラを使用します。";
+"NSMicrophoneUsageDescription" = "YO Voiceは、ボイスルームでの発言、音声の録音、またはプライベート通話を選択したときにマイクを使用します。";
+"NSPhotoLibraryUsageDescription" = "YO Voiceは、チャットやプロフィール・ルーム・クラブ用にあなたが選択した写真のみを使用します。";
