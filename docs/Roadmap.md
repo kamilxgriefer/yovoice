@@ -17,8 +17,8 @@ someone decide what to pick up next.
 ## Done
 
 - **The Dark/Pearl colour system now has one enforceable semantic contract**
-  (2026-08-30, ADR-133, **SOURCE + VISUAL QA VERIFIED; COORDINATED TESTER
-  BUILD PENDING**): navigation chrome, interactive copy, control boundaries,
+  (2026-08-30, ADR-133, **SOURCE + VISUAL QA VERIFIED; BUILD 19 TESTING**):
+  navigation chrome, interactive copy, control boundaries,
   status pairs and focus-on-brand are separate roles instead of variations of
   one purple. Normal Home, social, Profile, Moments, Settings, Notifications,
   Premium, onboarding and public report surfaces now follow the active theme;
@@ -38,12 +38,12 @@ someone decide what to pick up next.
   Home errors remain distinct and retryable, and primary gradient buttons now
   retain their full raster contrast. Dark/Pearl report sheets, standalone
   snackbars and real emoji fallback are included in the evidence set.
-  Physical-device and store evidence waits for the next explicitly requested
-  coordinated tester build.
+  The implementation is in Build 19 tester distribution; physical-device
+  acceptance remains pending before any public release.
 
 - **Authentication now shares one responsive stage and fails closed during
   password-profile provisioning** (2026-08-31, ADR-134, **SOURCE + ADVERSARIAL
-  TESTS VERIFIED; COORDINATED TESTER BUILD PENDING**): compact and medium
+  TESTS VERIFIED; BUILD 19 TESTING**): compact and medium
   layouts use one Voice Relay transition, wide screens use the matching
   two-panel curtain and reduced motion swaps atomically. Controllers and
   validation survive breakpoint changes, keyboard/focus remain reachable and
@@ -57,8 +57,8 @@ someone decide what to pick up next.
   server-authoritative display-name rule intact.
 
 - **New users now get a short, optional guided tour instead of an unexplained
-  Home screen** (2026-08-29, ADR-132, **SOURCE VERIFIED; WEB + NATIVE RELEASE
-  PENDING**): five focused steps introduce YO creation, Moments, Chats and
+  Home screen** (2026-08-29, ADR-132, **SOURCE VERIFIED; WEB + BUILD 19
+  TESTING**): five focused steps introduce YO creation, Moments, Chats and
   More using the real mobile dock or desktop rail as live spotlight anchors.
   Skip, Back, Next and Done are always reachable; keyboard, reduced-motion,
   Dark/Pearl and 320 px at 200% text are first-class states. The tour opens
@@ -73,7 +73,7 @@ someone decide what to pick up next.
 
 - **The collapsed live-room panel is now a single compact YO Live Capsule**
   (2026-08-29, ADR-102 amendment, `838bddb`, **WEB HOSTING DEPLOYED +
-  BYTE-EXACT; NATIVE TESTER BUILD HELD**): the old multi-row mobile card is
+  BYTE-EXACT; BUILD 19 TESTING**): the old multi-row mobile card is
   replaced below 880 px by an 82 px capsule with a dedicated room-return zone
   and three 48 px circular Chat, Mic and More controls. Latest chat, unread,
   audience and reconnecting state stay glanceable without occupying the Home
@@ -84,7 +84,7 @@ someone decide what to pick up next.
 
 - **Profile identity is now a compact two-level passport, not a badge
   staircase** (2026-08-29, ADR-131, **WEB HOSTING DEPLOYED + BYTE-EXACT;
-  NATIVE TESTER BUILD HELD**): the avatar and pseudonym share one responsive hero
+  BUILD 19 TESTING**): the avatar and pseudonym share one responsive hero
   row with a small semantic name plate, while official role/VIP and
   Creator/Premium/achievement identity use the full profile width beneath it.
   The owner case that previously stacked into four floors now remains two
@@ -95,7 +95,7 @@ someone decide what to pick up next.
   contrast. Repository-swap coverage also pins badge-listener ownership.
 
 - **The signed iOS shell now follows YO Voice's selected runtime theme**
-  (2026-08-29, ADR-129, **NEXT COORDINATED NATIVE TESTER BUILD PENDING**): the obsolete
+  (2026-08-29, ADR-129, **TESTFLIGHT BUILD 19 TESTING**): the obsolete
   `UIUserInterfaceStyle=Dark` application-wide override is gone, so System can
   report the device appearance and Pearl can reach the Flutter surface and
   platform controls. The branded launch storyboard and initial native window
@@ -103,8 +103,8 @@ someone decide what to pick up next.
   A source-level release regression prevents a future global appearance pin.
 
 - **The final mobile dock uses one continuous sculpted rise and transparent YO
-  mark** (2026-08-30, ADR-128, **SOURCE IMPLEMENTED; NATIVE STORE BUILD
-  PENDING**): the old circular notch, socket and resting centre tile are gone.
+  mark** (2026-08-30, ADR-128, **SOURCE IMPLEMENTED; BUILD 19 TESTING**): the
+  old circular notch, socket and resting centre tile are gone.
   Dark and Pearl share one responsive Bézier outline while keeping distinct
   material hierarchy. The official transparent favicon rests directly on the
   surface; compact navigation is icon-only with semantic labels and 48 px
@@ -112,11 +112,11 @@ someone decide what to pick up next.
   route, retargets rapid taps from its live position, stretches between
   neighbours and fades behind YO on cross-dock travel. More is selected only
   while its actual panel is open. Geometry, focus, unread `99+`, reduced
-  motion, safe areas and 320/390/430 plus 200% text are covered before the next
-  coordinated tester build.
+  motion, safe areas and 320/390/430 plus 200% text are covered; physical
+  tester-device acceptance remains pending.
 
 - **Pearl light theme is a complete, premium normal-product experience**
-  (2026-08-29, ADR-127, **WEB HOSTING DEPLOYED; NATIVE STORE BUILD PENDING**):
+  (2026-08-29, ADR-127, **WEB HOSTING DEPLOYED; BUILD 19 TESTING**):
   a semantic `AppPalette` now owns paired canvas,
   surface, copy, border, navigation, focus and status roles. Home/dock, Chats,
   Friends, Moments, Profile, Settings, Notifications, Premium, modal chrome
@@ -131,7 +131,7 @@ someone decide what to pick up next.
   result.
 
 - **Home Voice Moments are a truthful avatar-only story rail** (2026-08-29,
-  ADR-123, **SOURCE ONLY; NATIVE STORE BUILD PENDING**): mobile and desktop now
+  ADR-123, **DEPLOYED TO WEB; BUILD 19 TESTING**): mobile and desktop now
   keep the signed-in avatar first and show only followed authors who have
   active, playable Voice Moments. One author occupies one bubble and opens the
   complete ordered chain. Friend-only profiles, silent documents, profile
@@ -142,19 +142,19 @@ someone decide what to pick up next.
   targets.
 
 - **Profile avatars converge across Chats, open conversations and Home**
-  (2026-08-29, ADR-130, **SOURCE + EMULATOR VERIFIED; BACKEND/BUILD 13
-  PENDING**): live surfaces now read the privacy-safe current profile while
+  (2026-08-29, ADR-130, **SOURCE + EMULATOR VERIFIED; BACKEND DEPLOYED;
+  BUILD 19 TESTING**): live surfaces now read the privacy-safe current profile while
   conversation snapshots remain an offline fallback. Retryable server fan-out
   re-reads canonical identity per bounded transaction, validates Auth/profile
   activity and exact conversation membership, and cannot let an old delivery
   restore an obsolete or deliberately removed photo. A dry-run-first,
   resumable and aggregate-only repair is ready for existing stale snapshots.
-  The release gate remains production deploy/repair plus a two-account
-  Chats/Home smoke on coordinated tester build 14.
+  The production backend is deployed; a two-account physical Chats/Home cache
+  smoke remains tester acceptance.
 
 - **Room covers can be composed by the host instead of being silently
-  center-cropped** (2026-08-29, ADR-122, **DEPLOYED TO WEB; NATIVE STORE BUILD
-  PENDING**): Create Community/Podcast Room and Room Settings now share a real
+  center-cropped** (2026-08-29, ADR-122, **DEPLOYED TO WEB + RULES; BUILD 19
+  TESTING**): Create Community/Podcast Room and Room Settings now share a real
   21:9 editor with pinch zoom, drag, reset, keyboard/single-pointer controls
   and a central compact-card safety guide. Only the confirmed 1600×686 JPEG is
   uploaded; cancelling Replace preserves the prior composition. Upload and
@@ -175,8 +175,8 @@ someone decide what to pick up next.
   through reverse navigation. The Chrome gate now exercises valid JPEG, PNG,
   WebP, a rotated iPhone-style JPEG, forced route reset and the complete
   confirmation/export path.
-  The complete Firestore Rules suite passes 523/523; Rules remain source-only
-  until the coordinated backend release.
+  The complete Firestore Rules suite passes 523/523; production Rules were
+  deployed and read back byte-identically before tester assignment.
 
 - **Podcast Studio is a producer-led show surface, not a recolored Community
   Room** (2026-08-28, ADR-120, **DEPLOYED TO WEB + FIRESTORE RULES; iOS
@@ -239,7 +239,8 @@ someone decide what to pick up next.
   friendship, blocks, restrictions and active accounts are revalidated at
   start, answer and token issuance.
 - **Fixed in source 2026-08-31 — direct video calls extend the same
-  server-authoritative lifecycle** (ADR-135, **TESTER RELEASE PENDING**): Chats
+  server-authoritative lifecycle** (ADR-135, **BUILD 19 TESTING; PHYSICAL
+  MIXED-VERSION ACCEPTANCE PENDING**): Chats
   exposes a distinct video action; incoming/outgoing UI supports remote video,
   mirrored local PiP, camera flip, camera/mic/speaker controls and audio-only
   fallback. The backend stores immutable audio/video intent and scopes LiveKit
@@ -252,9 +253,9 @@ someone decide what to pick up next.
   with durable room teardown, and external room links confirm then start muted.
   Transport is encrypted by WebRTC/LiveKit, but app-level E2EE and native
   CallKit/ConnectionService presentation remain separate release work. A
-  server-checked recipient/minimum-build capability is also required before a
-  mixed-version rollout. No web, Functions or store build was published by
-  this source change.
+  server-checked recipient/minimum-build capability provides the compatibility
+  boundary. Web/Functions and Build 19 tester channels are deployed; the
+  two-device mixed-version result is not inferred from that rollout.
 
 > **DEPLOYED 2026-08-20.** This banner previously said the whole 2026-08-19/20
 > wave was fixed in source and unreachable in production. That is no longer
@@ -308,7 +309,7 @@ someone decide what to pick up next.
 
 - **Avatar cropping keeps the selected photo covering its frame through the
   first pinch** (2026-08-27, ADR-025 corrective follow-up, **DEPLOYED TO WEB;
-  NATIVE STORE BUILD PENDING**): the editor now seeds a uniform XYZ cover transform instead of
+  BUILD 19 TESTING**): the editor now seeds a uniform XYZ cover transform instead of
   leaving Z at 1, which had made Flutter apply the below-1 cover scale twice
   and shrink the image into the upper-left corner. Named 44 px Zoom −/+ and
   directional controls add single-pointer and keyboard equivalents to pinch
@@ -317,8 +318,8 @@ someone decide what to pick up next.
   geometry at normal and 200% text.
 
 - **Profile Preview's Message action survives stacked modal sheets**
-  (2026-08-27, ADR-113 corrective follow-up, **DEPLOYED TO WEB; NATIVE STORE
-  BUILD PENDING**):
+  (2026-08-27, ADR-113 corrective follow-up, **DEPLOYED TO WEB; BUILD 19
+  TESTING**):
   Preview returns a typed Chat/Profile destination to its launcher's navigator
   and navigation begins only after the sheet is gone. Callable refusal remains
   visibly actionable inside the preview instead of placing a snackbar under
@@ -1463,13 +1464,16 @@ someone decide what to pick up next.
 
 ## In Progress
 
-### Coordinated Build 19 release candidate
+### Coordinated Build 19 tester rollout and acceptance
 
-- **Status**: Product and backend work is integrated in source and the
-  complete source/backend/Rules/browser gates are green. **Build 19 is not yet
-  a coordinated release**: the physical visual/device matrix, production
-  backend/Hosting rollout, signed exact-commit artifacts, store processing and
-  tester assignment are still release gates.
+- **Status**: **Released to the bounded tester cohorts on 2026-09-03 from
+  `7ef9816fd3ee289cd065b37b83bd14d748a44e0c`; not publicly released.** The
+  production Functions/index/Firestore Rules/Storage Rules/Hosting sequence
+  and read-back checks passed. Google Play Internal Testing shows Build 19
+  available to 15 testers since 18:29 CEST. TestFlight Build 19 is `Testing`
+  for the persistent external 7 and internal 1 cohorts, with installs observed.
+  The physical visual/device and two-device mixed-version matrices remain
+  acceptance work before any public store release.
 - **Description**: This candidate joins the work that must travel together:
   Shared Media; DM photo, video and voice with camera/library capture and a
   durable replay-safe outbox; canonical avatar refresh and single-flight
@@ -1494,21 +1498,25 @@ someone decide what to pick up next.
   2123/2123; independent Build 19 QA is 229/229; Reels pagination/catalog is
   19/19 and source review is 40/40; Functions is 1166/1166; Firestore Rules is
   523/523; Storage Rules is 67/67; Reels/moderation security is 64/64; Family
-  media is 5/5; browser media/crop/Reels is 39/39; and the production Web
+  media is 11/11; browser media/crop/Reels is 39/39; and the production Web
   build succeeds. The shared DM media probe contract passes 9/9, a
-  fresh-emulator direct-integrity gate passes 35/35, and syntax checks for six
-  changed Node files plus the diff check pass. These are not a substitute for
-  the pending physical-device or deployed-production gates.
-- **Dependencies**: complete the physical visual/two-device matrix;
-  preserve the zero-token inventory; then follow the Functions → smoke →
-  indexes (only if required) → Firestore Rules → Storage Rules → Hosting →
-  website → native-store order in
-  [DEPLOYMENT.md](DEPLOYMENT.md#build-19-pre-release-runbook--not-released).
-  The website Updates entry must describe only verified shipped behavior and
-  needs its own Vercel deployment proof.
-- **Priority**: Critical. Release as one coordinated compatibility wave, not as
-  isolated feature uploads. The evidence ledger and final-result placeholders
-  live in
+  fresh-emulator direct-integrity gate passes 38/38, and syntax checks for
+  seven changed Node files plus the diff check pass. These are not a substitute
+  for pending physical-device acceptance.
+- **Production/distribution evidence**: all 166 intended Functions were ACTIVE;
+  the required index was READY; Firestore and Storage Rules read back
+  byte-identically; the exact source Hosting workflow passed. The separate
+  website release is production-verified from `9cc6d72550ce6e0b603136f7bb71e7e11891ab47`
+  with a 43/43 route/header smoke. Signed Build 19 artifacts were assigned to
+  both persistent tester channels; neither channel is a public store release.
+- **Dependencies**: complete the physical visual/two-device and mixed-version
+  matrices, preserve the zero-token inventory and review tester feedback
+  before considering public submission. The executed sequence and rollback
+  boundary are in
+  [DEPLOYMENT.md](DEPLOYMENT.md#build-19-coordinated-tester-release--2026-09-03).
+- **Priority**: Critical acceptance monitoring. Keep Build 19 as one
+  compatibility wave rather than creating isolated follow-up uploads. The
+  evidence ledger and directly observed results live in
   [the Build 19 session record](Sessions/2026-09-03-build-19-release-candidate.md).
 
 ### Moderator and super-moderator Premium preview (ADR-119)

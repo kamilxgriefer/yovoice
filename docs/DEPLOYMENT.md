@@ -15,12 +15,19 @@ deployables described in
 | Storage rules | `firebase deploy --only storage` | Manual |
 | `yovoice-website` | Vercel | Automatic, on push to `main` (separate repo) |
 
-### Build 19 pre-release runbook — NOT RELEASED
+### Build 19 coordinated tester release — 2026-09-03
 
-Build 19 must remain one coordinated compatibility release. Source integration,
-the complete Flutter/backend/Rules/browser/website suites and release-Web build
-are green, but this section records a **candidate**, not a production, Hosting,
-TestFlight or Google Play result.
+**TESTER ROLLOUT COMPLETE; NOT A PUBLIC APP STORE OR GOOGLE PLAY RELEASE.**
+Build `1.0.0 (19)` was produced from source commit
+`7ef9816fd3ee289cd065b37b83bd14d748a44e0c`. The compatible Functions,
+required index, Firestore Rules, Storage Rules and Firebase Hosting release
+were deployed and read back before the signed artifacts were assigned to the
+persistent tester channels. Google Play Internal Testing shows Build 19 as the
+latest release, available to the 15-account list since 18:29 CEST. TestFlight
+shows Build 19 in `Testing` for the existing one-account internal and
+seven-account external cohorts, with Build 19 installs observed in both
+cohorts. Physical two-device and mixed-version acceptance remains residual;
+none of this is evidence of public store review or public availability.
 
 #### Verified before release
 
@@ -35,22 +42,21 @@ TestFlight or Google Play result.
 | Firestore Rules | 523/523 | emulator result |
 | Storage Rules | 67/67 | emulator result |
 | Reels + atomic moderation | 64/64 | fresh-emulator security result |
-| Family media | 5/5 | combined media contract |
+| Family media | 11/11 | combined media contract |
 | Shared DM media probe | 9/9 | byte/container probe contract |
-| Direct media integrity | 35/35 | fresh-emulator reservation/finalization gate |
+| Direct media integrity | 38/38 | fresh-emulator reservation/finalization gate |
 | Browser media/crop/Reels | 39/39 | Chrome result |
 | Flutter production Web | built | release artifact produced |
 | Website | 87/87 + clean + built | tests, lint and release build |
 | Production dependency audits | 0 known vulnerabilities | Functions + Rules harness |
-| Changed Node syntax + diff | 6/6 + clean | `node --check` and `git diff --check` |
+| Changed Node syntax + diff | 7/7 + clean | `node --check` and `git diff --check` |
 
-The physical-device matrix, production deploy/read-back, final exact-commit
-artifacts and store availability are still pending. The independent source
-reviewer approved the legacy direct-message attachment migration after its
-12/12 unit gate, 1/1 Firestore query gate and 67/67 Storage gate. Tester
-distribution remains operationally held until that migration is proven
-complete in production before restrictive Storage Rules. Public release
-remains separately held for physical acceptance and staged App Check work.
+The automated and deployed-production gates are complete. The independent
+source reviewer approved the legacy direct-message attachment migration after
+its 12/12 unit gate, 1/1 Firestore query gate and 67/67 Storage gate; the
+production apply and repeat release-ready inventories completed before the
+restrictive Storage Rules release. Public release remains separately held for
+physical acceptance, the full visual matrix and staged App Check work.
 
 #### Completed production data prerequisite: Voice Moments
 
@@ -70,17 +76,21 @@ other bearer material to this log. Re-run the paginated inventory immediately
 before restrictive Storage Rules; **any non-zero token count or unresolved
 conflict stops the release**.
 
-#### Pending production data prerequisite: direct-message attachments
+#### Completed production data prerequisite: direct-message attachments
 
 The pinned read-only pre-cutover scan reached the end of
 `message_attachments/` and inspected 5 objects: 5 eligible, 0 already
-finalized, 0 invalid, 0 missing and 0 raced. It observed 5 legacy Firebase
-download tokens and revoked none because the run was dry-only. This proves the
-candidate set; it is not evidence that the migration has been applied.
+finalized, 0 invalid, 0 missing and 0 raced. The controlled apply finalized
+that set and revoked the legacy download tokens without deleting media bytes.
+Repeated null-cursor post-apply scans then reached the end with all 5 already
+finalized and 0 eligible, invalid, missing, raced or token-bearing objects;
+each reported `releaseReady=true` before restrictive Storage Rules were
+deployed.
 
-After the exact Build 19 Functions revision is ACTIVE and its previous
-revision has drained, freeze new direct-message attachment finalization and
-run the project/bucket-pinned operator in this order:
+The migration and inventory portions were executed after the exact Build 19
+Functions revision became ACTIVE and its previous revision drained, in the
+following order; the legacy/new-client playback clause in step 4 remains part
+of the physical mixed-version residual:
 
 1. one complete dry-run from a null cursor; require `reachedEnd=true`, 5
    eligible and no invalid/missing/raced objects;
@@ -153,7 +163,7 @@ inventory green.
 - Record the failed smoke, affected cohort, live revisions and recovery proof
   in the session log before attempting another release.
 
-#### Pre-release checklist
+#### Release checklist and residual acceptance
 
 - [x] Complete Flutter 2123/2123 in one final-tree invocation; independent
       Build 19 QA 229/229; Reels pagination/catalog 19/19 and source review
@@ -161,16 +171,16 @@ inventory green.
 - [x] Functions 1166/1166 across 118 suites; Firestore Rules 523/523; Storage
       Rules 67/67.
 - [x] Reels and atomic moderation fresh-emulator security gate 64/64; Family
-      media 5/5.
+      media 11/11.
 - [x] Voice Moment migration post-run: 5/5 migrated, legacy `audioUrl` 0,
       token inventory 0, bytes retained.
 - [x] DM stored-object sniffing and transaction-time reservation recheck:
-      shared probe 9/9, fresh-emulator direct integrity 35/35, changed Node
-      syntax 6/6 and diff check passed.
+      shared probe 9/9, fresh-emulator direct integrity 38/38, changed Node
+      syntax 7/7 and diff check passed.
 - [x] Legacy DM migration source gate: unit 12/12, Firestore query 1/1,
       production dry-run 5 eligible with 0 invalid/missing/raced and no write.
-- [ ] Legacy DM production apply and two complete `releaseReady=true` scans;
-      strict Storage Rules remain held until this is complete.
+- [x] Legacy DM production apply and repeated complete `releaseReady=true`
+      scans passed before strict Storage Rules deployment.
 - [x] Complete Flutter suite passes once against the final merged tree.
 - [x] Browser media/crop/Reels 39/39 and a production Web build pass.
 - [ ] Dark/Pearl 320/390/430/tablet/desktop, 200% text, keyboard and RTL visual
@@ -182,23 +192,48 @@ inventory green.
 - [x] Production dependency audits report zero known vulnerabilities; App
       Check status and residual risks are recorded honestly. Run the final
       staged-diff secret scan again after the release commit is assembled.
-- [ ] Production Functions/indexes/Rules/Storage rollout and read-back smokes
-      pass in the order above.
-- [ ] Hosting and website deployments have exact commit/artifact/visual proof.
-- [ ] Signed iOS/Android artifacts are processed, assigned to persistent tester
-      groups and independently shown as available.
+- [x] Production Functions/index/Rules/Storage rollout and read-back checks
+      passed in the required order.
+- [x] Firebase Hosting deployed the exact source commit and live route/header
+      checks passed. The separate website commit deployed successfully through
+      Vercel and its 43/43 production route/header smoke passed.
+- [x] Signed iOS/Android artifacts were processed, assigned to persistent
+      tester groups and observed as available.
 
-#### Final results — fill only after observation
+#### Final results — directly observed
 
-- Commit/tag: **pending**
-- Functions/indexes/Firestore Rules/Storage Rules revisions: **pending**
-- Hosting release and byte comparison: **pending**
-- Website Vercel release and visual review: **pending**
-- iOS artifact, processing, groups and external-tester availability: **pending**
-- Android artifact, track, tester list and non-owner availability: **pending**
-- Tester notification/email evidence: **pending**
-- Rollback needed: **pending**
-- Final decision: **HOLD** until every unchecked release gate is resolved.
+- Source commit: `7ef9816fd3ee289cd065b37b83bd14d748a44e0c`;
+  tester release only, no public-release tag or claim.
+- Functions/index/Rules/Storage: all 166 intended Functions were ACTIVE,
+  including 9/9 Reels exports; the required `messages` composite index was
+  `READY`; Firestore Rules and Storage Rules read back byte-identically with
+  SHA-256 `4741516c7bf17f9e57f3826d789c14becad0a7386435073fe3530dc79b02b243`
+  and `bce9925b397ab6bba0b5ccf8ea8cefd9db4ef02303f28dcd3a574af280`.
+- Hosting: workflow
+  [33757422008](https://github.com/kamilxgriefer/yovoice/actions/runs/33757422008)
+  succeeded for the exact source commit; production routes and required
+  security headers were verified.
+- Website: commit `9cc6d72550ce6e0b603136f7bb71e7e11891ab47` deployed through
+  Vercel deployment `6248731984`; the live Build 19 tester-availability page
+  and 43/43 production route/security-header smoke passed. Its copy explicitly
+  says this is not a public App Store or Google Play release.
+- iOS: signed IPA 56,525,856 bytes, SHA-256
+  `dbb99e55d38d26098a3e7f7f26dbeda1cafd9edcb4e1aee026d82c2b5d95724b`;
+  TestFlight Build 19 is `Testing` for the persistent external 7 and internal
+  1 tester cohorts, with installs observed. This is not an App Store release.
+- Android: signed AAB 115,020,041 bytes, SHA-256
+  `3850766844521330eb4ae8ed04ecc79c344ee89d5ade0af1c165d3be639c8b7f`;
+  Google Play Internal Testing shows Build 19 available to 15 testers,
+  published 2026-09-03 at 18:29 CEST. This is not a public Play release.
+- Notifications/email: TestFlight external-group automatic notification was
+  enabled. Six manual Apple messages were attempted; four later returned SMTP
+  5.7.1, so delivery to all recipients is not claimed. No new Build 19 Android
+  email wave was sent; prior invitations and the persistent tester list remain
+  the access path. Email is not used as store-availability evidence.
+- Rollback needed: no.
+- Final decision: **GO for the bounded tester cohorts; HOLD public store
+  release** until the physical two-device/mixed-version and full visual matrix
+  residuals pass.
 
 Detailed evidence ledger:
 [Build 19 release-candidate session](Sessions/2026-09-03-build-19-release-candidate.md).

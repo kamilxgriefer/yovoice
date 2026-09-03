@@ -18,10 +18,12 @@ about things that are broken, risky, or need verification.
 > before believing the code.
 > [ADR-082](Decisions.md#adr-082-a-feature-is-not-shipped-until-a-user-can-reach-it--reachability-is-part-of-done-and-a-green-suite-cannot-prove-it).
 
-## Build 19 release-candidate verification gaps (2026-09-03)
+## Build 19 tester-acceptance gaps (2026-09-03)
 
-These are deliberately not marked “released”. They distinguish source work
-from the evidence still needed before testers receive `1.0.0 (19)`:
+Build `1.0.0 (19)` is now available to the bounded TestFlight and Google Play
+Internal Testing cohorts. These entries distinguish completed automated and
+production rollout evidence from the physical acceptance still needed before
+any public store release:
 
 - **DM media and Shared Media**: photo, video and voice, camera/library
   acquisition, media playback, Shared Media tabs and the durable outbox are
@@ -29,9 +31,9 @@ from the evidence still needed before testers receive `1.0.0 (19)`:
   ISO-BMFF/WebM and MP3/WAV bytes, requires an audio-only voice container or a
   real video track, and rechecks object metadata plus the reservation in the
   canonical transaction. Its shared contract passes 9/9 and fresh-emulator
-  direct integrity passes 35/35. Complete Flutter 2123/2123 and browser
-  media/crop/Reels 39/39 are green; hostile production-object and physical
-  upload/playback/restart evidence is pending.
+  direct integrity passes 38/38. Complete Flutter 2123/2123 and browser
+  media/crop/Reels 39/39 are green; the production migration, IAM and Rules
+  read-back completed. Physical upload/playback/restart evidence is pending.
 - **Avatars and profile routes**: canonical refresh and a single-flight route
   guard address stale initials and stacked profiles after rapid taps. The
   final two-account cache-invalidation and native route-transition/visual
@@ -55,14 +57,19 @@ from the evidence still needed before testers receive `1.0.0 (19)`:
   pending.
 - **Moderation**: the content action, report resolution and append-only audit
   commit atomically; its focused 31/31 subset sits inside the 64/64
-  Reels/moderation security gate. The production callable revision and
-  read-back smoke are pending.
-- **Website Updates**: copy and graphics must be reconciled with only the
-  behavior that actually ships in Build 19. No Vercel deployment is claimed.
+  Reels/moderation security gate. The intended Reels Functions are deployed
+  and ACTIVE; a tester-device report/moderation journey remains acceptance
+  evidence.
+- **Website Updates**: tester-availability copy deployed from separate website
+  commit `9cc6d72550ce6e0b603136f7bb71e7e11891ab47` through successful Vercel
+  deployment `6248731984`. The live Updates entry reports the bounded Android
+  15 / TestFlight external 7 + internal 1 cohorts and clearly says this is not
+  a public store release; the production route/header smoke passed 43/43.
 
 The consolidated checklist is in
-[DEPLOYMENT.md](DEPLOYMENT.md#build-19-pre-release-runbook--not-released), and
-measured source evidence is in [TESTING.md](TESTING.md#build-19-pre-release-evidence-2026-09-03).
+[DEPLOYMENT.md](DEPLOYMENT.md#build-19-coordinated-tester-release--2026-09-03),
+and measured evidence is in
+[TESTING.md](TESTING.md#build-19-tester-release-evidence-2026-09-03).
 
 ## Security
 

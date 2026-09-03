@@ -17,13 +17,15 @@ sentence seriously. See
 [ADR-013](Decisions.md#adr-013-clients-write-firestore-directly-cloud-functions-are-reserved-for-privileged-work)
 for why this architecture was chosen anyway.
 
-## Build 19 pre-release security status
+## Build 19 tester-release security status
 
 Build 19 is source-verified by the complete application/backend/Rules suites
-and independent targeted review, not security-proven or released. There is no
-meaningful “200% secure” state: the release goal is to reduce attack surface,
-fail closed at trust boundaries and preserve evidence needed to detect and
-recover from abuse.
+and independent targeted review, and its bounded tester rollout followed the
+verified production Functions/index/Firestore Rules/Storage Rules/Hosting
+sequence. It is still not “security-proven” or a public store release. There is
+no meaningful “200% secure” state: the release goal is to reduce attack
+surface, fail closed at trust boundaries and preserve evidence needed to
+detect and recover from abuse.
 
 - **Private media**: canonical records hold first-party path, generation and
   bounded metadata rather than durable token URLs. Voice Moments and Reels use
@@ -37,8 +39,9 @@ recover from abuse.
   probe sniffs JPEG/PNG/WebP, ISO-BMFF/WebM and MP3/WAV bytes plus track
   presence; voice is audio-only and video has a real video track. A post-probe
   metadata read and the final transaction revalidate reservation, path,
-  generation, MIME, kind, size, duration and expiry. Production-object smokes
-  and deployment/read-back remain pending.
+  generation, MIME, kind, size, duration and expiry. Production IAM and both
+  Rules sources were read back successfully; physical-device media playback
+  and mixed-version smokes remain pending.
 - **Outbox and Shared Media**: retry identity is stable and publication remains
   server-authoritative. Shared Media is a view of an already-authorized
   conversation, not a separately public or client-writable index.
@@ -53,25 +56,24 @@ recover from abuse.
 - **Moderation**: removal state, report resolution and append-only audit commit
   in one transaction with deterministic replay. Access is checked before
   existence and audit data contains no grants/tokens. The focused atomic
-  subset is 31/31 inside the 64/64 Reels/moderation security gate; live
-  revision/read-back evidence is pending.
+  subset is 31/31 inside the 64/64 Reels/moderation security gate; all 9/9
+  intended Reels exports were observed ACTIVE in the deployed Functions set.
 - **Legacy Voice Moments**: the controlled 2026-09-03 migration finished with
   5 objects, 0 legacy `audioUrl` fields and 0 download tokens under both
   inventoried prefixes. No media bytes were deleted and no identifiers, URLs
   or bearer material are recorded in documentation.
 - **Residual controls**: App Check enforcement remains deliberately off unless
   a separately monitored rollout proves compatible clients. Production
-  dependency audits and the staged-diff secret scan are green; physical-device,
-  mixed-version, production IAM and deployed-rule read-back remain mandatory
-  release checks.
+  dependency audits and the staged-diff secret scan are green; physical-device
+  and mixed-version testing remain mandatory before any public release.
 
 Measured source evidence: complete Flutter 2123/2123, independent Build 19 QA
 229/229, Reels pagination/catalog 19/19, Reels/localization source review
 40/40, Functions 1166/1166, Firestore Rules 523/523, Storage Rules 67/67,
-Reels/moderation security 64/64, Family media 5/5, shared DM media probe 9/9,
-direct integrity 35/35 and browser media/crop/Reels 39/39. See
-[TESTING.md](TESTING.md#build-19-pre-release-evidence-2026-09-03) and the
-[Build 19 runbook](DEPLOYMENT.md#build-19-pre-release-runbook--not-released).
+Reels/moderation security 64/64, Family media 11/11, shared DM media probe 9/9,
+direct integrity 38/38 and browser media/crop/Reels 39/39. See
+[TESTING.md](TESTING.md#build-19-tester-release-evidence-2026-09-03) and the
+[Build 19 release record](DEPLOYMENT.md#build-19-coordinated-tester-release--2026-09-03).
 
 ## Identity and roles
 
@@ -979,7 +981,7 @@ generation prevents a stale publisher transaction from restoring removed data.
 Existing conversation access is intentionally independent and reveals only the
 participant label already stored on that authorised conversation.
 
-## Private media rollout gate (source only; not deployed)
+## Private media rollout status (Build 19 tester deployment complete)
 
 Room covers, profile media and Voice Moments no longer treat Firebase
 download-token URLs as durable application data. Firestore stores only a
@@ -988,20 +990,24 @@ are denied and an authenticated callable returns a generation-bound V4 grant
 for no more than 90 seconds after rechecking the live visibility, account,
 restriction, block and membership state.
 
-This change requires a coordinated rollout:
+The coordinated Build 19 tester rollout completed these production steps:
 
-1. deploy the new callables and ensure the Functions runtime identity can use
-   `iam.serviceAccounts.signBlob`;
-2. ship a client that understands canonical media references and clears every
-   grant cache on logout;
-3. run the dry-run and apply migrations plus the paginated object inventories
-   until no Firebase download token remains, including conflicts and orphans;
-4. only then deploy the restrictive Storage/Firestore rules.
+1. the new callables were deployed and all intended Functions were read back
+   ACTIVE;
+2. the canonical-media client was assigned to the bounded TestFlight and
+   Google Play Internal Testing cohorts;
+3. dry-run/apply migrations and repeat inventories reached release-ready state
+   with no remaining legacy download tokens in the affected prefixes;
+4. restrictive Firestore and Storage Rules were then deployed and read back
+   byte-identically, with the minimal Storage service-agent IAM binding
+   verified.
 
-Old clients cannot upload or render newly canonicalized media after the final
-rules step. An already-issued V4 URL remains a bearer capability until its
-maximum 90-second expiry; a visibility or block change prevents the next grant
-but cannot revoke bytes already retrieved by a viewer.
+Compatibility logic remains in the deployed backend for the previously
+distributed client, but an actual mixed-version two-device media matrix is a
+residual acceptance check rather than an inferred result. An already-issued
+V4 URL remains a bearer capability until its maximum 90-second expiry; a
+visibility or block change prevents the next grant but cannot revoke bytes
+already retrieved by a viewer.
 
 ## Checklist for new privileged write paths
 

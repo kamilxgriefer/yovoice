@@ -4,11 +4,13 @@ An honest picture of what's actually verified in this project, and how —
 deliberately not aspirational. Several separate, unequal layers of coverage
 exist; know which one you're relying on before trusting it.
 
-## Build 19 pre-release evidence (2026-09-03)
+## Build 19 tester-release evidence (2026-09-03)
 
-This is the latest evidence for the merged release-candidate work. It does not
-replace the last coordinated full-suite baseline below, and it does not prove a
-production deploy, a visual result or store availability.
+This is the latest evidence for the exact Build 19 source and bounded tester
+rollout. It proves the automated gates and the directly observed production
+deploy/read-back and tester-channel states described below. It does not prove
+the remaining physical-device, mixed-version or full visual matrix, and it is
+not evidence of a public App Store or Google Play release.
 
 | Gate | Measured result | What it proves |
 |---|---:|---|
@@ -21,32 +23,37 @@ production deploy, a visual result or store availability.
 | Firestore Rules | **523/523** | authorization behavior in the emulator |
 | Storage Rules | **67/67** | object-path/metadata authorization in the emulator |
 | Reels + atomic moderation | **64/64** | fresh-emulator security and replay cases |
-| Family media | **5/5** | combined media contract |
+| Family media | **11/11** | combined media contract |
 | Shared DM media probe | **9/9** | byte/container detection contract |
-| Direct media integrity | **35/35** | fresh-emulator reservation/finalization cases |
+| Direct media integrity | **38/38** | fresh-emulator reservation/finalization cases |
 | Browser media/crop/Reels | **39/39** | real Chrome behavior |
 | Flutter production Web | built | release artifact compiles |
 | Website | **87/87 + clean + built** | tests, lint and release build |
 | Production dependency audits | **0 known vulnerabilities** | Functions + Rules harness |
-| Changed Node syntax + diff | **6/6 + clean** | `node --check` and `git diff --check` |
+| Changed Node syntax + diff | **7/7 + clean** | `node --check` and `git diff --check` |
 
 The independent targeted buckets may overlap and are not added to the complete
-Flutter total. The following remain pending on the final merged tree:
+Flutter total. The Functions/index/Rules/Storage/Hosting production rollout
+and byte/read-back checks passed, and the signed Build 19 artifacts are
+available through the persistent TestFlight and Google Play Internal Testing
+cohorts. The following acceptance evidence remains pending:
 
 - Dark/Pearl, 320–desktop, 200% text, keyboard and RTL visual inspection;
 - physical iOS/Android camera/library, codecs, background/restart and
   two-account cache/privacy tests;
 - mixed-version two-device direct audio/video with APNs/FCM and Bluetooth;
-- production Functions/Rules/Storage/Hosting read-back smokes and both store
-  cohorts' independent availability.
+- end-to-end physical playback/upload/notification checks from non-owner
+  devices in both tester cohorts.
 
-The complete Functions count now includes the legacy direct-attachment
-migration suites. The focused migration gate is 12/12 unit tests plus 1/1
-Firestore emulator query test, while Storage remains 67/67. The production
-dry-run inspected all 5 legacy direct-message objects from a null cursor: 5
-eligible, 0 invalid/missing/raced and 5 tokens observed, with no writes. The
-apply and two required `releaseReady=true` inventories remain production
-release gates, not test results.
+The complete Functions count includes the legacy direct-attachment migration
+suites. The focused migration gate is 12/12 unit tests plus 1/1 Firestore
+emulator query test, while Storage remains 67/67. The production dry-run
+inspected all 5 legacy direct-message objects from a null cursor: 5 eligible,
+0 invalid/missing/raced and 5 tokens observed, with no writes. The controlled
+apply then finalized all 5 and revoked the legacy tokens without deleting
+media bytes; repeated null-cursor post-apply scans independently reached the
+end with 5 already finalized, zero remaining problem/token counts and
+`releaseReady=true`.
 
 DM stored-object content sniffing and transaction-time reservation recheck are
 source-verified: the probe recognizes JPEG/PNG/WebP, ISO-BMFF/WebM and MP3/WAV,
@@ -55,9 +62,9 @@ audio/video tracks. Voice requires audio-only media; video requires a real
 video track. After probing, metadata is read again and the transaction
 revalidates reservation, path, generation, MIME, kind, size, duration and
 expiry. The shared contract passed 9/9, fresh-emulator direct integrity passed
-35/35, six Node syntax checks passed and `git diff --check` passed. Real
-production-object and physical-device smokes remain pending, and these focused
-counts must be rerun if the implementation changes.
+38/38, seven Node syntax checks passed and `git diff --check` passed. Deployed
+IAM/rules/read-back checks passed; real physical-device media smokes remain
+pending, and these focused counts must be rerun if the implementation changes.
 
 Production migration evidence is data-state evidence, not playback evidence:
 five Voice Moment objects are migrated, Firestore legacy `audioUrl` is zero,
@@ -68,7 +75,7 @@ here. The operational detail is in
 
 ## Current counts
 
-**Last coordinated full-release baseline: 2026-09-02 (build 18).** One table,
+**Current coordinated tester-release baseline: 2026-09-03 (build 19).** One table,
 so there is a single place to correct when
 these move. Every figure is a suite run, not an estimate; file counts are
 `find`. *(The date used to live in the heading; it moved into the body on
@@ -77,24 +84,35 @@ correction silently broke all three anchors.)*
 
 | Suite | Command | Count |
 |---|---|---|
-| Firestore rules | `npm --prefix firestore-tests test` | **522** checks |
-| Storage rules | `npm --prefix firestore-tests run test:storage` | **60** checks |
+| Firestore rules | `npm --prefix firestore-tests test` | **523** checks |
+| Storage rules | `npm --prefix firestore-tests run test:storage` | **67** checks |
 | Family media (combined) | `npm --prefix firestore-tests run test:family-media` | **11** checks |
-| Cloud Functions | `npm --prefix functions test` | **1100** tests (118 suites) |
-| Flutter VM | `flutter test` | **2044** tests |
-| Flutter browser | `flutter test --platform chrome test/web_audio_capture_browser_test.dart test/image_crop_test.dart test/room_cover_editor_test.dart` | **18** tests (3 files) |
+| Cloud Functions | `npm --prefix functions test` | **1166** tests (118 suites) |
+| Flutter VM | `flutter test` | **2123** tests |
+| Flutter browser | Build 19 media/crop/Reels Chrome gate | **39** tests |
 
 **Where these numbers came from.** Every current row was re-measured on
-2026-09-02 against the coordinated build-18 release candidate, not inferred
-from an older release. Flutter VM passed **2044/2044** in one invocation and
+2026-09-03 against exact source commit
+`7ef9816fd3ee289cd065b37b83bd14d748a44e0c`, not inferred from an older
+release. Flutter VM passed **2123/2123** in one invocation and
 `flutter analyze --no-pub` reported no issues. Cloud Functions passed
-**1100/1100** across 118 suites under Node 22 on fresh Auth/Firestore
-emulators. Firestore Rules passed **522/522**; isolated Storage and combined
-Family-media gates passed **60/60** and **11/11**. The three real-Chrome
-media/crop files remain **18/18**; the compiled production Web artifact also
-passed **2/2** Playwright smoke checks, and the room-state visual harness
-rendered **55/55** frames/states. The Functions production-dependency audit
-reported **0 vulnerabilities**. Historical count movement remains below.
+**1166/1166** across 118 suites under Node 22 on fresh Auth/Firestore
+emulators. Firestore Rules passed **523/523**; isolated Storage and combined
+Family-media gates passed **67/67** and **11/11**. The real-Chrome Build 19
+media/crop/Reels gate passed **39/39**; the production Web artifact built and
+its Hosting workflow/live route checks passed. The Functions and Rules-harness
+production-dependency audits reported **0 known vulnerabilities**. Historical
+count movement remains below.
+
+> **Movement, 2026-09-03 (Build 19 coordinated tester release).** Flutter VM
+> **2044 → 2123**, Functions **1100 → 1166**, Firestore Rules **522 → 523**,
+> Storage Rules **60 → 67** and Chrome **18 → 39** cover the integrated
+> chat/media, Voice Moment, avatar, Reels, direct-call compatibility,
+> localization and moderation release. Family media remains **11/11**. The
+> focused shared DM probe is **9/9**, direct integrity is **38/38**, and all
+> seven changed Node files pass syntax checks. Production rollout/read-back and
+> both bounded tester channels were directly observed; physical two-device and
+> full visual acceptance remain separate residuals.
 
 > **Movement, 2026-09-02 (build-18 coordinated tester candidate).** Flutter VM
 > **1925 → 2044** covers the merged friends/avatar revision path, actionable
