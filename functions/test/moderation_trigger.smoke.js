@@ -21,6 +21,7 @@ process.env.FIRESTORE_EMULATOR_HOST =
 process.env.GCLOUD_PROJECT = process.env.GCLOUD_PROJECT ?? "demo-yovoice";
 
 const assert = require("node:assert/strict");
+const { createHash } = require("node:crypto");
 const { getApps, initializeApp } = require("firebase-admin/app");
 const { getFirestore, FieldValue } = require("firebase-admin/firestore");
 
@@ -42,6 +43,13 @@ const REPORTER = "smoke-reporter-uid";
 const MESSAGE_ID = "smoke-target-msg";
 const REPORT_ID = `${REPORTER}_globalMessage_${MESSAGE_ID}`;
 const MESSAGE_PATH = `globalChat/main/messages/${MESSAGE_ID}`;
+
+function expectedModerationAuditId(reportId, requestId) {
+  const digest = createHash("sha256")
+    .update(`${reportId}\0${requestId}`, "utf8")
+    .digest("hex");
+  return `report_${digest}`;
+}
 
 /// An unsigned JWT. Only the Functions emulator accepts these; it is how
 /// a callable's `request.auth` is populated locally.
@@ -183,7 +191,10 @@ async function main() {
     .where("targetId", "==", REPORT_ID)
     .get();
   assert.equal(reportAudits.size, 1, "exactly one report-action audit");
-  assert.equal(reportAudits.docs[0].id, `report_${REPORT_ID}_${requestId}`);
+  assert.equal(
+    reportAudits.docs[0].id,
+    expectedModerationAuditId(REPORT_ID, requestId),
+  );
 
   // Replaying the same requestId must change nothing and add nothing.
   const replay = await callModerateReport(
