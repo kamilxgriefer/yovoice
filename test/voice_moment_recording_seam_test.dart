@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:cloud_functions/cloud_functions.dart';
@@ -777,6 +779,68 @@ void main() {
           functions: functions,
         );
 
+    test(
+      'a lost reserve response times out and replays the same request',
+      () async {
+        final functions = _MomentPublishFunctions(
+          momentId: momentId,
+          storagePath: storagePath,
+          hangReserveOnce: true,
+        );
+        final service = MomentService(
+          firestore: firestore,
+          auth: auth,
+          storage: storage,
+          functions: functions,
+          callableTimeout: const Duration(milliseconds: 5),
+        );
+        final audio = FakeRecordedAudio(byteLength: 1024);
+
+        expect(
+          await service.publishRecordedMoment(
+            audio: audio,
+            durationSeconds: 1,
+            caption: 'Bounded reservation',
+          ),
+          momentId,
+        );
+        expect(functions.reservePayloads, hasLength(2));
+        expect(functions.reservePayloads[1], functions.reservePayloads[0]);
+        expect(audio.uploadCalls, 1);
+      },
+    );
+
+    test(
+      'a lost finalize response times out and replays without reuploading',
+      () async {
+        final functions = _MomentPublishFunctions(
+          momentId: momentId,
+          storagePath: storagePath,
+          hangFinalizeOnce: true,
+        );
+        final service = MomentService(
+          firestore: firestore,
+          auth: auth,
+          storage: storage,
+          functions: functions,
+          callableTimeout: const Duration(milliseconds: 5),
+        );
+        final audio = FakeRecordedAudio(byteLength: 1024);
+
+        expect(
+          await service.publishRecordedMoment(
+            audio: audio,
+            durationSeconds: 1,
+            caption: 'Bounded finalize',
+          ),
+          momentId,
+        );
+        expect(functions.finalizePayloads, hasLength(2));
+        expect(functions.finalizePayloads[1], functions.finalizePayloads[0]);
+        expect(audio.uploadCalls, 1);
+      },
+    );
+
     test('publishes a one-second mobile-web recording', () async {
       final functions = _MomentPublishFunctions(
         momentId: momentId,
@@ -1254,6 +1318,8 @@ class _MomentPublishFunctions implements FirebaseFunctions {
     required this.storagePath,
     this.failReserveOnce = false,
     this.failFinalizeOnce = false,
+    this.hangReserveOnce = false,
+    this.hangFinalizeOnce = false,
     this.reserveErrorCode,
   });
 
@@ -1261,6 +1327,8 @@ class _MomentPublishFunctions implements FirebaseFunctions {
   final String storagePath;
   final bool failReserveOnce;
   final bool failFinalizeOnce;
+  final bool hangReserveOnce;
+  final bool hangFinalizeOnce;
   final String? reserveErrorCode;
 
   final List<Map<String, dynamic>> reservePayloads = <Map<String, dynamic>>[];
@@ -1274,6 +1342,9 @@ class _MomentPublishFunctions implements FirebaseFunctions {
     final payload = Map<String, dynamic>.from(parameters as Map);
     if (name == 'reserveMomentDraft') {
       reservePayloads.add(payload);
+      if (hangReserveOnce && reservePayloads.length == 1) {
+        return Completer<Object?>().future;
+      }
       if (reserveErrorCode != null) {
         throw FirebaseFunctionsException(
           code: reserveErrorCode!,
@@ -1293,6 +1364,9 @@ class _MomentPublishFunctions implements FirebaseFunctions {
     }
     if (name == 'finalizeMomentDraft') {
       finalizePayloads.add(payload);
+      if (hangFinalizeOnce && finalizePayloads.length == 1) {
+        return Completer<Object?>().future;
+      }
       if (failFinalizeOnce && finalizePayloads.length == 1) {
         throw FirebaseFunctionsException(
           code: 'unavailable',

@@ -21,10 +21,13 @@ class TitleBadge extends StatelessWidget {
     final highRarity = achievement.rarity.index >= AchievementRarity.epic.index;
 
     return Container(
-      constraints: BoxConstraints(minHeight: compact ? 30 : 34),
+      // Compact achievement titles participate in the same identity rail as
+      // account and Premium chips. Keeping the exact 24px compact contract
+      // prevents a selected title from turning into a visibly larger block.
+      constraints: BoxConstraints(minHeight: compact ? 24 : 34),
       padding: EdgeInsets.symmetric(
-        horizontal: compact ? 10 : 13,
-        vertical: compact ? 6 : 7,
+        horizontal: compact ? 7 : 13,
+        vertical: compact ? 2 : 7,
       ),
       decoration: BoxDecoration(
         gradient: LinearGradient(
@@ -54,18 +57,18 @@ class TitleBadge extends StatelessWidget {
                   ? Icons.auto_awesome_rounded
                   : Icons.workspace_premium_rounded,
               color: palette.foreground,
-              size: compact ? 13 : 15,
+              size: compact ? 11 : 15,
             ),
-            const SizedBox(width: 6),
+            SizedBox(width: compact ? 3 : 6),
           ],
           Flexible(
             child: Text(
               localizedAchievementTitle(copy, achievement),
-              maxLines: 2,
+              maxLines: compact ? 1 : 2,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
                 color: palette.foreground,
-                fontSize: compact ? 11.5 : 13,
+                fontSize: compact ? 9.5 : 13,
                 height: 1.15,
                 fontWeight: highRarity ? FontWeight.w900 : FontWeight.w800,
                 letterSpacing: highRarity ? .3 : .1,
@@ -115,19 +118,20 @@ class _BadgePalette {
         foreground: Color(0xFFF0F7FF),
       ),
       AchievementRarity.epic => const _BadgePalette(
-        gradient: [Color(0xFF4D1767), Color(0xFFA52BFF)],
+        // Every stop stays above 4.5:1 against the 9.5px compact title.
+        gradient: [Color(0xFF4D1767), Color(0xFF8420CA)],
         border: Color(0xFFD07CFF),
         glow: Color(0xFFC052FF),
         foreground: Color(0xFFFFF4FF),
       ),
       AchievementRarity.legendary => const _BadgePalette(
-        gradient: [Color(0xFF7D3A0D), Color(0xFFFF9E24)],
+        gradient: [Color(0xFF7D3A0D), Color(0xFF95500B)],
         border: Color(0xFFFFC566),
         glow: Color(0xFFFFA52B),
         foreground: Color(0xFFFFF8E8),
       ),
       AchievementRarity.mythic => const _BadgePalette(
-        gradient: [Color(0xFF7E1D76), Color(0xFF5A29C8), Color(0xFFC52DFF)],
+        gradient: [Color(0xFF7E1D76), Color(0xFF5A29C8), Color(0xFF8F22B8)],
         border: Color(0xFFFF77DF),
         glow: Color(0xFFD84CFF),
         foreground: Color(0xFFFFFFFF),

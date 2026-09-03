@@ -2,7 +2,7 @@ name: yovoice
 description: "A new Flutter project."
 publish_to: "none"
 
-version: 1.0.0+18
+version: 1.0.0+19
 
 environment:
   sdk: ^3.9.0
@@ -31,6 +31,11 @@ dependencies:
   riverpod_annotation: ^3.0.3
 
   image_picker: ^1.2.0
+  # Official Flutter plugins used by the Reels composer and feed. Video stays
+  # inside YO Voice on every release platform; audio is selected through the
+  # operating-system picker and is uploaded only after rights attestation.
+  video_player: ^2.14.0
+  file_selector: ^1.1.0
   livekit_client: ^2.7.0
   permission_handler: ^12.0.1
   share_plus: ^12.0.2

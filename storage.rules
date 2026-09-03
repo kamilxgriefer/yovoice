@@ -50,6 +50,31 @@ service firebase.storage {
           isAllowedAudioType();
     }
 
+    function isAllowedVideoType() {
+      return request.resource.contentType in [
+        'video/mp4', 'video/quicktime', 'video/webm'
+      ];
+    }
+
+    function isValidVideoPayload() {
+      return request.resource.size >= 1024 &&
+          request.resource.size <= 64 * 1024 * 1024 &&
+          isAllowedVideoType();
+    }
+
+    function videoExtensionMatchesMime(fileName) {
+      return (
+        fileName.matches('.*[.]mp4') &&
+        request.resource.contentType == 'video/mp4'
+      ) || (
+        fileName.matches('.*[.]mov') &&
+        request.resource.contentType == 'video/quicktime'
+      ) || (
+        fileName.matches('.*[.]webm') &&
+        request.resource.contentType == 'video/webm'
+      );
+    }
+
     function imageExtensionMatchesMime(fileName) {
       return (
         fileName.matches('.*[.](jpg|jpeg)') &&
@@ -304,10 +329,12 @@ service firebase.storage {
     }
 
     // Private direct-message attachments are immutable, server-reserved
-    // objects. A participant may read through the authenticated Storage SDK;
-    // no public download-token URL is stored in Firestore. Creation is bound
-    // to an unexpired, server-owned reservation whose exact object identity
-    // and media contract are mirrored in custom metadata.
+    // objects. A participant may point-read only an object already bound to a
+    // canonical message; prefixes are never enumerable and an uploading
+    // reservation alone grants no recipient read. No public download-token URL
+    // is stored in Firestore. Creation is bound to an unexpired, server-owned
+    // reservation whose exact object identity and media contract are mirrored
+    // in custom metadata.
     match /message_attachments/{ownerId}/{conversationId}/{fileName} {
       function reservationPath() {
         return /databases/(default)/documents/directMessageUploadReservations/$(request.resource.metadata.get('yovoiceMessageId', ''));
@@ -325,7 +352,7 @@ service firebase.storage {
               'yovoiceMessagePath', 'yovoiceMediaType', 'yovoiceOwnerUid'
             ]) &&
             messageId.matches('m_[a-f0-9]{40}') &&
-            fileName.matches(messageId + '[.](jpg|png|webp|m4a)') &&
+            fileName.matches(messageId + '[.](jpg|png|webp|m4a|mp4|mov|webm)') &&
             request.resource.metadata.get('yovoiceOwnerUid', '') == ownerId &&
             request.resource.metadata.get('yovoiceConversationId', '') == conversationId &&
             request.resource.metadata.get('yovoiceMessagePath', '') ==
@@ -355,22 +382,160 @@ service firebase.storage {
                 reservation.durationSeconds >= 1 &&
                 reservation.durationSeconds <= 60 &&
                 isValidAudioPayload()
+              ) ||
+              (
+                reservation.type == 'video' &&
+                reservation.durationSeconds is int &&
+                reservation.durationSeconds >= 1 &&
+                reservation.durationSeconds <= 60 &&
+                isValidVideoPayload() &&
+                videoExtensionMatchesMime(fileName)
               )
             );
       }
 
-      function canReadPrivateAttachment() {
+      function canReadFinalizedAttachment() {
+        let messageId = resource.metadata.get('yovoiceMessageId', '');
+        // The generation-bound server finalizer adds yovoiceFinalized only
+        // after validating the exact reservation/bytes and revoking the
+        // upload's durable token. Build 18 objects are upgraded by the trusted
+        // pre-cutover migration; marker-less objects intentionally have no
+        // read fallback because rules cannot distinguish an old finalized
+        // object from a current upload that is still in progress. This also
+        // leaves the two cross-service reads for current account state and
+        // current conversation membership.
         return isActiveUser(request.auth.uid) &&
+            resource != null &&
+            resource.metadata.keys().hasOnly([
+              'yovoiceConversationId', 'yovoiceMessageId',
+              'yovoiceMessagePath', 'yovoiceMediaType', 'yovoiceOwnerUid',
+              'yovoiceFinalized'
+            ]) &&
+            resource.metadata.get('yovoiceFinalized', '') == 'true' &&
+            messageId.matches('m_[a-f0-9]{40}') &&
+            fileName.matches(messageId + '[.](jpg|png|webp|m4a|mp4|mov|webm)') &&
+            resource.metadata.get('yovoiceOwnerUid', '') == ownerId &&
+            resource.metadata.get('yovoiceConversationId', '') == conversationId &&
+            resource.metadata.get('yovoiceMessagePath', '') ==
+              'conversations/' + conversationId + '/messages/' + messageId &&
             firestore.exists(conversationPath()) &&
             firestore.get(conversationPath()).data.schemaVersion == 2 &&
-            request.auth.uid in firestore.get(conversationPath()).data.participantIds;
+            request.auth.uid in firestore.get(conversationPath()).data.participantIds &&
+            (
+              (
+                resource.metadata.get('yovoiceMediaType', '') == 'image' &&
+                resource.contentType in ['image/jpeg', 'image/png', 'image/webp']
+              ) ||
+              (
+                resource.metadata.get('yovoiceMediaType', '') == 'voice' &&
+                resource.contentType in ['audio/mp4', 'audio/m4a', 'audio/x-m4a']
+              ) ||
+              (
+                resource.metadata.get('yovoiceMediaType', '') == 'video' &&
+                resource.contentType in ['video/mp4', 'video/quicktime', 'video/webm']
+              )
+            );
       }
 
-      allow read: if canReadPrivateAttachment();
+      allow get: if canReadFinalizedAttachment();
+      allow list: if false;
       allow create: if resource == null &&
           isVerified() &&
           isActiveUser(ownerId) &&
           validAttachmentIdentity();
+      allow update, delete: if false;
+    }
+
+    // Reels are private, immutable, server-reserved objects. The uploader may
+    // create or recover only the exact bytes described by one live reservation;
+    // published playback is served by a short-lived generation-bound V4 grant.
+    match /reels/{userId}/{reelId}/{fileName} {
+      function reservationPath() {
+        return /databases/(default)/documents/reelUploadReservations/$(reelId);
+      }
+
+      function liveReservation() {
+        let path = reservationPath();
+        return firestore.exists(path) &&
+            firestore.get(path).data.schemaVersion == 1 &&
+            firestore.get(path).data.status == 'uploading' &&
+            firestore.get(path).data.ownerId == userId &&
+            firestore.get(path).data.reelId == reelId &&
+            firestore.get(path).data.expiresAt is timestamp &&
+            firestore.get(path).data.expiresAt > request.time;
+      }
+
+      function exactMetadata(metadata, kind) {
+        return metadata.keys().hasOnly(['ownerId', 'reelId', 'assetKind']) &&
+            metadata.ownerId == userId &&
+            metadata.reelId == reelId &&
+            metadata.assetKind == kind;
+      }
+
+      function reservedMedia(size, contentType, metadata) {
+        let reservation = firestore.get(reservationPath()).data;
+        return exactMetadata(metadata, 'media') &&
+            reservation.mediaStoragePath ==
+                'reels/' + userId + '/' + reelId + '/' + fileName &&
+            reservation.mediaContentType == contentType &&
+            reservation.mediaSize == size &&
+            size >= 128 &&
+            (
+              (
+                reservation.mediaKind == 'image' &&
+                size <= 10 * 1024 * 1024 &&
+                (
+                  (fileName == 'media.jpg' && contentType == 'image/jpeg') ||
+                  (fileName == 'media.png' && contentType == 'image/png') ||
+                  (fileName == 'media.webp' && contentType == 'image/webp')
+                )
+              ) ||
+              (
+                reservation.mediaKind == 'video' &&
+                size <= 100 * 1024 * 1024 &&
+                (
+                  (fileName == 'media.mp4' && contentType == 'video/mp4') ||
+                  (fileName == 'media.mov' && contentType == 'video/quicktime') ||
+                  (fileName == 'media.webm' && contentType == 'video/webm')
+                )
+              )
+            );
+      }
+
+      function reservedAudio(size, contentType, metadata) {
+        let reservation = firestore.get(reservationPath()).data;
+        return reservation.hasBackingAudio == true &&
+            exactMetadata(metadata, 'backingAudio') &&
+            reservation.backingAudioStoragePath ==
+                'reels/' + userId + '/' + reelId + '/' + fileName &&
+            reservation.audioContentType == contentType &&
+            reservation.audioSize == size &&
+            size >= 512 && size <= 15 * 1024 * 1024 &&
+            (
+              (fileName == 'backing-audio.mp3' && contentType == 'audio/mpeg') ||
+              (fileName == 'backing-audio.m4a' && contentType == 'audio/mp4') ||
+              (fileName == 'backing-audio.wav' && contentType == 'audio/wav')
+            );
+      }
+
+      function reservedAsset(size, contentType, metadata) {
+        return liveReservation() &&
+            (
+              reservedMedia(size, contentType, metadata) ||
+              reservedAudio(size, contentType, metadata)
+            );
+      }
+
+      allow get: if isActiveUser(userId) &&
+          reservedAsset(resource.size, resource.contentType, resource.metadata);
+      allow list: if false;
+      allow create: if resource == null && isVerified() &&
+          isActiveUser(userId) &&
+          reservedAsset(
+            request.resource.size,
+            request.resource.contentType,
+            request.resource.metadata
+          );
       allow update, delete: if false;
     }
 

@@ -151,4 +151,4 @@ jobs:
           firebaseServiceAccount: '${{ secrets.FIREBASE_SERVICE_ACCOUNT_YOVOICE_EC54A }}'
           projectId: yovoice-ec54a
           channelId: live
-          firebaseToolsVersion: 15.27.0
+          firebaseToolsVersion: 15.29.0

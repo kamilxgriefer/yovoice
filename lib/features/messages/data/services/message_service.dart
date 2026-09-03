@@ -26,6 +26,32 @@ class ChatPresence {
   final DateTime? lastSeen;
 }
 
+/// One stable, newest-first page of media messages from a private chat.
+///
+/// [cursor] is deliberately opaque to presentation code. It is only handed
+/// back to [MessageService.loadSharedMediaPage], keeping Firestore pagination
+/// details out of the UI while still allowing the complete archive to be
+/// loaded without reading every text message into memory.
+class SharedMediaPage {
+  const SharedMediaPage({
+    required this.messages,
+    required this.cursor,
+    required this.hasMore,
+    this.hiddenMessageIds = const <String>{},
+  });
+
+  final List<Message> messages;
+  final Object? cursor;
+  final bool hasMore;
+
+  /// Message documents observed by the live page that must no longer be
+  /// presented as shared media (for example after a soft-delete). Keeping
+  /// these ids separate lets the UI retain an item that merely moved beyond
+  /// the first-page boundary without resurrecting a deleted attachment from
+  /// its pagination cache.
+  final Set<String> hiddenMessageIds;
+}
+
 class _DirectAttachmentReservation {
   const _DirectAttachmentReservation({
     required this.conversationId,
@@ -159,7 +185,7 @@ class MessageService {
     return _outbox!;
   }
 
-  /// Account-scoped durable queue for photo and voice-message payloads.
+  /// Account-scoped durable queue for photo, video and voice payloads.
   DirectAttachmentOutbox get attachmentOutbox {
     final override = _attachmentOutboxOverride;
     if (override != null) return override;
@@ -182,7 +208,7 @@ class MessageService {
 
   /// Clears plaintext retry state at the account boundary. Sign-out calls this
   /// before Firebase Auth is cleared so no active delivery loop can retain a
-  /// reference to another account's pending text, image or voice payload.
+  /// reference to another account's pending text, image, video or voice data.
   Future<void> clearLocalSensitiveStateForUser(String userId) async {
     if (_auth.currentUser?.uid != userId) {
       throw StateError('The local message owner changed before cleanup.');
@@ -330,6 +356,89 @@ class MessageService {
           (snapshot) =>
               snapshot.docs.map(Message.fromFirestore).toList(growable: false),
         );
+  }
+
+  Query<Map<String, dynamic>> _sharedMediaQuery({
+    required String conversationId,
+    required MessageType type,
+    required int pageSize,
+  }) {
+    if (type == MessageType.text) {
+      throw ArgumentError.value(type, 'type', 'Text is not shared media.');
+    }
+    if (pageSize < 1 || pageSize > 100) {
+      throw RangeError.range(pageSize, 1, 100, 'pageSize');
+    }
+    return _conversations
+        .doc(conversationId)
+        .collection('messages')
+        .where('type', isEqualTo: type.name)
+        .orderBy('sentAt', descending: true)
+        .limit(pageSize);
+  }
+
+  SharedMediaPage _sharedMediaPage(
+    QuerySnapshot<Map<String, dynamic>> snapshot,
+    int pageSize,
+  ) {
+    final observed = snapshot.docs
+        .map(Message.fromFirestore)
+        .toList(growable: false);
+    final messages = observed
+        .where(
+          (message) =>
+              !message.isDeleted &&
+              (message.mediaUrl?.trim().isNotEmpty ?? false),
+        )
+        .toList(growable: false);
+    return SharedMediaPage(
+      messages: messages,
+      cursor: snapshot.docs.isEmpty ? null : snapshot.docs.last,
+      // A full page may still be the final page. One harmless follow-up query
+      // resolves that edge without ever hiding an older attachment.
+      hasMore: snapshot.docs.length == pageSize,
+      hiddenMessageIds: observed
+          .where(
+            (message) =>
+                message.isDeleted ||
+                !(message.mediaUrl?.trim().isNotEmpty ?? false),
+          )
+          .map((message) => message.id)
+          .toSet(),
+    );
+  }
+
+  /// Watches the newest page for one media type so newly sent attachments
+  /// appear immediately while older pages remain explicitly pageable.
+  Stream<SharedMediaPage> watchSharedMediaFirstPage({
+    required String conversationId,
+    required MessageType type,
+    int pageSize = 48,
+  }) {
+    return _sharedMediaQuery(
+      conversationId: conversationId,
+      type: type,
+      pageSize: pageSize,
+    ).snapshots().map((snapshot) => _sharedMediaPage(snapshot, pageSize));
+  }
+
+  /// Loads the next older page for [type]. A cursor from another service or
+  /// query is rejected locally instead of issuing an ambiguous request.
+  Future<SharedMediaPage> loadSharedMediaPage({
+    required String conversationId,
+    required MessageType type,
+    required Object cursor,
+    int pageSize = 48,
+  }) async {
+    if (cursor is! DocumentSnapshot<Map<String, dynamic>> || !cursor.exists) {
+      throw ArgumentError.value(cursor, 'cursor', 'Invalid media cursor.');
+    }
+    final query = _sharedMediaQuery(
+      conversationId: conversationId,
+      type: type,
+      pageSize: pageSize,
+    ).startAfterDocument(cursor);
+    return _sharedMediaPage(await query.get(), pageSize);
   }
 
   Stream<ChatPresence> watchUserPresence(String userId) {
@@ -874,8 +983,14 @@ class MessageService {
     required String conversationId,
     required XFile image,
   }) async {
+    final declaredLength = await image.length();
+    if (declaredLength < 128 || declaredLength > 8 * 1024 * 1024) {
+      throw StateError('Choose a photo smaller than 8 MB.');
+    }
     final bytes = await image.readAsBytes();
-    if (bytes.lengthInBytes < 128 || bytes.lengthInBytes > 8 * 1024 * 1024) {
+    if (bytes.lengthInBytes != declaredLength ||
+        bytes.lengthInBytes < 128 ||
+        bytes.lengthInBytes > 8 * 1024 * 1024) {
       throw StateError('Choose a photo smaller than 8 MB.');
     }
     final contentType = _imageContentType(image);
@@ -886,6 +1001,41 @@ class MessageService {
       type: MessageType.image,
       contentType: contentType,
       durationSeconds: null,
+      bytes: bytes,
+      reserveRequestId: _newRequestId(),
+      finalizeRequestId: _newRequestId(),
+    );
+    _listenForConnectivity();
+    await _deliverAttachment(entry.id, queue: queue);
+  }
+
+  /// Sends a short private video through the same server-reserved,
+  /// participant-only attachment pipeline as photos and voice messages.
+  Future<void> sendVideoMessage({
+    required String conversationId,
+    required XFile video,
+    required int durationSeconds,
+  }) async {
+    if (durationSeconds < 1 || durationSeconds > 60) {
+      throw StateError('Videos must be between 1 and 60 seconds.');
+    }
+    final declaredLength = await video.length();
+    if (declaredLength < 1024 || declaredLength > 64 * 1024 * 1024) {
+      throw StateError('Choose a video smaller than 64 MB.');
+    }
+    final bytes = await video.readAsBytes();
+    if (bytes.lengthInBytes != declaredLength ||
+        bytes.lengthInBytes < 1024 ||
+        bytes.lengthInBytes > 64 * 1024 * 1024) {
+      throw StateError('Choose a video smaller than 64 MB.');
+    }
+    final queue = attachmentOutbox;
+    final entry = await queue.enqueue(
+      fingerprint: sha256.convert(bytes).toString(),
+      conversationId: conversationId,
+      type: MessageType.video,
+      contentType: _videoContentType(video),
+      durationSeconds: durationSeconds,
       bytes: bytes,
       reserveRequestId: _newRequestId(),
       finalizeRequestId: _newRequestId(),
@@ -1259,6 +1409,20 @@ class MessageService {
       return 'image/jpeg';
     }
     throw StateError('Choose a JPG, PNG, or WebP photo.');
+  }
+
+  String _videoContentType(XFile video) {
+    final declared = video.mimeType?.split(';').first.trim().toLowerCase();
+    if (declared == 'video/mp4' ||
+        declared == 'video/quicktime' ||
+        declared == 'video/webm') {
+      return declared!;
+    }
+    final lower = video.name.toLowerCase();
+    if (lower.endsWith('.mov')) return 'video/quicktime';
+    if (lower.endsWith('.webm')) return 'video/webm';
+    if (lower.endsWith('.mp4') || lower.endsWith('.m4v')) return 'video/mp4';
+    throw StateError('Choose an MP4, MOV, or WebM video.');
   }
 
   Future<_DirectAttachmentReservation> _reserveDirectAttachment({

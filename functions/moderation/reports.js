@@ -1,13 +1,15 @@
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { FieldValue } = require("firebase-admin/firestore");
+const { createHash } = require("node:crypto");
 
 const {
   requireAuthentication,
   requireVerifiedStaff,
 } = require("../utils/auth");
 const { db, normalizeText } = require("../utils/firestore");
-const { writeAuditLog } = require("../utils/audit");
 const { USER_ROLES } = require("../utils/roles");
+const { isValidOpaqueUid } = require("../achievements/identity");
+const { REEL_SCHEMA_VERSION } = require("../reels/contract");
 
 const REGION = "europe-west1";
 
@@ -73,6 +75,9 @@ const TRANSITIONS = {
 };
 
 const MAX_MODERATOR_NOTE = 500;
+const SAFE_REPORT_ID = /^[A-Za-z0-9_-]{1,256}$/u;
+const SAFE_REEL_ID = /^[A-Za-z0-9_-]{1,128}$/u;
+const SAFE_REQUEST_ID = /^[A-Za-z0-9_-]{8,64}$/u;
 const REPORT_STAFF_ROLES = new Set([
   USER_ROLES.MODERATOR,
   USER_ROLES.SUPER_MODERATOR,
@@ -96,34 +101,84 @@ async function requireActiveStaff(request, { privileged = false } = {}) {
   );
 }
 
+function canonicalReelReference(report) {
+  const reelId = report.targetId;
+  if (
+    typeof reelId !== "string" ||
+    !SAFE_REEL_ID.test(reelId) ||
+    !isValidOpaqueUid(report.reportedUserId) ||
+    report.contextPath !== `reels/${reelId}`
+  ) {
+    throw new HttpsError(
+      "failed-precondition",
+      "The reported Reel reference is invalid.",
+    );
+  }
+  return db.collection("reels").doc(reelId);
+}
+
+function canonicalPublishedReel(snapshot, report) {
+  if (!snapshot.exists) {
+    throw new HttpsError(
+      "failed-precondition",
+      "The reported Reel no longer exists.",
+    );
+  }
+  const reel = snapshot.data();
+  if (
+    reel.schemaVersion !== REEL_SCHEMA_VERSION ||
+    reel.status !== "published" ||
+    reel.authorId !== report.reportedUserId ||
+    (reel.moderationStatus !== "visible" &&
+      reel.moderationStatus !== "hidden")
+  ) {
+    throw new HttpsError(
+      "failed-precondition",
+      "The reported Reel is not a canonical published Reel.",
+    );
+  }
+  return reel;
+}
+
+function moderationAuditId(reportId, requestId) {
+  const digest = createHash("sha256")
+    .update(`${reportId}\0${requestId}`, "utf8")
+    .digest("hex");
+  return `report_${digest}`;
+}
+
 const moderateReport = onCall(
   { region: REGION, enforceAppCheck: false },
   async (request) => {
     const caller = await requireActiveStaff(request, { privileged: true });
 
-    const reportId = normalizeText(request.data?.reportId, 256);
+    // Document and idempotency identities are authority-bearing input. Never
+    // trim or truncate them: doing so can alias two different caller values to
+    // the same report/audit document before the closed grammar is checked.
+    const reportId = request.data?.reportId;
+    const requestId = request.data?.requestId;
+    if (typeof reportId !== "string" || !SAFE_REPORT_ID.test(reportId)) {
+      throw new HttpsError("invalid-argument", "A valid report id is required.");
+    }
+    if (typeof requestId !== "string" || !SAFE_REQUEST_ID.test(requestId)) {
+      throw new HttpsError(
+        "invalid-argument",
+        "A valid requestId is required.",
+      );
+    }
+
     const action = normalizeText(request.data?.action, 32);
     // Client-generated per user action. A retry reuses it, which is what
     // makes this endpoint safely repeatable — see the short-circuit
     // inside the transaction.
-    const requestId = normalizeText(request.data?.requestId, 64);
     const resolution = normalizeText(request.data?.resolution, 64);
     const moderatorNote = normalizeText(
       request.data?.moderatorNote,
       MAX_MODERATOR_NOTE,
     );
 
-    if (!reportId || !/^[A-Za-z0-9_-]+$/.test(reportId)) {
-      throw new HttpsError("invalid-argument", "A valid report id is required.");
-    }
     if (!TRANSITIONS[action]) {
       throw new HttpsError("invalid-argument", "Unknown moderation action.");
-    }
-    if (!requestId || requestId.length < 8) {
-      throw new HttpsError(
-        "invalid-argument",
-        "A requestId of at least 8 characters is required.",
-      );
     }
 
     const needsResolution =
@@ -139,6 +194,9 @@ const moderateReport = onCall(
     }
 
     const reportReference = db.collection("reports").doc(reportId);
+    const auditReference = db
+      .collection("adminAuditLogs")
+      .doc(moderationAuditId(reportId, requestId));
 
     const outcome = await db.runTransaction(async (transaction) => {
       const snapshot = await transaction.get(reportReference);
@@ -188,35 +246,51 @@ const moderateReport = onCall(
 
       let contentRemoved = false;
       if (action === ACTION.REMOVE_AND_RESOLVE) {
-        if (report.targetType !== "globalMessage") {
-          throw new HttpsError(
-            "failed-precondition",
-            "Only a Global Chat message can be removed this way.",
-          );
-        }
-        const messageReference = db
-          .collection("globalChat")
-          .doc("main")
-          .collection("messages")
-          .doc(String(report.targetId));
-        const message = await transaction.get(messageReference);
+        if (report.targetType === "globalMessage") {
+          const messageReference = db
+            .collection("globalChat")
+            .doc("main")
+            .collection("messages")
+            .doc(String(report.targetId));
+          const message = await transaction.get(messageReference);
 
-        if (!message.exists) {
+          if (!message.exists) {
+            throw new HttpsError(
+              "failed-precondition",
+              "The reported message no longer exists.",
+            );
+          }
+          // Already gone: resolving is still correct, removing again is
+          // not, and re-writing it would fire a second moderation audit.
+          if (message.data().isDeleted !== true) {
+            transaction.update(messageReference, {
+              isDeleted: true,
+              deletedBy: caller.uid,
+              deletedAt: FieldValue.serverTimestamp(),
+              content: "",
+            });
+            contentRemoved = true;
+          }
+        } else if (report.targetType === "reel") {
+          const reelReference = canonicalReelReference(report);
+          const reelSnapshot = await transaction.get(reelReference);
+          const reel = canonicalPublishedReel(reelSnapshot, report);
+
+          // Media descriptors and bytes remain intact for evidence and a
+          // future reviewed appeal. Reads fail closed because every Reel
+          // playback/feed path requires moderationStatus == "visible".
+          if (reel.moderationStatus !== "hidden") {
+            transaction.update(reelReference, {
+              moderationStatus: "hidden",
+              updatedAt: FieldValue.serverTimestamp(),
+            });
+            contentRemoved = true;
+          }
+        } else {
           throw new HttpsError(
             "failed-precondition",
-            "The reported message no longer exists.",
+            "Only a Global Chat message or Reel can be removed this way.",
           );
-        }
-        // Already gone: resolving is still correct, removing again is
-        // not, and re-writing it would fire a second moderation audit.
-        if (message.data().isDeleted !== true) {
-          transaction.update(messageReference, {
-            isDeleted: true,
-            deletedBy: caller.uid,
-            deletedAt: FieldValue.serverTimestamp(),
-            content: "",
-          });
-          contentRemoved = true;
         }
       }
 
@@ -248,6 +322,29 @@ const moderateReport = onCall(
 
       transaction.set(reportReference, workflow, { merge: true });
 
+      // The state transition and its immutable audit evidence are one
+      // transaction. A lost response can therefore never leave a resolved
+      // report without a trail, and replaying the same requestId observes the
+      // already-committed pair instead of creating another entry.
+      transaction.create(auditReference, {
+        actorId: caller.uid,
+        actorEmail: caller.token?.email ?? caller.email ?? null,
+        actorRole: caller.role,
+        action: `report_${action}`,
+        targetType: "report",
+        targetId: reportId,
+        targetLabel: null,
+        details: {
+          previousStatus: current,
+          newStatus: transition.to,
+          resolution: needsResolution ? resolution : null,
+          note: moderatorNote || null,
+          contentRemoved,
+          requestId,
+        },
+        createdAt: FieldValue.serverTimestamp(),
+      });
+
       return {
         status: transition.to,
         previous: current,
@@ -255,31 +352,6 @@ const moderateReport = onCall(
         contentRemoved,
       };
     });
-
-    if (!outcome.replayed) {
-      // Deterministic on the idempotency key, so a retry that reaches
-      // this line after a network failure overwrites its own entry
-      // rather than appending a second one.
-      await writeAuditLog({
-        entryId: `report_${reportId}_${requestId}`,
-        caller: { uid: caller.uid, role: caller.role },
-        action: `report_${action}`,
-        targetType: "report",
-        targetId: reportId,
-        targetLabel: null,
-        details: {
-          previousStatus: outcome.previous,
-          newStatus: outcome.status,
-          resolution: needsResolution ? resolution : null,
-          // The note as recorded at the time of the action. The report
-          // document holds only the latest one; a trail needs the value
-          // that went with this specific transition.
-          note: moderatorNote || null,
-          contentRemoved: outcome.contentRemoved,
-          requestId,
-        },
-      });
-    }
 
     return {
       success: true,
@@ -298,4 +370,7 @@ module.exports = {
   ACTION,
   RESOLUTIONS,
   MAX_MODERATOR_NOTE,
+  SAFE_REPORT_ID,
+  SAFE_REQUEST_ID,
+  moderationAuditId,
 };

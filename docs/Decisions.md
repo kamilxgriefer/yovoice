@@ -82,6 +82,8 @@ given a false-precision date.
 | [118](#adr-118-premium-pairs-recurring-eur-with-non-renewing-prepaid-blik) | Premium pairs recurring EUR with non-renewing prepaid BLIK | Catalog deployed; provider rollout disabled | 2026-08-28 |
 | [119](#adr-119-moderator-premium-preview-is-a-derived-product-benefit-not-a-paid-entitlement) | Moderator Premium preview is a derived product benefit, not a paid entitlement | Implemented; production release pending | 2026-08-28 |
 | [120](#adr-120-podcast-studio-uses-the-participant-roster-as-its-production-state) | Podcast Studio uses the participant roster as its production state | Deployed to web and mobile beta | 2026-08-28 |
+| [137](#adr-137-build-19-private-media-is-reservation-bound-and-reels-accepts-only-user-owned-or-licensed-audio) | Build 19 private media is reservation-bound; Reels accepts only user-owned or licensed audio | Accepted in source; coordinated release pending | 2026-09-03 |
+| [138](#adr-138-moderation-and-its-audit-record-commit-atomically) | Moderation and its audit record commit atomically | Accepted in source; production deployment pending | 2026-09-03 |
 
 > **The index is incomplete and has been for a while**: rows for ADR-020
 > through ADR-052 were never added, and neither were ADR-062–065,
@@ -8536,3 +8538,142 @@ keys.
 - This decision supersedes ADR-072's three-language registry, English default
   for missing state and Polish Beta boundary. It does not authorize a store or
   Hosting deployment.
+
+## ADR-137: Build 19 private media is reservation-bound and Reels accepts only user-owned or licensed audio
+
+**Status**: Accepted in source; coordinated release pending
+**Date**: 2026-09-03
+
+### Context
+
+Build 19 adds Shared Media, DM video alongside photo and voice, recoverable
+media sends, Voice Moment playback recovery and a first real Reels surface.
+Those features touch the same risky seam: a client acquires bytes, uploads
+them, publishes a canonical document and later asks to read them. Treating a
+public download URL or a client-provided MIME label as authority would make
+privacy changes ineffective and allow malformed content to cross a trusted
+media boundary. Music-provider links also do not confer a licence to ingest
+or redistribute their audio.
+
+### Decision
+
+DM photo, voice and video use server reservations and canonical first-party
+`gs://` media references. Camera and library are acquisition choices only;
+they do not change authorization. Generation, size, type and tracks are bound
+at publication. Later reads are authenticated Storage point-gets of that exact
+path, gated by current active conversation membership and a finalized marker;
+they are not generation-bound signed grants, and prefix listing is denied. The
+durable upload token is revoked before publication. The durable outbox retains
+the local payload and stable request identity until the canonical server result
+is reconciled, so a retry does not silently create another message. Shared
+Media is a bounded projection of the conversation a participant can already
+read, split into photo/video and voice views; it is not a new public media
+index.
+
+Before canonical DM publication, the server validates reservation ownership,
+path, generation, size and declared type. It probes the stored object and
+rechecks the reservation inside the final transaction so a concurrent expiry,
+replacement or replay cannot authorize a stale commit. The final content-type
+probe sniffs JPEG, PNG, WebP, ISO-BMFF, WebM, MP3 and WAV bytes; its
+generation-bound stream reports detected type and audio/video track presence.
+Voice must be audio-only and video must contain a real video track. A
+post-probe metadata read plus the transaction revalidates reservation, path,
+generation, declared/detected MIME, kind, size, duration and expiry.
+
+Voice Moments and Reels are read through short-lived, generation-bound grants
+after current relationship and visibility checks.
+Grant/retry recovery may repair an interrupted publication but cannot make a
+legacy token URL durable again. The 2026-09-03 production migration finished
+with five Voice Moment objects and zero remaining download tokens or legacy
+`audioUrl` fields; it deleted no media bytes.
+
+Reels canonical records are created through callables and point to private,
+reservation-bound media. The MVP accepts media and backing audio the uploader
+owns or is licensed to publish, with rights attestation. Crop, trim, filter,
+text/link overlays and audio timing are stored as a non-destructive composition
+recipe. The product does **not** ingest, download, extract or redistribute
+Spotify, Apple Music or another provider's catalogue. Provider links may open
+the provider; they are not media inputs.
+
+Finalize attempts consume a transactional quota before any Storage metadata
+read or trusted probe; only an exact completed operation replay is free. Feed
+requests scan at most 24 records in batches of four, cache author authorization
+only within that request, authorize at most eight distinct authors, and are
+limited to 30 calls per minute. The returned cursor identifies the last record
+actually inspected, never the end of a prefetched batch. An author may delete
+their own hidden Reel: public content is replaced by a server-only tombstone
+containing moderation state and a metadata fingerprint, while exact
+generation-bound media cleanup runs from an outbox. Reports and audit rows
+remain intact.
+
+### Reasoning
+
+One reservation/generation contract is easier to audit than a different trust
+model for each picker and media type. Stable outbox identity handles lost
+acknowledgements without weakening server authority. Keeping Shared Media as a
+read projection avoids another denormalized privacy surface. A rights
+attestation does not itself prove copyright ownership, but it preserves an
+honest and enforceable product boundary while licensed catalogue ingestion and
+server transcoding remain future, separately designed work.
+
+### Consequences
+
+- A previously fetched Voice Moment/Reel grant remains a bearer capability
+  until its short expiry; blocking or privacy changes stop the next grant, not
+  bytes already retrieved. DM access instead relies on a fresh authenticated
+  Storage authorization decision for each SDK request.
+- Mixed-version clients must retain the legacy audio/default fallbacks while
+  new video and media capabilities are introduced additively.
+- Physical codec, camera/library, background/restart, lost-acknowledgement and
+  two-account visibility tests remain mandatory before store release.
+- The shared probe contract passes 9/9 and the fresh-emulator direct-integrity
+  gate passes 35/35; syntax checks for six changed Node files and the diff
+  check pass. Production deployment/read-back and hostile real-object smokes
+  remain release gates.
+- Reels is a real publish/read/report/delete MVP, but not a Spotify/Apple Music
+  import service and not yet an immutable server-rendered export pipeline.
+
+## ADR-138: Moderation and its audit record commit atomically
+
+**Status**: Accepted in source; production deployment pending
+**Date**: 2026-09-03
+
+### Context
+
+A moderation action that removes content and a separate best-effort audit
+write can split: the content disappears while accountability is missing, or an
+audit claims an action whose target still exists. Retrying that split flow can
+also create duplicate or contradictory history. Auditability matters most on
+the same adverse network and concurrency paths where a second write is least
+reliable.
+
+### Decision
+
+The callable checks acting access before target existence, binds the report to
+the exact target and commits the moderation state, report resolution and
+append-only audit record in one Firestore transaction. A deterministic replay
+identity makes the same authorized request idempotent. The audit contains
+bounded metadata and references, never private media grants or token material.
+Removing the public/canonical record does not automatically delete retained
+evidence bytes; retention and later deletion follow their explicit policy so
+an appeal or incident review is not destroyed by the action itself.
+
+### Reasoning
+
+Atomicity makes the product state and the accountability state one invariant,
+instead of relying on cleanup to guess which half won. Access-before-existence
+also avoids turning the callable into a target-enumeration oracle. Retained
+evidence is safer than irreversible deletion during the moderation request,
+provided access stays server-only and lifecycle cleanup remains bounded.
+
+### Consequences
+
+- The targeted atomic moderation subset passes 31/31 inside the 64/64
+  Reels/moderation security gate and measured Functions result of 1166/1166.
+- Production deployment and controlled unauthorized, replay, conflict and
+  audit read-back smokes remain required; source tests do not prove the live
+  callable revision.
+- A restore/appeal workflow is not implied unless it is explicitly implemented
+  and tested.
+- Cleanup must never erase the audit row merely because user-visible content
+  was removed.

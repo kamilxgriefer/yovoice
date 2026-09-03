@@ -1463,6 +1463,54 @@ someone decide what to pick up next.
 
 ## In Progress
 
+### Coordinated Build 19 release candidate
+
+- **Status**: Product and backend work is integrated in source and the
+  complete source/backend/Rules/browser gates are green. **Build 19 is not yet
+  a coordinated release**: the physical visual/device matrix, production
+  backend/Hosting rollout, signed exact-commit artifacts, store processing and
+  tester assignment are still release gates.
+- **Description**: This candidate joins the work that must travel together:
+  Shared Media; DM photo, video and voice with camera/library capture and a
+  durable replay-safe outbox; canonical avatar refresh and single-flight
+  profile routing; mixed-version direct audio/video compatibility; Voice
+  Moment generation grants and retry recovery; a real Reels MVP; compact
+  achievement/More presentation; Polish production copy and the guarded 41
+  additional locale variants; and atomic moderation/audit mutation.
+- **Media boundary**: Reels may use media and audio the user owns or is
+  licensed to publish, with an explicit rights attestation. It does not ingest,
+  download or re-publish Spotify, Apple Music or another provider's catalogue.
+  Its edit recipe is non-destructive metadata, not a claim that a server-side
+  transcoded master already exists.
+- **Production data evidence (2026-09-03)**: the Voice Moment migration
+  dry-run examined 5 legacy objects: 1 ready, 4 already migrated and 0
+  conflicts. The ready record was migrated; hardening scanned 1, revoked 1
+  legacy token and found 0 missing objects. A post-run found all 5 already
+  migrated. Firestore has 0 legacy `audioUrl` values; bucket inventory reports
+  `voice_moments` 5 objects / 0 download tokens and `voice_replies` 0 / 0.
+  No media bytes were deleted. Identifiers, URLs and token material are
+  deliberately absent from this aggregate record.
+- **Measured source evidence**: `flutter analyze` is clean; complete Flutter is
+  2123/2123; independent Build 19 QA is 229/229; Reels pagination/catalog is
+  19/19 and source review is 40/40; Functions is 1166/1166; Firestore Rules is
+  523/523; Storage Rules is 67/67; Reels/moderation security is 64/64; Family
+  media is 5/5; browser media/crop/Reels is 39/39; and the production Web
+  build succeeds. The shared DM media probe contract passes 9/9, a
+  fresh-emulator direct-integrity gate passes 35/35, and syntax checks for six
+  changed Node files plus the diff check pass. These are not a substitute for
+  the pending physical-device or deployed-production gates.
+- **Dependencies**: complete the physical visual/two-device matrix;
+  preserve the zero-token inventory; then follow the Functions → smoke →
+  indexes (only if required) → Firestore Rules → Storage Rules → Hosting →
+  website → native-store order in
+  [DEPLOYMENT.md](DEPLOYMENT.md#build-19-pre-release-runbook--not-released).
+  The website Updates entry must describe only verified shipped behavior and
+  needs its own Vercel deployment proof.
+- **Priority**: Critical. Release as one coordinated compatibility wave, not as
+  isolated feature uploads. The evidence ledger and final-result placeholders
+  live in
+  [the Build 19 session record](Sessions/2026-09-03-build-19-release-candidate.md).
+
 ### Moderator and super-moderator Premium preview (ADR-119)
 
 - **Status**: Implemented and reviewed in source; **production release

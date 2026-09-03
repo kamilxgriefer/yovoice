@@ -411,6 +411,144 @@ test("private media grant never outlives Moment expiry", async () => {
   );
 });
 
+test("legacy published Moments receive secure generation-bound playback grants", async () => {
+  const service = momentService();
+  const momentId = "legacy-playback-00001";
+  const storagePath = momentStoragePath(B, momentId);
+  storage.put(storagePath, {
+    authorId: B,
+    momentId,
+    generation: "44021",
+  });
+  await db.doc(`voiceMoments/${momentId}`).set({
+    authorId: B,
+    authorName: "Legacy display name",
+    authorPhotoUrl: null,
+    caption: "Legacy playback",
+    audioUrl: "https://firebasestorage.googleapis.com/legacy-token",
+    storagePath,
+    durationSeconds: 9,
+    likeCount: 0,
+    commentCount: 0,
+    replyToMomentId: null,
+    isPublished: true,
+    createdAt: Timestamp.fromMillis(nowMs - 20_000),
+    updatedAt: Timestamp.fromMillis(nowMs - 10_000),
+    publishedAt: Timestamp.fromMillis(nowMs - 10_000),
+  });
+
+  const access = await service.getVoiceMomentMediaAccess(
+    request(A, { momentId }),
+  );
+
+  assert.equal(access.mediaGeneration, "44021");
+  assert.equal(access.mediaContentType, "audio/mp4");
+  assert.equal(access.mediaSize, 4096);
+  assert.equal(storage.signedGrants.at(-1).path, storagePath);
+  assert.equal(
+    storage.objects.get(storagePath).metadata.firebaseStorageDownloadTokens,
+    undefined,
+  );
+  // Playback compatibility is read-only. The audited bulk migration remains
+  // the sole writer of canonical schema and child/counter reconciliation.
+  assert.equal(
+    (await db.doc(`voiceMoments/${momentId}`).get()).data().schemaVersion,
+    undefined,
+  );
+});
+
+test("expired legacy Moments fail before Storage metadata or signing", async () => {
+  const service = momentService();
+  const momentId = "legacy-expired-00001";
+  const storagePath = momentStoragePath(B, momentId);
+  storage.put(storagePath, {
+    authorId: B,
+    momentId,
+    generation: "44022",
+  });
+  await db.doc(`voiceMoments/${momentId}`).set({
+    authorId: B,
+    caption: "Expired legacy playback",
+    audioUrl: "https://firebasestorage.googleapis.com/legacy-token",
+    storagePath,
+    durationSeconds: 9,
+    likeCount: 0,
+    commentCount: 0,
+    replyToMomentId: null,
+    isPublished: true,
+    createdAt: Timestamp.fromMillis(nowMs - 100_000),
+    expiresAt: Timestamp.fromMillis(nowMs),
+  });
+  const metadataReads = storage.metadataReads;
+  const signedGrants = storage.signedGrants.length;
+
+  await assert.rejects(
+    service.getVoiceMomentMediaAccess(request(A, { momentId })),
+    (error) => error.code === "failed-precondition" &&
+      /expired/u.test(error.message),
+  );
+  assert.equal(storage.metadataReads, metadataReads);
+  assert.equal(storage.signedGrants.length, signedGrants);
+});
+
+test("a canonical reply under a legacy parent keeps exact media binding", async () => {
+  const service = momentService();
+  const momentId = "legacy-reply-parent1";
+  const commentId = "legacyreply000000000";
+  const storagePath = momentStoragePath(B, momentId);
+  const replyPath = voiceReplyStoragePath(C, momentId, commentId);
+  storage.put(storagePath, {
+    authorId: B,
+    momentId,
+    generation: "44023",
+  });
+  storage.put(replyPath, {
+    authorId: C,
+    momentId,
+    commentId,
+    generation: "44024",
+  });
+  await db.doc(`voiceMoments/${momentId}`).set({
+    authorId: B,
+    caption: "Legacy parent with a canonical reply",
+    audioUrl: "https://firebasestorage.googleapis.com/legacy-token",
+    storagePath,
+    durationSeconds: 9,
+    likeCount: 0,
+    commentCount: 1,
+    replyToMomentId: null,
+    isPublished: true,
+    createdAt: Timestamp.fromMillis(nowMs - 20_000),
+  });
+  await db.doc(`voiceMoments/${momentId}/comments/${commentId}`).set({
+    schemaVersion: 2,
+    type: "voice",
+    authorId: C,
+    authorName: `Public ${C}`,
+    authorPhotoUrl: null,
+    text: "",
+    audioUrl: null,
+    storagePath: replyPath,
+    durationSeconds: 4,
+    // The object carries 44024. A legacy parent must not weaken this exact
+    // generation binding for its otherwise canonical reply.
+    mediaGeneration: "44025",
+    mediaSize: 4096,
+    mediaContentType: "audio/mp4",
+    createdAt: Timestamp.fromMillis(nowMs - 10_000),
+  });
+  const signedGrants = storage.signedGrants.length;
+
+  await assert.rejects(
+    service.getVoiceMomentMediaAccess(
+      request(A, { momentId, commentId }),
+    ),
+    (error) => error.code === "failed-precondition" &&
+      /generation does not match/u.test(error.message),
+  );
+  assert.equal(storage.signedGrants.length, signedGrants);
+});
+
 test("media grant recheck closes a block race before returning the URL", async () => {
   const service = momentService();
   const { momentId } = await publish(service, {

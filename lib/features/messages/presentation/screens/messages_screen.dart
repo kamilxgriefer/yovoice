@@ -89,6 +89,7 @@ class _MessagesScreenState extends State<MessagesScreen> {
 
   String _query = '';
   bool _showArchived = false;
+  bool _conversationNavigationInFlight = false;
 
   @override
   void initState() {
@@ -119,6 +120,25 @@ class _MessagesScreenState extends State<MessagesScreen> {
   }
 
   Future<void> _openConversation(
+    Conversation conversation, {
+    FriendUser? liveFriend,
+  }) => _runConversationNavigation(
+    () => _openConversationOnce(conversation, liveFriend: liveFriend),
+  );
+
+  Future<void> _runConversationNavigation(
+    Future<void> Function() navigate,
+  ) async {
+    if (_conversationNavigationInFlight) return;
+    _conversationNavigationInFlight = true;
+    try {
+      await navigate();
+    } finally {
+      _conversationNavigationInFlight = false;
+    }
+  }
+
+  Future<void> _openConversationOnce(
     Conversation conversation, {
     FriendUser? liveFriend,
   }) async {
@@ -178,7 +198,10 @@ class _MessagesScreenState extends State<MessagesScreen> {
     );
   }
 
-  Future<void> _startChat(FriendUser friend) async {
+  Future<void> _startChat(FriendUser friend) =>
+      _runConversationNavigation(() => _startChatOnce(friend));
+
+  Future<void> _startChatOnce(FriendUser friend) async {
     try {
       final conversationId = await _messageService.openOrCreateConversation(
         otherUserId: friend.id,
@@ -1426,6 +1449,10 @@ class NewMessageSheetState extends State<NewMessageSheet> {
                                 _RecentChatTile(
                                   conversation: conversation,
                                   currentUserId: widget.currentUserId,
+                                  liveFriend:
+                                      friendsById[conversation.otherUserId(
+                                        widget.currentUserId,
+                                      )],
                                   onTap: () => widget.onConversationSelected(
                                     conversation,
                                   ),
@@ -1495,18 +1522,21 @@ class _RecentChatTile extends StatelessWidget {
   const _RecentChatTile({
     required this.conversation,
     required this.currentUserId,
+    required this.liveFriend,
     required this.onTap,
   });
 
   final Conversation conversation;
   final String currentUserId;
+  final FriendUser? liveFriend;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     final otherId = conversation.otherUserId(currentUserId);
-    final name = conversation.displayNameFor(otherId);
-    final photoUrl = conversation.photoUrlFor(otherId);
+    final name =
+        liveFriend?.displayName ?? conversation.displayNameFor(otherId);
+    final photoUrl = liveFriend?.photoUrl ?? conversation.photoUrlFor(otherId);
     final palette = context.appPalette;
 
     return ListTile(
@@ -1516,6 +1546,7 @@ class _RecentChatTile extends StatelessWidget {
         userId: otherId,
         backgroundColor: palette.surfaceSunken,
         photoUrl: photoUrl,
+        mediaRevision: liveFriend?.profileUpdatedAt,
         displayName: name,
       ),
       title: Text(
@@ -1972,6 +2003,7 @@ String _localizedConversationPreview(
   final content = switch (conversation.lastMessageType) {
     MessageType.voice => copy.text('Voice message', 'Wiadomość głosowa'),
     MessageType.image => copy.text('Photo', 'Zdjęcie'),
+    MessageType.video => copy.text('Video', 'Film'),
     MessageType.text => conversation.lastMessage,
   };
   return '$prefix$content';

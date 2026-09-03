@@ -4,10 +4,13 @@ import 'dart:typed_data';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
+import 'package:video_player/video_player.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/messages/data/models/message.dart';
+import 'package:yovoice/features/messages/presentation/widgets/direct_video_playback_source.dart';
+import 'package:yovoice/features/messages/presentation/widgets/direct_voice_playback_source.dart';
 import 'package:yovoice/shared/widgets/interactions/accessible_context_action.dart';
 
 class MessageBubble extends StatelessWidget {
@@ -17,6 +20,8 @@ class MessageBubble extends StatelessWidget {
     required this.onLongPress,
     this.privateMediaLoader,
     this.audioPlayerFactory,
+    this.voiceSourcePreparer,
+    this.videoSourcePreparer,
     super.key,
   });
 
@@ -26,6 +31,8 @@ class MessageBubble extends StatelessWidget {
   final Future<Uint8List?> Function(String? reference, int maxBytes)?
   privateMediaLoader;
   final AudioPlayer Function()? audioPlayerFactory;
+  final DirectVoiceSourcePreparer? voiceSourcePreparer;
+  final DirectVideoSourcePreparer? videoSourcePreparer;
 
   @override
   Widget build(BuildContext context) {
@@ -128,6 +135,8 @@ class MessageBubble extends StatelessWidget {
                           : colors.onErrorContainer,
                       privateMediaLoader: privateMediaLoader,
                       audioPlayerFactory: audioPlayerFactory,
+                      voiceSourcePreparer: voiceSourcePreparer,
+                      videoSourcePreparer: videoSourcePreparer,
                     ),
                   ],
                 ),
@@ -226,6 +235,8 @@ class _MessageContent extends StatelessWidget {
     required this.errorForegroundColor,
     required this.privateMediaLoader,
     required this.audioPlayerFactory,
+    required this.voiceSourcePreparer,
+    required this.videoSourcePreparer,
   });
 
   final Message message;
@@ -235,6 +246,8 @@ class _MessageContent extends StatelessWidget {
   final Future<Uint8List?> Function(String? reference, int maxBytes)?
   privateMediaLoader;
   final AudioPlayer Function()? audioPlayerFactory;
+  final DirectVoiceSourcePreparer? voiceSourcePreparer;
+  final DirectVideoSourcePreparer? videoSourcePreparer;
 
   @override
   Widget build(BuildContext context) {
@@ -266,6 +279,7 @@ class _MessageContent extends StatelessWidget {
           errorForegroundColor: errorForegroundColor,
           privateMediaLoader: privateMediaLoader,
           audioPlayerFactory: audioPlayerFactory,
+          voiceSourcePreparer: voiceSourcePreparer,
         );
       case MessageType.image:
         return _ImageMessageContent(
@@ -273,6 +287,15 @@ class _MessageContent extends StatelessWidget {
           foregroundColor: foregroundColor,
           mutedForegroundColor: mutedForegroundColor,
           privateMediaLoader: privateMediaLoader,
+        );
+      case MessageType.video:
+        return _VideoMessageContent(
+          message: message,
+          foregroundColor: foregroundColor,
+          mutedForegroundColor: mutedForegroundColor,
+          errorForegroundColor: errorForegroundColor,
+          privateMediaLoader: privateMediaLoader,
+          videoSourcePreparer: videoSourcePreparer,
         );
       case MessageType.text:
         return Text(
@@ -295,6 +318,7 @@ class _VoiceMessageContent extends StatefulWidget {
     required this.errorForegroundColor,
     required this.privateMediaLoader,
     required this.audioPlayerFactory,
+    required this.voiceSourcePreparer,
   });
 
   final Message message;
@@ -304,6 +328,7 @@ class _VoiceMessageContent extends StatefulWidget {
   final Future<Uint8List?> Function(String? reference, int maxBytes)?
   privateMediaLoader;
   final AudioPlayer Function()? audioPlayerFactory;
+  final DirectVoiceSourcePreparer? voiceSourcePreparer;
 
   @override
   State<_VoiceMessageContent> createState() => _VoiceMessageContentState();
@@ -317,6 +342,7 @@ class _VoiceMessageContentState extends State<_VoiceMessageContent> {
   bool _playing = false;
   bool _paused = false;
   bool _failed = false;
+  PreparedDirectVoiceSource? _preparedSource;
 
   @override
   void initState() {
@@ -342,6 +368,7 @@ class _VoiceMessageContentState extends State<_VoiceMessageContent> {
       _paused = false;
       _failed = false;
       unawaited(_player.stop());
+      unawaited(_releasePreparedSource());
     }
   }
 
@@ -349,7 +376,14 @@ class _VoiceMessageContentState extends State<_VoiceMessageContent> {
   void dispose() {
     unawaited(_stateSubscription?.cancel());
     unawaited(_player.dispose());
+    unawaited(_releasePreparedSource());
     super.dispose();
+  }
+
+  Future<void> _releasePreparedSource() async {
+    final prepared = _preparedSource;
+    _preparedSource = null;
+    await prepared?.dispose();
   }
 
   Future<void> _toggle() async {
@@ -379,13 +413,22 @@ class _VoiceMessageContentState extends State<_VoiceMessageContent> {
         if (bytes == null || bytes.isEmpty) {
           throw StateError('Voice message unavailable');
         }
-        await _player.play(BytesSource(bytes));
+        _preparedSource ??=
+            await (widget.voiceSourcePreparer ?? prepareDirectVoiceSource)(
+              bytes,
+              widget.message.id,
+            );
+        await _player.play(_preparedSource!.source);
       } else if (reference.startsWith('https://')) {
         await _player.play(UrlSource(reference));
       } else {
         throw StateError('Voice message unavailable');
       }
     } catch (_) {
+      // A native temporary file may have been removed under memory pressure,
+      // or a platform player may have rejected the first preparation. Retry
+      // must rebuild the source instead of replaying a poisoned handle.
+      await _releasePreparedSource();
       if (mounted) setState(() => _failed = true);
     } finally {
       if (mounted) setState(() => _loading = false);
@@ -406,73 +449,85 @@ class _VoiceMessageContentState extends State<_VoiceMessageContent> {
             )
           : _playing
           ? copy.text('Pause voice message', 'Wstrzymaj wiadomość głosową')
-          : copy.text(
-              'Play voice message, $duration seconds',
-              'Odtwórz wiadomość głosową, $duration s',
+          : copy.template(
+              'Play voice message, {duration} seconds',
+              'Odtwórz wiadomość głosową, {duration} s',
+              values: <String, Object>{'duration': duration},
             ),
       child: InkWell(
+        key: ValueKey<String>('direct-voice-${widget.message.id}'),
         onTap: _toggle,
         borderRadius: BorderRadius.circular(12),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (_loading)
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: 44),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
               SizedBox.square(
-                dimension: 24,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  color: widget.foregroundColor,
-                ),
-              )
-            else
-              Icon(
-                _failed
-                    ? Icons.refresh_rounded
-                    : _playing
-                    ? Icons.pause_rounded
-                    : Icons.play_arrow_rounded,
-                color: _failed
-                    ? widget.errorForegroundColor
-                    : widget.foregroundColor,
-                size: 27,
-              ),
-            const SizedBox(width: 6),
-            Flexible(
-              fit: FlexFit.loose,
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(minWidth: 48, maxWidth: 126),
-                child: SizedBox(
-                  height: 32,
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.center,
-                    children: List.generate(24, (index) {
-                      final height = 7 + ((index * 13 + duration) % 22);
-                      return Expanded(
-                        child: Container(
-                          height: height.toDouble(),
-                          margin: const EdgeInsets.symmetric(horizontal: 1),
-                          decoration: BoxDecoration(
-                            color: widget.foregroundColor.withValues(
-                              alpha: .82,
-                            ),
-                            borderRadius: BorderRadius.circular(20),
+                dimension: 44,
+                child: Center(
+                  child: _loading
+                      ? SizedBox.square(
+                          dimension: 24,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: widget.foregroundColor,
                           ),
+                        )
+                      : Icon(
+                          _failed
+                              ? Icons.refresh_rounded
+                              : _playing
+                              ? Icons.pause_rounded
+                              : Icons.play_arrow_rounded,
+                          color: _failed
+                              ? widget.errorForegroundColor
+                              : widget.foregroundColor,
+                          size: 27,
                         ),
-                      );
-                    }),
+                ),
+              ),
+              const SizedBox(width: 2),
+              Flexible(
+                fit: FlexFit.loose,
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(
+                    minWidth: 48,
+                    maxWidth: 126,
+                  ),
+                  child: SizedBox(
+                    height: 32,
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: List.generate(24, (index) {
+                        final height = 7 + ((index * 13 + duration) % 22);
+                        return Expanded(
+                          child: Container(
+                            height: height.toDouble(),
+                            margin: const EdgeInsets.symmetric(horizontal: 1),
+                            decoration: BoxDecoration(
+                              color: widget.foregroundColor.withValues(
+                                alpha: .82,
+                              ),
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                          ),
+                        );
+                      }),
+                    ),
                   ),
                 ),
               ),
-            ),
-            const SizedBox(width: 8),
-            Text(
-              '${duration ~/ 60}:${(duration % 60).toString().padLeft(2, '0')}',
-              style: TextStyle(
-                color: widget.mutedForegroundColor,
-                fontSize: 11,
+              const SizedBox(width: 8),
+              Text(
+                '${duration ~/ 60}:${(duration % 60).toString().padLeft(2, '0')}',
+                style: TextStyle(
+                  color: widget.mutedForegroundColor,
+                  fontSize: 11,
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -485,6 +540,8 @@ class _ImageMessageContent extends StatefulWidget {
     required this.foregroundColor,
     required this.mutedForegroundColor,
     required this.privateMediaLoader,
+    this.width = 210,
+    this.height = 230,
   });
 
   final Message message;
@@ -492,6 +549,8 @@ class _ImageMessageContent extends StatefulWidget {
   final Color mutedForegroundColor;
   final Future<Uint8List?> Function(String? reference, int maxBytes)?
   privateMediaLoader;
+  final double width;
+  final double height;
 
   @override
   State<_ImageMessageContent> createState() => _ImageMessageContentState();
@@ -540,13 +599,13 @@ class _ImageMessageContentState extends State<_ImageMessageContent> {
         borderRadius: BorderRadius.circular(14),
         child: Image.network(
           mediaUrl,
-          width: 210,
-          height: 230,
+          width: widget.width,
+          height: widget.height,
           fit: BoxFit.cover,
           semanticLabel: copy.text('Photo message', 'Wiadomość ze zdjęciem'),
           errorBuilder: (_, _, _) => SizedBox(
-            width: 210,
-            height: 130,
+            width: widget.width,
+            height: widget.height,
             child: Center(
               child: Icon(
                 Icons.broken_image_outlined,
@@ -564,8 +623,8 @@ class _ImageMessageContentState extends State<_ImageMessageContent> {
       builder: (context, snapshot) {
         if (snapshot.connectionState != ConnectionState.done) {
           return SizedBox(
-            width: 210,
-            height: 160,
+            width: widget.width,
+            height: widget.height,
             child: Center(
               child: CircularProgressIndicator(
                 strokeWidth: 2,
@@ -597,8 +656,8 @@ class _ImageMessageContentState extends State<_ImageMessageContent> {
             borderRadius: BorderRadius.circular(14),
             child: Image.memory(
               bytes,
-              width: 210,
-              height: 230,
+              width: widget.width,
+              height: widget.height,
               fit: BoxFit.cover,
               gaplessPlayback: true,
             ),
@@ -606,6 +665,298 @@ class _ImageMessageContentState extends State<_ImageMessageContent> {
         );
       },
     );
+  }
+}
+
+class _VideoMessageContent extends StatefulWidget {
+  const _VideoMessageContent({
+    required this.message,
+    required this.foregroundColor,
+    required this.mutedForegroundColor,
+    required this.errorForegroundColor,
+    required this.privateMediaLoader,
+    required this.videoSourcePreparer,
+    this.width = 238,
+    this.height = 158,
+  });
+
+  final Message message;
+  final Color foregroundColor;
+  final Color mutedForegroundColor;
+  final Color errorForegroundColor;
+  final Future<Uint8List?> Function(String? reference, int maxBytes)?
+  privateMediaLoader;
+  final DirectVideoSourcePreparer? videoSourcePreparer;
+  final double width;
+  final double height;
+
+  @override
+  State<_VideoMessageContent> createState() => _VideoMessageContentState();
+}
+
+class _VideoMessageContentState extends State<_VideoMessageContent> {
+  VideoPlayerController? _controller;
+  PreparedDirectVideoSource? _preparedSource;
+  Uint8List? _bytes;
+  bool _loading = false;
+  bool _failed = false;
+
+  @override
+  void didUpdateWidget(covariant _VideoMessageContent oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.message.id != widget.message.id ||
+        oldWidget.message.mediaUrl != widget.message.mediaUrl) {
+      unawaited(_release());
+      _bytes = null;
+      _loading = false;
+      _failed = false;
+    }
+  }
+
+  @override
+  void dispose() {
+    unawaited(_release());
+    super.dispose();
+  }
+
+  Future<void> _release() async {
+    final controller = _controller;
+    final prepared = _preparedSource;
+    _controller = null;
+    _preparedSource = null;
+    await Future.wait<void>([
+      if (controller != null) controller.dispose(),
+      if (prepared != null) prepared.dispose(),
+    ]);
+  }
+
+  Future<void> _toggle() async {
+    if (_loading) return;
+    final existing = _controller;
+    if (existing != null && existing.value.isInitialized) {
+      if (existing.value.isPlaying) {
+        await existing.pause();
+      } else {
+        if (existing.value.position >= existing.value.duration) {
+          await existing.seekTo(Duration.zero);
+        }
+        await existing.play();
+      }
+      return;
+    }
+
+    setState(() {
+      _loading = true;
+      _failed = false;
+    });
+    try {
+      final reference = widget.message.mediaUrl?.trim() ?? '';
+      late final VideoPlayerController controller;
+      if (reference.startsWith('https://')) {
+        controller = VideoPlayerController.networkUrl(Uri.parse(reference));
+      } else if (reference.startsWith('gs://')) {
+        _bytes ??=
+            await (widget.privateMediaLoader?.call(
+                  reference,
+                  64 * 1024 * 1024,
+                ) ??
+                _privateMediaBytes(reference, maxBytes: 64 * 1024 * 1024));
+        final bytes = _bytes;
+        if (bytes == null || bytes.isEmpty) {
+          throw StateError('Video unavailable');
+        }
+        _preparedSource ??=
+            await (widget.videoSourcePreparer ?? prepareDirectVideoSource)(
+              bytes,
+              widget.message.id,
+              reference,
+            );
+        controller = _preparedSource!.createController();
+      } else {
+        throw StateError('Video unavailable');
+      }
+      _controller = controller;
+      await controller.initialize();
+      await controller.setLooping(false);
+      if (!mounted) {
+        await _release();
+        return;
+      }
+      setState(() {});
+      await controller.play();
+    } catch (_) {
+      await _release();
+      if (mounted) setState(() => _failed = true);
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
+    final controller = _controller;
+    final initialized = controller?.value.isInitialized ?? false;
+    final duration = widget.message.durationSeconds ?? 0;
+    final label = _failed
+        ? copy.text(
+            'Video unavailable. Tap to retry.',
+            'Film jest niedostępny. Dotknij, aby spróbować ponownie.',
+          )
+        : copy.template(
+            'Play video message, {duration} seconds',
+            'Odtwórz wiadomość wideo, {duration} s',
+            values: <String, Object>{'duration': duration},
+          );
+
+    return Semantics(
+      button: true,
+      label: label,
+      child: SizedBox(
+        width: widget.width,
+        height: widget.height,
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(14),
+          child: ColoredBox(
+            color: Colors.black,
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                if (initialized) VideoPlayer(controller!),
+                if (!initialized)
+                  Center(
+                    child: Icon(
+                      Icons.video_file_outlined,
+                      color: widget.mutedForegroundColor,
+                      size: 40,
+                    ),
+                  ),
+                Center(
+                  child: Material(
+                    color: Colors.black.withValues(alpha: .52),
+                    shape: const CircleBorder(),
+                    child: InkWell(
+                      key: ValueKey('direct-video-${widget.message.id}'),
+                      onTap: _toggle,
+                      customBorder: const CircleBorder(),
+                      child: SizedBox.square(
+                        dimension: 52,
+                        child: Center(
+                          child: _loading
+                              ? const SizedBox.square(
+                                  dimension: 22,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: Colors.white,
+                                  ),
+                                )
+                              : initialized
+                              ? ValueListenableBuilder<VideoPlayerValue>(
+                                  valueListenable: controller!,
+                                  builder: (context, value, _) => Icon(
+                                    value.isPlaying
+                                        ? Icons.pause_rounded
+                                        : Icons.play_arrow_rounded,
+                                    color: Colors.white,
+                                    size: 30,
+                                  ),
+                                )
+                              : Icon(
+                                  _failed
+                                      ? Icons.refresh_rounded
+                                      : Icons.play_arrow_rounded,
+                                  color: _failed
+                                      ? widget.errorForegroundColor
+                                      : Colors.white,
+                                  size: 30,
+                                ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                Positioned(
+                  left: 10,
+                  bottom: 8,
+                  child: Text(
+                    '${duration ~/ 60}:${(duration % 60).toString().padLeft(2, '0')}',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                      shadows: [Shadow(blurRadius: 5, color: Colors.black)],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Media-only renderer used by the Shared media destination.
+///
+/// Keeping this path on the same authenticated byte loader and native voice
+/// preparation as chat bubbles prevents a second, subtly less secure media
+/// implementation from appearing in the gallery.
+class DirectMessageMediaPreview extends StatelessWidget {
+  const DirectMessageMediaPreview({
+    required this.message,
+    this.photoWidth = 210,
+    this.photoHeight = 230,
+    this.privateMediaLoader,
+    this.audioPlayerFactory,
+    this.voiceSourcePreparer,
+    this.videoSourcePreparer,
+    super.key,
+  });
+
+  final Message message;
+  final double photoWidth;
+  final double photoHeight;
+  final Future<Uint8List?> Function(String? reference, int maxBytes)?
+  privateMediaLoader;
+  final AudioPlayer Function()? audioPlayerFactory;
+  final DirectVoiceSourcePreparer? voiceSourcePreparer;
+  final DirectVideoSourcePreparer? videoSourcePreparer;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
+    return switch (message.type) {
+      MessageType.image => _ImageMessageContent(
+        message: message,
+        foregroundColor: palette.textPrimary,
+        mutedForegroundColor: palette.textSecondary,
+        privateMediaLoader: privateMediaLoader,
+        width: photoWidth,
+        height: photoHeight,
+      ),
+      MessageType.voice => _VoiceMessageContent(
+        message: message,
+        foregroundColor: palette.textPrimary,
+        mutedForegroundColor: palette.textSecondary,
+        errorForegroundColor: colors.error,
+        privateMediaLoader: privateMediaLoader,
+        audioPlayerFactory: audioPlayerFactory,
+        voiceSourcePreparer: voiceSourcePreparer,
+      ),
+      MessageType.video => _VideoMessageContent(
+        message: message,
+        foregroundColor: palette.textPrimary,
+        mutedForegroundColor: palette.textSecondary,
+        errorForegroundColor: colors.error,
+        privateMediaLoader: privateMediaLoader,
+        videoSourcePreparer: videoSourcePreparer,
+        width: photoWidth,
+        height: photoHeight,
+      ),
+      MessageType.text => const SizedBox.shrink(),
+    };
   }
 }
 
@@ -623,6 +974,7 @@ String _localizedReplyPreview(String value, AppLocalizations copy) {
     'Message deleted' => copy.text('Message deleted', 'Wiadomość usunięta'),
     'Voice message' => copy.text('Voice message', 'Wiadomość głosowa'),
     'Photo' => copy.text('Photo', 'Zdjęcie'),
+    'Video' => copy.text('Video', 'Film'),
     _ => value,
   };
 }

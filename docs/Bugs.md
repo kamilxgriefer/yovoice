@@ -18,6 +18,52 @@ about things that are broken, risky, or need verification.
 > before believing the code.
 > [ADR-082](Decisions.md#adr-082-a-feature-is-not-shipped-until-a-user-can-reach-it--reachability-is-part-of-done-and-a-green-suite-cannot-prove-it).
 
+## Build 19 release-candidate verification gaps (2026-09-03)
+
+These are deliberately not marked “released”. They distinguish source work
+from the evidence still needed before testers receive `1.0.0 (19)`:
+
+- **DM media and Shared Media**: photo, video and voice, camera/library
+  acquisition, media playback, Shared Media tabs and the durable outbox are
+  implemented in source. Server hardening now sniffs JPEG/PNG/WebP,
+  ISO-BMFF/WebM and MP3/WAV bytes, requires an audio-only voice container or a
+  real video track, and rechecks object metadata plus the reservation in the
+  canonical transaction. Its shared contract passes 9/9 and fresh-emulator
+  direct integrity passes 35/35. Complete Flutter 2123/2123 and browser
+  media/crop/Reels 39/39 are green; hostile production-object and physical
+  upload/playback/restart evidence is pending.
+- **Avatars and profile routes**: canonical refresh and a single-flight route
+  guard address stale initials and stacked profiles after rapid taps. The
+  final two-account cache-invalidation and native route-transition/visual
+  matrix is pending.
+- **Direct audio/video**: the server-authoritative call lifecycle retains
+  missing-`mediaType` = audio compatibility and offers audio fallback when a
+  recipient cannot accept video. Two physical devices, mixed installed
+  versions, camera/microphone/Bluetooth, backgrounding and APNs/FCM remain
+  tester gates; no FaceTime-equivalent application E2EE claim is made.
+- **Voice Moments**: generation grants and publish/play retry recovery are in
+  source. The production legacy migration itself is complete: 5 objects, 0
+  remaining download tokens, 0 legacy `audioUrl` fields and no deleted media
+  bytes. Final iOS/Android record → publish → play → expiry testing is pending.
+- **Reels MVP**: callable-owned publish/list/read/delete/report and a
+  non-destructive editor recipe are integrated. Only user-owned or licensed
+  backing audio is accepted; Spotify/Apple Music ingestion is absent by
+  design. Final visual/editor and physical codec/upload evidence is pending.
+- **Presentation/localization**: compact achievement/More treatment and the
+  production Polish + 41-additional-locale guarded catalog have targeted
+  coverage. Full visual, RTL, 200% text and native permission-string review is
+  pending.
+- **Moderation**: the content action, report resolution and append-only audit
+  commit atomically; its focused 31/31 subset sits inside the 64/64
+  Reels/moderation security gate. The production callable revision and
+  read-back smoke are pending.
+- **Website Updates**: copy and graphics must be reconciled with only the
+  behavior that actually ships in Build 19. No Vercel deployment is claimed.
+
+The consolidated checklist is in
+[DEPLOYMENT.md](DEPLOYMENT.md#build-19-pre-release-runbook--not-released), and
+measured source evidence is in [TESTING.md](TESTING.md#build-19-pre-release-evidence-2026-09-03).
+
 ## Security
 
 - **FIXED IN SOURCE 2026-08-29 — logout changed AuthGate but left private

@@ -16,6 +16,7 @@ import 'package:yovoice/features/calls/data/services/direct_call_service.dart';
 import 'package:yovoice/features/calls/data/services/voice_call_service.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/moments/data/services/moment_service.dart';
+import 'package:yovoice/features/reels/data/services/reel_service.dart';
 import 'package:yovoice/features/moments/data/services/offline_voice_moment_service.dart';
 import 'package:yovoice/features/notifications/data/services/push_notification_service.dart';
 import 'package:yovoice/features/premium/data/services/entitlement_service.dart';
@@ -452,6 +453,7 @@ class AuthService {
     try {
       (_injectedClearEphemeralMediaAccess ??
           MomentService.clearAllMediaAccessCaches)();
+      ReelService.clearAllMediaAccessCaches();
     } catch (error) {
       debugPrint(
         'AuthService.signOut: ephemeral media-grant cleanup failed '

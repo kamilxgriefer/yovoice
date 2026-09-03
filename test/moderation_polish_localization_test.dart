@@ -138,6 +138,30 @@ void main() {
     );
   });
 
+  testWidgets('the Reel queue filter has deliberate Polish copy', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1440, 1200);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(
+      polishHost(
+        ModerationCenterScreen(
+          embedded: true,
+          moderationService: _PolishModerationService(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Filtry'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Rolka'), findsOneWidget);
+    expect(find.text('Reel'), findsNothing);
+  });
+
   testWidgets('the audit trail localizes actions, states and accessibility', (
     tester,
   ) async {

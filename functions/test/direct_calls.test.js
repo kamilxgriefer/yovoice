@@ -290,7 +290,10 @@ describe("direct call signaling", () => {
     await assert.rejects(
       () => start("video-without-capability", "video"),
       (error) => error?.code === "failed-precondition" &&
-        /updates YO Voice on every active device/u.test(error.message),
+        /updates YO Voice on every active device/u.test(error.message) &&
+        error.details?.reason === "direct-video-capability-required" &&
+        error.details?.audioFallbackAvailable === true &&
+        error.details?.requiredProtocol === 1,
     );
     assert.equal((await db.collection("directCalls")
       .where("callerId", "==", CALLER).get()).empty, true);

@@ -2,6 +2,7 @@ import 'translations_global.dart';
 import 'translations_global_extended.dart';
 import 'translations_global_extended_overrides.dart';
 import 'translations_language_names.dart';
+import 'translations_reels.dart';
 import 'translations_auth_call_release.dart';
 import 'translations_chinese_traditional.dart';
 import 'translations_current_release.dart';
@@ -194,7 +195,9 @@ const appTranslationKeys = <String>{
   '{count} unread message.other',
   ...currentReleaseTranslationKeys,
   ...currentReleaseCompactTranslationKeys,
+  ...currentReleaseChatMediaTranslationKeys,
   ...authCallReleaseTranslationKeys,
+  ...reelsTranslationKeys,
 };
 
 final appTranslations = <String, Map<String, String>>{
@@ -210,7 +213,9 @@ final appTranslations = <String, Map<String, String>>{
       ...entry.value,
       ...currentReleaseTranslations[entry.key]!,
       ...currentReleaseCompactTranslations[entry.key]!,
+      ...currentReleaseChatMediaTranslations[entry.key]!,
       ...authCallReleaseTranslations[entry.key]!,
+      ...reelsTranslations[entry.key]!,
       ...localizedExtendedLanguageNames[entry.key]!,
     }),
 };

@@ -409,6 +409,11 @@ async function assertDirectVideoRecipientCompatible(transaction, userId) {
     throw new HttpsError(
       "failed-precondition",
       "Video calling is not available until your friend updates YO Voice on every active device.",
+      {
+        reason: "direct-video-capability-required",
+        audioFallbackAvailable: true,
+        requiredProtocol: DIRECT_VIDEO_PROTOCOL_VERSION,
+      },
     );
   }
 }

@@ -108,6 +108,8 @@ class Conversation {
         return '${prefix}Voice message';
       case MessageType.image:
         return '${prefix}Photo';
+      case MessageType.video:
+        return '${prefix}Video';
       case MessageType.text:
         return '$prefix$lastMessage';
     }

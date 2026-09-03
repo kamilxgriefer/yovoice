@@ -233,7 +233,9 @@ class BlobRecordedAudio extends RecordedAudio {
     Reference reference,
     SettableMetadata metadata,
   ) async {
-    final snapshot = await reference.putBlob(blob, metadata);
+    final snapshot = await awaitVoiceMomentUpload(
+      reference.putBlob(blob, metadata),
+    );
     final snapshotGeneration = snapshot.metadata?.generation?.trim();
     if (snapshotGeneration != null && snapshotGeneration.isNotEmpty) {
       return snapshotGeneration;

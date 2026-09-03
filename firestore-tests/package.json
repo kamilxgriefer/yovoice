@@ -8,10 +8,16 @@
     "test:family-media": "node family-media.test.js"
   },
   "dependencies": {
-    "@firebase/rules-unit-testing": "^5.0.1",
-    "firebase": "^12.17.0"
+    "@firebase/rules-unit-testing": "^5.0.2",
+    "firebase": "^12.18.0"
   },
   "devDependencies": {
-    "firebase-tools": "15.27.0"
+    "firebase-tools": "15.29.0"
+  },
+  "overrides": {
+    "gaxios": {
+      "uuid": "11.1.1"
+    },
+    "qs": "6.16.0"
   }
 }

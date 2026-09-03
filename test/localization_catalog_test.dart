@@ -7,6 +7,7 @@ import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/localization/translations/app_translation_catalog.dart';
 import 'package:yovoice/core/localization/translations/translations_auth_call_release.dart';
 import 'package:yovoice/core/localization/translations/translations_current_release.dart';
+import 'package:yovoice/core/localization/translations/translations_reels.dart';
 
 final _placeholderPattern = RegExp(r'\{[a-zA-Z][a-zA-Z0-9_]*\}');
 
@@ -93,7 +94,10 @@ void main() {
         expect(
           translations!.keys.toSet(),
           appTranslationKeys,
-          reason: '$localeKey must contain exactly the canonical source keys.',
+          reason:
+              '$localeKey must contain exactly the canonical source keys. '
+              'Missing: ${<String>{...appTranslationKeys}.difference(translations.keys.toSet())}; '
+              'extra: ${translations.keys.toSet().difference(<String>{...appTranslationKeys})}.',
         );
         for (final entry in translations.entries) {
           expect(
@@ -123,7 +127,9 @@ void main() {
       final releaseKeys = <String>{
         ...currentReleaseTranslationKeys,
         ...currentReleaseCompactTranslationKeys,
+        ...currentReleaseChatMediaTranslationKeys,
         ...authCallReleaseTranslationKeys,
+        ...reelsTranslationKeys,
       };
 
       expect(appTranslationKeys, containsAll(releaseKeys));
@@ -169,7 +175,13 @@ void main() {
         'fa',
         'sw',
       };
-      const naturallyUnchangedValues = <String>{'{destination}, {unread}'};
+      const naturallyUnchangedValues = <String>{
+        '{destination}, {unread}',
+        // Reels is a stable product destination name, like Premium and VIBE.
+        'Reels',
+        // Video is an established loanword in several supported languages.
+        'Video',
+      };
       const naturallyUnchangedPairs = <String>{
         // CLDR display names that are genuinely identical to English.
         'ms|Hindi',

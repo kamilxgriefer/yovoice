@@ -15,6 +15,194 @@ deployables described in
 | Storage rules | `firebase deploy --only storage` | Manual |
 | `yovoice-website` | Vercel | Automatic, on push to `main` (separate repo) |
 
+### Build 19 pre-release runbook — NOT RELEASED
+
+Build 19 must remain one coordinated compatibility release. Source integration,
+the complete Flutter/backend/Rules/browser/website suites and release-Web build
+are green, but this section records a **candidate**, not a production, Hosting,
+TestFlight or Google Play result.
+
+#### Verified before release
+
+| Gate | Result | Boundary |
+|---|---:|---|
+| Static analysis | clean | `flutter analyze`; source only |
+| Complete Flutter | 2123/2123 | one final-tree invocation |
+| Independent Build 19 QA | 229/229 | calls, chat/media, Moments, profile and navigation |
+| Reels pagination + catalog | 19/19 | cursor/retry and locale catalog contracts |
+| Reels visual/localization review | 40/40 | responsive/source contract |
+| Cloud Functions | 1166/1166 | 118 suites on fresh Auth + Firestore emulators |
+| Firestore Rules | 523/523 | emulator result |
+| Storage Rules | 67/67 | emulator result |
+| Reels + atomic moderation | 64/64 | fresh-emulator security result |
+| Family media | 5/5 | combined media contract |
+| Shared DM media probe | 9/9 | byte/container probe contract |
+| Direct media integrity | 35/35 | fresh-emulator reservation/finalization gate |
+| Browser media/crop/Reels | 39/39 | Chrome result |
+| Flutter production Web | built | release artifact produced |
+| Website | 87/87 + clean + built | tests, lint and release build |
+| Production dependency audits | 0 known vulnerabilities | Functions + Rules harness |
+| Changed Node syntax + diff | 6/6 + clean | `node --check` and `git diff --check` |
+
+The physical-device matrix, production deploy/read-back, final exact-commit
+artifacts and store availability are still pending. The independent source
+reviewer approved the legacy direct-message attachment migration after its
+12/12 unit gate, 1/1 Firestore query gate and 67/67 Storage gate. Tester
+distribution remains operationally held until that migration is proven
+complete in production before restrictive Storage Rules. Public release
+remains separately held for physical acceptance and staged App Check work.
+
+#### Completed production data prerequisite: Voice Moments
+
+The 2026-09-03 dry-run inspected five legacy Voice Moment objects: one ready,
+four already migrated and zero conflicts. The ready record migrated; hardening
+scanned one, revoked one legacy download token and found zero missing objects.
+The post-run classified all five as already migrated. Firestore contains zero
+legacy `audioUrl` values. The final inventory is:
+
+| Prefix | Objects | Download tokens |
+|---|---:|---:|
+| `voice_moments` | 5 | 0 |
+| `voice_replies` | 0 | 0 |
+
+No bytes were deleted. Do not add document ids, signed URLs, download tokens or
+other bearer material to this log. Re-run the paginated inventory immediately
+before restrictive Storage Rules; **any non-zero token count or unresolved
+conflict stops the release**.
+
+#### Pending production data prerequisite: direct-message attachments
+
+The pinned read-only pre-cutover scan reached the end of
+`message_attachments/` and inspected 5 objects: 5 eligible, 0 already
+finalized, 0 invalid, 0 missing and 0 raced. It observed 5 legacy Firebase
+download tokens and revoked none because the run was dry-only. This proves the
+candidate set; it is not evidence that the migration has been applied.
+
+After the exact Build 19 Functions revision is ACTIVE and its previous
+revision has drained, freeze new direct-message attachment finalization and
+run the project/bucket-pinned operator in this order:
+
+1. one complete dry-run from a null cursor; require `reachedEnd=true`, 5
+   eligible and no invalid/missing/raced objects;
+2. apply with the explicit maintenance confirmation until `reachedEnd=true`;
+3. run two new complete dry-runs from null cursors; both must independently
+   report `releaseReady=true` and zero eligible/invalid/missing/raced/token
+   counts;
+4. read the zero-token inventory again immediately before the strict Storage
+   Rules deploy, then test one legacy image and voice attachment from Build 18
+   and new media from Build 19 after the rules source is read back.
+
+Never deploy Functions and strict Storage Rules together. Never mark an
+object manually, restore a bearer token or delete a media byte to make the
+inventory green.
+
+#### Required release order
+
+1. Pin the exact commit; freeze unrelated release work; record current
+   Functions revisions, Firestore/Storage Rules sources, Hosting release and
+   both store baselines. Take aggregate-only inventories and a recoverable
+   data/rules backup.
+2. Re-run the complete pre-release checklist below against the exact pinned
+   tree; do not reuse the focused DM counts after any media-integrity change.
+3. Deploy additive/backward-compatible Functions first: DM/Shared Media,
+   Voice Moment grants/retry, direct audio/video compatibility, Reels and
+   atomic moderation. Confirm every intended export is ACTIVE, no unintended
+   export changed, and the prior revision has drained.
+4. Freeze direct attachment finalization, execute the controlled legacy DM
+   migration above, and obtain two complete `releaseReady=true` scans. Keep
+   the freeze through the strict Storage Rules read-back and mixed-version
+   media smoke.
+5. Run controlled production smokes with legacy and Build 19 clients. Prove
+   text/photo/video/voice retry, Shared Media visibility, avatar convergence,
+   audio fallback, Voice Moment grant/play and Reels publish/read/report.
+   Read back the atomic moderation audit result.
+6. Deploy only required indexes and wait for `READY`. Do not deploy the whole
+   index file merely because it exists; record the exact diff and query that
+   needs each index.
+7. Deploy Firestore Rules, read the released source back and diff it
+   byte-for-byte against the pinned commit. Repeat the authorization smokes.
+8. Re-run the zero-token inventory and production IAM check, then deploy
+   Storage Rules. Read back the released source byte-for-byte and repeat
+   authenticated upload/grant/playback plus unauthorized/cross-account smokes,
+   including Build 18 legacy image/voice playback. Unfreeze attachment traffic
+   only after those checks pass.
+9. Build and deploy the verified Flutter Web artifact to Firebase Hosting;
+   compare the workflow artifact and both live domains byte-for-byte.
+10. Update `yovoice-website` separately. Its Updates page may describe only
+   verified released behavior; obtain the Vercel production URL/commit and
+   responsive visual evidence before marking it live.
+11. Produce signed `1.0.0 (19)` artifacts from the same commit. Inspect package,
+    signing, entitlements/permissions and version. Upload, wait for processing,
+    assign the persistent TestFlight and Google Play internal groups, enable
+    the store's tester notification where appropriate, and verify availability
+    with a non-owner tester account before sending any separate email.
+
+#### Rollback boundary
+
+- Stop tester assignment/rollout and roll back client/website presentation
+  first; keep backend handlers compatible with build 18 while any old client
+  remains active.
+- Restore the captured Firestore and Storage Rules sources, then verify the
+  live ruleset bytes. Do not improvise a permissive rule.
+- Roll Functions back only to a revision that understands both old and Build
+  19 documents. Keep cleanup/retry workers available while queued operations
+  can still settle.
+- Do **not** reverse the Voice Moment migration, restore token URLs, delete
+  retained moderation evidence or delete media bytes as a release rollback.
+  Roll forward from canonical paths/generations instead.
+- Record the failed smoke, affected cohort, live revisions and recovery proof
+  in the session log before attempting another release.
+
+#### Pre-release checklist
+
+- [x] Complete Flutter 2123/2123 in one final-tree invocation; independent
+      Build 19 QA 229/229; Reels pagination/catalog 19/19 and source review
+      40/40.
+- [x] Functions 1166/1166 across 118 suites; Firestore Rules 523/523; Storage
+      Rules 67/67.
+- [x] Reels and atomic moderation fresh-emulator security gate 64/64; Family
+      media 5/5.
+- [x] Voice Moment migration post-run: 5/5 migrated, legacy `audioUrl` 0,
+      token inventory 0, bytes retained.
+- [x] DM stored-object sniffing and transaction-time reservation recheck:
+      shared probe 9/9, fresh-emulator direct integrity 35/35, changed Node
+      syntax 6/6 and diff check passed.
+- [x] Legacy DM migration source gate: unit 12/12, Firestore query 1/1,
+      production dry-run 5 eligible with 0 invalid/missing/raced and no write.
+- [ ] Legacy DM production apply and two complete `releaseReady=true` scans;
+      strict Storage Rules remain held until this is complete.
+- [x] Complete Flutter suite passes once against the final merged tree.
+- [x] Browser media/crop/Reels 39/39 and a production Web build pass.
+- [ ] Dark/Pearl 320/390/430/tablet/desktop, 200% text, keyboard and RTL visual
+      review passes; no result is inferred from a widget test.
+- [ ] Two-account physical iOS/Android matrix passes DM photo/video/voice,
+      camera/library, outbox restart, avatars, Voice Moments and Reels.
+- [ ] Two-device mixed-version direct audio/video matrix passes, including
+      permissions, background/foreground, Bluetooth and APNs/FCM.
+- [x] Production dependency audits report zero known vulnerabilities; App
+      Check status and residual risks are recorded honestly. Run the final
+      staged-diff secret scan again after the release commit is assembled.
+- [ ] Production Functions/indexes/Rules/Storage rollout and read-back smokes
+      pass in the order above.
+- [ ] Hosting and website deployments have exact commit/artifact/visual proof.
+- [ ] Signed iOS/Android artifacts are processed, assigned to persistent tester
+      groups and independently shown as available.
+
+#### Final results — fill only after observation
+
+- Commit/tag: **pending**
+- Functions/indexes/Firestore Rules/Storage Rules revisions: **pending**
+- Hosting release and byte comparison: **pending**
+- Website Vercel release and visual review: **pending**
+- iOS artifact, processing, groups and external-tester availability: **pending**
+- Android artifact, track, tester list and non-owner availability: **pending**
+- Tester notification/email evidence: **pending**
+- Rollback needed: **pending**
+- Final decision: **HOLD** until every unchecked release gate is resolved.
+
+Detailed evidence ledger:
+[Build 19 release-candidate session](Sessions/2026-09-03-build-19-release-candidate.md).
+
 ### Released 2026-09-02: coordinated mobile build 18
 
 **WEB, SCOPED BACKEND AND BOTH PERMANENT MOBILE TESTER CHANNELS RELEASED from

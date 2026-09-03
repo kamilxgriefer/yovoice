@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -20,6 +21,7 @@ class MomentService {
     FirebaseStorage? storage,
     FirebaseFunctions? functions,
     MomentMediaAccessInvoker? mediaAccessInvoker,
+    this.callableTimeout = const Duration(seconds: 20),
   }) : _firestore = firestore ?? FirebaseFirestore.instance,
        _auth = auth ?? FirebaseAuth.instance,
        _storage = storage ?? FirebaseStorage.instance,
@@ -31,6 +33,7 @@ class MomentService {
   final FirebaseStorage _storage;
   final FirebaseFunctions? _functionsOverride;
   final MomentMediaAccessInvoker? _mediaAccessInvoker;
+  final Duration callableTimeout;
   // Playback surfaces create short-lived MomentService instances. Keep the
   // bearer-grant cache process-wide so logout can invalidate every surface in
   // one operation instead of leaving an unreachable per-instance URL alive.
@@ -118,9 +121,11 @@ class MomentService {
           'momentId': cleanMomentId,
           'commentId': ?cleanCommentId,
         };
-        final response = _mediaAccessInvoker != null
-            ? await _mediaAccessInvoker(payload)
-            : await _requestMediaAccess(payload);
+        final response = await _withTimeoutReplay(
+          () => _mediaAccessInvoker != null
+              ? _mediaAccessInvoker(payload)
+              : _requestMediaAccess(payload),
+        );
         if (_auth.currentUser?.uid != uid) {
           throw StateError(
             'Your account changed before media access was granted.',
@@ -186,6 +191,28 @@ class MomentService {
         .httpsCallable('getVoiceMomentMediaAccess')
         .call<Map<Object?, Object?>>(payload);
     return result.data;
+  }
+
+  /// A timed-out callable may already have committed on the server. Retrying
+  /// once is safe because every publish step carries the same requestId and
+  /// every media grant is read-only. The bound prevents a platform channel or
+  /// lost response from leaving the publish/player spinner running forever.
+  Future<T> _withTimeoutReplay<T>(Future<T> Function() operation) async {
+    if (callableTimeout <= Duration.zero) {
+      throw ArgumentError.value(
+        callableTimeout,
+        'callableTimeout',
+        'must be positive',
+      );
+    }
+    for (var attempt = 0; attempt < 2; attempt++) {
+      try {
+        return await operation().timeout(callableTimeout);
+      } on TimeoutException catch (error, stackTrace) {
+        if (attempt == 1) Error.throwWithStackTrace(error, stackTrace);
+      }
+    }
+    throw StateError('The Voice Moment request did not complete.');
   }
 
   /// Invalidates every in-memory bearer grant, including a response already
@@ -450,11 +477,13 @@ class MomentService {
       }
       if (pending.momentId == null || pending.storagePath == null) {
         final reserve = functions.httpsCallable('reserveMomentDraft');
-        final reserved = await reserve.call<Map<Object?, Object?>>({
-          'caption': normalizedCaption,
-          'durationSeconds': durationSeconds,
-          'requestId': pending.requestId,
-        });
+        final reserved = await _withTimeoutReplay(
+          () => reserve.call<Map<Object?, Object?>>({
+            'caption': normalizedCaption,
+            'durationSeconds': durationSeconds,
+            'requestId': pending.requestId,
+          }),
+        );
         pending
           ..momentId = reserved.data['momentId'] as String?
           ..storagePath = reserved.data['storagePath'] as String?;
@@ -497,16 +526,18 @@ class MomentService {
       }
 
       final finalize = functions.httpsCallable('finalizeMomentDraft');
-      await finalize.call<Map<Object?, Object?>>({
-        'momentId': momentId,
-        'objectGeneration': objectGeneration,
-        'requestId': pending.requestId,
-        // Additive and omitted for the default: an absent field means 24
-        // hours server-side, so the default publish stays byte-identical
-        // to every pre-availability client.
-        if (!availability.isServerDefault)
-          'availabilityHours': availability.wireValue,
-      });
+      await _withTimeoutReplay(
+        () => finalize.call<Map<Object?, Object?>>({
+          'momentId': momentId,
+          'objectGeneration': objectGeneration,
+          'requestId': pending.requestId,
+          // Additive and omitted for the default: an absent field means 24
+          // hours server-side, so the default publish stays byte-identical
+          // to every pre-availability client.
+          if (!availability.isServerDefault)
+            'availabilityHours': availability.wireValue,
+        }),
+      );
 
       _pendingMomentPublishes.remove(audio);
       return momentId;
@@ -564,12 +595,14 @@ class MomentService {
       }
       if (pending.commentId == null || pending.storagePath == null) {
         final reserve = functions.httpsCallable('reserveVoiceCommentDraft');
-        final reserved = await reserve.call<Map<Object?, Object?>>({
-          'durationSeconds': durationSeconds,
-          'momentId': parentMomentId,
-          'text': caption,
-          'requestId': pending.requestId,
-        });
+        final reserved = await _withTimeoutReplay(
+          () => reserve.call<Map<Object?, Object?>>({
+            'durationSeconds': durationSeconds,
+            'momentId': parentMomentId,
+            'text': caption,
+            'requestId': pending.requestId,
+          }),
+        );
         pending
           ..commentId = reserved.data['commentId'] as String?
           ..storagePath = reserved.data['storagePath'] as String?;
@@ -620,12 +653,14 @@ class MomentService {
       // Never delete the media after an attempted finalize. Retrying the same
       // recording reuses this request id, reservation and generation, so the
       // callable safely replays instead of creating a duplicate reply.
-      await finalize.call<Map<Object?, Object?>>({
-        'momentId': parentMomentId,
-        'commentId': commentId,
-        'objectGeneration': objectGeneration,
-        'requestId': pending.requestId,
-      });
+      await _withTimeoutReplay(
+        () => finalize.call<Map<Object?, Object?>>({
+          'momentId': parentMomentId,
+          'commentId': commentId,
+          'objectGeneration': objectGeneration,
+          'requestId': pending.requestId,
+        }),
+      );
 
       _pendingMomentPublishes.remove(audio);
       return commentId;

@@ -437,6 +437,7 @@ void main() {
         MoreDestination.profile: 'Profile, You',
         MoreDestination.discover: 'Discover, Find rooms',
         MoreDestination.findCreators: 'Find creators, People to follow',
+        MoreDestination.reels: 'Reels, Create and watch',
         MoreDestination.clubs: 'Clubs, Communities, Premium required',
         MoreDestination.notifications: 'Alerts, Updates',
         MoreDestination.achievements: 'Awards, Progress',

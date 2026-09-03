@@ -1,4 +1,5 @@
 const assert = require("node:assert/strict");
+const { Readable } = require("node:stream");
 const { after, beforeEach, test } = require("node:test");
 
 process.env.FIRESTORE_EMULATOR_HOST ||= "127.0.0.1:8080";
@@ -23,6 +24,10 @@ const {
 const {
   createDirectMigrationService,
 } = require("../messaging/direct_migration");
+const {
+  createTrustedGcsMediaProbe,
+  sniffTrustedMediaHeader,
+} = require("../reels/probe");
 
 const db = getFirestore();
 const A = "dmi-alice";
@@ -56,12 +61,26 @@ function request(uid, data, verified = true) {
 }
 
 function directService(limitOverrides = {}, options = {}) {
+  const testStorage = options.storage == null
+    ? null
+    : {
+      ...options.storage,
+      revokeDownloadTokens: options.storage.revokeDownloadTokens ??
+        (async (_path, metadata, { requiredMetadata = {} } = {}) => ({
+          ...metadata,
+          metadata: {
+            ...(metadata.metadata ?? metadata.customMetadata ?? {}),
+            ...requiredMetadata,
+          },
+        })),
+    };
   return createDirectMessagingService({
     db,
     Timestamp,
     clock: () => nowMs,
     limits: { ...DEFAULT_LIMITS, ...limitOverrides },
     ...options,
+    ...(testStorage == null ? {} : { storage: testStorage }),
   });
 }
 
@@ -170,6 +189,24 @@ async function open(service, first = A, second = B, requestId = "open-0001") {
   }));
 }
 
+function detectedContentTypeFor(contentType) {
+  return contentType === "audio/m4a" || contentType === "audio/x-m4a"
+    ? "audio/mp4"
+    : contentType;
+}
+
+function matchingMediaProbe({ durationMs = null, overrides = {} } = {}) {
+  return async ({ generation, contentType, size }) => ({
+    detectedContentType: detectedContentTypeFor(contentType),
+    durationMs,
+    generation,
+    hasAudio: contentType.startsWith("audio/") || contentType.startsWith("video/"),
+    hasVideo: contentType.startsWith("video/"),
+    size,
+    ...overrides,
+  });
+}
+
 beforeEach(async () => {
   nowMs = 1_800_000_000_000;
   await reset();
@@ -177,6 +214,54 @@ beforeEach(async () => {
 });
 
 after(reset);
+
+test("trusted media inspection ignores the declared MIME and binds the generation", async () => {
+  const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xdb, 0, 1, 2, 3]);
+  const calls = [];
+  const probe = createTrustedGcsMediaProbe({
+    file(path, generationOptions) {
+      calls.push({ path, generationOptions });
+      return {
+        createReadStream(streamOptions) {
+          calls.push({ streamOptions });
+          return Readable.from([jpeg]);
+        },
+      };
+    },
+  });
+  const inspected = await probe({
+    storagePath: "message_attachments/user/thread/message.mp4",
+    generation: "123",
+    contentType: "video/mp4",
+    size: jpeg.length,
+    kind: "video",
+  });
+  assert.deepEqual(inspected, {
+    detectedContentType: "image/jpeg",
+    durationMs: null,
+    generation: "123",
+    hasAudio: false,
+    hasVideo: false,
+    size: jpeg.length,
+  });
+  assert.deepEqual(calls[0], {
+    path: "message_attachments/user/thread/message.mp4",
+    generationOptions: { generation: "123" },
+  });
+  assert.deepEqual(calls[1], {
+    streamOptions: {
+      start: 0,
+      end: jpeg.length - 1,
+      validation: false,
+    },
+  });
+  assert.deepEqual(
+    sniffTrustedMediaHeader(Buffer.from([
+      0, 0, 0, 20, 0x66, 0x74, 0x79, 0x70, 0x4d, 0x34, 0x41, 0x20,
+    ])),
+    { family: "iso-bmff", detectedContentType: null, majorBrand: "M4A " },
+  );
+});
 
 test("openDirectConversation binds one canonical pair and canonical identity", async () => {
   const service = directService();
@@ -491,7 +576,10 @@ test("private image attachments are reserved, storage-bound and finalized once",
       return `gs://yovoice-test.appspot.com/${path}`;
     },
   };
-  const service = directService({}, { storage });
+  const service = directService({}, {
+    storage,
+    mediaProbe: matchingMediaProbe(),
+  });
   const { conversationId } = await open(service);
   const reserved = await service.reserveDirectMessageAttachment(request(A, {
     conversationId,
@@ -556,6 +644,638 @@ test("private image attachments are reserved, storage-bound and finalized once",
   assert.deepEqual(replay, finalized);
 });
 
+test("attachment finalize revokes its generation-bound durable download token", async () => {
+  const metadata = new Map();
+  const revocations = [];
+  const storage = {
+    async getMetadata(path) {
+      return metadata.get(path);
+    },
+    async revokeDownloadTokens(path, observed, options = {}) {
+      const requiredMetadata = options.requiredMetadata ?? {};
+      const messageExists = (await db.doc(
+        observed.metadata.yovoiceMessagePath,
+      ).get()).exists;
+      revocations.push({
+        path,
+        generation: observed.generation,
+        finalized: requiredMetadata.yovoiceFinalized === "true",
+        messageExists,
+      });
+      const hardened = {
+        ...observed,
+        metadata: {
+          ...observed.metadata,
+          ...requiredMetadata,
+        },
+      };
+      delete hardened.metadata.firebaseStorageDownloadTokens;
+      metadata.set(path, hardened);
+      return hardened;
+    },
+    getObjectReference(path) {
+      return `gs://yovoice-test.appspot.com/${path}`;
+    },
+  };
+  const service = directService({}, {
+    storage,
+    mediaProbe: matchingMediaProbe(),
+  });
+  const { conversationId } = await open(
+    service,
+    A,
+    B,
+    "open-token-revocation",
+  );
+  const reserved = await service.reserveDirectMessageAttachment(request(A, {
+    conversationId,
+    type: "image",
+    contentType: "image/jpeg",
+    requestId: "media-token-reserve",
+  }));
+  metadata.set(reserved.storagePath, {
+    size: "2048",
+    contentType: "image/jpeg",
+    generation: "117",
+    metadata: {
+      yovoiceConversationId: conversationId,
+      yovoiceMessageId: reserved.messageId,
+      yovoiceMessagePath:
+        `conversations/${conversationId}/messages/${reserved.messageId}`,
+      yovoiceMediaType: "image",
+      yovoiceOwnerUid: A,
+      firebaseStorageDownloadTokens: "durable-bearer-token",
+    },
+  });
+
+  await service.finalizeDirectMessageAttachment(request(A, {
+    conversationId,
+    messageId: reserved.messageId,
+    objectGeneration: "117",
+    requestId: "media-token-finalize",
+  }));
+
+  assert.deepEqual(revocations, [
+    {
+      path: reserved.storagePath,
+      generation: "117",
+      finalized: false,
+      messageExists: false,
+    },
+    {
+      path: reserved.storagePath,
+      generation: "117",
+      finalized: true,
+      messageExists: true,
+    },
+  ]);
+  assert.equal(
+    metadata.get(reserved.storagePath).metadata.firebaseStorageDownloadTokens,
+    undefined,
+  );
+  assert.equal(
+    metadata.get(reserved.storagePath).metadata.yovoiceFinalized,
+    "true",
+  );
+  const message = (await db.doc(
+    `conversations/${conversationId}/messages/${reserved.messageId}`,
+  ).get()).data();
+  assert.equal(
+    message.mediaUrl,
+    `gs://yovoice-test.appspot.com/${reserved.storagePath}`,
+  );
+  assert.equal(message.mediaUrl.includes("token="), false);
+});
+
+test("attachment finalize fails closed when token revocation is ineffective", async () => {
+  const metadata = new Map();
+  const storage = {
+    async getMetadata(path) {
+      return metadata.get(path);
+    },
+    async revokeDownloadTokens(_path, observed) {
+      return observed;
+    },
+    getObjectReference(path) {
+      return `gs://yovoice-test.appspot.com/${path}`;
+    },
+  };
+  const service = directService({}, {
+    storage,
+    mediaProbe: matchingMediaProbe(),
+  });
+  const { conversationId } = await open(
+    service,
+    A,
+    B,
+    "open-token-fail-closed",
+  );
+  const reserved = await service.reserveDirectMessageAttachment(request(A, {
+    conversationId,
+    type: "image",
+    contentType: "image/jpeg",
+    requestId: "media-token-bad-reserve",
+  }));
+  metadata.set(reserved.storagePath, {
+    size: "2048",
+    contentType: "image/jpeg",
+    generation: "118",
+    metadata: {
+      yovoiceConversationId: conversationId,
+      yovoiceMessageId: reserved.messageId,
+      yovoiceMessagePath:
+        `conversations/${conversationId}/messages/${reserved.messageId}`,
+      yovoiceMediaType: "image",
+      yovoiceOwnerUid: A,
+      firebaseStorageDownloadTokens: "still-public",
+    },
+  });
+
+  await assert.rejects(
+    service.finalizeDirectMessageAttachment(request(A, {
+      conversationId,
+      messageId: reserved.messageId,
+      objectGeneration: "118",
+      requestId: "media-token-bad-finalize",
+    })),
+    (error) => error.code === "aborted",
+  );
+  assert.equal((await db.doc(
+    `conversations/${conversationId}/messages/${reserved.messageId}`,
+  ).get()).exists, false);
+  assert.equal((await db.doc(
+    `directMessageUploadReservations/${reserved.messageId}`,
+  ).get()).exists, true);
+});
+
+test("attachment finalize retry recovers a post-commit marker failure", async () => {
+  const metadata = new Map();
+  let markerAttempts = 0;
+  const storage = {
+    async getMetadata(path) {
+      return metadata.get(path);
+    },
+    async revokeDownloadTokens(path, observed, options = {}) {
+      const required = options.requiredMetadata ?? {};
+      const hardened = {
+        ...observed,
+        metadata: { ...observed.metadata },
+      };
+      delete hardened.metadata.firebaseStorageDownloadTokens;
+      if (required.yovoiceFinalized === "true") {
+        markerAttempts += 1;
+        if (markerAttempts === 1) {
+          throw Object.assign(new Error("synthetic metadata outage"), {
+            code: "unavailable",
+          });
+        }
+        hardened.metadata.yovoiceFinalized = "true";
+      }
+      metadata.set(path, hardened);
+      return hardened;
+    },
+    getObjectReference(path) {
+      return `gs://yovoice-test.appspot.com/${path}`;
+    },
+  };
+  const service = directService({}, {
+    storage,
+    mediaProbe: matchingMediaProbe(),
+  });
+  const { conversationId } = await open(
+    service,
+    A,
+    B,
+    "open-marker-recovery",
+  );
+  const reserved = await service.reserveDirectMessageAttachment(request(A, {
+    conversationId,
+    type: "image",
+    contentType: "image/jpeg",
+    requestId: "media-marker-reserve",
+  }));
+  metadata.set(reserved.storagePath, {
+    size: "2048",
+    contentType: "image/jpeg",
+    generation: "119",
+    metadata: {
+      yovoiceConversationId: conversationId,
+      yovoiceMessageId: reserved.messageId,
+      yovoiceMessagePath:
+        `conversations/${conversationId}/messages/${reserved.messageId}`,
+      yovoiceMediaType: "image",
+      yovoiceOwnerUid: A,
+      firebaseStorageDownloadTokens: "pre-finalize-token",
+    },
+  });
+  const finalizeRequest = request(A, {
+    conversationId,
+    messageId: reserved.messageId,
+    objectGeneration: "119",
+    requestId: "media-marker-finalize",
+  });
+
+  await assert.rejects(
+    service.finalizeDirectMessageAttachment(finalizeRequest),
+    (error) => error.code === "unavailable",
+  );
+  assert.equal((await db.doc(
+    `conversations/${conversationId}/messages/${reserved.messageId}`,
+  ).get()).exists, true, "the canonical message committed atomically");
+  assert.equal((await db.doc(
+    `directMessageUploadReservations/${reserved.messageId}`,
+  ).get()).exists, false);
+  assert.equal(
+    metadata.get(reserved.storagePath).metadata.firebaseStorageDownloadTokens,
+    undefined,
+  );
+  assert.equal(
+    metadata.get(reserved.storagePath).metadata.yovoiceFinalized,
+    undefined,
+  );
+
+  const replay = await service.finalizeDirectMessageAttachment(finalizeRequest);
+  assert.equal(replay.created, true);
+  assert.equal(markerAttempts, 2);
+  assert.equal(
+    metadata.get(reserved.storagePath).metadata.yovoiceFinalized,
+    "true",
+  );
+});
+
+test("private voice attachments require an audio-only trusted probe", async () => {
+  const metadata = new Map();
+  const storage = {
+    async getMetadata(path) { return metadata.get(path); },
+    getObjectReference(path) {
+      return `gs://yovoice-test.appspot.com/${path}`;
+    },
+  };
+  let probeHasVideo = true;
+  const service = directService({}, {
+    storage,
+    mediaProbe: async (input) => matchingMediaProbe({
+      durationMs: 4_200,
+      overrides: { hasAudio: true, hasVideo: probeHasVideo },
+    })(input),
+  });
+  const { conversationId } = await open(service, A, B, "open-voice-1");
+  const reserved = await service.reserveDirectMessageAttachment(request(A, {
+    conversationId,
+    type: "voice",
+    contentType: "audio/m4a",
+    durationSeconds: 5,
+    requestId: "media-voice-reserve-1",
+  }));
+  metadata.set(reserved.storagePath, {
+    size: "4096",
+    contentType: "audio/m4a",
+    generation: "19",
+    metadata: {
+      yovoiceConversationId: conversationId,
+      yovoiceMessageId: reserved.messageId,
+      yovoiceMessagePath:
+        `conversations/${conversationId}/messages/${reserved.messageId}`,
+      yovoiceMediaType: "voice",
+      yovoiceOwnerUid: A,
+    },
+  });
+  const finalizeRequest = request(A, {
+    conversationId,
+    messageId: reserved.messageId,
+    objectGeneration: "19",
+    requestId: "media-voice-finalize-1",
+  });
+  await assert.rejects(
+    service.finalizeDirectMessageAttachment(finalizeRequest),
+    (error) => error.code === "failed-precondition",
+  );
+  probeHasVideo = false;
+  const finalized = await service.finalizeDirectMessageAttachment(finalizeRequest);
+  assert.equal(finalized.type, "voice");
+  const message = (await db.doc(
+    `conversations/${conversationId}/messages/${reserved.messageId}`,
+  ).get()).data();
+  assert.equal(message.type, "voice");
+  assert.equal(message.durationSeconds, 5);
+});
+
+test("private video attachments remain backward-readable and storage-bound", async () => {
+  const metadata = new Map();
+  const storage = {
+    async getMetadata(path) {
+      const value = metadata.get(path);
+      if (!value) throw Object.assign(new Error("missing"), { code: "not-found" });
+      return value;
+    },
+    getObjectReference(path) {
+      return `gs://yovoice-test.appspot.com/${path}`;
+    },
+  };
+  const service = directService({}, {
+    storage,
+    mediaProbe: matchingMediaProbe({ durationMs: 11_500 }),
+  });
+  const { conversationId } = await open(service, A, B, "open-video-1");
+  const reserved = await service.reserveDirectMessageAttachment(request(A, {
+    conversationId,
+    type: "video",
+    contentType: "video/quicktime",
+    durationSeconds: 12,
+    requestId: "media-video-reserve-1",
+  }));
+  assert.equal(reserved.type, "video");
+  assert.match(reserved.storagePath, /[.]mov$/u);
+
+  metadata.set(reserved.storagePath, {
+    size: "4096",
+    contentType: "video/quicktime",
+    generation: "23",
+    metadata: {
+      yovoiceConversationId: conversationId,
+      yovoiceMessageId: reserved.messageId,
+      yovoiceMessagePath:
+        `conversations/${conversationId}/messages/${reserved.messageId}`,
+      yovoiceMediaType: "video",
+      yovoiceOwnerUid: A,
+    },
+  });
+  const finalized = await service.finalizeDirectMessageAttachment(request(A, {
+    conversationId,
+    messageId: reserved.messageId,
+    objectGeneration: "23",
+    requestId: "media-video-finalize-1",
+  }));
+  assert.equal(finalized.type, "video");
+  const message = (await db.doc(
+    `conversations/${conversationId}/messages/${reserved.messageId}`,
+  ).get()).data();
+  assert.equal(message.type, "video");
+  assert.equal(message.content, "Video");
+  assert.equal(message.durationSeconds, 12);
+  const conversation = (await db.doc(`conversations/${conversationId}`).get()).data();
+  assert.equal(conversation.lastMessage, "Video");
+  assert.equal(conversation.lastMessageType, "video");
+});
+
+test("trusted probe rejects a video whose real duration exceeds its contract", async () => {
+  const metadata = new Map();
+  const storage = {
+    async getMetadata(path) { return metadata.get(path); },
+    getObjectReference(path) {
+      return `gs://yovoice-test.appspot.com/${path}`;
+    },
+  };
+  const service = directService({}, {
+    storage,
+    mediaProbe: matchingMediaProbe({ durationMs: 61_000 }),
+  });
+  const { conversationId } = await open(service, A, B, "open-video-long");
+  const reserved = await service.reserveDirectMessageAttachment(request(A, {
+    conversationId,
+    type: "video",
+    contentType: "video/mp4",
+    durationSeconds: 12,
+    requestId: "media-video-long-reserve",
+  }));
+  metadata.set(reserved.storagePath, {
+    size: "4096",
+    contentType: "video/mp4",
+    generation: "29",
+    metadata: {
+      yovoiceConversationId: conversationId,
+      yovoiceMessageId: reserved.messageId,
+      yovoiceMessagePath:
+        `conversations/${conversationId}/messages/${reserved.messageId}`,
+      yovoiceMediaType: "video",
+      yovoiceOwnerUid: A,
+    },
+  });
+  await assert.rejects(
+    service.finalizeDirectMessageAttachment(request(A, {
+      conversationId,
+      messageId: reserved.messageId,
+      objectGeneration: "29",
+      requestId: "media-video-long-finalize",
+    })),
+    (error) => error.code === "failed-precondition",
+  );
+  assert.equal((await db.doc(
+    `directMessageUploadReservations/${reserved.messageId}`,
+  ).get()).exists, true);
+  assert.equal((await db.doc(
+    `conversations/${conversationId}/messages/${reserved.messageId}`,
+  ).get()).exists, false);
+});
+
+test("attachment finalization rejects an image whose bytes are a video", async () => {
+  const metadata = new Map();
+  const storage = {
+    async getMetadata(path) { return metadata.get(path); },
+    getObjectReference(path) {
+      return `gs://yovoice-test.appspot.com/${path}`;
+    },
+  };
+  const service = directService({}, {
+    storage,
+    mediaProbe: matchingMediaProbe({
+      overrides: {
+        detectedContentType: "video/mp4",
+        hasAudio: true,
+        hasVideo: true,
+      },
+    }),
+  });
+  const { conversationId } = await open(service, A, B, "open-image-spoof");
+  const reserved = await service.reserveDirectMessageAttachment(request(A, {
+    conversationId,
+    type: "image",
+    contentType: "image/jpeg",
+    requestId: "media-image-spoof-reserve",
+  }));
+  metadata.set(reserved.storagePath, {
+    size: "2048",
+    contentType: "image/jpeg",
+    generation: "31",
+    metadata: {
+      yovoiceConversationId: conversationId,
+      yovoiceMessageId: reserved.messageId,
+      yovoiceMessagePath:
+        `conversations/${conversationId}/messages/${reserved.messageId}`,
+      yovoiceMediaType: "image",
+      yovoiceOwnerUid: A,
+    },
+  });
+
+  await assert.rejects(
+    service.finalizeDirectMessageAttachment(request(A, {
+      conversationId,
+      messageId: reserved.messageId,
+      objectGeneration: "31",
+      requestId: "media-image-spoof-finalize",
+    })),
+    (error) => error.code === "failed-precondition",
+  );
+});
+
+test("attachment finalization rejects audio-only MP4 and a probe generation swap", async () => {
+  for (const [suffix, probeOverrides] of [
+    ["audio-only", { hasAudio: true, hasVideo: false }],
+    ["generation-swap", { generation: "999999" }],
+  ]) {
+    const metadata = new Map();
+    const storage = {
+      async getMetadata(path) { return metadata.get(path); },
+      getObjectReference(path) {
+        return `gs://yovoice-test.appspot.com/${path}`;
+      },
+    };
+    const service = directService({}, {
+      storage,
+      mediaProbe: matchingMediaProbe({
+        durationMs: 8_000,
+        overrides: probeOverrides,
+      }),
+    });
+    const { conversationId } = await open(
+      service,
+      A,
+      B,
+      `open-video-${suffix}`,
+    );
+    const reserved = await service.reserveDirectMessageAttachment(request(A, {
+      conversationId,
+      type: "video",
+      contentType: "video/mp4",
+      durationSeconds: 8,
+      requestId: `media-video-${suffix}-reserve`,
+    }));
+    metadata.set(reserved.storagePath, {
+      size: "4096",
+      contentType: "video/mp4",
+      generation: "37",
+      metadata: {
+        yovoiceConversationId: conversationId,
+        yovoiceMessageId: reserved.messageId,
+        yovoiceMessagePath:
+          `conversations/${conversationId}/messages/${reserved.messageId}`,
+        yovoiceMediaType: "video",
+        yovoiceOwnerUid: A,
+      },
+    });
+
+    await assert.rejects(
+      service.finalizeDirectMessageAttachment(request(A, {
+        conversationId,
+        messageId: reserved.messageId,
+        objectGeneration: "37",
+        requestId: `media-video-${suffix}-finalize`,
+      })),
+      (error) => error.code === "failed-precondition",
+      suffix,
+    );
+  }
+});
+
+test("attachment finalization rechecks storage and the full reservation after probing", async () => {
+  for (const mutation of [
+    "reservation-duration",
+    "reservation-path",
+    "reservation-content-type",
+    "reservation-kind",
+    "metadata-size",
+    "metadata-generation",
+    "metadata-content-type",
+    "expiry",
+  ]) {
+    const metadata = new Map();
+    let metadataReads = 0;
+    let reserved;
+    const storage = {
+      async getMetadata(path) {
+        metadataReads += 1;
+        const value = metadata.get(path);
+        if (metadataReads > 1) {
+          if (mutation === "metadata-size") return { ...value, size: "1023" };
+          if (mutation === "metadata-generation") {
+            return { ...value, generation: "42" };
+          }
+          if (mutation === "metadata-content-type") {
+            return { ...value, contentType: "video/quicktime" };
+          }
+        }
+        return value;
+      },
+      getObjectReference(path) {
+        return `gs://yovoice-test.appspot.com/${path}`;
+      },
+    };
+    const service = directService({}, {
+      storage,
+      mediaProbe: async (input) => {
+        const reservationRef = db.doc(
+          `directMessageUploadReservations/${reserved.messageId}`,
+        );
+        if (mutation === "reservation-duration") {
+          await reservationRef.update({ durationSeconds: 9 });
+        } else if (mutation === "reservation-path") {
+          await reservationRef.update({
+            storagePath: `${reserved.storagePath}.swapped`,
+          });
+        } else if (mutation === "reservation-content-type") {
+          await reservationRef.update({ contentType: "video/quicktime" });
+        } else if (mutation === "reservation-kind") {
+          await reservationRef.update({ type: "voice" });
+        } else if (mutation === "expiry") {
+          nowMs += 16 * 60_000;
+        }
+        return matchingMediaProbe({ durationMs: 8_000 })(input);
+      },
+    });
+    const { conversationId } = await open(
+      service,
+      A,
+      B,
+      `open-video-race-${mutation}`,
+    );
+    reserved = await service.reserveDirectMessageAttachment(request(A, {
+      conversationId,
+      type: "video",
+      contentType: "video/mp4",
+      durationSeconds: 8,
+      requestId: `media-video-race-${mutation}-reserve`,
+    }));
+    metadata.set(reserved.storagePath, {
+      size: "4096",
+      contentType: "video/mp4",
+      generation: "41",
+      metadata: {
+        yovoiceConversationId: conversationId,
+        yovoiceMessageId: reserved.messageId,
+        yovoiceMessagePath:
+          `conversations/${conversationId}/messages/${reserved.messageId}`,
+        yovoiceMediaType: "video",
+        yovoiceOwnerUid: A,
+      },
+    });
+
+    await assert.rejects(
+      service.finalizeDirectMessageAttachment(request(A, {
+        conversationId,
+        messageId: reserved.messageId,
+        objectGeneration: "41",
+        requestId: `media-video-race-${mutation}-finalize`,
+      })),
+      (error) => ["aborted", "deadline-exceeded", "failed-precondition"]
+        .includes(error.code),
+      mutation,
+    );
+    assert.equal((await db.doc(
+      `conversations/${conversationId}/messages/${reserved.messageId}`,
+    ).get()).exists, false, mutation);
+  }
+});
+
 test("attachment reservations reject forged media contracts and blocked peers", async () => {
   const service = directService({}, {
     storage: {
@@ -570,6 +1290,15 @@ test("attachment reservations reject forged media contracts and blocked peers", 
       type: "image",
       contentType: "text/html",
       requestId: "media-bad-mime",
+    })),
+    (error) => error.code === "invalid-argument",
+  );
+  await assert.rejects(
+    service.reserveDirectMessageAttachment(request(A, {
+      conversationId,
+      type: "video",
+      contentType: "video/mp4",
+      requestId: "media-video-no-duration",
     })),
     (error) => error.code === "invalid-argument",
   );
@@ -832,6 +1561,7 @@ test("changing message privacy during an upload prevents media finalization", as
         return `gs://yovoice-test.appspot.com/${path}`;
       },
     },
+    mediaProbe: matchingMediaProbe(),
   });
   const { conversationId } = await open(service, A, B, "privacy-media-open");
   const reserved = await service.reserveDirectMessageAttachment(request(A, {

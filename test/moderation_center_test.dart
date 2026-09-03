@@ -288,6 +288,32 @@ void main() {
       expect(find.text('Open'), findsWidgets);
     });
 
+    testWidgets('a Reel report has a human label, filter and hide action', (
+      tester,
+    ) async {
+      await seedReport(id: 'reel-report', targetType: 'reel');
+      await openAsStaff(tester);
+
+      expect(rowsWithTarget('Reel'), findsOneWidget);
+
+      await tester.tap(find.textContaining('Filters'));
+      await tester.pumpAndSettle();
+      expect(find.text('Reel'), findsNWidgets(2));
+
+      await tester.tap(find.text('Reel').last);
+      await tester.pump();
+      await tester.tap(find.text('Apply filters'));
+      await tester.pumpAndSettle();
+
+      expect(rowsWithTarget('Reel'), findsNWidgets(2));
+      await tester.tap(
+        find.bySemanticsLabel(RegExp(r'Harassment or bullying, Open')),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Hide Reel and resolve'), findsOneWidget);
+      expect(find.text('Remove message and resolve'), findsNothing);
+    });
+
     testWidgets('the status filter narrows to that status only', (
       tester,
     ) async {
@@ -392,6 +418,28 @@ void main() {
   });
 
   group('report model', () {
+    test(
+      'a canonical Reel target remains typed in the moderation queue',
+      () async {
+        await db.collection('reports').doc('reel').set({
+          'reporterId': 'reporter-uid',
+          'targetType': 'reel',
+          'targetId': 'reel-1',
+          'reportedUserId': 'author-uid',
+          'reason': 'spam',
+          'note': '',
+          'createdAt': Timestamp.now(),
+          'status': 'open',
+        });
+
+        final report = ModerationReport.fromFirestore(
+          await db.collection('reports').doc('reel').get(),
+        );
+
+        expect(report.targetType, ReportTargetType.reel);
+      },
+    );
+
     test('a report with NO status field is treated as Open, so nothing '
         'needs migrating', () async {
       await db.collection('reports').doc('legacy').set({

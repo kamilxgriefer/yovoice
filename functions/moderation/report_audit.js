@@ -1,7 +1,7 @@
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
 
 const { db, normalizeText, positiveInteger } = require("../utils/firestore");
-const { requireActiveStaff } = require("./reports");
+const { requireActiveStaff, SAFE_REPORT_ID } = require("./reports");
 
 const REGION = "europe-west1";
 
@@ -126,8 +126,10 @@ const listReportAuditTrail = onCall(
     // signed claim, server-written users/{uid}.role, not banned.
     await requireActiveStaff(request);
 
-    const reportId = normalizeText(request.data?.reportId, 256);
-    if (!reportId || !/^[A-Za-z0-9_-]+$/.test(reportId)) {
+    // IDs are capabilities selecting a document. Never trim or truncate them:
+    // two distinct caller inputs must not silently collapse onto one report.
+    const reportId = request.data?.reportId;
+    if (typeof reportId !== "string" || !SAFE_REPORT_ID.test(reportId)) {
       throw new HttpsError("invalid-argument", "A valid report id is required.");
     }
 

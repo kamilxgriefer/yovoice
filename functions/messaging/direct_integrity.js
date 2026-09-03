@@ -51,6 +51,11 @@ const DIRECT_MEDIA_TYPES = Object.freeze({
     maxBytes: 12 * 1024 * 1024,
     minBytes: 1024,
   }),
+  video: Object.freeze({
+    contentTypes: Object.freeze(["video/mp4", "video/quicktime", "video/webm"]),
+    maxBytes: 64 * 1024 * 1024,
+    minBytes: 1024,
+  }),
 });
 const ALLOWED_DIRECT_REACTIONS = Object.freeze([
   "❤️",
@@ -171,6 +176,11 @@ function directMediaMessageId(uid, conversationId, requestId) {
 
 function extensionForDirectMedia(type, contentType) {
   if (type === "voice") return "m4a";
+  if (type === "video") {
+    if (contentType === "video/quicktime") return "mov";
+    if (contentType === "video/webm") return "webm";
+    return "mp4";
+  }
   return contentType === "image/png"
     ? "png"
     : contentType === "image/webp" ? "webp" : "jpg";
@@ -189,7 +199,7 @@ function directMediaPathFromReference(reference, uid, conversationId, messageId)
   const path = reference.slice(firstPathSlash + 1);
   const expected = `message_attachments/${uid}/${conversationId}/${messageId}.`;
   if (!path.startsWith(expected) ||
-      !/\.(jpg|png|webp|m4a)$/u.test(path) ||
+      !/\.(jpg|png|webp|m4a|mp4|mov|webm)$/u.test(path) ||
       path.slice(expected.length).includes("/")) {
     return null;
   }
@@ -201,7 +211,12 @@ function customMetadataOf(metadata) {
   return isPlainObject(custom) ? custom : {};
 }
 
-function validateStoredDirectMedia(metadata, reservation, requestedGeneration) {
+function validateStoredDirectMedia(
+  metadata,
+  reservation,
+  requestedGeneration,
+  { requireFinalized = false } = {},
+) {
   const config = DIRECT_MEDIA_TYPES[reservation.type];
   if (!config || !metadata || typeof metadata !== "object") {
     fail("failed-precondition", "The uploaded attachment is missing.");
@@ -226,12 +241,146 @@ function validateStoredDirectMedia(metadata, reservation, requestedGeneration) {
     yovoiceOwnerUid: reservation.ownerId,
   };
   const custom = customMetadataOf(metadata);
-  const allowed = new Set([...Object.keys(expected), "firebaseStorageDownloadTokens"]);
+  const allowed = new Set([
+    ...Object.keys(expected),
+    "firebaseStorageDownloadTokens",
+    "yovoiceFinalized",
+  ]);
   if (Object.keys(custom).some((key) => !allowed.has(key)) ||
-      Object.entries(expected).some(([key, value]) => custom[key] !== value)) {
+      Object.entries(expected).some(([key, value]) => custom[key] !== value) ||
+      (custom.yovoiceFinalized !== undefined &&
+        custom.yovoiceFinalized !== "true") ||
+      (requireFinalized && custom.yovoiceFinalized !== "true")) {
     fail("failed-precondition", "The uploaded attachment identity is invalid.");
   }
   return { contentType: metadata.contentType, generation, size };
+}
+
+function hasDurableDownloadToken(metadata) {
+  const token = customMetadataOf(metadata).firebaseStorageDownloadTokens;
+  return typeof token === "string" && token.length > 0;
+}
+
+const DIRECT_RESERVATION_KEYS = Object.freeze([
+  "contentType",
+  "conversationId",
+  "createdAt",
+  "durationSeconds",
+  "expiresAt",
+  "messageId",
+  "ownerId",
+  "recipientId",
+  "schemaVersion",
+  "status",
+  "storagePath",
+  "type",
+]);
+
+function validateDirectMediaReservation(value, {
+  actorId,
+  conversationId,
+  messageId,
+  nowMs,
+}) {
+  if (!isPlainObject(value)) {
+    fail("failed-precondition", "The attachment reservation is invalid.");
+  }
+  const keys = Object.keys(value).sort();
+  const config = DIRECT_MEDIA_TYPES[value.type];
+  const createdAtMs = timestampMillis(value.createdAt);
+  const expiresAtMs = timestampMillis(value.expiresAt);
+  const durationIsValid = value.type === "image"
+    ? value.durationSeconds === null
+    : Number.isSafeInteger(value.durationSeconds) &&
+      value.durationSeconds >= 1 && value.durationSeconds <= 60;
+  if (
+    keys.length !== DIRECT_RESERVATION_KEYS.length ||
+    keys.some((key, index) => key !== DIRECT_RESERVATION_KEYS[index]) ||
+    value.schemaVersion !== 1 ||
+    value.status !== "uploading" ||
+    value.ownerId !== actorId ||
+    value.conversationId !== conversationId ||
+    value.messageId !== messageId ||
+    !/^m_[a-f0-9]{40}$/u.test(value.messageId) ||
+    !isValidOpaqueUid(value.ownerId) ||
+    !isValidOpaqueUid(value.recipientId) ||
+    value.recipientId === value.ownerId ||
+    !config ||
+    !config.contentTypes.includes(value.contentType) ||
+    value.contentType !== value.contentType.toLowerCase() ||
+    !durationIsValid ||
+    createdAtMs === null ||
+    expiresAtMs === null ||
+    createdAtMs > nowMs ||
+    expiresAtMs - createdAtMs !== DIRECT_UPLOAD_TTL_MS ||
+    value.storagePath !== directMediaStoragePath(
+      actorId,
+      conversationId,
+      messageId,
+      value.type,
+      value.contentType,
+    )
+  ) {
+    fail("failed-precondition", "The attachment reservation is invalid.");
+  }
+  if (expiresAtMs <= nowMs) {
+    fail("deadline-exceeded", "The attachment reservation expired.");
+  }
+  return {
+    contentType: value.contentType,
+    conversationId: value.conversationId,
+    createdAtMs,
+    durationSeconds: value.durationSeconds,
+    expiresAtMs,
+    messageId: value.messageId,
+    ownerId: value.ownerId,
+    recipientId: value.recipientId,
+    schemaVersion: value.schemaVersion,
+    status: value.status,
+    storagePath: value.storagePath,
+    type: value.type,
+  };
+}
+
+function sameDirectMediaReservation(first, second) {
+  return Object.keys(first).length === Object.keys(second).length &&
+    Object.keys(first).every((key) => first[key] === second[key]);
+}
+
+function normalizedDetectedContentType(contentType) {
+  return contentType === "audio/m4a" || contentType === "audio/x-m4a"
+    ? "audio/mp4"
+    : contentType;
+}
+
+function validateDirectMediaProbe(probe, reservation, media) {
+  if (!isPlainObject(probe) ||
+      probe.generation !== media.generation ||
+      probe.size !== media.size ||
+      probe.detectedContentType !== normalizedDetectedContentType(
+        reservation.contentType,
+      ) ||
+      typeof probe.hasAudio !== "boolean" ||
+      typeof probe.hasVideo !== "boolean") {
+    fail("failed-precondition", "The uploaded attachment bytes do not match.");
+  }
+  if (reservation.type === "image") {
+    if (probe.durationMs !== null || probe.hasAudio || probe.hasVideo) {
+      fail("failed-precondition", "The uploaded attachment is not an image.");
+    }
+    return null;
+  }
+  if (!Number.isSafeInteger(probe.durationMs) ||
+      probe.durationMs < 1 || probe.durationMs > 60_000 ||
+      (reservation.type === "voice" && (!probe.hasAudio || probe.hasVideo)) ||
+      (reservation.type === "video" && !probe.hasVideo)) {
+    fail("failed-precondition", "The uploaded attachment tracks are invalid.");
+  }
+  const trustedDurationSeconds = Math.max(1, Math.ceil(probe.durationMs / 1000));
+  if (Math.abs(trustedDurationSeconds - reservation.durationSeconds) > 2) {
+    fail("failed-precondition", "The uploaded attachment duration does not match.");
+  }
+  return trustedDurationSeconds;
 }
 
 function isPlainObject(value) {
@@ -382,7 +531,7 @@ function validateConversation(snapshot, conversationId, actorId, pairGuard) {
   }
   if (typeof data.lastMessage !== "string" || data.lastMessage.length > 2000 ||
       (data.lastMessageId !== null && !SAFE_ID.test(data.lastMessageId)) ||
-      !["text", "voice", "image"].includes(data.lastMessageType) ||
+      !["text", "voice", "image", "video"].includes(data.lastMessageType) ||
       (data.lastMessageSenderId !== "" &&
         !participants.includes(data.lastMessageSenderId)) ||
       timestampMillis(data.createdAt) === null ||
@@ -426,7 +575,7 @@ function validateMessage(snapshot, conversationId) {
       data.schemaVersion !== 2 || data.conversationId !== conversationId ||
       typeof data.senderId !== "string" ||
       !Number.isSafeInteger(data.sequence) || data.sequence < 1 ||
-      !["text", "voice", "image"].includes(data.type) ||
+      !["text", "voice", "image", "video"].includes(data.type) ||
       typeof data.isDeleted !== "boolean" || !Array.isArray(data.readBy) ||
       !isPlainObject(data.reactions)) {
     fail("data-loss", "The direct message schema is not canonical.");
@@ -447,6 +596,11 @@ function validateMessage(snapshot, conversationId) {
           data.durationSeconds !== null)) ||
       (data.type === "voice" &&
         (data.content !== "" || typeof data.mediaUrl !== "string" ||
+          !/^(gs:\/\/|https:\/\/)/u.test(data.mediaUrl) ||
+          !Number.isSafeInteger(data.durationSeconds) ||
+          data.durationSeconds < 1 || data.durationSeconds > 60)) ||
+      (data.type === "video" &&
+        (data.content !== "Video" || typeof data.mediaUrl !== "string" ||
           !/^(gs:\/\/|https:\/\/)/u.test(data.mediaUrl) ||
           !Number.isSafeInteger(data.durationSeconds) ||
           data.durationSeconds < 1 || data.durationSeconds > 60)) ||
@@ -479,6 +633,7 @@ function createDirectMessagingService({
   db,
   Timestamp,
   storage = null,
+  mediaProbe = null,
   clock = () => Date.now(),
   readPageSize = 100,
   limits = DEFAULT_LIMITS,
@@ -930,12 +1085,12 @@ function createDirectMessagingService({
     const requestId = requireRequestId(data.requestId);
     const type = String(data.type ?? "");
     const config = DIRECT_MEDIA_TYPES[type];
-    if (!config) fail("invalid-argument", "type must be image or voice.");
+    if (!config) fail("invalid-argument", "type must be image, voice, or video.");
     const contentType = String(data.contentType ?? "").toLowerCase();
     if (!config.contentTypes.includes(contentType)) {
       fail("invalid-argument", "contentType is not supported for this attachment.");
     }
-    const durationSeconds = type === "voice"
+    const durationSeconds = type === "voice" || type === "video"
       ? requireSafeInteger(data.durationSeconds, "durationSeconds", { min: 1, max: 60 })
       : null;
     if (type === "image" && data.durationSeconds !== undefined &&
@@ -1054,6 +1209,68 @@ function createDirectMessagingService({
     });
   }
 
+  async function markDirectAttachmentFinalized({
+    storagePath,
+    reservation,
+    objectGeneration,
+    metadata,
+  }) {
+    const finalizedMetadata = await storage.revokeDownloadTokens(
+      storagePath,
+      metadata,
+      { requiredMetadata: { yovoiceFinalized: "true" } },
+    );
+    if (hasDurableDownloadToken(finalizedMetadata) ||
+        customMetadataOf(finalizedMetadata).yovoiceFinalized !== "true") {
+      fail("aborted", "The uploaded attachment could not be secured.");
+    }
+    return validateStoredDirectMedia(
+      finalizedMetadata,
+      reservation,
+      objectGeneration,
+      { requireFinalized: true },
+    );
+  }
+
+  async function recoverDirectAttachmentFinalization({
+    authUid,
+    conversationId,
+    messageId,
+    objectGeneration,
+  }) {
+    const messageSnapshot = await db.doc(
+      `conversations/${conversationId}/messages/${messageId}`,
+    ).get();
+    const message = validateMessage(messageSnapshot, conversationId);
+    if (message.senderId !== authUid || message.isDeleted ||
+        !DIRECT_MEDIA_TYPES[message.type]) {
+      fail("data-loss", "The finalized attachment message is malformed.");
+    }
+    const storagePath = directMediaPathFromReference(
+      message.mediaUrl,
+      authUid,
+      conversationId,
+      messageId,
+    );
+    if (storagePath === null) {
+      fail("data-loss", "The finalized attachment reference is malformed.");
+    }
+    const metadata = await storage.getMetadata(storagePath);
+    const reservation = {
+      contentType: metadata?.contentType,
+      conversationId,
+      messageId,
+      ownerId: authUid,
+      type: message.type,
+    };
+    await markDirectAttachmentFinalized({
+      storagePath,
+      reservation,
+      objectGeneration,
+      metadata,
+    });
+  }
+
   async function finalizeDirectMessageAttachment(request) {
     const auth = requireActor(request);
     const data = requireExactInput(
@@ -1075,60 +1292,108 @@ function createDirectMessagingService({
       requestId,
       input,
     );
-    const timing = time();
+    const attemptTiming = time();
     const preflight = await beginAttemptPreflight({
       identity,
       kind: "direct.attachment.finalize",
       uid: auth.uid,
       requestId,
       scope: "finalize",
-      timing,
+      timing: attemptTiming,
     });
-    if (preflight.replay) return preflight.replay;
-    if (!storage?.getMetadata || !storage?.getObjectReference) {
+    if (!storage?.getMetadata || !storage?.getObjectReference ||
+        !storage?.revokeDownloadTokens ||
+        typeof mediaProbe !== "function") {
       fail("failed-precondition", "Attachment storage is unavailable.");
+    }
+    if (preflight.replay) {
+      await recoverDirectAttachmentFinalization({
+        authUid: auth.uid,
+        conversationId,
+        messageId,
+        objectGeneration,
+      });
+      return preflight.replay;
     }
     const reservationRef = db.doc(`directMessageUploadReservations/${messageId}`);
     const reservationSnapshot = await reservationRef.get();
     if (!reservationSnapshot.exists) {
       fail("not-found", "The attachment reservation does not exist.");
     }
-    const reservation = reservationSnapshot.data() ?? {};
-    const expectedKeys = [
-      "contentType", "conversationId", "createdAt", "durationSeconds",
-      "expiresAt", "messageId", "ownerId", "recipientId", "schemaVersion",
-      "status", "storagePath", "type",
-    ];
-    const keys = Object.keys(reservation).sort();
-    if (keys.length !== expectedKeys.length ||
-        keys.some((key, index) => key !== expectedKeys[index]) ||
-        reservation.schemaVersion !== 1 || reservation.ownerId !== auth.uid ||
-        reservation.conversationId !== conversationId ||
-        reservation.messageId !== messageId || reservation.status !== "uploading" ||
-        timestampMillis(reservation.expiresAt) === null ||
-        timestampMillis(reservation.expiresAt) <= timing.nowMs ||
-        reservation.storagePath !== directMediaStoragePath(
-          auth.uid,
-          conversationId,
-          messageId,
-          reservation.type,
-          reservation.contentType,
-        )) {
-      fail("failed-precondition", "The attachment reservation is invalid.");
-    }
+    const reservation = validateDirectMediaReservation(
+      reservationSnapshot.data() ?? {},
+      {
+        actorId: auth.uid,
+        conversationId,
+        messageId,
+        nowMs: attemptTiming.nowMs,
+      },
+    );
     const metadata = await storage.getMetadata(reservation.storagePath);
     const media = validateStoredDirectMedia(
       metadata,
       reservation,
       objectGeneration,
     );
+    const probe = await mediaProbe({
+      storagePath: reservation.storagePath,
+      generation: media.generation,
+      contentType: media.contentType,
+      size: media.size,
+      kind: reservation.type,
+    });
+    const trustedDurationSeconds = validateDirectMediaProbe(
+      probe,
+      reservation,
+      media,
+    );
+    // A probe may take seconds. Re-read metadata after it so an operator-side
+    // replacement or a broken adapter cannot publish a stale validation.
+    const finalMetadata = await storage.getMetadata(reservation.storagePath);
+    const finalMedia = validateStoredDirectMedia(
+      finalMetadata,
+      reservation,
+      objectGeneration,
+    );
+    if (finalMedia.contentType !== media.contentType ||
+        finalMedia.generation !== media.generation ||
+        finalMedia.size !== media.size) {
+      fail("aborted", "The uploaded attachment changed. Try again.");
+    }
+    // Firebase clients create a durable bearer token on upload. Remove it with
+    // the observed generation as a precondition before publishing. The trusted
+    // finalized marker is intentionally added only after the Firestore message
+    // commits, so a recipient can never read an unfinalized upload.
+    const securedMetadata = await storage.revokeDownloadTokens(
+      reservation.storagePath,
+      finalMetadata,
+    );
+    if (hasDurableDownloadToken(securedMetadata) ||
+        customMetadataOf(securedMetadata).yovoiceFinalized !== undefined) {
+      fail("aborted", "The uploaded attachment could not be secured.");
+    }
+    const securedMedia = validateStoredDirectMedia(
+      securedMetadata,
+      reservation,
+      objectGeneration,
+    );
+    if (securedMedia.contentType !== media.contentType ||
+        securedMedia.generation !== media.generation ||
+        securedMedia.size !== media.size) {
+      fail("aborted", "The uploaded attachment could not be secured.");
+    }
     const mediaReference = storage.getObjectReference(reservation.storagePath);
     if (typeof mediaReference !== "string" || !mediaReference.startsWith("gs://") ||
-        mediaReference.length > 4096) {
+        mediaReference.length > 4096 ||
+        directMediaPathFromReference(
+          mediaReference,
+          auth.uid,
+          conversationId,
+          messageId,
+        ) !== reservation.storagePath) {
       fail("failed-precondition", "The attachment reference is invalid.");
     }
-
-    return db.runTransaction(async (transaction) => {
+    const result = await db.runTransaction(async (transaction) => {
       const ledgerRef = ledgerReference(identity);
       const preflightRef = db.doc(`integrityPreflightLedgers/${identity.id}`);
       const conversationRef = db.doc(`conversations/${conversationId}`);
@@ -1142,6 +1407,10 @@ function createDirectMessagingService({
           reservationRef,
           messageRef,
         );
+      // Firestore may retry this callback. Capture a new server-controlled
+      // time for every attempt so an upload cannot survive its expiry merely
+      // because an earlier transaction attempt began before the deadline.
+      const finalTiming = time();
       const replay = assertLedgerReplay(ledger, {
         kind: "direct.attachment.finalize",
         uid: auth.uid,
@@ -1156,16 +1425,58 @@ function createDirectMessagingService({
           preflightData.inputHash !== identity.inputHash) {
         fail("failed-precondition", "The upload preflight is not canonical.");
       }
-      if (!currentReservation.exists ||
-          currentReservation.data()?.ownerId !== auth.uid ||
-          currentReservation.data()?.storagePath !== reservation.storagePath) {
-        fail("failed-precondition", "The attachment reservation changed.");
+      if (!currentReservation.exists) {
+        fail("aborted", "The attachment reservation changed. Try again.");
+      }
+      const current = validateDirectMediaReservation(
+        currentReservation.data() ?? {},
+        {
+          actorId: auth.uid,
+          conversationId,
+          messageId,
+          nowMs: finalTiming.nowMs,
+        },
+      );
+      if (!sameDirectMediaReservation(reservation, current)) {
+        fail("aborted", "The attachment reservation changed. Try again.");
+      }
+      // Re-bind every non-Firestore observation to the reservation that this
+      // transaction is about to consume. The GCS read cannot be part of the
+      // Firestore transaction, so it is repeated immediately before entry and
+      // its immutable generation, byte count and probe result are validated
+      // here again against the transaction's current path/MIME/kind/duration.
+      const committedMedia = validateStoredDirectMedia(
+        securedMetadata,
+        current,
+        objectGeneration,
+      );
+      if (committedMedia.contentType !== media.contentType ||
+          committedMedia.generation !== media.generation ||
+          committedMedia.size !== media.size) {
+        fail("aborted", "The uploaded attachment changed. Try again.");
+      }
+      const committedDurationSeconds = validateDirectMediaProbe(
+        probe,
+        current,
+        committedMedia,
+      );
+      if (committedDurationSeconds !== trustedDurationSeconds ||
+          directMediaPathFromReference(
+            mediaReference,
+            auth.uid,
+            conversationId,
+            messageId,
+          ) !== current.storagePath) {
+        fail("aborted", "The uploaded attachment changed. Try again.");
       }
       if (existing.exists) {
         fail("data-loss", "An attachment message exists without its ledger.");
       }
       const preliminary = conversationParticipants(conversation, auth.uid);
       const recipientId = preliminary.participants.find((uid) => uid !== auth.uid);
+      if (current.recipientId !== recipientId) {
+        fail("aborted", "The attachment recipient changed. Try again.");
+      }
       const related = await transactionGetAll(
         transaction,
         db.doc(`users/${auth.uid}`),
@@ -1187,8 +1498,8 @@ function createDirectMessagingService({
       );
       activeProfile(related[0], "Your");
       activeProfile(related[1], "The recipient");
-      assertNotRestricted(related[2], "Your", timing.nowMs);
-      assertNotRestricted(related[3], "The recipient", timing.nowMs);
+      assertNotRestricted(related[2], "Your", finalTiming.nowMs);
+      assertNotRestricted(related[3], "The recipient", finalTiming.nowMs);
       assertNotBlocked(related[4], related[5]);
       assertDirectMessagePrivacyFromRelated({
         actorId: auth.uid,
@@ -1201,17 +1512,23 @@ function createDirectMessagingService({
         context.data.lastMessageSequence,
         "lastMessageSequence",
       );
-      const preview = reservation.type === "image" ? "Photo" : "Voice message";
+      const preview = reservation.type === "image"
+        ? "Photo"
+        : reservation.type === "video" ? "Video" : "Voice message";
       transaction.create(messageRef, {
         schemaVersion: 2,
         sequence,
         conversationId,
         senderId: auth.uid,
         type: reservation.type,
-        content: "",
+        // Keep a plain-text fallback for older clients that do not know the
+        // additive `video` message type yet. Current clients render the media
+        // player; older builds safely show the word "Video" instead of an
+        // empty or malformed bubble.
+        content: reservation.type === "video" ? "Video" : "",
         mediaUrl: mediaReference,
-        durationSeconds: reservation.durationSeconds,
-        sentAt: timing.now,
+        durationSeconds: trustedDurationSeconds,
+        sentAt: finalTiming.now,
         readBy: [auth.uid],
         reactions: {},
         isDeleted: false,
@@ -1232,7 +1549,7 @@ function createDirectMessagingService({
         lastMessageSequence: sequence,
         lastMessageType: reservation.type,
         lastMessageSenderId: auth.uid,
-        updatedAt: timing.now,
+        updatedAt: finalTiming.now,
         archivedBy: [],
         unreadCounts,
       });
@@ -1251,10 +1568,22 @@ function createDirectMessagingService({
         requestId,
         inputHash: identity.inputHash,
         result,
-        now: timing.now,
+        now: finalTiming.now,
       }));
       return result;
     });
+    const finalizedMedia = await markDirectAttachmentFinalized({
+      storagePath: reservation.storagePath,
+      reservation,
+      objectGeneration,
+      metadata: securedMetadata,
+    });
+    if (finalizedMedia.contentType !== media.contentType ||
+        finalizedMedia.generation !== media.generation ||
+        finalizedMedia.size !== media.size) {
+      fail("aborted", "The uploaded attachment could not be secured.");
+    }
+    return result;
   }
 
   async function mutateMessage(request, action) {
@@ -1906,6 +2235,7 @@ module.exports = {
   directMediaMessageId,
   directMediaStoragePath,
   validateStoredDirectMedia,
+  validateDirectMediaProbe,
   validateConversation,
   validateMessage,
 };

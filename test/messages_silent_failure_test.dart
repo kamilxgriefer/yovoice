@@ -294,7 +294,7 @@ void main() {
           findsOne,
         );
         expect(find.byTooltip('Start voice call'), findsOneWidget);
-        expect(find.byTooltip('Add photo'), findsOneWidget);
+        expect(find.byTooltip('Add photo or video'), findsOneWidget);
         expect(tester.takeException(), isNull);
       });
     }

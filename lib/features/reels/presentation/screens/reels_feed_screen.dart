@@ -1,0 +1,659 @@
+import 'package:flutter/material.dart';
+
+import 'package:yovoice/core/localization/app_localizations.dart';
+import 'package:yovoice/core/theme/app_palette.dart';
+import 'package:yovoice/features/reels/data/models/reel.dart';
+import 'package:yovoice/features/reels/data/services/reel_service.dart';
+import 'package:yovoice/features/reels/presentation/widgets/reel_card.dart';
+import 'package:yovoice/shared/widgets/buttons/yo_button.dart';
+import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
+import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
+import 'package:yovoice/shared/widgets/states/yo_empty_state.dart';
+import 'package:yovoice/shared/widgets/states/yo_error_state.dart';
+import 'package:yovoice/shared/widgets/states/yo_loading_indicator.dart';
+
+class ReelsFeedScreen extends StatefulWidget {
+  const ReelsFeedScreen({
+    this.service,
+    this.videoBuilder,
+    this.onCreate,
+    this.embedded = false,
+    super.key,
+  });
+
+  final ReelService? service;
+  final ReelVideoBuilder? videoBuilder;
+
+  /// Opens the composer and completes when it closes. The feed reloads after
+  /// completion so a newly published Reel appears without reopening the tab.
+  final Future<void> Function()? onCreate;
+  final bool embedded;
+
+  @override
+  State<ReelsFeedScreen> createState() => _ReelsFeedScreenState();
+}
+
+class _ReelsFeedScreenState extends State<ReelsFeedScreen> {
+  static const int _maxEmptyPagesPerLoad = 4;
+
+  late final ReelService _service = widget.service ?? ReelService();
+  final PageController _pageController = PageController();
+  List<Reel> _items = const <Reel>[];
+  String? _cursor;
+  Object? _error;
+  bool _loading = true;
+  bool _loadingMore = false;
+  bool _hasMore = true;
+  bool _creating = false;
+  int _selected = 0;
+  final Set<String> _reporting = <String>{};
+
+  @override
+  void initState() {
+    super.initState();
+    _load(reset: true);
+  }
+
+  @override
+  void dispose() {
+    _pageController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _load({required bool reset}) async {
+    if ((!reset && (_loadingMore || !_hasMore))) return;
+    setState(() {
+      if (reset) {
+        _loading = true;
+      } else {
+        _loadingMore = true;
+      }
+      _error = null;
+    });
+    try {
+      var requestCursor = reset ? null : _cursor;
+      final loaded = <Reel>[];
+      final seenCursors = <String>{};
+      for (var request = 0; request < _maxEmptyPagesPerLoad; request++) {
+        final page = await _service.fetchFeed(cursor: requestCursor, limit: 10);
+        loaded.addAll(page.items);
+        final nextCursor = page.nextCursor;
+        requestCursor = nextCursor;
+        if (loaded.isNotEmpty || nextCursor == null) break;
+        if (!seenCursors.add(nextCursor)) {
+          throw const FormatException('Reel feed cursor did not advance.');
+        }
+      }
+      if (!mounted) return;
+      setState(() {
+        final combined = reset ? loaded : <Reel>[..._items, ...loaded];
+        _items = <Reel>[
+          for (final entry in {
+            for (final item in combined) item.id: item,
+          }.values)
+            entry,
+        ];
+        _cursor = requestCursor;
+        _hasMore = requestCursor != null;
+        _error = loaded.isEmpty && requestCursor != null
+            ? const _ReelFeedScanPaused()
+            : null;
+      });
+    } catch (error) {
+      if (mounted) setState(() => _error = error);
+    } finally {
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _loadingMore = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _report(Reel reel) async {
+    if (_reporting.contains(reel.id)) return;
+    final copy = AppLocalizations.of(context);
+    final reason = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: false,
+      useSafeArea: true,
+      isScrollControlled: true,
+      constraints: ResponsiveContentFrame.adaptiveModalConstraints(context),
+      backgroundColor: Colors.transparent,
+      builder: (context) => _ReelReportSheet(authorName: reel.authorName),
+    );
+    if (reason == null || !mounted) return;
+    setState(() => _reporting.add(reel.id));
+    try {
+      await _service.reportReel(reel.id, reason: reason);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            behavior: SnackBarBehavior.floating,
+            content: Text(
+              copy.text(
+                'Thanks. The Reel was sent for review.',
+                'Dziękujemy. Reel został wysłany do sprawdzenia.',
+              ),
+            ),
+          ),
+        );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            behavior: SnackBarBehavior.floating,
+            content: Text(
+              copy.text(
+                'The report could not be sent. Try again.',
+                'Nie udało się wysłać zgłoszenia. Spróbuj ponownie.',
+              ),
+            ),
+          ),
+        );
+    } finally {
+      if (mounted) setState(() => _reporting.remove(reel.id));
+    }
+  }
+
+  Future<void> _create() async {
+    final action = widget.onCreate;
+    if (action == null || _creating) return;
+    setState(() => _creating = true);
+    try {
+      await action();
+      if (mounted) await _load(reset: true);
+    } finally {
+      if (mounted) setState(() => _creating = false);
+    }
+  }
+
+  Future<void> _delete(Reel reel) async {
+    final copy = AppLocalizations.of(context);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(copy.text('Delete Reel?', 'Usunąć Reel?')),
+        content: Text(
+          copy.text(
+            'This removes the Reel from the feed. This action cannot be undone.',
+            'Reel zniknie z kanału. Tej operacji nie można cofnąć.',
+          ),
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: Text(copy.text('Cancel', 'Anuluj')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: Text(copy.text('Delete', 'Usuń')),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    try {
+      await _service.deleteReel(reel.id);
+      if (!mounted) return;
+      setState(() {
+        _items = _items.where((item) => item.id != reel.id).toList();
+        _selected = _items.isEmpty ? 0 : _selected.clamp(0, _items.length - 1);
+      });
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            behavior: SnackBarBehavior.floating,
+            content: Text(copy.text('Reel deleted.', 'Reel został usunięty.')),
+          ),
+        );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            behavior: SnackBarBehavior.floating,
+            content: Text(
+              copy.text(
+                'The Reel could not be deleted. Try again.',
+                'Nie udało się usunąć Reela. Spróbuj ponownie.',
+              ),
+            ),
+          ),
+        );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
+    final palette = context.appPalette;
+    final body = ColoredBox(
+      color: palette.background,
+      child: SafeArea(
+        top: widget.embedded,
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            if (_loading || (_items.isEmpty && _loadingMore)) {
+              return YoLoadingIndicator.fullscreen(
+                message: copy.text('Loading Reels', 'Ładowanie Reels'),
+              );
+            }
+            if (_error is _ReelFeedScanPaused && _items.isEmpty) {
+              return YoEmptyState(
+                icon: Icons.travel_explore_rounded,
+                title: copy.text('Loading Reels', 'Ładowanie Reels'),
+                subtitle: copy.text(
+                  'Something went wrong. Please try again.',
+                  'Coś poszło nie tak. Spróbuj ponownie.',
+                ),
+                actionLabel: copy.text('Try again', 'Spróbuj ponownie'),
+                onAction: () => _load(reset: false),
+              );
+            }
+            if (_error != null && _items.isEmpty) {
+              return YoErrorState(
+                error: _error,
+                onRetry: () => _load(reset: _cursor == null),
+              );
+            }
+            if (_items.isEmpty) {
+              return YoEmptyState(
+                icon: Icons.movie_creation_outlined,
+                title: copy.text('No Reels yet', 'Nie ma jeszcze Reels'),
+                subtitle: copy.text(
+                  'Published photos and short videos will appear here.',
+                  'Opublikowane zdjęcia i krótkie filmy pojawią się tutaj.',
+                ),
+                actionLabel: widget.onCreate == null
+                    ? null
+                    : copy.text('Create Reel', 'Utwórz Reel'),
+                onAction: _creating ? null : _create,
+              );
+            }
+            final feed = Stack(
+              children: <Widget>[
+                Positioned.fill(
+                  child: _FeedPager(
+                    items: _items,
+                    controller: _pageController,
+                    service: _service,
+                    selectedIndex: _selected,
+                    videoBuilder: widget.videoBuilder,
+                    onReport: _report,
+                    onDelete: _delete,
+                    onChanged: (index) {
+                      setState(() => _selected = index);
+                      if (index >= _items.length - 3) _load(reset: false);
+                    },
+                  ),
+                ),
+                if (_error != null)
+                  PositionedDirectional(
+                    start: 20,
+                    end: 20,
+                    bottom: 28,
+                    child: _FeedLoadMoreError(
+                      scanPaused: _error is _ReelFeedScanPaused,
+                      onRetry: () => _load(reset: false),
+                    ),
+                  )
+                else if (_loadingMore)
+                  const PositionedDirectional(
+                    end: 24,
+                    bottom: 28,
+                    child: YoLoadingIndicator(),
+                  ),
+              ],
+            );
+            if (constraints.maxWidth < 1100) {
+              return Center(
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxWidth: constraints.maxWidth < 600 ? 600 : 680,
+                  ),
+                  child: feed,
+                ),
+              );
+            }
+            final selected = _items[_selected.clamp(0, _items.length - 1)];
+            return Row(
+              children: <Widget>[
+                const Spacer(),
+                SizedBox(width: 620, child: feed),
+                const SizedBox(width: 32),
+                SizedBox(
+                  width: 320,
+                  child: _WideContextPanel(
+                    reel: selected,
+                    onCreate: widget.onCreate == null || _creating
+                        ? null
+                        : _create,
+                  ),
+                ),
+                const Spacer(),
+              ],
+            );
+          },
+        ),
+      ),
+    );
+    if (widget.embedded) return body;
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(copy.text('Reels', 'Reels')),
+        actions: widget.onCreate == null
+            ? null
+            : <Widget>[
+                IconButton(
+                  tooltip: copy.text('Create Reel', 'Utwórz Reel'),
+                  onPressed: _creating ? null : _create,
+                  icon: const Icon(Icons.add_rounded),
+                ),
+              ],
+      ),
+      body: body,
+    );
+  }
+}
+
+class _FeedPager extends StatelessWidget {
+  const _FeedPager({
+    required this.items,
+    required this.controller,
+    required this.service,
+    required this.selectedIndex,
+    required this.onChanged,
+    required this.onReport,
+    required this.onDelete,
+    this.videoBuilder,
+  });
+
+  final List<Reel> items;
+  final PageController controller;
+  final ReelService service;
+  final int selectedIndex;
+  final ValueChanged<int> onChanged;
+  final Future<void> Function(Reel reel) onReport;
+  final Future<void> Function(Reel reel) onDelete;
+  final ReelVideoBuilder? videoBuilder;
+
+  @override
+  Widget build(BuildContext context) {
+    return PageView.builder(
+      controller: controller,
+      scrollDirection: Axis.vertical,
+      itemCount: items.length,
+      onPageChanged: onChanged,
+      itemBuilder: (context, index) {
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(12, 12, 12, 16),
+          child: ReelCard(
+            key: ValueKey<String>(items[index].id),
+            reel: items[index],
+            service: service,
+            isActive: index == selectedIndex,
+            videoBuilder: videoBuilder,
+            onReport: service.isCurrentUserAuthor(items[index])
+                ? null
+                : () => onReport(items[index]),
+            onDelete: service.isCurrentUserAuthor(items[index])
+                ? () => onDelete(items[index])
+                : null,
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _ReelFeedScanPaused implements Exception {
+  const _ReelFeedScanPaused();
+}
+
+class _FeedLoadMoreError extends StatelessWidget {
+  const _FeedLoadMoreError({required this.scanPaused, required this.onRetry});
+
+  final bool scanPaused;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
+    final palette = context.appPalette;
+    final message = scanPaused
+        ? copy.text('Loading Reels', 'Ładowanie Reels')
+        : copy.text(
+            'Something went wrong. Please try again.',
+            'Coś poszło nie tak. Spróbuj ponownie.',
+          );
+    return Semantics(
+      container: true,
+      liveRegion: true,
+      label: message,
+      child: Material(
+        key: const ValueKey<String>('reels-load-more-error'),
+        color: palette.surfaceRaised,
+        elevation: 8,
+        shadowColor: palette.shadow,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(18),
+          side: BorderSide(
+            color: scanPaused ? palette.border : palette.dangerForeground,
+          ),
+        ),
+        child: Padding(
+          padding: const EdgeInsetsDirectional.fromSTEB(16, 10, 8, 10),
+          child: Row(
+            children: <Widget>[
+              Icon(
+                scanPaused ? Icons.travel_explore_rounded : Icons.sync_problem,
+                color: scanPaused
+                    ? palette.interactiveForeground
+                    : palette.dangerForeground,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  message,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: palette.textPrimary,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              TextButton.icon(
+                key: const ValueKey<String>('reels-load-more-retry'),
+                onPressed: onRetry,
+                icon: const Icon(Icons.refresh_rounded),
+                label: Text(copy.text('Try again', 'Spróbuj ponownie')),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ReelReportSheet extends StatelessWidget {
+  const _ReelReportSheet({required this.authorName});
+
+  final String authorName;
+
+  @override
+  Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
+    final palette = context.appPalette;
+    final reasons = <(String, String, IconData)>[
+      (
+        'spam',
+        copy.text('Spam or scam', 'Spam lub oszustwo'),
+        Icons.report_gmailerrorred_rounded,
+      ),
+      (
+        'harassment',
+        copy.text('Harassment or bullying', 'Nękanie lub prześladowanie'),
+        Icons.person_off_outlined,
+      ),
+      (
+        'hate',
+        copy.text('Hate or abusive content', 'Treści szerzące nienawiść'),
+        Icons.block_rounded,
+      ),
+      (
+        'sexual',
+        copy.text('Sexual content', 'Treści seksualne'),
+        Icons.visibility_off_outlined,
+      ),
+      (
+        'violence',
+        copy.text(
+          'Violence or dangerous acts',
+          'Przemoc lub niebezpieczne zachowania',
+        ),
+        Icons.warning_amber_rounded,
+      ),
+      (
+        'selfHarm',
+        copy.text('Self-harm or suicide', 'Samookaleczenia lub samobójstwo'),
+        Icons.health_and_safety_outlined,
+      ),
+      (
+        'impersonation',
+        copy.text('Impersonation', 'Podszywanie się'),
+        Icons.badge_outlined,
+      ),
+      (
+        'other',
+        copy.text('Something else', 'Inny powód'),
+        Icons.more_horiz_rounded,
+      ),
+    ];
+    final sheetLabel = copy.text('Report Reel', 'Zgłoś Reel');
+    return Material(
+      color: palette.surfaceRaised,
+      clipBehavior: Clip.antiAlias,
+      borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+      child: SafeArea(
+        top: false,
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.sizeOf(context).height * .86,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              YoModalSheetChrome(
+                sheetLabel: sheetLabel,
+                surfaceColor: palette.surfaceRaised,
+              ),
+              Flexible(
+                child: ListView(
+                  shrinkWrap: true,
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+                  children: <Widget>[
+                    Text(
+                      copy.template(
+                        'Why are you reporting {author}\'s Reel?',
+                        'Dlaczego zgłaszasz Reel użytkownika {author}?',
+                        values: <String, Object>{'author': authorName},
+                      ),
+                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      copy.text(
+                        'Your report is confidential.',
+                        'Twoje zgłoszenie jest poufne.',
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    for (final reason in reasons)
+                      ListTile(
+                        leading: Icon(reason.$3),
+                        title: Text(reason.$2),
+                        trailing: const Icon(Icons.chevron_right_rounded),
+                        onTap: () => Navigator.of(context).pop(reason.$1),
+                      ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _WideContextPanel extends StatelessWidget {
+  const _WideContextPanel({required this.reel, this.onCreate});
+
+  final Reel reel;
+  final Future<void> Function()? onCreate;
+
+  @override
+  Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
+    final palette = context.appPalette;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: palette.surface,
+        border: Border.all(color: palette.border),
+        borderRadius: BorderRadius.circular(24),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Text(
+              copy.text('Now playing', 'Teraz odtwarzane'),
+              style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                color: palette.interactiveForeground,
+              ),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              reel.authorName,
+              style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                color: palette.textPrimary,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            if (reel.composition.caption.isNotEmpty) ...<Widget>[
+              const SizedBox(height: 12),
+              Text(
+                reel.composition.caption,
+                style: Theme.of(
+                  context,
+                ).textTheme.bodyLarge?.copyWith(color: palette.textSecondary),
+              ),
+            ],
+            if (onCreate != null) ...<Widget>[
+              const SizedBox(height: 24),
+              YoButton(
+                label: copy.text('Create Reel', 'Utwórz Reel'),
+                onPressed: onCreate,
+                icon: const Icon(Icons.add_rounded),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}

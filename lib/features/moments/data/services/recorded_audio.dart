@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:audioplayers/audioplayers.dart';
@@ -33,6 +34,32 @@ const String kVoiceMomentContentType = 'audio/mp4';
 /// both the rules and the callables reject anything over 12 MiB.
 const int kMinPublishableAudioBytes = 1024;
 const int kMaxPublishableAudioBytes = 12 * 1024 * 1024;
+
+/// A stalled Storage task must not hold the publish UI forever. Sixty seconds
+/// still accommodates the maximum 12 MiB recording on a modest mobile uplink;
+/// after that the task is cancelled and the retained recording can be retried
+/// through the same server reservation.
+const Duration kVoiceMomentUploadTimeout = Duration(seconds: 60);
+
+Future<TaskSnapshot> awaitVoiceMomentUpload(UploadTask task) async {
+  try {
+    return await task.timeout(kVoiceMomentUploadTimeout);
+  } on TimeoutException catch (error) {
+    try {
+      await task.cancel().timeout(const Duration(seconds: 2));
+    } catch (_) {
+      // The original task has already exceeded its bound. Cancellation is
+      // best-effort; the server still validates the immutable generation on
+      // finalize, and the client keeps the recording for an idempotent retry.
+    }
+    throw VoiceRecordingException(
+      VoiceRecordingProblem.uploadFailed,
+      'Publishing took too long and was stopped safely.',
+      action: 'Check your connection and try again.',
+      cause: error,
+    );
+  }
+}
 
 /// Strips codec parameters and casing from a MIME type so it can be
 /// compared against the sets the backend enforces.

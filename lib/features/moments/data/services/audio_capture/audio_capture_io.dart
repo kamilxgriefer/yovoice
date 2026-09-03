@@ -103,7 +103,9 @@ class FileRecordedAudio extends RecordedAudio {
     Reference reference,
     SettableMetadata metadata,
   ) async {
-    final snapshot = await reference.putFile(file, metadata);
+    final snapshot = await awaitVoiceMomentUpload(
+      reference.putFile(file, metadata),
+    );
     final snapshotGeneration = snapshot.metadata?.generation?.trim();
     if (snapshotGeneration != null && snapshotGeneration.isNotEmpty) {
       return snapshotGeneration;

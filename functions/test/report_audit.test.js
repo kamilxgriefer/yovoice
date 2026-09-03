@@ -198,6 +198,19 @@ describe("listReportAuditTrail", () => {
       }
     });
 
+    test("report ids are rejected before trimming or truncation", async () => {
+      for (const bad of [
+        ` ${REPORT_ID}`,
+        `${REPORT_ID} `,
+        `${"r".repeat(256)}extra`,
+      ]) {
+        await expectRejection(
+          run(request(MOD, "moderator", { reportId: bad })),
+          "invalid-argument",
+        );
+      }
+    });
+
     test("a nonexistent report is not-found", async () => {
       await expectRejection(
         run(request(MOD, "moderator", { reportId: "nope_globalMessage_nope" })),

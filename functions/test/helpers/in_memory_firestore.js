@@ -41,6 +41,13 @@ class MemoryDocumentReference {
   async set(data, options = undefined) {
     this.database._set(this.database._documents, this, data, options);
   }
+
+  async update(data) {
+    if (!this.database._documents.has(this.path)) {
+      throw new Error(`document missing: ${this.path}`);
+    }
+    this.database._set(this.database._documents, this, data, { merge: true });
+  }
 }
 
 class MemoryQuery {
@@ -50,6 +57,7 @@ class MemoryQuery {
     this.config = {
       filters: config.filters ?? [],
       limit: config.limit ?? null,
+      orderBys: config.orderBys ?? [],
       startAfter: config.startAfter ?? null,
     };
   }
@@ -68,8 +76,13 @@ class MemoryQuery {
     });
   }
 
-  orderBy() {
-    return this._copy({});
+  orderBy(field, direction = "asc") {
+    if (direction !== "asc" && direction !== "desc") {
+      throw new Error(`unsupported order direction: ${direction}`);
+    }
+    return this._copy({
+      orderBys: [...this.config.orderBys, { field, direction }],
+    });
   }
 
   limit(value) {
@@ -82,21 +95,55 @@ class MemoryQuery {
 
   async get() {
     let entries = [...this.database._documents.entries()]
-      .filter(([path]) => directChild(path, this.collectionPath))
-      .sort(([left], [right]) => left.localeCompare(right));
-    if (this.config.startAfter !== null) {
-      entries = entries.filter(([path]) => path.split("/").at(-1) >
-        this.config.startAfter);
-    }
+      .filter(([path]) => directChild(path, this.collectionPath));
     for (const filter of this.config.filters) {
       entries = entries.filter(([, record]) =>
         record.data?.[filter.field] === filter.value);
+    }
+    const orderBys = this.config.orderBys.length === 0
+      ? [{ field: "__name__", direction: "asc" }]
+      : this.config.orderBys;
+    const orderedValue = ([path, record], field) =>
+      field === "__name__" ? path.split("/").at(-1) : record.data?.[field];
+    entries = entries
+      .filter((entry) => orderBys.every(
+        ({ field }) => orderedValue(entry, field) !== undefined,
+      ))
+      .sort((left, right) => {
+        for (const { field, direction } of orderBys) {
+          const leftValue = orderedValue(left, field);
+          const rightValue = orderedValue(right, field);
+          const normalizedLeft = leftValue instanceof Date
+            ? leftValue.getTime()
+            : leftValue;
+          const normalizedRight = rightValue instanceof Date
+            ? rightValue.getTime()
+            : rightValue;
+          const comparison = normalizedLeft < normalizedRight
+            ? -1
+            : normalizedLeft > normalizedRight ? 1 : 0;
+          if (comparison !== 0) {
+            return direction === "desc" ? -comparison : comparison;
+          }
+        }
+        return left[0].localeCompare(right[0]);
+      });
+    if (this.config.startAfter !== null) {
+      const firstOrder = orderBys[0];
+      entries = entries.filter((entry) => {
+        const value = orderedValue(entry, firstOrder.field);
+        return firstOrder.direction === "desc"
+          ? value < this.config.startAfter
+          : value > this.config.startAfter;
+      });
     }
     if (this.config.limit !== null) entries = entries.slice(0, this.config.limit);
     const docs = entries.map(([path, record]) => this.database._snapshot(
       new MemoryDocumentReference(this.database, path),
       new Map([[path, record]]),
     ));
+    this.database.metrics.queryDocumentReads += docs.length;
+    this.database.metrics.queryCalls += 1;
     return { docs, size: docs.length, empty: docs.length === 0 };
   }
 }
@@ -111,6 +158,11 @@ class InMemoryFirestore {
   constructor() {
     this._documents = new Map();
     this._tail = Promise.resolve();
+    this.metrics = {
+      getAllDocumentReads: 0,
+      queryCalls: 0,
+      queryDocumentReads: 0,
+    };
   }
 
   doc(path) {
@@ -119,6 +171,11 @@ class InMemoryFirestore {
 
   collection(path) {
     return new MemoryCollectionReference(this, path);
+  }
+
+  async getAll(...references) {
+    this.metrics.getAllDocumentReads += references.length;
+    return Promise.all(references.map((reference) => reference.get()));
   }
 
   seed(path, data, {

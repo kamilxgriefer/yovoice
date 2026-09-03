@@ -17,6 +17,62 @@ sentence seriously. See
 [ADR-013](Decisions.md#adr-013-clients-write-firestore-directly-cloud-functions-are-reserved-for-privileged-work)
 for why this architecture was chosen anyway.
 
+## Build 19 pre-release security status
+
+Build 19 is source-verified by the complete application/backend/Rules suites
+and independent targeted review, not security-proven or released. There is no
+meaningful “200% secure” state: the release goal is to reduce attack surface,
+fail closed at trust boundaries and preserve evidence needed to detect and
+recover from abuse.
+
+- **Private media**: canonical records hold first-party path, generation and
+  bounded metadata rather than durable token URLs. Voice Moments and Reels use
+  short-lived, generation-bound read grants after current authorization
+  checks. DM photo, voice and video deliberately use a different read model:
+  an authenticated Storage point-get of the exact canonical `gs://` path,
+  gated by current active conversation membership and a finalized marker;
+  prefix listing is denied. The upload's durable download token is revoked
+  before publication. DM generation is bound and revalidated at publication,
+  but the later SDK read is not itself a generation-bound grant. The trusted
+  probe sniffs JPEG/PNG/WebP, ISO-BMFF/WebM and MP3/WAV bytes plus track
+  presence; voice is audio-only and video has a real video track. A post-probe
+  metadata read and the final transaction revalidate reservation, path,
+  generation, MIME, kind, size, duration and expiry. Production-object smokes
+  and deployment/read-back remain pending.
+- **Outbox and Shared Media**: retry identity is stable and publication remains
+  server-authoritative. Shared Media is a view of an already-authorized
+  conversation, not a separately public or client-writable index.
+- **Direct calls**: missing legacy `mediaType` continues to mean audio, and a
+  recipient that lacks authoritative video capability gets an audio fallback.
+  LiveKit/WebRTC protects transport, but application-level E2EE is not
+  implemented; product copy must not claim FaceTime-equivalent E2EE.
+- **Reels**: canonical writes are callable-owned and media is private and
+  reservation-bound. The MVP accepts only media/audio the user owns or is
+  licensed to publish, with attestation. It does not ingest or extract Spotify,
+  Apple Music or other provider streams. Link-out is not media authorization.
+- **Moderation**: removal state, report resolution and append-only audit commit
+  in one transaction with deterministic replay. Access is checked before
+  existence and audit data contains no grants/tokens. The focused atomic
+  subset is 31/31 inside the 64/64 Reels/moderation security gate; live
+  revision/read-back evidence is pending.
+- **Legacy Voice Moments**: the controlled 2026-09-03 migration finished with
+  5 objects, 0 legacy `audioUrl` fields and 0 download tokens under both
+  inventoried prefixes. No media bytes were deleted and no identifiers, URLs
+  or bearer material are recorded in documentation.
+- **Residual controls**: App Check enforcement remains deliberately off unless
+  a separately monitored rollout proves compatible clients. Production
+  dependency audits and the staged-diff secret scan are green; physical-device,
+  mixed-version, production IAM and deployed-rule read-back remain mandatory
+  release checks.
+
+Measured source evidence: complete Flutter 2123/2123, independent Build 19 QA
+229/229, Reels pagination/catalog 19/19, Reels/localization source review
+40/40, Functions 1166/1166, Firestore Rules 523/523, Storage Rules 67/67,
+Reels/moderation security 64/64, Family media 5/5, shared DM media probe 9/9,
+direct integrity 35/35 and browser media/crop/Reels 39/39. See
+[TESTING.md](TESTING.md#build-19-pre-release-evidence-2026-09-03) and the
+[Build 19 runbook](DEPLOYMENT.md#build-19-pre-release-runbook--not-released).
+
 ## Identity and roles
 
 - **Identity**: Firebase Authentication, shared across the Flutter app and

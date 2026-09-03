@@ -1059,6 +1059,7 @@ void main() {
         // Anything else MUST be listed in the desktop More popover, or it
         // would become unreachable at desktop width.
         const inMorePopover = {
+          MoreDestination.reels,
           MoreDestination.clubs,
           MoreDestination.creatorStudio,
           MoreDestination.achievements,

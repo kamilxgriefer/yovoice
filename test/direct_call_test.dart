@@ -486,6 +486,59 @@ void main() {
     expect(find.text('Video calling…'), findsOneWidget);
   });
 
+  testWidgets(
+    'chat offers and starts a real audio fallback for an older video peer',
+    (tester) async {
+      tester.view.physicalSize = const Size(800, 900);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final calls = _FakeDirectCallGateway(
+        _call(status: DirectCallStatus.ringing),
+        videoCompatibilityFailures: 1,
+      );
+      final messages = _StubMessageService();
+      final auth = MockFirebaseAuth(
+        signedIn: true,
+        mockUser: MockUser(uid: 'caller', displayName: 'Caller'),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData.dark(useMaterial3: true),
+          home: ChatScreen(
+            conversationId: 'conversation-1',
+            otherUserId: 'callee',
+            otherDisplayName: 'Callee',
+            otherEmail: '',
+            otherPhotoUrl: '',
+            messageService: messages,
+            directCallService: calls,
+            voiceCallService: _FakeVoiceCallService(),
+            auth: auth,
+          ),
+        ),
+      );
+      messages.emit(const []);
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byTooltip('Start video call'));
+      await tester.pump();
+      await tester.pump();
+
+      expect(calls.startCalls, 1);
+      expect(calls.lastMediaType, DirectCallMediaType.video);
+      expect(find.text('Start audio'), findsOneWidget);
+
+      tester.widget<SnackBarAction>(find.byType(SnackBarAction)).onPressed();
+      await tester.pump();
+      await tester.pump();
+
+      expect(calls.startCalls, 2);
+      expect(calls.lastMediaType, DirectCallMediaType.audio);
+      expect(find.text('Calling…'), findsOneWidget);
+    },
+  );
+
   testWidgets('a fullscreen direct call makes the covered chat notification '
       'eligible, then restores suppression after return', (tester) async {
     final calls = _FakeDirectCallGateway(
@@ -756,10 +809,15 @@ DirectCall _call({
 }
 
 class _FakeDirectCallGateway implements DirectCallGateway {
-  _FakeDirectCallGateway(this.current, {this.events});
+  _FakeDirectCallGateway(
+    this.current, {
+    this.events,
+    this.videoCompatibilityFailures = 0,
+  });
 
   DirectCall current;
   final List<String>? events;
+  int videoCompatibilityFailures;
   final StreamController<DirectCall> _changes =
       StreamController<DirectCall>.broadcast();
   int startCalls = 0;
@@ -800,6 +858,13 @@ class _FakeDirectCallGateway implements DirectCallGateway {
     lastCalleeId = calleeId;
     lastConversationId = conversationId;
     lastMediaType = mediaType;
+    if (mediaType == DirectCallMediaType.video &&
+        videoCompatibilityFailures > 0) {
+      videoCompatibilityFailures--;
+      throw const DirectVideoCompatibilityException(
+        message: 'The recipient needs a newer YO Voice version for video.',
+      );
+    }
     current = _call(status: DirectCallStatus.ringing, mediaType: mediaType);
     return current.id;
   }

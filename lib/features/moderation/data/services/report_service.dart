@@ -8,6 +8,9 @@ enum ReportTargetType {
   /// A single Global Chat message.
   globalMessage,
 
+  /// A published Reel created through the server-authoritative Reel flow.
+  reel,
+
   /// An account, independent of any one message.
   user,
 }

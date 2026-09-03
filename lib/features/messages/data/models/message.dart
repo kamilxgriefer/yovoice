@@ -1,6 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
-enum MessageType { text, voice, image }
+enum MessageType { text, voice, image, video }
 
 class Message {
   const Message({
@@ -51,6 +51,8 @@ class Message {
         return 'Voice message';
       case MessageType.image:
         return 'Photo';
+      case MessageType.video:
+        return 'Video';
       case MessageType.text:
         return content;
     }

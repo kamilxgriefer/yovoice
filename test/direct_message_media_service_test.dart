@@ -101,6 +101,122 @@ void main() {
     );
   });
 
+  test(
+    'short video uses the reserved private path, MIME and duration',
+    () async {
+      const videoMessageId = 'm_abcdefabcdefabcdefabcdefabcdefabcdefabcd';
+      const videoStoragePath =
+          'message_attachments/alice-uid/$conversationId/$videoMessageId.mp4';
+      final functions = _AttachmentFunctions(
+        conversationId: conversationId,
+        messageId: videoMessageId,
+        storagePath: videoStoragePath,
+        mediaType: 'video',
+      );
+      final service = MessageService(
+        firestore: FakeFirebaseFirestore(),
+        auth: signedInAuth(),
+        functions: functions,
+        storage: MockFirebaseStorage(),
+        attachmentPayloadStore: payloadStore,
+      );
+
+      await service.sendVideoMessage(
+        conversationId: conversationId,
+        video: XFile.fromData(
+          Uint8List(4096),
+          mimeType: 'video/mp4',
+          name: 'clip.mp4',
+        ),
+        durationSeconds: 23,
+      );
+
+      expect(payloadStore.uploadPath, videoStoragePath);
+      expect(payloadStore.contentTypeAtUpload, 'video/mp4');
+      expect(payloadStore.customMetadataAtUpload?['yovoiceMediaType'], 'video');
+      expect(functions.reservePayloads.single, containsPair('type', 'video'));
+      expect(
+        functions.reservePayloads.single,
+        containsPair('durationSeconds', 23),
+      );
+      expect(functions.finalizePayloads, hasLength(1));
+    },
+  );
+
+  test(
+    'video rejects an unsafe duration or undersized payload before reserve',
+    () async {
+      final functions = _CountingFunctions();
+      final service = MessageService(
+        firestore: FakeFirebaseFirestore(),
+        auth: signedInAuth(),
+        functions: functions,
+        storage: MockFirebaseStorage(),
+        attachmentPayloadStore: payloadStore,
+      );
+      final validBytes = XFile.fromData(
+        Uint8List(2048),
+        mimeType: 'video/mp4',
+        name: 'clip.mp4',
+      );
+
+      await expectLater(
+        service.sendVideoMessage(
+          conversationId: conversationId,
+          video: validBytes,
+          durationSeconds: 61,
+        ),
+        throwsStateError,
+      );
+      await expectLater(
+        service.sendVideoMessage(
+          conversationId: conversationId,
+          video: XFile.fromData(
+            Uint8List(512),
+            mimeType: 'video/mp4',
+            name: 'tiny.mp4',
+          ),
+          durationSeconds: 4,
+        ),
+        throwsStateError,
+      );
+      expect(functions.calls, 0);
+    },
+  );
+
+  test(
+    'oversized photos and videos are rejected before allocating bytes',
+    () async {
+      final functions = _CountingFunctions();
+      final service = MessageService(
+        firestore: FakeFirebaseFirestore(),
+        auth: signedInAuth(),
+        functions: functions,
+        storage: MockFirebaseStorage(),
+        attachmentPayloadStore: payloadStore,
+      );
+      final photo = _LengthGuardXFile(8 * 1024 * 1024 + 1);
+      final video = _LengthGuardXFile(64 * 1024 * 1024 + 1);
+
+      await expectLater(
+        service.sendImageMessage(conversationId: conversationId, image: photo),
+        throwsStateError,
+      );
+      await expectLater(
+        service.sendVideoMessage(
+          conversationId: conversationId,
+          video: video,
+          durationSeconds: 4,
+        ),
+        throwsStateError,
+      );
+
+      expect(photo.readCalled, isFalse);
+      expect(video.readCalled, isFalse);
+      expect(functions.calls, 0);
+    },
+  );
+
   test('an upload committed with a lost response recovers generation from '
       'the same reservation instead of creating another one', () async {
     final functions = _AttachmentFunctions(
@@ -992,12 +1108,14 @@ class _AttachmentFunctions implements FirebaseFunctions {
     required this.storagePath,
     this.loseFirstFinalizeResponse = false,
     this.rejectFinalize = false,
+    this.mediaType = 'voice',
   });
 
   final String conversationId;
   final String messageId;
   final String storagePath;
   final bool loseFirstFinalizeResponse;
+  final String mediaType;
   bool rejectFinalize;
   final List<Map<String, dynamic>> reservePayloads = [];
   final List<Map<String, dynamic>> finalizePayloads = [];
@@ -1012,7 +1130,7 @@ class _AttachmentFunctions implements FirebaseFunctions {
           'conversationId': conversationId,
           'messageId': messageId,
           'storagePath': storagePath,
-          'type': 'voice',
+          'type': mediaType,
           'expiresAtMillis': DateTime.utc(2030).millisecondsSinceEpoch,
         };
       }
@@ -1237,6 +1355,25 @@ class _CountingFunctions implements FirebaseFunctions {
       calls += 1;
       return <Object?, Object?>{};
     });
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _LengthGuardXFile implements XFile {
+  _LengthGuardXFile(this.declaredLength);
+
+  final int declaredLength;
+  bool readCalled = false;
+
+  @override
+  Future<int> length() async => declaredLength;
+
+  @override
+  Future<Uint8List> readAsBytes() async {
+    readCalled = true;
+    throw StateError('Oversized files must not be allocated.');
   }
 
   @override

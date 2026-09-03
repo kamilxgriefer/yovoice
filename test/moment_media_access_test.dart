@@ -206,4 +206,29 @@ void main() {
       expect(calls, 0);
     },
   );
+
+  test('a lost media grant response is bounded and replayed once', () async {
+    final auth = MockFirebaseAuth(
+      signedIn: true,
+      mockUser: MockUser(uid: 'viewer-a'),
+    );
+    var calls = 0;
+    final service = MomentService(
+      firestore: FakeFirebaseFirestore(),
+      auth: auth,
+      storage: MockFirebaseStorage(),
+      callableTimeout: const Duration(milliseconds: 5),
+      mediaAccessInvoker: (_) {
+        calls += 1;
+        if (calls == 1) return Completer<Map<Object?, Object?>>().future;
+        return Future<Map<Object?, Object?>>.value(_grant());
+      },
+    );
+
+    expect(
+      await service.resolveMediaUri(momentId: 'moment-timeout'),
+      isA<Uri>(),
+    );
+    expect(calls, 2);
+  });
 }

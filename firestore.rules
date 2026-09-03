@@ -3757,5 +3757,25 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // Reels use server-authoritative reserve/finalize, feed, access, report
+    // and deletion callables. Clients never read or mutate these operational
+    // collections directly; published media is exposed only through a short-
+    // lived generation-bound grant after the callable rechecks eligibility.
+    match /reels/{reelId} {
+      allow read, write: if false;
+    }
+
+    match /reelUploadReservations/{reelId} {
+      allow read, write: if false;
+    }
+
+    match /reelCleanupOutbox/{outboxId} {
+      allow read, write: if false;
+    }
+
+    match /integrityOperationLedgers/{ledgerId} {
+      allow read, write: if false;
+    }
+
   }
 }

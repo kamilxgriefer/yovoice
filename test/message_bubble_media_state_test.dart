@@ -5,10 +5,13 @@ import 'dart:typed_data';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:video_player/video_player.dart';
 
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_theme.dart';
 import 'package:yovoice/features/messages/data/models/message.dart';
+import 'package:yovoice/features/messages/presentation/widgets/direct_video_playback_source.dart';
+import 'package:yovoice/features/messages/presentation/widgets/direct_voice_playback_source.dart';
 import 'package:yovoice/features/messages/presentation/widgets/message_bubble.dart';
 
 void main() {
@@ -115,6 +118,148 @@ void main() {
     expect(player.lastSource, isA<BytesSource>());
   });
 
+  testWidgets('gs voice uses authenticated bytes and a native-safe source', (
+    tester,
+  ) async {
+    final player = _FakeAudioPlayer();
+    var loadCalls = 0;
+    var prepareCalls = 0;
+    var cleanupCalls = 0;
+    await _pumpBubble(
+      tester,
+      _voiceMessage(id: 'native-voice', mediaUrl: _voiceOne),
+      loader: (_, _) async {
+        loadCalls++;
+        return Uint8List.fromList([1, 2, 3]);
+      },
+      playerFactory: () => player,
+      voiceSourcePreparer: (bytes, messageId) async {
+        prepareCalls++;
+        expect(bytes, Uint8List.fromList([1, 2, 3]));
+        expect(messageId, 'native-voice');
+        return PreparedDirectVoiceSource(
+          source: DeviceFileSource('/private/tmp/native-voice.m4a'),
+          dispose: () async => cleanupCalls++,
+        );
+      },
+    );
+
+    await tester.tap(find.byIcon(Icons.play_arrow_rounded));
+    await tester.pump();
+
+    expect(loadCalls, 1);
+    expect(prepareCalls, 1);
+    expect(player.lastSource, isA<DeviceFileSource>());
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+    expect(cleanupCalls, 1);
+  });
+
+  testWidgets('https voice streams directly and never invokes private loader', (
+    tester,
+  ) async {
+    final player = _FakeAudioPlayer();
+    var loadCalls = 0;
+    const url = 'https://example.test/private-voice.m4a';
+    await _pumpBubble(
+      tester,
+      _voiceMessage(id: 'legacy-https-voice', mediaUrl: url),
+      loader: (_, _) async {
+        loadCalls++;
+        return Uint8List.fromList([1]);
+      },
+      playerFactory: () => player,
+    );
+
+    await tester.tap(find.byIcon(Icons.play_arrow_rounded));
+    await tester.pump();
+
+    expect(loadCalls, 0);
+    expect(player.lastSource, isA<UrlSource>());
+    expect((player.lastSource! as UrlSource).url, url);
+  });
+
+  testWidgets(
+    'https photo uses its network reference, not private byte loader',
+    (tester) async {
+      var loadCalls = 0;
+      const url = 'https://example.test/private-photo.jpg';
+      await _pumpBubble(
+        tester,
+        _imageMessage(id: 'legacy-https-image', mediaUrl: url),
+        loader: (_, _) async {
+          loadCalls++;
+          return _onePixelPng;
+        },
+      );
+      await tester.pump();
+
+      final image = tester.widget<Image>(find.byType(Image));
+      expect(image.image, isA<NetworkImage>());
+      expect((image.image as NetworkImage).url, url);
+      expect(loadCalls, 0);
+    },
+  );
+
+  testWidgets('gs video resolves through authenticated bytes before playback', (
+    tester,
+  ) async {
+    var loadCalls = 0;
+    var maxBytes = 0;
+    var prepareCalls = 0;
+    var cleanupCalls = 0;
+    await _pumpBubble(
+      tester,
+      _videoMessage(id: 'private-video', mediaUrl: _videoOne),
+      loader: (_, limit) async {
+        loadCalls++;
+        maxBytes = limit;
+        return Uint8List.fromList([1, 2, 3]);
+      },
+      videoSourcePreparer: (bytes, messageId, reference) async {
+        prepareCalls++;
+        expect(messageId, 'private-video');
+        expect(reference, _videoOne);
+        return _TestPreparedVideoSource(() => cleanupCalls++);
+      },
+    );
+
+    await tester.tap(find.byKey(const ValueKey('direct-video-private-video')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+
+    expect(loadCalls, 1);
+    expect(maxBytes, 64 * 1024 * 1024);
+    expect(prepareCalls, 1);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+    expect(cleanupCalls, 1);
+  });
+
+  testWidgets('https video bypasses the private byte loader', (tester) async {
+    var loadCalls = 0;
+    await _pumpBubble(
+      tester,
+      _videoMessage(
+        id: 'https-video',
+        mediaUrl: 'https://example.test/private-video.mp4',
+      ),
+      loader: (_, _) async {
+        loadCalls++;
+        return Uint8List.fromList([1]);
+      },
+    );
+
+    await tester.tap(find.byKey(const ValueKey('direct-video-https-video')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+
+    expect(loadCalls, 0);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+  });
+
   testWidgets('a changed image id/source never renders the previous image '
       'while the new private object is loading', (tester) async {
     final second = Completer<Uint8List?>();
@@ -178,6 +323,24 @@ void main() {
     await tester.binding.setSurfaceSize(null);
   });
 
+  testWidgets('voice playback exposes a 44px minimum touch target', (
+    tester,
+  ) async {
+    await _pumpBubble(
+      tester,
+      _voiceMessage(id: 'touch-target', mediaUrl: _voiceOne),
+      loader: (_, _) async => Uint8List.fromList([1, 2, 3]),
+      playerFactory: _FakeAudioPlayer.new,
+    );
+
+    final target = find.byKey(
+      const ValueKey<String>('direct-voice-touch-target'),
+    );
+    expect(target, findsOneWidget);
+    expect(tester.getSize(target).width, greaterThanOrEqualTo(44));
+    expect(tester.getSize(target).height, greaterThanOrEqualTo(44));
+  });
+
   testWidgets('reaction pill stays below voice duration at 200% text scale', (
     tester,
   ) async {
@@ -221,6 +384,7 @@ const _voiceOne = 'gs://private/message_attachments/a/c/voice-1.m4a';
 const _voiceTwo = 'gs://private/message_attachments/a/c/voice-2.m4a';
 const _imageOne = 'gs://private/message_attachments/a/c/image-1.jpg';
 const _imageTwo = 'gs://private/message_attachments/a/c/image-2.jpg';
+const _videoOne = 'gs://private/message_attachments/a/c/video-1.mp4';
 
 final Uint8List _onePixelPng = base64Decode(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk'
@@ -261,11 +425,28 @@ Message _imageMessage({required String id, required String mediaUrl}) {
   );
 }
 
+Message _videoMessage({required String id, required String mediaUrl}) {
+  return Message(
+    id: id,
+    conversationId: 'conversation',
+    senderId: 'sender',
+    type: MessageType.video,
+    content: 'Video',
+    mediaUrl: mediaUrl,
+    durationSeconds: 9,
+    sentAt: DateTime.utc(2026, 9, 2),
+    readBy: const [],
+    reactions: const {},
+  );
+}
+
 Future<void> _pumpBubble(
   WidgetTester tester,
   Message message, {
   required Future<Uint8List?> Function(String? reference, int maxBytes) loader,
   AudioPlayer Function()? playerFactory,
+  DirectVoiceSourcePreparer? voiceSourcePreparer,
+  DirectVideoSourcePreparer? videoSourcePreparer,
   ThemeData? theme,
 }) {
   return tester.pumpWidget(
@@ -278,10 +459,25 @@ Future<void> _pumpBubble(
           onLongPress: () {},
           privateMediaLoader: loader,
           audioPlayerFactory: playerFactory,
+          voiceSourcePreparer: voiceSourcePreparer,
+          videoSourcePreparer: videoSourcePreparer,
         ),
       ),
     ),
   );
+}
+
+class _TestPreparedVideoSource implements PreparedDirectVideoSource {
+  _TestPreparedVideoSource(this.onDispose);
+
+  final void Function() onDispose;
+
+  @override
+  VideoPlayerController createController() =>
+      VideoPlayerController.networkUrl(Uri.parse('https://example.test/video'));
+
+  @override
+  Future<void> dispose() async => onDispose();
 }
 
 class _FakeAudioPlayer implements AudioPlayer {

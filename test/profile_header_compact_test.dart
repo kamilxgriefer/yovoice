@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:yovoice/features/achievements/data/models/achievement_definition.dart';
+import 'package:yovoice/features/achievements/presentation/widgets/title_badge.dart';
 import 'package:yovoice/features/profile/data/models/user_profile.dart';
 import 'package:yovoice/features/profile/presentation/widgets/profile_header.dart';
 import 'package:yovoice/shared/identity/public_identity_repository.dart';
@@ -225,6 +226,17 @@ void main() {
       rowCenters.length,
       lessThanOrEqualTo(2),
       reason: 'ordinary phone text keeps every identity in two compact rows',
+    );
+    final achievementHeight = tester.getSize(find.byType(TitleBadge)).height;
+    final accountHeight = tester
+        .getSize(find.byKey(const ValueKey('profile-account-type-creator')))
+        .height;
+    expect(
+      achievementHeight,
+      lessThanOrEqualTo(accountHeight + .01),
+      reason:
+          'an earned achievement must use the same compact chip height as '
+          'the other profile identity badges',
     );
     expect(
       tester.getSize(find.byType(ProfileHeader)).height,

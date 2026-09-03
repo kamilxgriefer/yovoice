@@ -27,6 +27,7 @@ const { createRoomCreationService } = require("../rooms/creation");
 const {
   createRoomCoverMigrationService,
 } = require("../rooms/cover_migration");
+const { createTrustedGcsMediaProbe } = require("../reels/probe");
 
 /**
  * Creates one dependency graph for the Stage B bindings.
@@ -52,16 +53,22 @@ function createStageBIntegrityRuntime({
   roomCoverMigrationOptions = {},
 } = {}) {
   const database = db ?? getFirestore();
-  const objectStorage = storage ?? createBucketStorageAdapter(
-    bucket ?? getStorage().bucket(),
-  );
+  const objectBucket = bucket ?? (storage ? null : getStorage().bucket());
+  const objectStorage = storage ?? createBucketStorageAdapter(objectBucket);
+  const {
+    mediaProbe: configuredDirectMediaProbe,
+    ...remainingDirectOptions
+  } = directOptions;
+  const directMediaProbe = configuredDirectMediaProbe ??
+    (objectBucket ? createTrustedGcsMediaProbe(objectBucket) : null);
 
   const direct = createDirectMessagingService({
     db: database,
     Timestamp: TimestampImpl,
     storage: objectStorage,
+    mediaProbe: directMediaProbe,
     clock,
-    ...directOptions,
+    ...remainingDirectOptions,
   });
   const community = createCommunityMessagingService({
     db: database,

@@ -20,6 +20,8 @@ import 'package:yovoice/features/messages/data/services/active_conversation_regi
 import 'package:yovoice/features/messages/data/services/direct_attachment_outbox.dart';
 import 'package:yovoice/features/messages/data/services/message_outbox.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
+import 'package:yovoice/features/messages/presentation/screens/shared_media_screen.dart';
+import 'package:yovoice/features/messages/presentation/widgets/direct_picked_video_inspector.dart';
 import 'package:yovoice/features/messages/presentation/widgets/message_bubble.dart';
 import 'package:yovoice/features/moderation/data/services/content_report_service.dart';
 import 'package:yovoice/features/moderation/presentation/report_content_flow.dart';
@@ -32,6 +34,16 @@ import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
+
+typedef DirectMessagePhotoPicker = Future<XFile?> Function(ImageSource source);
+typedef DirectMessageVideoPicker = Future<XFile?> Function(ImageSource source);
+
+enum DirectMessageMediaPickAction {
+  takePhoto,
+  photoLibrary,
+  recordVideo,
+  videoLibrary,
+}
 
 class ChatScreen extends StatefulWidget {
   const ChatScreen({
@@ -47,6 +59,10 @@ class ChatScreen extends StatefulWidget {
     this.directCallService,
     this.voiceCallService,
     this.profileService,
+    this.photoPicker,
+    this.videoPicker,
+    this.videoInspector,
+    this.profilePreviewAction,
     super.key,
   });
 
@@ -67,6 +83,13 @@ class ChatScreen extends StatefulWidget {
   final DirectCallGateway? directCallService;
   final VoiceCallService? voiceCallService;
   final ProfileService? profileService;
+  final DirectMessagePhotoPicker? photoPicker;
+  final DirectMessageVideoPicker? videoPicker;
+  final DirectMessageVideoInspector? videoInspector;
+
+  /// Deterministic seam for navigation regression tests. Production leaves
+  /// this null and opens the canonical profile preview.
+  final Future<void> Function()? profilePreviewAction;
 
   @override
   State<ChatScreen> createState() => _ChatScreenState();
@@ -96,7 +119,10 @@ class _ChatScreenState extends State<ChatScreen> {
   Message? _replyTo;
   bool _sending = false;
   bool _sendingMedia = false;
+  bool _mediaPickerOpen = false;
   bool _startingCall = false;
+  bool _profilePreviewOpen = false;
+  bool _sharedMediaOpen = false;
   bool _isMuted = false;
   bool _typingAnnounced = false;
   bool _typingUpdateInFlight = false;
@@ -474,6 +500,7 @@ class _ChatScreenState extends State<ChatScreen> {
     }
     setState(() => _startingCall = true);
     String? callId;
+    var effectiveMediaType = mediaType;
     try {
       final permissionSnapshot = await voice
           .prepareMediaPermissionsFromUserGesture(
@@ -491,6 +518,7 @@ class _ChatScreenState extends State<ChatScreen> {
       }
       if (mediaType == DirectCallMediaType.video &&
           !permissionSnapshot[AppPermissionKind.camera].isUsable) {
+        effectiveMediaType = DirectCallMediaType.audio;
         _showMessage(
           AppLocalizations.of(context).text(
             'Camera access is off. The call will start with audio only.',
@@ -501,7 +529,7 @@ class _ChatScreenState extends State<ChatScreen> {
       callId = await _calls.startCall(
         calleeId: widget.otherUserId,
         conversationId: widget.conversationId,
-        mediaType: mediaType,
+        mediaType: effectiveMediaType,
       );
       if (!mounted) {
         await _calls.cancel(callId);
@@ -535,13 +563,35 @@ class _ChatScreenState extends State<ChatScreen> {
           ActiveConversationRegistry.instance.enter(_registeredConversationId);
         }
       }
+    } on DirectVideoCompatibilityException {
+      if (!mounted) return;
+      final copy = AppLocalizations.of(context);
+      final messenger = ScaffoldMessenger.of(context);
+      messenger.hideCurrentSnackBar();
+      messenger.showSnackBar(
+        SnackBar(
+          duration: const Duration(seconds: 10),
+          content: Text(
+            copy.text(
+              'This person needs a newer YO Voice version for video. You can call with audio now.',
+              'Ta osoba potrzebuje nowszej wersji YO Voice do wideo. Możesz teraz zadzwonić głosowo.',
+            ),
+          ),
+          action: SnackBarAction(
+            label: copy.text('Start audio', 'Zadzwoń głosowo'),
+            onPressed: () => unawaited(
+              _startDirectCall(mediaType: DirectCallMediaType.audio),
+            ),
+          ),
+        ),
+      );
     } catch (error) {
       if (!mounted) return;
       final copy = AppLocalizations.of(context);
       _showMessage(
         friendlyErrorMessage(
           error,
-          fallback: mediaType == DirectCallMediaType.video
+          fallback: effectiveMediaType == DirectCallMediaType.video
               ? copy.text(
                   'Could not start this private video call.',
                   'Nie udało się rozpocząć prywatnego połączenia wideo.',
@@ -851,6 +901,43 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+  Future<void> _openProfilePreview() async {
+    if (_profilePreviewOpen) return;
+    _profilePreviewOpen = true;
+    try {
+      final action = widget.profilePreviewAction;
+      if (action != null) {
+        await action();
+      } else {
+        await showProfilePreview(
+          context,
+          userId: widget.otherUserId,
+          displayName: _otherDisplayName,
+          photoUrl: _otherPhotoUrl,
+        );
+      }
+    } finally {
+      _profilePreviewOpen = false;
+    }
+  }
+
+  Future<void> _openSharedMedia() async {
+    if (_sharedMediaOpen || !mounted) return;
+    _sharedMediaOpen = true;
+    try {
+      await Navigator.of(context).push<void>(
+        MaterialPageRoute<void>(
+          builder: (_) => SharedMediaScreen(
+            conversationId: widget.conversationId,
+            messageService: _service,
+          ),
+        ),
+      );
+    } finally {
+      _sharedMediaOpen = false;
+    }
+  }
+
   Future<void> _toggleMute() async {
     try {
       await _service.setConversationMuted(
@@ -904,14 +991,125 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  Future<void> _pickPhoto() async {
-    if (_sendingMedia) return;
-    final image = await ImagePicker().pickImage(
-      source: ImageSource.gallery,
-      maxWidth: 2048,
-      maxHeight: 2048,
-      imageQuality: 88,
+  Future<DirectMessageMediaPickAction?> _chooseMediaAction() {
+    final palette = context.appPalette;
+    final copy = AppLocalizations.of(context);
+    final label = copy.text('Add media', 'Dodaj multimedia');
+    return showModalBottomSheet<DirectMessageMediaPickAction>(
+      context: context,
+      useSafeArea: true,
+      backgroundColor: Colors.transparent,
+      showDragHandle: false,
+      constraints: ResponsiveContentFrame.adaptiveModalConstraints(
+        context,
+        maxWidth: 520,
+      ),
+      builder: (sheetContext) => Material(
+        color: palette.surfaceRaised,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+        clipBehavior: Clip.antiAlias,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              YoModalSheetChrome(
+                sheetLabel: label,
+                surfaceColor: palette.surfaceRaised,
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 0, 20, 10),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    label,
+                    style: TextStyle(
+                      color: palette.textPrimary,
+                      fontSize: 20,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                ),
+              ),
+              ListTile(
+                minTileHeight: 56,
+                leading: const Icon(Icons.photo_camera_outlined),
+                title: Text(copy.text('Take photo', 'Zrób zdjęcie')),
+                onTap: () => Navigator.pop(
+                  sheetContext,
+                  DirectMessageMediaPickAction.takePhoto,
+                ),
+              ),
+              ListTile(
+                minTileHeight: 56,
+                leading: const Icon(Icons.photo_library_outlined),
+                title: Text(copy.text('Photo library', 'Biblioteka zdjęć')),
+                onTap: () => Navigator.pop(
+                  sheetContext,
+                  DirectMessageMediaPickAction.photoLibrary,
+                ),
+              ),
+              ListTile(
+                minTileHeight: 56,
+                leading: const Icon(Icons.videocam_outlined),
+                title: Text(copy.text('Record video', 'Nagraj film')),
+                subtitle: Text(
+                  copy.text('Up to 60 seconds', 'Maksymalnie 60 sekund'),
+                ),
+                onTap: () => Navigator.pop(
+                  sheetContext,
+                  DirectMessageMediaPickAction.recordVideo,
+                ),
+              ),
+              ListTile(
+                minTileHeight: 56,
+                leading: const Icon(Icons.video_library_outlined),
+                title: Text(copy.text('Video library', 'Biblioteka filmów')),
+                onTap: () => Navigator.pop(
+                  sheetContext,
+                  DirectMessageMediaPickAction.videoLibrary,
+                ),
+              ),
+              const SizedBox(height: 8),
+            ],
+          ),
+        ),
+      ),
     );
+  }
+
+  Future<void> _pickAttachment() async {
+    if (_sendingMedia || _mediaPickerOpen) return;
+    _mediaPickerOpen = true;
+    DirectMessageMediaPickAction? action;
+    try {
+      action = await _chooseMediaAction();
+    } finally {
+      _mediaPickerOpen = false;
+    }
+    if (action == null || !mounted) return;
+    switch (action) {
+      case DirectMessageMediaPickAction.takePhoto:
+        return _pickPhoto(ImageSource.camera);
+      case DirectMessageMediaPickAction.photoLibrary:
+        return _pickPhoto(ImageSource.gallery);
+      case DirectMessageMediaPickAction.recordVideo:
+        return _pickVideo(ImageSource.camera);
+      case DirectMessageMediaPickAction.videoLibrary:
+        return _pickVideo(ImageSource.gallery);
+    }
+  }
+
+  Future<void> _pickPhoto(ImageSource source) async {
+    if (_sendingMedia) return;
+    final picker = widget.photoPicker;
+    final image = picker != null
+        ? await picker(source)
+        : await ImagePicker().pickImage(
+            source: source,
+            maxWidth: 2048,
+            maxHeight: 2048,
+            imageQuality: 88,
+          );
     if (image == null || !mounted) return;
     setState(() => _sendingMedia = true);
     try {
@@ -932,6 +1130,44 @@ class _ChatScreenState extends State<ChatScreen> {
                     'Nie udało się wysłać zdjęcia. Spróbuj ponownie.',
                   ),
                 ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _sendingMedia = false);
+    }
+  }
+
+  Future<void> _pickVideo(ImageSource source) async {
+    if (_sendingMedia) return;
+    try {
+      final picker = widget.videoPicker;
+      final video = picker != null
+          ? await picker(source)
+          : await ImagePicker().pickVideo(
+              source: source,
+              maxDuration: const Duration(seconds: 60),
+            );
+      if (video == null || !mounted) return;
+      setState(() => _sendingMedia = true);
+      final duration =
+          await (widget.videoInspector ?? inspectPickedDirectVideo)(video);
+      final durationSeconds = (duration.inMilliseconds + 999) ~/ 1000;
+      await _service.sendVideoMessage(
+        conversationId: widget.conversationId,
+        video: video,
+        durationSeconds: durationSeconds,
+      );
+    } catch (error) {
+      if (mounted) {
+        final copy = AppLocalizations.of(context);
+        _showMessage(
+          intentionalOrFriendly(
+            error,
+            fallback: copy.text(
+              'Your video could not be sent. Choose a video up to 60 seconds and try again.',
+              'Nie udało się wysłać filmu. Wybierz film do 60 sekund i spróbuj ponownie.',
+            ),
+          ),
         );
       }
     } finally {
@@ -1026,12 +1262,8 @@ class _ChatScreenState extends State<ChatScreen> {
                   onBack: () => Navigator.pop(context),
                   onMute: _toggleMute,
                   onArchive: _archiveConversation,
-                  onProfileTap: () => showProfilePreview(
-                    context,
-                    userId: widget.otherUserId,
-                    displayName: _otherDisplayName,
-                    photoUrl: _otherPhotoUrl,
-                  ),
+                  onSharedMedia: _openSharedMedia,
+                  onProfileTap: _openProfilePreview,
                   onCall: () => _startDirectCall(),
                   onVideoCall: () =>
                       _startDirectCall(mediaType: DirectCallMediaType.video),
@@ -1180,7 +1412,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   sending: _sending,
                   sendingMedia: _sendingMedia,
                   onSend: _send,
-                  onPhoto: _pickPhoto,
+                  onPhoto: _pickAttachment,
                   onVoice: _recordVoiceMessage,
                 ),
               ],
@@ -1210,6 +1442,7 @@ class _ChatHeader extends StatelessWidget {
     required this.onBack,
     required this.onMute,
     required this.onArchive,
+    required this.onSharedMedia,
     required this.onProfileTap,
     required this.onCall,
     required this.onVideoCall,
@@ -1225,6 +1458,7 @@ class _ChatHeader extends StatelessWidget {
   final VoidCallback onBack;
   final VoidCallback onMute;
   final VoidCallback onArchive;
+  final VoidCallback onSharedMedia;
 
   /// No dead avatars: tapping the person you're talking to opens their
   /// profile preview.
@@ -1369,9 +1603,24 @@ class _ChatHeader extends StatelessWidget {
                 onMute();
               } else if (value == 'archive') {
                 onArchive();
+              } else if (value == 'shared-media') {
+                onSharedMedia();
               }
             },
             itemBuilder: (_) => [
+              PopupMenuItem<String>(
+                value: 'shared-media',
+                child: Row(
+                  children: [
+                    Icon(Icons.perm_media_outlined, color: palette.textPrimary),
+                    const SizedBox(width: 12),
+                    Text(
+                      copy.text('Shared media', 'Udostępnione multimedia'),
+                      style: TextStyle(color: palette.textPrimary),
+                    ),
+                  ],
+                ),
+              ),
               PopupMenuItem<String>(
                 value: 'mute',
                 child: Row(
@@ -1997,9 +2246,12 @@ class _QueuedMediaMessageCard extends StatelessWidget {
   final VoidCallback onRetry;
   final VoidCallback onDiscard;
 
-  String _kind(AppLocalizations copy) => entry.type == MessageType.voice
-      ? copy.text('Voice message', 'Wiadomość głosowa')
-      : copy.text('Photo', 'Zdjęcie');
+  String _kind(AppLocalizations copy) => switch (entry.type) {
+    MessageType.voice => copy.text('Voice message', 'Wiadomość głosowa'),
+    MessageType.video => copy.text('Video', 'Film'),
+    MessageType.image => copy.text('Photo', 'Zdjęcie'),
+    MessageType.text => copy.text('Message', 'Wiadomość'),
+  };
 
   String _status(AppLocalizations copy) => switch (entry.status) {
     DirectAttachmentOutboxStatus.queued => copy.text('Sending…', 'Wysyłanie…'),
@@ -2010,9 +2262,12 @@ class _QueuedMediaMessageCard extends StatelessWidget {
     DirectAttachmentOutboxStatus.failed => copy.text('Not sent', 'Nie wysłano'),
   };
 
-  IconData get _kindIcon => entry.type == MessageType.voice
-      ? Icons.graphic_eq_rounded
-      : Icons.image_outlined;
+  IconData get _kindIcon => switch (entry.type) {
+    MessageType.voice => Icons.graphic_eq_rounded,
+    MessageType.video => Icons.video_file_outlined,
+    MessageType.image => Icons.image_outlined,
+    MessageType.text => Icons.chat_bubble_outline_rounded,
+  };
 
   @override
   Widget build(BuildContext context) {
@@ -2022,9 +2277,15 @@ class _QueuedMediaMessageCard extends StatelessWidget {
     final copy = AppLocalizations.of(context);
     final kind = _kind(copy);
     final status = _status(copy);
-    final semanticSubject = entry.type == MessageType.voice
-        ? copy.text('Your voice message', 'Twoja wiadomość głosowa')
-        : copy.text('Your photo', 'Twoje zdjęcie');
+    final semanticSubject = switch (entry.type) {
+      MessageType.voice => copy.text(
+        'Your voice message',
+        'Twoja wiadomość głosowa',
+      ),
+      MessageType.video => copy.text('Your video', 'Twój film'),
+      MessageType.image => copy.text('Your photo', 'Twoje zdjęcie'),
+      MessageType.text => copy.text('Your message', 'Twoja wiadomość'),
+    };
     final statusColor = failed ? colors.onErrorContainer : palette.focus;
     final maxWidth = (MediaQuery.sizeOf(context).width * 0.82).clamp(
       220.0,
@@ -2178,7 +2439,7 @@ class _Composer extends StatelessWidget {
             onPressed: sendingMedia ? null : onPhoto,
             tooltip: sendingMedia
                 ? copy.text('Sending attachment', 'Wysyłanie załącznika')
-                : copy.text('Add photo', 'Dodaj zdjęcie'),
+                : copy.text('Add photo or video', 'Dodaj zdjęcie lub film'),
             style: IconButton.styleFrom(
               backgroundColor: palette.surfaceMuted,
               foregroundColor: palette.textPrimary,
@@ -2865,6 +3126,7 @@ String _localizedMessagePreview(Message message, AppLocalizations copy) {
   return switch (message.type) {
     MessageType.voice => copy.text('Voice message', 'Wiadomość głosowa'),
     MessageType.image => copy.text('Photo', 'Zdjęcie'),
+    MessageType.video => copy.text('Video', 'Film'),
     MessageType.text => message.content,
   };
 }

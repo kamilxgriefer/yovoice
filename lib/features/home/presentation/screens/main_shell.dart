@@ -204,6 +204,7 @@ class MainShell extends StatefulWidget {
     10: MoreDestination.moderation,
     11: MoreDestination.staffCenter,
     12: MoreDestination.findCreators,
+    13: MoreDestination.reels,
   };
 
   @override
@@ -309,7 +310,7 @@ class _MainShellState extends State<MainShell>
 
   /// The notifications FEED (the bell) is its own screen rather than a
   /// MoreDestination — Alerts (preferences) is the one in the popover.
-  static const int _slotCount = 13;
+  static const int _slotCount = 14;
 
   /// Slots are built on FIRST visit and then kept alive, so switching
   /// back is instant and scroll position survives — without mounting
@@ -1177,6 +1178,7 @@ class _MainShellState extends State<MainShell>
       MoreDestination.moments => DesktopNavItem.moments,
       // Everything reached THROUGH the More popover keeps More lit.
       MoreDestination.clubs ||
+      MoreDestination.reels ||
       MoreDestination.creatorStudio ||
       MoreDestination.achievements ||
       MoreDestination.notifications ||

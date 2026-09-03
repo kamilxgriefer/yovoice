@@ -413,6 +413,74 @@ function validateMoment(
   return data;
 }
 
+// Read-only compatibility for published records created before the canonical
+// schema-v2 rollout. The durable `audioUrl` is never returned or trusted: the
+// media identity is reconstructed from authorId + momentId and verified
+// against Storage metadata before a short-lived grant is signed. Bulk
+// migration remains the canonical write path; this bridge only keeps an old
+// installed build's already-published audio playable during rollout.
+function validateLegacyMomentForPlayback(snapshot, momentId, activeAtMs) {
+  if (!snapshot.exists) fail("not-found", "The Voice Moment does not exist.");
+  const data = snapshot.data() ?? {};
+  if (
+    data.schemaVersion === 2 ||
+    (data.schemaVersion !== undefined &&
+      data.schemaVersion !== 0 &&
+      data.schemaVersion !== 1) ||
+    !isValidOpaqueUid(data.authorId) ||
+    data.storagePath !== momentStoragePath(data.authorId, momentId) ||
+    !Number.isSafeInteger(data.durationSeconds) ||
+    data.durationSeconds < 1 ||
+    data.durationSeconds > 60 ||
+    typeof data.caption !== "string" ||
+    data.caption.length > 280 ||
+    data.isPublished !== true ||
+    data.isDeleted === true ||
+    ![undefined, "legacy", "published"].includes(data.status) ||
+    (data.replyToMomentId !== undefined && data.replyToMomentId !== null) ||
+    timestampMillis(data.createdAt) === null ||
+    (data.updatedAt !== undefined &&
+      timestampMillis(data.updatedAt) === null) ||
+    (data.publishedAt !== undefined &&
+      timestampMillis(data.publishedAt) === null)
+  ) {
+    fail("data-loss", "The legacy Voice Moment record is malformed.");
+  }
+  // A partially upgraded record is corruption, not a legacy shape. Refuse it
+  // rather than letting absent/forged media fields weaken the v2 validator.
+  if (
+    data.mediaGeneration !== undefined ||
+    data.mediaSize !== undefined ||
+    data.mediaContentType !== undefined
+  ) {
+    fail("data-loss", "The legacy Voice Moment media state is malformed.");
+  }
+  if (
+    data.audioUrl !== undefined &&
+    (typeof data.audioUrl !== "string" ||
+      !data.audioUrl ||
+      data.audioUrl.length > 4096)
+  ) {
+    fail("data-loss", "The legacy Voice Moment media URL is malformed.");
+  }
+  nonNegativeCount(data.likeCount ?? 0, "legacy Voice Moment likeCount");
+  nonNegativeCount(
+    data.commentCount ?? 0,
+    "legacy Voice Moment commentCount",
+  );
+  const expiresAtMs = Object.prototype.hasOwnProperty.call(data, "expiresAt")
+    ? timestampMillis(data.expiresAt)
+    : null;
+  if (
+    (Object.prototype.hasOwnProperty.call(data, "expiresAt") &&
+      expiresAtMs === null) ||
+    (expiresAtMs !== null && expiresAtMs <= activeAtMs)
+  ) {
+    fail("failed-precondition", "This Voice Moment has expired.");
+  }
+  return data;
+}
+
 function validateComment(snapshot, momentId) {
   if (!snapshot.exists) fail("not-found", "The comment does not exist.");
   const data = snapshot.data() ?? {};
@@ -1014,10 +1082,17 @@ function createMomentIntegrityService({
       );
       activeProfile(caller, "Your");
       assertNotRestricted(callerRestriction, "Your", timing.nowMs);
-      const momentData = validateMoment(moment, momentId, {
-        published: true,
-        activeAtMs: timing.nowMs,
-      });
+      const legacyMoment = moment.data()?.schemaVersion !== 2;
+      const momentData = legacyMoment
+        ? validateLegacyMomentForPlayback(moment, momentId, timing.nowMs)
+        : validateMoment(moment, momentId, {
+            published: true,
+            activeAtMs: timing.nowMs,
+          });
+      // The compatibility exception applies only to the legacy root audio.
+      // A voice reply still carries canonical generation/MIME/size fields and
+      // must keep the full v2 media binding even when its parent is legacy.
+      const legacyMedia = legacyMoment && commentId === null;
 
       let mediaAuthorId = momentData.authorId;
       let storagePath = momentData.storagePath;
@@ -1077,6 +1152,8 @@ function createMomentIntegrityService({
         ? timestampMillis(momentData.expiresAt)
         : null;
       return {
+        legacyMedia,
+        legacyMoment,
         mediaAuthorId,
         commentId,
         mediaContentType,
@@ -1135,11 +1212,14 @@ function createMomentIntegrityService({
     const media = validateStoredAudio(
       metadata,
       expected,
-      access.mediaGeneration,
+      access.legacyMedia
+        ? String(metadata?.generation ?? "")
+        : access.mediaGeneration,
     );
     if (
-      media.contentType !== access.mediaContentType ||
-      media.size !== access.mediaSize
+      !access.legacyMedia &&
+      (media.contentType !== access.mediaContentType ||
+        media.size !== access.mediaSize)
     ) {
       fail("data-loss", "The Voice Moment media no longer matches its record.");
     }
@@ -1164,6 +1244,8 @@ function createMomentIntegrityService({
     });
     if (
       finalAccess.checkedAtMs >= access.expiresAtMs ||
+      finalAccess.legacyMedia !== access.legacyMedia ||
+      finalAccess.legacyMoment !== access.legacyMoment ||
       finalAccess.mediaAuthorId !== access.mediaAuthorId ||
       finalAccess.mediaContentType !== access.mediaContentType ||
       finalAccess.mediaGeneration !== access.mediaGeneration ||
@@ -2681,12 +2763,30 @@ function createBucketStorageAdapter(bucket) {
         bucket.name,
       )}/o/${encodeURIComponent(path)}?alt=media&token=${encodeURIComponent(token)}`;
     },
-    async revokeDownloadTokens(path, metadata) {
+    async revokeDownloadTokens(path, metadata, { requiredMetadata = null } = {}) {
       const custom = customMetadataOf(metadata);
+      const additions = requiredMetadata ?? {};
       if (
-        typeof custom.firebaseStorageDownloadTokens !== "string" ||
-        !custom.firebaseStorageDownloadTokens
+        !additions ||
+        typeof additions !== "object" ||
+        Array.isArray(additions) ||
+        Object.entries(additions).some(
+          ([key, value]) =>
+            !/^[A-Za-z][A-Za-z0-9]{0,63}$/u.test(key) ||
+            typeof value !== "string" ||
+            value.length === 0 ||
+            value.length > 256,
+        )
       ) {
+        fail("failed-precondition", "The private media identity is invalid.");
+      }
+      const hasToken =
+        typeof custom.firebaseStorageDownloadTokens === "string" &&
+        custom.firebaseStorageDownloadTokens.length > 0;
+      const hasRequiredMetadata = Object.entries(additions).every(
+        ([key, value]) => custom[key] === value,
+      );
+      if (!hasToken && hasRequiredMetadata) {
         return metadata;
       }
       const generation = String(metadata?.generation ?? "");
@@ -2697,6 +2797,7 @@ function createBucketStorageAdapter(bucket) {
         {
           metadata: {
             ...custom,
+            ...additions,
             // google-cloud/storage serializes null as metadata deletion. Keep
             // every canonical identity field and remove only Firebase's
             // permanent bearer capability.
@@ -2787,6 +2888,7 @@ module.exports = {
   createMomentIntegrityService,
   momentStoragePath,
   validateComment,
+  validateLegacyMomentForPlayback,
   validateMoment,
   validateStoredAudio,
   voiceReplyStoragePath,

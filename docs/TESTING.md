@@ -4,9 +4,72 @@ An honest picture of what's actually verified in this project, and how —
 deliberately not aspirational. Several separate, unequal layers of coverage
 exist; know which one you're relying on before trusting it.
 
+## Build 19 pre-release evidence (2026-09-03)
+
+This is the latest evidence for the merged release-candidate work. It does not
+replace the last coordinated full-suite baseline below, and it does not prove a
+production deploy, a visual result or store availability.
+
+| Gate | Measured result | What it proves |
+|---|---:|---|
+| Flutter analysis | clean | final source compiles/analyzes without diagnostics |
+| Complete Flutter | **2123/2123** | one full final-tree invocation |
+| Independent Build 19 QA | **229/229** | calls, chat/media, Moments, profile and navigation |
+| Reels pagination + catalog | **19/19** | cursor/retry and locale catalog contracts |
+| Reels visual/localization review | **40/40** | responsive/source contract |
+| Cloud Functions | **1166/1166** | 118 backend suites under fresh Auth + Firestore emulators |
+| Firestore Rules | **523/523** | authorization behavior in the emulator |
+| Storage Rules | **67/67** | object-path/metadata authorization in the emulator |
+| Reels + atomic moderation | **64/64** | fresh-emulator security and replay cases |
+| Family media | **5/5** | combined media contract |
+| Shared DM media probe | **9/9** | byte/container detection contract |
+| Direct media integrity | **35/35** | fresh-emulator reservation/finalization cases |
+| Browser media/crop/Reels | **39/39** | real Chrome behavior |
+| Flutter production Web | built | release artifact compiles |
+| Website | **87/87 + clean + built** | tests, lint and release build |
+| Production dependency audits | **0 known vulnerabilities** | Functions + Rules harness |
+| Changed Node syntax + diff | **6/6 + clean** | `node --check` and `git diff --check` |
+
+The independent targeted buckets may overlap and are not added to the complete
+Flutter total. The following remain pending on the final merged tree:
+
+- Dark/Pearl, 320–desktop, 200% text, keyboard and RTL visual inspection;
+- physical iOS/Android camera/library, codecs, background/restart and
+  two-account cache/privacy tests;
+- mixed-version two-device direct audio/video with APNs/FCM and Bluetooth;
+- production Functions/Rules/Storage/Hosting read-back smokes and both store
+  cohorts' independent availability.
+
+The complete Functions count now includes the legacy direct-attachment
+migration suites. The focused migration gate is 12/12 unit tests plus 1/1
+Firestore emulator query test, while Storage remains 67/67. The production
+dry-run inspected all 5 legacy direct-message objects from a null cursor: 5
+eligible, 0 invalid/missing/raced and 5 tokens observed, with no writes. The
+apply and two required `releaseReady=true` inventories remain production
+release gates, not test results.
+
+DM stored-object content sniffing and transaction-time reservation recheck are
+source-verified: the probe recognizes JPEG/PNG/WebP, ISO-BMFF/WebM and MP3/WAV,
+binds its stream to the stored generation and reports detected type plus
+audio/video tracks. Voice requires audio-only media; video requires a real
+video track. After probing, metadata is read again and the transaction
+revalidates reservation, path, generation, MIME, kind, size, duration and
+expiry. The shared contract passed 9/9, fresh-emulator direct integrity passed
+35/35, six Node syntax checks passed and `git diff --check` passed. Real
+production-object and physical-device smokes remain pending, and these focused
+counts must be rerun if the implementation changes.
+
+Production migration evidence is data-state evidence, not playback evidence:
+five Voice Moment objects are migrated, Firestore legacy `audioUrl` is zero,
+and both inventoried Voice Moment prefixes contain zero download tokens. No
+media bytes were deleted. Identifiers, URLs and token material are not recorded
+here. The operational detail is in
+[DEPLOYMENT.md](DEPLOYMENT.md#completed-production-data-prerequisite-voice-moments).
+
 ## Current counts
 
-**As of 2026-09-02.** One table, so there is a single place to correct when
+**Last coordinated full-release baseline: 2026-09-02 (build 18).** One table,
+so there is a single place to correct when
 these move. Every figure is a suite run, not an estimate; file counts are
 `find`. *(The date used to live in the heading; it moved into the body on
 2026-08-20 because three other docs deep-link to this section and every

@@ -41,7 +41,8 @@ class ProfileMediaImage extends StatefulWidget {
 }
 
 class _ProfileMediaImageState extends State<ProfileMediaImage> {
-  Future<Uri?>? _grant;
+  Uri? _resolvedUri;
+  int _resolutionGeneration = 0;
 
   @override
   void initState() {
@@ -52,10 +53,15 @@ class _ProfileMediaImageState extends State<ProfileMediaImage> {
   @override
   void didUpdateWidget(ProfileMediaImage oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.userId != widget.userId ||
+    final identityChanged =
+        oldWidget.userId != widget.userId ||
         oldWidget.kind != widget.kind ||
-        oldWidget.service != widget.service ||
-        oldWidget.revision != widget.revision) {
+        oldWidget.service != widget.service;
+    final revisionChanged = oldWidget.revision != widget.revision;
+    if (identityChanged || revisionChanged) {
+      if (identityChanged) {
+        _resolvedUri = null;
+      }
       if (oldWidget.revision != widget.revision) {
         final userId = widget.userId?.trim();
         if (userId != null && userId.isNotEmpty) {
@@ -67,13 +73,15 @@ class _ProfileMediaImageState extends State<ProfileMediaImage> {
   }
 
   void _resolve() {
+    final generation = ++_resolutionGeneration;
     final userId = widget.userId?.trim();
     if (userId == null || userId.isEmpty) {
-      _grant = null;
+      _resolvedUri = null;
       return;
     }
+    Future<Uri?> grant;
     try {
-      _grant = (widget.service ?? ProfileMediaService()).resolve(
+      grant = (widget.service ?? ProfileMediaService()).resolve(
         userId: userId,
         kind: widget.kind,
         revision: widget.revision,
@@ -86,40 +94,49 @@ class _ProfileMediaImageState extends State<ProfileMediaImage> {
       if (kDebugMode) {
         debugPrint('[IMAGE] profile media resolver unavailable: $error');
       }
-      _grant = Future<Uri?>.value(null);
+      return;
     }
+    grant.then(
+      (uri) {
+        if (!mounted || generation != _resolutionGeneration) return;
+        // A successful `available: false` response is authoritative and
+        // clears a removed photo. While this future is pending (or if it
+        // fails), [_resolvedUri] deliberately keeps the last successful
+        // public-profile revision on screen instead of flashing an initial.
+        setState(() => _resolvedUri = uri);
+      },
+      onError: (Object error, StackTrace stackTrace) {
+        if (kDebugMode) {
+          debugPrint('[IMAGE] profile media grant failed: $error');
+        }
+        // Transient network/auth refresh failures retain the last resolved
+        // image. A later publicProfiles revision will trigger another grant.
+      },
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-    final grant = _grant;
-    if (grant == null) return widget.fallback;
-    return FutureBuilder<Uri?>(
-      future: grant,
-      builder: (context, snapshot) {
-        final uri = snapshot.data;
-        if (uri == null) return widget.fallback;
-        return Image(
-          key: widget.imageKey,
-          image:
-              widget.imageProvider?.call(uri) ?? NetworkImage(uri.toString()),
-          fit: widget.fit,
-          alignment: widget.alignment,
-          filterQuality: widget.filterQuality,
-          frameBuilder: (context, child, frame, synchronous) => synchronous
-              ? child
-              : AnimatedOpacity(
-                  opacity: frame == null ? 0 : 1,
-                  duration: const Duration(milliseconds: 180),
-                  child: child,
-                ),
-          errorBuilder: (context, error, stackTrace) {
-            if (kDebugMode) {
-              debugPrint('[IMAGE] profile media grant failed to load: $error');
-            }
-            return KeyedSubtree(key: widget.errorKey, child: widget.fallback);
-          },
-        );
+    final uri = _resolvedUri;
+    if (uri == null) return widget.fallback;
+    return Image(
+      key: widget.imageKey,
+      image: widget.imageProvider?.call(uri) ?? NetworkImage(uri.toString()),
+      fit: widget.fit,
+      alignment: widget.alignment,
+      filterQuality: widget.filterQuality,
+      frameBuilder: (context, child, frame, synchronous) => synchronous
+          ? child
+          : AnimatedOpacity(
+              opacity: frame == null ? 0 : 1,
+              duration: const Duration(milliseconds: 180),
+              child: child,
+            ),
+      errorBuilder: (context, error, stackTrace) {
+        if (kDebugMode) {
+          debugPrint('[IMAGE] profile media grant failed to load: $error');
+        }
+        return KeyedSubtree(key: widget.errorKey, child: widget.fallback);
       },
     );
   }

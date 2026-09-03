@@ -511,6 +511,16 @@ function strictBooleanEnvironment(name) {
   throw new Error(`${name} must be exactly true or false.`);
 }
 
+const { createReelFunctions } = require("./reels");
+Object.assign(exports, createReelFunctions({
+  // Clients attach App Check tokens already. Enforcement follows the staged
+  // project-wide rollout and must not be enabled before platform telemetry is
+  // healthy on iOS, Android and Web.
+  enforceAppCheck: strictBooleanEnvironment(
+    "YOVOICE_ENFORCE_REELS_APP_CHECK",
+  ),
+}));
+
 const stageBFunctions = createStageBFunctions({
   // Rollout switch: clients already attach App Check tokens, but production
   // enforcement must only flip after Android/iOS/Web attestation telemetry

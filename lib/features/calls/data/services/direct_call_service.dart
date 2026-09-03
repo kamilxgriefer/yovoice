@@ -24,6 +24,22 @@ abstract interface class DirectCallGateway {
   Future<VoiceConnectionInfo> createJoinToken(String callId);
 }
 
+/// A video call was refused because at least one active recipient device has
+/// not advertised the direct-video protocol yet.
+///
+/// This is deliberately separate from generic callable failures so the UI can
+/// offer the backward-compatible audio call instead of presenting a dead end.
+class DirectVideoCompatibilityException implements Exception {
+  const DirectVideoCompatibilityException({required this.message});
+
+  static const reason = 'direct-video-capability-required';
+
+  final String message;
+
+  @override
+  String toString() => message;
+}
+
 class DirectCallService implements DirectCallGateway {
   DirectCallService({
     FirebaseFirestore? firestore,
@@ -52,6 +68,16 @@ class DirectCallService implements DirectCallGateway {
   final DirectCallStartRequestStore _startRequestStore;
   final DateTime Function() _clock;
   final Duration startRequestTtl;
+
+  // A second screen/service instance can be created while the first call
+  // start is awaiting the network. The durable request store guarantees that
+  // both attempts use one requestId; this registry additionally guarantees
+  // that the process sends only one callable request and both callers observe
+  // the same result.
+  static final Map<String, Future<String>> _inFlightStarts =
+      <String, Future<String>>{};
+  static final Map<String, Future<VoiceConnectionInfo>> _inFlightTokens =
+      <String, Future<VoiceConnectionInfo>>{};
 
   static String _newRequestId() {
     final random = Random.secure();
@@ -120,8 +146,35 @@ class DirectCallService implements DirectCallGateway {
     required String calleeId,
     required String conversationId,
     DirectCallMediaType mediaType = DirectCallMediaType.audio,
-  }) async {
+  }) {
     final callerId = _currentUserId;
+    final scope =
+        '$callerId\u0000$calleeId\u0000$conversationId\u0000${mediaType.name}';
+    final existing = _inFlightStarts[scope];
+    if (existing != null) return existing;
+
+    late final Future<String> operation;
+    operation =
+        _startCall(
+          callerId: callerId,
+          calleeId: calleeId,
+          conversationId: conversationId,
+          mediaType: mediaType,
+        ).whenComplete(() {
+          if (identical(_inFlightStarts[scope], operation)) {
+            _inFlightStarts.remove(scope);
+          }
+        });
+    _inFlightStarts[scope] = operation;
+    return operation;
+  }
+
+  Future<String> _startCall({
+    required String callerId,
+    required String calleeId,
+    required String conversationId,
+    required DirectCallMediaType mediaType,
+  }) async {
     var request = await _acquireStartRequest(
       callerId: callerId,
       calleeId: calleeId,
@@ -246,7 +299,8 @@ class DirectCallService implements DirectCallGateway {
             expectedRequestId: requestId,
           );
         }
-        Error.throwWithStackTrace(error, stackTrace);
+        final compatibilityError = _videoCompatibilityError(error);
+        Error.throwWithStackTrace(compatibilityError ?? error, stackTrace);
       }
     }
     throw StateError('The call service did not complete.');
@@ -265,6 +319,24 @@ class DirectCallService implements DirectCallGateway {
 
   bool _isTerminalStartFailure(Object error) =>
       error is FirebaseFunctionsException && !_isAmbiguousStartFailure(error);
+
+  DirectVideoCompatibilityException? _videoCompatibilityError(Object error) {
+    if (error is! FirebaseFunctionsException ||
+        error.code != 'failed-precondition') {
+      return null;
+    }
+    final details = error.details;
+    if (details is! Map ||
+        details['reason'] != DirectVideoCompatibilityException.reason ||
+        details['audioFallbackAvailable'] != true) {
+      return null;
+    }
+    return DirectVideoCompatibilityException(
+      message:
+          error.message ??
+          'Video calling is unavailable until your friend updates YO Voice.',
+    );
+  }
 
   @override
   Future<void> accept(String callId) => _action(
@@ -339,10 +411,41 @@ class DirectCallService implements DirectCallGateway {
   }
 
   @override
-  Future<VoiceConnectionInfo> createJoinToken(String callId) async {
-    final response = await _functions
-        .httpsCallable('createDirectCallToken')
-        .call<Map<String, dynamic>>({'callId': callId});
-    return VoiceConnectionInfo.fromMap(response.data);
+  Future<VoiceConnectionInfo> createJoinToken(String callId) {
+    final uid = _currentUserId;
+    final scope = '$uid\u0000$callId';
+    final existing = _inFlightTokens[scope];
+    if (existing != null) return existing;
+
+    late final Future<VoiceConnectionInfo> operation;
+    operation = _createJoinToken(callId: callId, requestId: _requestIdFactory())
+        .whenComplete(() {
+          if (identical(_inFlightTokens[scope], operation)) {
+            _inFlightTokens.remove(scope);
+          }
+        });
+    _inFlightTokens[scope] = operation;
+    return operation;
+  }
+
+  Future<VoiceConnectionInfo> _createJoinToken({
+    required String callId,
+    required String requestId,
+  }) async {
+    for (var attempt = 0; attempt < 2; attempt++) {
+      try {
+        final response = await _functions
+            .httpsCallable('createDirectCallToken')
+            .call<Map<String, dynamic>>({
+              'callId': callId,
+              'requestId': requestId,
+            });
+        return VoiceConnectionInfo.fromMap(response.data);
+      } catch (error, stackTrace) {
+        if (attempt == 0 && _isAmbiguousStartFailure(error)) continue;
+        Error.throwWithStackTrace(error, stackTrace);
+      }
+    }
+    throw StateError('The private call connection did not complete.');
   }
 }

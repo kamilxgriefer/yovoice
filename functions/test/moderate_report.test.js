@@ -22,11 +22,18 @@ process.env.FIRESTORE_EMULATOR_HOST =
 process.env.GCLOUD_PROJECT = process.env.GCLOUD_PROJECT ?? "yovoice-fn-test";
 
 const { getApps, initializeApp } = require("firebase-admin/app");
-const { getFirestore, FieldValue } = require("firebase-admin/firestore");
+const {
+  getFirestore,
+  FieldValue,
+  Timestamp,
+} = require("firebase-admin/firestore");
 
 if (getApps().length === 0) initializeApp();
 
-const { moderateReport } = require("../moderation/reports");
+const {
+  moderateReport,
+  moderationAuditId,
+} = require("../moderation/reports");
 
 const db = getFirestore();
 const run = moderateReport.run ?? moderateReport;
@@ -45,6 +52,9 @@ const REPORTER = "reporter-uid";
 
 const REPORT_ID = `${REPORTER}_globalMessage_msg-1`;
 const MESSAGE = "globalChat/main/messages/msg-1";
+const REEL_ID = "reel-1";
+const REEL_REPORT_ID = "reel-report-1";
+const REEL = `reels/${REEL_ID}`;
 
 function request(uid, role, data, token = {}) {
   return {
@@ -136,6 +146,58 @@ async function seedMessage(overrides = {}) {
     isDeleted: false,
     deletedBy: null,
     deletedAt: null,
+    ...overrides,
+  });
+}
+
+async function seedReelReport(overrides = {}) {
+  await db.doc(`reports/${REEL_REPORT_ID}`).set({
+    reporterId: REPORTER,
+    targetType: "reel",
+    targetId: REEL_ID,
+    reportedUserId: AUTHOR,
+    contextPath: REEL,
+    reason: "harassment",
+    note: "reported Reel evidence",
+    status: "open",
+    createdAt: FieldValue.serverTimestamp(),
+    ...overrides,
+  });
+}
+
+async function seedReel(overrides = {}) {
+  await db.doc(REEL).set({
+    schemaVersion: 1,
+    status: "published",
+    moderationStatus: "visible",
+    authorId: AUTHOR,
+    authorName: "Author",
+    media: {
+      kind: "image",
+      contentType: "image/jpeg",
+      size: 1024,
+      generation: "123",
+      durationMs: 0,
+      storagePath: `reels/${AUTHOR}/${REEL_ID}/media.jpg`,
+    },
+    backingAudio: null,
+    composition: {
+      caption: "Reported evidence",
+      crop: { scalePermille: 1000, offsetXPermille: 0, offsetYPermille: 0 },
+      filter: "original",
+      trimStartMs: 0,
+      trimEndMs: 0,
+      textOverlays: [],
+      linkOverlays: [],
+      originalAudioVolume: 0,
+      backingAudioVolume: 0,
+      audioTrimStartMs: 0,
+      audioRightsAttested: false,
+      audioAttribution: "",
+    },
+    sortKey: `1778000000000_${REEL_ID}`,
+    publishedAt: Timestamp.fromMillis(1778000000000),
+    updatedAt: Timestamp.fromMillis(1778000000000),
     ...overrides,
   });
 }
@@ -308,6 +370,62 @@ describe("moderateReport", () => {
         "invalid-argument",
       );
     });
+
+    test("a request id cannot escape the canonical audit collection",
+      async () => {
+        await expectRejection(
+          run(request(MOD, "moderator", {
+            reportId: REPORT_ID,
+            action: "claim",
+            requestId: "unsafe/audit-id",
+          })),
+          "invalid-argument",
+        );
+
+        const report = (await db.doc(`reports/${REPORT_ID}`).get()).data();
+        assert.equal(report.status, "open");
+        assert.equal(report.lastRequestId, undefined);
+        assert.equal((await auditsForReport()).size, 0);
+      });
+
+    test("report and request ids are rejected before trimming or truncation",
+      async () => {
+        const reportPrefix = "r".repeat(256);
+        const requestPrefix = "q".repeat(64);
+        const cases = [
+          {
+            reportId: ` ${REPORT_ID}`,
+            requestId: "req-no-trim-1",
+          },
+          {
+            reportId: `${reportPrefix}extra`,
+            requestId: "req-no-truncate-report",
+          },
+          {
+            reportId: REPORT_ID,
+            requestId: " req-no-trim-2",
+          },
+          {
+            reportId: REPORT_ID,
+            requestId: `${requestPrefix}extra`,
+          },
+        ];
+
+        for (const input of cases) {
+          await expectRejection(
+            run(request(MOD, "moderator", {
+              ...input,
+              action: "claim",
+            })),
+            "invalid-argument",
+          );
+        }
+
+        const report = (await db.doc(`reports/${REPORT_ID}`).get()).data();
+        assert.equal(report.status, "open");
+        assert.equal(report.lastRequestId, undefined);
+        assert.equal((await auditsForReport()).size, 0);
+      });
 
     test("closing without a valid resolution is rejected", async () => {
       await expectRejection(
@@ -490,6 +608,149 @@ describe("moderateReport", () => {
       const report = (await db.doc(`reports/${REPORT_ID}`).get()).data();
       assert.equal(report.status, "open", "the report did not move");
     });
+
+    test("remove-and-resolve hides a canonical Reel and closes its report "
+      + "atomically without deleting evidence", async () => {
+      await seedReelReport();
+      await seedReel();
+      const before = (await db.doc(REEL).get()).data();
+
+      const result = await run(request(MOD, "moderator", {
+        reportId: REEL_REPORT_ID,
+        action: "removeAndResolve",
+        requestId: "req-hide-reel-1",
+        resolution: "contentRemoved",
+      }));
+
+      assert.equal(result.status, "resolved");
+      assert.equal(result.contentRemoved, true);
+
+      const reelSnapshot = await db.doc(REEL).get();
+      assert.equal(reelSnapshot.exists, true, "evidence document survives");
+      const reel = reelSnapshot.data();
+      assert.equal(reel.moderationStatus, "hidden");
+      assert.equal(reel.status, "published");
+      assert.equal(reel.authorId, AUTHOR);
+      assert.deepEqual(reel.media, before.media, "media evidence is untouched");
+      assert.deepEqual(
+        reel.composition,
+        before.composition,
+        "composition evidence is untouched",
+      );
+      assert.ok(reel.updatedAt instanceof Timestamp);
+      assert.ok(reel.updatedAt.toMillis() >= before.updatedAt.toMillis());
+
+      const report = (await db.doc(`reports/${REEL_REPORT_ID}`).get()).data();
+      assert.equal(report.status, "resolved");
+      assert.equal(report.contentRemoved, true);
+      assert.equal(report.targetId, REEL_ID, "reporter evidence is immutable");
+      assert.equal(report.reportedUserId, AUTHOR);
+    });
+
+    test("a forged Reel report cannot hide another author's Reel or close "
+      + "the report", async () => {
+      await seedReel();
+      await seedReelReport({ reportedUserId: "different-author" });
+
+      await expectRejection(
+        run(request(MOD, "moderator", {
+          reportId: REEL_REPORT_ID,
+          action: "removeAndResolve",
+          requestId: "req-forged-reel",
+          resolution: "contentRemoved",
+        })),
+        "failed-precondition",
+      );
+
+      assert.equal((await db.doc(REEL).get()).data().moderationStatus, "visible");
+      assert.equal(
+        (await db.doc(`reports/${REEL_REPORT_ID}`).get()).data().status,
+        "open",
+        "target validation and workflow update share one transaction",
+      );
+    });
+
+    test("a Reel report cannot redirect moderation through a crafted target "
+      + "id or context path", async () => {
+      await seedReel();
+      const craftedCases = [
+        {
+          targetId: "../users/admin-uid",
+          contextPath: "reels/../users/admin-uid",
+        },
+        { targetId: REEL_ID, contextPath: `users/${AUTHOR}` },
+      ];
+
+      for (const [index, crafted] of craftedCases.entries()) {
+        await seedReelReport(crafted);
+        await expectRejection(
+          run(request(MOD, "moderator", {
+            reportId: REEL_REPORT_ID,
+            action: "removeAndResolve",
+            requestId: `req-reel-path-${index}`,
+            resolution: "contentRemoved",
+          })),
+          "failed-precondition",
+        );
+        assert.equal(
+          (await db.doc(REEL).get()).data().moderationStatus,
+          "visible",
+        );
+        assert.equal(
+          (await db.doc(`reports/${REEL_REPORT_ID}`).get()).data().status,
+          "open",
+        );
+      }
+    });
+
+    test("a missing, tombstoned or non-canonical Reel fails closed without "
+      + "half-resolving", async () => {
+      const cases = [
+        { label: "missing", seed: null },
+        { label: "tombstoned", seed: { status: "deleted" } },
+        { label: "unknown schema", seed: { schemaVersion: 2 } },
+      ];
+
+      for (const [index, entry] of cases.entries()) {
+        await db.doc(REEL).delete();
+        await seedReelReport({ status: "open" });
+        if (entry.seed !== null) await seedReel(entry.seed);
+
+        await expectRejection(
+          run(request(MOD, "moderator", {
+            reportId: REEL_REPORT_ID,
+            action: "removeAndResolve",
+            requestId: `req-reel-invalid-${index}`,
+            resolution: "contentRemoved",
+          })),
+          "failed-precondition",
+        );
+        assert.equal(
+          (await db.doc(`reports/${REEL_REPORT_ID}`).get()).data().status,
+          "open",
+          `${entry.label} target half-resolved the report`,
+        );
+      }
+    });
+
+    test("an already-hidden canonical Reel is not rewritten or re-attributed",
+      async () => {
+        const hiddenAt = Timestamp.fromMillis(1777000000000);
+        await seedReel({ moderationStatus: "hidden", updatedAt: hiddenAt });
+        await seedReelReport();
+
+        const result = await run(request(MOD, "moderator", {
+          reportId: REEL_REPORT_ID,
+          action: "removeAndResolve",
+          requestId: "req-reel-already-hidden",
+          resolution: "contentRemoved",
+        }));
+
+        assert.equal(result.status, "resolved");
+        assert.equal(result.contentRemoved, false);
+        assert.equal((await db.doc(REEL).get()).data().updatedAt.toMillis(),
+          hiddenAt.toMillis());
+      });
   });
 
   describe("evidence and audit", () => {
@@ -519,7 +780,10 @@ describe("moderateReport", () => {
         assert.equal(audits.size, 1);
 
         const entry = audits.docs[0];
-        assert.equal(entry.id, `report_${REPORT_ID}_req-audit-shape`);
+        assert.equal(
+          entry.id,
+          moderationAuditId(REPORT_ID, "req-audit-shape"),
+        );
         const data = entry.data();
         assert.equal(data.actorId, MOD);
         assert.equal(data.action, "report_dismiss");

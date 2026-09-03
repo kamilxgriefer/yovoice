@@ -341,13 +341,37 @@ void main() {
         ]),
         <String>['canonical-concurrent', 'canonical-concurrent'],
       );
-      expect(functions.payloads, hasLength(2));
+      expect(functions.payloads, hasLength(1));
       expect(
         functions.payloads.map((item) => item['requestId']).toSet(),
         <Object?>{'concurrent-request-a'},
       );
     },
   );
+
+  test('video capability refusal becomes an actionable typed error', () async {
+    final service = DirectCallService(
+      firestore: FakeFirebaseFirestore(),
+      functions: _VideoCompatibilityFunctions(),
+      auth: MockFirebaseAuth(signedIn: true, mockUser: MockUser(uid: 'caller')),
+      requestIdFactory: () => 'video-capability-request',
+    );
+
+    await expectLater(
+      service.startCall(
+        calleeId: 'callee',
+        conversationId: 'caller_callee',
+        mediaType: DirectCallMediaType.video,
+      ),
+      throwsA(
+        isA<DirectVideoCompatibilityException>().having(
+          (error) => error.message,
+          'message',
+          contains('updates YO Voice'),
+        ),
+      ),
+    );
+  });
 
   test('pending starts are isolated by signed-in account and peer', () async {
     final functions = _ColdRestartStartFunctions();
@@ -391,6 +415,38 @@ void main() {
     );
     expect(functions.payloads.last['requestId'], 'caller-b-to-callee-a');
   });
+
+  test(
+    'lost token response replays one request and concurrent joins coalesce',
+    () async {
+      final functions = _LostTokenResponseFunctions();
+      final service = DirectCallService(
+        firestore: FakeFirebaseFirestore(),
+        functions: functions,
+        auth: MockFirebaseAuth(
+          signedIn: true,
+          mockUser: MockUser(uid: 'caller'),
+        ),
+        requestIdFactory: () => 'token-request-1',
+      );
+
+      final results = await Future.wait(<Future<Object>>[
+        service.createJoinToken('active-call-1'),
+        service.createJoinToken('active-call-1'),
+      ]);
+
+      expect(results[0], same(results[1]));
+      expect(functions.payloads, hasLength(2));
+      expect(
+        functions.payloads.map((payload) => payload['requestId']).toSet(),
+        <Object?>{'token-request-1'},
+      );
+      expect(
+        functions.payloads.map((payload) => payload['callId']).toSet(),
+        <Object?>{'active-call-1'},
+      );
+    },
+  );
 
   test('lost accept response reconciles the committed call state', () async {
     final firestore = FakeFirebaseFirestore();
@@ -547,23 +603,46 @@ class _TerminalThenFreshFunctions implements FirebaseFunctions {
 
 class _ConcurrentStartFunctions implements FirebaseFunctions {
   final List<Map<String, dynamic>> payloads = <Map<String, dynamic>>[];
-  final Completer<void> _bothArrived = Completer<void>();
+  final Completer<void> _release = Completer<void>();
 
   @override
   HttpsCallable httpsCallable(String name, {HttpsCallableOptions? options}) =>
       _CallableStub((parameters) async {
         expect(name, 'startDirectCall');
         payloads.add(Map<String, dynamic>.from(parameters as Map));
-        if (payloads.length == 2 && !_bothArrived.isCompleted) {
-          _bothArrived.complete();
-        }
-        await _bothArrived.future;
+        Future<void>.delayed(const Duration(milliseconds: 10)).then((_) {
+          if (!_release.isCompleted) _release.complete();
+        });
+        await _release.future;
         return <String, dynamic>{
           'callId': 'canonical-concurrent',
           'status': 'ringing',
           'expiresAtMillis': 1787947260000,
         };
       });
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _VideoCompatibilityFunctions implements FirebaseFunctions {
+  @override
+  HttpsCallable httpsCallable(
+    String name, {
+    HttpsCallableOptions? options,
+  }) => _CallableStub((_) async {
+    expect(name, 'startDirectCall');
+    throw FirebaseFunctionsException(
+      code: 'failed-precondition',
+      message:
+          'Video calling is not available until your friend updates YO Voice on every active device.',
+      details: const <String, Object>{
+        'reason': DirectVideoCompatibilityException.reason,
+        'audioFallbackAvailable': true,
+        'requiredProtocol': 1,
+      },
+    );
+  });
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
@@ -582,6 +661,31 @@ class _LostActionResponseFunctions implements FirebaseFunctions {
           code: 'unavailable',
           message: 'The committed response was lost.',
         );
+      });
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _LostTokenResponseFunctions implements FirebaseFunctions {
+  final List<Map<String, dynamic>> payloads = <Map<String, dynamic>>[];
+
+  @override
+  HttpsCallable httpsCallable(String name, {HttpsCallableOptions? options}) =>
+      _CallableStub((parameters) async {
+        expect(name, 'createDirectCallToken');
+        payloads.add(Map<String, dynamic>.from(parameters as Map));
+        if (payloads.length == 1) {
+          throw FirebaseFunctionsException(
+            code: 'unavailable',
+            message: 'The signed token response was lost.',
+          );
+        }
+        return <String, dynamic>{
+          'serverUrl': 'wss://yovoice-3f7j9fb7.livekit.cloud',
+          'participantToken': 'signed-token',
+          'permissions': <String, Object?>{'canPublish': true},
+        };
       });
 
   @override

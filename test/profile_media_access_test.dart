@@ -1,9 +1,13 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:yovoice/features/profile/data/services/profile_media_service.dart';
+import 'package:yovoice/shared/widgets/profile/profile_media_image.dart';
 
 void main() {
   MockFirebaseAuth auth(String uid) => MockFirebaseAuth(
@@ -148,4 +152,66 @@ void main() {
     response.complete(grant());
     await expectLater(pending, throwsA(isA<StateError>()));
   });
+
+  testWidgets(
+    'a public-profile revision retains the resolved avatar while its new grant loads',
+    (tester) async {
+      final second = Completer<Map<Object?, Object?>>();
+      var calls = 0;
+      final service = ProfileMediaService(
+        auth: auth('viewer'),
+        invoker: (_, __) {
+          calls++;
+          return calls == 1 ? Future.value(grant()) : second.future;
+        },
+      );
+      var revision = DateTime.utc(2026, 9, 2, 8);
+      late StateSetter rebuild;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: StatefulBuilder(
+            builder: (context, setState) {
+              rebuild = setState;
+              return ProfileMediaImage(
+                userId: 'target',
+                kind: ProfileMediaKind.avatar,
+                fit: BoxFit.cover,
+                service: service,
+                revision: revision,
+                fallback: const Text('T'),
+                imageProvider: (_) => MemoryImage(_onePixelPng),
+              );
+            },
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byType(Image), findsOneWidget);
+      expect(find.text('T'), findsNothing);
+
+      rebuild(() => revision = revision.add(const Duration(seconds: 1)));
+      await tester.pump();
+      expect(calls, 2);
+      expect(
+        find.byType(Image),
+        findsOneWidget,
+        reason: 'a transient grant refresh must not flash the initial',
+      );
+      expect(find.text('T'), findsNothing);
+
+      second.complete(grant(available: false));
+      await tester.pumpAndSettle();
+      expect(find.byType(Image), findsNothing);
+      expect(
+        find.text('T'),
+        findsOneWidget,
+        reason: 'an authoritative removal still clears the retained avatar',
+      );
+    },
+  );
 }
+
+final Uint8List _onePixelPng = base64Decode(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk'
+  '+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+);

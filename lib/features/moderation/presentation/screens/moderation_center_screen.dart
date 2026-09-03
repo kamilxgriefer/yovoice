@@ -1272,10 +1272,12 @@ abstract final class _Filters {
   static String targetLabel(ReportTargetType target, {AppLocalizations? copy}) {
     final english = switch (target) {
       ReportTargetType.globalMessage => 'Message',
+      ReportTargetType.reel => 'Reel',
       ReportTargetType.user => 'Account',
     };
     final polish = switch (target) {
       ReportTargetType.globalMessage => 'Wiadomość',
+      ReportTargetType.reel => 'Rolka',
       ReportTargetType.user => 'Konto',
     };
     return copy?.text(english, polish) ?? english;
@@ -1792,10 +1794,15 @@ class _DetailState extends State<_Detail> {
                 ),
                 ReportStatus.resolved =>
                   result.contentRemoved
-                      ? copy.text(
-                          'Message removed and report resolved.',
-                          'Wiadomość usunięta, a zgłoszenie rozstrzygnięte.',
-                        )
+                      ? widget.report.targetType == ReportTargetType.reel
+                            ? copy.text(
+                                'Reel hidden and report resolved.',
+                                'Rolka ukryta, a zgłoszenie rozstrzygnięte.',
+                              )
+                            : copy.text(
+                                'Message removed and report resolved.',
+                                'Wiadomość usunięta, a zgłoszenie rozstrzygnięte.',
+                              )
                       : copy.text(
                           'Report resolved.',
                           'Zgłoszenie rozstrzygnięte.',
@@ -1932,7 +1939,9 @@ class _DetailState extends State<_Detail> {
   Widget _actions(ModerationReport report) {
     final copy = AppLocalizations.of(context);
     final service = widget.service;
-    final canRemove = report.targetType == ReportTargetType.globalMessage;
+    final isReel = report.targetType == ReportTargetType.reel;
+    final canRemove =
+        report.targetType == ReportTargetType.globalMessage || isReel;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -2035,10 +2044,15 @@ class _DetailState extends State<_Detail> {
             ),
             if (canRemove)
               _ActionButton(
-                label: copy.text(
-                  'Remove message and resolve',
-                  'Usuń wiadomość i rozstrzygnij',
-                ),
+                label: isReel
+                    ? copy.text(
+                        'Hide Reel and resolve',
+                        'Ukryj rolkę i rozstrzygnij',
+                      )
+                    : copy.text(
+                        'Remove message and resolve',
+                        'Usuń wiadomość i rozstrzygnij',
+                      ),
                 icon: Icons.delete_outline_rounded,
                 danger: true,
                 busy: _busy,
@@ -2048,18 +2062,31 @@ class _DetailState extends State<_Detail> {
                     requestId: id,
                     note: _note.text,
                   ),
-                  confirmTitle: copy.text(
-                    'Remove this message?',
-                    'Usunąć tę wiadomość?',
-                  ),
-                  confirmBody: copy.text(
-                    'The message is hidden from the community and kept '
-                        'as evidence. This is recorded against your account '
-                        'in the moderation audit log.',
-                    'Wiadomość zostanie ukryta przed społecznością i zachowana '
-                        'jako dowód. Ta czynność zostanie przypisana do Twojego '
-                        'konta w dzienniku audytu moderacji.',
-                  ),
+                  confirmTitle: isReel
+                      ? copy.text('Hide this Reel?', 'Ukryć tę rolkę?')
+                      : copy.text(
+                          'Remove this message?',
+                          'Usunąć tę wiadomość?',
+                        ),
+                  confirmBody: isReel
+                      ? copy.text(
+                          'The Reel is hidden from feeds and playback while its '
+                              'media is kept as evidence. This is recorded '
+                              'against your account in the moderation audit log.',
+                          'Rolka zostanie ukryta w kanałach i odtwarzaczu, a jej '
+                              'media zachowane jako dowód. Ta czynność zostanie '
+                              'przypisana do Twojego konta w dzienniku audytu '
+                              'moderacji.',
+                        )
+                      : copy.text(
+                          'The message is hidden from the community and kept '
+                              'as evidence. This is recorded against your account '
+                              'in the moderation audit log.',
+                          'Wiadomość zostanie ukryta przed społecznością i '
+                              'zachowana jako dowód. Ta czynność zostanie '
+                              'przypisana do Twojego konta w dzienniku audytu '
+                              'moderacji.',
+                        ),
                 ),
               ),
             _ActionButton(

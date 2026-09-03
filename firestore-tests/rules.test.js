@@ -13383,6 +13383,45 @@ async function main() {
     },
   );
 
+  await check(
+    "REELS SECURITY: content, reservations, cleanup and ledgers are opaque " +
+      "and server-only",
+    async () => {
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        const db = ctx.firestore();
+        await Promise.all([
+          setDoc(doc(db, "reels/reel-security"), {
+            ownerId: "host-uid",
+            moderationStatus: "visible",
+          }),
+          setDoc(doc(db, "reelUploadReservations/reel-security"), {
+            ownerId: "host-uid",
+            status: "uploading",
+          }),
+          setDoc(doc(db, "reelCleanupOutbox/reel-security"), {
+            ownerId: "host-uid",
+            status: "pending",
+          }),
+          setDoc(doc(db, "integrityOperationLedgers/reel-security"), {
+            ownerId: "host-uid",
+          }),
+        ]);
+      });
+      const db = host.firestore();
+      for (const path of [
+        "reels/reel-security",
+        "reelUploadReservations/reel-security",
+        "reelCleanupOutbox/reel-security",
+        "integrityOperationLedgers/reel-security",
+      ]) {
+        const reference = doc(db, path);
+        await assertFails(getDoc(reference));
+        await assertFails(setDoc(reference, { forged: true }));
+        await assertFails(deleteDoc(reference));
+      }
+    },
+  );
+
   console.log(`\n${passed} passed, ${failed} failed`);
   await testEnv.cleanup();
   process.exit(failed > 0 ? 1 : 0);

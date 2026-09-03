@@ -15,6 +15,8 @@ const {
   ref,
   uploadBytes,
   getBytes,
+  getDownloadURL,
+  updateMetadata,
   deleteObject,
   listAll,
 } = require("firebase/storage");
@@ -93,6 +95,7 @@ const smallImage = new Uint8Array(64 * 1024);
 const tooSmallImage = new Uint8Array(1);
 const overProfileCap = new Uint8Array(2 * 1024 * 1024 + 1);
 const smallAudio = new Uint8Array(128 * 1024);
+const smallVideo = new Uint8Array(256 * 1024);
 const tooSmallAudio = new Uint8Array(1000);
 const oversizeAudio = new Uint8Array(12 * 1024 * 1024 + 1);
 
@@ -115,8 +118,14 @@ const DIRECT_CONVERSATION = "dm_storage_test";
 const DIRECT_IMAGE_MESSAGE = `m_${"a".repeat(40)}`;
 const DIRECT_CONTRACT_IMAGE = `m_${"d".repeat(40)}`;
 const DIRECT_VOICE_MESSAGE = `m_${"e".repeat(40)}`;
+const DIRECT_VIDEO_MESSAGE = `m_${"9".repeat(40)}`;
 const DIRECT_UNVERIFIED_MESSAGE = `m_${"f".repeat(40)}`;
 const DIRECT_EXPIRED_MESSAGE = `m_${"0".repeat(40)}`;
+const STORAGE_TEST_BUCKET = "demo-yovoice";
+const REEL_IMAGE = "reel-image-1";
+const REEL_VIDEO = "reel-video-1";
+const REEL_EXPIRED = "reel-expired-1";
+const REEL_UNVERIFIED = "reel-unverified-1";
 
 function momentMetadata(authorId, momentId, extra = {}) {
   return {
@@ -153,7 +162,9 @@ function voiceReplyReservation(ownerId, momentId, commentId, overrides = {}) {
 
 function directMetadata(ownerId, conversationId, messageId, type, extra = {}) {
   return {
-    contentType: type === "image" ? "image/jpeg" : "audio/mp4",
+    contentType: type === "image"
+      ? "image/jpeg"
+      : type === "video" ? "video/mp4" : "audio/mp4",
     customMetadata: {
       yovoiceConversationId: conversationId,
       yovoiceMessageId: messageId,
@@ -163,6 +174,77 @@ function directMetadata(ownerId, conversationId, messageId, type, extra = {}) {
       ...extra,
     },
   };
+}
+
+function directMessage(ownerId, conversationId, messageId, type, extension) {
+  return {
+    schemaVersion: 2,
+    sequence: 1,
+    conversationId,
+    senderId: ownerId,
+    type,
+    content: type === "video" ? "Video" : "",
+    mediaUrl:
+      `gs://${STORAGE_TEST_BUCKET}/message_attachments/${ownerId}/` +
+      `${conversationId}/${messageId}.${extension}`,
+    durationSeconds: type === "image" ? null : 7,
+    sentAt: new Date(),
+    readBy: [ownerId],
+    reactions: {},
+    isDeleted: false,
+    editedAt: null,
+    replyToMessageId: null,
+    replyToSenderId: null,
+    replyToContent: null,
+  };
+}
+
+function reelMetadata(ownerId, reelId, assetKind, contentType) {
+  return {
+    contentType,
+    customMetadata: { ownerId, reelId, assetKind },
+  };
+}
+
+async function seedReelReservation(
+  testEnv,
+  {
+    reelId,
+    ownerId = ALICE,
+    mediaKind = "image",
+    mediaContentType = "image/jpeg",
+    mediaSize = smallImage.length,
+    mediaFileName = "media.jpg",
+    hasBackingAudio = false,
+    audioContentType = null,
+    audioSize = null,
+    audioFileName = null,
+    expiresAt = new Date(Date.now() + 10 * 60 * 1000),
+  },
+) {
+  const mediaStoragePath = `reels/${ownerId}/${reelId}/${mediaFileName}`;
+  const backingAudioStoragePath = audioFileName == null
+    ? null
+    : `reels/${ownerId}/${reelId}/${audioFileName}`;
+  await testEnv.withSecurityRulesDisabled(async (ctx) => {
+    await setDoc(doc(ctx.firestore(), `reelUploadReservations/${reelId}`), {
+      schemaVersion: 1,
+      reelId,
+      ownerId,
+      status: "uploading",
+      mediaKind,
+      mediaContentType,
+      mediaSize,
+      mediaStoragePath,
+      hasBackingAudio,
+      audioContentType,
+      audioSize,
+      backingAudioStoragePath,
+      createdAt: new Date(),
+      expiresAt,
+    });
+  });
+  return { mediaStoragePath, backingAudioStoragePath };
 }
 
 // `testEnv.clearStorage()` deletes only what a single `listAll()` at the
@@ -203,6 +285,36 @@ async function clearStorage(testEnv) {
       );
     }
   });
+}
+
+async function revokeEmulatorDownloadToken(testEnv, objectPath) {
+  let tokenUrl;
+  let beforeStatus;
+  let afterStatus;
+  await testEnv.withSecurityRulesDisabled(async (ctx) => {
+    const object = ref(ctx.storage(), objectPath);
+    tokenUrl = await getDownloadURL(object);
+    beforeStatus = (await fetch(tokenUrl)).status;
+    const token = new URL(tokenUrl).searchParams.get("token");
+    if (!token) {
+      throw new Error("Storage emulator did not issue a download token.");
+    }
+    const revokeUrl = new URL(tokenUrl);
+    revokeUrl.search = "";
+    revokeUrl.searchParams.set("delete_token", token);
+    const response = await fetch(revokeUrl, {
+      method: "POST",
+      headers: { Authorization: "Bearer owner" },
+    });
+    if (!response.ok) {
+      throw new Error(`Storage emulator token revocation failed: ${response.status}`);
+    }
+    await updateMetadata(object, {
+      customMetadata: { yovoiceFinalized: "true" },
+    });
+  });
+  afterStatus = (await fetch(tokenUrl)).status;
+  return { beforeStatus, afterStatus, tokenUrl };
 }
 
 async function seed(testEnv) {
@@ -396,6 +508,23 @@ async function seed(testEnv) {
       },
     );
     await setDoc(
+      doc(db, `directMessageUploadReservations/${DIRECT_VIDEO_MESSAGE}`),
+      {
+        schemaVersion: 1,
+        ownerId: ALICE,
+        conversationId: DIRECT_CONVERSATION,
+        messageId: DIRECT_VIDEO_MESSAGE,
+        recipientId: BOB,
+        type: "video",
+        contentType: "video/mp4",
+        durationSeconds: 12,
+        storagePath: `message_attachments/${ALICE}/${DIRECT_CONVERSATION}/${DIRECT_VIDEO_MESSAGE}.mp4`,
+        status: "uploading",
+        createdAt: new Date(),
+        expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+      },
+    );
+    await setDoc(
       doc(db, `directMessageUploadReservations/${DIRECT_UNVERIFIED_MESSAGE}`),
       {
         schemaVersion: 1,
@@ -429,6 +558,47 @@ async function seed(testEnv) {
         expiresAt: new Date(Date.now() - 10 * 60 * 1000),
       },
     );
+    await Promise.all([
+      setDoc(
+        doc(
+          db,
+          `conversations/${DIRECT_CONVERSATION}/messages/${DIRECT_IMAGE_MESSAGE}`,
+        ),
+        directMessage(
+          ALICE,
+          DIRECT_CONVERSATION,
+          DIRECT_IMAGE_MESSAGE,
+          "image",
+          "jpg",
+        ),
+      ),
+      setDoc(
+        doc(
+          db,
+          `conversations/${DIRECT_CONVERSATION}/messages/${DIRECT_VOICE_MESSAGE}`,
+        ),
+        directMessage(
+          ALICE,
+          DIRECT_CONVERSATION,
+          DIRECT_VOICE_MESSAGE,
+          "voice",
+          "m4a",
+        ),
+      ),
+      setDoc(
+        doc(
+          db,
+          `conversations/${DIRECT_CONVERSATION}/messages/${DIRECT_VIDEO_MESSAGE}`,
+        ),
+        directMessage(
+          ALICE,
+          DIRECT_CONVERSATION,
+          DIRECT_VIDEO_MESSAGE,
+          "video",
+          "mp4",
+        ),
+      ),
+    ]);
   });
 }
 
@@ -549,8 +719,8 @@ async function main() {
 
   // --- Direct messages: exact server reservation + participant-only reads. ---
   const directImagePath = `message_attachments/${ALICE}/${DIRECT_CONVERSATION}/${DIRECT_IMAGE_MESSAGE}.jpg`;
-  await check("reserved direct image uploads with exact identity", () =>
-    assertSucceeds(
+  await check("reserved direct image uploads with exact identity", async () => {
+    await assertSucceeds(
       uploadBytes(
         ref(alice, directImagePath),
         smallImage,
@@ -561,8 +731,28 @@ async function main() {
           "image",
         ),
       ),
-    ),
-  );
+    );
+    // Build 18 created the canonical message document but did not add the
+    // server-owned finalization marker. Keep that historical shape denied
+    // until the trusted migration has revoked its bearer token, re-probed the
+    // exact generation and added the marker. Message existence alone is not a
+    // safe substitute because it would reopen the publish/metadata race.
+    await assertFails(getBytes(ref(alice, directImagePath)));
+    await assertFails(getBytes(ref(bob, directImagePath)));
+    const revoked = await revokeEmulatorDownloadToken(
+      testEnv,
+      directImagePath,
+    );
+    if (revoked.beforeStatus !== 200 || revoked.afterStatus === 200) {
+      throw new Error(
+        `durable token status did not change from 200: ` +
+          `${revoked.beforeStatus} -> ${revoked.afterStatus}`,
+      );
+    }
+    if (!revoked.tokenUrl.includes("token=")) {
+      throw new Error("emulator did not issue a bearer-token download URL");
+    }
+  });
   await check(
     "only conversation participants can read private attachments",
     async () => {
@@ -570,6 +760,79 @@ async function main() {
       await assertSucceeds(getBytes(ref(bob, directImagePath)));
       await assertFails(getBytes(ref(mallory, directImagePath)));
       await assertFails(getBytes(ref(anon, directImagePath)));
+    },
+  );
+  await check(
+    "disabled participants and deleted conversations lose direct reads",
+    async () => {
+      try {
+        await testEnv.withSecurityRulesDisabled(async (ctx) => {
+          await setDoc(
+            doc(ctx.firestore(), `users/${BOB}`),
+            { disabled: true },
+            { merge: true },
+          );
+        });
+        await assertFails(getBytes(ref(bob, directImagePath)));
+      } finally {
+        await testEnv.withSecurityRulesDisabled(async (ctx) => {
+          await setDoc(
+            doc(ctx.firestore(), `users/${BOB}`),
+            { disabled: false },
+            { merge: true },
+          );
+        });
+      }
+
+      try {
+        await testEnv.withSecurityRulesDisabled(async (ctx) => {
+          await deleteDoc(
+            doc(ctx.firestore(), `conversations/${DIRECT_CONVERSATION}`),
+          );
+        });
+        await assertFails(getBytes(ref(bob, directImagePath)));
+      } finally {
+        await testEnv.withSecurityRulesDisabled(async (ctx) => {
+          await setDoc(
+            doc(ctx.firestore(), `conversations/${DIRECT_CONVERSATION}`),
+            { schemaVersion: 2, participantIds: [ALICE, BOB] },
+          );
+        });
+      }
+    },
+  );
+  await check(
+    "direct attachments are point-readable only after finalization and never listable",
+    async () => {
+      const unfinalizedPath =
+        `message_attachments/${ALICE}/${DIRECT_CONVERSATION}/` +
+        `${DIRECT_CONTRACT_IMAGE}.jpg`;
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await uploadBytes(
+          ref(ctx.storage(), unfinalizedPath),
+          smallImage,
+          directMetadata(
+            ALICE,
+            DIRECT_CONVERSATION,
+            DIRECT_CONTRACT_IMAGE,
+            "image",
+          ),
+        );
+      });
+
+      await assertSucceeds(getBytes(ref(bob, directImagePath)));
+      await assertFails(getBytes(ref(bob, unfinalizedPath)));
+      await assertFails(
+        listAll(
+          ref(
+            bob,
+            `message_attachments/${ALICE}/${DIRECT_CONVERSATION}`,
+          ),
+        ),
+      );
+      await assertFails(
+        listAll(ref(alice, `message_attachments/${ALICE}`)),
+      );
     },
   );
   await check(
@@ -641,6 +904,19 @@ async function main() {
     async () => {
       const path = `message_attachments/${ALICE}/${DIRECT_CONVERSATION}/${DIRECT_CONTRACT_IMAGE}.jpg`;
       await assertFails(
+        uploadBytes(
+          ref(alice, path),
+          smallImage,
+          directMetadata(
+            ALICE,
+            DIRECT_CONVERSATION,
+            DIRECT_CONTRACT_IMAGE,
+            "image",
+            { yovoiceFinalized: "true" },
+          ),
+        ),
+      );
+      await assertFails(
         uploadBytes(ref(alice, path), smallImage, {
           ...directMetadata(
             ALICE,
@@ -705,6 +981,48 @@ async function main() {
           ),
         ),
       );
+      await assertFails(getBytes(ref(alice, path)));
+      await assertFails(getBytes(ref(bob, path)));
+      const revoked = await revokeEmulatorDownloadToken(testEnv, path);
+      if (revoked.beforeStatus !== 200 || revoked.afterStatus === 200) {
+        throw new Error(
+          `legacy voice token status did not change from 200: ` +
+            `${revoked.beforeStatus} -> ${revoked.afterStatus}`,
+        );
+      }
+      await assertSucceeds(getBytes(ref(alice, path)));
+      await assertSucceeds(getBytes(ref(bob, path)));
+      await assertFails(getBytes(ref(mallory, path)));
+    },
+  );
+  await check(
+    "reserved direct video is private and binds MIME to its extension",
+    async () => {
+      const path = `message_attachments/${ALICE}/${DIRECT_CONVERSATION}/${DIRECT_VIDEO_MESSAGE}.mp4`;
+      await assertFails(
+        uploadBytes(ref(alice, path), smallVideo, {
+          ...directMetadata(
+            ALICE,
+            DIRECT_CONVERSATION,
+            DIRECT_VIDEO_MESSAGE,
+            "video",
+          ),
+          contentType: "video/quicktime",
+        }),
+      );
+      await assertSucceeds(
+        uploadBytes(
+          ref(alice, path),
+          smallVideo,
+          directMetadata(
+            ALICE,
+            DIRECT_CONVERSATION,
+            DIRECT_VIDEO_MESSAGE,
+            "video",
+          ),
+        ),
+      );
+      await revokeEmulatorDownloadToken(testEnv, path);
       await assertSucceeds(getBytes(ref(alice, path)));
       await assertSucceeds(getBytes(ref(bob, path)));
       await assertFails(getBytes(ref(mallory, path)));
@@ -739,6 +1057,130 @@ async function main() {
           ),
         ),
       );
+    },
+  );
+
+  // --- Reels: exact reservation-bound media, uploader recovery only. ---
+  const reelImage = await seedReelReservation(testEnv, {
+    reelId: REEL_IMAGE,
+  });
+  await check(
+    "verified Reel author can upload and recover the exact reserved image",
+    async () => {
+      await assertSucceeds(
+        uploadBytes(
+          ref(alice, reelImage.mediaStoragePath),
+          smallImage,
+          reelMetadata(ALICE, REEL_IMAGE, "media", "image/jpeg"),
+        ),
+      );
+      await assertSucceeds(getBytes(ref(alice, reelImage.mediaStoragePath)));
+      await assertFails(getBytes(ref(bob, reelImage.mediaStoragePath)));
+      await assertFails(getBytes(ref(anon, reelImage.mediaStoragePath)));
+      await assertFails(listAll(ref(alice, `reels/${ALICE}/${REEL_IMAGE}`)));
+      await assertFails(deleteObject(ref(alice, reelImage.mediaStoragePath)));
+      await assertFails(
+        uploadBytes(
+          ref(alice, reelImage.mediaStoragePath),
+          smallImage,
+          reelMetadata(ALICE, REEL_IMAGE, "media", "image/jpeg"),
+        ),
+      );
+    },
+  );
+
+  const reelVideo = await seedReelReservation(testEnv, {
+    reelId: REEL_VIDEO,
+    mediaKind: "video",
+    mediaContentType: "video/mp4",
+    mediaSize: smallVideo.length,
+    mediaFileName: "media.mp4",
+    hasBackingAudio: true,
+    audioContentType: "audio/mp4",
+    audioSize: smallAudio.length,
+    audioFileName: "backing-audio.m4a",
+  });
+  await check(
+    "Reel video and licensed backing audio bind type, path and metadata",
+    async () => {
+      await assertFails(
+        uploadBytes(
+          ref(alice, reelVideo.mediaStoragePath),
+          smallVideo,
+          reelMetadata(ALICE, REEL_VIDEO, "media", "video/quicktime"),
+        ),
+      );
+      await assertFails(
+        uploadBytes(
+          ref(alice, reelVideo.mediaStoragePath),
+          smallVideo,
+          reelMetadata(BOB, REEL_VIDEO, "media", "video/mp4"),
+        ),
+      );
+      await assertSucceeds(
+        uploadBytes(
+          ref(alice, reelVideo.mediaStoragePath),
+          smallVideo,
+          reelMetadata(ALICE, REEL_VIDEO, "media", "video/mp4"),
+        ),
+      );
+      await assertSucceeds(
+        uploadBytes(
+          ref(alice, reelVideo.backingAudioStoragePath),
+          smallAudio,
+          reelMetadata(ALICE, REEL_VIDEO, "backingAudio", "audio/mp4"),
+        ),
+      );
+    },
+  );
+
+  const expiredReel = await seedReelReservation(testEnv, {
+    reelId: REEL_EXPIRED,
+    expiresAt: new Date(Date.now() - 60 * 1000),
+  });
+  const unverifiedReel = await seedReelReservation(testEnv, {
+    reelId: REEL_UNVERIFIED,
+    ownerId: NEWBIE,
+  });
+  await check(
+    "expired, unverified and forged Reel uploads fail closed",
+    async () => {
+      await assertFails(
+        uploadBytes(
+          ref(alice, expiredReel.mediaStoragePath),
+          smallImage,
+          reelMetadata(ALICE, REEL_EXPIRED, "media", "image/jpeg"),
+        ),
+      );
+      await assertFails(
+        uploadBytes(
+          ref(newbie, unverifiedReel.mediaStoragePath),
+          smallImage,
+          reelMetadata(NEWBIE, REEL_UNVERIFIED, "media", "image/jpeg"),
+        ),
+      );
+      await assertFails(
+        uploadBytes(
+          ref(alice, `reels/${ALICE}/missing-reel/media.jpg`),
+          smallImage,
+          reelMetadata(ALICE, "missing-reel", "media", "image/jpeg"),
+        ),
+      );
+    },
+  );
+
+  await testEnv.withSecurityRulesDisabled(async (ctx) => {
+    await setDoc(
+      doc(ctx.firestore(), `reelUploadReservations/${REEL_IMAGE}`),
+      { status: "published" },
+      { merge: true },
+    );
+  });
+  await check(
+    "published Reel bytes are never exposed through direct Storage reads",
+    async () => {
+      await assertFails(getBytes(ref(alice, reelImage.mediaStoragePath)));
+      await assertFails(getBytes(ref(bob, reelImage.mediaStoragePath)));
     },
   );
 
