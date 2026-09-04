@@ -7,10 +7,12 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:mock_exceptions/mock_exceptions.dart';
 
 import 'package:yovoice/core/presence/presence_service.dart';
 import 'package:yovoice/features/auth/data/auth_service.dart';
 import 'package:yovoice/features/auth/providers/auth_provider.dart';
+import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/services/firestore_service.dart';
 
 /// Signing out owns the server-side cleanup that requires a live session and
@@ -198,6 +200,8 @@ class _Harness {
 }
 
 void main() {
+  tearDown(FriendService.clearSharedReadCaches);
+
   group('AuthService.signOut cleanup ordering', () {
     test('marks the account offline while the session is still live', () async {
       final harness = _Harness();
@@ -297,6 +301,61 @@ void main() {
   });
 
   group('AuthService.signOut resilience', () {
+    test(
+      'a failed Firebase sign-out keeps the authenticated friends stream live',
+      () async {
+        final harness = _Harness();
+        await harness.firestore
+            .collection('users')
+            .doc('user-1')
+            .collection('friends')
+            .doc('friend-1')
+            .set({'displayName': 'Friend'});
+        await harness.firestore
+            .collection('publicProfiles')
+            .doc('friend-1')
+            .set({'displayName': 'Before failed sign-out'});
+        final friends = FriendService(
+          firestore: harness.firestore,
+          auth: harness.auth,
+        );
+        final initial = Completer<void>();
+        final updated = Completer<void>();
+        final subscription = friends.watchFriends().listen((items) {
+          if (items.any(
+                (friend) => friend.displayName == 'Before failed sign-out',
+              ) &&
+              !initial.isCompleted) {
+            initial.complete();
+          }
+          if (items.any(
+                (friend) => friend.displayName == 'After failed sign-out',
+              ) &&
+              !updated.isCompleted) {
+            updated.complete();
+          }
+        });
+        addTearDown(subscription.cancel);
+        await initial.future.timeout(const Duration(seconds: 5));
+
+        whenCalling(
+          Invocation.method(#signOut, [null]),
+        ).on(harness.auth).thenThrow(FirebaseAuthException(code: 'internal'));
+
+        await expectLater(
+          harness.service.signOut(),
+          throwsA(isA<FirebaseAuthException>()),
+        );
+        expect(harness.auth.currentUser?.uid, 'user-1');
+
+        await harness.firestore
+            .collection('publicProfiles')
+            .doc('friend-1')
+            .update({'displayName': 'After failed sign-out'});
+        await updated.future.timeout(const Duration(seconds: 5));
+      },
+    );
+
     test('a denied presence write still signs the user out', () async {
       final harness = _Harness();
       harness.presence.failure = FirebaseException(

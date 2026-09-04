@@ -14,12 +14,28 @@ import 'package:yovoice/features/friends/presentation/screens/friend_profile_scr
 import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/notifications/data/services/notification_service.dart';
 import 'package:yovoice/features/profile/data/services/follow_service.dart';
+import 'package:yovoice/features/profile/data/services/profile_media_service.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
+import 'package:yovoice/features/profile/presentation/screens/follow_list_screen.dart';
+import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
 
 class _EmptySocialGraphService implements SocialGraphService {
   @override
   Future<MutualFriendsSummary> getMutualFriends(String targetUserId) async =>
       MutualFriendsSummary.empty;
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _MutualSocialGraphService implements SocialGraphService {
+  const _MutualSocialGraphService(this.summary);
+
+  final MutualFriendsSummary summary;
+
+  @override
+  Future<MutualFriendsSummary> getMutualFriends(String targetUserId) async =>
+      summary;
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
@@ -75,7 +91,11 @@ void main() {
     });
   });
 
-  FriendProfileScreen buildScreen({Key? key}) {
+  FriendProfileScreen buildScreen({
+    Key? key,
+    SocialGraphService? socialGraphService,
+    ProfileMediaService? profileMediaService,
+  }) {
     final notifications = NotificationService(firestore: db, auth: auth);
     return FriendProfileScreen(
       key: key,
@@ -87,6 +107,8 @@ void main() {
         isOnline: true,
         lastSeen: null,
       ),
+      firestore: db,
+      auth: auth,
       friendService: FriendService(
         firestore: db,
         auth: auth,
@@ -99,9 +121,112 @@ void main() {
       ),
       profileService: ProfileService(firestore: db, auth: auth),
       followService: FollowService(firestore: db, auth: auth),
-      socialGraphService: _EmptySocialGraphService(),
+      socialGraphService: socialGraphService ?? _EmptySocialGraphService(),
+      profileMediaService: profileMediaService,
     );
   }
+
+  testWidgets('rapid stat taps push one follow-list route', (tester) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(
+      MaterialApp(theme: AppTheme.darkTheme, home: buildScreen()),
+    );
+    for (var pump = 0; pump < 8; pump++) {
+      await tester.pump(const Duration(milliseconds: 80));
+    }
+
+    final followers = find.byKey(
+      const ValueKey('friend-profile-stat-followers'),
+    );
+    final scrollable = find
+        .descendant(
+          of: find.byKey(const ValueKey('friend-profile-content-frame')),
+          matching: find.byType(Scrollable),
+        )
+        .first;
+    await tester.scrollUntilVisible(followers, 180, scrollable: scrollable);
+    final tapRegion = tester.widget<AccessibleTapRegion>(followers);
+    tapRegion.onTap!();
+    tapRegion.onTap!();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+
+    expect(find.byType(FollowListScreen), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('mutual avatar ignores legacy URL and uses viewer grant', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final requestedTargets = <String>[];
+    final media = ProfileMediaService(
+      auth: auth,
+      invoker: (_, request) async {
+        requestedTargets.add(request['userId']! as String);
+        return {
+          'schemaVersion': 1,
+          'available': false,
+          'expiresAtMillis': DateTime.now()
+              .toUtc()
+              .add(const Duration(seconds: 80))
+              .millisecondsSinceEpoch,
+        };
+      },
+    );
+    const maliciousUrl = 'https://tracker.invalid/private-avatar.jpg';
+    final graph = _MutualSocialGraphService(
+      MutualFriendsSummary(
+        count: 1,
+        sample: [
+          SuggestedFriend(
+            uid: 'mutual-user',
+            displayName: 'Mutual User',
+            photoUrl: maliciousUrl,
+            mutualCount: 1,
+          ),
+        ],
+      ),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.darkTheme,
+        home: buildScreen(
+          socialGraphService: graph,
+          profileMediaService: media,
+        ),
+      ),
+    );
+    for (var pump = 0; pump < 8; pump++) {
+      await tester.pump(const Duration(milliseconds: 80));
+    }
+
+    final mutualLabel = find.text('1 mutual friend');
+    final scrollable = find
+        .descendant(
+          of: find.byKey(const ValueKey('friend-profile-content-frame')),
+          matching: find.byType(Scrollable),
+        )
+        .first;
+    await tester.scrollUntilVisible(mutualLabel, 180, scrollable: scrollable);
+    await tester.pumpAndSettle();
+
+    expect(requestedTargets, contains('mutual-user'));
+    expect(
+      find.byWidgetPredicate((widget) {
+        if (widget is! Image) return false;
+        final provider = widget.image;
+        return provider is NetworkImage && provider.url == maliciousUrl;
+      }),
+      findsNothing,
+      reason: 'denormalized photoUrl must never bypass profile-media grants',
+    );
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets('keeps phones full-width and centres an 880px profile feed '
       'across desktop widths with long content', (tester) async {

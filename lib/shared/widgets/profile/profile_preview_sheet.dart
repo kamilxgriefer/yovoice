@@ -29,6 +29,8 @@ import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 import 'package:yovoice/shared/widgets/profile/profile_media_image.dart';
 import 'package:yovoice/shared/widgets/profile/profile_photo_viewer.dart';
 
+final Set<NavigatorState> _profilePreviewNavigators = <NavigatorState>{};
+
 /// The one way to open "who is this person?" from anywhere in the app —
 /// a tap on any avatar or name (participant lists, chats, friends,
 /// moments, search) opens this compact preview instead of yanking the
@@ -58,65 +60,93 @@ Future<void> showProfilePreview(
   // after popping the sheet is unsafe (and used to make Message appear inert
   // when the preview itself was opened above another modal).
   final navigator = Navigator.of(context);
-  final resolvedAuth = auth ?? FirebaseAuth.instance;
-  // Production shares the process-wide facade. Dependency-injected previews
-  // get a matching short-lived service; this helper owns and disposes it only
-  // after a pushed Chat route has returned.
-  final ownedMessageService =
-      messageService == null && (firestore != null || auth != null)
-      ? MessageService(firestore: firestore, auth: resolvedAuth)
-      : null;
-  final resolvedMessageService =
-      messageService ?? ownedMessageService ?? MessageService.live;
+  // A profile preview fans out into profile, relationship, moderation and
+  // mutual-friend reads. Rapid taps used to enqueue multiple identical sheets
+  // before the first frame appeared, multiplying that work and later popping
+  // a stack of duplicate profiles. Allow one visible preview per Navigator;
+  // the lock is released as soon as the sheet resolves, before its destination
+  // route is pushed, so avatars remain usable inside that route.
+  if (!_profilePreviewNavigators.add(navigator)) return;
+  MessageService? ownedMessageService;
 
   try {
-    final destination = await showModalBottomSheet<_ProfilePreviewDestination>(
-      context: context,
-      isScrollControlled: true,
-      useSafeArea: true,
-      backgroundColor: Colors.transparent,
-      showDragHandle: false,
-      barrierColor: context.appPalette.scrim.withValues(alpha: .72),
-      constraints: ResponsiveContentFrame.adaptiveModalConstraints(context),
-      builder: (_) => ProfilePreviewSheet(
-        userId: userId,
-        seedDisplayName: displayName,
-        seedPhotoUrl: photoUrl,
-        firestore: firestore,
-        auth: resolvedAuth,
-        friendService: friendService,
-        messageService: resolvedMessageService,
-        profileMediaService: profileMediaService,
-        profileMediaImageProvider: profileMediaImageProvider,
-      ),
-    );
+    final resolvedAuth = auth ?? FirebaseAuth.instance;
+    // Production shares the process-wide facade. Dependency-injected previews
+    // get a matching short-lived service; this helper owns and disposes it only
+    // after a pushed Chat route has returned.
+    ownedMessageService =
+        messageService == null && (firestore != null || auth != null)
+        ? MessageService(firestore: firestore, auth: resolvedAuth)
+        : null;
+    final resolvedMessageService =
+        messageService ?? ownedMessageService ?? MessageService.live;
 
-    if (destination == null || !navigator.mounted) return;
+    _ProfilePreviewDestination? destination;
+    try {
+      destination = await showModalBottomSheet<_ProfilePreviewDestination>(
+        context: context,
+        isScrollControlled: true,
+        useSafeArea: true,
+        backgroundColor: Colors.transparent,
+        showDragHandle: false,
+        barrierColor: context.appPalette.scrim.withValues(alpha: .72),
+        constraints: ResponsiveContentFrame.adaptiveModalConstraints(context),
+        builder: (_) => ProfilePreviewSheet(
+          userId: userId,
+          seedDisplayName: displayName,
+          seedPhotoUrl: photoUrl,
+          firestore: firestore,
+          auth: resolvedAuth,
+          friendService: friendService,
+          messageService: resolvedMessageService,
+          profileMediaService: profileMediaService,
+          profileMediaImageProvider: profileMediaImageProvider,
+        ),
+      );
+    } finally {
+      _profilePreviewNavigators.remove(navigator);
+    }
 
-    switch (destination) {
+    final resolvedDestination = destination;
+    if (resolvedDestination == null || !navigator.mounted) return;
+
+    switch (resolvedDestination) {
       case _ProfileChatDestination():
         await navigator.push<void>(
           MaterialPageRoute<void>(
             builder: (_) => ChatScreen(
-              conversationId: destination.conversationId,
-              otherUserId: destination.profile.uid,
-              otherDisplayName: destination.profile.displayName,
-              otherEmail: destination.profile.email,
-              otherPhotoUrl: destination.profile.photoUrl ?? '',
-              otherProfileUpdatedAt: destination.profile.profileUpdatedAt,
-              messageService: destination.messageService,
-              auth: destination.auth,
+              conversationId: resolvedDestination.conversationId,
+              otherUserId: resolvedDestination.profile.uid,
+              otherDisplayName: resolvedDestination.profile.displayName,
+              otherEmail: resolvedDestination.profile.email,
+              otherPhotoUrl: resolvedDestination.profile.photoUrl ?? '',
+              otherProfileUpdatedAt:
+                  resolvedDestination.profile.profileUpdatedAt,
+              messageService: resolvedDestination.messageService,
+              firestore: resolvedDestination.firestore,
+              auth: resolvedDestination.auth,
             ),
           ),
         );
       case _FullProfileDestination():
         await navigator.push<void>(
           MaterialPageRoute<void>(
-            builder: (_) => FriendProfileScreen(friend: destination.friend),
+            builder: (_) => FriendProfileScreen(
+              friend: resolvedDestination.friend,
+              firestore: resolvedDestination.firestore,
+              auth: resolvedDestination.auth,
+              friendService: resolvedDestination.friendService,
+              messageService: resolvedDestination.messageService,
+              profileService: resolvedDestination.profileService,
+              followService: resolvedDestination.followService,
+              socialGraphService: resolvedDestination.socialGraphService,
+              profileMediaService: resolvedDestination.profileMediaService,
+            ),
           ),
         );
     }
   } finally {
+    _profilePreviewNavigators.remove(navigator);
     await ownedMessageService?.dispose();
   }
 }
@@ -130,19 +160,39 @@ class _ProfileChatDestination extends _ProfilePreviewDestination {
     required this.conversationId,
     required this.profile,
     required this.messageService,
+    required this.firestore,
     required this.auth,
   });
 
   final String conversationId;
   final UserProfile profile;
   final MessageService messageService;
+  final FirebaseFirestore firestore;
   final FirebaseAuth auth;
 }
 
 class _FullProfileDestination extends _ProfilePreviewDestination {
-  const _FullProfileDestination(this.friend);
+  const _FullProfileDestination({
+    required this.friend,
+    required this.firestore,
+    required this.auth,
+    required this.friendService,
+    required this.messageService,
+    required this.profileService,
+    required this.followService,
+    required this.socialGraphService,
+    required this.profileMediaService,
+  });
 
   final FriendUser friend;
+  final FirebaseFirestore firestore;
+  final FirebaseAuth auth;
+  final FriendService friendService;
+  final MessageService messageService;
+  final ProfileService profileService;
+  final FollowService followService;
+  final SocialGraphService socialGraphService;
+  final ProfileMediaService? profileMediaService;
 }
 
 class ProfilePreviewSheet extends StatefulWidget {
@@ -199,6 +249,7 @@ class _ProfilePreviewSheetState extends State<ProfilePreviewSheet> {
   bool _busyFriend = false;
   bool _busyFollow = false;
   bool _busyMessage = false;
+  bool _destinationChosen = false;
   String? _messageError;
 
   String get _currentUid => _auth.currentUser?.uid ?? '';
@@ -270,8 +321,20 @@ class _ProfilePreviewSheetState extends State<ProfilePreviewSheet> {
   }
 
   void _openFullProfile(UserProfile profile) {
+    if (_destinationChosen) return;
+    _destinationChosen = true;
     Navigator.of(context).pop<_ProfilePreviewDestination>(
-      _FullProfileDestination(_asFriendUser(profile)),
+      _FullProfileDestination(
+        friend: _asFriendUser(profile),
+        firestore: _firestore,
+        auth: _auth,
+        friendService: _friends,
+        messageService: _messages,
+        profileService: _profiles,
+        followService: _follows,
+        socialGraphService: _socialGraph,
+        profileMediaService: widget.profileMediaService,
+      ),
     );
   }
 
@@ -294,6 +357,7 @@ class _ProfilePreviewSheetState extends State<ProfilePreviewSheet> {
           conversationId: conversationId,
           profile: profile,
           messageService: _messages,
+          firestore: _firestore,
           auth: _auth,
         ),
       );

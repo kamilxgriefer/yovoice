@@ -8,6 +8,7 @@ import 'package:yovoice/features/friends/data/models/friend_request.dart';
 import 'package:yovoice/features/friends/data/models/friend_user.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/friends/data/services/social_graph_service.dart';
+import 'package:yovoice/features/profile/data/services/profile_media_service.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/profile/profile_photo_viewer.dart';
@@ -17,6 +18,7 @@ class AddFriendScreen extends StatefulWidget {
   const AddFriendScreen({
     this.friendService,
     this.socialGraphService,
+    this.profileMediaService,
     super.key,
   });
 
@@ -26,6 +28,7 @@ class AddFriendScreen extends StatefulWidget {
   /// wiring below can be exercised without a Firebase app.
   final FriendService? friendService;
   final SocialGraphService? socialGraphService;
+  final ProfileMediaService? profileMediaService;
 
   @override
   State<AddFriendScreen> createState() => _AddFriendScreenState();
@@ -36,6 +39,7 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
       widget.friendService ?? FriendService();
   late final SocialGraphService _socialGraphService =
       widget.socialGraphService ?? SocialGraphService();
+  ProfileMediaService? get _profileMediaService => widget.profileMediaService;
   final TextEditingController _searchController = TextEditingController();
 
   Timer? _searchDebounce;
@@ -623,6 +627,7 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
         final user = _results[index];
         return _UserResultCard(
           user: user,
+          profileMediaService: _profileMediaService,
           relationshipStatus:
               _relationshipStatuses[user.id] ?? FriendRelationshipStatus.none,
           isProcessing: _processingIds.contains(user.id),
@@ -692,6 +697,7 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
                 padding: const EdgeInsets.only(bottom: 10),
                 child: _SuggestionCard(
                   suggestion: suggestion,
+                  profileMediaService: _profileMediaService,
                   isProcessing: _processingIds.contains(suggestion.uid),
                   relationshipStatus: _suggestionStatuses[suggestion.uid],
                   onPressed: () => _addSuggestion(suggestion),
@@ -708,12 +714,14 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
 class _SuggestionCard extends StatelessWidget {
   const _SuggestionCard({
     required this.suggestion,
+    this.profileMediaService,
     required this.isProcessing,
     required this.relationshipStatus,
     required this.onPressed,
   });
 
   final SuggestedFriend suggestion;
+  final ProfileMediaService? profileMediaService;
   final bool isProcessing;
   final FriendRelationshipStatus? relationshipStatus;
   final VoidCallback onPressed;
@@ -742,12 +750,14 @@ class _SuggestionCard extends StatelessWidget {
             userId: suggestion.uid,
             displayName: suggestion.displayName,
             mediaRevision: suggestion.profileUpdatedAt,
+            mediaService: profileMediaService,
             minimumSize: const Size(48, 48),
             child: ClipOval(
               child: UserAvatar(
                 radius: 24,
                 userId: suggestion.uid,
                 mediaRevision: suggestion.profileUpdatedAt,
+                mediaService: profileMediaService,
                 displayName: suggestion.displayName,
                 backgroundColor: palette.surfaceSunken,
               ),
@@ -887,6 +897,7 @@ class _SuggestionCard extends StatelessWidget {
 class _UserResultCard extends StatelessWidget {
   const _UserResultCard({
     required this.user,
+    this.profileMediaService,
     required this.relationshipStatus,
     required this.isProcessing,
     required this.onPressed,
@@ -894,6 +905,7 @@ class _UserResultCard extends StatelessWidget {
   });
 
   final FriendUser user;
+  final ProfileMediaService? profileMediaService;
   final FriendRelationshipStatus relationshipStatus;
   final bool isProcessing;
   final VoidCallback onPressed;
@@ -915,7 +927,7 @@ class _UserResultCard extends StatelessWidget {
     );
     final identity = Row(
       children: [
-        _UserAvatar(user: user),
+        _UserAvatar(user: user, profileMediaService: profileMediaService),
         const SizedBox(width: 13),
         Expanded(
           child: Column(
@@ -1135,9 +1147,10 @@ class _FriendButtonPresentation {
 }
 
 class _UserAvatar extends StatelessWidget {
-  const _UserAvatar({required this.user});
+  const _UserAvatar({required this.user, this.profileMediaService});
 
   final FriendUser user;
+  final ProfileMediaService? profileMediaService;
 
   @override
   Widget build(BuildContext context) {
@@ -1157,11 +1170,13 @@ class _UserAvatar extends StatelessWidget {
         userId: user.id,
         displayName: user.displayName,
         mediaRevision: user.profileUpdatedAt,
+        mediaService: profileMediaService,
         minimumSize: const Size(48, 48),
         child: UserAvatar(
           radius: 24,
           userId: user.id,
           mediaRevision: user.profileUpdatedAt,
+          mediaService: profileMediaService,
           displayName: user.displayName,
           backgroundColor: palette.surfaceSunken,
         ),

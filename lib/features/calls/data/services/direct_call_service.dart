@@ -17,7 +17,10 @@ abstract interface class DirectCallGateway {
     required String conversationId,
     DirectCallMediaType mediaType = DirectCallMediaType.audio,
   });
-  Future<void> accept(String callId);
+  Future<DirectCallStatus> accept(
+    String callId, {
+    DirectCallMediaType mediaType = DirectCallMediaType.audio,
+  });
   Future<void> decline(String callId);
   Future<void> cancel(String callId);
   Future<void> end(String callId);
@@ -40,13 +43,75 @@ class DirectVideoCompatibilityException implements Exception {
   String toString() => message;
 }
 
+/// The direct-call transport is healthy, but this legacy friendship has not
+/// yet been reconciled into the server-authoritative bilateral guard model.
+///
+/// Keeping this distinct from connectivity and LiveKit failures lets the UI
+/// explain that retrying the same call cannot help and lets telemetry measure
+/// the remaining reviewed migration population without exposing identities.
+class DirectCallFriendshipException implements Exception {
+  const DirectCallFriendshipException();
+
+  static const reason = 'canonical-friendship-required';
+
+  String get message =>
+      'Calling will be available after this friendship is verified.';
+
+  @override
+  String toString() => message;
+}
+
+/// The supplied conversation is not the canonical direct conversation for
+/// the selected pair. The fixed local copy avoids surfacing backend text.
+class DirectCallConversationException implements Exception {
+  const DirectCallConversationException();
+
+  static const reason = 'direct-conversation-required';
+
+  String get message => 'Open the direct conversation and try the call again.';
+
+  @override
+  String toString() => message;
+}
+
+/// Calls require a verified email even when an older screen has not yet
+/// surfaced the global verification banner.
+class DirectCallEmailVerificationException implements Exception {
+  const DirectCallEmailVerificationException();
+
+  static const reason = 'email-verification-required';
+
+  String get message => 'Verify your email before starting a call.';
+
+  @override
+  String toString() => message;
+}
+
+/// A different installation of the same account tried to join a call that was
+/// started or answered elsewhere.
+class DirectCallInstallationBindingException implements Exception {
+  const DirectCallInstallationBindingException();
+
+  static const reason = 'direct-call-installation-binding-required';
+
+  String get message =>
+      'Continue this call on the device that started or answered it.';
+
+  @override
+  String toString() => message;
+}
+
 class DirectCallService implements DirectCallGateway {
+  static const int directVideoProtocol = 1;
+
   DirectCallService({
     FirebaseFirestore? firestore,
     FirebaseFunctions? functions,
     FirebaseAuth? auth,
     String Function()? requestIdFactory,
     DirectCallStartRequestStore? startRequestStore,
+    DirectCallInstallationIdStore? installationIdStore,
+    String Function()? installationIdFactory,
     DateTime Function()? clock,
     // A ringing call can become active after its start response was lost and
     // remain valid for eight hours. Keep the idempotency key slightly longer
@@ -59,6 +124,10 @@ class DirectCallService implements DirectCallGateway {
        _requestIdFactory = requestIdFactory ?? _newRequestId,
        _startRequestStore =
            startRequestStore ?? SharedPreferencesDirectCallStartRequestStore(),
+       _installationIdStore =
+           installationIdStore ??
+           SharedPreferencesDirectCallInstallationIdStore(),
+       _installationIdFactory = installationIdFactory ?? _newInstallationId,
        _clock = clock ?? DateTime.now;
 
   final FirebaseFirestore _firestore;
@@ -66,8 +135,11 @@ class DirectCallService implements DirectCallGateway {
   final FirebaseAuth _auth;
   final String Function() _requestIdFactory;
   final DirectCallStartRequestStore _startRequestStore;
+  final DirectCallInstallationIdStore _installationIdStore;
+  final String Function() _installationIdFactory;
   final DateTime Function() _clock;
   final Duration startRequestTtl;
+  Future<String>? _installationIdFuture;
 
   // A second screen/service instance can be created while the first call
   // start is awaiting the network. The durable request store guarantees that
@@ -86,6 +158,30 @@ class DirectCallService implements DirectCallGateway {
       (_) => random.nextInt(256),
     ).map((value) => value.toRadixString(16).padLeft(2, '0')).join();
     return '${DateTime.now().millisecondsSinceEpoch.toRadixString(16)}-$randomPart';
+  }
+
+  static String _newInstallationId() {
+    final random = Random.secure();
+    return List<int>.generate(
+      32,
+      (_) => random.nextInt(256),
+    ).map((value) => value.toRadixString(16).padLeft(2, '0')).join();
+  }
+
+  Future<String> _installationId() {
+    final existing = _installationIdFuture;
+    if (existing != null) return existing;
+    late final Future<String> operation;
+    operation = _installationIdStore
+        .loadOrCreate(candidate: _installationIdFactory())
+        .catchError((Object error, StackTrace stackTrace) {
+          if (identical(_installationIdFuture, operation)) {
+            _installationIdFuture = null;
+          }
+          Error.throwWithStackTrace(error, stackTrace);
+        });
+    _installationIdFuture = operation;
+    return operation;
   }
 
   String get _currentUserId {
@@ -175,6 +271,7 @@ class DirectCallService implements DirectCallGateway {
     required String conversationId,
     required DirectCallMediaType mediaType,
   }) async {
+    final installationId = await _installationId();
     var request = await _acquireStartRequest(
       callerId: callerId,
       calleeId: calleeId,
@@ -192,6 +289,7 @@ class DirectCallService implements DirectCallGateway {
         conversationId: conversationId,
         mediaType: mediaType,
         requestId: request.requestId,
+        installationId: installationId,
       );
       final callId = response['callId'] as String?;
       if (callId == null || callId.isEmpty) {
@@ -275,6 +373,7 @@ class DirectCallService implements DirectCallGateway {
     required String conversationId,
     required DirectCallMediaType mediaType,
     required String requestId,
+    required String installationId,
   }) async {
     for (var attempt = 0; attempt < 2; attempt++) {
       try {
@@ -285,6 +384,9 @@ class DirectCallService implements DirectCallGateway {
               'conversationId': conversationId,
               'mediaType': mediaType.name,
               'requestId': requestId,
+              'installationId': installationId,
+              if (mediaType == DirectCallMediaType.video)
+                'directVideoProtocol': directVideoProtocol,
             });
         return response.data;
       } catch (error, stackTrace) {
@@ -299,8 +401,9 @@ class DirectCallService implements DirectCallGateway {
             expectedRequestId: requestId,
           );
         }
-        final compatibilityError = _videoCompatibilityError(error);
-        Error.throwWithStackTrace(compatibilityError ?? error, stackTrace);
+        final actionableError =
+            _videoCompatibilityError(error) ?? _knownStartRefusal(error);
+        Error.throwWithStackTrace(actionableError ?? error, stackTrace);
       }
     }
     throw StateError('The call service did not complete.');
@@ -338,15 +441,77 @@ class DirectCallService implements DirectCallGateway {
     );
   }
 
+  Object? _knownStartRefusal(Object error) {
+    if (error is! FirebaseFunctionsException ||
+        error.code != 'failed-precondition') {
+      return null;
+    }
+    final details = error.details;
+    if (details is! Map) return null;
+    switch (details['reason']) {
+      case DirectCallFriendshipException.reason:
+        return const DirectCallFriendshipException();
+      case DirectCallConversationException.reason:
+        return const DirectCallConversationException();
+      case DirectCallEmailVerificationException.reason:
+        return const DirectCallEmailVerificationException();
+      case DirectCallInstallationBindingException.reason:
+        return const DirectCallInstallationBindingException();
+    }
+    return null;
+  }
+
   @override
-  Future<void> accept(String callId) => _action(
-    'acceptDirectCall',
-    callId,
-    acceptedStatuses: const <DirectCallStatus>{
-      DirectCallStatus.active,
-      DirectCallStatus.ended,
-    },
-  );
+  Future<DirectCallStatus> accept(
+    String callId, {
+    DirectCallMediaType mediaType = DirectCallMediaType.audio,
+  }) async {
+    final installationId = await _installationId();
+    return _acceptAction(
+      callId,
+      payload: <String, Object?>{
+        'installationId': installationId,
+        if (mediaType == DirectCallMediaType.video)
+          'directVideoProtocol': directVideoProtocol,
+      },
+    );
+  }
+
+  /// Accept is installation-bound, so an `active` Firestore snapshot cannot
+  /// prove that *this* installation won the Answer race. Another installation
+  /// of the same account may have committed that state while this request was
+  /// in flight. Only a valid callable response (including an idempotent replay
+  /// for the same binding) authorises this device to continue into LiveKit.
+  Future<DirectCallStatus> _acceptAction(
+    String callId, {
+    required Map<String, Object?> payload,
+  }) async {
+    final callable = _functions.httpsCallable('acceptDirectCall');
+    final request = <String, Object?>{'callId': callId, ...payload};
+    for (var attempt = 0; attempt < 2; attempt++) {
+      try {
+        final response = await callable.call<Map<String, dynamic>>(request);
+        final responseCallId = response.data['callId'];
+        final status = response.data['status'];
+        if (responseCallId != callId || status is! String) {
+          throw StateError('The call service returned an invalid answer.');
+        }
+        return switch (status) {
+          'active' => DirectCallStatus.active,
+          'ended' => DirectCallStatus.ended,
+          _ => throw StateError('The call service returned an invalid answer.'),
+        };
+      } catch (error, stackTrace) {
+        if (attempt == 0 && _isAmbiguousStartFailure(error)) continue;
+        Error.throwWithStackTrace(
+          _installationBindingError(error) ?? error,
+          stackTrace,
+        );
+      }
+    }
+    throw StateError('The call service did not complete the answer.');
+  }
+
   @override
   Future<void> decline(String callId) => _action(
     'declineDirectCall',
@@ -357,7 +522,12 @@ class DirectCallService implements DirectCallGateway {
   Future<void> cancel(String callId) => _action(
     'cancelDirectCall',
     callId,
-    acceptedStatuses: const <DirectCallStatus>{DirectCallStatus.cancelled},
+    acceptedStatuses: const <DirectCallStatus>{
+      DirectCallStatus.cancelled,
+      // If Answer committed first, the server converts the caller's pending
+      // Cancel into an immediate End so the user gesture still wins.
+      DirectCallStatus.ended,
+    },
   );
   @override
   Future<void> end(String callId) => _action(
@@ -374,17 +544,24 @@ class DirectCallService implements DirectCallGateway {
   Future<void> _action(
     String name,
     String callId, {
+    Map<String, Object?> payload = const <String, Object?>{},
     required Set<DirectCallStatus> acceptedStatuses,
   }) async {
     final callable = _functions.httpsCallable(name);
+    final request = <String, Object?>{'callId': callId, ...payload};
     try {
-      await callable.call<void>({'callId': callId});
+      await callable.call<void>(request);
       return;
-    } catch (error) {
-      if (!_isAmbiguousStartFailure(error)) rethrow;
+    } catch (error, stackTrace) {
+      if (!_isAmbiguousStartFailure(error)) {
+        Error.throwWithStackTrace(
+          _installationBindingError(error) ?? error,
+          stackTrace,
+        );
+      }
       if (await _callReached(callId, acceptedStatuses)) return;
       try {
-        await callable.call<void>({'callId': callId});
+        await callable.call<void>(request);
         return;
       } catch (retryError, retryStackTrace) {
         // The retry can race the first committed transition and receive a
@@ -393,7 +570,10 @@ class DirectCallService implements DirectCallGateway {
         if (await _callReached(callId, acceptedStatuses)) {
           return;
         }
-        Error.throwWithStackTrace(retryError, retryStackTrace);
+        Error.throwWithStackTrace(
+          _installationBindingError(retryError) ?? retryError,
+          retryStackTrace,
+        );
       }
     }
   }
@@ -432,6 +612,7 @@ class DirectCallService implements DirectCallGateway {
     required String callId,
     required String requestId,
   }) async {
+    final installationId = await _installationId();
     for (var attempt = 0; attempt < 2; attempt++) {
       try {
         final response = await _functions
@@ -439,13 +620,33 @@ class DirectCallService implements DirectCallGateway {
             .call<Map<String, dynamic>>({
               'callId': callId,
               'requestId': requestId,
+              'installationId': installationId,
+              'directVideoProtocol': directVideoProtocol,
             });
         return VoiceConnectionInfo.fromMap(response.data);
       } catch (error, stackTrace) {
         if (attempt == 0 && _isAmbiguousStartFailure(error)) continue;
-        Error.throwWithStackTrace(error, stackTrace);
+        Error.throwWithStackTrace(
+          _installationBindingError(error) ?? error,
+          stackTrace,
+        );
       }
     }
     throw StateError('The private call connection did not complete.');
+  }
+
+  DirectCallInstallationBindingException? _installationBindingError(
+    Object error,
+  ) {
+    if (error is! FirebaseFunctionsException ||
+        error.code != 'failed-precondition') {
+      return null;
+    }
+    final details = error.details;
+    if (details is Map &&
+        details['reason'] == DirectCallInstallationBindingException.reason) {
+      return const DirectCallInstallationBindingException();
+    }
+    return null;
   }
 }

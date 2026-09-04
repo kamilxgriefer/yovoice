@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:audioplayers/audioplayers.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
@@ -28,6 +29,7 @@ import 'package:yovoice/features/moderation/presentation/report_content_flow.dar
 import 'package:yovoice/features/moments/data/services/recorded_audio.dart';
 import 'package:yovoice/features/moments/data/services/voice_moment_recorder.dart';
 import 'package:yovoice/features/profile/data/models/user_profile.dart';
+import 'package:yovoice/features/profile/data/services/profile_media_service.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
@@ -54,6 +56,8 @@ class ChatScreen extends StatefulWidget {
     required this.otherPhotoUrl,
     this.otherProfileUpdatedAt,
     this.messageService,
+    this.profileMediaService,
+    this.firestore,
     this.auth,
     this.contentReportService,
     this.directCallService,
@@ -78,6 +82,8 @@ class ChatScreen extends StatefulWidget {
   /// nothing and gets the live singletons, tests pass fakes so the
   /// failure paths below can be exercised without a Firebase app.
   final MessageService? messageService;
+  final ProfileMediaService? profileMediaService;
+  final FirebaseFirestore? firestore;
   final FirebaseAuth? auth;
   final ContentReportService? contentReportService;
   final DirectCallGateway? directCallService;
@@ -96,10 +102,22 @@ class ChatScreen extends StatefulWidget {
 }
 
 class _ChatScreenState extends State<ChatScreen> {
+  late final FirebaseFirestore _firestore =
+      widget.firestore ?? FirebaseFirestore.instance;
+  late final FirebaseAuth _auth = widget.auth ?? FirebaseAuth.instance;
+  late final MessageService? _ownedMessageService =
+      widget.messageService == null &&
+          (widget.firestore != null || widget.auth != null)
+      ? MessageService(firestore: _firestore, auth: _auth)
+      : null;
   late final MessageService _service =
-      widget.messageService ?? MessageService.live;
+      widget.messageService ?? _ownedMessageService ?? MessageService.live;
+  late final ProfileMediaService? _profileMediaService =
+      widget.profileMediaService ??
+      (widget.auth != null ? ProfileMediaService(auth: _auth) : null);
   late final DirectCallGateway _calls =
-      widget.directCallService ?? DirectCallService();
+      widget.directCallService ??
+      DirectCallService(firestore: _firestore, auth: _auth);
   late final VoiceCallService _voice =
       widget.voiceCallService ?? VoiceCallService.instance;
   final TextEditingController _controller = TextEditingController();
@@ -134,6 +152,10 @@ class _ChatScreenState extends State<ChatScreen> {
       const <DirectAttachmentOutboxEntry>[];
   final Map<String, OutboxEntry> _awaitingSnapshots = {};
   Set<String> _committedMessageIds = const <String>{};
+  Map<String, Message> _committedMessagesById = const <String, Message>{};
+  List<Message> _latestMessages = const <Message>[];
+  List<Message>? _pendingMediaReconciliation;
+  bool _mediaReconciliationInFlight = false;
 
   /// Read receipts follow the conversation snapshot, not the build cycle:
   /// [_newestMarkedMessageId] is the newest incoming unread message we already
@@ -149,8 +171,7 @@ class _ChatScreenState extends State<ChatScreen> {
   late String _otherPhotoUrl;
   DateTime? _otherProfileUpdatedAt;
 
-  String get _currentUserId =>
-      (widget.auth ?? FirebaseAuth.instance).currentUser?.uid ?? '';
+  String get _currentUserId => _auth.currentUser?.uid ?? '';
 
   @override
   void initState() {
@@ -161,7 +182,9 @@ class _ChatScreenState extends State<ChatScreen> {
     _otherProfileUpdatedAt = widget.otherProfileUpdatedAt;
     ActiveConversationRegistry.instance.enter(_registeredConversationId);
     try {
-      final profiles = widget.profileService ?? ProfileService();
+      final profiles =
+          widget.profileService ??
+          ProfileService(firestore: _firestore, auth: _auth);
       _profileSubscription = profiles
           .watchProfile(widget.otherUserId)
           .listen(_handleProfileIdentity, onError: (Object _) {});
@@ -224,11 +247,13 @@ class _ChatScreenState extends State<ChatScreen> {
     _typingAnnounced = false;
     _lastTypingHeartbeat = null;
     _markReadRetryTimer?.cancel();
+    _pendingMediaReconciliation = null;
     unawaited(_messagesSubscription?.cancel());
     unawaited(_profileSubscription?.cancel());
     unawaited(_outboxSubscription?.cancel());
     unawaited(_deliveredSubscription?.cancel());
     unawaited(_mediaOutboxSubscription?.cancel());
+    unawaited(_ownedMessageService?.dispose());
     _controller
       ..removeListener(_handleTyping)
       ..dispose();
@@ -347,6 +372,7 @@ class _ChatScreenState extends State<ChatScreen> {
           .where((entry) => entry.conversationId == widget.conversationId)
           .toList(growable: false);
     });
+    _scheduleMediaReconciliation(_latestMessages);
   }
 
   void _handleOutboxDelivered(OutboxEntry entry) {
@@ -396,7 +422,12 @@ class _ChatScreenState extends State<ChatScreen> {
   /// Fires once per newest-message advance — never per rebuild. Messages
   /// arrive newest-first (watchMessages orders `sentAt` descending).
   void _handleMessagesDelivered(List<Message> messages) {
-    _committedMessageIds = messages.map((message) => message.id).toSet();
+    _latestMessages = List<Message>.unmodifiable(messages);
+    _committedMessagesById = <String, Message>{
+      for (final message in messages) message.id: message,
+    };
+    _committedMessageIds = _committedMessagesById.keys.toSet();
+    _scheduleMediaReconciliation(messages);
     final acknowledged = _awaitingSnapshots.entries
         .where(
           (item) => _committedMessageIds.contains(_canonicalId(item.value)),
@@ -421,6 +452,49 @@ class _ChatScreenState extends State<ChatScreen> {
     _newestMarkedMessageId = newestId;
     _markReadRequested = true;
     unawaited(_drainMarkRead());
+  }
+
+  bool _matchesCommittedMedia(DirectAttachmentOutboxEntry entry) {
+    final reservation = entry.reservation;
+    if (reservation == null || reservation.messageId.isEmpty) return false;
+    final message = _committedMessagesById[reservation.messageId];
+    return message != null &&
+        message.senderId == _currentUserId &&
+        message.conversationId == entry.conversationId &&
+        message.type != MessageType.text &&
+        message.type == entry.type;
+  }
+
+  void _scheduleMediaReconciliation(List<Message> messages) {
+    if (!mounted || messages.isEmpty || _mediaOutboxEntries.isEmpty) return;
+    if (!_mediaOutboxEntries.any(_matchesCommittedMedia)) return;
+    _pendingMediaReconciliation = List<Message>.unmodifiable(messages);
+    if (_mediaReconciliationInFlight) return;
+    _mediaReconciliationInFlight = true;
+    scheduleMicrotask(_drainMediaReconciliation);
+  }
+
+  Future<void> _drainMediaReconciliation() async {
+    try {
+      while (mounted) {
+        final messages = _pendingMediaReconciliation;
+        if (messages == null) break;
+        _pendingMediaReconciliation = null;
+        try {
+          await _service.reconcileCommittedAttachments(messages);
+        } catch (error) {
+          // Keep the durable entry if persistence/cleanup fails. A later
+          // snapshot or outbox change retries this idempotent reconciliation.
+          debugPrint('ChatScreen media reconciliation failed: $error');
+        }
+      }
+    } finally {
+      _mediaReconciliationInFlight = false;
+      if (mounted && _pendingMediaReconciliation != null) {
+        _mediaReconciliationInFlight = true;
+        scheduleMicrotask(_drainMediaReconciliation);
+      }
+    }
   }
 
   /// Serialises read-cursor work and coalesces snapshot bursts. Firestore can
@@ -548,10 +622,8 @@ class _ChatScreenState extends State<ChatScreen> {
               callService: _calls,
               currentUserId: _currentUserId,
               participantName:
-                  (widget.auth ?? FirebaseAuth.instance)
-                      .currentUser
-                      ?.displayName ??
-                  (widget.auth ?? FirebaseAuth.instance).currentUser?.email ??
+                  _auth.currentUser?.displayName ??
+                  _auth.currentUser?.email ??
                   AppLocalizations.of(
                     context,
                   ).text('YO Voice user', 'Użytkownik YO Voice'),
@@ -583,6 +655,33 @@ class _ChatScreenState extends State<ChatScreen> {
               _startDirectCall(mediaType: DirectCallMediaType.audio),
             ),
           ),
+        ),
+      );
+    } on DirectCallFriendshipException {
+      if (!mounted) return;
+      final copy = AppLocalizations.of(context);
+      _showMessage(
+        copy.text(
+          'Calls are temporarily unavailable while this friendship is verified. Try again shortly.',
+          'Połączenia są chwilowo niedostępne, dopóki ta znajomość nie zostanie zweryfikowana. Spróbuj ponownie za chwilę.',
+        ),
+      );
+    } on DirectCallConversationException {
+      if (!mounted) return;
+      final copy = AppLocalizations.of(context);
+      _showMessage(
+        copy.text(
+          'This chat is no longer ready for calls. Return to Chats and reopen the conversation.',
+          'Ten czat nie jest już gotowy do połączeń. Wróć do Czatów i ponownie otwórz rozmowę.',
+        ),
+      );
+    } on DirectCallEmailVerificationException {
+      if (!mounted) return;
+      final copy = AppLocalizations.of(context);
+      _showMessage(
+        copy.text(
+          'Verify your email before calling. Use the verification banner on Home.',
+          'Zweryfikuj adres e-mail przed połączeniem. Użyj banera weryfikacji na stronie głównej.',
         ),
       );
     } catch (error) {
@@ -709,9 +808,14 @@ class _ChatScreenState extends State<ChatScreen> {
     return visible;
   }
 
-  List<DirectAttachmentOutboxEntry> _visibleMediaOutboxEntries() =>
-      List<DirectAttachmentOutboxEntry>.of(_mediaOutboxEntries)
-        ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+  List<DirectAttachmentOutboxEntry> _visibleMediaOutboxEntries() {
+    final visible =
+        _mediaOutboxEntries
+            .where((entry) => !_matchesCommittedMedia(entry))
+            .toList(growable: false)
+          ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    return visible;
+  }
 
   Future<void> _messageActions(Message message) async {
     if (message.isDeleted) {
@@ -914,6 +1018,10 @@ class _ChatScreenState extends State<ChatScreen> {
           userId: widget.otherUserId,
           displayName: _otherDisplayName,
           photoUrl: _otherPhotoUrl,
+          firestore: _firestore,
+          auth: _auth,
+          messageService: _service,
+          profileMediaService: _profileMediaService,
         );
       }
     } finally {
@@ -1256,6 +1364,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   displayName: _otherDisplayName,
                   photoUrl: _otherPhotoUrl,
                   mediaRevision: _otherProfileUpdatedAt,
+                  profileMediaService: _profileMediaService,
                   presenceStream: _presence,
                   muted: _isMuted,
                   callBusy: _startingCall,
@@ -1311,6 +1420,7 @@ class _ChatScreenState extends State<ChatScreen> {
                           name: _otherDisplayName,
                           photoUrl: _otherPhotoUrl,
                           mediaRevision: _otherProfileUpdatedAt,
+                          profileMediaService: _profileMediaService,
                         );
                       }
 
@@ -1436,6 +1546,7 @@ class _ChatHeader extends StatelessWidget {
     required this.displayName,
     required this.photoUrl,
     required this.mediaRevision,
+    this.profileMediaService,
     required this.presenceStream,
     required this.muted,
     required this.callBusy,
@@ -1452,6 +1563,7 @@ class _ChatHeader extends StatelessWidget {
   final String displayName;
   final String photoUrl;
   final Object? mediaRevision;
+  final ProfileMediaService? profileMediaService;
   final Stream<ChatPresence> presenceStream;
   final bool muted;
   final bool callBusy;
@@ -1510,6 +1622,7 @@ class _ChatHeader extends StatelessWidget {
                         name: displayName,
                         url: photoUrl,
                         mediaRevision: mediaRevision,
+                        profileMediaService: profileMediaService,
                         radius: 20,
                       ),
                       const SizedBox(width: 11),
@@ -1681,12 +1794,14 @@ class _EmptyConversation extends StatelessWidget {
     required this.name,
     required this.photoUrl,
     required this.mediaRevision,
+    this.profileMediaService,
   });
 
   final String userId;
   final String name;
   final String photoUrl;
   final Object? mediaRevision;
+  final ProfileMediaService? profileMediaService;
 
   @override
   Widget build(BuildContext context) {
@@ -1711,6 +1826,7 @@ class _EmptyConversation extends StatelessWidget {
                     name: name,
                     url: photoUrl,
                     mediaRevision: mediaRevision,
+                    profileMediaService: profileMediaService,
                     radius: 43,
                   ),
                   const SizedBox(height: 17),
@@ -3097,6 +3213,7 @@ class _Avatar extends StatelessWidget {
     required this.name,
     required this.url,
     required this.mediaRevision,
+    this.profileMediaService,
     required this.radius,
   });
 
@@ -3104,6 +3221,7 @@ class _Avatar extends StatelessWidget {
   final String name;
   final String url;
   final Object? mediaRevision;
+  final ProfileMediaService? profileMediaService;
   final double radius;
 
   @override
@@ -3114,6 +3232,7 @@ class _Avatar extends StatelessWidget {
       backgroundColor: const Color(0xFF7B25E8),
       photoUrl: url,
       mediaRevision: mediaRevision,
+      mediaService: profileMediaService,
       displayName: name,
     );
   }

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
@@ -5,9 +7,13 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_theme.dart';
+import 'package:yovoice/features/friends/data/models/friend_request.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
+import 'package:yovoice/features/friends/presentation/screens/friend_profile_screen.dart';
 import 'package:yovoice/features/friends/presentation/screens/friends_screen.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
+import 'package:yovoice/features/messages/presentation/screens/chat_screen.dart';
+import 'package:yovoice/features/profile/data/services/profile_media_service.dart';
 
 void main() {
   const me = 'receiver';
@@ -44,7 +50,15 @@ void main() {
     });
   });
 
-  Widget app({TextScaler textScaler = TextScaler.noScaling, ThemeData? theme}) {
+  tearDown(FriendService.clearSharedReadCaches);
+
+  Widget app({
+    TextScaler textScaler = TextScaler.noScaling,
+    ThemeData? theme,
+    bool showRequestsInitially = true,
+    MessageService? messageService,
+    ProfileMediaService? profileMediaService,
+  }) {
     final friends = FriendService(
       firestore: db,
       auth: auth,
@@ -68,9 +82,13 @@ void main() {
         child: child!,
       ),
       home: FriendsScreen(
-        showRequestsInitially: true,
+        showRequestsInitially: showRequestsInitially,
         friendService: friends,
-        messageService: MessageService(firestore: db, auth: auth),
+        messageService:
+            messageService ?? MessageService(firestore: db, auth: auth),
+        profileMediaService: profileMediaService,
+        firestore: db,
+        auth: auth,
       ),
     );
   }
@@ -119,6 +137,21 @@ void main() {
     expect(calls, hasLength(1));
     expect(calls.single.data, {'senderId': sender, 'accept': false});
     expect(find.text('No pending requests'), findsOneWidget);
+  });
+
+  testWidgets('opening Requests late replays the existing request snapshot', (
+    tester,
+  ) async {
+    await seedRequest();
+    await tester.pumpWidget(app(showRequestsInitially: false));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Ola'), findsNothing);
+    await tester.tap(find.text('Requests 1'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Ola'), findsOneWidget);
+    expect(find.text('Accept'), findsOneWidget);
   });
 
   testWidgets('request actions reflow at 320px and 200 percent text', (
@@ -183,5 +216,244 @@ void main() {
       expect(subtitle.style!.color, themeCase.palette.textSecondary);
       expect(tester.takeException(), isNull);
     }
+  });
+
+  testWidgets('rapid add-friend taps push only one route', (tester) async {
+    await tester.pumpWidget(app());
+    await tester.pumpAndSettle();
+
+    final addFriend = find.bySemanticsLabel('Add friend');
+    expect(addFriend, findsOneWidget);
+    await tester.tap(addFriend);
+    await tester.tap(addFriend, warnIfMissed: false);
+    await tester.tap(addFriend, warnIfMissed: false);
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('add-friend-screen')), findsOneWidget);
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('friends-screen')),
+      findsOneWidget,
+      reason: 'one back action must return to the originating Friends screen',
+    );
+    expect(find.byKey(const ValueKey('add-friend-screen')), findsNothing);
+  });
+
+  testWidgets('friends reload after a Requests tab round trip', (tester) async {
+    await db
+        .collection('users')
+        .doc(me)
+        .collection('friends')
+        .doc('friend')
+        .set({'displayName': 'Ada'});
+    await db.collection('publicProfiles').doc('friend').set({
+      'uid': 'friend',
+      'displayName': 'Ada',
+    });
+    await tester.pumpWidget(app());
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('All'));
+    await tester.pumpAndSettle();
+    expect(find.text('Ada'), findsOneWidget);
+
+    await tester.tap(find.text('Requests'));
+    await tester.pumpAndSettle();
+    expect(find.text('Ada'), findsNothing);
+
+    await tester.tap(find.text('All'));
+    await tester.pumpAndSettle();
+    expect(
+      find.text('Ada'),
+      findsOneWidget,
+      reason: 'the retired friends fanout must be reacquired on remount',
+    );
+  });
+
+  testWidgets('friend routes retain the injected Firebase context', (
+    tester,
+  ) async {
+    await db
+        .collection('users')
+        .doc(me)
+        .collection('friends')
+        .doc('friend')
+        .set({'displayName': 'Ada'});
+    await db.collection('publicProfiles').doc('friend').set({
+      'uid': 'friend',
+      'displayName': 'Ada',
+    });
+    final messages = MessageService(firestore: db, auth: auth);
+    final profileMedia = ProfileMediaService(
+      auth: auth,
+      invoker: (_, __) async => const <Object?, Object?>{},
+    );
+    addTearDown(messages.dispose);
+    await tester.pumpWidget(
+      app(
+        showRequestsInitially: false,
+        messageService: messages,
+        profileMediaService: profileMedia,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Ada'));
+    await tester.pumpAndSettle();
+    final profile = tester.widget<FriendProfileScreen>(
+      find.byType(FriendProfileScreen),
+    );
+    expect(identical(profile.messageService, messages), isTrue);
+    expect(identical(profile.profileMediaService, profileMedia), isTrue);
+    expect(identical(profile.firestore, db), isTrue);
+    expect(identical(profile.auth, auth), isTrue);
+
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Message'));
+    await tester.pumpAndSettle();
+    final chat = tester.widget<ChatScreen>(find.byType(ChatScreen));
+    expect(identical(chat.messageService, messages), isTrue);
+    expect(identical(chat.profileMediaService, profileMedia), isTrue);
+    expect(identical(chat.firestore, db), isTrue);
+    expect(identical(chat.auth, auth), isTrue);
+  });
+
+  testWidgets(
+    'default friend route derives its message service from injected Firebase',
+    (tester) async {
+      await db
+          .collection('users')
+          .doc(me)
+          .collection('friends')
+          .doc('friend')
+          .set({'displayName': 'Ada'});
+      await db.collection('publicProfiles').doc('friend').set({
+        'uid': 'friend',
+        'displayName': 'Ada',
+      });
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AppTheme.darkTheme,
+          home: FriendsScreen(
+            firestore: db,
+            auth: auth,
+            showRequestsInitially: false,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Ada'));
+      await tester.pumpAndSettle();
+
+      final profile = tester.widget<FriendProfileScreen>(
+        find.byType(FriendProfileScreen),
+      );
+      expect(profile.messageService, isNotNull);
+      expect(identical(profile.firestore, db), isTrue);
+      expect(identical(profile.auth, auth), isTrue);
+    },
+  );
+
+  testWidgets('requests recover after a terminal fanout error', (tester) async {
+    final source = StreamController<List<FriendRequest>>.broadcast();
+    addTearDown(source.close);
+    var sourceSubscriptions = 0;
+    final friends = FriendService(
+      firestore: db,
+      auth: auth,
+      friendRequestsWatch: (_) {
+        sourceSubscriptions += 1;
+        return source.stream;
+      },
+    );
+    final messages = MessageService(firestore: db, auth: auth);
+    addTearDown(messages.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.darkTheme,
+        home: FriendsScreen(
+          showRequestsInitially: true,
+          friendService: friends,
+          messageService: messages,
+          firestore: db,
+          auth: auth,
+        ),
+      ),
+    );
+    await tester.pump();
+    source.add(const <FriendRequest>[]);
+    await tester.pumpAndSettle();
+    expect(sourceSubscriptions, 1);
+
+    source.addError(StateError('request listener stopped'));
+    await tester.pumpAndSettle();
+    expect(find.text('Could not load requests'), findsOneWidget);
+
+    await tester.tap(find.text('All'));
+    await tester.pumpAndSettle();
+    expect(sourceSubscriptions, 2);
+    await tester.tap(find.text('Requests'));
+    await tester.pump();
+
+    source.add(const [
+      FriendRequest(
+        senderId: 'recovered-sender',
+        senderName: 'Recovered request',
+        senderEmail: '',
+        senderPhotoUrl: null,
+        createdAt: null,
+      ),
+    ]);
+    await tester.pumpAndSettle();
+    expect(find.text('Recovered request'), findsOneWidget);
+  });
+
+  testWidgets('search rebuilds keep one pending-request source listener', (
+    tester,
+  ) async {
+    final source = StreamController<List<FriendRequest>>.broadcast();
+    addTearDown(source.close);
+    var sourceSubscriptions = 0;
+    final friends = FriendService(
+      firestore: db,
+      auth: auth,
+      friendRequestsWatch: (_) {
+        sourceSubscriptions += 1;
+        return source.stream;
+      },
+    );
+    final messages = MessageService(firestore: db, auth: auth);
+    addTearDown(messages.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.darkTheme,
+        home: FriendsScreen(
+          friendService: friends,
+          messageService: messages,
+          firestore: db,
+          auth: auth,
+        ),
+      ),
+    );
+    await tester.pump();
+    source.add(const <FriendRequest>[]);
+    await tester.pumpAndSettle();
+    expect(sourceSubscriptions, 1);
+
+    await tester.enterText(find.byType(TextField), 'a');
+    await tester.pump();
+    await tester.enterText(find.byType(TextField), 'ada');
+    await tester.pump();
+    await tester.tap(find.text('Online'));
+    await tester.pumpAndSettle();
+
+    expect(
+      sourceSubscriptions,
+      1,
+      reason: 'search/filter rebuilds must not churn the Firestore fanout',
+    );
   });
 }

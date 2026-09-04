@@ -1464,6 +1464,85 @@ someone decide what to pick up next.
 
 ## In Progress
 
+### Post-Build-19 P0 tester compatibility repair
+
+- **Status**: **Implemented as the `1.0.0 (20)` successor and automated-tested
+  in source on 2026-09-04; not deployed or assigned to tester channels.** The
+  current unreleased tree passes Flutter 2192/2192,
+  direct-call plus localization Flutter 67/67,
+  friend recovery 22/22, Functions 1218/1218 across 118 suites, Firestore Rules
+  523/523, Storage Rules 67/67, Family media 11/11, direct-call backend 47/47,
+  direct-media integrity 39/39, focused media probing 29/29 and reviewed
+  friendship reconciliation 12/12, with clean static analysis, eight Node
+  syntax checks, 615 Dart files formatted with zero changes and
+  `git diff --check`. Avatar/profile review passes 91/91 without P0/P1, the DM
+  media/outbox focused aggregate passes 68/68 and the independent cleanup
+  re-review passes 41/41 without P0/P1/P2. The dependency audit is unavailable:
+  all three npm advisory requests ended with `socket hang up`.
+- **Description**: Repair the production failures reported from Build 19
+  without weakening the privacy boundary. Direct-call refusals now carry safe,
+  localized reason codes; video compatibility remains additive for older
+  clients. Valid iOS MOV/MP4 ISO-BMFF variants are accepted only after probing
+  their immutable generation. A bounded, always-on corroborator validates all
+  playable audio/video tracks, sample counts and movie/track/media/decode/
+  composition/edit timelines, with explicit request/byte/track limits and
+  fail-closed handling of fragmented or ambiguous files.
+  Production-shaped authoritative reservation expiry/change responses rotate
+  the reservation and `messageId` before generic ambiguity handling. Canonical
+  lost-ack reconciliation requires exact sender/conversation/message/type and
+  completes durably by deleting payload before the manifest; delete failures
+  stay queued across retry/restart, while wrong sender, type or conversation
+  never suppresses or cleans a real failed entry. Concurrent delivery and
+  reconciliation converge on one completion.
+  Friends and requests share account-scoped ref-counted replay fanouts instead
+  of duplicate 2N+1 reads, avatar grants invalidate only the changed target,
+  and rapid profile/chat navigation is single-flight while retaining injected
+  Auth/Firestore/service context.
+  The private-avatar cache is viewer/auth-bound, capped by a 256-entry LRU and
+  clears mounted providers plus Flutter `ImageCache` entries at expiry/global
+  boundaries. Mutual-friend avatars use `UserAvatar` and the current grant;
+  preview, full-profile and social-stat routes have explicit navigation locks.
+  A root friends/requests source failure remains terminal for its shared
+  generation. Child public-profile/presence listeners instead degrade
+  fail-closed and retry at 250 ms, 500 ms, 1 s, 2 s and exponentially up to a
+  30 s cap; their backoff resets only after 30 s of stable health. Malformed
+  child snapshots use the same bounded recovery path, and generation/child
+  epochs plus explicit timer/subscription cancellation prevent stale
+  remove/re-add, retirement, auth-switch or sign-out resurrection.
+  Direct video now negotiates at `Answer` rather than guessing from push-token
+  inventory; legacy/camera-denied answers downgrade atomically to audio. New
+  calls bind tokens to call-scoped hashed installation identity, other devices
+  never auto-open media, terminal disconnect exposes Retry and passive Close/
+  system-back cannot end the active call elsewhere.
+- **Legacy friendship boundary**: affected long-lived friendships cannot be
+  trusted merely because bilateral client-writable mirrors exist. The
+  operator-only repair consumes an explicit independently reviewed allowlist,
+  is capped at 100 pairs/64 KiB, defaults to dry-run, requires the exact
+  SHA-256 plan digest for apply, and uses a schema-v2 timestamp containing exact
+  `seconds` and `nanoseconds` rather than lossy milliseconds. It rechecks active
+  verified Auth users, exact profile/mirror shape and timestamp, blocks,
+  communication restrictions and existing guards, then atomically creates the
+  two guards for each pair. It
+  never scans or auto-blesses legacy rows. No production reconciliation has
+  been run from this source tree.
+- **Dependencies**: independent media security review is approved with no
+  high- or medium-risk blocker. Independent call review found two blocking UI
+  races; both were repaired and are regression-tested. The target-scoped avatar
+  epoch map has one non-blocking P2 housekeeping item: it may grow across a very
+  long session with many unique target evictions, but is cleared globally/on
+  logout and does not weaken privacy or correctness. Next, rerun the
+  currently unavailable npm advisory audit, commit and deploy the additive
+  Functions revision with read-back; prepare and independently review
+  the minimum explicit allowlist; run dry-run, controlled apply and post-apply
+  no-op evidence; then execute physical mixed-version two-device audio/video,
+  avatar and iOS camera/library media checks. The locked host prevented the
+  final automated screen-control pass, so visual/native acceptance is still a
+  real gate.
+- **Priority**: Critical. Production calls and friends-only avatars remain
+  unavailable for affected legacy pairs until both the backend revision and
+  the reviewed data reconciliation are applied. Keep this as one coordinated
+  compatibility wave; do not publish another isolated native build first.
+
 ### Coordinated Build 19 tester rollout and acceptance
 
 - **Status**: **Released to the bounded tester cohorts on 2026-09-03 from

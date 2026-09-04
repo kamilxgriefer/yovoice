@@ -122,6 +122,16 @@ void main() {
     await tester.pumpAndSettle();
   }
 
+  testWidgets(
+    'builds with injected domain services and no default Firebase app',
+    (tester) async {
+      await pumpScreen(tester, buildService());
+
+      expect(find.byType(AddFriendScreen), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets('Accept on a received request invokes acceptFriendRequest, '
       'never sendFriendRequest', (tester) async {
     await pumpScreen(tester, buildService());

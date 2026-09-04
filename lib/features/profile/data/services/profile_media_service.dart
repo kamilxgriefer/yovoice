@@ -11,6 +11,8 @@ typedef ProfileMediaCallableInvoker =
       Map<String, Object?> request,
     );
 
+typedef ProfileMediaClock = DateTime Function();
+
 enum ProfileMediaKind { avatar, banner }
 
 class ProfileMediaUploadReservation {
@@ -25,29 +27,57 @@ class ProfileMediaUploadReservation {
   final DateTime expiresAt;
 }
 
+class ProfileMediaAccess {
+  const ProfileMediaAccess({required this.uri, required this.expiresAt});
+
+  final Uri? uri;
+  final DateTime expiresAt;
+}
+
+class ProfileMediaAccessBoundary {
+  const ProfileMediaAccessBoundary({this.userId});
+
+  /// Null means every mounted grant must be dropped, for example on logout.
+  final String? userId;
+}
+
 class ProfileMediaService {
   ProfileMediaService({
     FirebaseAuth? auth,
     FirebaseFunctions? functions,
     ProfileMediaCallableInvoker? invoker,
+    ProfileMediaClock? clock,
   }) : _auth = auth ?? FirebaseAuth.instance,
        _functionsOverride = functions,
-       _invoker = invoker {
+       _invoker = invoker,
+       _clock = clock ?? DateTime.now {
     _registerCacheBoundary();
   }
 
   final FirebaseAuth _auth;
   final FirebaseFunctions? _functionsOverride;
   final ProfileMediaCallableInvoker? _invoker;
+  final ProfileMediaClock _clock;
 
-  static final Map<String, _CachedProfileMediaAccess> _cache = {};
-  static final Map<String, Future<Uri?>> _pending = {};
+  static const int maxCacheEntries = 256;
+  static final Map<String, ProfileMediaAccess> _cache = {};
+  static final Map<String, Future<ProfileMediaAccess>> _pending = {};
+  static final Map<String, int> _targetEpochs = {};
+  static final StreamController<ProfileMediaAccessBoundary> _accessBoundaries =
+      StreamController<ProfileMediaAccessBoundary>.broadcast(sync: true);
   static int _cacheEpoch = 0;
   static bool _registered = false;
 
   FirebaseFunctions get _functions =>
       _functionsOverride ??
       FirebaseFunctions.instanceFor(region: 'europe-west1');
+
+  DateTime get nowUtc => _clock().toUtc();
+
+  static Stream<ProfileMediaAccessBoundary> get accessBoundaries =>
+      _accessBoundaries.stream;
+
+  static int get debugCacheEntryCount => _cache.length;
 
   static void _registerCacheBoundary() {
     if (_registered) return;
@@ -60,16 +90,19 @@ class ProfileMediaService {
 
   static void clearAllMediaAccessCaches() {
     _cacheEpoch += 1;
+    _targetEpochs.clear();
     _cache.clear();
     _pending.clear();
+    _accessBoundaries.add(const ProfileMediaAccessBoundary());
   }
 
   static void evictUser(String userId) {
     final clean = userId.trim();
     if (clean.isEmpty) return;
-    _cacheEpoch += 1;
+    _targetEpochs[clean] = (_targetEpochs[clean] ?? 0) + 1;
     _cache.removeWhere((key, _) => key.contains(':$clean:'));
     _pending.removeWhere((key, _) => key.contains(':$clean:'));
+    _accessBoundaries.add(ProfileMediaAccessBoundary(userId: clean));
   }
 
   Future<ProfileMediaUploadReservation> reserveUpload({
@@ -133,6 +166,16 @@ class ProfileMediaService {
     required String userId,
     required ProfileMediaKind kind,
     Object? revision,
+  }) => resolveAccess(
+    userId: userId,
+    kind: kind,
+    revision: revision,
+  ).then((access) => access.uri);
+
+  Future<ProfileMediaAccess> resolveAccess({
+    required String userId,
+    required ProfileMediaKind kind,
+    Object? revision,
   }) {
     final viewerId = _auth.currentUser?.uid ?? '';
     final targetId = userId.trim();
@@ -143,20 +186,32 @@ class ProfileMediaService {
       throw const FormatException('The profile-media user id is invalid.');
     }
     final key = '$viewerId:$targetId:${kind.name}:${_revisionKey(revision)}';
-    final now = DateTime.now().toUtc();
+    final now = nowUtc;
     final cached = _cache[key];
     if (cached != null &&
         cached.expiresAt.isAfter(now.add(const Duration(seconds: 15)))) {
-      return Future.value(cached.uri);
+      // Dart maps retain insertion order. Reinsert the requested entry to make
+      // this a bounded O(1) LRU without scanning every avatar on every build.
+      _cache.remove(key);
+      _cache[key] = cached;
+      return Future.value(cached);
     }
+    _cache.remove(key);
     final epoch = _cacheEpoch;
-    return _pending.putIfAbsent(key, () async {
+    final targetEpoch = _targetEpochs[targetId] ?? 0;
+    // Epochs are part of the in-flight key, not the persisted cache key. A
+    // target-scoped eviction can therefore start a fresh request immediately
+    // without a stale future deleting or poisoning the new single-flight.
+    final pendingKey = '$key:epoch-$epoch-$targetEpoch';
+    return _pending.putIfAbsent(pendingKey, () async {
       try {
         final response = await _call('getProfileMediaAccess', {
           'userId': targetId,
           'kind': kind.name,
         });
-        if (_auth.currentUser?.uid != viewerId || _cacheEpoch != epoch) {
+        if (_auth.currentUser?.uid != viewerId ||
+            _cacheEpoch != epoch ||
+            (_targetEpochs[targetId] ?? 0) != targetEpoch) {
           throw StateError(
             'Profile-media access was cleared before it could be used.',
           );
@@ -172,17 +227,15 @@ class ProfileMediaService {
           rawExpiry,
           isUtc: true,
         );
-        final receivedAt = DateTime.now().toUtc();
+        final receivedAt = nowUtc;
         if (!expiresAt.isAfter(receivedAt) ||
             expiresAt.isAfter(receivedAt.add(const Duration(seconds: 91)))) {
           throw const FormatException('Unsafe profile-media grant expiry.');
         }
         if (!available) {
-          _cache[key] = _CachedProfileMediaAccess(
-            uri: null,
-            expiresAt: expiresAt,
-          );
-          return null;
+          final access = ProfileMediaAccess(uri: null, expiresAt: expiresAt);
+          _storeCache(key, access);
+          return access;
         }
         final rawUrl = response['url'];
         final generation = response['generation'];
@@ -210,18 +263,33 @@ class ProfileMediaService {
             uri.userInfo.isNotEmpty) {
           throw const FormatException('Unsafe profile-media grant URL.');
         }
-        _cache[key] = _CachedProfileMediaAccess(uri: uri, expiresAt: expiresAt);
-        return uri;
+        final access = ProfileMediaAccess(uri: uri, expiresAt: expiresAt);
+        _storeCache(key, access);
+        return access;
       } finally {
-        _pending.remove(key);
+        _pending.remove(pendingKey);
       }
     });
+  }
+
+  static void _storeCache(String key, ProfileMediaAccess access) {
+    _cache.remove(key);
+    while (_cache.length >= maxCacheEntries) {
+      _cache.remove(_cache.keys.first);
+    }
+    _cache[key] = access;
   }
 
   static String _revisionKey(Object? revision) {
     if (revision == null) return 'legacy';
     if (revision case DateTime value) {
       return 'date-${value.toUtc().microsecondsSinceEpoch}';
+    }
+    if (revision case String value) {
+      final parsed = DateTime.tryParse(value.trim());
+      if (parsed != null) {
+        return 'date-${parsed.toUtc().microsecondsSinceEpoch}';
+      }
     }
     if (revision case int value) return 'int-$value';
     if (revision case num value when value.isFinite) {
@@ -244,11 +312,4 @@ class ProfileMediaService {
         .call<Map<Object?, Object?>>(request);
     return result.data;
   }
-}
-
-class _CachedProfileMediaAccess {
-  const _CachedProfileMediaAccess({required this.uri, required this.expiresAt});
-
-  final Uri? uri;
-  final DateTime expiresAt;
 }

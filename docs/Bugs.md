@@ -2822,3 +2822,89 @@ permission flags).
   error localizer before rendering. English and Polish widget regressions pin
   the actionable fallback and assert that backend codes, messages and secret-
   shaped test values never reach the UI.
+- **Fixed in source 2026-09-03 — shared friends/request streams and profile
+  route guards had lifecycle gaps at tab and auth boundaries.** The Friends
+  screen retained a fanout after its final listener retired, so a
+  Requests→All round trip could leave the friend list permanently closed; the
+  request cache reused a non-replaying production Firestore broadcast, so a
+  late Requests view could wait forever after its badges consumed the initial
+  snapshot. Both reads now use/reacquire ref-counted replay fanouts, validate
+  the synchronous Firebase Auth identity at final delivery, and drop queued
+  values after retirement. Fatal source/setup errors also evict their dead
+  generation so a later view can retry instead of joining a poisoned cache.
+  Successful sign-out clears both generations before returning, while a failed
+  sign-out leaves the still-authenticated session's streams live. The
+  profile-preview single-flight guard now releases on every setup failure, and
+  its nullable route result is promoted before dispatch. Injected Auth,
+  Firestore and service instances are preserved across Friends, Chat, preview
+  and full-profile routes instead of silently switching to the process-wide
+  Firebase account. Focused service, auth-cleanup, Friends workflow and preview
+  widget regressions cover the failure paths.
+- **Fixed in source 2026-09-04 — Build 19 rejected valid iOS direct-message
+  videos when picker metadata and immutable ISO-BMFF branding disagreed, or
+  when the generic parser omitted a valid QuickTime duration.** The client now
+  sniffs the actual selected bytes before reservation. The server permits only
+  the narrow MP4/QuickTime video-container equivalence after a generation-bound
+  probe. Every ISO-BMFF result is now corroborated against all playable tracks,
+  including `audi` and `soun`: movie, track, media, decode, composition and edit
+  timelines plus sample counts must agree conservatively. The parser is capped
+  at eight tracks, 160 generation-bound reads and 2 MiB of timing bytes;
+  fragmented, ambiguous, overflowing or over-budget media fails closed. Track,
+  generation, size, kind and duration checks remain strict, and unrelated MIME
+  mismatches still fail closed. Direct integrity passes 39/39, the focused probe
+  passes 29/29 and the full Functions suite passes 1215/1215.
+  The repaired Functions revision is not yet deployed and physical Apple
+  camera/library codec smoke remains pending.
+- **Fixed in source 2026-09-04 — legitimate pre-cutover friends could not
+  start direct calls or fetch friends-only avatars because their canonical
+  server-owned guards did not exist.** This was not caused by the recipient
+  running an older application build. The call endpoint now returns localized,
+  actionable reason codes instead of a generic failure, while the security
+  boundary continues to reject client-writable mirrors. A bounded operator-only
+  reconciliation can create both guards atomically for independently reviewed
+  pairs after exact Auth/profile/mirror/timestamp/block/restriction checks, a
+  mandatory dry-run and matching digest. It never scans or auto-promotes old
+  rows. Its schema-v2 manifest binds the complete reviewed Firestore timestamp
+  as `{seconds, nanoseconds}` (including microsecond differences) into the plan
+  digest and writes that exact value to both guards. No production reconciliation
+  has been applied yet, so affected
+  production pairs remain blocked until the controlled deployment and data
+  step are completed.
+- **Fixed in source 2026-09-04 — direct-call capability detection and
+  multi-device UI could reject a valid no-push recipient, auto-open media on a
+  second device, lose a terminal disconnect during a pending `Answer`, or let
+  passive-route dismissal end the call on the answering device.** FCM token
+  inventory is no longer a video-capability authority. The caller offers v1;
+  the installation performing `Answer` retains video only when it explicitly
+  acknowledges v1, otherwise the call atomically downgrades to audio. New
+  clients use call-scoped SHA-256 installation bindings, never a raw stored
+  identifier, while legacy audio remains compatible. Other devices require an
+  explicit continue gesture and cannot auto-join; disconnect exposes Retry;
+  Close/system back only dismiss a passive route. Focused Flutter is 45/45,
+  direct-call emulator is 44/44, complete Flutter is 2161/2161 and complete
+  Functions is 1215/1215. Physical mixed-version two-device verification is
+  still pending.
+- **Fixed in the final unreleased 2026-09-04 source candidate — DM media could
+  mishandle a lost acknowledgement or orphan private payload bytes during local
+  cleanup.** Production-shaped authoritative reservation expiry/change errors
+  now rotate reservation and `messageId` before generic ambiguity handling;
+  ambiguous transport results retain the durable retry identity. Canonical
+  reconciliation requires the exact sender, conversation, `messageId` and
+  media type. Completion deletes payload before manifest removal, so deletion
+  failure remains queued across retry/restart; wrong sender, type or
+  conversation never suppresses the failed item or cleans its bytes, and
+  concurrent delivery/reconciliation converges once. The focused aggregate is
+  68/68 and independent cleanup re-review is 41/41 with no P0/P1/P2 finding.
+  This is source evidence only; physical/deployed success is not claimed.
+- **Fixed in the final unreleased 2026-09-04 source candidate — private avatars
+  could outlive a grant boundary in mounted/cache state and repeated profile
+  taps could queue duplicate routes.** Expiring/auth-bound profile media now
+  clears both the mounted provider and Flutter `ImageCache`, with grants kept in
+  a 256-entry LRU. Mutual-friend rows render through `UserAvatar` and the current
+  viewer grant; preview, full-profile and social-stat routes are single-flight.
+  Avatar/profile review passes 91/91 with no P0/P1. One non-blocking P2 remains:
+  the target epoch map may grow in an exceptionally long session with many
+  unique evictions, but is cleared globally/on logout and is not a privacy or
+  correctness blocker. The complete final candidate is Flutter 2192/2192,
+  analysis-clean and formatted across 615 Dart files with zero changes; it has
+  not been deployed or physically accepted.

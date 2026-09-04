@@ -17,6 +17,7 @@ if (getApps().length === 0) initializeApp();
 
 const {
   DIRECT_CALL_ATTEMPT_LIMITS,
+  DIRECT_CALL_ERROR_REASONS,
   DIRECT_VIDEO_PROTOCOL_VERSION,
   DIRECT_CALL_START_LIMITS,
   DIRECT_CALL_TOKEN_RATE_LIMIT,
@@ -41,6 +42,9 @@ const db = getFirestore();
 const P = "dct-";
 const CALLER = `${P}caller`;
 const CALLEE = `${P}callee`;
+const CALLER_INSTALLATION = "caller-installation-0001";
+const CALLEE_INSTALLATION = "callee-installation-0001";
+const OTHER_INSTALLATION = "other-installation-0001";
 
 function request(uid, data, verified = true) {
   return { auth: { uid, token: { email_verified: verified } }, data };
@@ -166,24 +170,29 @@ async function seedConversation() {
   });
 }
 
-async function seedVideoCapableDevice({
-  userId = CALLEE,
-  token = "video-capable-device",
-  protocol = DIRECT_VIDEO_PROTOCOL_VERSION,
-} = {}) {
-  await db.doc(`users/${userId}/fcmTokens/${token}`).set({
-    platform: "ios",
-    directVideoProtocol: protocol,
-    updatedAt: Timestamp.now(),
-  });
+function videoDeviceData(installationId) {
+  return {
+    installationId,
+    directVideoProtocol: DIRECT_VIDEO_PROTOCOL_VERSION,
+  };
 }
 
-async function start(requestId = null, mediaType = undefined) {
+async function start(requestId = null, mediaType = undefined, extra = {}) {
   return startDirectCall.run(request(CALLER, {
     calleeId: CALLEE,
     conversationId: `${P}conversation`,
     ...(requestId === null ? {} : { requestId }),
     ...(mediaType === undefined ? {} : { mediaType }),
+    ...(mediaType === "video" ? videoDeviceData(CALLER_INSTALLATION) : {}),
+    ...extra,
+  }));
+}
+
+async function acceptVideo(callId, extra = {}) {
+  return acceptDirectCall.run(request(CALLEE, {
+    callId,
+    ...videoDeviceData(CALLEE_INSTALLATION),
+    ...extra,
   }));
 }
 
@@ -217,7 +226,6 @@ beforeEach(async () => {
   await seedProfiles();
   await seedFriendship();
   await seedConversation();
-  await seedVideoCapableDevice();
 });
 
 describe("direct call signaling", () => {
@@ -277,6 +285,13 @@ describe("direct call signaling", () => {
     assert.equal(call.data().mediaType, "video");
     assert.equal(signal.data().mediaType, "video");
     assert.equal(notification.data().targetLabel, "Incoming video call");
+    assert.deepEqual(await start(requestId, "video"), result);
+    await assert.rejects(
+      () => start(requestId, "video", {
+        installationId: OTHER_INSTALLATION,
+      }),
+      (error) => error?.code === "already-exists",
+    );
 
     await assert.rejects(
       () => start(requestId, "audio"),
@@ -284,45 +299,162 @@ describe("direct call signaling", () => {
     );
   });
 
-  test("video fails closed when no recipient device advertises support", async () => {
-    await db.recursiveDelete(db.doc(`users/${CALLEE}/fcmTokens/video-capable-device`));
-
+  test("Build 19 video offer fails safely with its audio-fallback reason", async () => {
     await assert.rejects(
-      () => start("video-without-capability", "video"),
+      () => startDirectCall.run(request(CALLER, {
+        calleeId: CALLEE,
+        conversationId: `${P}conversation`,
+        mediaType: "video",
+        requestId: "build19-video-without-installation-protocol",
+      })),
       (error) => error?.code === "failed-precondition" &&
-        /updates YO Voice on every active device/u.test(error.message) &&
-        error.details?.reason === "direct-video-capability-required" &&
+        error.details?.reason ===
+          DIRECT_CALL_ERROR_REASONS.videoCapabilityRequired &&
         error.details?.audioFallbackAvailable === true &&
-        error.details?.requiredProtocol === 1,
+        error.details?.requiredProtocol === DIRECT_VIDEO_PROTOCOL_VERSION,
     );
     assert.equal((await db.collection("directCalls")
       .where("callerId", "==", CALLER).get()).empty, true);
   });
 
-  test("video fails closed when any registered recipient device is legacy", async () => {
-    await db.doc(`users/${CALLEE}/fcmTokens/legacy-device`).set({
-      platform: "android",
-      updatedAt: Timestamp.now(),
-    });
-
+  test("video start requires the offered protocol after installation binding", async () => {
     await assert.rejects(
-      () => start("video-with-mixed-devices", "video"),
-      (error) => error?.code === "failed-precondition",
+      () => start("video-without-caller-protocol", "video", {
+        directVideoProtocol: null,
+      }),
+      (error) => error?.code === "failed-precondition" &&
+        error.details?.reason ===
+          DIRECT_CALL_ERROR_REASONS.videoCapabilityRequired,
+    );
+    assert.equal((await db.collection("directCalls")
+      .where("callerId", "==", CALLER).get()).empty, true);
+  });
+
+  test("an explicit v1 answer retains video and binds the accepting installation", async () => {
+    const result = await start("video-answer-negotiation", "video");
+    assert.equal(
+      (await db.collection(`users/${CALLEE}/fcmTokens`).get()).empty,
+      true,
+    );
+
+    assert.deepEqual(await acceptVideo(result.callId), {
+      callId: result.callId,
+      status: "active",
+    });
+    const active = (await db.doc(`directCalls/${result.callId}`).get()).data();
+    assert.equal(active.callerInstallationBinding.length, 64);
+    assert.equal(active.calleeInstallationBinding.length, 64);
+    assert.notEqual(
+      active.callerInstallationBinding,
+      active.calleeInstallationBinding,
+    );
+    assert.equal(
+      active.negotiatedVideoProtocol,
+      DIRECT_VIDEO_PROTOCOL_VERSION,
+    );
+    assert.deepEqual(await acceptVideo(result.callId), {
+      callId: result.callId,
+      status: "active",
+    });
+    await assert.rejects(
+      () => acceptVideo(result.callId, {
+        installationId: OTHER_INSTALLATION,
+      }),
+      (error) => error?.code === "failed-precondition" &&
+        error.details?.reason ===
+          DIRECT_CALL_ERROR_REASONS.installationBindingRequired,
     );
   });
 
-  test("audio stays compatible with recipients that use a legacy client", async () => {
-    await db.recursiveDelete(db.doc(`users/${CALLEE}/fcmTokens/video-capable-device`));
-    await db.doc(`users/${CALLEE}/fcmTokens/legacy-device`).set({
-      platform: "android",
-      updatedAt: Timestamp.now(),
+  test("a legacy answer atomically downgrades video to audio before tokens", async () => {
+    const result = await start("legacy-video-answer-downgrade", "video");
+
+    assert.deepEqual(
+      await acceptDirectCall.run(request(CALLEE, { callId: result.callId })),
+      { callId: result.callId, status: "active" },
+    );
+    assert.deepEqual(
+      await acceptDirectCall.run(request(CALLEE, { callId: result.callId })),
+      { callId: result.callId, status: "active" },
+    );
+    const [activeSnapshot, signalSnapshot] = await db.getAll(
+      db.doc(`directCalls/${result.callId}`),
+      db.doc(`users/${CALLEE}/incomingCalls/${result.callId}`),
+    );
+    const active = activeSnapshot.data();
+    assert.equal(active.status, "active");
+    assert.equal(active.mediaType, "audio");
+    assert.equal(Object.hasOwn(active, "calleeInstallationBinding"), false);
+    assert.equal(Object.hasOwn(active, "negotiatedVideoProtocol"), false);
+    assert.equal(signalSnapshot.data().mediaType, "audio");
+
+    const harness = tokenHarness();
+    const options = tokenOptions(harness);
+    const callerToken = await createDirectCallTokenHandler(
+      request(CALLER, {
+        callId: result.callId,
+        installationId: CALLER_INSTALLATION,
+      }),
+      options,
+    );
+    const calleeToken = await createDirectCallTokenHandler(
+      request(CALLEE, { callId: result.callId }),
+      options,
+    );
+    assert.deepEqual(callerToken.permissions.canPublishSources, ["microphone"]);
+    assert.deepEqual(calleeToken.permissions.canPublishSources, ["microphone"]);
+    assert.equal(harness.state.signed, 2);
+  });
+
+  test("a camera-denied new answer downgrades to device-bound audio", async () => {
+    const result = await start("camera-denied-video-downgrade", "video");
+    const answer = request(CALLEE, {
+      callId: result.callId,
+      installationId: CALLEE_INSTALLATION,
     });
 
-    const result = await start("audio-with-legacy-device", "audio");
-    assert.equal(
-      (await db.doc(`directCalls/${result.callId}`).get()).data().mediaType,
-      "audio",
+    assert.deepEqual(await acceptDirectCall.run(answer), {
+      callId: result.callId,
+      status: "active",
+    });
+    assert.deepEqual(await acceptDirectCall.run(answer), {
+      callId: result.callId,
+      status: "active",
+    });
+    const active = (await db.doc(`directCalls/${result.callId}`).get()).data();
+    assert.equal(active.mediaType, "audio");
+    assert.equal(active.calleeInstallationBinding.length, 64);
+    assert.equal(Object.hasOwn(active, "negotiatedVideoProtocol"), false);
+
+    const harness = tokenHarness();
+    const options = tokenOptions(harness);
+    const token = await createDirectCallTokenHandler(
+      request(CALLEE, {
+        callId: result.callId,
+        installationId: CALLEE_INSTALLATION,
+      }),
+      options,
     );
+    assert.deepEqual(token.permissions.canPublishSources, ["microphone"]);
+    for (const data of [
+      { callId: result.callId },
+      { callId: result.callId, installationId: OTHER_INSTALLATION },
+    ]) {
+      await assert.rejects(
+        () => createDirectCallTokenHandler(request(CALLEE, data), options),
+        (error) => error?.code === "failed-precondition" &&
+          error.details?.reason ===
+            DIRECT_CALL_ERROR_REASONS.installationBindingRequired,
+      );
+    }
+    assert.equal(harness.state.signed, 1);
+  });
+
+  test("audio start remains compatible without installation capability fields", async () => {
+    const result = await start("legacy-audio-without-capability", "audio");
+    const call = (await db.doc(`directCalls/${result.callId}`).get()).data();
+    assert.equal(call.mediaType, "audio");
+    assert.equal(Object.hasOwn(call, "callerInstallationBinding"), false);
   });
 
   test("unsupported media types fail closed before signaling", async () => {
@@ -350,11 +482,86 @@ describe("direct call signaling", () => {
     assert.deepEqual(replay, canonical);
   });
 
-  test("only bilateral canonical friends may call", async () => {
-    await db.doc(`friendshipGuards/${CALLEE}/friends/${CALLER}`).delete();
+  test("installation-bound audio starts replay only on the same installation", async () => {
+    const requestId = "bound-audio-start-replay";
+    const first = await start(requestId, "audio", {
+      installationId: CALLER_INSTALLATION,
+    });
+    assert.deepEqual(
+      await start(requestId, "audio", {
+        installationId: CALLER_INSTALLATION,
+      }),
+      first,
+    );
     await assert.rejects(
-      start,
-      (error) => error?.code === "failed-precondition",
+      () => start(requestId, "audio", {
+        installationId: OTHER_INSTALLATION,
+      }),
+      (error) => error?.code === "already-exists",
+    );
+  });
+
+  test("legacy mirrors cannot bypass bilateral canonical friendship", async () => {
+    const createdAt = Timestamp.fromMillis(1_754_672_178_468);
+    await Promise.all([
+      db.doc(`friendshipGuards/${CALLER}/friends/${CALLEE}`).delete(),
+      db.doc(`friendshipGuards/${CALLEE}/friends/${CALLER}`).delete(),
+      db.doc(`users/${CALLER}/friends/${CALLEE}`).set({
+        userId: CALLEE,
+        createdAt,
+      }),
+      db.doc(`users/${CALLEE}/friends/${CALLER}`).set({
+        userId: CALLER,
+        createdAt,
+      }),
+    ]);
+    for (const mediaType of ["audio", "video"]) {
+      await assert.rejects(
+        () => start(`legacy-friendship-${mediaType}`, mediaType),
+        (error) => error?.code === "failed-precondition" &&
+          error.details?.reason ===
+            DIRECT_CALL_ERROR_REASONS.canonicalFriendshipRequired,
+      );
+    }
+    assert.equal((await db.collection("directCalls")
+      .where("callerId", "==", CALLER).get()).empty, true);
+  });
+
+  test("a caller-only canonical friendship guard cannot authorize a call", async () => {
+    await db.doc(`friendshipGuards/${CALLEE}/friends/${CALLER}`).delete();
+
+    await assert.rejects(
+      () => start("caller-only-friendship-guard", "audio"),
+      (error) => error?.code === "failed-precondition" &&
+        error.details?.reason ===
+          DIRECT_CALL_ERROR_REASONS.canonicalFriendshipRequired,
+    );
+    assert.equal((await db.collection("directCalls")
+      .where("callerId", "==", CALLER).get()).empty, true);
+  });
+
+  test("a callee-only canonical friendship guard cannot authorize a call", async () => {
+    await db.doc(`friendshipGuards/${CALLER}/friends/${CALLEE}`).delete();
+
+    await assert.rejects(
+      () => start("callee-only-friendship-guard", "audio"),
+      (error) => error?.code === "failed-precondition" &&
+        error.details?.reason ===
+          DIRECT_CALL_ERROR_REASONS.canonicalFriendshipRequired,
+    );
+    assert.equal((await db.collection("directCalls")
+      .where("callerId", "==", CALLER).get()).empty, true);
+  });
+
+  test("unverified callers receive a reason-coded refusal", async () => {
+    await assert.rejects(
+      () => startDirectCall.run(request(CALLER, {
+        calleeId: CALLEE,
+        conversationId: `${P}conversation`,
+      }, false)),
+      (error) => error?.code === "failed-precondition" &&
+        error.details?.reason ===
+          DIRECT_CALL_ERROR_REASONS.emailVerificationRequired,
     );
   });
 
@@ -364,7 +571,9 @@ describe("direct call signaling", () => {
     });
     await assert.rejects(
       start,
-      (error) => error?.code === "failed-precondition",
+      (error) => error?.code === "failed-precondition" &&
+        error.details?.reason ===
+          DIRECT_CALL_ERROR_REASONS.directConversationRequired,
     );
   });
 
@@ -612,9 +821,40 @@ describe("direct call signaling", () => {
     assert.equal(outbox.data().roomName, directCallRoomName(result.callId));
   });
 
+  for (const mediaType of ["audio", "video"]) {
+    test(`caller cancel after ${mediaType} Answer wins ends and tears down`, async () => {
+      const result = await start(`cancel-answer-race-${mediaType}`, mediaType);
+      if (mediaType === "video") {
+        await acceptVideo(result.callId);
+      } else {
+        await acceptDirectCall.run(request(CALLEE, { callId: result.callId }));
+      }
+
+      assert.deepEqual(
+        await cancelDirectCall.run(request(CALLER, { callId: result.callId })),
+        { callId: result.callId, status: "ended" },
+      );
+      assert.deepEqual(
+        await cancelDirectCall.run(request(CALLER, { callId: result.callId })),
+        { callId: result.callId, status: "ended" },
+      );
+      const [call, callerLock, calleeLock, outbox] = await db.getAll(
+        db.doc(`directCalls/${result.callId}`),
+        db.doc(`directCallLocks/${CALLER}`),
+        db.doc(`directCallLocks/${CALLEE}`),
+        db.doc(`directCallControlOutbox/${result.callId}`),
+      );
+      assert.equal(call.data().status, "ended");
+      assert.equal(call.data().endedBy, CALLER);
+      assert.equal(callerLock.exists, false);
+      assert.equal(calleeLock.exists, false);
+      assert.equal(outbox.data().roomName, directCallRoomName(result.callId));
+    });
+  }
+
   test("end commits and queues teardown when the inbox mirror is absent", async () => {
     const result = await start(null, "video");
-    await acceptDirectCall.run(request(CALLEE, { callId: result.callId }));
+    await acceptVideo(result.callId);
     await db.doc(`users/${CALLEE}/incomingCalls/${result.callId}`).delete();
 
     assert.deepEqual(
@@ -639,15 +879,188 @@ describe("direct call signaling", () => {
   ]) {
     test(`${mediaType} token exposes only its server-authorized sources`, async () => {
       const result = await start(null, mediaType);
-      await acceptDirectCall.run(request(CALLEE, { callId: result.callId }));
+      if (mediaType === "video") {
+        await acceptVideo(result.callId);
+      } else {
+        await acceptDirectCall.run(request(CALLEE, { callId: result.callId }));
+      }
       const response = await createDirectCallTokenHandler(
-        request(CALLER, { callId: result.callId }),
+        request(CALLER, {
+          callId: result.callId,
+          ...(mediaType === "video"
+            ? videoDeviceData(CALLER_INSTALLATION)
+            : {}),
+        }),
       );
       assert.deepEqual(response.permissions.canPublishSources, expectedSources);
       assert.equal(response.permissions.canPublishSources.includes("screen_share"), false);
       assert.equal(response.permissions.canPublishSources.includes("screen_share_audio"), false);
     });
   }
+
+  test("video tokens are limited to the installations that started and answered", async () => {
+    const result = await start("video-device-token-binding", "video");
+    await acceptVideo(result.callId);
+    const harness = tokenHarness();
+    const options = tokenOptions(harness);
+
+    for (const data of [
+      { callId: result.callId },
+      {
+        callId: result.callId,
+        ...videoDeviceData(OTHER_INSTALLATION),
+      },
+    ]) {
+      await assert.rejects(
+        () => createDirectCallTokenHandler(request(CALLER, data), options),
+        (error) => error?.code === "failed-precondition" &&
+        error.details?.reason ===
+            DIRECT_CALL_ERROR_REASONS.installationBindingRequired,
+      );
+    }
+    await assert.rejects(
+      () => createDirectCallTokenHandler(request(CALLER, {
+        callId: result.callId,
+        installationId: CALLER_INSTALLATION,
+      }), options),
+      (error) => error?.code === "failed-precondition" &&
+        error.details?.reason ===
+          DIRECT_CALL_ERROR_REASONS.videoCapabilityRequired,
+    );
+
+    const callerRequest = request(CALLER, {
+      callId: result.callId,
+      requestId: "video-token-installation-replay",
+      ...videoDeviceData(CALLER_INSTALLATION),
+    });
+    const callerToken = await createDirectCallTokenHandler(
+      callerRequest,
+      options,
+    );
+    assert.deepEqual(
+      await createDirectCallTokenHandler(callerRequest, options),
+      callerToken,
+    );
+    await assert.rejects(
+      () => createDirectCallTokenHandler(request(CALLER, {
+        callId: result.callId,
+        requestId: "video-token-installation-replay",
+        ...videoDeviceData(OTHER_INSTALLATION),
+      }), options),
+      (error) => error?.code === "already-exists",
+    );
+    const calleeToken = await createDirectCallTokenHandler(
+      request(CALLEE, {
+        callId: result.callId,
+        ...videoDeviceData(CALLEE_INSTALLATION),
+      }),
+      options,
+    );
+    assert.equal(callerToken.participantIdentity, CALLER);
+    assert.equal(calleeToken.participantIdentity, CALLEE);
+    assert.equal(harness.state.signed, 2);
+  });
+
+  test("installation secrets never persist in call, inbox, or idempotency ledgers", async () => {
+    const result = await start("private-installation-start", "video");
+    await acceptVideo(result.callId);
+    const harness = tokenHarness();
+    await createDirectCallTokenHandler(
+      request(CALLER, {
+        callId: result.callId,
+        requestId: "private-installation-token",
+        ...videoDeviceData(CALLER_INSTALLATION),
+      }),
+      tokenOptions(harness),
+    );
+
+    const [call, signal, ledgers] = await Promise.all([
+      db.doc(`directCalls/${result.callId}`).get(),
+      db.doc(`users/${CALLEE}/incomingCalls/${result.callId}`).get(),
+      db.collection("integrityOperationLedgers")
+        .where("ownerId", "==", CALLER)
+        .get(),
+    ]);
+    assert.equal(call.exists, true);
+    assert.equal(signal.exists, true);
+    assert.deepEqual(
+      ledgers.docs.map((document) => document.data().kind).sort(),
+      ["direct.call.start", "direct.call.token"],
+    );
+
+    const persistedSurfaces = new Map([
+      ["call", call.data()],
+      ["inbox signal", signal.data()],
+      ["idempotency ledgers", ledgers.docs.map((document) => document.data())],
+    ]);
+    for (const [surface, value] of persistedSurfaces) {
+      const serialized = JSON.stringify(value);
+      for (const secret of [CALLER_INSTALLATION, CALLEE_INSTALLATION]) {
+        assert.equal(
+          serialized.includes(secret),
+          false,
+          `${surface} persisted a raw installation secret`,
+        );
+      }
+    }
+  });
+
+  test("new audio calls bind devices while legacy audio remains account-compatible", async () => {
+    const result = await start("audio-device-token-binding", "audio", {
+      installationId: CALLER_INSTALLATION,
+    });
+    const acceptRequest = (installationId) => request(CALLEE, {
+      callId: result.callId,
+      ...(installationId === null ? {} : { installationId }),
+    });
+    assert.deepEqual(
+      await acceptDirectCall.run(acceptRequest(CALLEE_INSTALLATION)),
+      { callId: result.callId, status: "active" },
+    );
+    assert.deepEqual(
+      await acceptDirectCall.run(acceptRequest(CALLEE_INSTALLATION)),
+      { callId: result.callId, status: "active" },
+    );
+    for (const installationId of [null, OTHER_INSTALLATION]) {
+      await assert.rejects(
+        () => acceptDirectCall.run(acceptRequest(installationId)),
+        (error) => error?.code === "failed-precondition" &&
+          error.details?.reason ===
+            DIRECT_CALL_ERROR_REASONS.installationBindingRequired,
+      );
+    }
+
+    const harness = tokenHarness();
+    const options = tokenOptions(harness);
+    await assert.rejects(
+      () => createDirectCallTokenHandler(
+        request(CALLER, { callId: result.callId }),
+        options,
+      ),
+      (error) => error?.code === "failed-precondition" &&
+        error.details?.reason ===
+          DIRECT_CALL_ERROR_REASONS.installationBindingRequired,
+    );
+    const tokenRequest = request(CALLER, {
+      callId: result.callId,
+      installationId: CALLER_INSTALLATION,
+      requestId: "bound-audio-token-replay",
+    });
+    const first = await createDirectCallTokenHandler(tokenRequest, options);
+    assert.deepEqual(
+      await createDirectCallTokenHandler(tokenRequest, options),
+      first,
+    );
+    await assert.rejects(
+      () => createDirectCallTokenHandler(request(CALLER, {
+        callId: result.callId,
+        installationId: OTHER_INSTALLATION,
+        requestId: "bound-audio-token-replay",
+      }), options),
+      (error) => error?.code === "already-exists",
+    );
+    assert.equal(harness.state.signed, 1);
+  });
 
   test("100 blocked token retries stop before graph and JWT after N", async () => {
     const result = await start("blocked-token-call-0001");
@@ -951,7 +1364,7 @@ describe("direct call signaling", () => {
 
   test("active-call expiry ends media, frees locks and queues room teardown", async () => {
     const result = await start(null, "video");
-    await acceptDirectCall.run(request(CALLEE, { callId: result.callId }));
+    await acceptVideo(result.callId);
     const callRef = db.doc(`directCalls/${result.callId}`);
     await callRef.update({ expiresAt: Timestamp.fromMillis(Date.now() - 1000) });
 
@@ -968,7 +1381,7 @@ describe("direct call signaling", () => {
 
   test("active-call expiry survives a missing inbox mirror", async () => {
     const result = await start(null, "video");
-    await acceptDirectCall.run(request(CALLEE, { callId: result.callId }));
+    await acceptVideo(result.callId);
     const callRef = db.doc(`directCalls/${result.callId}`);
     await Promise.all([
       callRef.update({ expiresAt: Timestamp.fromMillis(Date.now() - 1000) }),

@@ -7,6 +7,7 @@ import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/localization/translations/app_translation_catalog.dart';
 import 'package:yovoice/core/localization/translations/translations_auth_call_release.dart';
 import 'package:yovoice/core/localization/translations/translations_current_release.dart';
+import 'package:yovoice/core/localization/translations/translations_direct_call_refusals.dart';
 import 'package:yovoice/core/localization/translations/translations_reels.dart';
 
 final _placeholderPattern = RegExp(r'\{[a-zA-Z][a-zA-Z0-9_]*\}');
@@ -129,6 +130,7 @@ void main() {
         ...currentReleaseCompactTranslationKeys,
         ...currentReleaseChatMediaTranslationKeys,
         ...authCallReleaseTranslationKeys,
+        ...directCallRefusalTranslationKeys,
         ...reelsTranslationKeys,
       };
 
@@ -157,6 +159,32 @@ void main() {
         }
       }
     });
+
+    test(
+      'connection interruption copy is localized in every translated locale',
+      () {
+        const key = 'Connection interrupted';
+
+        expect(directCallRefusalTranslationKeys, contains(key));
+        for (final entry in directCallRefusalTranslations.entries) {
+          expect(
+            entry.value.keys,
+            contains(key),
+            reason: '${entry.key} must localize the direct-call interruption.',
+          );
+          expect(
+            entry.value[key]!.trim(),
+            isNotEmpty,
+            reason: '${entry.key} has empty direct-call interruption copy.',
+          );
+          expect(
+            entry.value[key],
+            isNot(key),
+            reason: '${entry.key} must not fall back to English.',
+          );
+        }
+      },
+    );
 
     test('extended locale catalogs do not ship English fallback copy', () {
       const extendedLocaleKeys = <String>{

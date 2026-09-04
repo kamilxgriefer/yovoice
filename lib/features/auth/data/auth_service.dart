@@ -14,6 +14,7 @@ import 'package:yovoice/features/auth/data/auth_profile_identity.dart';
 import 'package:yovoice/features/auth/data/totp_mfa_service.dart';
 import 'package:yovoice/features/calls/data/services/direct_call_service.dart';
 import 'package:yovoice/features/calls/data/services/voice_call_service.dart';
+import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/moments/data/services/moment_service.dart';
 import 'package:yovoice/features/reels/data/services/reel_service.dart';
@@ -484,6 +485,20 @@ class AuthService {
       }
     } finally {
       await _firebaseAuth.signOut();
+      // Friends fanouts replay public identity and presence across otherwise
+      // independent screens. Retire them only after Firebase confirms the
+      // boundary: if sign-out itself fails, the still-authenticated screens
+      // must keep their live streams. This remains synchronous before the
+      // sign-out future completes, so a subsequent account cannot inherit the
+      // prior generation.
+      try {
+        FriendService.clearSharedReadCaches();
+      } catch (error) {
+        debugPrint(
+          'AuthService.signOut: friend read-cache cleanup failed '
+          '(${error.runtimeType}). Sign-out will continue.',
+        );
+      }
       // Drop the cached current-profile/entitlement streams so the next
       // account never inherits the previous user's replayed snapshots.
       ProfileService.resetCurrentProfileCache();

@@ -8,11 +8,29 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:yovoice/features/calls/data/models/direct_call.dart';
 import 'package:yovoice/features/calls/data/services/direct_call_service.dart';
+import 'package:yovoice/features/calls/data/services/direct_call_start_request_store.dart';
 
 void main() {
   setUp(() {
     SharedPreferences.setMockInitialValues(<String, Object>{});
   });
+
+  test(
+    'installation secret is durable and never rotated by a new service',
+    () async {
+      final firstStore = SharedPreferencesDirectCallInstallationIdStore();
+      expect(
+        await firstStore.loadOrCreate(candidate: 'installation-secret-first'),
+        'installation-secret-first',
+      );
+
+      final afterRestart = SharedPreferencesDirectCallInstallationIdStore();
+      expect(
+        await afterRestart.loadOrCreate(candidate: 'installation-secret-other'),
+        'installation-secret-first',
+      );
+    },
+  );
 
   test(
     'lost start response retries the same request id and reuses call',
@@ -47,6 +65,14 @@ void main() {
         functions.payloads.map((payload) => payload['mediaType']).toSet(),
         <Object?>{'audio'},
       );
+      expect(
+        functions.payloads.map((payload) => payload['installationId']).toSet(),
+        hasLength(1),
+      );
+      expect(
+        functions.payloads.first['installationId'],
+        isA<String>().having((value) => value.length, 'length', 64),
+      );
     },
   );
 
@@ -74,6 +100,12 @@ void main() {
     expect(
       functions.payloads.map((payload) => payload['requestId']).toSet(),
       <Object?>{'video-request_1'},
+    );
+    expect(
+      functions.payloads
+          .map((payload) => payload['directVideoProtocol'])
+          .toSet(),
+      <Object?>{DirectCallService.directVideoProtocol},
     );
   });
 
@@ -373,6 +405,71 @@ void main() {
     );
   });
 
+  test(
+    'canonical friendship refusal is distinct from transport failure',
+    () async {
+      final service = DirectCallService(
+        firestore: FakeFirebaseFirestore(),
+        functions: _ReasonCodedStartRefusalFunctions(
+          DirectCallFriendshipException.reason,
+        ),
+        auth: MockFirebaseAuth(
+          signedIn: true,
+          mockUser: MockUser(uid: 'caller'),
+        ),
+        requestIdFactory: () => 'friendship-required-request',
+      );
+
+      await expectLater(
+        service.startCall(calleeId: 'callee', conversationId: 'caller_callee'),
+        throwsA(
+          isA<DirectCallFriendshipException>().having(
+            (error) => error.message,
+            'message',
+            contains('friendship is verified'),
+          ),
+        ),
+      );
+    },
+  );
+
+  test('other reason-coded start refusals use safe typed copy', () async {
+    Future<Object> refusal(String reason, String requestId) async {
+      final service = DirectCallService(
+        firestore: FakeFirebaseFirestore(),
+        functions: _ReasonCodedStartRefusalFunctions(reason),
+        auth: MockFirebaseAuth(
+          signedIn: true,
+          mockUser: MockUser(uid: 'caller'),
+        ),
+        requestIdFactory: () => requestId,
+      );
+      try {
+        await service.startCall(
+          calleeId: 'callee',
+          conversationId: 'caller_callee',
+        );
+      } catch (error) {
+        return error;
+      }
+      throw StateError('Expected the reason-coded refusal.');
+    }
+
+    final conversation = await refusal(
+      DirectCallConversationException.reason,
+      'conversation-required-request',
+    );
+    expect(conversation, isA<DirectCallConversationException>());
+    expect(conversation.toString(), isNot(contains('unsafe backend detail')));
+
+    final email = await refusal(
+      DirectCallEmailVerificationException.reason,
+      'email-verification-request',
+    );
+    expect(email, isA<DirectCallEmailVerificationException>());
+    expect(email.toString(), isNot(contains('unsafe backend detail')));
+  });
+
   test('pending starts are isolated by signed-in account and peer', () async {
     final functions = _ColdRestartStartFunctions();
     final callerA = MockFirebaseAuth(
@@ -445,31 +542,73 @@ void main() {
         functions.payloads.map((payload) => payload['callId']).toSet(),
         <Object?>{'active-call-1'},
       );
+      expect(
+        functions.payloads.map((payload) => payload['installationId']).toSet(),
+        hasLength(1),
+      );
+      expect(
+        functions.payloads
+            .map((payload) => payload['directVideoProtocol'])
+            .toSet(),
+        <Object?>{DirectCallService.directVideoProtocol},
+      );
     },
   );
 
-  test('lost accept response reconciles the committed call state', () async {
-    final firestore = FakeFirebaseFirestore();
-    await firestore.collection('directCalls').doc('call-1').set({
-      'status': 'active',
-      'callerId': 'caller',
-      'calleeId': 'callee',
-    });
-    final functions = _LostActionResponseFunctions();
+  test('wrong-installation token refusal becomes a safe typed error', () async {
     final service = DirectCallService(
-      firestore: firestore,
-      functions: functions,
-      auth: MockFirebaseAuth(signedIn: true, mockUser: MockUser(uid: 'callee')),
+      firestore: FakeFirebaseFirestore(),
+      functions: _InstallationBindingRefusalFunctions(),
+      auth: MockFirebaseAuth(signedIn: true, mockUser: MockUser(uid: 'caller')),
     );
 
-    await service.accept('call-1');
-
-    expect(functions.calls, 1);
-    expect(functions.lastName, 'acceptDirectCall');
+    await expectLater(
+      service.createJoinToken('active-call-elsewhere'),
+      throwsA(isA<DirectCallInstallationBindingException>()),
+    );
   });
 
   test(
-    'second accept races committed first attempt and reconciles every error',
+    'lost accept response retries the same installation-bound callable',
+    () async {
+      final firestore = FakeFirebaseFirestore();
+      await firestore.collection('directCalls').doc('call-1').set({
+        'status': 'active',
+        'callerId': 'caller',
+        'calleeId': 'callee',
+      });
+      final functions = _LostThenReplayAcceptFunctions();
+      final service = DirectCallService(
+        firestore: firestore,
+        functions: functions,
+        auth: MockFirebaseAuth(
+          signedIn: true,
+          mockUser: MockUser(uid: 'callee'),
+        ),
+      );
+
+      expect(
+        await service.accept('call-1', mediaType: DirectCallMediaType.video),
+        DirectCallStatus.active,
+      );
+
+      expect(functions.calls, 2);
+      expect(functions.lastName, 'acceptDirectCall');
+      expect(functions.lastPayload?['installationId'], isA<String>());
+      expect(
+        functions.lastPayload?['directVideoProtocol'],
+        DirectCallService.directVideoProtocol,
+      );
+      expect(
+        functions.payloads.map((payload) => payload['installationId']).toSet(),
+        hasLength(1),
+      );
+      expect(functions.payloads[0], functions.payloads[1]);
+    },
+  );
+
+  test(
+    'active state from another installation never authorizes this device',
     () async {
       final firestore = FakeFirebaseFirestore();
       await firestore.collection('directCalls').doc('call-race').set({
@@ -487,7 +626,10 @@ void main() {
         ),
       );
 
-      await service.accept('call-race');
+      await expectLater(
+        service.accept('call-race'),
+        throwsA(isA<DirectCallInstallationBindingException>()),
+      );
 
       expect(functions.calls, 2);
       expect(
@@ -648,19 +790,49 @@ class _VideoCompatibilityFunctions implements FirebaseFunctions {
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
-class _LostActionResponseFunctions implements FirebaseFunctions {
-  int calls = 0;
-  String? lastName;
+class _ReasonCodedStartRefusalFunctions implements FirebaseFunctions {
+  const _ReasonCodedStartRefusalFunctions(this.reason);
+
+  final String reason;
 
   @override
   HttpsCallable httpsCallable(String name, {HttpsCallableOptions? options}) =>
       _CallableStub((_) async {
+        expect(name, 'startDirectCall');
+        throw FirebaseFunctionsException(
+          code: 'failed-precondition',
+          message: 'unsafe backend detail',
+          details: <String, Object>{'reason': reason},
+        );
+      });
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _LostThenReplayAcceptFunctions implements FirebaseFunctions {
+  int calls = 0;
+  String? lastName;
+  Map<String, dynamic>? lastPayload;
+  final List<Map<String, dynamic>> payloads = <Map<String, dynamic>>[];
+
+  @override
+  HttpsCallable httpsCallable(String name, {HttpsCallableOptions? options}) =>
+      _CallableStub((parameters) async {
         calls++;
         lastName = name;
-        throw FirebaseFunctionsException(
-          code: 'unavailable',
-          message: 'The committed response was lost.',
-        );
+        lastPayload = Map<String, dynamic>.from(parameters as Map);
+        payloads.add(lastPayload!);
+        if (calls == 1) {
+          throw FirebaseFunctionsException(
+            code: 'unavailable',
+            message: 'The committed response was lost.',
+          );
+        }
+        return <String, dynamic>{
+          'callId': lastPayload!['callId'],
+          'status': 'active',
+        };
       });
 
   @override
@@ -692,6 +864,24 @@ class _LostTokenResponseFunctions implements FirebaseFunctions {
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
+class _InstallationBindingRefusalFunctions implements FirebaseFunctions {
+  @override
+  HttpsCallable httpsCallable(String name, {HttpsCallableOptions? options}) =>
+      _CallableStub((_) async {
+        expect(name, 'createDirectCallToken');
+        throw FirebaseFunctionsException(
+          code: 'failed-precondition',
+          message: 'unsafe backend detail',
+          details: const <String, Object>{
+            'reason': DirectCallInstallationBindingException.reason,
+          },
+        );
+      });
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
 class _ActionCommitRaceFunctions implements FirebaseFunctions {
   _ActionCommitRaceFunctions(this.firestore);
 
@@ -709,16 +899,18 @@ class _ActionCommitRaceFunctions implements FirebaseFunctions {
             message: 'The first response was lost before local state changed.',
           );
         }
-        // The original backend transaction commits while the retry is in
-        // flight. The retry then observes non-ringing and returns a stable
-        // failed-precondition. Client reconciliation must run for this error,
-        // not only for a second ambiguous transport failure.
+        // Another installation commits Answer while this installation's
+        // ambiguous retry is in flight. The shared call document is active,
+        // but this device still must fail closed on the binding refusal.
         await firestore.collection('directCalls').doc('call-race').update({
           'status': 'active',
         });
         throw FirebaseFunctionsException(
           code: 'failed-precondition',
-          message: 'The call has already been answered.',
+          message: 'unsafe backend detail',
+          details: const <String, Object>{
+            'reason': DirectCallInstallationBindingException.reason,
+          },
         );
       });
 

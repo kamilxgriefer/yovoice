@@ -210,6 +210,8 @@ class _FriendProfilePreviewState extends State<_FriendProfilePreview> {
         isOnline: true,
         lastSeen: null,
       ),
+      firestore: firestore,
+      auth: auth,
       friendService: FriendService(
         firestore: firestore,
         auth: auth,

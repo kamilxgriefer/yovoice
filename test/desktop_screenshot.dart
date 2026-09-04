@@ -703,6 +703,8 @@ void main() {
               showRequestsInitially: true,
               friendService: friends,
               messageService: MessageService(firestore: db, auth: auth),
+              firestore: db,
+              auth: auth,
             ),
           ),
         ),

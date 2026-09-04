@@ -5,13 +5,19 @@ import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/friends/data/models/friend_user.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
+import 'package:yovoice/features/profile/data/services/profile_media_service.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
 class BlockedUsersScreen extends StatefulWidget {
-  const BlockedUsersScreen({this.friendService, super.key});
+  const BlockedUsersScreen({
+    this.friendService,
+    this.profileMediaService,
+    super.key,
+  });
 
   final FriendService? friendService;
+  final ProfileMediaService? profileMediaService;
 
   @override
   State<BlockedUsersScreen> createState() => _BlockedUsersScreenState();
@@ -20,6 +26,7 @@ class BlockedUsersScreen extends StatefulWidget {
 class _BlockedUsersScreenState extends State<BlockedUsersScreen> {
   late final FriendService _friendService =
       widget.friendService ?? FriendService();
+  ProfileMediaService? get _profileMediaService => widget.profileMediaService;
   late final Stream<List<FriendUser>> _blockedStream;
   final Set<String> _processingIds = <String>{};
 
@@ -243,6 +250,7 @@ class _BlockedUsersScreenState extends State<BlockedUsersScreen> {
                                     radius: 24,
                                     userId: user.id,
                                     mediaRevision: user.profileUpdatedAt,
+                                    mediaService: _profileMediaService,
                                     displayName: user.displayName,
                                     backgroundColor: palette.surfaceSunken,
                                   ),

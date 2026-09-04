@@ -6,6 +6,7 @@ import 'translations_reels.dart';
 import 'translations_auth_call_release.dart';
 import 'translations_chinese_traditional.dart';
 import 'translations_current_release.dart';
+import 'translations_direct_call_refusals.dart';
 import 'translations_slavic_nordic.dart';
 import 'translations_western.dart';
 
@@ -197,6 +198,7 @@ const appTranslationKeys = <String>{
   ...currentReleaseCompactTranslationKeys,
   ...currentReleaseChatMediaTranslationKeys,
   ...authCallReleaseTranslationKeys,
+  ...directCallRefusalTranslationKeys,
   ...reelsTranslationKeys,
 };
 
@@ -215,6 +217,7 @@ final appTranslations = <String, Map<String, String>>{
       ...currentReleaseCompactTranslations[entry.key]!,
       ...currentReleaseChatMediaTranslations[entry.key]!,
       ...authCallReleaseTranslations[entry.key]!,
+      ...directCallRefusalTranslations[entry.key]!,
       ...reelsTranslations[entry.key]!,
       ...localizedExtendedLanguageNames[entry.key]!,
     }),

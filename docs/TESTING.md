@@ -73,6 +73,80 @@ media bytes were deleted. Identifiers, URLs and token material are not recorded
 here. The operational detail is in
 [DEPLOYMENT.md](DEPLOYMENT.md#completed-production-data-prerequisite-voice-moments).
 
+## Post-Build-19 P0 source candidate (2026-09-04; not deployed)
+
+Tester reports after Build 19 exposed two production-only compatibility gaps:
+some legitimate legacy friendships predated the server-owned
+`friendshipGuards` cutover, and valid iOS camera videos could present a
+QuickTime filename/MIME while their immutable ISO-BMFF bytes identified an MP4
+brand, or could omit parser-reported duration despite valid classic ISO-BMFF
+track timelines. The same
+tester wave also exposed duplicated Friends/Requests reads, stale avatar-grant
+invalidation and profile routes that could be stacked by rapid taps.
+
+This row is evidence for the current unreleased `1.0.0 (20)` source tree only.
+It does not replace the exact Build 19 evidence above and does not claim that
+production or either tester channel already contains the repair.
+
+| Gate | Measured result | What it proves |
+|---|---:|---|
+| Flutter analysis | clean | current source analyzes without diagnostics |
+| Complete Flutter | **2192/2192** | one full-tree VM invocation after the final P0 fixes |
+| Direct-call + localization Flutter | **67/67** | mixed-device UX and all 43 selectable locale variants' current-release call copy |
+| Friend recovery Flutter | **22/22** | child profile/presence recovery, stale generations, remove/re-add, auth isolation and timer cleanup |
+| Avatar/profile focused review | **91/91** | expiring/auth-bound cache, mutual avatars and navigation locks; no P0/P1 finding |
+| DM media/outbox focused aggregate | **68/68** | authoritative rotation, exact canonical reconciliation and retry/restart cleanup |
+| Independent cleanup re-review | **41/41** | delete failure, restart, concurrency and wrong sender/type/conversation; no P0/P1/P2 finding |
+| Cloud Functions | **1218/1218** | 118 suites on fresh Auth + Firestore emulators |
+| Firestore Rules | **523/523** | current authorization rules against the Firestore emulator |
+| Storage Rules | **67/67** | current media-path, size, type and read boundaries |
+| Family media | **11/11** | combined Firestore/Storage family-media boundary |
+| Direct media integrity | **39/39** | generation-bound finalization, MOV/MP4 equivalence and duration corroboration |
+| Focused trusted media probe | **29/29** | timing plus sample maps, self-contained data references, `mdat` bounds and overlap rejection |
+| Direct calls | **47/47** | accept-time video negotiation, device binding, replay and raw-secret non-persistence |
+| Reviewed legacy friendship reconciliation | **12/12** | precise schema-v2 timestamp/digest, bounded dry-run/apply and conflict refusal |
+| Modified JavaScript syntax | **8/8** | every changed/new backend or test file parses under Node |
+| Dart format | **615 files, 0 changed** | final Dart tree was already formatted |
+| Diff integrity | clean | no whitespace errors |
+
+For DM media lost acknowledgements, production-shaped authoritative
+`deadline-exceeded` expiry and `aborted` reservation-change responses are
+recognized before generic ambiguity and rotate both the reservation and
+`messageId`. Generic ambiguous failures preserve the durable retry identity.
+Canonical reconciliation requires an exact sender, conversation, `messageId`
+and media-type match. Outbox completion deletes the payload before removing the
+manifest entry; a delete failure therefore remains durable across retry and
+restart. Wrong sender, conversation or type never suppresses the visible
+failure or removes its payload, and concurrent reconciliation/delivery is
+pinned to one completion.
+
+Private avatar grants are viewer/auth-bound and held in a 256-entry LRU. Expiry
+or an auth/global boundary clears the mounted provider and its Flutter
+`ImageCache` entry. Mutual-friend rendering goes through `UserAvatar` and its
+viewer grant, while preview, full-profile and social-stat navigation use
+single-flight locks. Non-blocking P2: the target-scoped epoch map can grow in a
+very long session with many unique target evictions; it is globally cleared at
+logout/auth reset and is not a privacy or correctness blocker.
+
+The reconciliation utility never scans or auto-promotes client-writable
+friend mirrors. It accepts only an operator-reviewed explicit pair allowlist,
+defaults to dry-run, pins the production project, limits input size/count and
+requires the exact SHA-256 dry-run digest for apply. The normalized schema-v2
+manifest binds `{seconds, nanoseconds}` and preserves the exact Firestore
+timestamp in both guards. Auth state and all
+Firestore predicates are re-read before writes; the two guards for one pair
+are created in one transaction. A production apply has **not** been run.
+
+Remaining release gates are a reviewed Functions deployment, a controlled
+aggregate-only friendship dry-run/apply/post-check for the independently
+verified affected pairs, and physical two-device iOS/Android checks for calls,
+avatar visibility and real camera/library codecs. The simulator/UI pass is
+also still pending because the host was locked when screen automation was
+attempted. The npm advisory endpoint also returned `socket hang up` on all three
+current candidate attempts; dependency audit is therefore **unavailable** and
+must be rerun, not inferred from Build 19. Automated success is not presented
+as physical-device success.
+
 ## Current counts
 
 **Current coordinated tester-release baseline: 2026-09-03 (build 19).** One table,
@@ -559,9 +633,9 @@ close most of it, and they are cheap:
 
 `firestore-tests/` — a standalone Node project running regression and
 attack-scenario checks against `firestore.rules` via
-`@firebase/rules-unit-testing` and the Firestore emulator — **494 checks
+`@firebase/rules-unit-testing` and the Firestore emulator — **523 checks
 passing** — plus `storage.test.js`, the same treatment for `storage.rules`
-against the Storage emulator (60 checks: path ownership, size caps,
+against the Storage emulator (67 checks: path ownership, size caps,
 content-type allowlists, read gating, default deny), plus 11 combined
 family-media checks. All three run in CI on every push to `main` and gate
 the Hosting release (see [DEPLOYMENT.md](DEPLOYMENT.md)). Full workflow in
@@ -741,17 +815,18 @@ bounded local outbox instead — see the Flutter section below.
 
 ## Cloud Functions — real coverage, unevenly distributed
 
-`functions/test/` — **907 tests across 69 `*.test.js` files**, run with
-`node --test test/*.test.js` against the Auth + Firestore emulators, and
+`functions/test/` — **1218 tests across 91 `*.test.js` files and 118 suites**,
+run with `node --test --test-concurrency=1 test/*.test.js` against fresh Auth +
+Firestore emulators, and
 gating the Hosting release in CI like the rules suites do. A separate
 `npm --prefix functions run test:smoke` drives two trigger smokes and one
 callable social-graph smoke against the Functions emulator.
 
 **A real trap this suite has already sprung, worth knowing before you add
-to it.** `node --test test/*.test.js` runs the files **concurrently
-against one shared emulator**. Any assertion on an *absolute* count over a
-collection that another file also writes is therefore load-bearing on
-interleaving: it passes locally and fails on the runner, or vice versa.
+to it.** The older `node --test test/*.test.js` command ran files concurrently
+against one shared emulator. Any assertion on an *absolute* count over a
+collection that another file also writes was therefore load-bearing on
+interleaving: it passed locally and failed on the runner, or vice versa.
 `legacy_identity_scrub.test.js` asserted `scanned === 1` while
 `scrubIdentitySnapshots` scans the whole `conversations` collection and
 takes no uid or prefix scope, so it could not isolate itself the way its
@@ -762,10 +837,11 @@ the **delta** around the test's own write, which keeps the assertion
 exactly as strong (one document scanned, one scrub planned, nothing
 written) while being independent of what else exists.
 
-The general rule: assert on a delta or on a scoped fixture, never on an
+The general rule remains: assert on a delta or on a scoped fixture, never on an
 absolute count over a collection your file does not exclusively own. The
-2026-08-28 direct-chat release gate ran the exact concurrent suite against a
-fresh Auth + Firestore emulator pair: **907 passed, 0 failed**.
+current package gate additionally pins `--test-concurrency=1`; it is serial,
+not concurrent. The 2026-08-28 direct-chat result of **907/907** is historical
+evidence from the older command, not the current suite inventory.
 
 ### Premium billing release matrix
 
@@ -811,9 +887,9 @@ provider checkout.
 
 ## Dart tests — real, but narrow
 
-`test/` — **1672 VM tests across 153 compatible files**, plus **18 real-Chrome
-tests across three files** (one browser-only and two shared; **154 `*_test.dart` files
-total**), green in local verification, grown mostly
+`test/` — **2192 VM tests across 199 compatible files**, with **200
+`*_test.dart` files total** (one is browser-only), green in current local
+verification and grown mostly
 out of real bugs rather than an even coverage discipline. The
 pattern throughout: fake the Firebase backends
 (`firebase_auth_mocks` / `fake_cloud_firestore` /
@@ -1055,7 +1131,7 @@ Worth naming plainly rather than leaving implicit:
   accrual and failure contracts are covered against fakes/emulators. No test
   in this repo has held a real LiveKit connection, so production delivery is
   still a manual integration claim. See [Bugs.md](Bugs.md#achievements).
-- Broad service coverage remains uneven despite the 120 VM regression files;
+- Broad service coverage remains uneven despite the 199 VM-compatible test files;
   **live audio in particular has none.** The room *liveness* path gained real
   coverage on 2026-08-20, but audio quality, reconnect, device routing and
   the web microphone permission path are untouched and unretested, and no

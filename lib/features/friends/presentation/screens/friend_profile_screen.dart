@@ -1,3 +1,7 @@
+import 'dart:async';
+
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/helpers/error_messages.dart';
@@ -26,6 +30,8 @@ import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 class FriendProfileScreen extends StatefulWidget {
   const FriendProfileScreen({
     required this.friend,
+    this.firestore,
+    this.auth,
     this.friendService,
     this.messageService,
     this.profileService,
@@ -36,6 +42,8 @@ class FriendProfileScreen extends StatefulWidget {
   });
 
   final FriendUser friend;
+  final FirebaseFirestore? firestore;
+  final FirebaseAuth? auth;
 
   /// Injectable seams keep responsive widget tests on the exact production
   /// screen without requiring a configured Firebase app.
@@ -51,14 +59,26 @@ class FriendProfileScreen extends StatefulWidget {
 }
 
 class _FriendProfileScreenState extends State<FriendProfileScreen> {
+  late final FirebaseFirestore _firestore =
+      widget.firestore ?? FirebaseFirestore.instance;
+  late final FirebaseAuth _auth = widget.auth ?? FirebaseAuth.instance;
   late final FriendService _friendService =
-      widget.friendService ?? FriendService();
+      widget.friendService ?? FriendService(firestore: _firestore, auth: _auth);
+  late final MessageService? _ownedMessageService =
+      widget.messageService == null &&
+          (widget.firestore != null || widget.auth != null)
+      ? MessageService(firestore: _firestore, auth: _auth)
+      : null;
   late final MessageService _messageService =
-      widget.messageService ?? MessageService.live;
+      widget.messageService ?? _ownedMessageService ?? MessageService.live;
+  late final ProfileMediaService? _profileMediaService =
+      widget.profileMediaService ??
+      (widget.auth != null ? ProfileMediaService(auth: _auth) : null);
   late final ProfileService _profileService =
-      widget.profileService ?? ProfileService();
+      widget.profileService ??
+      ProfileService(firestore: _firestore, auth: _auth);
   late final FollowService _followService =
-      widget.followService ?? FollowService();
+      widget.followService ?? FollowService(firestore: _firestore, auth: _auth);
   late final SocialGraphService _socialGraphService =
       widget.socialGraphService ?? SocialGraphService();
 
@@ -68,6 +88,7 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
   bool _removingFriend = false;
   bool _changingFollow = false;
   bool _blocking = false;
+  bool _openingSocialList = false;
 
   @override
   void initState() {
@@ -75,6 +96,12 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
     _mutualFriendsFuture = _socialGraphService
         .getMutualFriends(widget.friend.id)
         .catchError((_) => MutualFriendsSummary.empty);
+  }
+
+  @override
+  void dispose() {
+    unawaited(_ownedMessageService?.dispose());
+    super.dispose();
   }
 
   Future<void> _openChat() async {
@@ -98,6 +125,10 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
             otherEmail: friend.email,
             otherPhotoUrl: friend.photoUrl ?? '',
             otherProfileUpdatedAt: friend.profileUpdatedAt,
+            messageService: _messageService,
+            profileMediaService: _profileMediaService,
+            firestore: _firestore,
+            auth: _auth,
           ),
         ),
       );
@@ -266,12 +297,22 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
       );
   }
 
-  void _openList(FollowListType type) {
-    Navigator.of(context).push<void>(
-      MaterialPageRoute<void>(
-        builder: (_) => FollowListScreen(userId: widget.friend.id, type: type),
-      ),
-    );
+  Future<void> _openList(FollowListType type) async {
+    if (_openingSocialList) return;
+    _openingSocialList = true;
+    try {
+      await Navigator.of(context).push<void>(
+        MaterialPageRoute<void>(
+          builder: (_) => FollowListScreen(
+            userId: widget.friend.id,
+            type: type,
+            service: _followService,
+          ),
+        ),
+      );
+    } finally {
+      _openingSocialList = false;
+    }
   }
 
   @override
@@ -509,7 +550,7 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
         userId: widget.friend.id,
         displayName: name,
         mediaRevision: revision,
-        mediaService: widget.profileMediaService,
+        mediaService: _profileMediaService,
         minimumSize: const Size(124, 124),
         child: Container(
           padding: const EdgeInsets.all(4),
@@ -523,7 +564,7 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
             radius: 58,
             userId: widget.friend.id,
             mediaRevision: revision,
-            mediaService: widget.profileMediaService,
+            mediaService: _profileMediaService,
             displayName: name,
             backgroundColor: context.appPalette.surfaceSunken,
             premium: profile?.premiumIdentity ?? widget.friend.premiumIdentity,
@@ -708,7 +749,10 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
                     for (var i = 0; i < summary.sample.length.clamp(0, 4); i++)
                       Positioned(
                         left: i * 14.0,
-                        child: _MutualFriendAvatar(friend: summary.sample[i]),
+                        child: _MutualFriendAvatar(
+                          friend: summary.sample[i],
+                          mediaService: _profileMediaService,
+                        ),
                       ),
                   ],
                 ),
@@ -992,13 +1036,13 @@ class _UnavailableProfile extends StatelessWidget {
 }
 
 class _MutualFriendAvatar extends StatelessWidget {
-  const _MutualFriendAvatar({required this.friend});
+  const _MutualFriendAvatar({required this.friend, this.mediaService});
 
   final SuggestedFriend friend;
+  final ProfileMediaService? mediaService;
 
   @override
   Widget build(BuildContext context) {
-    final hasPhoto = friend.photoUrl?.trim().isNotEmpty == true;
     final palette = context.appPalette;
     return Container(
       width: 28,
@@ -1007,24 +1051,17 @@ class _MutualFriendAvatar extends StatelessWidget {
         shape: BoxShape.circle,
         color: palette.surfaceSunken,
         border: Border.all(color: palette.surface, width: 2),
-        image: hasPhoto
-            ? DecorationImage(
-                image: NetworkImage(friend.photoUrl!),
-                fit: BoxFit.cover,
-              )
-            : null,
       ),
       alignment: Alignment.center,
-      child: hasPhoto
-          ? null
-          : Text(
-              friend.initial,
-              style: TextStyle(
-                color: palette.textPrimary,
-                fontSize: 11,
-                fontWeight: FontWeight.w800,
-              ),
-            ),
+      clipBehavior: Clip.antiAlias,
+      child: UserAvatar(
+        radius: 12,
+        userId: friend.uid,
+        mediaRevision: friend.profileUpdatedAt,
+        mediaService: mediaService,
+        displayName: friend.displayName,
+        backgroundColor: palette.surfaceSunken,
+      ),
     );
   }
 }

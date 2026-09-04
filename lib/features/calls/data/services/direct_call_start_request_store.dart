@@ -91,6 +91,57 @@ abstract interface class DirectCallStartRequestStore {
   });
 }
 
+/// Durable, app-installation-scoped secret used to bind a private call to the
+/// device that started or answered it.
+///
+/// The raw value never belongs in Firestore. Callables persist only a digest
+/// salted with the call and participant identifiers, so another signed-in
+/// device cannot copy the binding from participant-readable call state.
+abstract interface class DirectCallInstallationIdStore {
+  Future<String> loadOrCreate({required String candidate});
+}
+
+class SharedPreferencesDirectCallInstallationIdStore
+    implements DirectCallInstallationIdStore {
+  SharedPreferencesDirectCallInstallationIdStore({
+    Future<SharedPreferences> Function()? preferences,
+  }) : _preferences = preferences ?? SharedPreferences.getInstance;
+
+  static const _storageKey = 'yovoice.directCall.installationSecret.v1';
+  static final RegExp _safeId = RegExp(r'^[A-Za-z0-9_-]{8,128}$');
+  static Future<void> _mutationTail = Future<void>.value();
+
+  final Future<SharedPreferences> Function() _preferences;
+
+  @override
+  Future<String> loadOrCreate({required String candidate}) {
+    final completer = Completer<String>();
+    _mutationTail = _mutationTail.then((_) async {
+      try {
+        final preferences = await _preferences();
+        final existing = preferences.getString(_storageKey)?.trim();
+        if (existing != null && _safeId.hasMatch(existing)) {
+          completer.complete(existing);
+          return;
+        }
+        if (!_safeId.hasMatch(candidate)) {
+          throw StateError('The direct-call installation secret is invalid.');
+        }
+        final saved = await preferences.setString(_storageKey, candidate);
+        if (!saved) {
+          throw StateError(
+            'The direct-call installation secret could not be saved.',
+          );
+        }
+        completer.complete(candidate);
+      } catch (error, stackTrace) {
+        completer.completeError(error, stackTrace);
+      }
+    });
+    return completer.future;
+  }
+}
+
 /// Durable, account-and-peer scoped idempotency state for starting a call.
 ///
 /// The record is committed before the callable runs. A process that loses the

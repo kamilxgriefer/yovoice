@@ -35,6 +35,7 @@ const {
 
 const REGION = "europe-west1";
 const SAFE_ID = /^[A-Za-z0-9_-]{1,128}$/u;
+const DIRECT_CALL_INSTALLATION_ID = /^[A-Za-z0-9_-]{8,128}$/u;
 const RING_TTL_MS = 60 * 1000;
 const ACTIVE_CALL_TTL_MS = 8 * 60 * 60 * 1000;
 const TOKEN_TTL = "5m";
@@ -54,13 +55,18 @@ const DIRECT_CALL_ATTEMPT_LIMITS = Object.freeze({
   }),
 });
 const DIRECT_CALL_MEDIA_TYPES = new Set(["audio", "video"]);
-// Video was added after the original audio-only direct-call protocol. A
-// recipient with even one registered legacy device must not receive a call
-// that the device could silently present as audio while the caller publishes
-// camera video. FCM device rows are the existing per-device registration
-// boundary, so the client advertises the exact protocol it understands there.
+const DIRECT_CALL_ERROR_REASONS = Object.freeze({
+  canonicalFriendshipRequired: "canonical-friendship-required",
+  directConversationRequired: "direct-conversation-required",
+  emailVerificationRequired: "email-verification-required",
+  installationBindingRequired: "direct-call-installation-binding-required",
+  videoCapabilityRequired: "direct-video-capability-required",
+});
+// Video was added after the original audio-only direct-call protocol. The
+// initiating installation offers this version and the installation performing
+// Answer must acknowledge the same version. A legacy Answer remains valid but
+// atomically downgrades the canonical call to audio before tokens are minted.
 const DIRECT_VIDEO_PROTOCOL_VERSION = 1;
-const MAX_DIRECT_CALL_DEVICE_CAPABILITIES = 50;
 const DIRECT_CALL_START_LIMITS = Object.freeze({
   caller: Object.freeze({
     windowMs: 10 * 60 * 1000,
@@ -326,6 +332,7 @@ function assertCanonicalFriendship(first, second, firstId, secondId) {
     throw new HttpsError(
       "failed-precondition",
       "Direct voice calls are available between confirmed friends.",
+      { reason: DIRECT_CALL_ERROR_REASONS.canonicalFriendshipRequired },
     );
   }
 }
@@ -361,6 +368,7 @@ function assertDirectConversation(snapshot, callerId, calleeId) {
     throw new HttpsError(
       "failed-precondition",
       "Start this call from your direct conversation.",
+      { reason: DIRECT_CALL_ERROR_REASONS.directConversationRequired },
     );
   }
 }
@@ -394,26 +402,82 @@ function requireDirectCallMediaType(value) {
   return mediaType;
 }
 
-async function assertDirectVideoRecipientCompatible(transaction, userId) {
-  const registeredDevices = await transaction.get(
-    db.collection(`users/${userId}/fcmTokens`)
-      .limit(MAX_DIRECT_CALL_DEVICE_CAPABILITIES + 1),
-  );
-  const hasTooManyDevices =
-    registeredDevices.size > MAX_DIRECT_CALL_DEVICE_CAPABILITIES;
-  const everyDeviceSupportsVideo = registeredDevices.size > 0 &&
-    registeredDevices.docs.every((document) =>
-      document.data()?.directVideoProtocol === DIRECT_VIDEO_PROTOCOL_VERSION,
+function optionalDirectCallInstallationId(value) {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== "string") {
+    throw new HttpsError(
+      "invalid-argument",
+      "A valid app installation is required.",
     );
-  if (hasTooManyDevices || !everyDeviceSupportsVideo) {
+  }
+  const installationId = value.trim();
+  if (!DIRECT_CALL_INSTALLATION_ID.test(installationId)) {
+    throw new HttpsError(
+      "invalid-argument",
+      "A valid app installation is required.",
+    );
+  }
+  return installationId;
+}
+
+function directCallInstallationBinding(callId, userId, installationId) {
+  if (
+    !SAFE_ID.test(normalizeText(callId, 128)) ||
+    !SAFE_ID.test(normalizeText(userId, 128)) ||
+    !DIRECT_CALL_INSTALLATION_ID.test(installationId)
+  ) {
+    throw new TypeError("A valid direct-call installation binding is required.");
+  }
+  // Do not persist a stable installation identifier into participant-readable
+  // call state. The call-scoped digest is sufficient to bind later accepts and
+  // token requests without making an installation linkable across calls.
+  return createHash("sha256")
+    .update(`direct-call-installation\u0000${callId}\u0000${userId}\u0000${installationId}`)
+    .digest("hex");
+}
+
+function directVideoCapabilityError(message) {
+  return new HttpsError(
+    "failed-precondition",
+    message,
+    {
+      reason: DIRECT_CALL_ERROR_REASONS.videoCapabilityRequired,
+      audioFallbackAvailable: true,
+      requiredProtocol: DIRECT_VIDEO_PROTOCOL_VERSION,
+    },
+  );
+}
+
+function assertDirectVideoProtocol(protocol, message) {
+  if (protocol !== DIRECT_VIDEO_PROTOCOL_VERSION) {
+    throw directVideoCapabilityError(message);
+  }
+}
+
+function assertDirectCallInstallationBound({
+  callId,
+  call,
+  userId,
+  installationId,
+}) {
+  const bindingField = userId === call.callerId
+    ? "callerInstallationBinding"
+    : "calleeInstallationBinding";
+  const storedBinding = normalizeText(call[bindingField], 64);
+  const mediaType = requireDirectCallMediaType(call.mediaType);
+  if (storedBinding.length === 0 && mediaType === "audio") {
+    // Calls created or accepted by an audio-only legacy client intentionally
+    // retain their historical account-level authorization contract.
+    return;
+  }
+  const suppliedBinding = installationId === null
+    ? null
+    : directCallInstallationBinding(callId, userId, installationId);
+  if (storedBinding.length !== 64 || suppliedBinding !== storedBinding) {
     throw new HttpsError(
       "failed-precondition",
-      "Video calling is not available until your friend updates YO Voice on every active device.",
-      {
-        reason: "direct-video-capability-required",
-        audioFallbackAvailable: true,
-        requiredProtocol: DIRECT_VIDEO_PROTOCOL_VERSION,
-      },
+      "Continue this call on the device that started or answered it.",
+      { reason: DIRECT_CALL_ERROR_REASONS.installationBindingRequired },
     );
   }
 }
@@ -547,6 +611,7 @@ async function startDirectCallHandler(request) {
     throw new HttpsError(
       "failed-precondition",
       "Verify your email before starting a voice call.",
+      { reason: DIRECT_CALL_ERROR_REASONS.emailVerificationRequired },
     );
   }
   const calleeId = normalizeText(request.data?.calleeId, 128);
@@ -556,6 +621,24 @@ async function startDirectCallHandler(request) {
     "mediaType",
   );
   const mediaType = requireDirectCallMediaType(request.data?.mediaType);
+  const installationId = optionalDirectCallInstallationId(
+    request.data?.installationId,
+  );
+  const directVideoProtocol = request.data?.directVideoProtocol;
+  if (mediaType === "video") {
+    if (installationId === null) {
+      // Build 19 already sends an explicit video offer but predates the
+      // installation/protocol fields. Refuse video safely while returning the
+      // reason that client understands and can turn into an audio fallback.
+      throw directVideoCapabilityError(
+        "Update YO Voice on this device before starting a video call.",
+      );
+    }
+    assertDirectVideoProtocol(
+      directVideoProtocol,
+      "Update YO Voice on this device before starting a video call.",
+    );
+  }
   if (!SAFE_ID.test(calleeId) || calleeId === auth.uid) {
     throw new HttpsError(
       "invalid-argument",
@@ -578,9 +661,13 @@ async function startDirectCallHandler(request) {
       "direct.call.start",
       auth.uid,
       requestId,
-      mediaTypeWasProvided
-        ? { calleeId, conversationId, mediaType }
-        : { calleeId, conversationId },
+      {
+        calleeId,
+        conversationId,
+        ...(mediaTypeWasProvided ? { mediaType } : {}),
+        ...(installationId === null ? {} : { installationId }),
+        ...(mediaType === "video" ? { directVideoProtocol } : {}),
+      },
     );
   const canonicalStartIdentity = requestId === null
     ? null
@@ -588,7 +675,13 @@ async function startDirectCallHandler(request) {
       "direct.call.start",
       auth.uid,
       requestId,
-      { calleeId, conversationId, mediaType },
+      {
+        calleeId,
+        conversationId,
+        mediaType,
+        ...(installationId === null ? {} : { installationId }),
+        ...(mediaType === "video" ? { directVideoProtocol } : {}),
+      },
     );
   const legacyAudioStartIdentity = requestId === null || mediaType !== "audio"
     ? null
@@ -749,11 +842,6 @@ async function startDirectCallHandler(request) {
       calleeId,
     );
     assertDirectConversation(conversation, auth.uid, calleeId);
-    if (mediaType === "video") {
-      // Deliberately after friendship/conversation authorization: callers must
-      // not be able to probe another account's private device inventory.
-      await assertDirectVideoRecipientCompatible(transaction, calleeId);
-    }
     if (lockIsActive(callerLock, nowMillis)) {
       throw new HttpsError(
         "already-exists",
@@ -801,6 +889,16 @@ async function startDirectCallHandler(request) {
       answeredAt: null,
       endedAt: null,
       endedBy: null,
+      ...(installationId === null ? {} : {
+        callerInstallationBinding: directCallInstallationBinding(
+          callRef.id,
+          auth.uid,
+          installationId,
+        ),
+      }),
+      ...(mediaType === "video" ? {
+        offeredVideoProtocol: DIRECT_VIDEO_PROTOCOL_VERSION,
+      } : {}),
       ...(startIdentity === null ? {} : {
         startRequestId: requestId,
         startInputHash: startIdentity.inputHash,
@@ -856,12 +954,28 @@ async function startDirectCallHandler(request) {
       status: "ringing",
       expiresAtMillis: expiresAt.toMillis(),
     };
+  }).catch((error) => {
+    const reason = error?.details?.reason;
+    if (Object.values(DIRECT_CALL_ERROR_REASONS).includes(reason)) {
+      // Deliberately exclude participant and conversation identifiers. The
+      // reason, callable code and media type are enough to distinguish a
+      // migration/configuration refusal from transport or LiveKit failures.
+      logger.warn("Direct call start refused", {
+        code: error.code ?? "unknown",
+        reason,
+        mediaType,
+      });
+    }
+    throw error;
   });
 }
 
 async function transitionDirectCall(request, action) {
   const auth = requireAuthentication(request);
   const callId = requireCallId(request);
+  const installationId = action === "accept"
+    ? optionalDirectCallInstallationId(request.data?.installationId)
+    : null;
   const callRef = db.doc(`directCalls/${callId}`);
 
   return db.runTransaction(async (transaction) => {
@@ -870,6 +984,9 @@ async function transitionDirectCall(request, action) {
     const now = Timestamp.now();
     const expired = (timestampMillis(call.expiresAt) ?? 0) <= now.toMillis();
     let nextStatus;
+    let acceptedMediaType = null;
+    let negotiatedVideo = false;
+    let bindAcceptingInstallation = false;
 
     if (action === "accept") {
       if (auth.uid !== call.calleeId) {
@@ -878,10 +995,30 @@ async function transitionDirectCall(request, action) {
           "This call cannot be answered.",
         );
       }
+      const mediaType = requireDirectCallMediaType(call.mediaType);
       // A callable response may be lost after the transaction committed. The
       // desired state is therefore replay-safe for the same authorised actor.
       // `ended` also proves that this ringing call was accepted first.
       if (call.status === "active" || call.status === "ended") {
+        if (mediaType === "video") {
+          if (installationId === null) {
+            throw new HttpsError(
+              "failed-precondition",
+              "Continue this video call on the device that answered it.",
+              { reason: DIRECT_CALL_ERROR_REASONS.installationBindingRequired },
+            );
+          }
+          assertDirectVideoProtocol(
+            request.data?.directVideoProtocol,
+            "Continue this video call on an updated device.",
+          );
+        }
+        assertDirectCallInstallationBound({
+          callId,
+          call,
+          userId: auth.uid,
+          installationId,
+        });
         return { callId, status: call.status };
       }
       if (call.status !== "ringing") {
@@ -894,6 +1031,23 @@ async function transitionDirectCall(request, action) {
         throw new HttpsError("deadline-exceeded", "This call has expired.");
       }
       await assertCallPairAvailable(transaction, call, now.toMillis());
+      if (mediaType === "video") {
+        // The device that performs Answer is the authoritative capability
+        // boundary. Legacy clients send neither field; they can still answer,
+        // but the canonical call becomes audio before either participant can
+        // mint a LiveKit token. An explicit v1 acknowledgement retains video;
+        // a supplied installation remains bound even when camera capability is
+        // absent and the call is therefore downgraded.
+        negotiatedVideo = installationId !== null &&
+          request.data?.directVideoProtocol === DIRECT_VIDEO_PROTOCOL_VERSION &&
+          call.offeredVideoProtocol === DIRECT_VIDEO_PROTOCOL_VERSION &&
+          normalizeText(call.callerInstallationBinding, 64).length === 64;
+        acceptedMediaType = negotiatedVideo ? "video" : "audio";
+        bindAcceptingInstallation = installationId !== null;
+      } else {
+        acceptedMediaType = "audio";
+        bindAcceptingInstallation = installationId !== null;
+      }
       nextStatus = "active";
     } else if (action === "decline") {
       if (auth.uid !== call.calleeId) {
@@ -917,14 +1071,22 @@ async function transitionDirectCall(request, action) {
           "This call cannot be cancelled.",
         );
       }
-      if (call.status === "cancelled") return { callId, status: call.status };
-      if (call.status !== "ringing") {
+      if (call.status === "cancelled" || call.status === "ended") {
+        return { callId, status: call.status };
+      }
+      if (call.status === "ringing") {
+        nextStatus = "cancelled";
+      } else if (call.status === "active") {
+        // Answer and Cancel can cross in flight. When Answer wins the
+        // transaction race, honour the caller's already-issued Cancel as an
+        // immediate End and queue the normal LiveKit teardown below.
+        nextStatus = "ended";
+      } else {
         throw new HttpsError(
           "failed-precondition",
           "This call cannot be cancelled.",
         );
       }
-      nextStatus = "cancelled";
     } else if (action === "end") {
       if (call.status !== "active") {
         if (TERMINAL_STATUSES.has(call.status)) {
@@ -958,7 +1120,22 @@ async function transitionDirectCall(request, action) {
       status: nextStatus,
       updatedAt: now,
       expiresAt,
-      ...(isActive ? { answeredAt: now } : {}),
+      ...(isActive ? {
+        answeredAt: now,
+        mediaType: acceptedMediaType,
+        ...(!bindAcceptingInstallation ? {} : {
+          calleeInstallationBinding: directCallInstallationBinding(
+            callId,
+            auth.uid,
+            installationId,
+          ),
+        }),
+        ...(negotiatedVideo ? {
+          negotiatedVideoProtocol: DIRECT_VIDEO_PROTOCOL_VERSION,
+        } : requireDirectCallMediaType(call.mediaType) === "video"
+          ? { negotiatedVideoProtocol: FieldValue.delete() }
+          : {}),
+      } : {}),
       ...(!isActive ? { endedAt: now, endedBy: auth.uid } : {}),
     });
     writeDirectCallStartLedger(
@@ -976,6 +1153,7 @@ async function transitionDirectCall(request, action) {
         status: nextStatus,
         updatedAt: now,
         expiresAt,
+        ...(isActive ? { mediaType: acceptedMediaType } : {}),
       });
     }
     transaction.delete(
@@ -1014,7 +1192,15 @@ async function transitionDirectCall(request, action) {
   });
 }
 
-async function authorizeDirectCallVoice(callId, authenticatedUser, transaction) {
+async function authorizeDirectCallVoice(
+  callId,
+  authenticatedUser,
+  transaction,
+  {
+    installationId = null,
+    directVideoProtocol = null,
+  } = {},
+) {
   const callRef = db.doc(`directCalls/${callId}`);
   const callSnapshot = await transaction.get(callRef);
   const { call, participants } = callContext(callSnapshot, authenticatedUser.uid);
@@ -1027,6 +1213,34 @@ async function authorizeDirectCallVoice(callId, authenticatedUser, transaction) 
   if ((timestampMillis(call.expiresAt) ?? 0) <= Date.now()) {
     throw new HttpsError("deadline-exceeded", "This call has ended.");
   }
+  const mediaType = requireDirectCallMediaType(call.mediaType);
+  if (mediaType === "video") {
+    if (installationId === null) {
+      throw new HttpsError(
+        "failed-precondition",
+        "Update YO Voice on this device before connecting to this video call.",
+        { reason: DIRECT_CALL_ERROR_REASONS.installationBindingRequired },
+      );
+    }
+    assertDirectVideoProtocol(
+      directVideoProtocol,
+      "Update YO Voice on this device before connecting to this video call.",
+    );
+    assertDirectVideoProtocol(
+      call.offeredVideoProtocol,
+      "The caller must restart this video call after updating YO Voice.",
+    );
+    assertDirectVideoProtocol(
+      call.negotiatedVideoProtocol,
+      "The recipient must answer this video call from an updated device.",
+    );
+  }
+  assertDirectCallInstallationBound({
+    callId,
+    call,
+    userId: authenticatedUser.uid,
+    installationId,
+  });
   const otherId = participants.find((uid) => uid !== authenticatedUser.uid);
   const references = [
     db.doc(`users/${authenticatedUser.uid}`),
@@ -1059,6 +1273,8 @@ async function recordAuthorizedDirectCallSession({
   expiresAt,
   nowMs = Date.now(),
   operation = null,
+  installationId = null,
+  directVideoProtocol = null,
 }) {
   const roomName = directCallRoomName(callId);
   return db.runTransaction(async (transaction) => {
@@ -1079,6 +1295,7 @@ async function recordAuthorizedDirectCallSession({
       callId,
       authenticatedUser,
       transaction,
+      { installationId, directVideoProtocol },
     );
     const sessionReference = activeVoiceSessionReference(
       authenticatedUser.uid,
@@ -1151,13 +1368,23 @@ async function createDirectCallTokenHandler(request, {
       request.data?.requestId === null
     ? null
     : requireRequestId(request.data.requestId);
+  const installationId = optionalDirectCallInstallationId(
+    request.data?.installationId,
+  );
+  const directVideoProtocol = request.data?.directVideoProtocol;
   const tokenIdentity = requestId === null
     ? null
     : operationIdentity(
       "direct.call.token",
       auth.uid,
       requestId,
-      { callId },
+      {
+        callId,
+        ...(installationId === null ? {} : { installationId }),
+        ...(directVideoProtocol === undefined || directVideoProtocol === null
+          ? {}
+          : { directVideoProtocol }),
+      },
     );
   const nowMs = clock();
 
@@ -1176,7 +1403,12 @@ async function createDirectCallTokenHandler(request, {
     if (preflightReplay) return preflightReplay;
 
     const access = await db.runTransaction((transaction) =>
-      authorizeDirectCallVoice(callId, auth, transaction),
+      authorizeDirectCallVoice(
+        callId,
+        auth,
+        transaction,
+        { installationId, directVideoProtocol },
+      ),
     );
     const identity = canonicalIdentity(auth.uid, access.profile);
     const mediaType = requireDirectCallMediaType(access.call.mediaType);
@@ -1240,6 +1472,8 @@ async function createDirectCallTokenHandler(request, {
       authenticatedUser: auth,
       expiresAt,
       nowMs,
+      installationId,
+      directVideoProtocol,
       operation: tokenIdentity === null ? null : {
         identity: tokenIdentity,
         kind: "direct.call.token",
@@ -1494,15 +1728,14 @@ const onDirectCallControlCreated = onDocumentCreated(
 module.exports = {
   ACTIVE_CALL_TTL_MS,
   DIRECT_CALL_ATTEMPT_LIMITS,
+  DIRECT_CALL_ERROR_REASONS,
   DIRECT_VIDEO_PROTOCOL_VERSION,
   DIRECT_CALL_START_LIMITS,
   DIRECT_CALL_TOKEN_RATE_LIMIT,
   DIRECT_CALL_TOKEN_RATE_WINDOW_MS,
-  MAX_DIRECT_CALL_DEVICE_CAPABILITIES,
   RING_TTL_MS,
   acceptDirectCall,
   assertDirectConversation,
-  assertDirectVideoRecipientCompatible,
   authorizeDirectCallVoice,
   assertCanonicalFriendship,
   cancelDirectCall,

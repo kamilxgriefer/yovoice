@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
+import 'dart:typed_data';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
@@ -1034,7 +1035,7 @@ class MessageService {
       fingerprint: sha256.convert(bytes).toString(),
       conversationId: conversationId,
       type: MessageType.video,
-      contentType: _videoContentType(video),
+      contentType: _videoContentType(video, bytes),
       durationSeconds: durationSeconds,
       bytes: bytes,
       reserveRequestId: _newRequestId(),
@@ -1086,6 +1087,50 @@ class MessageService {
 
   Future<void> discardQueuedAttachment(String entryId) =>
       attachmentOutbox.discard(entryId);
+
+  /// Removes durable media work only after the canonical conversation stream
+  /// proves that this account published the same reserved media message.
+  ///
+  /// A finalize callable can commit and then lose its response. In that case
+  /// the canonical snapshot is stronger evidence than the local retry state,
+  /// including a max-attempt `failed` entry. Matching the sender, conversation,
+  /// message id and media type prevents an unrelated or malformed document
+  /// from deleting somebody's pending bytes.
+  Future<void> reconcileCommittedAttachments(Iterable<Message> messages) async {
+    final queue = attachmentOutbox;
+    final ownerId = _auth.currentUser?.uid;
+    if (ownerId == null || ownerId != queue.ownerId) return;
+    await queue.load();
+    if (_auth.currentUser?.uid != ownerId) return;
+
+    final canonical = <String>{
+      for (final message in messages)
+        if (message.senderId == ownerId && message.type != MessageType.text)
+          '${message.conversationId}\u0000${message.id}\u0000${message.type.name}',
+    };
+    if (canonical.isEmpty) return;
+
+    final completed = queue.entries
+        .where((entry) {
+          final reservation = entry.reservation;
+          if (reservation == null || reservation.messageId.isEmpty) {
+            return false;
+          }
+          if (reservation.conversationId != entry.conversationId ||
+              reservation.type != entry.type) {
+            return false;
+          }
+          return canonical.contains(
+            '${entry.conversationId}\u0000${reservation.messageId}\u0000${entry.type.name}',
+          );
+        })
+        .toList(growable: false);
+
+    for (final entry in completed) {
+      if (_auth.currentUser?.uid != ownerId) return;
+      await queue.complete(entry.id);
+    }
+  }
 
   Future<void> retryFailedAttachment(String entryId) async {
     final queue = attachmentOutbox;
@@ -1188,6 +1233,15 @@ class MessageService {
               await queue.complete(entry.id);
               return;
             } on FirebaseFunctionsException catch (error) {
+              if (_isAuthoritativeReservationInvalid(error)) {
+                entry = (await queue.rotateRejectedReservation(
+                  entry.id,
+                  expectedReserveRequestId: entry.reserveRequestId,
+                  reserveRequestId: _newRequestId(),
+                  finalizeRequestId: _newRequestId(),
+                ))!;
+                continue;
+              }
               if (error.code != 'failed-precondition' ||
                   !queue.reservationNeedsRefresh(entry)) {
                 rethrow;
@@ -1366,11 +1420,14 @@ class MessageService {
 
   bool _isAmbiguousAttachmentFailure(Object error) {
     if (error is FirebaseFunctionsException) {
-      return const {
-        'unavailable',
-        'deadline-exceeded',
-        'aborted',
-      }.contains(error.code);
+      if (_isAuthoritativeReservationInvalid(error)) return false;
+      // A callable can commit the canonical message and still lose its ACK.
+      // Keep this exactly aligned with the text outbox so background
+      // cancellation and protocol-level INTERNAL/UNKNOWN responses replay the
+      // same idempotency request instead of becoming a false permanent
+      // failure. This branch must precede FirebaseException because
+      // FirebaseFunctionsException extends it.
+      return _isAmbiguousTransportFailure(error);
     }
     if (error is FirebaseException) {
       return const {
@@ -1385,10 +1442,21 @@ class MessageService {
   }
 
   bool _isAuthoritativeReservationInvalid(Object error) {
-    if (error is! FirebaseException || error.code != 'failed-precondition') {
-      return false;
+    if (error is! FirebaseException) return false;
+    final message = (error.message ?? '').trim().toLowerCase();
+    // These are the production finalize responses. They are authoritative,
+    // not ambiguous transport failures, even though their callable codes also
+    // appear in the generic retry set. Exact text keeps an unrelated deadline
+    // or transaction abort on the stable idempotency identity.
+    if (error.code == 'deadline-exceeded' &&
+        message == 'the attachment reservation expired.') {
+      return true;
     }
-    final message = (error.message ?? '').toLowerCase();
+    if (error.code == 'aborted' &&
+        message == 'the attachment reservation changed. try again.') {
+      return true;
+    }
+    if (error.code != 'failed-precondition') return false;
     if (!message.contains('reservation')) return false;
     return message.contains('expired') ||
         message.contains('invalid') ||
@@ -1411,7 +1479,10 @@ class MessageService {
     throw StateError('Choose a JPG, PNG, or WebP photo.');
   }
 
-  String _videoContentType(XFile video) {
+  String _videoContentType(XFile video, Uint8List bytes) {
+    final sniffed = _sniffVideoContentType(bytes);
+    if (sniffed != null) return sniffed;
+
     final declared = video.mimeType?.split(';').first.trim().toLowerCase();
     if (declared == 'video/mp4' ||
         declared == 'video/quicktime' ||
@@ -1423,6 +1494,47 @@ class MessageService {
     if (lower.endsWith('.webm')) return 'video/webm';
     if (lower.endsWith('.mp4') || lower.endsWith('.m4v')) return 'video/mp4';
     throw StateError('Choose an MP4, MOV, or WebM video.');
+  }
+
+  /// iOS can expose an ISO-BMFF recording as `.MOV`/`video/quicktime` even
+  /// when its immutable bytes use an MP4 brand. Bind the reservation to the
+  /// bytes when possible so Storage metadata and the trusted server probe
+  /// agree. This is only an early client hint; the backend still inspects the
+  /// complete generation and its audio/video tracks before publishing.
+  String? _sniffVideoContentType(Uint8List bytes) {
+    if (bytes.lengthInBytes >= 4 &&
+        bytes[0] == 0x1a &&
+        bytes[1] == 0x45 &&
+        bytes[2] == 0xdf &&
+        bytes[3] == 0xa3) {
+      return 'video/webm';
+    }
+
+    final limit = min(bytes.lengthInBytes, 4096);
+    var offset = 0;
+    while (offset + 12 <= limit) {
+      final size =
+          (bytes[offset] << 24) |
+          (bytes[offset + 1] << 16) |
+          (bytes[offset + 2] << 8) |
+          bytes[offset + 3];
+      final isFileType =
+          bytes[offset + 4] == 0x66 &&
+          bytes[offset + 5] == 0x74 &&
+          bytes[offset + 6] == 0x79 &&
+          bytes[offset + 7] == 0x70;
+      if (isFileType) {
+        final majorBrand = String.fromCharCodes(
+          bytes.sublist(offset + 8, offset + 12),
+        );
+        return majorBrand == 'qt  ' || majorBrand == 'M4V '
+            ? 'video/quicktime'
+            : 'video/mp4';
+      }
+      if (size < 8 || offset + size > limit) break;
+      offset += size;
+    }
+    return null;
   }
 
   Future<_DirectAttachmentReservation> _reserveDirectAttachment({
@@ -1559,13 +1671,8 @@ class MessageService {
         return;
       } catch (error) {
         lastError = error;
-        final retryable =
-            error is FirebaseFunctionsException &&
-            const {
-              'unavailable',
-              'deadline-exceeded',
-              'aborted',
-            }.contains(error.code);
+        if (_isAuthoritativeReservationInvalid(error)) rethrow;
+        final retryable = _isAmbiguousTransportFailure(error);
         if (!retryable || attempt == 2) rethrow;
         await Future<void>.delayed(Duration(milliseconds: 250 * (attempt + 1)));
       }

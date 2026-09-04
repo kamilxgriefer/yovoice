@@ -20,6 +20,7 @@ const {
   canonicalConversationId,
   canonicalPairKey,
   createDirectMessagingService,
+  validateDirectMediaProbe,
 } = require("../messaging/direct_integrity");
 const {
   createDirectMigrationService,
@@ -260,6 +261,41 @@ test("trusted media inspection ignores the declared MIME and binds the generatio
       0, 0, 0, 20, 0x66, 0x74, 0x79, 0x70, 0x4d, 0x34, 0x41, 0x20,
     ])),
     { family: "iso-bmff", detectedContentType: null, majorBrand: "M4A " },
+  );
+});
+
+test("direct video accepts only the trusted MP4/QuickTime container equivalence", () => {
+  const reservation = {
+    type: "video",
+    contentType: "video/quicktime",
+    durationSeconds: 8,
+  };
+  const media = { generation: "23", size: 4096 };
+  const baseProbe = {
+    detectedContentType: "video/mp4",
+    durationMs: 8_000,
+    generation: "23",
+    hasAudio: true,
+    hasVideo: true,
+    size: 4096,
+  };
+
+  assert.equal(validateDirectMediaProbe(baseProbe, reservation, media), 8);
+  assert.throws(
+    () => validateDirectMediaProbe(
+      { ...baseProbe, detectedContentType: "video/webm" },
+      reservation,
+      media,
+    ),
+    (error) => error.code === "failed-precondition",
+  );
+  assert.throws(
+    () => validateDirectMediaProbe(
+      { ...baseProbe, hasVideo: false, hasAudio: true },
+      reservation,
+      media,
+    ),
+    (error) => error.code === "failed-precondition",
   );
 });
 
@@ -960,7 +996,7 @@ test("private voice attachments require an audio-only trusted probe", async () =
   assert.equal(message.durationSeconds, 5);
 });
 
-test("private video attachments remain backward-readable and storage-bound", async () => {
+test("iOS MOV finalizes when its trusted bytes carry an MP4 brand", async () => {
   const metadata = new Map();
   const storage = {
     async getMetadata(path) {
@@ -974,7 +1010,10 @@ test("private video attachments remain backward-readable and storage-bound", asy
   };
   const service = directService({}, {
     storage,
-    mediaProbe: matchingMediaProbe({ durationMs: 11_500 }),
+    mediaProbe: matchingMediaProbe({
+      durationMs: 11_500,
+      overrides: { detectedContentType: "video/mp4" },
+    }),
   });
   const { conversationId } = await open(service, A, B, "open-video-1");
   const reserved = await service.reserveDirectMessageAttachment(request(A, {

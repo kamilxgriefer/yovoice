@@ -82,8 +82,9 @@ given a false-precision date.
 | [118](#adr-118-premium-pairs-recurring-eur-with-non-renewing-prepaid-blik) | Premium pairs recurring EUR with non-renewing prepaid BLIK | Catalog deployed; provider rollout disabled | 2026-08-28 |
 | [119](#adr-119-moderator-premium-preview-is-a-derived-product-benefit-not-a-paid-entitlement) | Moderator Premium preview is a derived product benefit, not a paid entitlement | Implemented; production release pending | 2026-08-28 |
 | [120](#adr-120-podcast-studio-uses-the-participant-roster-as-its-production-state) | Podcast Studio uses the participant roster as its production state | Deployed to web and mobile beta | 2026-08-28 |
-| [137](#adr-137-build-19-private-media-is-reservation-bound-and-reels-accepts-only-user-owned-or-licensed-audio) | Build 19 private media is reservation-bound; Reels accepts only user-owned or licensed audio | Accepted in source; coordinated release pending | 2026-09-03 |
-| [138](#adr-138-moderation-and-its-audit-record-commit-atomically) | Moderation and its audit record commit atomically | Accepted in source; production deployment pending | 2026-09-03 |
+| [137](#adr-137-build-19-private-media-is-reservation-bound-and-reels-accepts-only-user-owned-or-licensed-audio) | Build 19 private media is reservation-bound; Reels accepts only user-owned or licensed audio | Build 19 tester rollout complete; corrective successor pending | 2026-09-03 |
+| [138](#adr-138-moderation-and-its-audit-record-commit-atomically) | Moderation and its audit record commit atomically | Deployed / ACTIVE with Build 19 | 2026-09-03 |
+| [139](#adr-139-legacy-friendship-reconciliation-requires-reviewed-server-evidence-and-social-read-fanouts-are-account-scoped) | Legacy friendship reconciliation requires reviewed server evidence; social-read fanouts are account-scoped | Accepted in source; production deployment pending | 2026-09-04 |
 
 > **The index is incomplete and has been for a while**: rows for ADR-020
 > through ADR-052 were never added, and neither were ADR-062–065,
@@ -8454,11 +8455,16 @@ depending on widget lifecycle timing.
   implemented, so no UI or marketing copy may claim FaceTime-equivalent E2EE.
 - Physical two-device camera, Bluetooth, background/foreground, APNs/FCM and
   poor-network tests remain mandatory before a tester or production release.
-- A mixed-version recipient capability is not yet authoritative. Video must be
-  limited to a cohort on the compatible build until a server-checked device or
-  minimum-build handshake is added.
-- Release order is backward-compatible Functions, authoritative capability
-  registration/gate, compatible clients, then video enablement.
+- Mixed-version capability is negotiated by the installation performing
+  `Answer`, not inferred from FCM registrations. Protocol-v1 on both sides
+  retains video; a legacy answer or unavailable camera atomically downgrades
+  canonical call and signal state to audio before token issuance.
+- New calls persist only call-and-participant-scoped SHA-256 installation
+  bindings. The raw 256-bit local value is neither logged nor stored in call,
+  inbox or operation-ledger documents. Legacy unbound audio retains its
+  account-level contract; new bound calls reject another installation.
+- Release order is backward-compatible Functions first, then compatible
+  clients. Physical mixed-version acceptance remains mandatory.
 - This decision authorizes source work only; it does not authorize deployment.
 
 ## ADR-136: UI language is device-local, Polish is production copy, and additional locales enter through one guarded core catalog
@@ -8541,7 +8547,7 @@ keys.
 
 ## ADR-137: Build 19 private media is reservation-bound and Reels accepts only user-owned or licensed audio
 
-**Status**: Accepted in source; coordinated release pending
+**Status**: Build 19 tester rollout complete; corrective successor pending
 **Date**: 2026-09-03
 
 ### Context
@@ -8570,6 +8576,16 @@ Media is a bounded projection of the conversation a participant can already
 read, split into photo/video and voice views; it is not a new public media
 index.
 
+Production-shaped authoritative `deadline-exceeded` reservation expiry and
+`aborted` reservation-change refusals are classified before generic ambiguity.
+They rotate the rejected reservation and `messageId`; a genuinely ambiguous
+transport result preserves the durable identity. Lost-ack reconciliation
+accepts only an exact canonical sender, conversation, `messageId` and media-type
+match. Completion is ordered payload-delete before manifest removal, leaving a
+delete failure durable for retry/restart. A wrong sender, conversation or type
+cannot suppress the failed item or delete its payload, and concurrent delivery
+and reconciliation converge on one completion.
+
 Before canonical DM publication, the server validates reservation ownership,
 path, generation, size and declared type. It probes the stored object and
 rechecks the reservation inside the final transaction so a concurrent expiry,
@@ -8579,6 +8595,18 @@ generation-bound stream reports detected type and audio/video track presence.
 Voice must be audio-only and video must contain a real video track. A
 post-probe metadata read plus the transaction revalidates reservation, path,
 generation, declared/detected MIME, kind, size, duration and expiry.
+
+For video only, `video/mp4` and `video/quicktime` are treated as one ISO-BMFF
+container family after the immutable stored generation has been probed. This
+handles iOS pickers that report a MOV label for MP4-branded bytes (and the
+inverse) without general MIME coercion. Every ISO-BMFF result is corroborated,
+even when the general parser reports a positive duration. The bounded parser
+walks at most eight playable tracks and conservatively takes the maximum of the
+movie, track, media, decode, composition and edit timelines after matching
+sample counts. Both QuickTime `audi` and ISO `soun` handlers are audio. At most
+160 generation-bound range requests and 2 MiB of timing bytes are read;
+fragmented (`moof`/`mfra`/`mvex`), ambiguous, overflowing, malformed or
+over-budget files fail closed. Every other MIME mismatch also fails closed.
 
 Voice Moments and Reels are read through short-lived, generation-bound grants
 after current relationship and visibility checks.
@@ -8626,16 +8654,25 @@ server transcoding remain future, separately designed work.
   new video and media capabilities are introduced additively.
 - Physical codec, camera/library, background/restart, lost-acknowledgement and
   two-account visibility tests remain mandatory before store release.
-- The shared probe contract passes 9/9 and the fresh-emulator direct-integrity
-  gate passes 35/35; syntax checks for six changed Node files and the diff
-  check pass. Production deployment/read-back and hostile real-object smokes
-  remain release gates.
+- The initial Build 19 shared-probe baseline passed 9/9 with a 35/35
+  direct-integrity gate and six Node syntax checks. It is historical evidence,
+  not the current post-release gate.
+- The post-Build-19 corrective source tree passes the focused probe 29/29,
+  direct integrity 39/39 and the complete Functions gate 1218/1218 on fresh
+  Auth and Firestore emulators. Independent security re-review found no high-
+  or medium-risk blocker. Those source results do not claim that the deployed
+  Build 19 Functions revision contains the successor repair;
+  deployment/read-back and hostile real-object smokes remain successor gates.
+- The final DM media/outbox aggregate passes 68/68. An independent cleanup
+  re-review passes 41/41 without a P0/P1/P2 finding, including payload-delete
+  failure, retry/restart, concurrency and wrong sender/type/conversation cases.
+  This is source evidence, not physical or deployed success.
 - Reels is a real publish/read/report/delete MVP, but not a Spotify/Apple Music
   import service and not yet an immutable server-rendered export pipeline.
 
 ## ADR-138: Moderation and its audit record commit atomically
 
-**Status**: Accepted in source; production deployment pending
+**Status**: Deployed / ACTIVE with Build 19
 **Date**: 2026-09-03
 
 ### Context
@@ -8669,11 +8706,129 @@ provided access stays server-only and lifecycle cleanup remains bounded.
 ### Consequences
 
 - The targeted atomic moderation subset passes 31/31 inside the 64/64
-  Reels/moderation security gate and measured Functions result of 1166/1166.
-- Production deployment and controlled unauthorized, replay, conflict and
-  audit read-back smokes remain required; source tests do not prove the live
-  callable revision.
+  Reels/moderation security gate and measured Build 19 Functions result of
+  1166/1166; the rollout evidence records the intended Functions as ACTIVE.
+- Controlled unauthorized, replay, conflict and audit read-back smokes remain
+  residual evidence only where a corresponding production result has not been
+  recorded. Source tests alone do not prove live callable behavior.
 - A restore/appeal workflow is not implied unless it is explicitly implemented
   and tested.
 - Cleanup must never erase the audit row merely because user-visible content
   was removed.
+
+## ADR-139: Legacy friendship reconciliation requires reviewed server evidence, and social-read fanouts are account-scoped
+
+**Status**: Accepted in source; production deployment pending
+**Date**: 2026-09-04
+
+### Context
+
+The canonical friendship cutover made `friendshipGuards` the server-owned
+authorization source for direct calls and friends-only profile media. Some
+real friendships created before that cutover still have exact bilateral
+legacy mirrors but no guards. Build 19 therefore correctly failed closed, yet
+legitimate testers could neither call nor retrieve each other's protected
+avatars. Automatically trusting every legacy mirror would repair availability
+by reintroducing the client-writable data as authority.
+
+The same tester reports made a separate performance/lifecycle defect visible:
+Home, Chats and Friends could construct overlapping per-friend reads; cached
+non-replaying request streams could leave a reopened tab empty; broad avatar
+grant invalidation made sibling widgets refetch; and rapid taps could push the
+same profile more than once. Shared state also creates an account-isolation
+obligation at sign-out and account changes.
+
+### Decision
+
+Legacy guards are reconciled only from an explicit, independently reviewed
+schema-v2 allowlist of exact user pairs plus their reviewed establishment
+timestamp represented as `{seconds, nanoseconds}`. Nanoseconds must be
+Firestore-persistable (microsecond aligned), the normalized digest binds both
+components and each created guard stores the exact timestamp without reducing
+it to milliseconds. The
+operator utility is pinned to the production project, defaults to dry-run,
+accepts at most 100 pairs and 64 KiB, emits aggregate counts only and requires
+the SHA-256 digest of the normalized dry-run manifest for apply. It never scans
+for candidates. Immediately before writing, it re-reads active and
+email-verified Auth users, exact profile and bilateral mirror identity/shape,
+the exact reviewed timestamps, block records, communication restrictions and
+both guard states. Each pair's two guards are created in one Firestore
+transaction. Any mismatch refuses that pair and stops the remaining apply;
+previously completed pair transactions are reported rather than hidden.
+
+Friends and request reads use ref-counted replay fanouts keyed by the concrete
+Firestore/Auth/account context. A final listener releases the upstream
+subscription and cache entry; a terminal setup/source error is forwarded once,
+retires and evicts that generation so a later view can retry. Every delivery
+rechecks the synchronous authenticated uid, so queued data from a previous
+account is dropped. A successful sign-out clears shared generations only after
+Firebase Auth has actually signed out; a failed sign-out leaves the still-live
+session usable. Profile/chat route launches are single-flight and propagate
+their injected Auth, Firestore and service context. Avatar-grant epochs are
+target-scoped instead of globally invalidating unrelated people.
+
+Private profile-media grants are viewer/auth-bound and cached in a bounded
+256-entry LRU. Expiry and auth/global boundaries evict the mounted image
+provider and its Flutter `ImageCache` entry before replacement data may render.
+Mutual-friend rows use `UserAvatar` and the current grant instead of a legacy
+photo URL. Preview, full-profile and social-stat list launches each hold an
+explicit navigation lock so repeated taps cannot enqueue duplicate routes.
+
+Root friends/requests query failure is deliberately distinct from a child
+projection failure: the root failure remains terminal for the shared
+generation, while a failed public-profile or presence point listener degrades
+that child fail-closed and retries after 250 ms, 500 ms, 1 s, 2 s, then
+exponentially up to a 30 s cap. The backoff resets only after the replacement
+listener remains healthy for 30 s, preventing repeated data-then-error cycles
+from becoming a hot loop. Malformed profile/presence snapshots take the same
+fail-closed retry path rather than escaping as uncaught parser errors. Child
+epochs and explicit cancellation of retry/stability timers and subscriptions
+prevent removed friends, retired generations, auth switches or sign-out from
+resurrecting stale child state.
+
+### Reasoning
+
+Availability cannot justify converting untrusted historical rows back into an
+authorization source. Human-reviewed, pair-bounded evidence plus strict
+machine revalidation keeps the exceptional migration narrow, auditable and
+fail-closed. A digest prevents an allowlist from changing between review and
+apply. Per-pair atomicity avoids one-sided guards without pretending Auth and
+Firestore share a global transaction.
+
+One account-scoped fanout removes duplicate network work while preserving the
+privacy invariant at the last delivery boundary. Ref counting and terminal
+eviction are necessary together: sharing without ownership leaks listeners,
+while replay without account/terminal isolation can preserve stale or poisoned
+state.
+
+### Consequences
+
+- Existing affected testers require both the additive backend deployment and a
+  reviewed production reconciliation; a new mobile binary alone cannot create
+  missing server authority.
+- The migration cannot be run from a generated query result. An operator must
+  independently establish and review every pair, preserve the dry-run digest
+  and inspect aggregate apply/post-apply evidence.
+- A failure during a multi-pair apply may leave earlier pairs complete; every
+  completed pair is bilaterally atomic and the report states the partial
+  count. Rerunning the same reviewed manifest is idempotent.
+- Shared friends/request streams and profile-route context now have regression
+  coverage for tab switches, late listeners, fatal source errors, account
+  changes, failed/successful sign-out and rapid taps.
+- Automated evidence for the current unreleased tree is Flutter 2192/2192,
+  direct-call plus localization Flutter 67/67, friend recovery 22/22, Functions
+  1218/1218 across 118 suites, Firestore Rules 523/523, Storage Rules 67/67,
+  Family media 11/11, direct-call backend 47/47, direct integrity 39/39,
+  focused media probe 29/29 and reconciliation 12/12 with clean analysis,
+  eight-file JavaScript syntax, 615 Dart files formatted with zero changes and
+  clean diff checks. Avatar/profile review is 91/91 with no P0/P1, the focused
+  DM media/outbox aggregate is 68/68 and the independent cleanup re-review is
+  41/41 with no P0/P1/P2. The npm audit is unavailable
+  after three advisory requests ended with `socket hang up`.
+  Independent media security re-review is approved with no high- or
+  medium-risk blocker. Production apply/read-back and physical two-device
+  acceptance remain mandatory and are not implied by these counts.
+- Non-blocking P2: the target-scoped avatar epoch map can grow over a very long
+  session that evicts many unique targets. Global/auth clearing, including
+  logout, bounds account lifetime and prevents any privacy/correctness impact;
+  an in-session bound remains housekeeping.

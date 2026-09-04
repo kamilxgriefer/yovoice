@@ -1,3 +1,7 @@
+import 'dart:async';
+
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/helpers/error_messages.dart';
@@ -11,6 +15,7 @@ import 'package:yovoice/features/friends/presentation/screens/blocked_users_scre
 import 'package:yovoice/features/friends/presentation/screens/friend_profile_screen.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/messages/presentation/screens/chat_screen.dart';
+import 'package:yovoice/features/profile/data/services/profile_media_service.dart';
 import 'package:yovoice/shared/widgets/buttons/yo_icon_button.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
@@ -25,6 +30,9 @@ class FriendsScreen extends StatefulWidget {
     this.showRequestsInitially = false,
     this.friendService,
     this.messageService,
+    this.profileMediaService,
+    this.firestore,
+    this.auth,
     super.key,
   });
 
@@ -34,22 +42,36 @@ class FriendsScreen extends StatefulWidget {
   final bool showRequestsInitially;
   final FriendService? friendService;
   final MessageService? messageService;
+  final ProfileMediaService? profileMediaService;
+  final FirebaseFirestore? firestore;
+  final FirebaseAuth? auth;
 
   @override
   State<FriendsScreen> createState() => _FriendsScreenState();
 }
 
 class _FriendsScreenState extends State<FriendsScreen> {
+  late final FirebaseFirestore _firestore =
+      widget.firestore ?? FirebaseFirestore.instance;
+  late final FirebaseAuth _auth = widget.auth ?? FirebaseAuth.instance;
   late final FriendService _friendService =
-      widget.friendService ?? FriendService();
+      widget.friendService ?? FriendService(firestore: _firestore, auth: _auth);
+  late final MessageService? _ownedMessageService =
+      widget.messageService == null &&
+          (widget.firestore != null || widget.auth != null)
+      ? MessageService(firestore: _firestore, auth: _auth)
+      : null;
   late final MessageService _messageService =
-      widget.messageService ?? MessageService.live;
+      widget.messageService ?? _ownedMessageService ?? MessageService.live;
+  late final ProfileMediaService? _profileMediaService =
+      widget.profileMediaService ??
+      (widget.auth != null ? ProfileMediaService(auth: _auth) : null);
   final TextEditingController _searchController = TextEditingController();
 
-  late final Stream<List<FriendUser>> _friendsStream;
-  late final Stream<List<FriendRequest>> _requestsStream;
-
   final Set<String> _processingRequestIds = <String>{};
+  late Stream<int> _requestCountStream;
+  bool _navigationInFlight = false;
+  bool _requestFanoutFailed = false;
   String _query = '';
   _FriendsFilter _filter = _FriendsFilter.all;
 
@@ -59,8 +81,7 @@ class _FriendsScreenState extends State<FriendsScreen> {
     if (widget.showRequestsInitially) {
       _filter = _FriendsFilter.requests;
     }
-    _friendsStream = _friendService.watchFriends();
-    _requestsStream = _friendService.watchFriendRequests();
+    _requestCountStream = _friendService.watchPendingFriendRequestCount();
     _searchController.addListener(_handleSearchChanged);
   }
 
@@ -69,6 +90,7 @@ class _FriendsScreenState extends State<FriendsScreen> {
     _searchController
       ..removeListener(_handleSearchChanged)
       ..dispose();
+    unawaited(_ownedMessageService?.dispose());
     super.dispose();
   }
 
@@ -78,27 +100,69 @@ class _FriendsScreenState extends State<FriendsScreen> {
     setState(() => _query = value);
   }
 
-  Future<void> _openAddFriend() async {
-    await Navigator.of(context).push<void>(
-      MaterialPageRoute<void>(builder: (_) => const AddFriendScreen()),
-    );
+  void _selectFilter(_FriendsFilter filter) {
+    // A terminal request-source failure evicts its shared generation. Keep the
+    // count stream stable during ordinary rebuilds, but explicitly reacquire a
+    // replacement when the user next interacts with the filters.
+    if (_requestFanoutFailed) {
+      _requestCountStream = _friendService.watchPendingFriendRequestCount();
+      _requestFanoutFailed = false;
+    }
+    if (_filter == filter) {
+      setState(() {});
+      return;
+    }
+    setState(() => _filter = filter);
   }
 
-  Future<void> _openBlockedUsers() async {
-    await Navigator.of(context).push<void>(
-      MaterialPageRoute<void>(builder: (_) => const BlockedUsersScreen()),
-    );
+  Future<void> _runNavigation(Future<void> Function() navigate) async {
+    if (_navigationInFlight) return;
+    _navigationInFlight = true;
+    try {
+      await navigate();
+    } finally {
+      _navigationInFlight = false;
+    }
   }
 
-  Future<void> _openProfile(FriendUser friend) async {
-    await Navigator.of(context).push<void>(
+  Future<void> _openAddFriend() => _runNavigation(
+    () => Navigator.of(context).push<void>(
       MaterialPageRoute<void>(
-        builder: (_) => FriendProfileScreen(friend: friend),
+        builder: (_) => AddFriendScreen(
+          friendService: _friendService,
+          profileMediaService: _profileMediaService,
+        ),
       ),
-    );
-  }
+    ),
+  );
 
-  Future<void> _startChat(FriendUser friend) async {
+  Future<void> _openBlockedUsers() => _runNavigation(
+    () => Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => BlockedUsersScreen(
+          friendService: _friendService,
+          profileMediaService: _profileMediaService,
+        ),
+      ),
+    ),
+  );
+
+  Future<void> _openProfile(FriendUser friend) => _runNavigation(
+    () => Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => FriendProfileScreen(
+          friend: friend,
+          friendService: _friendService,
+          messageService: _messageService,
+          profileMediaService: _profileMediaService,
+          firestore: _firestore,
+          auth: _auth,
+        ),
+      ),
+    ),
+  );
+
+  Future<void> _startChat(FriendUser friend) => _runNavigation(() async {
     try {
       final conversationId = await _messageService.openOrCreateConversation(
         otherUserId: friend.id,
@@ -118,6 +182,10 @@ class _FriendsScreenState extends State<FriendsScreen> {
             otherEmail: friend.email,
             otherPhotoUrl: friend.photoUrl ?? '',
             otherProfileUpdatedAt: friend.profileUpdatedAt,
+            messageService: _messageService,
+            profileMediaService: _profileMediaService,
+            firestore: _firestore,
+            auth: _auth,
           ),
         ),
       );
@@ -138,7 +206,7 @@ class _FriendsScreenState extends State<FriendsScreen> {
         isError: true,
       );
     }
-  }
+  });
 
   Future<void> _acceptRequest(FriendRequest request) async {
     await _runRequestAction(
@@ -419,8 +487,11 @@ class _FriendsScreenState extends State<FriendsScreen> {
     return Padding(
       padding: const EdgeInsets.fromLTRB(18, 13, 18, 0),
       child: StreamBuilder<int>(
-        stream: _friendService.watchPendingFriendRequestCount(),
+        stream: _requestCountStream,
         builder: (context, snapshot) {
+          if (snapshot.hasError) {
+            _requestFanoutFailed = true;
+          }
           final requestCount = snapshot.data ?? 0;
           return SingleChildScrollView(
             scrollDirection: Axis.horizontal,
@@ -429,13 +500,13 @@ class _FriendsScreenState extends State<FriendsScreen> {
                 _FilterChip(
                   label: copy.text('All', 'Wszyscy'),
                   selected: _filter == _FriendsFilter.all,
-                  onTap: () => setState(() => _filter = _FriendsFilter.all),
+                  onTap: () => _selectFilter(_FriendsFilter.all),
                 ),
                 const SizedBox(width: 8),
                 _FilterChip(
                   label: copy.text('Online', 'Online'),
                   selected: _filter == _FriendsFilter.online,
-                  onTap: () => setState(() => _filter = _FriendsFilter.online),
+                  onTap: () => _selectFilter(_FriendsFilter.online),
                 ),
                 const SizedBox(width: 8),
                 _FilterChip(
@@ -446,8 +517,7 @@ class _FriendsScreenState extends State<FriendsScreen> {
                         )
                       : copy.text('Requests', 'Zaproszenia'),
                   selected: _filter == _FriendsFilter.requests,
-                  onTap: () =>
-                      setState(() => _filter = _FriendsFilter.requests),
+                  onTap: () => _selectFilter(_FriendsFilter.requests),
                 ),
               ],
             ),
@@ -460,7 +530,10 @@ class _FriendsScreenState extends State<FriendsScreen> {
   Widget _buildFriends() {
     final copy = AppLocalizations.of(context);
     return StreamBuilder<List<FriendUser>>(
-      stream: _friendsStream,
+      // The shared fanout retires when its final listener goes away. The
+      // Requests filter removes this StreamBuilder entirely, so reacquire the
+      // current generation when the friends view mounts again.
+      stream: _friendService.watchFriends(),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting &&
             !snapshot.hasData) {
@@ -549,6 +622,7 @@ class _FriendsScreenState extends State<FriendsScreen> {
                 padding: const EdgeInsets.only(bottom: 8),
                 child: _FriendCard(
                   friend: friend,
+                  profileMediaService: _profileMediaService,
                   onProfile: () => _openProfile(friend),
                   onMessage: () => _startChat(friend),
                 ),
@@ -563,7 +637,10 @@ class _FriendsScreenState extends State<FriendsScreen> {
   Widget _buildRequests() {
     final copy = AppLocalizations.of(context);
     return StreamBuilder<List<FriendRequest>>(
-      stream: _requestsStream,
+      // A terminal source error retires and evicts the shared generation.
+      // Reacquiring here lets a filter round trip attach to its replacement
+      // instead of retaining a closed stream for the lifetime of the screen.
+      stream: _friendService.watchFriendRequests(),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting &&
             !snapshot.hasData) {
@@ -575,6 +652,7 @@ class _FriendsScreenState extends State<FriendsScreen> {
         }
 
         if (snapshot.hasError) {
+          _requestFanoutFailed = true;
           return _EmptyState(
             icon: Icons.cloud_off_rounded,
             title: copy.text(
@@ -625,6 +703,7 @@ class _FriendsScreenState extends State<FriendsScreen> {
             final request = requests[index];
             return FriendRequestCard(
               request: request,
+              profileMediaService: _profileMediaService,
               processing: _processingRequestIds.contains(request.senderId),
               onAccept: () => _acceptRequest(request),
               onDecline: () => _declineRequest(request),
@@ -718,11 +797,13 @@ class _FriendsSummary extends StatelessWidget {
 class _FriendCard extends StatelessWidget {
   const _FriendCard({
     required this.friend,
+    this.profileMediaService,
     required this.onProfile,
     required this.onMessage,
   });
 
   final FriendUser friend;
+  final ProfileMediaService? profileMediaService;
   final VoidCallback onProfile;
   final VoidCallback onMessage;
 
@@ -761,6 +842,7 @@ class _FriendCard extends StatelessWidget {
                       radius: 27,
                       userId: friend.id,
                       mediaRevision: friend.profileUpdatedAt,
+                      mediaService: profileMediaService,
                       displayName: friend.displayName,
                       backgroundColor: palette.surfaceSunken,
                     ),
@@ -845,6 +927,7 @@ class _FriendCard extends StatelessWidget {
 class FriendRequestCard extends StatelessWidget {
   const FriendRequestCard({
     required this.request,
+    this.profileMediaService,
     required this.processing,
     required this.onAccept,
     required this.onDecline,
@@ -852,6 +935,7 @@ class FriendRequestCard extends StatelessWidget {
   });
 
   final FriendRequest request;
+  final ProfileMediaService? profileMediaService;
   final bool processing;
   final VoidCallback onAccept;
   final VoidCallback onDecline;
@@ -878,6 +962,7 @@ class FriendRequestCard extends StatelessWidget {
           UserAvatar(
             radius: 27,
             userId: request.senderId,
+            mediaService: profileMediaService,
             displayName: name,
             backgroundColor: palette.surfaceSunken,
           ),

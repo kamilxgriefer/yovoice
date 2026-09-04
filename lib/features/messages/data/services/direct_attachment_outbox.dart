@@ -713,7 +713,15 @@ class DirectAttachmentOutbox {
             _entries[index].status != DirectAttachmentOutboxStatus.failed) {
           throw StateError('Only a failed attachment can be discarded.');
         }
-        final removed = _entries.removeAt(index);
+        final removed = _entries[index];
+
+        // Keep the manifest as the retry token until private bytes are gone.
+        // Removing/persisting first can orphan a payload forever when the
+        // platform store rejects deletion. Deletes are idempotent, so a rare
+        // manifest persistence failure after this point safely retries the
+        // payload delete while the entry remains tracked.
+        await payloadStore.delete(accountNamespace, removed.id);
+        _entries.removeAt(index);
         try {
           await _persist();
         } catch (_) {
@@ -721,6 +729,5 @@ class DirectAttachmentOutbox {
           rethrow;
         }
         _notify();
-        await payloadStore.delete(accountNamespace, removed.id);
       });
 }

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
@@ -42,11 +44,18 @@ class ProfileMediaImage extends StatefulWidget {
 
 class _ProfileMediaImageState extends State<ProfileMediaImage> {
   Uri? _resolvedUri;
+  ImageProvider<Object>? _resolvedProvider;
   int _resolutionGeneration = 0;
+  Timer? _expiryTimer;
+  StreamSubscription<ProfileMediaAccessBoundary>? _boundarySubscription;
+  ProfileMediaService? _ownedService;
 
   @override
   void initState() {
     super.initState();
+    _boundarySubscription = ProfileMediaService.accessBoundaries.listen(
+      _handleAccessBoundary,
+    );
     _resolve();
   }
 
@@ -59,29 +68,71 @@ class _ProfileMediaImageState extends State<ProfileMediaImage> {
         oldWidget.service != widget.service;
     final revisionChanged = oldWidget.revision != widget.revision;
     if (identityChanged || revisionChanged) {
+      if (oldWidget.service != widget.service) {
+        _ownedService = null;
+      }
       if (identityChanged) {
-        _resolvedUri = null;
+        _clearResolvedImage(notify: false);
       }
-      if (oldWidget.revision != widget.revision) {
-        final userId = widget.userId?.trim();
-        if (userId != null && userId.isNotEmpty) {
-          ProfileMediaService.evictUser(userId);
-        }
-      }
+      // The revision is already part of the service cache key. Evicting here
+      // made every mounted copy of the same avatar invalidate its siblings'
+      // in-flight grant, causing duplicate callable traffic and intermittent
+      // fallback initials across Home, Chats and profile surfaces.
       _resolve();
     }
+  }
+
+  @override
+  void dispose() {
+    _expiryTimer?.cancel();
+    unawaited(_boundarySubscription?.cancel());
+    _evictProvider(_resolvedProvider);
+    super.dispose();
+  }
+
+  void _handleAccessBoundary(ProfileMediaAccessBoundary boundary) {
+    final userId = widget.userId?.trim();
+    if (boundary.userId != null && boundary.userId != userId) return;
+    _resolutionGeneration += 1;
+    _expiryTimer?.cancel();
+    _clearResolvedImage(notify: mounted);
+    // A global boundary is logout/account switching: fail closed and wait for
+    // a new widget/session. Target boundaries represent an upload, explicit
+    // access change or scheduled expiry and may safely reauthorize.
+    if (boundary.userId != null && mounted) _resolve();
+  }
+
+  void _clearResolvedImage({required bool notify}) {
+    final provider = _resolvedProvider;
+    void clear() {
+      _resolvedUri = null;
+      _resolvedProvider = null;
+    }
+
+    if (notify) {
+      setState(clear);
+    } else {
+      clear();
+    }
+    _evictProvider(provider);
+  }
+
+  void _evictProvider(ImageProvider<Object>? provider) {
+    if (provider != null) unawaited(provider.evict());
   }
 
   void _resolve() {
     final generation = ++_resolutionGeneration;
     final userId = widget.userId?.trim();
     if (userId == null || userId.isEmpty) {
-      _resolvedUri = null;
+      _clearResolvedImage(notify: false);
       return;
     }
-    Future<Uri?> grant;
+    Future<ProfileMediaAccess> grant;
+    late ProfileMediaService service;
     try {
-      grant = (widget.service ?? ProfileMediaService()).resolve(
+      service = widget.service ?? (_ownedService ??= ProfileMediaService());
+      grant = service.resolveAccess(
         userId: userId,
         kind: widget.kind,
         revision: widget.revision,
@@ -97,13 +148,33 @@ class _ProfileMediaImageState extends State<ProfileMediaImage> {
       return;
     }
     grant.then(
-      (uri) {
+      (access) {
         if (!mounted || generation != _resolutionGeneration) return;
         // A successful `available: false` response is authoritative and
         // clears a removed photo. While this future is pending (or if it
         // fails), [_resolvedUri] deliberately keeps the last successful
         // public-profile revision on screen instead of flashing an initial.
-        setState(() => _resolvedUri = uri);
+        final uri = access.uri;
+        final provider = uri == null
+            ? null
+            : widget.imageProvider?.call(uri) ?? NetworkImage(uri.toString());
+        final previousProvider = _resolvedProvider;
+        final previousUri = _resolvedUri;
+        setState(() {
+          _resolvedUri = uri;
+          _resolvedProvider = provider;
+        });
+        if (previousUri != uri) _evictProvider(previousProvider);
+        _expiryTimer?.cancel();
+        final remaining = access.expiresAt.difference(service.nowUtc);
+        if (remaining <= Duration.zero) {
+          ProfileMediaService.evictUser(userId);
+        } else {
+          _expiryTimer = Timer(
+            remaining,
+            () => ProfileMediaService.evictUser(userId),
+          );
+        }
       },
       onError: (Object error, StackTrace stackTrace) {
         if (kDebugMode) {
@@ -121,7 +192,7 @@ class _ProfileMediaImageState extends State<ProfileMediaImage> {
     if (uri == null) return widget.fallback;
     return Image(
       key: widget.imageKey,
-      image: widget.imageProvider?.call(uri) ?? NetworkImage(uri.toString()),
+      image: _resolvedProvider ?? NetworkImage(uri.toString()),
       fit: widget.fit,
       alignment: widget.alignment,
       filterQuality: widget.filterQuality,

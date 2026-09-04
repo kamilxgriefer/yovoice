@@ -143,6 +143,56 @@ void main() {
     );
   });
 
+  test('payload delete failure keeps the manifest and a later completion '
+      'retry removes both exactly once', () async {
+    final queue = DirectAttachmentOutbox(
+      ownerId: 'account-a',
+      preferences: preferences,
+      payloadStore: payloadStore,
+      idFactory: () => 'attachment_delete_retry_1',
+    );
+    final saved = await queue.enqueue(
+      fingerprint: List<String>.filled(64, '7').join(),
+      conversationId: 'account-a_friend',
+      type: MessageType.image,
+      contentType: 'image/jpeg',
+      durationSeconds: null,
+      bytes: Uint8List(256),
+      reserveRequestId: 'reserve-request-delete-retry',
+      finalizeRequestId: 'finalize-request-delete-retry',
+    );
+    payloadStore.deleteFailuresRemaining = 1;
+
+    await expectLater(queue.complete(saved.id), throwsA(isA<StateError>()));
+
+    expect(queue.entries.single.id, saved.id);
+    expect(await payloadStore.exists(queue.accountNamespace, saved.id), isTrue);
+    expect(payloadStore.deleteCalls, 1);
+
+    final restarted = DirectAttachmentOutbox(
+      ownerId: 'account-a',
+      preferences: preferences,
+      payloadStore: payloadStore,
+    );
+    await restarted.load();
+    expect(restarted.entries.single.id, saved.id);
+
+    await restarted.complete(saved.id);
+
+    expect(restarted.entries, isEmpty);
+    expect(
+      await payloadStore.exists(queue.accountNamespace, saved.id),
+      isFalse,
+    );
+    expect(payloadStore.deleteCalls, 2);
+    await restarted.complete(saved.id);
+    expect(
+      payloadStore.deleteCalls,
+      2,
+      reason: 'a stale duplicate completion must not delete twice',
+    );
+  });
+
   test('a stale failed-card discard loses its race with retry', () async {
     final queue = DirectAttachmentOutbox(
       ownerId: 'account-a',
@@ -287,6 +337,8 @@ void main() {
 class _MemoryPayloadStore implements DirectAttachmentPayloadStore {
   final Map<String, Uint8List> _payloads = <String, Uint8List>{};
   bool failNextKeys = false;
+  int deleteFailuresRemaining = 0;
+  int deleteCalls = 0;
   int keysCalls = 0;
 
   String _key(String namespace, String id) => '$namespace:$id';
@@ -324,6 +376,11 @@ class _MemoryPayloadStore implements DirectAttachmentPayloadStore {
 
   @override
   Future<void> delete(String namespace, String id) async {
+    deleteCalls += 1;
+    if (deleteFailuresRemaining > 0) {
+      deleteFailuresRemaining -= 1;
+      throw StateError('temporary payload delete failure');
+    }
     _payloads.remove(_key(namespace, id));
   }
 

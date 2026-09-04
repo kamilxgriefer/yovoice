@@ -50,9 +50,17 @@ class _DirectCallScreenState extends State<DirectCallScreen>
   DirectCall? _latest;
   DirectCallStatus? _lastHandledStatus;
   bool _actionBusy = false;
+  bool _finishRequested = false;
   bool _joinRequested = false;
+  bool _locallyAccepted = false;
+  bool _connectionInterrupted = false;
+  bool _terminalDisconnectPending = false;
   bool _cameraPausedInBackground = false;
   int _elapsedSeconds = 0;
+  late VoiceCallStatus _lastVoiceStatus;
+
+  bool get _connectionNeedsRetry =>
+      _voice.status == VoiceCallStatus.failed || _connectionInterrupted;
 
   String get _currentUserId {
     final injected = widget.currentUserId?.trim();
@@ -89,6 +97,7 @@ class _DirectCallScreenState extends State<DirectCallScreen>
       // camera permission.
       unawaited(_pauseCameraForBackground());
     }
+    _lastVoiceStatus = _voice.status;
     _voice.addListener(_refresh);
   }
 
@@ -148,7 +157,59 @@ class _DirectCallScreenState extends State<DirectCallScreen>
   }
 
   void _refresh() {
+    final nextStatus = _voice.status;
+    final terminalDisconnect =
+        _joinRequested &&
+        _latest?.status == DirectCallStatus.active &&
+        nextStatus == VoiceCallStatus.disconnected &&
+        _lastVoiceStatus != VoiceCallStatus.disconnected;
+    if (terminalDisconnect) {
+      if (_actionBusy) {
+        // The authoritative active snapshot can connect media before Answer's
+        // callable returns. Preserve a terminal SDK disconnect from that
+        // window and reconcile it as soon as the user action completes.
+        _terminalDisconnectPending = true;
+      } else {
+        _markConnectionInterrupted();
+      }
+    } else if (nextStatus == VoiceCallStatus.connected) {
+      _terminalDisconnectPending = false;
+      _connectionInterrupted = false;
+    }
+    _lastVoiceStatus = nextStatus;
     if (mounted) setState(() {});
+  }
+
+  void _markConnectionInterrupted() {
+    _terminalDisconnectPending = false;
+    _joinRequested = false;
+    _connectionInterrupted = true;
+  }
+
+  void _completeBusyAction() {
+    if (!mounted) return;
+    setState(() {
+      _actionBusy = false;
+      if (_terminalDisconnectPending) {
+        final callStillActive = _latest?.status == DirectCallStatus.active;
+        if (_joinRequested &&
+            callStillActive &&
+            _voice.status == VoiceCallStatus.disconnected) {
+          _markConnectionInterrupted();
+        } else {
+          _terminalDisconnectPending = false;
+        }
+      }
+    });
+  }
+
+  bool _needsExplicitIncomingJoin(DirectCall call) {
+    final connected = _voice.isConnected && _voice.directCallId == call.id;
+    return call.status == DirectCallStatus.active &&
+        call.isIncomingFor(_currentUserId) &&
+        !_locallyAccepted &&
+        !_joinRequested &&
+        !connected;
   }
 
   void _handleCall(DirectCall call) {
@@ -159,6 +220,22 @@ class _DirectCallScreenState extends State<DirectCallScreen>
       if (!mounted) return;
       switch (call.status) {
         case DirectCallStatus.active:
+          if (_finishRequested) {
+            // A remote Answer can arrive while the caller's Cancel request is
+            // pending. The local finishing intent is authoritative for media:
+            // never join or reopen mic/camera after that user gesture.
+            if (_voice.directCallId == call.id) {
+              unawaited(_voice.disconnect(playSound: false));
+            }
+            return;
+          }
+          if (call.isIncomingFor(_currentUserId) && !_locallyAccepted) {
+            // Another installation of this account may have answered. Never
+            // auto-join it (and therefore never open this device's mic) without
+            // the local Answer gesture that created the server binding.
+            _startClock(call);
+            return;
+          }
           _startClock(call);
           if (!_joinRequested) unawaited(_connect(call));
         case DirectCallStatus.ringing:
@@ -197,18 +274,24 @@ class _DirectCallScreenState extends State<DirectCallScreen>
     _clock = Timer.periodic(const Duration(seconds: 1), (_) => update());
   }
 
-  Future<void> _connect(DirectCall call) async {
+  Future<void> _connect(DirectCall call, {bool? enableCamera}) async {
+    if (_finishRequested) return;
     _joinRequested = true;
+    _connectionInterrupted = false;
     final contact = call.otherIdentity(_currentUserId);
     try {
       await _voice.joinDirectCall(
         callId: call.id,
         contactName: contact.displayName,
         participantName: _participantName,
-        enableCamera: call.isVideo,
+        enableCamera: enableCamera ?? call.isVideo,
       );
+      if (_finishRequested && _voice.directCallId == call.id) {
+        await _voice.disconnect(playSound: false);
+      }
     } catch (error) {
       _joinRequested = false;
+      if (_finishRequested) return;
       if (!mounted) return;
       _showError(
         _friendlyError(
@@ -221,14 +304,35 @@ class _DirectCallScreenState extends State<DirectCallScreen>
   }
 
   Future<void> _accept() async {
-    if (_actionBusy) return;
+    if (_actionBusy || _finishRequested) return;
     final call = _latest;
     if (call == null) return;
     setState(() => _actionBusy = true);
     try {
-      if (!await _prepareMediaPermissions(includeCamera: call.isVideo)) return;
-      await _calls.accept(widget.callId);
+      final acceptedMedia = await _prepareMediaPermissions(
+        includeCamera: call.isVideo,
+      );
+      if (acceptedMedia == null || _finishRequested) return;
+      final acceptedStatus = await _calls.accept(
+        widget.callId,
+        mediaType: acceptedMedia,
+      );
+      if (_finishRequested || acceptedStatus != DirectCallStatus.active) {
+        return;
+      }
+      // An active snapshot can belong to another installation of this same
+      // account. Only the validated, installation-bound callable response
+      // above authorises this device to open its local media session.
+      _locallyAccepted = true;
+      final latest = _latest;
+      if (latest?.status == DirectCallStatus.active && !_joinRequested) {
+        await _connect(
+          latest!,
+          enableCamera: acceptedMedia == DirectCallMediaType.video,
+        );
+      }
     } catch (error) {
+      _locallyAccepted = false;
       if (mounted) {
         _showError(
           _friendlyError(
@@ -239,13 +343,14 @@ class _DirectCallScreenState extends State<DirectCallScreen>
         );
       }
     } finally {
-      if (mounted) setState(() => _actionBusy = false);
+      _completeBusyAction();
     }
   }
 
   Future<void> _finish() async {
     final call = _latest;
     if (call == null || _actionBusy) return;
+    _finishRequested = true;
     setState(() => _actionBusy = true);
     try {
       // Privacy is local-first: an offline or slow callable must never leave
@@ -282,7 +387,7 @@ class _DirectCallScreenState extends State<DirectCallScreen>
         );
       }
     } finally {
-      if (mounted) setState(() => _actionBusy = false);
+      _completeBusyAction();
     }
   }
 
@@ -305,7 +410,7 @@ class _DirectCallScreenState extends State<DirectCallScreen>
   Future<void> _toggleCamera() async {
     try {
       if (!_voice.isCameraEnabled &&
-          !await _prepareMediaPermissions(includeCamera: true)) {
+          await _prepareMediaPermissions(includeCamera: true) == null) {
         return;
       }
       await _voice.toggleCamera();
@@ -359,11 +464,40 @@ class _DirectCallScreenState extends State<DirectCallScreen>
   }
 
   Future<void> _retryConnect(DirectCall call) async {
-    if (!await _prepareMediaPermissions(includeCamera: call.isVideo)) return;
-    await _connect(call);
+    if (_finishRequested) return;
+    final preparedMedia = await _prepareMediaPermissions(
+      includeCamera: call.isVideo,
+    );
+    if (preparedMedia == null || _finishRequested) {
+      return;
+    }
+    _connectionInterrupted = false;
+    await _connect(
+      call,
+      enableCamera: preparedMedia == DirectCallMediaType.video,
+    );
   }
 
-  Future<bool> _prepareMediaPermissions({required bool includeCamera}) async {
+  Future<void> _continueIncomingCall(DirectCall call) async {
+    if (_actionBusy || _joinRequested || _finishRequested) return;
+    setState(() => _actionBusy = true);
+    try {
+      final preparedMedia = await _prepareMediaPermissions(
+        includeCamera: call.isVideo,
+      );
+      if (preparedMedia == null || _finishRequested) return;
+      await _connect(
+        call,
+        enableCamera: preparedMedia == DirectCallMediaType.video,
+      );
+    } finally {
+      _completeBusyAction();
+    }
+  }
+
+  Future<DirectCallMediaType?> _prepareMediaPermissions({
+    required bool includeCamera,
+  }) async {
     final snapshot = await _voice.prepareMediaPermissionsFromUserGesture(
       includeCamera: includeCamera,
     );
@@ -377,7 +511,7 @@ class _DirectCallScreenState extends State<DirectCallScreen>
           ),
         );
       }
-      return false;
+      return null;
     }
     if (includeCamera &&
         !snapshot[AppPermissionKind.camera].isUsable &&
@@ -389,7 +523,9 @@ class _DirectCallScreenState extends State<DirectCallScreen>
         ),
       );
     }
-    return true;
+    return includeCamera && snapshot[AppPermissionKind.camera].isUsable
+        ? DirectCallMediaType.video
+        : DirectCallMediaType.audio;
   }
 
   void _showError(String message) {
@@ -404,6 +540,12 @@ class _DirectCallScreenState extends State<DirectCallScreen>
     required String polish,
   }) {
     final copy = AppLocalizations.of(context);
+    if (error is DirectCallInstallationBindingException) {
+      return copy.text(
+        'This call is active on another device. Continue there.',
+        'To połączenie jest aktywne na innym urządzeniu. Kontynuuj na nim.',
+      );
+    }
     return copy.isPolish
         ? polish
         : friendlyErrorMessage(error, fallback: english);
@@ -423,11 +565,15 @@ class _DirectCallScreenState extends State<DirectCallScreen>
       builder: (context, snapshot) {
         final call = snapshot.data;
         if (call != null) _handleCall(call);
-        final canPop = call?.status.isTerminal ?? false;
+        final passiveIncoming =
+            call != null && _needsExplicitIncomingJoin(call);
+        final canPop =
+            (call?.status.isTerminal ?? false) ||
+            (passiveIncoming && !_actionBusy);
         return PopScope(
           canPop: canPop,
           onPopInvokedWithResult: (didPop, _) {
-            if (!didPop) unawaited(_finish());
+            if (!didPop && !passiveIncoming) unawaited(_finish());
           },
           child: Scaffold(
             backgroundColor: AppImmersiveColors.background,
@@ -466,6 +612,11 @@ class _DirectCallScreenState extends State<DirectCallScreen>
     final active = call.status == DirectCallStatus.active;
     final status = _statusText(call, incoming);
     final connected = _voice.isConnected && _voice.directCallId == call.id;
+    final needsExplicitIncomingJoin = _needsExplicitIncomingJoin(call);
+
+    if (needsExplicitIncomingJoin) {
+      return _buildExplicitIncomingJoin(context, call: call, contact: contact);
+    }
 
     if (call.isVideo && active) {
       return _buildActiveVideoCall(
@@ -579,7 +730,7 @@ class _DirectCallScreenState extends State<DirectCallScreen>
             speakerPreferred: _voice.isSpeakerPreferred,
             speakerBusy: _voice.speakerChangeInProgress,
             canSwitchSpeaker: _voice.canSwitchSpeakerphone,
-            connectionFailed: _voice.status == VoiceCallStatus.failed,
+            connectionFailed: _connectionNeedsRetry,
             onAccept: _accept,
             onFinish: _finish,
             onMute: _toggleMute,
@@ -587,6 +738,106 @@ class _DirectCallScreenState extends State<DirectCallScreen>
             onRetry: () => unawaited(_retryConnect(call)),
           ),
           const SizedBox(height: 18),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildExplicitIncomingJoin(
+    BuildContext context, {
+    required DirectCall call,
+    required DirectCallIdentity contact,
+  }) {
+    final copy = AppLocalizations.of(context);
+    return ResponsiveContentFrame(
+      width: ResponsiveContentWidth.form,
+      padding: const EdgeInsets.symmetric(horizontal: 24),
+      child: Column(
+        children: [
+          Align(
+            alignment: Alignment.centerLeft,
+            child: IconButton(
+              onPressed: _actionBusy
+                  ? null
+                  : () => Navigator.of(context).maybePop(),
+              tooltip: copy.text('Close', 'Zamknij'),
+              icon: const Icon(Icons.keyboard_arrow_down_rounded, size: 34),
+              color: AppImmersiveColors.textPrimary,
+            ),
+          ),
+          Expanded(
+            child: Center(
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _CallAvatar(identity: contact, size: 128),
+                    const SizedBox(height: 26),
+                    Text(
+                      contact.displayName,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        color: AppImmersiveColors.textPrimary,
+                        fontSize: 28,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      copy.text(
+                        'This call was answered on one of your devices.',
+                        'To połączenie odebrano na jednym z Twoich urządzeń.',
+                      ),
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        color: AppImmersiveColors.textSecondary,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 28),
+                    FilledButton.icon(
+                      onPressed: _actionBusy
+                          ? null
+                          : () => unawaited(_continueIncomingCall(call)),
+                      icon: _actionBusy
+                          ? const SizedBox.square(
+                              dimension: 18,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Colors.white,
+                              ),
+                            )
+                          : Icon(
+                              call.isVideo
+                                  ? Icons.videocam_rounded
+                                  : Icons.call_rounded,
+                            ),
+                      label: Text(
+                        copy.text(
+                          'Continue on this device',
+                          'Kontynuuj na tym urządzeniu',
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      copy.text(
+                        'Only the device used to answer can reconnect.',
+                        'Ponownie połączy się tylko urządzenie użyte do odebrania.',
+                      ),
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        color: AppImmersiveColors.textTertiary,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 24),
         ],
       ),
     );
@@ -858,6 +1109,7 @@ class _DirectCallScreenState extends State<DirectCallScreen>
                           ],
                           _VideoCallControls(
                             connected: connected,
+                            connectionFailed: _connectionNeedsRetry,
                             muted: _voice.isMuted,
                             cameraEnabled: _voice.isCameraEnabled,
                             cameraBusy: _voice.cameraChangeInProgress,
@@ -868,6 +1120,7 @@ class _DirectCallScreenState extends State<DirectCallScreen>
                             onMute: _toggleMute,
                             onCamera: _toggleCamera,
                             onSpeaker: _toggleSpeaker,
+                            onRetry: () => unawaited(_retryConnect(call)),
                             onFinish: _finish,
                           ),
                         ],
@@ -901,10 +1154,14 @@ class _DirectCallScreenState extends State<DirectCallScreen>
             ? copy.text('Video calling…', 'Łączenie wideo…')
             : copy.text('Calling…', 'Łączenie…'),
       DirectCallStatus.active =>
-        _voice.status == VoiceCallStatus.failed
+        _connectionNeedsRetry
             ? copy.isPolish
-                  ? 'Nie udało się połączyć'
-                  : _voice.errorMessage ?? 'Connection failed'
+                  ? copy.text('Connection interrupted', 'Połączenie przerwane')
+                  : _voice.errorMessage ??
+                        copy.text(
+                          'Connection interrupted',
+                          'Połączenie przerwane',
+                        )
             : copy.text('Connecting…', 'Łączenie…'),
       DirectCallStatus.declined => copy.text(
         'Call declined',
@@ -1055,6 +1312,7 @@ class _LocalCameraOff extends StatelessWidget {
 class _VideoCallControls extends StatelessWidget {
   const _VideoCallControls({
     required this.connected,
+    required this.connectionFailed,
     required this.muted,
     required this.cameraEnabled,
     required this.cameraBusy,
@@ -1065,10 +1323,12 @@ class _VideoCallControls extends StatelessWidget {
     required this.onMute,
     required this.onCamera,
     required this.onSpeaker,
+    required this.onRetry,
     required this.onFinish,
   });
 
   final bool connected;
+  final bool connectionFailed;
   final bool muted;
   final bool cameraEnabled;
   final bool cameraBusy;
@@ -1079,6 +1339,7 @@ class _VideoCallControls extends StatelessWidget {
   final VoidCallback onMute;
   final VoidCallback onCamera;
   final VoidCallback onSpeaker;
+  final VoidCallback onRetry;
   final VoidCallback onFinish;
 
   @override
@@ -1101,87 +1362,116 @@ class _VideoCallControls extends StatelessWidget {
       ),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-        children: [
-          _CompactVideoAction(
-            label: muted
-                ? copy.text('Unmute', 'Włącz mikrofon')
-                : copy.text('Mute', 'Wycisz'),
-            semanticsLabel: copy.text('Microphone', 'Mikrofon'),
-            semanticsHint: muted
-                ? copy.text(
-                    'Double tap to unmute',
-                    'Dotknij dwukrotnie, aby włączyć mikrofon',
-                  )
-                : copy.text(
-                    'Double tap to mute',
-                    'Dotknij dwukrotnie, aby wyciszyć',
+        children: connectionFailed
+            ? [
+                _CompactVideoAction(
+                  label: copy.text('Retry', 'Ponów'),
+                  semanticsLabel: copy.text(
+                    'Retry connection',
+                    'Ponów połączenie',
                   ),
-            semanticsToggled: !muted,
-            icon: muted ? Icons.mic_off_rounded : Icons.mic_rounded,
-            selected: muted,
-            onPressed: connected && !actionBusy ? onMute : null,
-          ),
-          _CompactVideoAction(
-            label: cameraEnabled
-                ? copy.text('Camera off', 'Wyłącz kamerę')
-                : copy.text('Camera on', 'Włącz kamerę'),
-            semanticsLabel: copy.text('Camera', 'Kamera'),
-            semanticsHint: cameraEnabled
-                ? copy.text(
-                    'Double tap to turn camera off',
-                    'Dotknij dwukrotnie, aby wyłączyć kamerę',
-                  )
-                : copy.text(
-                    'Double tap to turn camera on',
-                    'Dotknij dwukrotnie, aby włączyć kamerę',
+                  icon: Icons.refresh_rounded,
+                  onPressed: actionBusy ? null : onRetry,
+                ),
+                _CompactVideoAction(
+                  label: copy.text('End', 'Zakończ'),
+                  semanticsLabel: copy.text('End call', 'Zakończ połączenie'),
+                  semanticsHint: copy.text(
+                    'Double tap to end the call',
+                    'Dotknij dwukrotnie, aby zakończyć połączenie',
                   ),
-            semanticsToggled: cameraEnabled,
-            icon: cameraEnabled
-                ? Icons.videocam_rounded
-                : Icons.videocam_off_rounded,
-            selected: !cameraEnabled,
-            busy: cameraBusy,
-            onPressed: connected && !actionBusy && !cameraBusy
-                ? onCamera
-                : null,
-          ),
-          _CompactVideoAction(
-            label: speakerPreferred
-                ? copy.text('Use earpiece', 'Użyj słuchawki')
-                : copy.text('Use speaker', 'Użyj głośnika'),
-            semanticsLabel: copy.text('Speakerphone', 'Tryb głośnomówiący'),
-            semanticsHint: speakerPreferred
-                ? copy.text(
-                    'Double tap to use earpiece',
-                    'Dotknij dwukrotnie, aby użyć słuchawki',
-                  )
-                : copy.text(
-                    'Double tap to use speaker',
-                    'Dotknij dwukrotnie, aby użyć głośnika',
+                  icon: Icons.call_end_rounded,
+                  destructive: true,
+                  onPressed: actionBusy ? null : onFinish,
+                ),
+              ]
+            : [
+                _CompactVideoAction(
+                  label: muted
+                      ? copy.text('Unmute', 'Włącz mikrofon')
+                      : copy.text('Mute', 'Wycisz'),
+                  semanticsLabel: copy.text('Microphone', 'Mikrofon'),
+                  semanticsHint: muted
+                      ? copy.text(
+                          'Double tap to unmute',
+                          'Dotknij dwukrotnie, aby włączyć mikrofon',
+                        )
+                      : copy.text(
+                          'Double tap to mute',
+                          'Dotknij dwukrotnie, aby wyciszyć',
+                        ),
+                  semanticsToggled: !muted,
+                  icon: muted ? Icons.mic_off_rounded : Icons.mic_rounded,
+                  selected: muted,
+                  onPressed: connected && !actionBusy ? onMute : null,
+                ),
+                _CompactVideoAction(
+                  label: cameraEnabled
+                      ? copy.text('Camera off', 'Wyłącz kamerę')
+                      : copy.text('Camera on', 'Włącz kamerę'),
+                  semanticsLabel: copy.text('Camera', 'Kamera'),
+                  semanticsHint: cameraEnabled
+                      ? copy.text(
+                          'Double tap to turn camera off',
+                          'Dotknij dwukrotnie, aby wyłączyć kamerę',
+                        )
+                      : copy.text(
+                          'Double tap to turn camera on',
+                          'Dotknij dwukrotnie, aby włączyć kamerę',
+                        ),
+                  semanticsToggled: cameraEnabled,
+                  icon: cameraEnabled
+                      ? Icons.videocam_rounded
+                      : Icons.videocam_off_rounded,
+                  selected: !cameraEnabled,
+                  busy: cameraBusy,
+                  onPressed: connected && !actionBusy && !cameraBusy
+                      ? onCamera
+                      : null,
+                ),
+                _CompactVideoAction(
+                  label: speakerPreferred
+                      ? copy.text('Use earpiece', 'Użyj słuchawki')
+                      : copy.text('Use speaker', 'Użyj głośnika'),
+                  semanticsLabel: copy.text(
+                    'Speakerphone',
+                    'Tryb głośnomówiący',
                   ),
-            semanticsToggled: speakerPreferred,
-            icon: speakerPreferred
-                ? Icons.volume_up_rounded
-                : Icons.hearing_rounded,
-            selected: speakerPreferred,
-            busy: speakerBusy,
-            onPressed:
-                connected && canSwitchSpeaker && !speakerBusy && !actionBusy
-                ? onSpeaker
-                : null,
-          ),
-          _CompactVideoAction(
-            label: copy.text('End', 'Zakończ'),
-            semanticsLabel: copy.text('End call', 'Zakończ połączenie'),
-            semanticsHint: copy.text(
-              'Double tap to end the call',
-              'Dotknij dwukrotnie, aby zakończyć połączenie',
-            ),
-            icon: Icons.call_end_rounded,
-            destructive: true,
-            onPressed: actionBusy ? null : onFinish,
-          ),
-        ],
+                  semanticsHint: speakerPreferred
+                      ? copy.text(
+                          'Double tap to use earpiece',
+                          'Dotknij dwukrotnie, aby użyć słuchawki',
+                        )
+                      : copy.text(
+                          'Double tap to use speaker',
+                          'Dotknij dwukrotnie, aby użyć głośnika',
+                        ),
+                  semanticsToggled: speakerPreferred,
+                  icon: speakerPreferred
+                      ? Icons.volume_up_rounded
+                      : Icons.hearing_rounded,
+                  selected: speakerPreferred,
+                  busy: speakerBusy,
+                  onPressed:
+                      connected &&
+                          canSwitchSpeaker &&
+                          !speakerBusy &&
+                          !actionBusy
+                      ? onSpeaker
+                      : null,
+                ),
+                _CompactVideoAction(
+                  label: copy.text('End', 'Zakończ'),
+                  semanticsLabel: copy.text('End call', 'Zakończ połączenie'),
+                  semanticsHint: copy.text(
+                    'Double tap to end the call',
+                    'Dotknij dwukrotnie, aby zakończyć połączenie',
+                  ),
+                  icon: Icons.call_end_rounded,
+                  destructive: true,
+                  onPressed: actionBusy ? null : onFinish,
+                ),
+              ],
       ),
     );
   }

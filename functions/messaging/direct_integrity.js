@@ -353,13 +353,30 @@ function normalizedDetectedContentType(contentType) {
     : contentType;
 }
 
+function directMediaContentTypesMatch(reservation, detectedContentType) {
+  const reservedContentType = normalizedDetectedContentType(
+    reservation.contentType,
+  );
+  const detected = normalizedDetectedContentType(detectedContentType);
+  if (reservedContentType === detected) return true;
+
+  // MOV and MP4 are both ISO-BMFF containers. Apple camera recordings can be
+  // surfaced as video/quicktime while carrying an MP4 major brand (and M4V can
+  // appear in the opposite direction). Treat only these two video MIME values
+  // as an equivalent container family after the trusted probe has inspected
+  // the immutable generation. Track and duration checks below remain strict.
+  return reservation.type === "video" &&
+    new Set([reservedContentType, detected]).size === 2 &&
+    [reservedContentType, detected].every((contentType) =>
+      contentType === "video/mp4" || contentType === "video/quicktime"
+    );
+}
+
 function validateDirectMediaProbe(probe, reservation, media) {
   if (!isPlainObject(probe) ||
       probe.generation !== media.generation ||
       probe.size !== media.size ||
-      probe.detectedContentType !== normalizedDetectedContentType(
-        reservation.contentType,
-      ) ||
+      !directMediaContentTypesMatch(reservation, probe.detectedContentType) ||
       typeof probe.hasAudio !== "boolean" ||
       typeof probe.hasVideo !== "boolean") {
     fail("failed-precondition", "The uploaded attachment bytes do not match.");

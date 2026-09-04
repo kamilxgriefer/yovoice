@@ -11,6 +11,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_theme.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
+import 'package:yovoice/features/friends/presentation/screens/friend_profile_screen.dart';
 import 'package:yovoice/features/messages/data/models/message.dart';
 import 'package:yovoice/features/messages/data/services/message_outbox.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
@@ -80,6 +81,7 @@ Future<FocusNode> _openPreview(
       'Recording a new episode https://open.spotify.com/episode/123',
   String accountType = 'creator',
   bool isFriend = false,
+  int launchCount = 1,
 }) async {
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1;
@@ -130,29 +132,33 @@ Future<FocusNode> _openPreview(
           builder: (context) => Center(
             child: FilledButton(
               focusNode: launcherFocus,
-              onPressed: () => unawaited(
-                showProfilePreview(
-                  context,
-                  userId: 'creator',
-                  displayName: 'Maya Voice',
-                  firestore: firestore,
-                  auth: auth,
-                  friendService: friendMutationInvoker == null
-                      ? null
-                      : FriendService(
-                          firestore: firestore,
-                          auth: auth,
-                          mutationInvoker: friendMutationInvoker,
-                        ),
-                  messageService: openConversation == null
-                      ? null
-                      : _PreviewMessageService(
-                          firestore: firestore,
-                          auth: auth,
-                          openConversation: openConversation,
-                        ),
-                ),
-              ),
+              onPressed: () {
+                for (var index = 0; index < launchCount; index++) {
+                  unawaited(
+                    showProfilePreview(
+                      context,
+                      userId: 'creator',
+                      displayName: 'Maya Voice',
+                      firestore: firestore,
+                      auth: auth,
+                      friendService: friendMutationInvoker == null
+                          ? null
+                          : FriendService(
+                              firestore: firestore,
+                              auth: auth,
+                              mutationInvoker: friendMutationInvoker,
+                            ),
+                      messageService: openConversation == null
+                          ? null
+                          : _PreviewMessageService(
+                              firestore: firestore,
+                              auth: auth,
+                              openConversation: openConversation,
+                            ),
+                    ),
+                  );
+                }
+              },
               child: const Text('Open profile preview'),
             ),
           ),
@@ -353,6 +359,77 @@ void main() {
     expect(launcherFocus.hasFocus, isTrue);
   });
 
+  testWidgets('rapid launch requests open only one profile preview', (
+    tester,
+  ) async {
+    await _openPreview(tester, size: const Size(390, 844), launchCount: 3);
+
+    expect(find.byType(ProfilePreviewSheet), findsOneWidget);
+    expect(find.bySemanticsLabel('Close profile preview'), findsOneWidget);
+
+    await tester.tap(find.bySemanticsLabel('Close profile preview'));
+    await tester.pumpAndSettle();
+    expect(find.byType(ProfilePreviewSheet), findsNothing);
+  });
+
+  testWidgets('a failed launch releases the navigator single-flight guard', (
+    tester,
+  ) async {
+    final firestore = FakeFirebaseFirestore();
+    final auth = MockFirebaseAuth(
+      signedIn: true,
+      mockUser: MockUser(uid: 'me', email: 'me@yovoice.app'),
+    );
+    await firestore.collection('users').doc('me').set({
+      'uid': 'me',
+      'displayName': 'Me',
+    });
+    await firestore.collection('publicProfiles').doc('creator').set({
+      'uid': 'creator',
+      'displayName': 'Maya Voice',
+    });
+
+    late BuildContext launcherContext;
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.darkTheme,
+        home: Scaffold(
+          body: Builder(
+            builder: (context) {
+              launcherContext = context;
+              return const SizedBox.shrink();
+            },
+          ),
+        ),
+      ),
+    );
+
+    // Resolving the default Auth singleton fails in this Firebase-free test.
+    // The navigator lock must still be removed before the error escapes.
+    await expectLater(
+      showProfilePreview(
+        launcherContext,
+        userId: 'creator',
+        firestore: firestore,
+      ),
+      throwsA(isA<FirebaseException>()),
+    );
+
+    unawaited(
+      showProfilePreview(
+        launcherContext,
+        userId: 'creator',
+        firestore: firestore,
+        auth: auth,
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byType(ProfilePreviewSheet), findsOneWidget);
+
+    await tester.tap(find.bySemanticsLabel('Close profile preview'));
+    await tester.pumpAndSettle();
+  });
+
   testWidgets('profile preview keeps bio as the fallback when Vibe is empty', (
     tester,
   ) async {
@@ -509,7 +586,30 @@ void main() {
 
       final chat = tester.widget<ChatScreen>(find.byType(ChatScreen));
       expect(identical(chat.messageService, messages), isTrue);
+      expect(identical(chat.firestore, firestore), isTrue);
       expect(identical(chat.auth, auth), isTrue);
+
+      // Resolving the first preview into Chat must release the rapid-tap
+      // guard. Keeping that guard for the entire lifetime of the pushed route
+      // makes every avatar inside Chat appear inert until the user goes back.
+      final chatProfileAction = find.descendant(
+        of: find.byKey(const ValueKey('chat-header')),
+        matching: find.text('Otee'),
+      );
+      expect(chatProfileAction, findsOneWidget);
+      await tester.tap(chatProfileAction);
+      await tester.pumpAndSettle();
+      expect(find.byType(ProfilePreviewSheet), findsOneWidget);
+      final nestedPreview = tester.widget<ProfilePreviewSheet>(
+        find.byType(ProfilePreviewSheet),
+      );
+      expect(identical(nestedPreview.messageService, messages), isTrue);
+      expect(identical(nestedPreview.firestore, firestore), isTrue);
+      expect(identical(nestedPreview.auth, auth), isTrue);
+      await tester.tap(find.bySemanticsLabel('Close profile preview'));
+      await tester.pumpAndSettle();
+      expect(find.byType(ProfilePreviewSheet), findsNothing);
+      expect(find.byType(ChatScreen), findsOneWidget);
 
       // The routed Chat must reconcile optimistic and server messages under
       // the same injected UID. Using global Auth here would leave two bubbles
@@ -551,6 +651,58 @@ void main() {
       semantics.dispose();
     },
   );
+
+  testWidgets('full profile route retains the preview service context', (
+    tester,
+  ) async {
+    await _openPreview(
+      tester,
+      size: const Size(390, 844),
+      accountType: 'personal',
+    );
+    final preview = tester.widget<ProfilePreviewSheet>(
+      find.byType(ProfilePreviewSheet),
+    );
+
+    await tester.ensureVisible(find.text('View full profile'));
+    await tester.tap(find.text('View full profile'));
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
+
+    final profile = tester.widget<FriendProfileScreen>(
+      find.byType(FriendProfileScreen),
+    );
+    expect(identical(profile.firestore, preview.firestore), isTrue);
+    expect(identical(profile.auth, preview.auth), isTrue);
+    expect(identical(profile.messageService, preview.messageService), isTrue);
+    expect(profile.friendService, isNotNull);
+    expect(profile.profileService, isNotNull);
+    expect(profile.followService, isNotNull);
+    expect(profile.socialGraphService, isNotNull);
+  });
+
+  testWidgets('rapid full-profile taps push exactly one destination', (
+    tester,
+  ) async {
+    await _openPreview(
+      tester,
+      size: const Size(390, 844),
+      accountType: 'personal',
+    );
+
+    final openFullProfile = find.text('View full profile');
+    await tester.ensureVisible(openFullProfile);
+    final button = tester.widget<TextButton>(
+      find.ancestor(of: openFullProfile, matching: find.byType(TextButton)),
+    );
+    button.onPressed!();
+    button.onPressed!();
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
+
+    expect(find.byType(FriendProfileScreen), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets('Message failure remains visible inside the profile preview', (
     tester,

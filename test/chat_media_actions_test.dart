@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
+import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -12,6 +13,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_theme.dart';
 import 'package:yovoice/features/messages/data/models/message.dart';
+import 'package:yovoice/features/messages/data/services/direct_attachment_outbox.dart';
+import 'package:yovoice/features/messages/data/services/direct_attachment_payload_store.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/messages/presentation/screens/chat_screen.dart';
 import 'package:yovoice/features/messages/presentation/screens/shared_media_screen.dart';
@@ -198,6 +201,180 @@ void main() {
     await tester.pump();
   });
 
+  testWidgets(
+    'a canonical media message clears a max-attempt durable outbox card',
+    (tester) async {
+      const messageId = 'm_0123456789abcdef0123456789abcdef01234567';
+      final messages = StreamController<List<Message>>();
+      addTearDown(messages.close);
+      final payloadStore = _TestPayloadStore();
+      final mediaOutbox = DirectAttachmentOutbox(
+        ownerId: currentUserId,
+        preferences: await SharedPreferences.getInstance(),
+        payloadStore: payloadStore,
+        maxAttempts: 1,
+      );
+      final pending = await mediaOutbox.enqueue(
+        fingerprint: 'a' * 64,
+        conversationId: 'conversation',
+        type: MessageType.image,
+        contentType: 'image/jpeg',
+        durationSeconds: null,
+        bytes: Uint8List(128),
+        reserveRequestId: 'reserve-request',
+        finalizeRequestId: 'finalize-request',
+      );
+      await mediaOutbox.setReservation(
+        pending.id,
+        DirectAttachmentReservationRecord(
+          conversationId: 'conversation',
+          messageId: messageId,
+          storagePath:
+              'message_attachments/$currentUserId/conversation/$messageId.jpg',
+          type: MessageType.image,
+          expiresAt: DateTime.utc(2030),
+          clientExpiresAt: DateTime.utc(2030),
+        ),
+      );
+      await mediaOutbox.markRetry(
+        pending.id,
+        StateError('The finalize acknowledgement was lost.'),
+      );
+      expect(
+        mediaOutbox.entries.single.status,
+        DirectAttachmentOutboxStatus.failed,
+      );
+      expect(payloadStore.payloads, isNotEmpty);
+      final service = _ActionMessageService(
+        firestore,
+        auth,
+        attachmentOutbox: mediaOutbox,
+        messageStream: messages.stream,
+      );
+
+      await tester.pumpWidget(host(service));
+      await tester.pump();
+      expect(
+        find.byKey(ValueKey('queued-media-${pending.id}')),
+        findsOneWidget,
+      );
+
+      messages.add([
+        Message(
+          id: messageId,
+          conversationId: 'conversation',
+          senderId: currentUserId,
+          type: MessageType.image,
+          content: 'Photo',
+          sentAt: DateTime.utc(2026, 9, 4),
+          readBy: const [currentUserId],
+          reactions: const {},
+          mediaUrl: 'gs://private/committed-image.jpg',
+        ),
+      ]);
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(ValueKey('queued-media-${pending.id}')), findsNothing);
+      expect(mediaOutbox.entries, isEmpty);
+      expect(payloadStore.payloads, isEmpty);
+    },
+  );
+
+  for (final scenario in const [
+    (
+      label: 'wrong sender',
+      conversationId: 'conversation',
+      senderId: otherUserId,
+      type: MessageType.image,
+    ),
+    (
+      label: 'wrong media type',
+      conversationId: 'conversation',
+      senderId: currentUserId,
+      type: MessageType.voice,
+    ),
+    (
+      label: 'wrong conversation',
+      conversationId: 'another-conversation',
+      senderId: currentUserId,
+      type: MessageType.image,
+    ),
+  ]) {
+    testWidgets(
+      'canonical id with ${scenario.label} keeps the durable media card',
+      (tester) async {
+        const messageId = 'm_0123456789abcdef0123456789abcdef01234567';
+        final messages = StreamController<List<Message>>();
+        addTearDown(messages.close);
+        final payloadStore = _TestPayloadStore();
+        final mediaOutbox = DirectAttachmentOutbox(
+          ownerId: currentUserId,
+          preferences: await SharedPreferences.getInstance(),
+          payloadStore: payloadStore,
+          maxAttempts: 1,
+        );
+        final pending = await mediaOutbox.enqueue(
+          fingerprint: 'b' * 64,
+          conversationId: 'conversation',
+          type: MessageType.image,
+          contentType: 'image/jpeg',
+          durationSeconds: null,
+          bytes: Uint8List(128),
+          reserveRequestId: 'reserve-request',
+          finalizeRequestId: 'finalize-request',
+        );
+        await mediaOutbox.setReservation(
+          pending.id,
+          DirectAttachmentReservationRecord(
+            conversationId: 'conversation',
+            messageId: messageId,
+            storagePath:
+                'message_attachments/$currentUserId/conversation/$messageId.jpg',
+            type: MessageType.image,
+            expiresAt: DateTime.utc(2030),
+            clientExpiresAt: DateTime.utc(2030),
+          ),
+        );
+        await mediaOutbox.markRetry(pending.id, StateError('lost ACK'));
+        final service = _ActionMessageService(
+          firestore,
+          auth,
+          attachmentOutbox: mediaOutbox,
+          messageStream: messages.stream,
+        );
+
+        await tester.pumpWidget(host(service));
+        await tester.pump();
+        messages.add([
+          Message(
+            id: messageId,
+            conversationId: scenario.conversationId,
+            senderId: scenario.senderId,
+            type: scenario.type,
+            content: scenario.type == MessageType.voice
+                ? 'Voice message'
+                : 'Photo',
+            sentAt: DateTime.utc(2026, 9, 4),
+            readBy: const [currentUserId],
+            reactions: const {},
+            mediaUrl: 'gs://private/not-the-reserved-media',
+          ),
+        ]);
+        await tester.pumpAndSettle();
+
+        expect(
+          find.byKey(ValueKey('queued-media-${pending.id}')),
+          findsOneWidget,
+        );
+        expect(mediaOutbox.entries, hasLength(1));
+        expect(
+          await payloadStore.exists(mediaOutbox.accountNamespace, pending.id),
+          isTrue,
+        );
+      },
+    );
+  }
+
   testWidgets('top overflow opens Shared media beside mute and archive', (
     tester,
   ) async {
@@ -221,15 +398,24 @@ void main() {
 }
 
 class _ActionMessageService extends MessageService {
-  _ActionMessageService(FakeFirebaseFirestore firestore, MockFirebaseAuth auth)
-    : super(firestore: firestore, auth: auth);
+  _ActionMessageService(
+    FakeFirebaseFirestore firestore,
+    MockFirebaseAuth auth, {
+    DirectAttachmentOutbox? attachmentOutbox,
+    Stream<List<Message>>? messageStream,
+  }) : _messageStream = messageStream ?? Stream.value(const <Message>[]),
+       super(
+         firestore: firestore,
+         auth: auth,
+         attachmentOutbox: attachmentOutbox,
+       );
 
   final List<XFile> sentImages = [];
   final List<({XFile video, int durationSeconds})> sentVideos = [];
+  final Stream<List<Message>> _messageStream;
 
   @override
-  Stream<List<Message>> watchMessages(String conversationId) =>
-      Stream.value(const <Message>[]);
+  Stream<List<Message>> watchMessages(String conversationId) => _messageStream;
 
   @override
   Stream<bool> watchTyping({
@@ -266,4 +452,47 @@ class _ActionMessageService extends MessageService {
   }) async {
     sentVideos.add((video: video, durationSeconds: durationSeconds));
   }
+}
+
+class _TestPayloadStore implements DirectAttachmentPayloadStore {
+  final Map<String, Uint8List> payloads = {};
+
+  String _key(String namespace, String id) => '$namespace:$id';
+
+  @override
+  Future<void> write(String namespace, String id, Uint8List bytes) async {
+    payloads[_key(namespace, id)] = Uint8List.fromList(bytes);
+  }
+
+  @override
+  Future<bool> exists(String namespace, String id) async =>
+      payloads.containsKey(_key(namespace, id));
+
+  @override
+  Future<Set<String>> keys(String namespace) async {
+    final prefix = '$namespace:';
+    return payloads.keys
+        .where((key) => key.startsWith(prefix))
+        .map((key) => key.substring(prefix.length))
+        .toSet();
+  }
+
+  @override
+  Future<void> delete(String namespace, String id) async {
+    payloads.remove(_key(namespace, id));
+  }
+
+  @override
+  Future<void> clear(String namespace) async {
+    final prefix = '$namespace:';
+    payloads.removeWhere((key, _) => key.startsWith(prefix));
+  }
+
+  @override
+  Future<String> upload(
+    String namespace,
+    String id,
+    Reference reference,
+    SettableMetadata metadata,
+  ) => throw UnsupportedError('The widget test never uploads media.');
 }
