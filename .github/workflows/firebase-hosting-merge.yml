@@ -168,7 +168,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Download verified Hosting artifact
-        uses: actions/download-artifact@974686ed5098c7f9c9289ec946b9058e496a2561 # v8.0.0
+        uses: actions/download-artifact@484a0b528fb4d7bd804637ccb632e47a0e638317 # v8.0.0
         with:
           name: yovoice-web-${{ github.sha }}
           path: build/web
