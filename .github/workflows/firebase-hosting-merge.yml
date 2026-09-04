@@ -71,15 +71,44 @@ jobs:
             firestore-tests/package-lock.json
             functions/package-lock.json
 
+      # npm 10 falls back to the retiring quick-audit endpoint when the bulk
+      # advisory service has a transient failure. That fallback cannot
+      # serialize a lockfile-v3 virtual tree correctly and reports a false
+      # "Invalid package tree". npm 11 removed the legacy fallback; pin it so
+      # the security gate is reproducible instead of following the runner
+      # image's bundled npm release.
+      - name: Pin npm for deterministic audits
+        run: |
+          npm install --global npm@11.19.1
+          npm --version
+
       - name: Install Firebase test dependencies
         run: |
-          npm --prefix firestore-tests ci
-          npm --prefix functions ci
+          npm --prefix firestore-tests ci --no-audit
+          npm --prefix functions ci --no-audit
 
       - name: Audit production Node dependencies
         run: |
-          npm --prefix firestore-tests audit --omit=dev --audit-level=high
-          npm --prefix functions audit --omit=dev --audit-level=high
+          audit_with_retry() {
+            local package_dir="$1"
+            local attempt
+            for attempt in 1 2 3; do
+              if npm --prefix "$package_dir" audit \
+                --omit=dev \
+                --audit-level=high \
+                --fetch-retries=0 \
+                --fetch-timeout=60000; then
+                return 0
+              fi
+              if [ "$attempt" -eq 3 ]; then
+                return 1
+              fi
+              sleep "$((attempt * 10))"
+            done
+          }
+
+          audit_with_retry firestore-tests
+          audit_with_retry functions
 
       - name: Run Firestore rules tests
         run: |
