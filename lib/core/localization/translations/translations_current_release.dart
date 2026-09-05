@@ -199,7 +199,8 @@ const currentReleaseCompactTranslations = <String, Map<String, String>>{
   "sw": <String, String>{"Write…": "Andika…"},
 };
 
-/// Labels and accessibility copy for media entries in private chats.
+/// Labels and accessibility copy for media and conversation actions in
+/// private chats.
 ///
 /// Kept as a separate ordered pack so the coordinated Chats release cannot
 /// silently fall back to English in any selectable locale.
@@ -210,6 +211,7 @@ const currentReleaseChatMediaTranslationKeys = <String>[
   "Your message",
   "Play voice message, {duration} seconds",
   "Play video message, {duration} seconds",
+  "Conversation actions for {name}",
 ];
 
 final currentReleaseChatMediaTranslations = <String, Map<String, String>>{
@@ -230,6 +232,7 @@ const _currentReleaseChatMediaTranslationValues = <String, List<String>>{
     "Deine Nachricht",
     "Sprachnachricht abspielen, {duration} Sekunden",
     "Videonachricht abspielen, {duration} Sekunden",
+    "Aktionen für die Unterhaltung mit {name}",
   ],
   "es": <String>[
     "Vídeo",
@@ -238,6 +241,7 @@ const _currentReleaseChatMediaTranslationValues = <String, List<String>>{
     "Tu mensaje",
     "Reproducir mensaje de voz, {duration} segundos",
     "Reproducir mensaje de vídeo, {duration} segundos",
+    "Acciones de la conversación con {name}",
   ],
   "pt": <String>[
     "Vídeo",
@@ -246,6 +250,7 @@ const _currentReleaseChatMediaTranslationValues = <String, List<String>>{
     "A tua mensagem",
     "Reproduzir mensagem de voz, {duration} segundos",
     "Reproduzir mensagem de vídeo, {duration} segundos",
+    "Ações da conversa com {name}",
   ],
   "pt_BR": <String>[
     "Vídeo",
@@ -254,6 +259,7 @@ const _currentReleaseChatMediaTranslationValues = <String, List<String>>{
     "Sua mensagem",
     "Reproduzir mensagem de voz, {duration} segundos",
     "Reproduzir mensagem de vídeo, {duration} segundos",
+    "Ações da conversa com {name}",
   ],
   "fr": <String>[
     "Vidéo",
@@ -262,6 +268,7 @@ const _currentReleaseChatMediaTranslationValues = <String, List<String>>{
     "Votre message",
     "Lire le message vocal, {duration} secondes",
     "Lire le message vidéo, {duration} secondes",
+    "Actions de la conversation avec {name}",
   ],
   "it": <String>[
     "Video",
@@ -270,6 +277,7 @@ const _currentReleaseChatMediaTranslationValues = <String, List<String>>{
     "Il tuo messaggio",
     "Riproduci il messaggio vocale, {duration} secondi",
     "Riproduci il messaggio video, {duration} secondi",
+    "Azioni della conversazione con {name}",
   ],
   "uk": <String>[
     "Відео",
@@ -278,6 +286,7 @@ const _currentReleaseChatMediaTranslationValues = <String, List<String>>{
     "Ваше повідомлення",
     "Відтворити голосове повідомлення, {duration} с",
     "Відтворити відеоповідомлення, {duration} с",
+    "Дії для розмови з {name}",
   ],
   "ru": <String>[
     "Видео",
@@ -286,6 +295,7 @@ const _currentReleaseChatMediaTranslationValues = <String, List<String>>{
     "Ваше сообщение",
     "Воспроизвести голосовое сообщение, {duration} с",
     "Воспроизвести видеосообщение, {duration} с",
+    "Действия для разговора с {name}",
   ],
   "cs": <String>[
     "Video",
@@ -294,6 +304,7 @@ const _currentReleaseChatMediaTranslationValues = <String, List<String>>{
     "Vaše zpráva",
     "Přehrát hlasovou zprávu, {duration} sekund",
     "Přehrát videozprávu, {duration} sekund",
+    "Akce pro konverzaci s {name}",
   ],
   "sk": <String>[
     "Video",
@@ -302,6 +313,7 @@ const _currentReleaseChatMediaTranslationValues = <String, List<String>>{
     "Vaša správa",
     "Prehrať hlasovú správu, {duration} sekúnd",
     "Prehrať videosprávu, {duration} sekúnd",
+    "Akcie pre konverzáciu s {name}",
   ],
   "bg": <String>[
     "Видео",
@@ -310,6 +322,7 @@ const _currentReleaseChatMediaTranslationValues = <String, List<String>>{
     "Вашето съобщение",
     "Възпроизвеждане на гласово съобщение, {duration} секунди",
     "Възпроизвеждане на видео съобщение, {duration} секунди",
+    "Действия за разговора с {name}",
   ],
   "nl": <String>[
     "Video",
@@ -318,6 +331,7 @@ const _currentReleaseChatMediaTranslationValues = <String, List<String>>{
     "Jouw bericht",
     "Spraakbericht afspelen, {duration} seconden",
     "Videobericht afspelen, {duration} seconden",
+    "Acties voor het gesprek met {name}",
   ],
   "ro": <String>[
     "Videoclip",
@@ -326,6 +340,7 @@ const _currentReleaseChatMediaTranslationValues = <String, List<String>>{
     "Mesajul tău",
     "Redă mesajul vocal, {duration} secunde",
     "Redă mesajul video, {duration} secunde",
+    "Acțiuni pentru conversația cu {name}",
   ],
   "tr": <String>[
     "Video",
@@ -334,6 +349,7 @@ const _currentReleaseChatMediaTranslationValues = <String, List<String>>{
     "Mesajın",
     "Sesli mesajı oynat, {duration} saniye",
     "Görüntülü mesajı oynat, {duration} saniye",
+    "{name} ile sohbet işlemleri",
   ],
   "el": <String>[
     "Βίντεο",
@@ -342,6 +358,7 @@ const _currentReleaseChatMediaTranslationValues = <String, List<String>>{
     "Το μήνυμά σας",
     "Αναπαραγωγή φωνητικού μηνύματος, {duration} δευτερόλεπτα",
     "Αναπαραγωγή μηνύματος βίντεο, {duration} δευτερόλεπτα",
+    "Ενέργειες για τη συνομιλία με {name}",
   ],
   "hu": <String>[
     "Videó",
@@ -350,6 +367,7 @@ const _currentReleaseChatMediaTranslationValues = <String, List<String>>{
     "Az üzeneted",
     "Hangüzenet lejátszása, {duration} másodperc",
     "Videóüzenet lejátszása, {duration} másodperc",
+    "A beszélgetés műveletei: {name}",
   ],
   "hr": <String>[
     "Video",
@@ -358,6 +376,7 @@ const _currentReleaseChatMediaTranslationValues = <String, List<String>>{
     "Vaša poruka",
     "Reproduciraj glasovnu poruku, {duration} sekundi",
     "Reproduciraj videoporuku, {duration} sekundi",
+    "Radnje za razgovor s {name}",
   ],
   "sr": <String>[
     "Видео",
@@ -366,6 +385,7 @@ const _currentReleaseChatMediaTranslationValues = <String, List<String>>{
     "Ваша порука",
     "Пусти гласовну поруку, {duration} секунди",
     "Пусти видео-поруку, {duration} секунди",
+    "Радње за разговор са {name}",
   ],
   "sv": <String>[
     "Video",
@@ -374,6 +394,7 @@ const _currentReleaseChatMediaTranslationValues = <String, List<String>>{
     "Ditt meddelande",
     "Spela upp röstmeddelande, {duration} sekunder",
     "Spela upp videomeddelande, {duration} sekunder",
+    "Åtgärder för konversationen med {name}",
   ],
   "da": <String>[
     "Video",
@@ -382,6 +403,7 @@ const _currentReleaseChatMediaTranslationValues = <String, List<String>>{
     "Din besked",
     "Afspil talebesked, {duration} sekunder",
     "Afspil videobesked, {duration} sekunder",
+    "Handlinger for samtalen med {name}",
   ],
   "nb": <String>[
     "Video",
@@ -390,6 +412,7 @@ const _currentReleaseChatMediaTranslationValues = <String, List<String>>{
     "Meldingen din",
     "Spill av talemelding, {duration} sekunder",
     "Spill av videomelding, {duration} sekunder",
+    "Handlinger for samtalen med {name}",
   ],
   "fi": <String>[
     "Video",
@@ -398,6 +421,7 @@ const _currentReleaseChatMediaTranslationValues = <String, List<String>>{
     "Viestisi",
     "Toista ääniviesti, {duration} sekuntia",
     "Toista videoviesti, {duration} sekuntia",
+    "Keskustelun toiminnot: {name}",
   ],
   "lt": <String>[
     "Vaizdo įrašas",
@@ -406,6 +430,7 @@ const _currentReleaseChatMediaTranslationValues = <String, List<String>>{
     "Jūsų žinutė",
     "Paleisti balso žinutę, {duration} sekundžių",
     "Paleisti vaizdo žinutę, {duration} sekundžių",
+    "Pokalbio su {name} veiksmai",
   ],
   "lv": <String>[
     "Video",
@@ -414,6 +439,7 @@ const _currentReleaseChatMediaTranslationValues = <String, List<String>>{
     "Jūsu ziņojums",
     "Atskaņot balss ziņojumu, {duration} sekundes",
     "Atskaņot videoziņojumu, {duration} sekundes",
+    "Sarunas ar {name} darbības",
   ],
   "et": <String>[
     "Video",
@@ -422,6 +448,7 @@ const _currentReleaseChatMediaTranslationValues = <String, List<String>>{
     "Sinu sõnum",
     "Esita häälsõnum, {duration} sekundit",
     "Esita videosõnum, {duration} sekundit",
+    "Vestluse toimingud: {name}",
   ],
   "id": <String>[
     "Video",
@@ -430,6 +457,7 @@ const _currentReleaseChatMediaTranslationValues = <String, List<String>>{
     "Pesan Anda",
     "Putar pesan suara, {duration} detik",
     "Putar pesan video, {duration} detik",
+    "Tindakan percakapan dengan {name}",
   ],
   "vi": <String>[
     "Video",
@@ -438,6 +466,7 @@ const _currentReleaseChatMediaTranslationValues = <String, List<String>>{
     "Tin nhắn của bạn",
     "Phát tin nhắn thoại, {duration} giây",
     "Phát tin nhắn video, {duration} giây",
+    "Thao tác cho cuộc trò chuyện với {name}",
   ],
   "zh_CN": <String>[
     "视频",
@@ -446,6 +475,7 @@ const _currentReleaseChatMediaTranslationValues = <String, List<String>>{
     "你的消息",
     "播放语音消息，时长 {duration} 秒",
     "播放视频消息，时长 {duration} 秒",
+    "与 {name} 的会话操作",
   ],
   "zh_TW": <String>[
     "影片",
@@ -454,6 +484,7 @@ const _currentReleaseChatMediaTranslationValues = <String, List<String>>{
     "你的訊息",
     "播放語音訊息，長度 {duration} 秒",
     "播放影片訊息，長度 {duration} 秒",
+    "與 {name} 的對話操作",
   ],
   "ja": <String>[
     "動画",
@@ -462,6 +493,7 @@ const _currentReleaseChatMediaTranslationValues = <String, List<String>>{
     "あなたのメッセージ",
     "音声メッセージを再生、{duration}秒",
     "動画メッセージを再生、{duration}秒",
+    "{name} との会話の操作",
   ],
   "ko": <String>[
     "동영상",
@@ -470,6 +502,7 @@ const _currentReleaseChatMediaTranslationValues = <String, List<String>>{
     "내 메시지",
     "음성 메시지 재생, {duration}초",
     "동영상 메시지 재생, {duration}초",
+    "{name}님과의 대화 작업",
   ],
   "ar": <String>[
     "فيديو",
@@ -478,6 +511,7 @@ const _currentReleaseChatMediaTranslationValues = <String, List<String>>{
     "رسالتك",
     "تشغيل رسالة صوتية، مدتها {duration} ثانية",
     "تشغيل رسالة فيديو، مدتها {duration} ثانية",
+    "إجراءات المحادثة مع {name}",
   ],
   "hi": <String>[
     "वीडियो",
@@ -486,6 +520,7 @@ const _currentReleaseChatMediaTranslationValues = <String, List<String>>{
     "आपका संदेश",
     "वॉइस मैसेज चलाएँ, {duration} सेकंड",
     "वीडियो मैसेज चलाएँ, {duration} सेकंड",
+    "{name} के साथ बातचीत के विकल्प",
   ],
   "bn": <String>[
     "ভিডিও",
@@ -494,6 +529,7 @@ const _currentReleaseChatMediaTranslationValues = <String, List<String>>{
     "আপনার বার্তা",
     "ভয়েস বার্তা চালান, {duration} সেকেন্ড",
     "ভিডিও বার্তা চালান, {duration} সেকেন্ড",
+    "{name}-এর সাথে কথোপকথনের বিকল্প",
   ],
   "ur": <String>[
     "ویڈیو",
@@ -502,6 +538,7 @@ const _currentReleaseChatMediaTranslationValues = <String, List<String>>{
     "آپ کا پیغام",
     "صوتی پیغام چلائیں، {duration} سیکنڈ",
     "ویڈیو پیغام چلائیں، {duration} سیکنڈ",
+    "{name} کے ساتھ گفتگو کے اختیارات",
   ],
   "th": <String>[
     "วิดีโอ",
@@ -510,6 +547,7 @@ const _currentReleaseChatMediaTranslationValues = <String, List<String>>{
     "ข้อความของคุณ",
     "เล่นข้อความเสียง ความยาว {duration} วินาที",
     "เล่นข้อความวิดีโอ ความยาว {duration} วินาที",
+    "การดำเนินการสำหรับการสนทนากับ {name}",
   ],
   "ms": <String>[
     "Video",
@@ -518,6 +556,7 @@ const _currentReleaseChatMediaTranslationValues = <String, List<String>>{
     "Mesej anda",
     "Mainkan mesej suara, {duration} saat",
     "Mainkan mesej video, {duration} saat",
+    "Tindakan perbualan dengan {name}",
   ],
   "fil": <String>[
     "Bidyo",
@@ -526,6 +565,7 @@ const _currentReleaseChatMediaTranslationValues = <String, List<String>>{
     "Ang iyong mensahe",
     "I-play ang voice message, {duration} segundo",
     "I-play ang video message, {duration} segundo",
+    "Mga aksyon sa pag-uusap kay {name}",
   ],
   "he": <String>[
     "וידאו",
@@ -534,6 +574,7 @@ const _currentReleaseChatMediaTranslationValues = <String, List<String>>{
     "ההודעה שלך",
     "הפעלת הודעה קולית, {duration} שניות",
     "הפעלת הודעת וידאו, {duration} שניות",
+    "פעולות לשיחה עם {name}",
   ],
   "fa": <String>[
     "ویدیو",
@@ -542,6 +583,7 @@ const _currentReleaseChatMediaTranslationValues = <String, List<String>>{
     "پیام شما",
     "پخش پیام صوتی، {duration} ثانیه",
     "پخش پیام ویدیویی، {duration} ثانیه",
+    "گزینه‌های گفت‌وگو با {name}",
   ],
   "sw": <String>[
     "Video",
@@ -550,6 +592,7 @@ const _currentReleaseChatMediaTranslationValues = <String, List<String>>{
     "Ujumbe wako",
     "Cheza ujumbe wa sauti, sekunde {duration}",
     "Cheza ujumbe wa video, sekunde {duration}",
+    "Vitendo vya mazungumzo na {name}",
   ],
 };
 

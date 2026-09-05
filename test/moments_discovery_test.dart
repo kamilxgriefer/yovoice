@@ -1004,7 +1004,7 @@ void main() {
 
       // Compact dock labels stay available to assistive technologies even
       // though the visual treatment is intentionally icon-only.
-      for (final label in ['Home', 'Chats', 'YO Moments', 'More']) {
+      for (final label in ['Home', 'Rooms', 'Chats', 'Your Moments', 'More']) {
         expect(
           find.bySemanticsLabel(label),
           findsOneWidget,
@@ -1029,7 +1029,7 @@ void main() {
         (widget) => widget is Semantics && widget.properties.selected == true,
       );
       expect(lit, findsOneWidget);
-      expect(tester.widget<Semantics>(lit).properties.label, 'YO Moments');
+      expect(tester.widget<Semantics>(lit).properties.label, 'Your Moments');
 
       // Friends is primary tab 2 and mobile Home's "Your circle" selects
       // it. It owns no dock slot, so the bar must light NOTHING rather
@@ -1055,7 +1055,7 @@ void main() {
         dockHost(selectedIndex: 0, onSelect: (index) => selected = index),
       );
       await tester.pumpAndSettle();
-      await tester.tap(find.bySemanticsLabel('YO Moments'));
+      await tester.tap(find.bySemanticsLabel('Your Moments'));
       await tester.pumpAndSettle();
 
       expect(selected, momentsSlot);

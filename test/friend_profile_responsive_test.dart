@@ -4,6 +4,7 @@ import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:yovoice/shared/widgets/backgrounds/yo_page_background.dart';
 
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_theme.dart';
@@ -441,7 +442,7 @@ void main() {
         await tester.pump(const Duration(milliseconds: 80));
       }
 
-      final background = tester.widget<Container>(
+      final background = tester.widget<YoPageBackground>(
         find.byKey(const ValueKey('friend-profile-background')),
       );
       final gradient =

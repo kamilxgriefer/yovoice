@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:yovoice/shared/widgets/backgrounds/yo_page_background.dart';
 
 import 'package:yovoice/core/helpers/error_messages.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
@@ -293,7 +294,7 @@ class _FriendsScreenState extends State<FriendsScreen> {
     return Scaffold(
       key: const ValueKey('friends-screen'),
       backgroundColor: palette.background,
-      body: Container(
+      body: YoPageBackground(
         decoration: BoxDecoration(
           gradient: RadialGradient(
             center: Alignment(-.86, -.96),

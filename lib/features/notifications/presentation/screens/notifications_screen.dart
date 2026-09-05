@@ -1,5 +1,6 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:yovoice/shared/widgets/backgrounds/yo_page_background.dart';
 import 'package:flutter/semantics.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
@@ -216,7 +217,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     final colors = Theme.of(context).colorScheme;
     return Scaffold(
       backgroundColor: palette.background,
-      body: Container(
+      body: YoPageBackground(
         key: const ValueKey('notifications-background'),
         decoration: BoxDecoration(
           gradient: RadialGradient(

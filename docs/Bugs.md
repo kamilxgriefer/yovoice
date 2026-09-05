@@ -20,6 +20,24 @@ about things that are broken, risky, or need verification.
 
 ## Build 20 fixes and remaining acceptance gaps (2026-09-05; invited testing)
 
+Post-Build-20 Meniscus development found two local interaction regressions:
+recognized pointer cancellation could commit a drag destination, and the
+unread badge remained right-aligned in RTL. Raw pointer cancellation now
+clears preview before recognizer end routing; the badge uses logical `end`.
+Focused tests cover cancellation, rapid initial movement, denied navigation,
+external selection and RTL. These changes are local/source-only, not part of
+the already-distributed Build 20 runtime described below.
+
+The Home/atmosphere review also exposed short-screen Chats header overflow and
+truncated primary names at 200% text. Local presentation now uses coordinated
+header/list scrolling and full-width enlarged-text identities. Rooms' idle
+hero pulse respects Reduced Motion and offstage TickerMode. Home expiry now
+recovers visible, actionable keyboard focus, including a horizontally scrolled
+avatar rail. Featured copy and owner/staff controls have guaranteed contrast
+backings over bright uploaded covers. Full regression passes 2364 tests and
+independent source/visual review approved the changes; these remain source-only,
+not claimed as shipped fixes.
+
 Runtime `941376e` is deployed on Firebase Hosting and available to the existing
 Google Play internal cohort of 15 testers. Both signed Build 20 artifacts were
 uploaded once; iOS completed processing, has its internal cohort of one

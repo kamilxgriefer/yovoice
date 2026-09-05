@@ -7,6 +7,7 @@ import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_theme.dart';
 import 'package:yovoice/features/discover/presentation/discover_category_identity.dart';
 import 'package:yovoice/features/discover/presentation/screens/discover_screen.dart';
+import 'package:yovoice/features/discover/presentation/widgets/hero_live_room.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
 
@@ -49,6 +50,48 @@ VoiceRoom _room() => VoiceRoom(
 );
 
 void main() {
+  testWidgets(
+    'Rooms hero stops decorative pulse for reduced motion and offstage',
+    (tester) async {
+      var reduced = false;
+      var active = true;
+      late StateSetter change;
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AppTheme.darkTheme,
+          home: StatefulBuilder(
+            builder: (context, setState) {
+              change = setState;
+              return MediaQuery(
+                data: MediaQuery.of(
+                  context,
+                ).copyWith(disableAnimations: reduced),
+                child: TickerMode(
+                  enabled: active,
+                  child: Scaffold(
+                    body: HeroLiveRoom(room: _room(), onJoin: () {}),
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(tester.binding.hasScheduledFrame, isTrue);
+      change(() => reduced = true);
+      await tester.pumpAndSettle();
+      expect(tester.binding.hasScheduledFrame, isFalse);
+      change(() {
+        reduced = false;
+        active = false;
+      });
+      await tester.pumpAndSettle();
+      expect(tester.binding.hasScheduledFrame, isFalse);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets('Discover Pearl is semantic and overflow-free at 320px / 200%', (
     tester,
   ) async {

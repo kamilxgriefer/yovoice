@@ -16,6 +16,28 @@ someone decide what to pick up next.
 
 ## Done
 
+- **Meniscus mobile navigation and approved live-first Home** (2026-09-05,
+  ADR-141/142; **SOURCE + VISUAL QA VERIFIED, NOT PUBLISHED**): Home → Rooms →
+  Chats → Your Moments → More replaces the fixed center-logo action. The
+  moving bead/socket supports tap, drag release/cancel, keyboard, RTL and
+  Reduced Motion while preserving stable page identities and desktop
+  navigation. Real Create room entry points and guided-tour anchors remain.
+  Home follows the owner-selected second concept using existing room, followed
+  Moment and conversation streams, not fictional activity. Five original
+  static WebP scenes (224,674 bytes total, bounded 864px decode) serve the main
+  destinations with Dark/Pearl/high-contrast handling; Rooms receives the
+  approved sofa/neon setting and uploaded covers retain precedence.
+  Navigation/Home copy and the updated Chats tooltip cover all 43 locales.
+  Independent engineering, visual/accessibility/QA and final source reviews
+  approved the changes; full analysis is clean and **2364/2364 Flutter tests
+  pass**. Real-font renders cover phone/tablet/desktop, 320px at 200% text,
+  long/RTL labels, bright uploaded covers and expiry-focus recovery. The
+  production dock/background preview was also checked in iOS Simulator.
+  Exact motion parity to the compressed reference and native screen-reader
+  acceptance are not claimed. No new store build, Hosting deployment or tester
+  mail is included. Evidence and limits:
+  [session record](Sessions/2026-09-05-meniscus-live-first-home.md).
+
 - **The Dark/Pearl colour system now has one enforceable semantic contract**
   (2026-08-30, ADR-133, **SOURCE + VISUAL QA VERIFIED; BUILD 19 TESTING**):
   navigation chrome, interactive copy, control boundaries,

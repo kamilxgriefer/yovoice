@@ -883,6 +883,50 @@ void main() {
       await tester.pumpAndSettle();
     }
 
+    for (final theme in [AppTheme.darkTheme, AppTheme.lightTheme]) {
+      testWidgets(
+        'short Chats body scrolls and wraps identifiers at 200% ${theme.brightness.name}',
+        (tester) async {
+          const name = 'Aleksandra Very Long Family Name';
+          final service = _StubMessageService(
+            messages: const [],
+            conversations: [
+              _archivedConversation().withParticipantIdentity(
+                userId: otherUserId,
+                displayName: name,
+                photoUrl: '',
+              ),
+            ],
+          );
+          await pumpMessages(
+            tester,
+            service,
+            size: const Size(320, 460),
+            theme: theme,
+            textScaler: const TextScaler.linear(2),
+          );
+          await tester.tap(find.byTooltip('Show archived conversations'));
+          await tester.pumpAndSettle();
+          final scroll = find.byKey(
+            const ValueKey('messages-coordinated-scroll'),
+          );
+          await tester.drag(scroll, const Offset(0, -320));
+          await tester.pumpAndSettle();
+          final title = find.byKey(
+            const ValueKey('conversation-expanded-name-me-uid_them-uid'),
+          );
+          await tester.ensureVisible(title);
+          await tester.pumpAndSettle();
+          final text = tester.widget<Text>(title);
+          expect(text.data, name);
+          expect(text.maxLines, isNull);
+          expect(text.overflow, isNot(TextOverflow.ellipsis));
+          expect(tester.getSize(title).width, greaterThan(200));
+          expect(tester.takeException(), isNull);
+        },
+      );
+    }
+
     testWidgets('chat list overlays the current friend avatar immediately', (
       tester,
     ) async {

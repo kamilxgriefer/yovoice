@@ -132,6 +132,7 @@ class MobileMomentsStrip extends StatelessWidget {
     required this.onCreateMoment,
     this.onOpenChain,
     this.expiryClock,
+    this.expandedLabels = false,
     super.key,
   });
 
@@ -140,6 +141,7 @@ class MobileMomentsStrip extends StatelessWidget {
   final String currentUserId;
   final ValueChanged<VoiceMoment> onOpenMoment;
   final VoidCallback onCreateMoment;
+  final bool expandedLabels;
 
   /// Opens the signed-in user's whole ACTIVE chain in the story viewer.
   /// Optional so existing callers keep working; when null the bubble
@@ -197,9 +199,12 @@ class MobileMomentsStrip extends StatelessWidget {
             ),
       builder: (context, recoveryFocus, tileFocusNode) {
         final yours = _MomentBubble(
+          expandedLabel: expandedLabels,
           key: const ValueKey('home-your-moment'),
-          focusNode: mine == null ? null : tileFocusNode(mine.id),
-          label: 'YO Moments',
+          // This avatar always exists, even when the last own Moment expires.
+          // It is the visible, actionable recovery target for the whole rail.
+          focusNode: recoveryFocus,
+          label: copy.homeYou,
           userId: profile?.uid ?? currentUserId,
           // The profile is authoritative. A Moment's denormalized photo can
           // be older than a newly saved avatar.
@@ -235,12 +240,6 @@ class MobileMomentsStrip extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
-            MomentExpiryFocusTarget(
-              key: const ValueKey('mobile-home-moments-heading'),
-              focusNode: recoveryFocus,
-              semanticLabel: copy.yoMomentsFromYourCircle,
-              child: MobileSectionHeader(title: copy.yoMomentsFromYourCircle),
-            ),
             // This is a story rail, not an empty-state card. The signed-in
             // avatar is always first; every other avatar proves that person
             // has an active Voice Moment the viewer can open.
@@ -249,10 +248,48 @@ class MobileMomentsStrip extends StatelessWidget {
               clipBehavior: Clip.none,
               child: Row(
                 children: [
-                  yours,
+                  Focus(
+                    canRequestFocus: false,
+                    skipTraversal: true,
+                    onFocusChange: (focused) {
+                      if (!focused) return;
+                      WidgetsBinding.instance.addPostFrameCallback((_) {
+                        final target = recoveryFocus.context;
+                        if (target == null ||
+                            !target.mounted ||
+                            !recoveryFocus.hasFocus) {
+                          return;
+                        }
+                        // The expired author can be far along a scrolled
+                        // rail. Recovery must reveal the actual own action,
+                        // not merely move keyboard focus offscreen. Jumping
+                        // avoids motion and respects Reduce Motion as well.
+                        Scrollable.ensureVisible(target);
+                      });
+                    },
+                    child: ListenableBuilder(
+                      listenable: recoveryFocus,
+                      child: yours,
+                      builder: (context, child) => DecoratedBox(
+                        key: const ValueKey('home-own-moment-focus-outline'),
+                        position: DecorationPosition.foreground,
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(
+                            width: 2,
+                            color: recoveryFocus.hasFocus
+                                ? context.appPalette.focus
+                                : Colors.transparent,
+                          ),
+                        ),
+                        child: child,
+                      ),
+                    ),
+                  ),
                   for (final chain in shown) ...[
                     const SizedBox(width: 12),
                     _MomentBubble(
+                      expandedLabel: expandedLabels,
                       key: ValueKey('home-moment-${chain.moments.last.id}'),
                       focusNode: tileFocusNode(chain.moments.last.id),
                       label: chain.authorName,
@@ -296,6 +333,7 @@ class _MomentBubble extends StatelessWidget {
     this.semanticLabel,
     this.onAddTap,
     this.focusNode,
+    this.expandedLabel = false,
     super.key,
   });
 
@@ -306,6 +344,7 @@ class _MomentBubble extends StatelessWidget {
   final Object? mediaRevision;
   final String? displayName;
   final bool showAdd;
+  final bool expandedLabel;
 
   /// A real chain count (own live Moments); null hides the badge.
   final int? count;
@@ -325,9 +364,14 @@ class _MomentBubble extends StatelessWidget {
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
     final enlargedText = MediaQuery.textScalerOf(context).scale(1) >= 1.6;
+    // The own tile reserves a separate 44px + target beside the main
+    // playback target; shrinking that hit area over the avatar's centre
+    // makes an ordinary "play mine" tap record instead.
     final tileWidth = showAdd
         ? (enlargedText ? 118.0 : 94.0)
-        : (enlargedText ? 104.0 : 72.0);
+        : expandedLabel
+        ? (enlargedText ? 180.0 : 128.0)
+        : (enlargedText ? 104.0 : 64.0);
     return Semantics(
       button: true,
       // Followed-author tiles are one atomic action. The own tile keeps
@@ -350,7 +394,7 @@ class _MomentBubble extends StatelessWidget {
                   clipBehavior: Clip.none,
                   children: [
                     Align(
-                      alignment: Alignment.centerLeft,
+                      alignment: Alignment.center,
                       child: Container(
                         padding: const EdgeInsets.all(2.5),
                         decoration: BoxDecoration(
@@ -378,7 +422,7 @@ class _MomentBubble extends StatelessWidget {
                     ),
                     if (count != null)
                       Positioned(
-                        left: -3,
+                        left: (tileWidth - 64) / 2,
                         top: -3,
                         child: Container(
                           key: const ValueKey('home-your-moment-count'),
@@ -408,7 +452,7 @@ class _MomentBubble extends StatelessWidget {
                       ),
                     if (showAdd)
                       Positioned(
-                        right: 0,
+                        right: enlargedText ? 6 : 0,
                         bottom: 0,
                         child: _AddMomentBadge(
                           onTap: onAddTap,
@@ -438,7 +482,7 @@ class _MomentBubble extends StatelessWidget {
               const SizedBox(height: 6),
               Text(
                 label,
-                maxLines: enlargedText ? 2 : 1,
+                maxLines: enlargedText || expandedLabel ? 2 : 1,
                 overflow: enlargedText
                     ? TextOverflow.visible
                     : TextOverflow.ellipsis,
@@ -480,7 +524,7 @@ class _AddMomentBadge extends StatelessWidget {
         child: SizedBox(
           width: 44,
           height: 44,
-          child: Align(alignment: Alignment.bottomLeft, child: child),
+          child: Align(alignment: Alignment.bottomRight, child: child),
         ),
       ),
     );

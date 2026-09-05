@@ -4,6 +4,7 @@ import 'package:audioplayers/audioplayers.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:yovoice/shared/widgets/backgrounds/yo_page_background.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/navigation/app_route_observer.dart';
@@ -292,63 +293,68 @@ class _MomentsScreenState extends State<MomentsScreen> with RouteAware {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: context.appPalette.background,
-      body: SafeArea(
-        child: Column(
-          children: [
-            ResponsiveContentFrame(
-              width: ResponsiveContentWidth.feed,
-              fillHeight: false,
-              child: _MomentsHeader(
-                // The shell owns the chrome when this is a root tab; a
-                // pushed route keeps a real Back button.
-                showBack: !widget.isRootTab && Navigator.of(context).canPop(),
-                selectedFormat: _format,
-                onFormatSelected: _selectFormat,
-                onCreate: () => unawaited(_showCreateChooser()),
+      body: YoPageBackground(
+        section: YoPageSection.moments,
+        child: SafeArea(
+          child: Column(
+            children: [
+              ResponsiveContentFrame(
+                width: ResponsiveContentWidth.feed,
+                fillHeight: false,
+                child: _MomentsHeader(
+                  // The shell owns the chrome when this is a root tab; a
+                  // pushed route keeps a real Back button.
+                  showBack: !widget.isRootTab && Navigator.of(context).canPop(),
+                  selectedFormat: _format,
+                  onFormatSelected: _selectFormat,
+                  onCreate: () => unawaited(_showCreateChooser()),
+                ),
               ),
-            ),
-            Expanded(
-              child: IndexedStack(
-                key: const ValueKey<String>('yo-moments-format-stack'),
-                index: _format.index,
-                children: <Widget>[
-                  if (_voiceHasBeenOpened)
-                    MomentsFeedView(
-                      key: const ValueKey('moments-feed'),
-                      initialFilter: _initialFilter,
-                      discoveryService: widget.discoveryService,
-                      feedService: widget.feedService,
-                      momentService: widget.momentService,
-                      viewsService: widget.viewsService,
-                      contentReportService: widget.contentReportService,
-                      auth: widget.auth,
-                      isVisible: _voiceVisible,
-                      onOpenDetail: widget.onOpenDetail,
-                      playerFactory: widget.playerFactory,
-                      expiryClock: widget.expiryClock,
-                      expiryTimerFactory: widget.expiryTimerFactory,
-                      onRecord: () => unawaited(_createMoment()),
-                    )
-                  else
-                    const SizedBox.shrink(
-                      key: ValueKey<String>('yo-moments-voice-lazy'),
-                    ),
-                  if (_reelsHasBeenOpened)
-                    ReelsFeedScreen(
-                      key: ValueKey<String>('yo-moments-reels-$_reelsRevision'),
-                      embedded: true,
-                      service: widget.reelService,
-                      isVisible: _reelsVisible,
-                      onCreate: _openReelComposer,
-                    )
-                  else
-                    const SizedBox.shrink(
-                      key: ValueKey<String>('yo-moments-reels-lazy'),
-                    ),
-                ],
+              Expanded(
+                child: IndexedStack(
+                  key: const ValueKey<String>('yo-moments-format-stack'),
+                  index: _format.index,
+                  children: <Widget>[
+                    if (_voiceHasBeenOpened)
+                      MomentsFeedView(
+                        key: const ValueKey('moments-feed'),
+                        initialFilter: _initialFilter,
+                        discoveryService: widget.discoveryService,
+                        feedService: widget.feedService,
+                        momentService: widget.momentService,
+                        viewsService: widget.viewsService,
+                        contentReportService: widget.contentReportService,
+                        auth: widget.auth,
+                        isVisible: _voiceVisible,
+                        onOpenDetail: widget.onOpenDetail,
+                        playerFactory: widget.playerFactory,
+                        expiryClock: widget.expiryClock,
+                        expiryTimerFactory: widget.expiryTimerFactory,
+                        onRecord: () => unawaited(_createMoment()),
+                      )
+                    else
+                      const SizedBox.shrink(
+                        key: ValueKey<String>('yo-moments-voice-lazy'),
+                      ),
+                    if (_reelsHasBeenOpened)
+                      ReelsFeedScreen(
+                        key: ValueKey<String>(
+                          'yo-moments-reels-$_reelsRevision',
+                        ),
+                        embedded: true,
+                        service: widget.reelService,
+                        isVisible: _reelsVisible,
+                        onCreate: _openReelComposer,
+                      )
+                    else
+                      const SizedBox.shrink(
+                        key: ValueKey<String>('yo-moments-reels-lazy'),
+                      ),
+                  ],
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );

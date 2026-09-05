@@ -129,6 +129,7 @@ class HomeRoomBanner extends StatelessWidget {
     this.roomService,
     this.clubService,
     this.compact = false,
+    this.featured = false,
     this.currentUserId,
     this.onManageOwnedRoom,
     this.onDeleteOwnedRoom,
@@ -154,6 +155,10 @@ class HomeRoomBanner extends StatelessWidget {
   /// Phone density: tighter type and padding. Never a different layout —
   /// the reading order is identical on both.
   final bool compact;
+
+  /// Only the first actual live room receives the scenic hero treatment.
+  /// This changes presentation, never status, ordering or room authority.
+  final bool featured;
 
   /// The ordinary owner controls are derived from the room authority, never
   /// from a staff badge. The callable invoked by [onDeleteOwnedRoom] checks
@@ -196,7 +201,9 @@ class HomeRoomBanner extends StatelessWidget {
       ),
       child: Container(
         margin: EdgeInsets.only(bottom: compact ? 14 : 12),
-        constraints: BoxConstraints(minHeight: compact ? 168 : 140),
+        constraints: BoxConstraints(
+          minHeight: featured ? (compact ? 246 : 288) : (compact ? 168 : 140),
+        ),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(20),
           color: palette.surface,
@@ -209,84 +216,214 @@ class HomeRoomBanner extends StatelessWidget {
             // the broken-image case, so a banner can never show a
             // broken-image glyph.
             Positioned.fill(
-              child: RoomVisual(room: room, expand: true, radius: 0),
+              child: ExcludeSemantics(
+                child: RoomVisual(
+                  room: room,
+                  expand: true,
+                  radius: 0,
+                  fallbackAsset: featured
+                      ? 'assets/images/atmospheres/rooms-lounge.webp'
+                      : null,
+                ),
+              ),
             ),
-            Positioned.fill(child: _CoverScrim(compact: compact)),
+            Positioned.fill(
+              child: _CoverScrim(compact: compact, featured: featured),
+            ),
             Padding(
-              padding: EdgeInsets.all(compact ? 14 : 13),
+              padding: EdgeInsets.all(featured ? 18 : (compact ? 14 : 13)),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Row(
                     children: [
-                      _StatusBadge(live: room.isLive),
-                      const SizedBox(width: 9),
-                      _CountChip(count: room.participantCount),
-                      if (hasOwnerActions || hasStaffActions) const Spacer(),
-                      if (hasOwnerActions)
-                        _OwnedRoomMenu(
-                          // Keyed by room id: these tiles live in lists that
-                          // reorder on every join/leave, and a recycled menu
-                          // state must never point at another tile's club.
-                          key: ValueKey('owned-room-menu-${room.id}'),
-                          room: room,
-                          onManage: onManageOwnedRoom,
-                          onDelete: onDeleteOwnedRoom,
-                          currentUserId: currentUserId,
-                          clubService: clubService,
+                      Expanded(
+                        child: Wrap(
+                          spacing: 9,
+                          runSpacing: 8,
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          children: [
+                            _StatusBadge(live: room.isLive),
+                            if (featured)
+                              DecoratedBox(
+                                decoration: BoxDecoration(
+                                  color: const Color(0xD9090710),
+                                  borderRadius: BorderRadius.circular(999),
+                                ),
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 8,
+                                    vertical: 5,
+                                  ),
+                                  child: _CountChip(
+                                    count: room.participantCount,
+                                  ),
+                                ),
+                              )
+                            else
+                              _CountChip(count: room.participantCount),
+                          ],
                         ),
-                      if (hasOwnerActions && hasStaffActions)
-                        const SizedBox(width: 4),
-                      if (hasStaffActions)
-                        RoomStaffMenu(
-                          room: room,
-                          capabilities: staffCapabilities!,
-                          functions: staffFunctions,
-                          onRoomDeleted: onRoomDeleted,
+                      ),
+                      if (hasOwnerActions || hasStaffActions)
+                        DecoratedBox(
+                          key: featured
+                              ? const ValueKey('home-featured-actions-backing')
+                              : null,
+                          decoration: BoxDecoration(
+                            // Keep the native controls and hit targets while
+                            // insulating their icons from bright uploads.
+                            color: featured
+                                ? const Color(0xD9090710)
+                                : Colors.transparent,
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              if (hasOwnerActions)
+                                _OwnedRoomMenu(
+                                  // List reordering must never recycle a menu
+                                  // state into another room's club authority.
+                                  key: ValueKey('owned-room-menu-${room.id}'),
+                                  room: room,
+                                  onManage: onManageOwnedRoom,
+                                  onDelete: onDeleteOwnedRoom,
+                                  currentUserId: currentUserId,
+                                  clubService: clubService,
+                                ),
+                              if (hasOwnerActions && hasStaffActions)
+                                const SizedBox(width: 4),
+                              if (hasStaffActions)
+                                RoomStaffMenu(
+                                  room: room,
+                                  capabilities: staffCapabilities!,
+                                  functions: staffFunctions,
+                                  onRoomDeleted: onRoomDeleted,
+                                ),
+                            ],
+                          ),
                         ),
                     ],
                   ),
-                  SizedBox(height: compact ? 10 : 8),
-                  Text(
-                    room.name,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: compact ? 19 : 20,
-                      height: 1.15,
-                      letterSpacing: -.3,
-                      fontWeight: FontWeight.w800,
-                    ),
+                  SizedBox(
+                    height: featured ? (compact ? 48 : 76) : (compact ? 10 : 8),
                   ),
-                  if (room.description.trim().isNotEmpty) ...[
-                    const SizedBox(height: 5),
-                    Text(
-                      room.description,
-                      maxLines: compact ? 2 : 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: const Color(0xFFC4BAD3),
-                        fontSize: 12.5,
-                        height: 1.35,
+                  DecoratedBox(
+                    key: featured
+                        ? const ValueKey('home-featured-text-backing')
+                        : null,
+                    decoration: BoxDecoration(
+                      // Fixed-opacity backing follows actual text bounds,
+                      // independent of the cover's luminance or card height.
+                      color: featured
+                          ? const Color(0xD9090710)
+                          : Colors.transparent,
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    child: Padding(
+                      padding: featured
+                          ? const EdgeInsets.all(12)
+                          : EdgeInsets.zero,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            room.name,
+                            maxLines: featured ? null : 2,
+                            overflow: featured
+                                ? TextOverflow.visible
+                                : TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: featured
+                                  ? (compact ? 24 : 28)
+                                  : (compact ? 19 : 20),
+                              height: 1.15,
+                              letterSpacing: -.3,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                          if (room.description.trim().isNotEmpty) ...[
+                            const SizedBox(height: 5),
+                            Text(
+                              room.description,
+                              maxLines: featured ? null : (compact ? 2 : 1),
+                              overflow: featured
+                                  ? TextOverflow.visible
+                                  : TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: const Color(0xFFE2DAEC),
+                                fontSize: 12.5,
+                                height: 1.35,
+                              ),
+                            ),
+                          ],
+                          SizedBox(height: compact ? 12 : 10),
+                          if (featured) ...[
+                            if (tags.isNotEmpty) ...[
+                              Wrap(
+                                spacing: 6,
+                                runSpacing: 6,
+                                children: [for (final tag in tags) _Tag(tag)],
+                              ),
+                              const SizedBox(height: 12),
+                            ],
+                            if (MediaQuery.textScalerOf(context).scale(1) >=
+                                1.6)
+                              Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  _FacePile(
+                                    room: room,
+                                    roomService: roomService,
+                                    compact: compact,
+                                  ),
+                                  const SizedBox(height: 8),
+                                  _JoinButton(
+                                    compact: true,
+                                    onTap: () => onJoin(room),
+                                  ),
+                                ],
+                              )
+                            else
+                              Row(
+                                children: [
+                                  _FacePile(
+                                    room: room,
+                                    roomService: roomService,
+                                    compact: compact,
+                                  ),
+                                  const Spacer(),
+                                  _JoinButton(
+                                    compact: compact,
+                                    onTap: () => onJoin(room),
+                                  ),
+                                ],
+                              ),
+                          ] else
+                            Row(
+                              crossAxisAlignment: CrossAxisAlignment.center,
+                              children: [
+                                Expanded(child: _TagRow(tags: tags)),
+                                const SizedBox(width: 10),
+                                _FacePile(
+                                  room: room,
+                                  roomService: roomService,
+                                  compact: compact,
+                                ),
+                                SizedBox(width: compact ? 8 : 12),
+                                _JoinButton(
+                                  compact: compact,
+                                  onTap: () => onJoin(room),
+                                ),
+                              ],
+                            ),
+                        ],
                       ),
                     ),
-                  ],
-                  SizedBox(height: compact ? 12 : 10),
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.center,
-                    children: [
-                      Expanded(child: _TagRow(tags: tags)),
-                      const SizedBox(width: 10),
-                      _FacePile(
-                        room: room,
-                        roomService: roomService,
-                        compact: compact,
-                      ),
-                      SizedBox(width: compact ? 8 : 12),
-                      _JoinButton(compact: compact, onTap: () => onJoin(room)),
-                    ],
                   ),
                 ],
               ),
@@ -655,12 +792,30 @@ class _ConfirmDeleteDialogState extends State<_ConfirmDeleteDialog> {
 /// rasteriser from seconds to minutes, which is the same work the
 /// browser would be doing.
 class _CoverScrim extends StatelessWidget {
-  const _CoverScrim({required this.compact});
+  const _CoverScrim({required this.compact, this.featured = false});
 
   final bool compact;
+  final bool featured;
 
   @override
   Widget build(BuildContext context) {
+    if (featured) {
+      return const DecoratedBox(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [
+              Color(0x55090710),
+              Color(0x3D090710),
+              Color(0xE8090710),
+              Color(0xFA090710),
+            ],
+            stops: [0, .22, .66, 1],
+          ),
+        ),
+      );
+    }
     return DecoratedBox(
       decoration: BoxDecoration(
         gradient: LinearGradient(
@@ -829,7 +984,7 @@ class _JoinButton extends StatelessWidget {
           : copy.text('Join room', 'Dołącz do pokoju'),
       onPressed: onTap,
       fullWidth: false,
-      height: 44,
+      height: 48,
     );
   }
 }

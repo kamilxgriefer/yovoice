@@ -14,6 +14,7 @@ import 'package:yovoice/features/auth/data/auth_service.dart';
 import 'package:yovoice/features/auth/presentation/screens/verify_email_screen.dart';
 import 'package:yovoice/features/auth/presentation/widgets/email_verification_banner.dart';
 import 'package:yovoice/features/clubs/presentation/screens/club_overview_screen.dart';
+import 'package:yovoice/features/discover/presentation/screens/discover_screen.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/followed_creators_card.dart';
 import 'package:yovoice/features/messages/presentation/screens/chat_screen.dart';
 import 'package:yovoice/features/profile/data/models/follow_user.dart';
@@ -168,6 +169,23 @@ class MainShell extends StatefulWidget {
 
   static const double desktopBreakpoint = 1100;
 
+  /// Stable content identities are independent of the mobile dock's visual
+  /// order: Home, Rooms, Chats, Moments. Friends remains a retained hidden
+  /// slot reached from Home and More; desktop-only destinations return Home
+  /// when a viewport switches to the mobile shell.
+  @visibleForTesting
+  static int mobileIndexFor(int index) =>
+      const {0, 1, 2, 3, 5}.contains(index) ? index : 0;
+
+  @visibleForTesting
+  static int mobileNavigationOrder(int index) => switch (index) {
+    0 => 0,
+    3 => 1,
+    1 => 2,
+    5 => 3,
+    _ => 4,
+  };
+
   /// One layout predicate for rendering AND navigation. A wide viewport can
   /// still need the mobile shell when browser zoom leaves too little logical
   /// height for the fixed rail; menu presentation and content-slot routing
@@ -274,15 +292,9 @@ class _MainShellState extends State<MainShell>
   SubscriptionEntitlements _entitlements = SubscriptionEntitlements.free;
   StreamSubscription<SubscriptionEntitlements>? _entitlementSubscription;
 
-  // Friends replaced Profile as the third primary tab: it's the
-  // higher-frequency social destination. Profile lives in More and
-  // behind every own-avatar tap instead.
-  // Indices 0-2 are the shared primary tabs the mobile dock also drives.
-  // 3-4 are DESKTOP-ONLY slots: the rail selects them so Discover and
-  // Notifications swap the centre content exactly like Chats/Friends,
-  // instead of pushing a route over the shell. The mobile dock never
-  // selects them (it only sets 0-2), and the mobile branch clamps, so
-  // mobile navigation is unchanged.
+  // Keep stable content identities when the mobile visual order changes.
+  // Friends remains retained at slot 2, while Rooms promotes Discover's
+  // existing slot 3 instead of renumbering desktop destinations.
   static const List<Widget> _screens = [
     HomeScreen(),
     MessagesScreen(),
@@ -323,8 +335,29 @@ class _MainShellState extends State<MainShell>
   /// screen subscribes to rather than a constructor argument.
   final ValueNotifier<bool> _momentsVisible = ValueNotifier<bool>(false);
   final ValueNotifier<bool> _homeVisible = ValueNotifier<bool>(true);
+  final ScrollController _roomsScrollController = ScrollController();
 
   Widget _buildSlot(int index) {
+    if (index == _discoverSlot) {
+      return Builder(
+        builder: (context) {
+          final mobile = !MainShell.usesDesktopLayout(
+            MediaQuery.sizeOf(context),
+          );
+          return DiscoverScreen(
+            isRootTab: true,
+            asRoomsDestination: mobile,
+            scrollController: _roomsScrollController,
+            onCreateRoom: mobile ? () => unawaited(_openCreateRoom()) : null,
+            // A cached Rooms slot also survives on desktop. Only the active
+            // layout owns this key; the desktop rail owns Create there.
+            createRoomKey: mobile
+                ? _onboardingAnchors[GuidedOnboardingTarget.create]
+                : null,
+          );
+        },
+      );
+    }
     if (index == _notificationsSlot) {
       return const NotificationsScreen(isRootTab: true);
     }
@@ -464,17 +497,15 @@ class _MainShellState extends State<MainShell>
     return null;
   }
 
-  /// Mobile shows the three shared tabs PLUS the Moments slot, which the
-  /// dock now selects directly. Any other desktop-only slot falls back to
-  /// Home rather than showing a tab the dock cannot represent.
+  /// Mobile selects the stable Home/Rooms/Chats/Moments content identities.
+  /// Other desktop-only slots fall back to Home on responsive resize.
   ///
   /// Friends (tab 2) is deliberately still reachable here even though it
   /// no longer owns a dock slot — mobile Home's "Your circle" selects it,
   /// and its state, scroll position and listeners stay alive in the
   /// IndexedStack. The dock renders no capsule while it is showing,
   /// rather than lighting a slot that is not where you are.
-  static int _mobileIndexFor(int index) =>
-      (index <= 2 || index == _momentsSlot) ? index : 0;
+  static int _mobileIndexFor(int index) => MainShell.mobileIndexFor(index);
 
   int get _mobileIndex => _mobileIndexFor(_selectedIndex);
 
@@ -693,7 +724,9 @@ class _MainShellState extends State<MainShell>
       await _waitForShellTransition();
       if (!mounted || ModalRoute.of(context)?.isCurrent != true) return null;
 
-      if (_selectedIndex != 0) _onDestinationSelected(0);
+      await _prepareGuidedOnboardingLayout(
+        MainShell.usesDesktopLayout(MediaQuery.sizeOf(context)),
+      );
       _removeMessageOverlay();
       await WidgetsBinding.instance.endOfFrame;
       if (!mounted || ModalRoute.of(context)?.isCurrent != true) return null;
@@ -703,8 +736,31 @@ class _MainShellState extends State<MainShell>
         anchors: _onboardingAnchors,
         desktop: MainShell.usesDesktopLayout(MediaQuery.sizeOf(context)),
         desktopLayoutFor: MainShell.usesDesktopLayout,
+        onLayoutChanged: (desktop) =>
+            unawaited(_prepareGuidedOnboardingLayout(desktop)),
       );
     });
+  }
+
+  Future<void> _prepareGuidedOnboardingLayout(bool desktop) async {
+    if (!mounted || !_onboardingOpen) return;
+    // The mobile Create spotlight follows the real Rooms CTA, not the
+    // removed centre-logo action. Desktop introduces its rail from Home.
+    // Preparing either layout invokes no creation, entry or media permission.
+    final tourIndex = desktop ? 0 : _discoverSlot;
+    if (_selectedIndex != tourIndex) _onDestinationSelected(tourIndex);
+    await WidgetsBinding.instance.endOfFrame;
+    if (!mounted ||
+        !_onboardingOpen ||
+        desktop != MainShell.usesDesktopLayout(MediaQuery.sizeOf(context))) {
+      return;
+    }
+    if (!desktop && _roomsScrollController.hasClients) {
+      // The Rooms slot is retained, including its scroll. Replay must reveal
+      // the real CTA even after the user has browsed far down the live list.
+      _roomsScrollController.jumpTo(0);
+      await WidgetsBinding.instance.endOfFrame;
+    }
   }
 
   Future<void> _waitForShellTransition() async {
@@ -826,6 +882,7 @@ class _MainShellState extends State<MainShell>
     appRouteObserver.unsubscribe(this);
     _homeVisible.dispose();
     _momentsVisible.dispose();
+    _roomsScrollController.dispose();
     _tabTransition.dispose();
     _conversationSubscription?.cancel();
     _notificationCountSubscription?.cancel();
@@ -983,9 +1040,18 @@ class _MainShellState extends State<MainShell>
 
     _removeMessageOverlay();
 
+    final desktop = MainShell.usesDesktopLayout(MediaQuery.sizeOf(context));
     setState(() {
       _previousSelectedIndex = _selectedIndex;
-      _tabDirection = index > _selectedIndex ? 1 : -1;
+      _tabDirection = desktop
+          ? (index > _selectedIndex ? 1 : -1)
+          : (MainShell.mobileNavigationOrder(index) >
+                    MainShell.mobileNavigationOrder(_selectedIndex)
+                ? 1
+                : -1);
+      if (!desktop && Directionality.of(context) == TextDirection.rtl) {
+        _tabDirection *= -1;
+      }
       _selectedIndex = index;
     });
     _momentsVisible.value = index == _momentsSlot;
@@ -1105,6 +1171,15 @@ class _MainShellState extends State<MainShell>
     // listeners — instead of pushing a second copy over the shell.
     if (destination == MoreDestination.friends) {
       _onDestinationSelected(2);
+      return;
+    }
+
+    // Rooms and Moments are true mobile roots, not duplicated pushed
+    // destinations. More and Home links select the same retained content as
+    // the dock, preserving search, scroll and audio-visibility ownership.
+    if (destination == MoreDestination.discover ||
+        destination == MoreDestination.moments) {
+      _onDestinationSelected(_slotForDestination(destination)!);
       return;
     }
 
@@ -1395,13 +1470,7 @@ class _MainShellState extends State<MainShell>
     final viewport = MediaQuery.sizeOf(context);
     final isDesktop = MainShell.usesDesktopLayout(viewport);
 
-    HomeScreen.openDiscoverTab = () {
-      if (isDesktop) {
-        _onDestinationSelected(_discoverSlot);
-      } else {
-        unawaited(_openMoreDestination(MoreDestination.discover));
-      }
-    };
+    HomeScreen.openDiscoverTab = () => _onDestinationSelected(_discoverSlot);
 
     if (isDesktop) {
       return Scaffold(
@@ -1508,12 +1577,12 @@ class _MainShellState extends State<MainShell>
           if (!_hostedDestinationActive) const RoomMiniBar(),
           YoFloatingNavigationDock(
             tourDestinationKeys: {
-              1: _onboardingAnchors[GuidedOnboardingTarget.chats]!,
+              2: _onboardingAnchors[GuidedOnboardingTarget.chats]!,
               3: _onboardingAnchors[GuidedOnboardingTarget.moments]!,
               4: _onboardingAnchors[GuidedOnboardingTarget.more]!,
             },
-            tourVoiceKey: _onboardingAnchors[GuidedOnboardingTarget.create],
             selectedTabIndex: _mobileIndex,
+            roomsTabIndex: _discoverSlot,
             momentsTabIndex: _momentsSlot,
             unreadConversationCount: _unreadConversationCount,
             onDestinationSelected: _onDestinationSelected,
@@ -1778,6 +1847,7 @@ class _MoreDestinationHostState extends State<MoreDestinationHost> {
           const RoomMiniBar(),
           YoFloatingNavigationDock(
             selectedTabIndex: widget.selectedIndex,
+            roomsTabIndex: _MainShellState._discoverSlot,
             momentsTabIndex: _MainShellState._momentsSlot,
             unreadConversationCount: unreadConversationCount,
             onDestinationSelected: (index) =>

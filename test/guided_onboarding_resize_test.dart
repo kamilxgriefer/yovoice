@@ -23,6 +23,7 @@ void main() {
         for (final target in GuidedOnboardingTarget.values)
           target: GlobalKey(debugLabel: 'responsive-tour-${target.name}'),
       };
+      final preparedLayouts = <bool>[];
 
       await tester.pumpWidget(
         MaterialApp(
@@ -38,7 +39,10 @@ void main() {
             data: MediaQuery.of(context).copyWith(disableAnimations: true),
             child: child!,
           ),
-          home: _ResponsiveTourHarness(anchors: anchors),
+          home: _ResponsiveTourHarness(
+            anchors: anchors,
+            onLayoutChanged: preparedLayouts.add,
+          ),
         ),
       );
       await tester.pumpAndSettle();
@@ -50,7 +54,12 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Use your voice'), findsOneWidget);
+      expect(
+        find.text('Create a Voice Moment or start a Voice Room here.'),
+        findsOneWidget,
+      );
       _expectCreateHighlightMatches(tester, anchors);
+      expect(preparedLayouts, [true]);
       expect(tester.takeException(), isNull);
 
       tester.view.physicalSize = const Size(390, 844);
@@ -59,7 +68,14 @@ void main() {
       expect(find.byKey(const ValueKey('mobile-anchor-layout')), findsOne);
       expect(find.byKey(const ValueKey('desktop-anchor-layout')), findsNothing);
       expect(find.text('Use your voice'), findsOneWidget);
+      expect(
+        find.text(
+          'Create a Voice Room here. Open Your Moments to record a Voice Moment.',
+        ),
+        findsOneWidget,
+      );
       _expectCreateHighlightMatches(tester, anchors);
+      expect(preparedLayouts, [true, false]);
       expect(tester.takeException(), isNull);
 
       tester.view.physicalSize = const Size(1200, 800);
@@ -69,6 +85,7 @@ void main() {
       expect(find.byKey(const ValueKey('mobile-anchor-layout')), findsNothing);
       expect(find.text('Use your voice'), findsOneWidget);
       _expectCreateHighlightMatches(tester, anchors);
+      expect(preparedLayouts, [true, false, true]);
       expect(tester.takeException(), isNull);
     },
   );
@@ -94,9 +111,13 @@ void _expectCreateHighlightMatches(
 }
 
 class _ResponsiveTourHarness extends StatefulWidget {
-  const _ResponsiveTourHarness({required this.anchors});
+  const _ResponsiveTourHarness({
+    required this.anchors,
+    required this.onLayoutChanged,
+  });
 
   final Map<GuidedOnboardingTarget, GlobalKey> anchors;
+  final ValueChanged<bool> onLayoutChanged;
 
   @override
   State<_ResponsiveTourHarness> createState() => _ResponsiveTourHarnessState();
@@ -110,6 +131,7 @@ class _ResponsiveTourHarnessState extends State<_ResponsiveTourHarness> {
         anchors: widget.anchors,
         desktop: MainShell.usesDesktopLayout(MediaQuery.sizeOf(context)),
         desktopLayoutFor: MainShell.usesDesktopLayout,
+        onLayoutChanged: widget.onLayoutChanged,
       ),
     );
   }
@@ -176,26 +198,33 @@ class _MobileAnchorLayout extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       key: const ValueKey('mobile-anchor-layout'),
-      body: Center(
-        child: FilledButton(
-          key: const ValueKey('open-guided-tour'),
-          onPressed: onOpen,
-          child: const Text('Open tour'),
-        ),
+      body: Column(
+        children: [
+          FilledButton.tonalIcon(
+            key: anchors[GuidedOnboardingTarget.create],
+            onPressed: () {},
+            icon: const Icon(Icons.add_rounded),
+            label: const Text('Create room'),
+          ),
+          FilledButton(
+            key: const ValueKey('open-guided-tour'),
+            onPressed: onOpen,
+            child: const Text('Open tour'),
+          ),
+        ],
       ),
       bottomNavigationBar: YoFloatingNavigationDock(
-        selectedTabIndex: 0,
+        selectedTabIndex: 3,
         momentsTabIndex: 5,
         unreadConversationCount: 0,
         onDestinationSelected: (_) {},
         onVoicePressed: () {},
         onMorePressed: () {},
         tourDestinationKeys: {
-          1: anchors[GuidedOnboardingTarget.chats]!,
+          2: anchors[GuidedOnboardingTarget.chats]!,
           3: anchors[GuidedOnboardingTarget.moments]!,
           4: anchors[GuidedOnboardingTarget.more]!,
         },
-        tourVoiceKey: anchors[GuidedOnboardingTarget.create],
       ),
     );
   }

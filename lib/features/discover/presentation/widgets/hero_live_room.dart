@@ -29,7 +29,22 @@ class _HeroLiveRoomState extends State<HeroLiveRoom>
     _animationController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 2400),
-    )..repeat();
+    );
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final motionAllowed =
+        !MediaQuery.disableAnimationsOf(context) &&
+        !MediaQuery.accessibleNavigationOf(context) &&
+        TickerMode.valuesOf(context).enabled;
+    if (motionAllowed) {
+      if (!_animationController.isAnimating) _animationController.repeat();
+    } else {
+      _animationController.stop();
+      _animationController.value = 0;
+    }
   }
 
   @override

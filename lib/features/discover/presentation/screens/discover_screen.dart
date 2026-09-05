@@ -12,18 +12,34 @@ import 'package:yovoice/features/discover/presentation/widgets/hero_live_room.da
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
 import 'package:yovoice/features/rooms/presentation/screens/room_entry_screen.dart';
+import 'package:yovoice/shared/widgets/backgrounds/yo_page_background.dart';
 import 'package:yovoice/shared/widgets/buttons/yo_icon_button.dart';
 import 'package:yovoice/shared/widgets/identity/official_role_badge.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 
 class DiscoverScreen extends StatefulWidget {
-  const DiscoverScreen({this.isRootTab = false, this.roomService, super.key});
+  const DiscoverScreen({
+    this.isRootTab = false,
+    this.asRoomsDestination = false,
+    this.onCreateRoom,
+    this.createRoomKey,
+    this.scrollController,
+    this.roomService,
+    super.key,
+  });
 
   /// True when this screen IS the shell's current content (the desktop
   /// rail's Discover slot) rather than a pushed route — the same flag
   /// FriendsScreen uses, so a root tab never shows a back button that
   /// would have nothing to pop.
   final bool isRootTab;
+
+  /// Mobile promotes the same discovery data and room entry flow to Rooms.
+  /// Desktop and pushed discovery keep their existing presentation.
+  final bool asRoomsDestination;
+  final VoidCallback? onCreateRoom;
+  final Key? createRoomKey;
+  final ScrollController? scrollController;
 
   /// Injectable for focused rendering and error-state tests. Production keeps
   /// the same default service and therefore the same live-room data source.
@@ -329,7 +345,8 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
     return Scaffold(
       key: const ValueKey('discover-screen'),
       backgroundColor: palette.background,
-      body: Container(
+      body: YoPageBackground(
+        section: YoPageSection.rooms,
         key: const ValueKey('discover-canvas'),
         decoration: BoxDecoration(
           gradient: dark
@@ -352,12 +369,6 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
             child: StreamBuilder<List<VoiceRoom>>(
               stream: _roomService.watchLivePublicRooms(),
               builder: (context, snapshot) {
-                if (snapshot.hasError) {
-                  return _DiscoverErrorState(
-                    message: _readableError(snapshot.error!, copy),
-                  );
-                }
-
                 final allRooms = snapshot.data ?? const <VoiceRoom>[];
                 final filteredRooms = _filterRooms(allRooms);
                 final sections = _createSections(filteredRooms);
@@ -372,6 +383,7 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
                     );
                   },
                   child: CustomScrollView(
+                    controller: widget.scrollController,
                     physics: const AlwaysScrollableScrollPhysics(
                       parent: BouncingScrollPhysics(),
                     ),
@@ -382,8 +394,14 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
                           child: _DiscoverHeader(
                             searchController: _searchController,
                             onSearchChanged: _onSearchChanged,
-                            liveRoomCount: allRooms.length,
+                            liveRoomCount:
+                                snapshot.hasData && !snapshot.hasError
+                                ? allRooms.length
+                                : null,
                             isRootTab: widget.isRootTab,
+                            asRoomsDestination: widget.asRoomsDestination,
+                            onCreateRoom: widget.onCreateRoom,
+                            createRoomKey: widget.createRoomKey,
                           ),
                         ),
                       ),
@@ -401,7 +419,16 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
                           ),
                         ),
                       ),
-                      if (snapshot.connectionState == ConnectionState.waiting &&
+                      if (snapshot.hasError)
+                        SliverFillRemaining(
+                          hasScrollBody: false,
+                          child: _DiscoverErrorState(
+                            message: _readableError(snapshot.error!, copy),
+                            asRoomsDestination: widget.asRoomsDestination,
+                          ),
+                        )
+                      else if (snapshot.connectionState ==
+                              ConnectionState.waiting &&
                           !snapshot.hasData)
                         const SliverFillRemaining(
                           hasScrollBody: false,
@@ -602,12 +629,18 @@ class _DiscoverHeader extends StatelessWidget {
     required this.onSearchChanged,
     required this.liveRoomCount,
     this.isRootTab = false,
+    this.asRoomsDestination = false,
+    this.onCreateRoom,
+    this.createRoomKey,
   });
 
   final TextEditingController searchController;
   final ValueChanged<String> onSearchChanged;
-  final int liveRoomCount;
+  final int? liveRoomCount;
   final bool isRootTab;
+  final bool asRoomsDestination;
+  final VoidCallback? onCreateRoom;
+  final Key? createRoomKey;
 
   @override
   Widget build(BuildContext context) {
@@ -619,7 +652,9 @@ class _DiscoverHeader extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          copy.text('Discover', 'Odkrywaj'),
+          asRoomsDestination
+                            ? copy.navigationRooms
+              : copy.text('Discover', 'Odkrywaj'),
           style: TextStyle(
             color: palette.textPrimary,
             fontSize: 31,
@@ -656,16 +691,32 @@ class _DiscoverHeader extends StatelessWidget {
         if (largeText) ...[
           if (!isRootTab) ...[back, const SizedBox(height: 14)],
           title,
-          const SizedBox(height: 14),
-          _LiveRoomCounter(count: liveRoomCount),
+          if (liveRoomCount != null) ...[
+            const SizedBox(height: 14),
+            _LiveRoomCounter(count: liveRoomCount!),
+          ],
         ] else
           Row(
             children: [
               if (!isRootTab) ...[back, const SizedBox(width: 10)],
               Expanded(child: title),
-              _LiveRoomCounter(count: liveRoomCount),
+              if (liveRoomCount != null)
+                _LiveRoomCounter(count: liveRoomCount!),
             ],
           ),
+        if (onCreateRoom != null) ...[
+          const SizedBox(height: 16),
+          Align(
+            alignment: AlignmentDirectional.centerStart,
+            child: FilledButton.tonalIcon(
+              key: createRoomKey ?? const ValueKey('rooms-create-room'),
+              onPressed: onCreateRoom,
+              style: FilledButton.styleFrom(minimumSize: const Size(48, 48)),
+              icon: const Icon(Icons.add_rounded),
+              label: Text(copy.text('Create room', 'Utwórz pokój')),
+            ),
+          ),
+        ],
         const SizedBox(height: 22),
         TextField(
           key: const ValueKey('discover-search-field'),
@@ -1963,9 +2014,13 @@ class _DiscoverEmptyState extends StatelessWidget {
 }
 
 class _DiscoverErrorState extends StatelessWidget {
-  const _DiscoverErrorState({required this.message});
+  const _DiscoverErrorState({
+    required this.message,
+    this.asRoomsDestination = false,
+  });
 
   final String message;
+  final bool asRoomsDestination;
 
   @override
   Widget build(BuildContext context) {
@@ -1995,10 +2050,15 @@ class _DiscoverErrorState extends StatelessWidget {
             ),
             const SizedBox(height: 18),
             Text(
-              copy.text(
-                'Could not load Discover',
-                'Nie udało się wczytać sekcji Odkrywaj',
-              ),
+              asRoomsDestination
+                  ? copy.text(
+                      'Could not load rooms',
+                      'Nie udało się wczytać pokojów',
+                    )
+                  : copy.text(
+                      'Could not load Discover',
+                      'Nie udało się wczytać sekcji Odkrywaj',
+                    ),
               style: TextStyle(
                 color: palette.textPrimary,
                 fontSize: 19,

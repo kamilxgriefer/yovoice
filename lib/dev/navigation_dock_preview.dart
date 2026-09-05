@@ -10,6 +10,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_theme.dart';
 import 'package:yovoice/features/home/presentation/widgets/navigation/yo_floating_navigation_dock.dart';
+import 'package:yovoice/shared/widgets/backgrounds/yo_page_background.dart';
 
 void main() => runApp(const _NavigationDockPreviewApp());
 
@@ -62,16 +63,15 @@ class _PreviewSurface extends StatefulWidget {
 class _PreviewSurfaceState extends State<_PreviewSurface> {
   static const _momentsIndex = 5;
   int _selectedIndex = 0;
-  int _voicePresses = 0;
   bool _moreSelected = false;
 
   String get _status {
-    if (_voicePresses > 0) return 'YO action · $_voicePresses';
     if (_moreSelected) return 'More';
     return switch (_selectedIndex) {
       0 => 'Home',
       1 => 'Chats',
-      _momentsIndex => 'Moments',
+      3 => 'Rooms',
+      _momentsIndex => 'Your Moments',
       _ => 'Navigation',
     };
   }
@@ -80,7 +80,15 @@ class _PreviewSurfaceState extends State<_PreviewSurface> {
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
     return Scaffold(
-      body: DecoratedBox(
+      body: YoPageBackground(
+        section: _moreSelected
+            ? YoPageSection.more
+            : switch (_selectedIndex) {
+                0 => YoPageSection.home,
+                1 => YoPageSection.chats,
+                3 => YoPageSection.rooms,
+                _ => YoPageSection.moments,
+              },
         decoration: BoxDecoration(
           gradient: LinearGradient(
             begin: Alignment.topLeft,
@@ -115,8 +123,8 @@ class _PreviewSurfaceState extends State<_PreviewSurface> {
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  'Klikaj zakładki i centralne YO. To bieżący widget '
-                  'produkcyjny, a nie makieta.',
+                  'Kliknij zakładkę albo przeciągnij okrągły przycisk. '
+                  'To produkcyjny widget Meniscus — podgląd lokalny.',
                   style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                     color: colors.onSurfaceVariant,
                     height: 1.4,
@@ -158,15 +166,10 @@ class _PreviewSurfaceState extends State<_PreviewSurface> {
         onDestinationSelected: (index) => setState(() {
           _selectedIndex = index;
           _moreSelected = false;
-          _voicePresses = 0;
         }),
-        onVoicePressed: () => setState(() {
-          _voicePresses++;
-          _moreSelected = false;
-        }),
+        onVoicePressed: () {},
         onMorePressed: () => setState(() {
           _moreSelected = true;
-          _voicePresses = 0;
         }),
       ),
     );

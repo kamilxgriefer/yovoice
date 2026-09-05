@@ -21,6 +21,7 @@ import 'package:yovoice/features/settings/presentation/screens/settings_screen.d
 import 'package:yovoice/features/staff/data/staff_capabilities.dart';
 import 'package:yovoice/features/staff/presentation/screens/staff_center_screen.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
+import 'package:yovoice/shared/widgets/backgrounds/yo_page_background.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
 
@@ -503,145 +504,155 @@ class _MoreSheetState extends State<MoreSheet> {
     ];
 
     final content = Container(
+      clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
         color: palette.surfaceRaised,
         borderRadius: const BorderRadius.vertical(top: Radius.circular(30)),
         border: Border(top: BorderSide(color: palette.border)),
       ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
+      child: Stack(
         children: [
-          YoModalSheetChrome(
-            key: ValueKey('more-sheet-drag-handle'),
-            sheetLabel: copy.text('More menu', 'Menu Więcej'),
-            surfaceColor: palette.surfaceRaised,
+          const Positioned.fill(
+            child: YoAtmosphereArt(section: YoPageSection.more),
           ),
-          Flexible(
-            child: SingleChildScrollView(
-              key: const ValueKey('more-sheet-scroll-view'),
-              padding: EdgeInsets.fromLTRB(
-                16,
-                isVeryNarrow ? 8 : 10,
-                16,
-                isVeryNarrow ? 8 : 16,
+          Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              YoModalSheetChrome(
+                key: ValueKey('more-sheet-drag-handle'),
+                sheetLabel: copy.text('More menu', 'Menu Więcej'),
+                surfaceColor: palette.surfaceRaised,
               ),
-              keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Row(
+              Flexible(
+                child: SingleChildScrollView(
+                  key: const ValueKey('more-sheet-scroll-view'),
+                  padding: EdgeInsets.fromLTRB(
+                    16,
+                    isVeryNarrow ? 8 : 10,
+                    16,
+                    isVeryNarrow ? 8 : 16,
+                  ),
+                  keyboardDismissBehavior:
+                      ScrollViewKeyboardDismissBehavior.onDrag,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
                     children: [
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              copy.more,
-                              style: TextStyle(
-                                color: palette.textPrimary,
-                                fontSize: 27,
-                                fontWeight: FontWeight.w900,
-                              ),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  copy.more,
+                                  style: TextStyle(
+                                    color: palette.textPrimary,
+                                    fontSize: 27,
+                                    fontWeight: FontWeight.w900,
+                                  ),
+                                ),
+                                if (!isVeryNarrow) ...[
+                                  const SizedBox(height: 3),
+                                  Text(
+                                    copy.text(
+                                      'Everything else, kept one tap away.',
+                                      'Wszystkie pozostałe funkcje pod ręką.',
+                                    ),
+                                    style: TextStyle(
+                                      color: palette.textSecondary,
+                                      fontSize: 13,
+                                    ),
+                                  ),
+                                ],
+                              ],
                             ),
-                            if (!isVeryNarrow) ...[
-                              const SizedBox(height: 3),
-                              Text(
-                                copy.text(
-                                  'Everything else, kept one tap away.',
-                                  'Wszystkie pozostałe funkcje pod ręką.',
+                          ),
+                        ],
+                      ),
+                      SizedBox(height: isVeryNarrow ? 8 : 12),
+                      LayoutBuilder(
+                        builder: (context, constraints) {
+                          final scaler = MediaQuery.textScalerOf(context);
+                          final textScale = scaler.scale(14) / 14;
+
+                          // A dense launcher grid fits every ordinary action in
+                          // the first expanded phone view. Enlarged text switches
+                          // to intrinsic full-width rows instead of making fixed
+                          // grid cells taller and narrower at the same time.
+                          if (textScale > 1.3) {
+                            return Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                for (
+                                  var index = 0;
+                                  index < productEntries.length;
+                                  index++
+                                ) ...[
+                                  if (index > 0) const SizedBox(height: 8),
+                                  _WideMoreTile(
+                                    destination:
+                                        productEntries[index].destination,
+                                    icon: productEntries[index].icon,
+                                    label: productEntries[index].label,
+                                    subtitle: productEntries[index].subtitle,
+                                    isLocked: productEntries[index].isLocked,
+                                  ),
+                                ],
+                              ],
+                            );
+                          }
+
+                          final usesTwoColumns = constraints.maxWidth < 480;
+
+                          return GridView.count(
+                            crossAxisCount: usesTwoColumns ? 2 : 3,
+                            shrinkWrap: true,
+                            physics: const NeverScrollableScrollPhysics(),
+                            mainAxisSpacing: 8,
+                            crossAxisSpacing: 8,
+                            // Compact rows keep the visible product destinations
+                            // in the first owner view on a 390x844 phone while
+                            // preserving a comfortable 44px+ touch target.
+                            mainAxisExtent: 65,
+                            children: [
+                              // Moments took the dock slot Friends held, so
+                              // Friends takes the grid slot Moments held — a
+                              // 1:1 swap without changing the route contract.
+                              // Friends also remains primary tab index 2 with
+                              // its state alive, and one tap from Home's
+                              // "Your circle".
+                              for (final entry in productEntries)
+                                _MoreTile(
+                                  destination: entry.destination,
+                                  icon: entry.icon,
+                                  label: entry.label,
+                                  subtitle: entry.subtitle,
+                                  isLocked: entry.isLocked,
                                 ),
-                                style: TextStyle(
-                                  color: palette.textSecondary,
-                                  fontSize: 13,
-                                ),
-                              ),
                             ],
-                          ],
+                          );
+                        },
+                      ),
+                      // The staff section: BELOW the destination grid, ABOVE Settings, and
+                      // present only when the server-derived capabilities back a
+                      // real door. Ordinary and VIP accounts render the exact layout
+                      // this sheet always had.
+                      ..._staffSection(),
+                      const SizedBox(height: 8),
+                      _WideMoreTile(
+                        destination: MoreDestination.settings,
+                        icon: Icons.settings_rounded,
+                        label: copy.settings,
+                        subtitle: copy.text(
+                          'Privacy, account and application preferences',
+                          'Prywatność, konto i ustawienia aplikacji',
                         ),
                       ),
                     ],
                   ),
-                  SizedBox(height: isVeryNarrow ? 8 : 12),
-                  LayoutBuilder(
-                    builder: (context, constraints) {
-                      final scaler = MediaQuery.textScalerOf(context);
-                      final textScale = scaler.scale(14) / 14;
-
-                      // A dense launcher grid fits every ordinary action in
-                      // the first expanded phone view. Enlarged text switches
-                      // to intrinsic full-width rows instead of making fixed
-                      // grid cells taller and narrower at the same time.
-                      if (textScale > 1.3) {
-                        return Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            for (
-                              var index = 0;
-                              index < productEntries.length;
-                              index++
-                            ) ...[
-                              if (index > 0) const SizedBox(height: 8),
-                              _WideMoreTile(
-                                destination: productEntries[index].destination,
-                                icon: productEntries[index].icon,
-                                label: productEntries[index].label,
-                                subtitle: productEntries[index].subtitle,
-                                isLocked: productEntries[index].isLocked,
-                              ),
-                            ],
-                          ],
-                        );
-                      }
-
-                      final usesTwoColumns = constraints.maxWidth < 480;
-
-                      return GridView.count(
-                        crossAxisCount: usesTwoColumns ? 2 : 3,
-                        shrinkWrap: true,
-                        physics: const NeverScrollableScrollPhysics(),
-                        mainAxisSpacing: 8,
-                        crossAxisSpacing: 8,
-                        // Compact rows keep the visible product destinations
-                        // in the first owner view on a 390x844 phone while
-                        // preserving a comfortable 44px+ touch target.
-                        mainAxisExtent: 65,
-                        children: [
-                          // Moments took the dock slot Friends held, so
-                          // Friends takes the grid slot Moments held — a
-                          // 1:1 swap without changing the route contract.
-                          // Friends also remains primary tab index 2 with
-                          // its state alive, and one tap from Home's
-                          // "Your circle".
-                          for (final entry in productEntries)
-                            _MoreTile(
-                              destination: entry.destination,
-                              icon: entry.icon,
-                              label: entry.label,
-                              subtitle: entry.subtitle,
-                              isLocked: entry.isLocked,
-                            ),
-                        ],
-                      );
-                    },
-                  ),
-                  // The staff section: BELOW the destination grid, ABOVE Settings, and
-                  // present only when the server-derived capabilities back a
-                  // real door. Ordinary and VIP accounts render the exact layout
-                  // this sheet always had.
-                  ..._staffSection(),
-                  const SizedBox(height: 8),
-                  _WideMoreTile(
-                    destination: MoreDestination.settings,
-                    icon: Icons.settings_rounded,
-                    label: copy.settings,
-                    subtitle: copy.text(
-                      'Privacy, account and application preferences',
-                      'Prywatność, konto i ustawienia aplikacji',
-                    ),
-                  ),
-                ],
+                ),
               ),
-            ),
+            ],
           ),
         ],
       ),

@@ -12,6 +12,7 @@ Future<GuidedOnboardingOutcome?> showGuidedOnboardingTour(
   required Map<GuidedOnboardingTarget, GlobalKey> anchors,
   required bool desktop,
   bool Function(Size viewport)? desktopLayoutFor,
+  ValueChanged<bool>? onLayoutChanged,
 }) async {
   final reduceMotion = MediaQuery.disableAnimationsOf(context);
   final route = RawDialogRoute<GuidedOnboardingOutcome>(
@@ -28,6 +29,7 @@ Future<GuidedOnboardingOutcome?> showGuidedOnboardingTour(
       anchors: anchors,
       desktop: desktop,
       desktopLayoutFor: desktopLayoutFor,
+      onLayoutChanged: onLayoutChanged,
     ),
     transitionBuilder: (_, animation, __, child) => FadeTransition(
       opacity: CurvedAnimation(parent: animation, curve: Curves.easeOutCubic),
@@ -47,12 +49,14 @@ class GuidedOnboardingTour extends StatefulWidget {
     required this.anchors,
     required this.desktop,
     this.desktopLayoutFor,
+    this.onLayoutChanged,
     super.key,
   });
 
   final Map<GuidedOnboardingTarget, GlobalKey> anchors;
   final bool desktop;
   final bool Function(Size viewport)? desktopLayoutFor;
+  final ValueChanged<bool>? onLayoutChanged;
 
   @override
   State<GuidedOnboardingTour> createState() => _GuidedOnboardingTourState();
@@ -89,8 +93,8 @@ class _GuidedOnboardingTourState extends State<GuidedOnboardingTour> {
                 'Tutaj szybko nagrasz Voice Moment lub utworzysz pokój głosowy.',
               )
             : copy.text(
-                'YO is your shortcut to a Voice Moment or a new Voice Room.',
-                'Przycisk YO pozwala szybko nagrać Voice Moment lub utworzyć pokój głosowy.',
+                'Create a Voice Room here. Open Your Moments to record a Voice Moment.',
+                'Tutaj utworzysz pokój głosowy. Otwórz Twoje Momenty, aby nagrać Voice Moment.',
               ),
       ),
       _GuidedTourStep(
@@ -191,6 +195,7 @@ class _GuidedOnboardingTourState extends State<GuidedOnboardingTour> {
     final placementTarget = step.target ?? GuidedOnboardingTarget.create;
     if (_trackedViewport != viewport ||
         _trackedDesktopLayout != desktopLayout) {
+      final layoutChanged = _trackedDesktopLayout != desktopLayout;
       // A key can briefly retain the previous responsive branch's RenderBox.
       // Never feed that stale desktop rect into mobile positioning (or vice
       // versa); use the safe centered placement until post-layout remeasure.
@@ -198,6 +203,13 @@ class _GuidedOnboardingTourState extends State<GuidedOnboardingTour> {
       _trackedDesktopLayout = desktopLayout;
       _trackedAnchorTarget = placementTarget;
       _trackedAnchor = null;
+      if (layoutChanged) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted && !_closing) {
+            widget.onLayoutChanged?.call(desktopLayout);
+          }
+        });
+      }
     }
     final measuredAnchor = _trackedAnchorRect(placementTarget);
     final anchor = step.target == null ? null : measuredAnchor;

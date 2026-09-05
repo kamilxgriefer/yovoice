@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:yovoice/shared/widgets/backgrounds/yo_page_background.dart';
 
 import 'package:yovoice/core/helpers/error_messages.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
@@ -351,7 +352,8 @@ class _MessagesScreenState extends State<MessagesScreen> {
     return Scaffold(
       key: const ValueKey('messages-screen'),
       backgroundColor: palette.background,
-      body: Container(
+      body: YoPageBackground(
+        section: YoPageSection.chats,
         key: const ValueKey('messages-screen-background'),
         decoration: BoxDecoration(
           gradient: RadialGradient(
@@ -374,155 +376,147 @@ class _MessagesScreenState extends State<MessagesScreen> {
           child: ResponsiveContentFrame(
             width: ResponsiveContentWidth.list,
             alignment: ResponsiveContentAlignment.topLeft,
-            child: Column(
-              children: [
-                _MessagesHeader(
-                  showArchived: _showArchived,
-                  onNewMessage: _showNewMessageSheet,
-                  onToggleArchived: () {
-                    setState(() => _showArchived = !_showArchived);
-                  },
-                ),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(18, 0, 18, 13),
-                  child: _SearchField(controller: _searchController),
-                ),
-                Expanded(
-                  child: StreamBuilder<List<FriendUser>>(
-                    stream: _friendsStream,
-                    builder: (context, friendsSnapshot) {
-                      final friends =
-                          friendsSnapshot.data ?? const <FriendUser>[];
-                      final friendsById = {
-                        for (final friend in friends) friend.id: friend,
-                      };
-                      return Column(
-                        children: [
-                          _FriendsRow(
-                            friends: friends,
-                            onFriendSelected: _startChat,
-                            onAdd: _showNewMessageSheet,
+            child: StreamBuilder<List<FriendUser>>(
+              stream: _friendsStream,
+              builder: (context, friendsSnapshot) {
+                final friends = friendsSnapshot.data ?? const <FriendUser>[];
+                final friendsById = {
+                  for (final friend in friends) friend.id: friend,
+                };
+                // Header, search and friend rail can leave the viewport on a
+                // short screen / enlarged text. Conversations stay lazy rather
+                // than being shrink-wrapped into an eager all-message column.
+                return NestedScrollView(
+                  key: const ValueKey('messages-coordinated-scroll'),
+                  headerSliverBuilder: (context, innerBoxIsScrolled) => [
+                    SliverToBoxAdapter(
+                      child: _MessagesHeader(
+                        showArchived: _showArchived,
+                        onNewMessage: _showNewMessageSheet,
+                        onToggleArchived: () {
+                          setState(() => _showArchived = !_showArchived);
+                        },
+                      ),
+                    ),
+                    SliverToBoxAdapter(
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(18, 0, 18, 13),
+                        child: _SearchField(controller: _searchController),
+                      ),
+                    ),
+                    SliverToBoxAdapter(
+                      child: Padding(
+                        padding: const EdgeInsets.only(bottom: 9),
+                        child: _FriendsRow(
+                          friends: friends,
+                          onFriendSelected: _startChat,
+                          onAdd: _showNewMessageSheet,
+                        ),
+                      ),
+                    ),
+                  ],
+                  body: StreamBuilder<List<Conversation>>(
+                    stream: _conversationsStream,
+                    builder: (context, snapshot) {
+                      if (snapshot.connectionState == ConnectionState.waiting &&
+                          !snapshot.hasData) {
+                        return Center(
+                          child: CircularProgressIndicator(
+                            color: palette.interactiveForeground,
+                            strokeWidth: 2.5,
                           ),
-                          const SizedBox(height: 9),
-                          Expanded(
-                            child: StreamBuilder<List<Conversation>>(
-                              stream: _conversationsStream,
-                              builder: (context, snapshot) {
-                                if (snapshot.connectionState ==
-                                        ConnectionState.waiting &&
-                                    !snapshot.hasData) {
-                                  return Center(
-                                    child: CircularProgressIndicator(
-                                      color: palette.interactiveForeground,
-                                      strokeWidth: 2.5,
-                                    ),
-                                  );
-                                }
+                        );
+                      }
 
-                                if (snapshot.hasError) {
-                                  return _MessagesError(
-                                    message: _readableError(snapshot.error),
-                                  );
-                                }
+                      if (snapshot.hasError) {
+                        return _MessagesError(
+                          message: _readableError(snapshot.error),
+                        );
+                      }
 
-                                if (currentUserId == null) {
-                                  return _MessagesError(
-                                    message: AppLocalizations.of(context).text(
-                                      'Sign in to open your chats.',
-                                      'Zaloguj się, aby otworzyć swoje czaty.',
-                                    ),
-                                  );
-                                }
+                      if (currentUserId == null) {
+                        return _MessagesError(
+                          message: AppLocalizations.of(context).text(
+                            'Sign in to open your chats.',
+                            'Zaloguj się, aby otworzyć swoje czaty.',
+                          ),
+                        );
+                      }
 
-                                final allConversations =
-                                    snapshot.data ?? const <Conversation>[];
-                                final conversations = allConversations
-                                    .where((conversation) {
-                                      final archived = conversation
-                                          .isArchivedFor(currentUserId);
+                      final allConversations =
+                          snapshot.data ?? const <Conversation>[];
+                      final conversations = allConversations
+                          .where((conversation) {
+                            final archived = conversation.isArchivedFor(
+                              currentUserId,
+                            );
 
-                                      if (_showArchived != archived) {
-                                        return false;
-                                      }
+                            if (_showArchived != archived) {
+                              return false;
+                            }
 
-                                      if (_query.isEmpty) {
-                                        return true;
-                                      }
+                            if (_query.isEmpty) {
+                              return true;
+                            }
 
-                                      final otherId = conversation.otherUserId(
-                                        currentUserId,
-                                      );
-                                      final name =
-                                          (friendsById[otherId]?.displayName ??
-                                                  conversation.displayNameFor(
-                                                    otherId,
-                                                  ))
-                                              .toLowerCase();
-                                      final preview =
-                                          _localizedConversationPreview(
-                                            conversation,
-                                            currentUserId,
-                                            AppLocalizations.of(context),
-                                          ).toLowerCase();
+                            final otherId = conversation.otherUserId(
+                              currentUserId,
+                            );
+                            final name =
+                                (friendsById[otherId]?.displayName ??
+                                        conversation.displayNameFor(otherId))
+                                    .toLowerCase();
+                            final preview = _localizedConversationPreview(
+                              conversation,
+                              currentUserId,
+                              AppLocalizations.of(context),
+                            ).toLowerCase();
 
-                                      return name.contains(_query) ||
-                                          preview.contains(_query);
-                                    })
-                                    .toList(growable: false);
+                            return name.contains(_query) ||
+                                preview.contains(_query);
+                          })
+                          .toList(growable: false);
 
-                                if (conversations.isEmpty) {
-                                  return _EmptyMessages(
-                                    archived: _showArchived,
-                                    hasSearch: _query.isNotEmpty,
-                                    onNewMessage: _showNewMessageSheet,
-                                  );
-                                }
+                      if (conversations.isEmpty) {
+                        return _EmptyMessages(
+                          archived: _showArchived,
+                          hasSearch: _query.isNotEmpty,
+                          onNewMessage: _showNewMessageSheet,
+                        );
+                      }
 
-                                return ListView.separated(
-                                  padding: const EdgeInsets.fromLTRB(
-                                    14,
-                                    4,
-                                    14,
-                                    118,
-                                  ),
-                                  itemCount: conversations.length,
-                                  separatorBuilder: (_, __) =>
-                                      const SizedBox(height: 4),
-                                  itemBuilder: (context, index) {
-                                    final conversation = conversations[index];
-                                    final muted = conversation.isMutedFor(
-                                      currentUserId,
-                                    );
-                                    final otherUserId = conversation
-                                        .otherUserId(currentUserId);
-                                    final liveFriend = friendsById[otherUserId];
+                      return ListView.separated(
+                        padding: const EdgeInsets.fromLTRB(14, 4, 14, 118),
+                        itemCount: conversations.length,
+                        separatorBuilder: (_, __) => const SizedBox(height: 4),
+                        itemBuilder: (context, index) {
+                          final conversation = conversations[index];
+                          final muted = conversation.isMutedFor(currentUserId);
+                          final otherUserId = conversation.otherUserId(
+                            currentUserId,
+                          );
+                          final liveFriend = friendsById[otherUserId];
 
-                                    return _ConversationTile(
-                                      conversation: conversation,
-                                      currentUserId: currentUserId,
-                                      liveFriend: liveFriend,
-                                      muted: muted,
-                                      service: _messageService,
-                                      onTap: () => _openConversation(
-                                        conversation,
-                                        liveFriend: liveFriend,
-                                      ),
-                                      onArchive: () =>
-                                          _archiveConversation(conversation),
-                                      onToggleMute: () =>
-                                          _toggleMute(conversation, muted),
-                                    );
-                                  },
-                                );
-                              },
+                          return _ConversationTile(
+                            conversation: conversation,
+                            currentUserId: currentUserId,
+                            liveFriend: liveFriend,
+                            muted: muted,
+                            service: _messageService,
+                            onTap: () => _openConversation(
+                              conversation,
+                              liveFriend: liveFriend,
                             ),
-                          ),
-                        ],
+                            onArchive: () => _archiveConversation(conversation),
+                            onToggleMute: () =>
+                                _toggleMute(conversation, muted),
+                          );
+                        },
                       );
                     },
                   ),
-                ),
-              ],
+                );
+              },
             ),
           ),
         ),
@@ -896,6 +890,7 @@ class _ConversationTile extends StatelessWidget {
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
     final copy = AppLocalizations.of(context);
+    final enlargedText = MediaQuery.textScalerOf(context).scale(1) >= 1.6;
 
     return Material(
       color: Colors.transparent,
@@ -911,119 +906,225 @@ class _ConversationTile extends StatelessWidget {
                 : Colors.transparent,
             borderRadius: BorderRadius.circular(18),
           ),
-          child: Row(
-            children: [
-              _ConversationAvatar(
-                name: name,
-                photoUrl: photoUrl,
-                userId: otherUserId,
-                mediaRevision: friend?.profileUpdatedAt,
-                service: service,
-              ),
-              const SizedBox(width: 13),
-              Expanded(
-                child: Column(
+          child: enlargedText
+              ? Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Row(
                       children: [
+                        _ConversationAvatar(
+                          name: name,
+                          photoUrl: photoUrl,
+                          userId: otherUserId,
+                          mediaRevision: friend?.profileUpdatedAt,
+                          service: service,
+                        ),
+                        const SizedBox(width: 12),
                         Expanded(
-                          child: Text(
-                            name,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: palette.textPrimary,
-                              fontSize: 15,
-                              fontWeight: unread > 0
-                                  ? FontWeight.w900
-                                  : FontWeight.w700,
-                            ),
+                          child: Wrap(
+                            spacing: 8,
+                            runSpacing: 6,
+                            crossAxisAlignment: WrapCrossAlignment.center,
+                            children: [
+                              Text(
+                                _relativeTime(
+                                  context,
+                                  conversation.updatedAt,
+                                  copy,
+                                ),
+                                style: TextStyle(
+                                  color: palette.textSecondary,
+                                  fontSize: 11,
+                                ),
+                              ),
+                              if (muted)
+                                Icon(
+                                  Icons.notifications_off_outlined,
+                                  color: palette.textSecondary,
+                                  size: 18,
+                                ),
+                              if (unread > 0)
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 8,
+                                    vertical: 3,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: colors.primary,
+                                    borderRadius: BorderRadius.circular(20),
+                                  ),
+                                  child: Text(
+                                    unread > 99 ? '99+' : '$unread',
+                                    style: TextStyle(
+                                      color: colors.onPrimary,
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w800,
+                                    ),
+                                  ),
+                                ),
+                            ],
                           ),
                         ),
-                        const SizedBox(width: 8),
-                        Text(
-                          _relativeTime(context, conversation.updatedAt, copy),
-                          style: TextStyle(
-                            color: unread > 0
-                                ? palette.focus
-                                : palette.textTertiary,
-                            fontSize: 11,
-                            fontWeight: unread > 0
-                                ? FontWeight.w800
-                                : FontWeight.w500,
+                        IconButton(
+                          onPressed: () => _showActions(context),
+                          tooltip: copy.template(
+                            'Conversation actions for {name}',
+                            'Opcje rozmowy z {name}',
+                            values: {'name': name},
+                          ),
+                          icon: Icon(
+                            Icons.more_horiz_rounded,
+                            color: palette.textSecondary,
                           ),
                         ),
                       ],
                     ),
+                    const SizedBox(height: 9),
+                    Text(
+                      name,
+                      key: ValueKey(
+                        'conversation-expanded-name-${conversation.id}',
+                      ),
+                      style: TextStyle(
+                        color: palette.textPrimary,
+                        fontSize: 15,
+                        fontWeight: unread > 0
+                            ? FontWeight.w900
+                            : FontWeight.w700,
+                      ),
+                    ),
                     const SizedBox(height: 5),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            preview,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: unread > 0
-                                  ? palette.textPrimary
-                                  : palette.textSecondary,
-                              fontSize: 13,
-                              fontWeight: unread > 0
-                                  ? FontWeight.w700
-                                  : FontWeight.w400,
-                            ),
-                          ),
-                        ),
-                        if (muted) ...[
-                          const SizedBox(width: 8),
-                          Icon(
-                            Icons.notifications_off_outlined,
-                            color: palette.textSecondary,
-                            size: 16,
-                          ),
-                        ],
-                        if (unread > 0) ...[
-                          const SizedBox(width: 9),
-                          Container(
-                            constraints: const BoxConstraints(
-                              minWidth: 20,
-                              minHeight: 20,
-                            ),
-                            alignment: Alignment.center,
-                            padding: const EdgeInsets.symmetric(horizontal: 6),
-                            decoration: BoxDecoration(
-                              color: colors.primary,
-                              shape: BoxShape.circle,
-                            ),
-                            child: Text(
-                              unread > 99 ? '99+' : '$unread',
-                              style: TextStyle(
-                                color: colors.onPrimary,
-                                fontSize: 10,
-                                fontWeight: FontWeight.w900,
+                    Text(
+                      preview,
+                      maxLines: 3,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: palette.textSecondary,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ],
+                )
+              : Row(
+                  children: [
+                    _ConversationAvatar(
+                      name: name,
+                      photoUrl: photoUrl,
+                      userId: otherUserId,
+                      mediaRevision: friend?.profileUpdatedAt,
+                      service: service,
+                    ),
+                    const SizedBox(width: 13),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  name,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    color: palette.textPrimary,
+                                    fontSize: 15,
+                                    fontWeight: unread > 0
+                                        ? FontWeight.w900
+                                        : FontWeight.w700,
+                                  ),
+                                ),
                               ),
-                            ),
+                              const SizedBox(width: 8),
+                              Text(
+                                _relativeTime(
+                                  context,
+                                  conversation.updatedAt,
+                                  copy,
+                                ),
+                                style: TextStyle(
+                                  color: unread > 0
+                                      ? palette.focus
+                                      : palette.textTertiary,
+                                  fontSize: 11,
+                                  fontWeight: unread > 0
+                                      ? FontWeight.w800
+                                      : FontWeight.w500,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 5),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  preview,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    color: unread > 0
+                                        ? palette.textPrimary
+                                        : palette.textSecondary,
+                                    fontSize: 13,
+                                    fontWeight: unread > 0
+                                        ? FontWeight.w700
+                                        : FontWeight.w400,
+                                  ),
+                                ),
+                              ),
+                              if (muted) ...[
+                                const SizedBox(width: 8),
+                                Icon(
+                                  Icons.notifications_off_outlined,
+                                  color: palette.textSecondary,
+                                  size: 16,
+                                ),
+                              ],
+                              if (unread > 0) ...[
+                                const SizedBox(width: 9),
+                                Container(
+                                  constraints: const BoxConstraints(
+                                    minWidth: 20,
+                                    minHeight: 20,
+                                  ),
+                                  alignment: Alignment.center,
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 6,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: colors.primary,
+                                    shape: BoxShape.circle,
+                                  ),
+                                  child: Text(
+                                    unread > 99 ? '99+' : '$unread',
+                                    style: TextStyle(
+                                      color: colors.onPrimary,
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.w900,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ],
                           ),
                         ],
-                      ],
+                      ),
+                    ),
+                    IconButton(
+                      onPressed: () => _showActions(context),
+                      tooltip: copy.template(
+                        'Conversation actions for {name}',
+                        'Opcje rozmowy z {name}',
+                        values: {'name': name},
+                      ),
+                      icon: Icon(
+                        Icons.more_horiz_rounded,
+                        color: palette.textSecondary,
+                      ),
                     ),
                   ],
                 ),
-              ),
-              IconButton(
-                onPressed: () => _showActions(context),
-                tooltip: copy.text(
-                  'Conversation actions for $name',
-                  'Opcje rozmowy z $name',
-                ),
-                icon: Icon(
-                  Icons.more_horiz_rounded,
-                  color: palette.textSecondary,
-                ),
-              ),
-            ],
-          ),
         ),
       ),
     );
@@ -1144,7 +1245,9 @@ class _ConversationAvatarState extends State<_ConversationAvatar> {
               UserAvatar(
                 radius: 29,
                 userId: widget.userId,
-                backgroundColor: palette.surfaceSunken,
+                backgroundColor: Theme.of(context).brightness == Brightness.dark
+                    ? palette.surfaceSunken
+                    : Theme.of(context).colorScheme.primary,
                 photoUrl: photoUrl,
                 mediaRevision: widget.mediaRevision,
                 displayName: name,

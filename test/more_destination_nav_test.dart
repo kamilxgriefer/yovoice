@@ -72,9 +72,9 @@ void main() {
     // The full shell bar is present on the pushed destination route.
     expect(find.byKey(const ValueKey('yo-destination-0')), findsOneWidget);
     expect(find.byKey(const ValueKey('yo-destination-1')), findsOneWidget);
-    // Moments replaced Friends in the dock when it was promoted to
-    // primary navigation. Friends kept its tab, its state and its rail
-    // item, and moved to the first tile of the More sheet.
+    expect(find.byKey(const ValueKey('yo-destination-2')), findsOneWidget);
+    // Rooms and Chats keep distinct visual slots without renumbering their
+    // content identities. Friends is still reachable from Home and More.
     expect(find.byKey(const ValueKey('yo-destination-3')), findsOneWidget);
     expect(find.text('Friends'), findsNothing);
     expect(find.byKey(const ValueKey('yo-destination-4')), findsOneWidget);
@@ -135,22 +135,41 @@ void main() {
     expect(find.text('DESTINATION'), findsNothing);
   });
 
-  testWidgets('the voice action and More menu also pop back first', (
+  testWidgets('Rooms pops back first and uses the existing discovery slot', (
     tester,
   ) async {
     final navigatorKey = GlobalKey<NavigatorState>();
-    var voiceOpened = false;
+    int? selected;
     await pumpHost(
       tester,
       navigatorKey: navigatorKey,
-      onDestinationSelected: (_) {},
-      onVoicePressed: () => voiceOpened = true,
+      onDestinationSelected: (index) => selected = index,
     );
 
-    await tester.tap(find.bySemanticsLabel('Open voice actions'));
+    expect(find.bySemanticsLabel('Open voice actions'), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('yo-destination-1')));
     await tester.pumpAndSettle();
 
-    expect(voiceOpened, isTrue);
+    final roomsSlot = MainShell.desktopSlots.entries
+        .firstWhere((entry) => entry.value == MoreDestination.discover)
+        .key;
+    expect(selected, roomsSlot);
+    expect(find.text('SHELL'), findsOneWidget);
+  });
+
+  testWidgets('Chats retains content slot one after its visual move', (
+    tester,
+  ) async {
+    final navigatorKey = GlobalKey<NavigatorState>();
+    int? selected;
+    await pumpHost(
+      tester,
+      navigatorKey: navigatorKey,
+      onDestinationSelected: (index) => selected = index,
+    );
+    await tester.tap(find.byKey(const ValueKey('yo-destination-2')));
+    await tester.pumpAndSettle();
+    expect(selected, 1);
     expect(find.text('SHELL'), findsOneWidget);
   });
 
@@ -192,18 +211,17 @@ void main() {
     (tester) async {
       final navigatorKey = GlobalKey<NavigatorState>();
       var epochIsCurrent = true;
-      var voiceOpenCount = 0;
+      var destinationOpenCount = 0;
       await pumpHost(
         tester,
         navigatorKey: navigatorKey,
-        onDestinationSelected: (_) {},
-        onVoicePressed: () => voiceOpenCount += 1,
+        onDestinationSelected: (_) => destinationOpenCount += 1,
         canForwardNavigation: () => epochIsCurrent,
       );
 
-      await tester.tap(find.bySemanticsLabel('Open voice actions'));
+      await tester.tap(find.byKey(const ValueKey('yo-destination-1')));
       await tester.pump();
-      expect(voiceOpenCount, 0);
+      expect(destinationOpenCount, 0);
 
       epochIsCurrent = false;
       navigatorKey.currentState!.pushAndRemoveUntil<void>(
@@ -214,7 +232,7 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(voiceOpenCount, 0);
+      expect(destinationOpenCount, 0);
       expect(find.text('LOGIN'), findsOneWidget);
       expect(tester.takeException(), isNull);
     },

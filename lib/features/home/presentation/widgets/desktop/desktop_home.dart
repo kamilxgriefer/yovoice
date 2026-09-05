@@ -9,6 +9,7 @@ import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/rooms/presentation/screens/room_settings_screen.dart';
 import 'package:yovoice/features/home/presentation/widgets/shared/home_room_board.dart';
+import 'package:yovoice/features/home/presentation/widgets/shared/home_overview_sections.dart';
 import 'package:yovoice/features/home/presentation/widgets/shared/recent_chats.dart';
 import 'package:yovoice/features/clubs/data/models/club.dart';
 import 'package:yovoice/features/clubs/data/services/club_chat_service.dart';
@@ -29,6 +30,7 @@ import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
 import 'package:yovoice/features/staff/data/staff_capabilities.dart';
 import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
+import 'package:yovoice/shared/widgets/backgrounds/yo_page_background.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 import 'package:yovoice/shared/widgets/states/yo_error_state.dart';
 
@@ -261,6 +263,15 @@ class _DesktopHomeState extends State<DesktopHome> {
 
   @override
   Widget build(BuildContext context) {
+    return YoPageBackground(
+      section: YoPageSection.home,
+      // DesktopShell owns the base canvas and surrounding columns.
+      decoration: const BoxDecoration(),
+      child: _buildContent(context),
+    );
+  }
+
+  Widget _buildContent(BuildContext context) {
     return StreamBuilder<List<VoiceRoom>>(
       stream: _liveRooms,
       builder: (context, snapshot) {
@@ -275,7 +286,6 @@ class _DesktopHomeState extends State<DesktopHome> {
 
         return Builder(
           builder: (context) {
-            final copy = AppLocalizations.of(context);
             // ONE room list. Live around you, Featured Live and For
             // you were three presentations over overlapping streams, so
             // the same room could appear three times on one screen.
@@ -306,6 +316,7 @@ class _DesktopHomeState extends State<DesktopHome> {
                 const SizedBox(height: 20),
                 // 1. Which followed voices have a Moment I can hear?
                 DesktopMomentsStrip(
+                  avatarOnly: true,
                   isVisible: widget.isVisible,
                   profile: _profile,
                   feedService: widget.feedService,
@@ -316,79 +327,19 @@ class _DesktopHomeState extends State<DesktopHome> {
                   onOpenChain: widget.onOpenChain,
                   onCreateMoment: widget.onCreateMoment,
                   onSeeAll: widget.onSeeAllMoments,
-                ),
-                gap,
-                // 2. Which rooms can I join?
-                _HomeSectionTitle(
-                  copy.text('Rooms for you', 'Pokoje dla Ciebie'),
-                  onViewAll: widget.onSeeAllRooms,
-                ),
-                if (roomsUnavailable)
-                  YoErrorState(
-                    message: copy.text(
-                      'Live rooms could not be loaded. Check your connection '
-                          'and try again.',
-                      'Nie udało się wczytać pokojów na żywo. Sprawdź '
-                          'połączenie i spróbuj ponownie.',
-                    ),
-                    onRetry: _retryLiveRooms,
-                    compact: true,
-                  )
-                else if (board.isEmpty)
-                  _HomeSectionNote(
-                    copy.text(
-                      'No rooms to show yet — start one and your community '
-                          'will see it here.',
-                      'Nie ma jeszcze żadnych pokojów — utwórz pierwszy, '
-                          'a zobaczy go Twoja społeczność.',
-                    ),
-                  )
-                else
-                  for (final room in board)
-                    HomeRoomBanner(
-                      room: room,
-                      onJoin: widget.onOpenRoom,
-                      roomService: _rooms,
-                      currentUserId: widget.currentUserId,
-                      onManageOwnedRoom: () => _openRoomSettings(room),
-                      onDeleteOwnedRoom: () => _deleteOwnedRoom(room),
-                      staffCapabilities: _capabilities,
-                    ),
-                gap,
-                // 3. Which rooms belong to me?
-                _HomeSectionTitle(
-                  copy.text('Your active rooms', 'Twoje aktywne pokoje'),
-                  onViewAll: widget.onSeeAllRooms,
-                ),
-                StreamBuilder<List<VoiceRoom>>(
-                  stream: _owned,
-                  builder: (context, ownedSnapshot) => HomeActiveRooms(
-                    rooms: ownedSnapshot.data ?? const <VoiceRoom>[],
-                    currentUserId: widget.currentUserId,
-                    onEnter: widget.onOpenRoom,
-                    onEdit: _openRoomSettings,
-                    onDelete: _deleteOwnedRoom,
-                    onCreateRoom: widget.onStartRoom,
-                  ),
-                ),
-                gap,
-                // 4. Who did I speak with most recently?
-                _HomeSectionTitle(
-                  copy.text('Your recent chats', 'Ostatnie czaty'),
-                  onViewAll: widget.onSeeAllChats,
-                ),
-                StreamBuilder<List<Conversation>>(
-                  stream: _conversations,
-                  builder: (context, conversationSnapshot) => RecentChats(
-                    snapshot: conversationSnapshot,
-                    currentUserId: widget.currentUserId,
-                    onOpenConversation: widget.onOpenConversation,
-                    onFindFriends: widget.onViewAllFriends,
-                    style: RecentChatsStyle.desktopBackdrop,
-                    photoStreamForUser: _profiles == null
-                        ? null
-                        : _recentChatPhotoStream,
-                    profileMediaService: widget.profileMediaService,
+                  contentBuilder: (context, rail, moments) => Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      rail,
+                      gap,
+                      _buildOverview(
+                        context,
+                        board: board,
+                        moments: moments,
+                        roomsUnavailable: roomsUnavailable,
+                        roomsLoading: !roomsUnavailable && !snapshot.hasData,
+                      ),
+                    ],
                   ),
                 ),
                 if (widget.trailingContent != null) ...[
@@ -402,6 +353,150 @@ class _DesktopHomeState extends State<DesktopHome> {
       },
     );
   }
+
+  Widget _buildOverview(
+    BuildContext context, {
+    required List<VoiceRoom> board,
+    required List<VoiceMoment> moments,
+    required bool roomsUnavailable,
+    required bool roomsLoading,
+  }) {
+    final copy = AppLocalizations.of(context);
+    final liveSection = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _HomeSectionTitle(copy.homeLiveForYou, onViewAll: widget.onSeeAllRooms),
+        if (roomsUnavailable)
+          YoErrorState(
+            message: copy.text(
+              'Live rooms could not be loaded. Check your connection and try again.',
+              'Nie udało się wczytać pokojów na żywo. Sprawdź połączenie i spróbuj ponownie.',
+            ),
+            onRetry: _retryLiveRooms,
+            compact: true,
+          )
+        else if (roomsLoading)
+          const HomeRoomsLoading()
+        else if (board.isEmpty)
+          _HomeSectionNote(
+            copy.text(
+              'No rooms to show yet — start one and your community will see it here.',
+              'Nie ma jeszcze żadnych pokojów — utwórz pierwszy, a zobaczy go Twoja społeczność.',
+            ),
+          )
+        else
+          _roomBanner(board.first, featured: true),
+        const SizedBox(height: 2),
+        HomeQuickActions(
+          onCreateRoom: widget.onStartRoom,
+          onFriends: widget.onViewAllFriends,
+        ),
+      ],
+    );
+    final socialSection = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        HomeCircleActivity(
+          onFriends: widget.onViewAllFriends,
+          moments: moments,
+          currentUserId: widget.currentUserId,
+          onOpenMoment: widget.onOpenMoment,
+          onOpenChain: widget.onOpenChain,
+        ),
+        const SizedBox(height: 22),
+        _HomeSectionTitle(
+          copy.text('Your recent chats', 'Ostatnie czaty'),
+          onViewAll: widget.onSeeAllChats,
+        ),
+        StreamBuilder<List<Conversation>>(
+          stream: _conversations,
+          builder: (context, conversationSnapshot) => RecentChats(
+            snapshot: conversationSnapshot,
+            currentUserId: widget.currentUserId,
+            onOpenConversation: widget.onOpenConversation,
+            onFindFriends: widget.onViewAllFriends,
+            style: RecentChatsStyle.desktopBackdrop,
+            photoStreamForUser: _profiles == null
+                ? null
+                : _recentChatPhotoStream,
+            profileMediaService: widget.profileMediaService,
+          ),
+        ),
+      ],
+    );
+    return LayoutBuilder(
+      builder: (context, constraints) => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (constraints.maxWidth >= 850 &&
+              MediaQuery.textScalerOf(context).scale(1) < 1.6)
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(flex: 3, child: liveSection),
+                const SizedBox(width: 24),
+                Expanded(flex: 2, child: socialSection),
+              ],
+            )
+          else ...[
+            liveSection,
+            socialSection,
+          ],
+          const SizedBox(height: 26),
+          _HomeSectionTitle(
+            copy.text('Your active rooms', 'Twoje aktywne pokoje'),
+            onViewAll: widget.onSeeAllRooms,
+          ),
+          StreamBuilder<List<VoiceRoom>>(
+            stream: _owned,
+            builder: (context, ownedSnapshot) =>
+                ownedSnapshot.hasError || _owned == null
+                ? YoErrorState(
+                    compact: true,
+                    message: copy.text(
+                      'Could not load rooms',
+                      'Nie udało się wczytać pokojów',
+                    ),
+                    onRetry: () =>
+                        setState(() => _owned = _rooms?.watchOwnedRooms()),
+                  )
+                : !ownedSnapshot.hasData
+                ? const HomeRoomsLoading()
+                : HomeActiveRooms(
+                    rooms: ownedSnapshot.data ?? const <VoiceRoom>[],
+                    currentUserId: widget.currentUserId,
+                    onEnter: widget.onOpenRoom,
+                    onEdit: _openRoomSettings,
+                    onDelete: _deleteOwnedRoom,
+                    onCreateRoom: widget.onStartRoom,
+                  ),
+          ),
+          if (board.length > 1 && !roomsUnavailable) ...[
+            const SizedBox(height: 26),
+            _HomeSectionTitle(
+              copy.text('Rooms for you', 'Pokoje dla Ciebie'),
+              onViewAll: widget.onSeeAllRooms,
+            ),
+            for (final room in board.skip(1)) _roomBanner(room),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _roomBanner(VoiceRoom room, {bool featured = false}) => HomeRoomBanner(
+    key: featured
+        ? const ValueKey('home-featured-room')
+        : ValueKey('home-room-${room.id}'),
+    room: room,
+    featured: featured,
+    onJoin: widget.onOpenRoom,
+    roomService: _rooms,
+    currentUserId: widget.currentUserId,
+    onManageOwnedRoom: () => _openRoomSettings(room),
+    onDeleteOwnedRoom: () => _deleteOwnedRoom(room),
+    staffCapabilities: _capabilities,
+  );
 }
 
 // ---------------------------------------------------------------- header
@@ -461,6 +556,7 @@ class RoomVisual extends StatelessWidget {
     this.size = 56,
     this.radius = 14,
     this.expand = false,
+    this.fallbackAsset,
     super.key,
   });
 
@@ -471,6 +567,7 @@ class RoomVisual extends StatelessWidget {
   /// Fills the incoming constraints instead of the square [size] — how
   /// the room banner uses its cover as a full-bleed background.
   final bool expand;
+  final String? fallbackAsset;
 
   static const _gradients = <List<Color>>[
     [Color(0xFF6D28D9), Color(0xFF9333EA)],
@@ -485,21 +582,33 @@ class RoomVisual extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cover = room.imageUrl?.trim();
+    Widget fallback() {
+      final gradient = DecoratedBox(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: _fallback,
+          ),
+        ),
+      );
+      if (fallbackAsset == null) return gradient;
+      return Image.asset(
+        fallbackAsset!,
+        fit: BoxFit.cover,
+        excludeFromSemantics: true,
+        filterQuality: FilterQuality.low,
+        errorBuilder: (_, _, _) => gradient,
+      );
+    }
+
     return ClipRRect(
       borderRadius: BorderRadius.circular(radius),
       child: SizedBox(
         width: expand ? double.infinity : size,
         height: expand ? double.infinity : size,
         child: cover == null || cover.isEmpty
-            ? DecoratedBox(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: _fallback,
-                  ),
-                ),
-              )
+            ? fallback()
             : Image.network(
                 cover,
                 fit: BoxFit.cover,
@@ -511,11 +620,7 @@ class RoomVisual extends StatelessWidget {
                   return Stack(
                     fit: StackFit.expand,
                     children: [
-                      DecoratedBox(
-                        decoration: BoxDecoration(
-                          gradient: LinearGradient(colors: _fallback),
-                        ),
-                      ),
+                      fallback(),
                       AnimatedOpacity(
                         opacity: frame == null ? 0 : 1,
                         duration: const Duration(milliseconds: 180),
@@ -526,11 +631,7 @@ class RoomVisual extends StatelessWidget {
                 },
                 // Never a broken-image glyph: a revoked or 404 cover
                 // degrades to the same branded gradient as no cover.
-                errorBuilder: (_, __, ___) => DecoratedBox(
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(colors: _fallback),
-                  ),
-                ),
+                errorBuilder: (_, __, ___) => fallback(),
               ),
       ),
     );

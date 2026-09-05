@@ -7,6 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_theme.dart';
+import 'package:yovoice/shared/widgets/backgrounds/yo_page_background.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
 import 'package:yovoice/features/moments/data/services/moment_discovery_service.dart';
 import 'package:yovoice/features/moments/data/services/moment_service.dart';
@@ -161,10 +162,16 @@ void main() {
         await tester.pump(const Duration(milliseconds: 50));
       }
 
-      final feed = tester.widget<Container>(
-        find.byKey(const ValueKey('moments-feed-view')),
+      final feed = find.byKey(const ValueKey('moments-feed-view'));
+      expect(tester.widget(feed), isA<YoPageBackground>());
+      final canvas = tester.widget<DecoratedBox>(
+        find.descendant(of: feed, matching: find.byType(DecoratedBox)).first,
       );
-      expect(feed.color, _palette(brightness).background);
+      expect(
+        (canvas.decoration as BoxDecoration).color,
+        _palette(brightness).background,
+      );
+      expect(find.byKey(const ValueKey('yo-atmosphere-moments')), findsOneWidget);
       expect(
         find.byKey(ValueKey('moment-featured-${moment.id}')),
         findsOneWidget,

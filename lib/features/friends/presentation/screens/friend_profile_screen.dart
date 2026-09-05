@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:yovoice/shared/widgets/backgrounds/yo_page_background.dart';
 
 import 'package:yovoice/core/helpers/error_messages.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
@@ -339,7 +340,7 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
             final copy = AppLocalizations.of(context);
             return Scaffold(
               backgroundColor: palette.background,
-              body: Container(
+              body: YoPageBackground(
                 key: const ValueKey('friend-profile-background'),
                 decoration: BoxDecoration(
                   gradient: RadialGradient(
@@ -934,9 +935,11 @@ class _ProfileLoading extends StatelessWidget {
     return Scaffold(
       key: const ValueKey('friend-profile-loading'),
       backgroundColor: context.appPalette.background,
-      body: Center(
-        child: CircularProgressIndicator(
-          color: context.appPalette.interactiveForeground,
+      body: YoPageBackground(
+        child: Center(
+          child: CircularProgressIndicator(
+            color: context.appPalette.interactiveForeground,
+          ),
         ),
       ),
     );
@@ -954,80 +957,82 @@ class _UnavailableProfile extends StatelessWidget {
     final copy = AppLocalizations.of(context);
     return Scaffold(
       backgroundColor: palette.background,
-      body: SafeArea(
-        child: ResponsiveContentFrame(
-          width: ResponsiveContentWidth.list,
-          alignment: ResponsiveContentAlignment.topCenter,
-          child: Column(
-            key: const ValueKey('friend-profile-unavailable'),
-            children: [
-              Align(
-                alignment: Alignment.centerLeft,
-                child: IconButton(
-                  tooltip: copy.text('Back', 'Wstecz'),
-                  onPressed: onBack,
-                  icon: Icon(
-                    Icons.arrow_back_ios_new_rounded,
-                    color: palette.textPrimary,
+      body: YoPageBackground(
+        child: SafeArea(
+          child: ResponsiveContentFrame(
+            width: ResponsiveContentWidth.list,
+            alignment: ResponsiveContentAlignment.topCenter,
+            child: Column(
+              key: const ValueKey('friend-profile-unavailable'),
+              children: [
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: IconButton(
+                    tooltip: copy.text('Back', 'Wstecz'),
+                    onPressed: onBack,
+                    icon: Icon(
+                      Icons.arrow_back_ios_new_rounded,
+                      color: palette.textPrimary,
+                    ),
                   ),
                 ),
-              ),
-              Expanded(
-                child: Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(24),
-                    child: ConstrainedBox(
-                      constraints: const BoxConstraints(maxWidth: 480),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Container(
-                            width: 64,
-                            height: 64,
-                            alignment: Alignment.center,
-                            decoration: BoxDecoration(
-                              color: palette.surface,
-                              shape: BoxShape.circle,
-                              border: Border.all(color: palette.border),
+                Expanded(
+                  child: Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(24),
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 480),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Container(
+                              width: 64,
+                              height: 64,
+                              alignment: Alignment.center,
+                              decoration: BoxDecoration(
+                                color: palette.surface,
+                                shape: BoxShape.circle,
+                                border: Border.all(color: palette.border),
+                              ),
+                              child: Icon(
+                                Icons.lock_outline_rounded,
+                                color: palette.interactiveForeground,
+                                size: 30,
+                              ),
                             ),
-                            child: Icon(
-                              Icons.lock_outline_rounded,
-                              color: palette.interactiveForeground,
-                              size: 30,
+                            const SizedBox(height: 18),
+                            Text(
+                              copy.text(
+                                'This profile isn\'t available',
+                                'Ten profil jest niedostępny',
+                              ),
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                color: palette.textPrimary,
+                                fontSize: 22,
+                                fontWeight: FontWeight.w900,
+                              ),
                             ),
-                          ),
-                          const SizedBox(height: 18),
-                          Text(
-                            copy.text(
-                              'This profile isn\'t available',
-                              'Ten profil jest niedostępny',
+                            const SizedBox(height: 8),
+                            Text(
+                              copy.text(
+                                'The person may have changed who can view their profile.',
+                                'Ta osoba mogła zmienić ustawienia widoczności profilu.',
+                              ),
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                color: palette.textSecondary,
+                                height: 1.45,
+                              ),
                             ),
-                            textAlign: TextAlign.center,
-                            style: TextStyle(
-                              color: palette.textPrimary,
-                              fontSize: 22,
-                              fontWeight: FontWeight.w900,
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                            copy.text(
-                              'The person may have changed who can view their profile.',
-                              'Ta osoba mogła zmienić ustawienia widoczności profilu.',
-                            ),
-                            textAlign: TextAlign.center,
-                            style: TextStyle(
-                              color: palette.textSecondary,
-                              height: 1.45,
-                            ),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
                     ),
                   ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),

@@ -7,6 +7,7 @@ import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/friends/data/models/friend_user.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/home/data/services/home_feed_service.dart';
+import 'package:yovoice/features/home/presentation/widgets/mobile/mobile_home_sections.dart';
 import 'package:yovoice/features/moments/data/models/moment_chain.dart';
 import 'package:yovoice/features/profile/data/models/follow_user.dart';
 import 'package:yovoice/features/profile/data/services/follow_service.dart';
@@ -47,6 +48,8 @@ class DesktopMomentsStrip extends StatefulWidget {
     this.currentUserId,
     this.expiryClock,
     this.isVisible,
+    this.avatarOnly = false,
+    this.contentBuilder,
     super.key,
   });
 
@@ -89,6 +92,16 @@ class DesktopMomentsStrip extends StatefulWidget {
 
   /// A rising edge replaces the completed v2 feed stream with a fresh one.
   final ValueListenable<bool>? isVisible;
+
+  /// Home can compose its responsive overview from this same resolved feed;
+  /// neither the circle recap nor the new layout opens another subscription.
+  final bool avatarOnly;
+  final Widget Function(
+    BuildContext context,
+    Widget rail,
+    List<VoiceMoment> visibleMoments,
+  )?
+  contentBuilder;
 
   /// A Moment counts as "new" for a day after it is posted.
   static const Duration newWindow = Duration(hours: 24);
@@ -216,6 +229,25 @@ class _DesktopMomentsStripState extends State<DesktopMomentsStrip> {
                       ...?mine?.moments,
                       for (final chain in shown) ...chain.moments,
                     ];
+
+                    if (widget.avatarOnly) {
+                      final rail = MobileMomentsStrip(
+                        expandedLabels: true,
+                        moments: visibleMoments,
+                        profile: profile,
+                        currentUserId: ownUserId,
+                        onOpenMoment: widget.onOpenMoment,
+                        onOpenChain: widget.onOpenChain,
+                        onCreateMoment: widget.onCreateMoment,
+                        expiryClock: widget.expiryClock,
+                      );
+                      return widget.contentBuilder?.call(
+                            context,
+                            rail,
+                            visibleMoments,
+                          ) ??
+                          rail;
+                    }
 
                     return MomentExpiryListTransition(
                       // Expiry announcements and focus recovery must describe

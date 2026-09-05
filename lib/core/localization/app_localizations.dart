@@ -201,6 +201,33 @@ class AppLocalizations {
 
   String get home => text('Home', 'Główna');
 
+  String get homeLiveForYou =>
+      contextualText('home.liveForYou', 'Live for you', 'Na żywo dla Ciebie');
+  String get homeYourCircle =>
+      contextualText('home.yourCircle', 'Your circle', 'Twój krąg');
+  String get homeCreateRoom =>
+      contextualText('home.createRoom', 'Create room', 'Stwórz pokój');
+  String get homeStartConversation => contextualText(
+    'home.startConversation',
+    'Invite and talk',
+    'Zaproś i rozmawiaj',
+  );
+  String get homeGrowYourCircle => contextualText(
+    'home.growYourCircle',
+    'Grow your circle',
+    'Powiększ swój krąg',
+  );
+  String get homeYou => contextualText('home.you', 'You', 'Ty');
+
+  /// Mobile room-directory destination, distinct from desktop Discover.
+  String get navigationRooms =>
+      contextualText('navigation.rooms', 'Rooms', 'Pokoje');
+
+  /// Mobile navigation label; the shared destination heading keeps its
+  /// separate, invariant YO Moments product name.
+  String get navigationYourMoments =>
+      contextualText('navigation.yourMoments', 'Your Moments', 'Twoje Momenty');
+
   /// Product destination name. Brand names stay invariant in every locale;
   /// "Voice Moment" and "Reel" remain the localized format names inside it.
   String get moments => 'YO Moments';

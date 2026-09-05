@@ -7,11 +7,13 @@ import 'package:firebase_storage_mocks/firebase_storage_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:yovoice/core/theme/app_palette.dart';
 
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/home/data/services/home_feed_service.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/desktop_moments_strip.dart';
 import 'package:yovoice/features/home/presentation/widgets/mobile/mobile_home_sections.dart';
+import 'package:yovoice/features/home/presentation/widgets/shared/home_overview_sections.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
 import 'package:yovoice/features/moments/data/services/moment_discovery_service.dart';
 import 'package:yovoice/features/moments/data/services/moment_service.dart';
@@ -192,18 +194,119 @@ void main() {
     PublicIdentityRepository.instance = originalIdentity;
   });
 
+  for (final anotherRemains in [false, true]) {
+    testWidgets(
+      'circle expiry recovers visible focus without duplicate announcement: $anotherRemains',
+      (tester) async {
+        await tester.binding.setSurfaceSize(const Size(390, 844));
+        addTearDown(() => tester.binding.setSurfaceSize(null));
+        final semantics = tester.ensureSemantics();
+        final announcements = _captureAnnouncements(tester);
+        final clock = _Clock(_anchor);
+        final expiring = _moment(
+          'circle-expiring',
+          expiresAt: _anchor.add(const Duration(seconds: 10)),
+        );
+        final remaining = _moment(
+          'circle-remaining',
+          authorId: 'other',
+          authorName: 'Other',
+          expiresAt: _anchor.add(const Duration(hours: 1)),
+        );
+        var friendsOpens = 0;
+        Future<void> pump(List<VoiceMoment> moments) => tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: SingleChildScrollView(
+                child: Column(
+                  children: [
+                    MobileMomentsStrip(
+                      moments: moments,
+                      profile: _profile(),
+                      currentUserId: 'me',
+                      expiryClock: () => clock.now,
+                      onOpenMoment: (_) {},
+                      onCreateMoment: () {},
+                    ),
+                    HomeCircleActivity(
+                      moments: moments,
+                      currentUserId: 'me',
+                      expiryClock: () => clock.now,
+                      onOpenMoment: (_) {},
+                      onFriends: () => friendsOpens++,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+        await pump([]);
+        expect(
+          find.byKey(const ValueKey('home-circle-expiry-friends')),
+          findsNothing,
+        );
+        await pump([expiring, if (anotherRemains) remaining]);
+        final tile = tester.widget<ListTile>(
+          find.byKey(const ValueKey('home-circle-friend')),
+        );
+        tile.focusNode!.requestFocus();
+        await tester.pump();
+        expect(tile.focusNode!.hasFocus, isTrue);
+        clock.now = expiring.expiresAt!;
+        await pump([if (anotherRemains) remaining]);
+        await tester.pump();
+        await tester.pump();
+        expect(find.byKey(const ValueKey('home-circle-friend')), findsNothing);
+        if (anotherRemains) {
+          final heading = tester.widget<MomentExpiryFocusTarget>(
+            find.byKey(const ValueKey('home-circle-expiry-heading')),
+          );
+          expect(heading.focusNode.hasFocus, isTrue);
+        } else {
+          final recovery = tester.widget<OutlinedButton>(
+            find.byKey(const ValueKey('home-circle-expiry-friends')),
+          );
+          expect(recovery.focusNode!.hasFocus, isTrue);
+          await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+          await tester.pump();
+          expect(friendsOpens, 1);
+        }
+        expect(_messages(announcements), [
+          'One Voice Moment expired and was removed from Home.',
+        ]);
+        await pump([if (anotherRemains) remaining]);
+        expect(_messages(announcements), hasLength(1));
+        expect(tester.takeException(), isNull);
+        semantics.dispose();
+      },
+    );
+  }
+
   testWidgets(
     'visible mobile Home strip announces once and recovers a removed tile',
     (tester) async {
-      await tester.binding.setSurfaceSize(const Size(390, 844));
+      await tester.binding.setSurfaceSize(const Size(320, 844));
       addTearDown(() => tester.binding.setSurfaceSize(null));
       final semantics = tester.ensureSemantics();
       final announcements = _captureAnnouncements(tester);
       final clock = _Clock(_anchor);
       final expiring = _moment(
         'mobile-expiring',
+        createdAt: _anchor.subtract(const Duration(days: 1)),
         expiresAt: _anchor.add(const Duration(seconds: 10)),
       );
+      final remaining = [
+        for (var index = 0; index < 6; index++)
+          _moment(
+            'mobile-remaining-$index',
+            authorId: 'remaining-$index',
+            authorName: 'Other $index',
+            createdAt: _anchor.subtract(Duration(minutes: index)),
+            expiresAt: _anchor.add(const Duration(hours: 1)),
+          ),
+      ];
+      var records = 0;
 
       Future<void> pump(List<VoiceMoment> moments) => tester.pumpWidget(
         MaterialApp(
@@ -214,14 +317,21 @@ void main() {
               currentUserId: 'me',
               expiryClock: () => clock.now,
               onOpenMoment: (_) {},
-              onCreateMoment: () {},
+              onCreateMoment: () => records++,
             ),
           ),
         ),
       );
 
-      await pump([expiring]);
+      await pump([expiring, ...remaining]);
       final tile = find.byKey(const ValueKey('home-moment-mobile-expiring'));
+      await tester.ensureVisible(tile);
+      await tester.pump();
+      expect(
+        tester.getRect(find.byKey(const ValueKey('home-your-moment'))).right,
+        lessThan(0),
+        reason: 'The recovery target starts offscreen in the scrolled rail.',
+      );
       final tileInk = tester.widget<InkWell>(
         find.descendant(of: tile, matching: find.byType(InkWell)).first,
       );
@@ -230,18 +340,43 @@ void main() {
       expect(tileInk.focusNode!.hasFocus, isTrue);
 
       clock.now = expiring.expiresAt!;
-      await pump(const <VoiceMoment>[]);
+      await pump(remaining);
+      await tester.pump();
       await tester.pump();
 
-      final heading = tester.widget<MomentExpiryFocusTarget>(
-        find.byKey(const ValueKey('mobile-home-moments-heading')),
+      final ownAvatar = find.byKey(const ValueKey('home-your-moment'));
+      final ownAction = tester.widget<InkWell>(
+        find.descendant(of: ownAvatar, matching: find.byType(InkWell)).first,
       );
-      expect(heading.focusNode.hasFocus, isTrue);
+      expect(ownAction.focusNode!.hasFocus, isTrue);
+      expect(tester.getSize(ownAvatar).width, greaterThanOrEqualTo(44));
+      expect(tester.getSize(ownAvatar).height, greaterThanOrEqualTo(44));
+      final ownBounds = tester.getRect(ownAvatar);
+      expect(ownBounds.left, greaterThanOrEqualTo(0));
+      expect(ownBounds.right, lessThanOrEqualTo(320));
+      expect(
+        find.byKey(const ValueKey('mobile-home-moments-heading')),
+        findsNothing,
+        reason: 'Recovery must not land on an invisible heading placeholder.',
+      );
+      final outline = tester.widget<DecoratedBox>(
+        find.byKey(const ValueKey('home-own-moment-focus-outline')),
+      );
+      final border = (outline.decoration as BoxDecoration).border! as Border;
+      expect(border.top.width, 2);
+      expect(border.top.color, tester.element(ownAvatar).appPalette.focus);
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pump();
+      expect(
+        records,
+        1,
+        reason: 'The visible recovery action records a Moment.',
+      );
       expect(_messages(announcements), [
         'One Voice Moment expired and was removed from Home.',
       ]);
 
-      await pump(const <VoiceMoment>[]);
+      await pump(remaining);
       expect(_messages(announcements), hasLength(1));
       semantics.dispose();
     },

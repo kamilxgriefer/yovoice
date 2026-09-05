@@ -4,6 +4,7 @@ import 'dart:io' show Platform;
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:yovoice/shared/widgets/backgrounds/yo_page_background.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -450,66 +451,69 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final palette = context.appPalette;
     return Scaffold(
       backgroundColor: palette.background,
-      body: SafeArea(
-        child: ResponsiveContentFrame(
-          width: ResponsiveContentWidth.list,
-          alignment: ResponsiveContentAlignment.topLeft,
-          child: Column(
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(6, 10, 18, 6),
-                child: Row(
-                  children: [
-                    if (!widget.isRootTab) ...[
-                      YoIconButton(
-                        icon: Icons.arrow_back_ios_new_rounded,
-                        iconSize: 18,
-                        size: 40,
-                        backgroundColor: palette.surface,
-                        borderColor: palette.border,
-                        onPressed: () => Navigator.of(context).pop(),
+      body: YoPageBackground(
+        section: YoPageSection.more,
+        child: SafeArea(
+          child: ResponsiveContentFrame(
+            width: ResponsiveContentWidth.list,
+            alignment: ResponsiveContentAlignment.topLeft,
+            child: Column(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(6, 10, 18, 6),
+                  child: Row(
+                    children: [
+                      if (!widget.isRootTab) ...[
+                        YoIconButton(
+                          icon: Icons.arrow_back_ios_new_rounded,
+                          iconSize: 18,
+                          size: 40,
+                          backgroundColor: palette.surface,
+                          borderColor: palette.border,
+                          onPressed: () => Navigator.of(context).pop(),
+                        ),
+                        const SizedBox(width: 6),
+                      ],
+                      Text(
+                        copy.text('Settings', 'Ustawienia'),
+                        style: TextStyle(
+                          color: palette.textPrimary,
+                          fontSize: 26,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: -0.5,
+                        ),
                       ),
-                      const SizedBox(width: 6),
                     ],
-                    Text(
-                      copy.text('Settings', 'Ustawienia'),
-                      style: TextStyle(
-                        color: palette.textPrimary,
-                        fontSize: 26,
-                        fontWeight: FontWeight.w900,
-                        letterSpacing: -0.5,
-                      ),
-                    ),
-                  ],
+                  ),
                 ),
-              ),
-              Expanded(
-                child: StreamBuilder<UserProfile>(
-                  stream: _profileService.watchCurrentProfile(),
-                  builder: (context, snapshot) {
-                    if (snapshot.hasError) {
-                      return YoErrorState(
-                        message: copy.text(
-                          friendlyErrorMessage(snapshot.error!),
-                          'Nie udało się wczytać ustawień. Spróbuj ponownie.',
-                        ),
-                        compact: true,
-                      );
-                    }
-                    final profile = snapshot.data;
-                    if (profile == null) {
-                      return YoLoadingIndicator.fullscreen(
-                        message: copy.text(
-                          'Loading settings…',
-                          'Ładowanie ustawień…',
-                        ),
-                      );
-                    }
-                    return _buildContent(context, profile);
-                  },
+                Expanded(
+                  child: StreamBuilder<UserProfile>(
+                    stream: _profileService.watchCurrentProfile(),
+                    builder: (context, snapshot) {
+                      if (snapshot.hasError) {
+                        return YoErrorState(
+                          message: copy.text(
+                            friendlyErrorMessage(snapshot.error!),
+                            'Nie udało się wczytać ustawień. Spróbuj ponownie.',
+                          ),
+                          compact: true,
+                        );
+                      }
+                      final profile = snapshot.data;
+                      if (profile == null) {
+                        return YoLoadingIndicator.fullscreen(
+                          message: copy.text(
+                            'Loading settings…',
+                            'Ładowanie ustawień…',
+                          ),
+                        );
+                      }
+                      return _buildContent(context, profile);
+                    },
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),

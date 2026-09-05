@@ -4,6 +4,7 @@ import 'package:audioplayers/audioplayers.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:yovoice/shared/widgets/backgrounds/yo_page_background.dart';
 import 'package:share_plus/share_plus.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
@@ -966,16 +967,15 @@ class _MomentsFeedViewState extends State<MomentsFeedView> {
 
   @override
   Widget build(BuildContext context) {
-    final palette = context.appPalette;
     return LayoutBuilder(
       builder: (context, constraints) {
         final width = constraints.maxWidth;
         final wide = width >= _detailWidth;
         final compact = width < _tabletWidth;
 
-        return Container(
+        return YoPageBackground(
+          section: YoPageSection.moments,
           key: const ValueKey('moments-feed-view'),
-          color: palette.background,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [

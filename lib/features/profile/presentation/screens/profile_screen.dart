@@ -1,6 +1,7 @@
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:yovoice/shared/widgets/backgrounds/yo_page_background.dart';
 
 import 'package:yovoice/core/helpers/error_messages.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
@@ -196,11 +197,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
         final profile = snapshot.data;
         if (profile == null) {
           return Scaffold(
-            body: Semantics(
-              liveRegion: true,
-              label: copy.text('Loading profile', 'Wczytywanie profilu'),
-              child: const ExcludeSemantics(
-                child: Center(child: CircularProgressIndicator()),
+            body: YoPageBackground(
+              child: Semantics(
+                liveRegion: true,
+                label: copy.text('Loading profile', 'Wczytywanie profilu'),
+                child: const ExcludeSemantics(
+                  child: Center(child: CircularProgressIndicator()),
+                ),
               ),
             ),
           );
@@ -216,51 +219,55 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 final clubs = clubsSnapshot.data ?? const <Club>[];
                 return Scaffold(
                   backgroundColor: context.appPalette.background,
-                  body: ResponsiveContentFrame(
-                    width: ResponsiveContentWidth.feed,
-                    child: _ProfileContent(
-                      profile: profile,
-                      communities: communities,
-                      clubs: clubs,
-                      communitiesLoading:
-                          communitiesSnapshot.connectionState ==
-                              ConnectionState.waiting ||
-                          clubsSnapshot.connectionState ==
-                              ConnectionState.waiting,
-                      onEdit: () {
-                        Navigator.of(context).push(
-                          MaterialPageRoute<void>(
-                            builder: (_) => EditProfileScreen(profile: profile),
-                          ),
-                        );
-                      },
-                      onAchievements: () {
-                        Navigator.of(context).push(
-                          MaterialPageRoute<void>(
-                            builder: (_) =>
-                                AchievementsScreen(profile: profile),
-                          ),
-                        );
-                      },
-                      onOpenCommunity: (room) {
-                        Navigator.of(context).push(
-                          MaterialPageRoute<void>(
-                            builder: (_) => RoomEntryScreen(room: room),
-                          ),
-                        );
-                      },
-                      onOpenClub: (club) {
-                        Navigator.of(context).push(
-                          MaterialPageRoute<void>(
-                            builder: (_) => ClubOverviewScreen(clubId: club.id),
-                          ),
-                        );
-                      },
-                      showSuperAdminActivation: _isOwnerAccount,
-                      isActivatingSuperAdmin: _isActivatingSuperAdmin,
-                      currentRole: _currentRole,
-                      onActivateSuperAdmin: _activateSuperAdmin,
-                      onLogout: _authService.signOut,
+                  body: YoPageBackground(
+                    child: ResponsiveContentFrame(
+                      width: ResponsiveContentWidth.feed,
+                      child: _ProfileContent(
+                        profile: profile,
+                        communities: communities,
+                        clubs: clubs,
+                        communitiesLoading:
+                            communitiesSnapshot.connectionState ==
+                                ConnectionState.waiting ||
+                            clubsSnapshot.connectionState ==
+                                ConnectionState.waiting,
+                        onEdit: () {
+                          Navigator.of(context).push(
+                            MaterialPageRoute<void>(
+                              builder: (_) =>
+                                  EditProfileScreen(profile: profile),
+                            ),
+                          );
+                        },
+                        onAchievements: () {
+                          Navigator.of(context).push(
+                            MaterialPageRoute<void>(
+                              builder: (_) =>
+                                  AchievementsScreen(profile: profile),
+                            ),
+                          );
+                        },
+                        onOpenCommunity: (room) {
+                          Navigator.of(context).push(
+                            MaterialPageRoute<void>(
+                              builder: (_) => RoomEntryScreen(room: room),
+                            ),
+                          );
+                        },
+                        onOpenClub: (club) {
+                          Navigator.of(context).push(
+                            MaterialPageRoute<void>(
+                              builder: (_) =>
+                                  ClubOverviewScreen(clubId: club.id),
+                            ),
+                          );
+                        },
+                        showSuperAdminActivation: _isOwnerAccount,
+                        isActivatingSuperAdmin: _isActivatingSuperAdmin,
+                        currentRole: _currentRole,
+                        onActivateSuperAdmin: _activateSuperAdmin,
+                        onLogout: _authService.signOut,
+                      ),
                     ),
                   ),
                 );
@@ -1219,13 +1226,15 @@ class _ErrorView extends StatelessWidget {
     final palette = context.appPalette;
     return Scaffold(
       backgroundColor: palette.background,
-      body: Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Text(
-            message,
-            textAlign: TextAlign.center,
-            style: TextStyle(color: palette.textPrimary),
+      body: YoPageBackground(
+        child: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Text(
+              message,
+              textAlign: TextAlign.center,
+              style: TextStyle(color: palette.textPrimary),
+            ),
           ),
         ),
       ),

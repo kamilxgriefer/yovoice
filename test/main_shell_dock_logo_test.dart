@@ -1,11 +1,7 @@
-// The dock's branded centre and the detail page's navigation contract:
-// the YO Voice logo anchors the centre action (same route/behaviour as
-// ever — the voice sheet), and a Moment detail hosted by the shell keeps
-// the bottom navigation visible with Moments the active tab.
-
+// Hosted detail routes retain the same five-destination Meniscus dock.
+// The former central logo/voice action is intentionally not a sixth action.
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-
 import 'package:yovoice/features/home/presentation/screens/main_shell.dart';
 import 'package:yovoice/features/home/presentation/widgets/more_sheet.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
@@ -34,7 +30,6 @@ VoiceMoment _moment() {
 int get _momentsSlot => MainShell.desktopSlots.entries
     .firstWhere((entry) => entry.value == MoreDestination.moments)
     .key;
-
 Future<SemanticsHandle> _pumpHost(
   WidgetTester tester, {
   required Widget body,
@@ -45,12 +40,7 @@ Future<SemanticsHandle> _pumpHost(
   tester.view.physicalSize = const Size(390, 844);
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
-
-  // Selected-state assertions read the semantics tree. The caller
-  // disposes the handle before the test body returns — the framework
-  // verifies that before teardowns run.
   final semantics = tester.ensureSemantics();
-
   await tester.pumpWidget(
     MaterialApp(
       theme: ThemeData.dark(useMaterial3: true),
@@ -74,11 +64,6 @@ Future<SemanticsHandle> _pumpHost(
   return semantics;
 }
 
-/// Whether the dock item labelled [label] declares itself selected.
-///
-/// Read from the Semantics WIDGET the item builds (its accessibility
-/// contract), which is stable regardless of how the compiled semantics
-/// tree merges the label with the item's caption text.
 bool _isSelected(WidgetTester tester, String label) {
   final items = tester.widgetList<Semantics>(
     find.byWidgetPredicate(
@@ -89,75 +74,159 @@ bool _isSelected(WidgetTester tester, String label) {
   return items.any((widget) => widget.properties.selected == true);
 }
 
+class _HostedNavigationObserver extends NavigatorObserver {
+  var pushes = 0;
+  var pops = 0;
+
+  @override
+  void didPush(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    pushes++;
+    super.didPush(route, previousRoute);
+  }
+
+  @override
+  void didPop(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    pops++;
+    super.didPop(route, previousRoute);
+  }
+}
+
 void main() {
-  testWidgets('the dock centre is the transparent official YO mark, '
-      'and it still opens the voice action', (tester) async {
-    var voiceOpened = 0;
-    final semantics = await _pumpHost(
-      tester,
-      body: const Text('BODY'),
-      selectedIndex: 0,
-      onVoicePressed: () => voiceOpened++,
+  for (final destination in [
+    (0, 0, 'Home'),
+    (3, 1, 'Rooms'),
+    (5, 3, 'Your Moments'),
+  ]) {
+    testWidgets(
+      'retapping selected ${destination.$3} exits hosted route exactly once',
+      (tester) async {
+        tester.view.physicalSize = const Size(390, 844);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.reset);
+        final navigatorKey = GlobalKey<NavigatorState>();
+        final observer = _HostedNavigationObserver();
+        final requests = <int>[];
+        await tester.pumpWidget(
+          MaterialApp(
+            navigatorKey: navigatorKey,
+            navigatorObservers: [observer],
+            theme: ThemeData.dark(useMaterial3: true),
+            home: const Scaffold(body: Text('RETAINED ROOT CONTENT')),
+          ),
+        );
+        final rootElement = tester.element(find.text('RETAINED ROOT CONTENT'));
+        navigatorKey.currentState!.push(
+          MaterialPageRoute<void>(
+            builder: (_) => MoreDestinationHost(
+              body: const Text('HOSTED PROFILE OR SETTINGS'),
+              selectedIndex: destination.$1,
+              unreadConversationCount: 0,
+              onDestinationSelected: requests.add,
+              onVoicePressed: () =>
+                  fail('Retapping a destination must not open voice actions'),
+              onMorePressed: () =>
+                  fail('Retapping a destination must not open More'),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(_isSelected(tester, destination.$3), isTrue);
+        final tap = tester
+            .widget<InkWell>(
+              find.byKey(ValueKey('yo-destination-${destination.$2}')),
+            )
+            .onTap!;
+        tap();
+        tap();
+        await tester.pump();
+        expect(
+          observer.pops,
+          1,
+          reason: 'The hosted route owns one navigation commit.',
+        );
+        expect(
+          requests,
+          isEmpty,
+          reason: 'Forward only after reverse transition completes.',
+        );
+        await tester.pumpAndSettle();
+        expect(requests, [destination.$1]);
+        expect(observer.pops, 1);
+        expect(
+          observer.pushes,
+          2,
+          reason: 'No duplicate root or content route may be pushed.',
+        );
+        expect(navigatorKey.currentState!.canPop(), isFalse);
+        expect(find.text('HOSTED PROFILE OR SETTINGS'), findsNothing);
+        expect(find.text('RETAINED ROOT CONTENT'), findsOneWidget);
+        expect(
+          identical(
+            tester.element(find.text('RETAINED ROOT CONTENT')),
+            rootElement,
+          ),
+          isTrue,
+        );
+        expect(tester.takeException(), isNull);
+      },
     );
-
-    final logo = tester.widget<Image>(find.byKey(const ValueKey('dock-logo')));
-    expect(
-      (logo.image as AssetImage).assetName,
-      'assets/images/yo-voice-favicon-512.png',
-      reason: 'the centre anchor renders the real brand asset',
-    );
-    expect(logo.color, isNull);
-    expect(logo.fit, BoxFit.contain);
-    expect(logo.filterQuality, FilterQuality.high);
-
-    await tester.tap(find.bySemanticsLabel('Open voice actions'));
-    await tester.pump();
-    expect(voiceOpened, 1, reason: 'same behaviour as ever, new face');
-    semantics.dispose();
-  });
-
-  testWidgets('with the Moments slot selected, Moments is the active dock '
-      'item — the state the shell passes for both the feed and the hosted '
-      'detail page', (tester) async {
+  }
+  testWidgets(
+    'hosted dock has five real destinations and no central voice action',
+    (tester) async {
+      var voiceOpened = 0;
+      final semantics = await _pumpHost(
+        tester,
+        body: const Text('BODY'),
+        selectedIndex: 0,
+        onVoicePressed: () => voiceOpened++,
+      );
+      expect(find.byKey(const ValueKey('dock-logo')), findsNothing);
+      expect(
+        find.byKey(const ValueKey('yo-center-action-hit-target')),
+        findsNothing,
+      );
+      expect(find.bySemanticsLabel('Open voice actions'), findsNothing);
+      for (final label in ['Home', 'Rooms', 'Chats', 'Your Moments', 'More']) {
+        expect(find.bySemanticsLabel(label), findsOneWidget);
+      }
+      expect(voiceOpened, 0);
+      expect(_isSelected(tester, 'Home'), isTrue);
+      semantics.dispose();
+    },
+  );
+  testWidgets('Moments domain slot selects Your Moments in hosted dock', (
+    tester,
+  ) async {
     final semantics = await _pumpHost(
       tester,
       body: const Text('BODY'),
       selectedIndex: _momentsSlot,
     );
-
-    expect(_isSelected(tester, 'YO Moments'), isTrue);
+    expect(_isSelected(tester, 'Your Moments'), isTrue);
     expect(_isSelected(tester, 'Home'), isFalse);
     semantics.dispose();
   });
-
-  testWidgets('a Moment detail hosted by the shell keeps the whole dock '
-      'visible with Moments active, and its sections render', (tester) async {
-    // The detail screen constructs its services defensively: with no
-    // Firebase app every seam degrades and the page still renders the
-    // Moment it was handed — exactly what this hosting test needs.
-    final semantics = await _pumpHost(
-      tester,
-      body: MomentDetailScreen(moment: _moment()),
-      selectedIndex: _momentsSlot,
-    );
-
-    // The page's own chrome and content.
-    expect(find.byKey(const ValueKey('moment-detail-back')), findsOneWidget);
-    expect(find.text('The one thing nobody tells you.'), findsOneWidget);
-    expect(find.byKey(const ValueKey('moment-detail-play')), findsOneWidget);
-
-    // The persistent dock, with Moments lit.
-    expect(find.text('Home'), findsNothing);
-    expect(find.text('Chats'), findsNothing);
-    expect(find.text('YO Moments'), findsNothing);
-    expect(find.text('More'), findsNothing);
-    expect(find.byKey(const ValueKey('dock-logo')), findsOneWidget);
-    expect(_isSelected(tester, 'YO Moments'), isTrue);
-    semantics.dispose();
-  });
-
-  testWidgets('dock taps from the hosted detail still fire the shell '
-      'routes', (tester) async {
+  testWidgets(
+    'hosted Moment detail preserves content and the active navigation',
+    (tester) async {
+      final semantics = await _pumpHost(
+        tester,
+        body: MomentDetailScreen(moment: _moment()),
+        selectedIndex: _momentsSlot,
+      );
+      expect(find.byKey(const ValueKey('moment-detail-back')), findsOneWidget);
+      expect(find.text('The one thing nobody tells you.'), findsOneWidget);
+      expect(find.byKey(const ValueKey('moment-detail-play')), findsOneWidget);
+      expect(find.text('Your Moments'), findsOneWidget);
+      expect(find.byKey(const ValueKey('dock-logo')), findsNothing);
+      expect(_isSelected(tester, 'Your Moments'), isTrue);
+      semantics.dispose();
+    },
+  );
+  testWidgets('hosted detail Home tap still uses shell callback', (
+    tester,
+  ) async {
     int? selected;
     final semantics = await _pumpHost(
       tester,
@@ -165,87 +234,24 @@ void main() {
       selectedIndex: _momentsSlot,
       onDestinationSelected: (index) => selected = index,
     );
-
     await tester.tap(find.byKey(const ValueKey('yo-destination-0')));
     await tester.pumpAndSettle();
     expect(selected, 0);
     semantics.dispose();
   });
-
-  testWidgets(
-    'the official logo rests without a permanent circular backplate',
-    (tester) async {
-      final semantics = await _pumpHost(
-        tester,
-        body: const SizedBox.shrink(),
-        selectedIndex: 0,
-        onVoicePressed: () {},
-      );
-      final logo = find.byKey(const ValueKey('dock-logo'));
-      expect(logo, findsOneWidget);
-
-      final boundary = find.byKey(const ValueKey('yo-center-action-boundary'));
-      expect(boundary, findsOneWidget);
-      final buttonRect = tester.getRect(boundary);
-      final logoRect = tester.getRect(logo);
-      expect(buttonRect.width, inInclusiveRange(64, 68));
-      expect(buttonRect.height, buttonRect.width);
-      expect(logoRect.width, 76);
-      expect(logoRect.height, logoRect.width);
-      expect(logoRect.width * .814, inInclusiveRange(60, 62));
-      expect(logoRect.height * .844, inInclusiveRange(63, 65));
-      expect(
-        find.descendant(
-          of: boundary,
-          matching: find.byWidgetPredicate(
-            (widget) =>
-                widget is Material &&
-                widget.type != MaterialType.transparency &&
-                widget.color != null &&
-                widget.color!.a > 0,
-          ),
-        ),
-        findsNothing,
-        reason: 'the transparent mark must not inherit a filled material disc',
-      );
-      expect(
-        find.descendant(of: boundary, matching: find.byType(ClipOval)),
-        findsNothing,
-      );
-      semantics.dispose();
-    },
-  );
-
-  testWidgets(
-    'the button and contained logo follow the responsive size guide',
-    (tester) async {
-      final semantics = await _pumpHost(
-        tester,
-        body: const SizedBox.shrink(),
-        selectedIndex: 0,
-        onVoicePressed: () {},
-      );
-      tester.view.physicalSize = const Size(320, 700);
-      await tester.pump();
-      final small = tester.getSize(find.byKey(const ValueKey('dock-logo')));
-      final smallButton = tester.getSize(
-        find.byKey(const ValueKey('yo-center-action-boundary')),
-      );
-      expect(smallButton.width, 64);
-      expect(small.width, 68);
-      expect(small.width * .814, inInclusiveRange(55, 56));
-      expect(tester.takeException(), isNull);
-
-      tester.view.physicalSize = const Size(430, 900);
-      await tester.pump();
-      final large = tester.getSize(find.byKey(const ValueKey('dock-logo')));
-      final largeButton = tester.getSize(
-        find.byKey(const ValueKey('yo-center-action-boundary')),
-      );
-      expect(largeButton.width, 68);
-      expect(large.width, 76);
-      expect(large.width * .814, inInclusiveRange(60, 62));
-      semantics.dispose();
-    },
-  );
+  testWidgets('hosted Rooms button routes to stable Discover slot, not Chats', (
+    tester,
+  ) async {
+    int? selected;
+    final semantics = await _pumpHost(
+      tester,
+      body: const Text('BODY'),
+      selectedIndex: _momentsSlot,
+      onDestinationSelected: (index) => selected = index,
+    );
+    await tester.tap(find.byKey(const ValueKey('yo-destination-1')));
+    await tester.pumpAndSettle();
+    expect(selected, 3);
+    semantics.dispose();
+  });
 }

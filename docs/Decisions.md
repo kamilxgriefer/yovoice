@@ -8900,3 +8900,95 @@ has drained and a separately reviewed minimum-version cutover is approved.
 - Deployment order is backend first, then Build 20 client migration, telemetry
   and physical two-account acceptance, and only then a separately authorized
   rule/min-version cutover.
+
+## ADR-141: Mobile Meniscus navigation preserves stable content identities
+
+**Date:** 2026-09-05
+**Status:** Source and bounded visual/Simulator verification complete; not deployed
+
+### Context
+
+The owner supplied a Meniscus animation and requested five mobile destinations
+without the central logo/action. Merely replacing icons would leave the fixed
+convex rise, lose creation/onboarding access and risk renumbering retained
+desktop content slots. A foreground logo overlay would also tint user media.
+
+### Decision
+
+Keep domain identities Home 0, Rooms/Discover 3, Chats 1 and YO Moments 5.
+More stays the existing full menu. Mobile Rooms is a retained root with a real
+Create room CTA; its guided-tour anchor is revealed on replay and resize.
+Desktop navigation and Community/Broadcast creation remain distinct.
+
+The mobile widget paints a single moving circular bowl and tangent shoulders,
+with a spring-driven bead. Drag previews are local presentation state: only
+release requests one route, and only accepted parent state marks it selected.
+Cancel/denial restores accepted state. Reduced Motion settles immediately.
+No audio service or backend listener is owned by the navigation component.
+
+Normal page owners use one nested-deduplicated static background watermark,
+not a global foreground overlay. Immersive media/call/camera/auth surfaces
+retain their dedicated backdrops. Navigation text is separately localized so
+the unified YO Moments destination does not silently become an own-only feed.
+
+### Reasoning
+
+This separates visual movement from routing and preserves cached page state,
+existing permission/session authority, keyboard semantics and the desktop
+contract while honoring the new mobile visual direction.
+
+### Consequences
+
+- Five predictable touch targets and visible active labels replace the old
+  logo-based creation action; creation must remain available on Home/Rooms.
+- Existing `onVoicePressed` constructor compatibility is retained, but it is
+  not wired to a hidden or sixth mobile control.
+- Exact native motion/VoiceOver acceptance and ordinary regression testing
+  are distinct from source compilation. No store or Hosting publication is
+  implied by this source change.
+
+## ADR-142: Home is live-first; destination scenery stays decorative and local
+
+**Date:** 2026-09-05
+**Status:** Source, independent review and rendered verification complete; not deployed
+
+### Context
+
+The owner approved the second Home mockup (compact avatars, one live-room
+hero, creation/social actions and genuine activity) and asked for the sofa/YO
+neon environment as the Rooms background with companion scenes elsewhere.
+A flattened UI image or invented activity would fail the product contract;
+large animated backgrounds would compound the reported performance concerns.
+
+### Decision
+
+Keep the existing Home services, authorization and navigation callback owners.
+Compose production room/Moment/chat data into the approved hierarchy and keep
+owned-room management and additional rooms reachable. New Home copy uses the
+same 43-locale catalog. Circle activity is actual playable followed Moments,
+not inferred presence or fabricated listener activity.
+
+Add an optional section to the shared page canvas. Five original WebP scenes
+are bundled locally (224,674 bytes total), decoded at no more than 864 px wide,
+static, excluded from semantics/hit testing and omitted for high contrast.
+Dark/Pearl art alpha is bounded so even a worst-case image pixel keeps primary
+and secondary copy readable over the supported semantic canvases. Scenery
+does not layer an additional watermark and nested pages share one canvas.
+Real uploaded room images take priority over the scenic fallback. Immersive
+media/auth/call flows retain their own backgrounds; desktop More stays plain.
+
+### Reasoning
+
+The brand can feel like one inviting place without adding network latency,
+media playback or duplicate social subscriptions. Separate presentation from
+data truth and from uploaded content. Make the reference useful for hierarchy
+and art direction, not a source of fictional production records.
+
+### Consequences
+
+- Existing callbacks and Community/Broadcast products remain distinct.
+- Responsive Home, short-screen Chats and keyboard/expiry cases require real
+  rendered verification in addition to automated tests.
+- Artwork provenance and the prompt set are retained in
+  `assets/images/atmospheres/README.md`; original generated PNGs are preserved.
+- A source commit is not a store or Hosting release. No publication is implied.

@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/features/rooms/presentation/screens/room_settings_screen.dart';
 import 'package:yovoice/features/home/presentation/widgets/shared/home_room_board.dart';
+import 'package:yovoice/features/home/presentation/widgets/shared/home_overview_sections.dart';
 import 'package:yovoice/features/home/presentation/widgets/shared/recent_chats.dart';
 import 'package:yovoice/features/messages/data/models/conversation.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
@@ -16,8 +17,6 @@ import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/home/data/services/home_feed_service.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
-import 'package:yovoice/features/moments/presentation/screens/moments_screen.dart'
-    show MomentCard;
 import 'package:yovoice/features/profile/data/models/follow_user.dart';
 import 'package:yovoice/features/profile/data/models/user_profile.dart';
 import 'package:yovoice/features/profile/data/services/follow_service.dart';
@@ -27,21 +26,17 @@ import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
 import 'package:yovoice/features/staff/data/staff_capabilities.dart';
 import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
+import 'package:yovoice/shared/widgets/backgrounds/yo_page_background.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 import 'package:yovoice/shared/widgets/states/yo_error_state.dart';
 
-/// The MOBILE Home — "Voice Briefing".
-///
-/// Same information hierarchy as the desktop Pulse Home, rebuilt at phone
-/// proportions per `assets/images/home mobile.png`: compact header, a
-/// one-line live briefing, a featured room, a Your circle / Your Moment
-/// pair, the recommended list, then the existing Moments feed.
+/// Live-first Home: followed Moments, one featured real room, quick routes,
+/// social activity, recent conversations and owned-room management.
 ///
 /// Every number and face is real:
 ///  - live rooms + counts → [RoomService.watchLivePublicRooms]
 ///  - rosters / avatars / speaking → [RoomService.watchParticipants]
-///  - feed → [HomeFeedService.watchSocialMoments] rendered by the shared
-///    [MomentCard] (no second feed implementation)
+///  - feed → [HomeFeedService.watchSocialMoments], reused by rail and recap
 ///  - identity → [ProfileService.watchCurrentProfile]
 class MobileHome extends StatefulWidget {
   const MobileHome({
@@ -264,6 +259,15 @@ class _MobileHomeState extends State<MobileHome> {
 
   @override
   Widget build(BuildContext context) {
+    return YoPageBackground(
+      section: YoPageSection.home,
+      // MainShell owns the base canvas; retain it beneath the static mark.
+      decoration: const BoxDecoration(),
+      child: _buildContent(context),
+    );
+  }
+
+  Widget _buildContent(BuildContext context) {
     return StreamBuilder<List<VoiceRoom>>(
       stream: _liveRooms,
       builder: (context, snapshot) {
@@ -274,52 +278,46 @@ class _MobileHomeState extends State<MobileHome> {
         // will see it here" was printed over a denial or a dead
         // connection, which is advice the reader cannot act on.
         final roomsUnavailable = snapshot.hasError || _liveRooms == null;
-
-        return ListView(
-          // Top inset clears the status bar / notch (the shell's
-          // mobile body is not wrapped in a SafeArea), and the bottom
-          // inset clears the floating hub bar so the last card is
-          // never trapped underneath it.
-          padding: EdgeInsets.fromLTRB(
-            16,
-            MediaQuery.paddingOf(context).top + 10,
-            16,
-            128,
-          ),
-          children: [
-            _MobileHeader(
-              profile: _profile,
-              onNotifications: widget.onOpenNotifications,
-              onProfile: widget.onOpenProfile,
-              unreadNotificationCount: widget.unreadNotificationCount,
-            ),
-            const SizedBox(height: 16),
-            // Home answers four questions, in this order, and nothing
-            // is asked twice.
-            const SizedBox(height: 4),
-            StreamBuilder<List<FollowUser>>(
-              stream: _following,
-              builder: (context, followingSnapshot) {
-                final followedIds = {
-                  for (final user
-                      in followingSnapshot.data ?? const <FollowUser>[])
-                    user.uid,
-                };
-                return StreamBuilder<List<VoiceMoment>>(
-                  stream: _feed,
-                  builder: (context, momentSnapshot) {
-                    final visibleMoments =
-                        (momentSnapshot.data ?? const <VoiceMoment>[])
-                            .where(
-                              (moment) =>
-                                  moment.authorId == _resolvedUserId ||
-                                  followedIds.contains(moment.authorId),
-                            )
-                            .toList(growable: false);
-                    // The signed-in avatar comes from the SHARED profile
-                    // stream the header already reads. Other avatars are
-                    // followed authors with a real active Voice Moment.
-                    return StreamBuilder<UserProfile>(
+        final roomsLoading = !roomsUnavailable && !snapshot.hasData;
+        final board = rankRoomsForHome(live: live, recommended: live);
+        return StreamBuilder<List<FollowUser>>(
+          stream: _following,
+          builder: (context, followingSnapshot) {
+            final followedIds = {
+              for (final user in followingSnapshot.data ?? const <FollowUser>[])
+                user.uid,
+            };
+            return StreamBuilder<List<VoiceMoment>>(
+              stream: _feed,
+              builder: (context, momentSnapshot) {
+                final visibleMoments =
+                    (momentSnapshot.data ?? const <VoiceMoment>[])
+                        .where(
+                          (moment) =>
+                              moment.authorId == _resolvedUserId ||
+                              followedIds.contains(moment.authorId),
+                        )
+                        .toList(growable: false);
+                return ListView(
+                  // Top inset clears the status bar / notch (the shell's
+                  // mobile body is not wrapped in a SafeArea), and the bottom
+                  // inset clears the floating hub bar so the last card is
+                  // never trapped underneath it.
+                  padding: EdgeInsets.fromLTRB(
+                    16,
+                    MediaQuery.paddingOf(context).top + 10,
+                    16,
+                    128,
+                  ),
+                  children: [
+                    _MobileHeader(
+                      profile: _profile,
+                      onNotifications: widget.onOpenNotifications,
+                      onProfile: widget.onOpenProfile,
+                      unreadNotificationCount: widget.unreadNotificationCount,
+                    ),
+                    const SizedBox(height: 22),
+                    StreamBuilder<UserProfile>(
                       stream: _profile,
                       builder: (context, profileSnapshot) => MobileMomentsStrip(
                         moments: visibleMoments,
@@ -329,80 +327,126 @@ class _MobileHomeState extends State<MobileHome> {
                         onOpenChain: widget.onOpenChain,
                         onCreateMoment: widget.onCreateMoment,
                       ),
-                    );
-                  },
+                    ),
+                    MobileSectionHeader(
+                      title: copy.homeLiveForYou,
+                      onSeeAll: widget.onOpenDiscover,
+                    ),
+                    if (roomsUnavailable)
+                      YoErrorState(
+                        message: copy.text(
+                          'Live rooms could not be loaded. Check your connection and try again.',
+                          'Nie udało się wczytać pokojów na żywo. Sprawdź połączenie i spróbuj ponownie.',
+                        ),
+                        onRetry: _retryLiveRooms,
+                        compact: true,
+                      )
+                    else if (roomsLoading)
+                      const HomeRoomsLoading()
+                    else if (board.isEmpty)
+                      _MobileNote(
+                        copy.text(
+                          'No rooms to show yet — start one and your community will see it here.',
+                          'Nie ma jeszcze żadnych pokojów — utwórz pierwszy, a zobaczy go Twoja społeczność.',
+                        ),
+                      )
+                    else
+                      HomeRoomBanner(
+                        key: const ValueKey('home-featured-room'),
+                        room: board.first,
+                        featured: true,
+                        onJoin: widget.onOpenRoom,
+                        roomService: _rooms,
+                        compact: true,
+                        currentUserId: _resolvedUserId,
+                        onManageOwnedRoom: () => _openRoomSettings(board.first),
+                        onDeleteOwnedRoom: () => _deleteOwnedRoom(board.first),
+                        staffCapabilities: _capabilities,
+                      ),
+                    const SizedBox(height: 2),
+                    HomeQuickActions(
+                      onCreateRoom: widget.onCreateRoom,
+                      onFriends: widget.onOpenFriends,
+                    ),
+                    HomeCircleActivity(
+                      onFriends: widget.onOpenFriends,
+                      moments: visibleMoments,
+                      currentUserId: _resolvedUserId,
+                      onOpenMoment: widget.onOpenMoment,
+                      onOpenChain: widget.onOpenChain,
+                    ),
+                    MobileSectionHeader(
+                      title: copy.text('Your recent chats', 'Ostatnie czaty'),
+                      onSeeAll: widget.onSeeAllChats,
+                    ),
+                    StreamBuilder<List<Conversation>>(
+                      stream: _conversations,
+                      builder: (context, conversationSnapshot) => RecentChats(
+                        snapshot: conversationSnapshot,
+                        currentUserId: _resolvedUserId,
+                        onOpenConversation: widget.onOpenConversation,
+                        onFindFriends: widget.onOpenFriends,
+                        photoStreamForUser: _profiles == null
+                            ? null
+                            : _recentChatPhotoStream,
+                        profileMediaService: widget.profileMediaService,
+                      ),
+                    ),
+                    MobileSectionHeader(
+                      title: copy.text(
+                        'Your active rooms',
+                        'Twoje aktywne pokoje',
+                      ),
+                      onSeeAll: widget.onOpenDiscover,
+                    ),
+                    StreamBuilder<List<VoiceRoom>>(
+                      stream: _owned,
+                      builder: (context, ownedSnapshot) =>
+                          ownedSnapshot.hasError || _owned == null
+                          ? YoErrorState(
+                              compact: true,
+                              message: copy.text(
+                                'Could not load rooms',
+                                'Nie udało się wczytać pokojów',
+                              ),
+                              onRetry: () => setState(
+                                () => _owned = _rooms?.watchOwnedRooms(),
+                              ),
+                            )
+                          : !ownedSnapshot.hasData
+                          ? const HomeRoomsLoading()
+                          : HomeActiveRooms(
+                              rooms: ownedSnapshot.data ?? const <VoiceRoom>[],
+                              currentUserId: _resolvedUserId,
+                              onEnter: widget.onOpenRoom,
+                              onEdit: _openRoomSettings,
+                              onDelete: _deleteOwnedRoom,
+                              onCreateRoom: widget.onCreateRoom,
+                              compact: true,
+                            ),
+                    ),
+                    if (board.length > 1 && !roomsUnavailable) ...[
+                      MobileSectionHeader(
+                        title: copy.text('Rooms for you', 'Pokoje dla Ciebie'),
+                        onSeeAll: widget.onOpenDiscover,
+                      ),
+                      for (final room in board.skip(1))
+                        HomeRoomBanner(
+                          room: room,
+                          onJoin: widget.onOpenRoom,
+                          roomService: _rooms,
+                          compact: true,
+                          currentUserId: _resolvedUserId,
+                          onManageOwnedRoom: () => _openRoomSettings(room),
+                          onDeleteOwnedRoom: () => _deleteOwnedRoom(room),
+                          staffCapabilities: _capabilities,
+                        ),
+                    ],
+                  ],
                 );
               },
-            ),
-            MobileSectionHeader(
-              title: copy.text('Rooms for you', 'Pokoje dla Ciebie'),
-              onSeeAll: widget.onOpenDiscover,
-            ),
-            if (roomsUnavailable)
-              YoErrorState(
-                message: copy.text(
-                  'Live rooms could not be loaded. Check your connection and try again.',
-                  'Nie udało się wczytać pokojów na żywo. Sprawdź połączenie i spróbuj ponownie.',
-                ),
-                onRetry: _retryLiveRooms,
-                compact: true,
-              )
-            else if (rankRoomsForHome(live: live, recommended: live).isEmpty)
-              _MobileNote(
-                copy.text(
-                  'No rooms to show yet — start one and your community will see it here.',
-                  'Nie ma jeszcze żadnych pokojów — utwórz pierwszy, a zobaczy go Twoja społeczność.',
-                ),
-              )
-            else
-              for (final room in rankRoomsForHome(
-                live: live,
-                recommended: live,
-              ))
-                HomeRoomBanner(
-                  room: room,
-                  onJoin: widget.onOpenRoom,
-                  roomService: _rooms,
-                  compact: true,
-                  currentUserId: _resolvedUserId,
-                  onManageOwnedRoom: () => _openRoomSettings(room),
-                  onDeleteOwnedRoom: () => _deleteOwnedRoom(room),
-                  staffCapabilities: _capabilities,
-                ),
-            MobileSectionHeader(
-              title: copy.text('Your active rooms', 'Twoje aktywne pokoje'),
-              onSeeAll: widget.onOpenDiscover,
-            ),
-            StreamBuilder<List<VoiceRoom>>(
-              stream: _owned,
-              builder: (context, ownedSnapshot) => HomeActiveRooms(
-                rooms: ownedSnapshot.data ?? const <VoiceRoom>[],
-                currentUserId: _resolvedUserId,
-                onEnter: widget.onOpenRoom,
-                onEdit: _openRoomSettings,
-                onDelete: _deleteOwnedRoom,
-                onCreateRoom: widget.onCreateRoom,
-                compact: true,
-              ),
-            ),
-            MobileSectionHeader(
-              title: copy.text('Your recent chats', 'Ostatnie czaty'),
-              onSeeAll: widget.onSeeAllChats,
-            ),
-            StreamBuilder<List<Conversation>>(
-              stream: _conversations,
-              builder: (context, conversationSnapshot) => RecentChats(
-                snapshot: conversationSnapshot,
-                currentUserId: _resolvedUserId,
-                onOpenConversation: widget.onOpenConversation,
-                onFindFriends: widget.onOpenFriends,
-                photoStreamForUser: _profiles == null
-                    ? null
-                    : _recentChatPhotoStream,
-                profileMediaService: widget.profileMediaService,
-              ),
-            ),
-          ],
+            );
+          },
         );
       },
     );

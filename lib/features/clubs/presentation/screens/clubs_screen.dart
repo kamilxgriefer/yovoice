@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:yovoice/shared/widgets/backgrounds/yo_page_background.dart';
 
 import 'package:yovoice/core/helpers/error_messages.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
@@ -130,116 +131,126 @@ class _ClubsScreenState extends State<ClubsScreen> {
     return Scaffold(
       key: const ValueKey('clubs-screen'),
       backgroundColor: palette.background,
-      body: SafeArea(
-        bottom: false,
-        child: ResponsiveContentFrame(
-          width: ResponsiveContentWidth.feed,
-          alignment: ResponsiveContentAlignment.topLeft,
-          child: Column(
-            children: [
-              _Header(
-                onCreatePressed: _openCreateClub,
-                isRootTab: widget.isRootTab,
-              ),
-              Expanded(
-                child: StreamBuilder<List<ClubInvite>>(
-                  stream: _clubService.watchMyClubInvites(),
-                  builder: (context, inviteSnapshot) {
-                    final invites = inviteSnapshot.data ?? const <ClubInvite>[];
-                    return StreamBuilder<List<Club>>(
-                      stream: _clubService.watchMyClubs(),
-                      builder: (context, clubSnapshot) {
-                        if (clubSnapshot.connectionState ==
-                                ConnectionState.waiting &&
-                            !clubSnapshot.hasData) {
-                          return Center(
-                            child: CircularProgressIndicator(
-                              color: colors.primary,
+      body: YoPageBackground(
+        child: SafeArea(
+          bottom: false,
+          child: ResponsiveContentFrame(
+            width: ResponsiveContentWidth.feed,
+            alignment: ResponsiveContentAlignment.topLeft,
+            child: Column(
+              children: [
+                _Header(
+                  onCreatePressed: _openCreateClub,
+                  isRootTab: widget.isRootTab,
+                ),
+                Expanded(
+                  child: StreamBuilder<List<ClubInvite>>(
+                    stream: _clubService.watchMyClubInvites(),
+                    builder: (context, inviteSnapshot) {
+                      final invites =
+                          inviteSnapshot.data ?? const <ClubInvite>[];
+                      return StreamBuilder<List<Club>>(
+                        stream: _clubService.watchMyClubs(),
+                        builder: (context, clubSnapshot) {
+                          if (clubSnapshot.connectionState ==
+                                  ConnectionState.waiting &&
+                              !clubSnapshot.hasData) {
+                            return Center(
+                              child: CircularProgressIndicator(
+                                color: colors.primary,
+                              ),
+                            );
+                          }
+                          if (clubSnapshot.hasError) {
+                            return _ErrorState(
+                              message: copy.isPolish
+                                  ? 'Sprawdź połączenie i spróbuj ponownie.'
+                                  : friendlyErrorMessage(
+                                      clubSnapshot.error ?? 'unknown',
+                                      fallback: 'Could not load your clubs.',
+                                    ),
+                              onRetry: () => setState(() {}),
+                            );
+                          }
+
+                          final clubs = clubSnapshot.data ?? const <Club>[];
+                          if (clubs.isEmpty && invites.isEmpty) {
+                            return _EmptyState(
+                              onCreatePressed: _openCreateClub,
+                            );
+                          }
+
+                          return RefreshIndicator(
+                            color: colors.primary,
+                            backgroundColor: palette.surfaceRaised,
+                            onRefresh: () async => setState(() {}),
+                            child: ListView(
+                              physics: const AlwaysScrollableScrollPhysics(),
+                              padding: const EdgeInsets.fromLTRB(
+                                18,
+                                10,
+                                18,
+                                130,
+                              ),
+                              children: [
+                                if (invites.isNotEmpty) ...[
+                                  Text(
+                                    copy.text(
+                                      'Club invitations',
+                                      'Zaproszenia do klubów',
+                                    ),
+                                    style: TextStyle(
+                                      color: palette.textPrimary,
+                                      fontSize: 19,
+                                      fontWeight: FontWeight.w900,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 12),
+                                  for (final invite in invites) ...[
+                                    ClubInviteCard(
+                                      invite: invite,
+                                      busy: _processingInvites.contains(
+                                        invite.clubId,
+                                      ),
+                                      onAccept: () =>
+                                          _respondToInvite(invite, true),
+                                      onDecline: () =>
+                                          _respondToInvite(invite, false),
+                                    ),
+                                    const SizedBox(height: 12),
+                                  ],
+                                  const SizedBox(height: 8),
+                                ],
+                                if (clubs.isNotEmpty) ...[
+                                  _SummaryCard(clubCount: clubs.length),
+                                  const SizedBox(height: 18),
+                                  Text(
+                                    copy.text('Your clubs', 'Twoje kluby'),
+                                    style: TextStyle(
+                                      color: palette.textPrimary,
+                                      fontSize: 19,
+                                      fontWeight: FontWeight.w900,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 12),
+                                  for (final club in clubs) ...[
+                                    _ClubCard(
+                                      club: club,
+                                      onTap: () => _openClub(club),
+                                    ),
+                                    const SizedBox(height: 12),
+                                  ],
+                                ],
+                              ],
                             ),
                           );
-                        }
-                        if (clubSnapshot.hasError) {
-                          return _ErrorState(
-                            message: copy.isPolish
-                                ? 'Sprawdź połączenie i spróbuj ponownie.'
-                                : friendlyErrorMessage(
-                                    clubSnapshot.error ?? 'unknown',
-                                    fallback: 'Could not load your clubs.',
-                                  ),
-                            onRetry: () => setState(() {}),
-                          );
-                        }
-
-                        final clubs = clubSnapshot.data ?? const <Club>[];
-                        if (clubs.isEmpty && invites.isEmpty) {
-                          return _EmptyState(onCreatePressed: _openCreateClub);
-                        }
-
-                        return RefreshIndicator(
-                          color: colors.primary,
-                          backgroundColor: palette.surfaceRaised,
-                          onRefresh: () async => setState(() {}),
-                          child: ListView(
-                            physics: const AlwaysScrollableScrollPhysics(),
-                            padding: const EdgeInsets.fromLTRB(18, 10, 18, 130),
-                            children: [
-                              if (invites.isNotEmpty) ...[
-                                Text(
-                                  copy.text(
-                                    'Club invitations',
-                                    'Zaproszenia do klubów',
-                                  ),
-                                  style: TextStyle(
-                                    color: palette.textPrimary,
-                                    fontSize: 19,
-                                    fontWeight: FontWeight.w900,
-                                  ),
-                                ),
-                                const SizedBox(height: 12),
-                                for (final invite in invites) ...[
-                                  ClubInviteCard(
-                                    invite: invite,
-                                    busy: _processingInvites.contains(
-                                      invite.clubId,
-                                    ),
-                                    onAccept: () =>
-                                        _respondToInvite(invite, true),
-                                    onDecline: () =>
-                                        _respondToInvite(invite, false),
-                                  ),
-                                  const SizedBox(height: 12),
-                                ],
-                                const SizedBox(height: 8),
-                              ],
-                              if (clubs.isNotEmpty) ...[
-                                _SummaryCard(clubCount: clubs.length),
-                                const SizedBox(height: 18),
-                                Text(
-                                  copy.text('Your clubs', 'Twoje kluby'),
-                                  style: TextStyle(
-                                    color: palette.textPrimary,
-                                    fontSize: 19,
-                                    fontWeight: FontWeight.w900,
-                                  ),
-                                ),
-                                const SizedBox(height: 12),
-                                for (final club in clubs) ...[
-                                  _ClubCard(
-                                    club: club,
-                                    onTap: () => _openClub(club),
-                                  ),
-                                  const SizedBox(height: 12),
-                                ],
-                              ],
-                            ],
-                          ),
-                        );
-                      },
-                    );
-                  },
+                        },
+                      );
+                    },
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),

@@ -4,6 +4,7 @@ import 'package:audioplayers/audioplayers.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:yovoice/shared/widgets/backgrounds/yo_page_background.dart';
 import 'package:image_picker/image_picker.dart';
 
 import 'package:yovoice/core/helpers/error_messages.dart';
@@ -1335,7 +1336,8 @@ class _ChatScreenState extends State<ChatScreen> {
     return Scaffold(
       key: const ValueKey('chat-screen'),
       backgroundColor: palette.background,
-      body: Container(
+      body: YoPageBackground(
+        section: YoPageSection.chats,
         key: const ValueKey('chat-screen-background'),
         decoration: BoxDecoration(
           gradient: RadialGradient(

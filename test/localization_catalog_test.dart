@@ -8,6 +8,8 @@ import 'package:yovoice/core/localization/translations/app_translation_catalog.d
 import 'package:yovoice/core/localization/translations/translations_auth_call_release.dart';
 import 'package:yovoice/core/localization/translations/translations_current_release.dart';
 import 'package:yovoice/core/localization/translations/translations_direct_call_refusals.dart';
+import 'package:yovoice/core/localization/translations/translations_home.dart';
+import 'package:yovoice/core/localization/translations/translations_mobile_navigation.dart';
 import 'package:yovoice/core/localization/translations/translations_reels.dart';
 import 'package:yovoice/core/localization/translations/translations_yo_moments.dart';
 
@@ -42,6 +44,179 @@ const _extendedLanguagePreferences = <AppLanguagePreference>[
 
 void main() {
   group('localization catalog integrity', () {
+    test('Home copy covers every translated locale explicitly', () {
+      final translatedLocaleKeys = selectableAppLanguages
+          .where(
+            (language) =>
+                language != AppLanguagePreference.english &&
+                language != AppLanguagePreference.polish,
+          )
+          .map((language) => language.localeKey)
+          .toSet();
+      expect(homeTranslations.keys.toSet(), translatedLocaleKeys);
+      expect(appTranslationKeys, containsAll(homeTranslationKeys));
+      for (final localeKey in translatedLocaleKeys) {
+        expect(
+          homeTranslations[localeKey]!.keys.toSet(),
+          homeTranslationKeys.toSet(),
+          reason: localeKey,
+        );
+        for (final key in homeTranslationKeys) {
+          final value = translatedPhrase(localeKey, key);
+          expect(value, isNotNull, reason: '$localeKey: $key');
+          expect(value!.trim(), isNotEmpty, reason: '$localeKey: $key');
+          expect(_placeholders(value), _placeholders(key));
+        }
+      }
+    });
+
+    test('Home labels resolve in all 43 locales with reviewed EN/PL copy', () {
+      List<String> labels(AppLocalizations copy) => [
+        copy.homeLiveForYou,
+        copy.homeYourCircle,
+        copy.homeCreateRoom,
+        copy.homeStartConversation,
+        copy.homeGrowYourCircle,
+        copy.homeYou,
+      ];
+
+      final english = labels(const AppLocalizations(Locale('en')));
+      expect(english, [
+        'Live for you',
+        'Your circle',
+        'Create room',
+        'Invite and talk',
+        'Grow your circle',
+        'You',
+      ]);
+      expect(labels(const AppLocalizations(Locale('pl'))), [
+        'Na żywo dla Ciebie',
+        'Twój krąg',
+        'Stwórz pokój',
+        'Zaproś i rozmawiaj',
+        'Powiększ swój krąg',
+        'Ty',
+      ]);
+      expect(AppLocalizations.supportedLocales, hasLength(43));
+      for (final locale in AppLocalizations.supportedLocales) {
+        final values = labels(AppLocalizations(locale));
+        for (var index = 0; index < values.length; index++) {
+          expect(values[index].trim(), isNotEmpty);
+          if (locale.languageCode != 'en') {
+            expect(
+              values[index],
+              isNot(english[index]),
+              reason: '${locale.toLanguageTag()}: ${homeTranslationKeys[index]}',
+            );
+          }
+        }
+      }
+    });
+
+    test(
+      'mobile navigation copy covers every translated locale explicitly',
+      () {
+        final translatedLocaleKeys = selectableAppLanguages
+            .where(
+              (language) =>
+                  language != AppLanguagePreference.english &&
+                  language != AppLanguagePreference.polish,
+            )
+            .map((language) => language.localeKey)
+            .toSet();
+        expect(mobileNavigationTranslations.keys.toSet(), translatedLocaleKeys);
+        expect(
+          appTranslationKeys,
+          containsAll(mobileNavigationTranslationKeys),
+        );
+        for (final localeKey in translatedLocaleKeys) {
+          expect(
+            mobileNavigationTranslations[localeKey]!.keys.toSet(),
+            mobileNavigationTranslationKeys.toSet(),
+          );
+          for (final key in mobileNavigationTranslationKeys) {
+            final value = translatedPhrase(localeKey, key);
+            expect(value, isNotNull, reason: '$localeKey: $key');
+            expect(value!.trim(), isNotEmpty, reason: '$localeKey: $key');
+            expect(
+              value,
+              isNot(key),
+              reason: '$localeKey: no English fallback',
+            );
+          }
+        }
+      },
+    );
+
+    test('mobile Rooms label never falls back to English in other locales', () {
+      expect(const AppLocalizations(Locale('en')).navigationRooms, 'Rooms');
+      expect(const AppLocalizations(Locale('pl')).navigationRooms, 'Pokoje');
+      expect(const AppLocalizations(Locale('ar')).navigationRooms, 'الغرف');
+      for (final locale in AppLocalizations.supportedLocales) {
+        final label = AppLocalizations(locale).navigationRooms;
+        expect(label.trim(), isNotEmpty, reason: locale.toLanguageTag());
+        if (locale.languageCode != 'en') {
+          expect(label, isNot('Rooms'), reason: locale.toLanguageTag());
+        }
+      }
+    });
+
+    test(
+      'mobile tab label is localized without changing the product brand',
+      () {
+        expect(
+          const AppLocalizations(Locale('en')).navigationYourMoments,
+          'Your Moments',
+        );
+        expect(
+          const AppLocalizations(Locale('pl')).navigationYourMoments,
+          'Twoje Momenty',
+        );
+        for (final locale in AppLocalizations.supportedLocales) {
+          final copy = AppLocalizations(locale);
+          expect(copy.navigationYourMoments.trim(), isNotEmpty);
+          expect(copy.moments, 'YO Moments');
+          if (locale.languageCode != 'en') {
+            expect(
+              copy.navigationYourMoments,
+              isNot('Your Moments'),
+              reason: locale.toLanguageTag(),
+            );
+          }
+        }
+      },
+    );
+
+    test('mobile create guidance names the translated destination', () {
+      const source =
+          'Create a Voice Room here. Open Your Moments to record a Voice Moment.';
+      const polish =
+          'Tutaj utworzysz pokój głosowy. Otwórz Twoje Momenty, aby nagrać Voice Moment.';
+      for (final locale in AppLocalizations.supportedLocales) {
+        final copy = AppLocalizations(locale);
+        final body = copy.text(source, polish);
+        expect(
+          body,
+          contains(copy.navigationYourMoments),
+          reason: '${locale.toLanguageTag()} must match the visible tab label.',
+        );
+        expect(body, contains('Voice Moment'));
+        if (locale.languageCode != 'en') {
+          expect(body, isNot(source), reason: locale.toLanguageTag());
+        }
+        if (locale.languageCode != 'en' && locale.languageCode != 'pl') {
+          expect(
+            translatedPhrase(
+              copy.localeKey,
+              'Create a Voice Moment or start a Voice Room here.',
+            ),
+            isNotNull,
+            reason: 'Existing desktop creation guidance remains available.',
+          );
+        }
+      }
+    });
+
     test('YO Moments copy is explicit in every translated locale', () {
       final translatedLocaleKeys = selectableAppLanguages
           .where(

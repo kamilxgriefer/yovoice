@@ -5,6 +5,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:yovoice/core/theme/app_theme.dart';
+import 'package:yovoice/shared/widgets/backgrounds/yo_page_background.dart';
 
 import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/messages/data/models/conversation.dart';
@@ -21,6 +23,7 @@ import 'package:yovoice/features/rooms/data/services/room_service.dart';
 import 'package:yovoice/features/staff/data/staff_capabilities.dart';
 
 import 'voice_moment_test_doubles.dart';
+import 'home_watermark_visual_capture.dart';
 
 /// Mobile Home ("Voice Briefing") coverage: real data in every module,
 /// the retired hero composition gone, honest empty states, and clean
@@ -40,6 +43,7 @@ class _StreamFollowService extends FollowService {
 
 void main() {
   const uid = 'me-uid';
+  setUpAll(loadHomeWatermarkFonts);
 
   late FakeFirebaseFirestore db;
 
@@ -233,6 +237,87 @@ void main() {
     addTearDown(tester.view.reset);
   }
 
+  for (final (name, theme) in [
+    ('dark', AppTheme.darkTheme),
+    ('pearl', AppTheme.lightTheme),
+  ]) {
+    for (final size in [
+      const Size(320, 720),
+      const Size(390, 844),
+      const Size(768, 1024),
+    ]) {
+      testWidgets('production Home watermark mobile $name ${size.width}', (
+        tester,
+      ) async {
+        usePhone(tester, size);
+        final capture = GlobalKey();
+        var profileOpens = 0;
+        await tester.pumpWidget(
+          RepaintBoundary(
+            key: capture,
+            child: MaterialApp(
+              debugShowCheckedModeBanner: false,
+              theme: theme,
+              home: MediaQuery(
+                data: MediaQueryData(
+                  size: size,
+                  textScaler: TextScaler.linear(size.width == 320 ? 2 : 1),
+                  disableAnimations: true,
+                ),
+                child: Scaffold(
+                  body: buildHome(onProfile: () => profileOpens++),
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.runAsync(
+          () => precacheImage(
+            AssetImage(YoPageSection.home.asset),
+            capture.currentContext!,
+          ),
+        );
+        await tester.pumpAndSettle();
+        final mark = find.descendant(
+          of: find.byType(MobileHome),
+          matching: find.byKey(const ValueKey('yo-atmosphere-home')),
+        );
+        expect(mark, findsOneWidget);
+        final canvas = tester.widget<YoPageBackground>(
+          find.descendant(
+            of: find.byType(MobileHome),
+            matching: find.byType(YoPageBackground),
+          ),
+        );
+        expect(
+          canvas.decoration,
+          const BoxDecoration(),
+          reason: 'shell owns underlying paint',
+        );
+        expect(tester.getSize(find.byType(YoPageBackground)), size);
+        await captureHomeWatermarkFrame(
+          tester,
+          capture,
+          'yo-watermark-mobile-home-$name-${size.width.toInt()}',
+        );
+        final before = tester.getRect(mark);
+        await tester.drag(find.byType(ListView).first, const Offset(0, -240));
+        await tester.pumpAndSettle();
+        expect(
+          tester.getRect(mark),
+          before,
+          reason: 'logo must not scroll with Home content',
+        );
+        expect(
+          profileOpens,
+          0,
+          reason: 'decoration never triggers a profile action',
+        );
+        expect(tester.takeException(), isNull);
+      });
+    }
+  }
+
   testWidgets('renders the briefing modules from real data and drops the '
       'retired hero composition', (tester) async {
     // Tall viewport: mobile Home is a long feed now, and a lazy ListView
@@ -253,15 +338,17 @@ void main() {
     expect(find.text('Kamil'), findsOneWidget);
     expect(find.textContaining('👋'), findsNothing);
     // The four questions Home answers, in order, and nothing else.
-    expect(find.text('YO Moments from your circle'), findsOneWidget);
-    expect(find.text('Rooms for you'), findsOneWidget);
+    expect(find.text('YO Moments from your circle'), findsNothing);
+    expect(find.text('You'), findsOneWidget);
+    expect(find.text('Live for you'), findsOneWidget);
     expect(find.text('Your active rooms'), findsOneWidget);
     expect(find.text('Your recent chats'), findsOneWidget);
 
     double y(String label) => tester.getTopLeft(find.text(label)).dy;
-    expect(y('YO Moments from your circle'), lessThan(y('Rooms for you')));
-    expect(y('Rooms for you'), lessThan(y('Your active rooms')));
-    expect(y('Your active rooms'), lessThan(y('Your recent chats')));
+    expect(y('You'), lessThan(y('Live for you')));
+    expect(y('Live for you'), lessThan(y('Your recent chats')));
+    expect(y('Your recent chats'), lessThan(y('Your active rooms')));
+    expect(find.byKey(const ValueKey('home-featured-room')), findsOneWidget);
 
     // The room appears ONCE, on one board — not in three sections.
     expect(find.text('Evening Talks'), findsOneWidget);
@@ -296,6 +383,7 @@ void main() {
     var creators = 0;
     var friends = 0;
     var moment = 0;
+    var createRoom = 0;
 
     await tester.pumpWidget(
       host(
@@ -305,6 +393,7 @@ void main() {
           onFindCreators: () => creators++,
           onFriends: () => friends++,
           onCreateMoment: () => moment++,
+          onCreateRoom: () => createRoom++,
         ),
       ),
     );
@@ -326,8 +415,12 @@ void main() {
     expect(creators, 0);
     expect(discover, 0);
 
-    // Friends is a bottom-navigation destination now, not a Home card.
-    expect(friends, 0);
+    await tester.tap(find.byKey(const ValueKey('home-quick-friends')));
+    await tester.tap(find.byKey(const ValueKey('home-quick-create-room')));
+    await tester.pump();
+    expect(friends, 1);
+    expect(createRoom, 1);
+    expect(moment, 1, reason: 'Create room must never record a Moment');
   });
 
   testWidgets('phone room banners expose owner controls and senior staff '
@@ -492,11 +585,11 @@ void main() {
     }
 
     expect(find.byKey(const ValueKey('home-your-moment')), findsOneWidget);
-    expect(find.text('Followed voice'), findsOneWidget);
+    expect(find.text('Followed voice'), findsNWidgets(2));
     expect(find.text('Friend only'), findsNothing);
     expect(find.text('Silent profile'), findsNothing);
 
-    await tester.tap(find.text('Followed voice'));
+    await tester.tap(find.byKey(const ValueKey('home-moment-followed-newer')));
     await tester.pump();
     expect(openedChain?.map((moment) => moment.id), [
       'followed-older',
@@ -535,6 +628,36 @@ void main() {
     }
     expect(find.text('Stream followed'), findsNothing);
     expect(find.byKey(const ValueKey('home-your-moment')), findsOneWidget);
+  });
+
+  testWidgets('own Moment playback and plus keep separate touch targets', (
+    tester,
+  ) async {
+    usePhone(tester, const Size(390, 1000));
+    await seedMoment(id: 'mine-active', authorId: uid, authorName: 'Kamil');
+    var records = 0;
+    List<VoiceMoment>? played;
+    await tester.pumpWidget(
+      host(
+        buildHome(
+          onCreateMoment: () => records++,
+          onOpenChain: (chain) => played = chain,
+        ),
+      ),
+    );
+    for (var i = 0; i < 8; i++) {
+      await tester.pump(const Duration(milliseconds: 60));
+    }
+    await tester.tap(find.byKey(const ValueKey('home-your-moment')));
+    await tester.pump();
+    expect(played?.single.id, 'mine-active');
+    expect(records, 0);
+    final plus = find.byKey(const ValueKey('home-record-moment'));
+    expect(tester.getSize(plus), const Size(44, 44));
+    await tester.tap(plus);
+    await tester.pump();
+    expect(records, 1);
+    expect(played?.single.id, 'mine-active');
   });
 
   testWidgets('avatar-only Moments rail fits 320px at 200 percent text', (

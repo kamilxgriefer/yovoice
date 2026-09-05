@@ -48,30 +48,34 @@ keyboard/focus access on desktop, and preserved safe-area/keyboard insets.
 
 ## Floating mobile navigation
 
-`YoFloatingNavigationDock` is the only mobile shell navigation surface. Its
-central YO action is a real action, not a destination tab, and sits in a
-continuous sculpted rise that belongs to the dock's single outer vector path.
-There is no circular notch, socket, cradle or detached centre tile. The
-official transparent `yo-voice-favicon-512.png` mark rests directly on the
-Dark/Pearl dock material with no permanent disc or halo. Its invisible target
-is 64 px below 332 logical pixels and 68 px otherwise; the asset may overflow
-that target so its measured alpha bounds remain approximately 52–62 px. The
-transparent artwork is translated 19 px inside that stable target: the visible
-alpha, rather than the PNG canvas, sits approximately 22 px below the rise apex
-and keeps approximately 19 px of material beneath it.
+`YoFloatingNavigationDock` is the only mobile shell navigation surface. The
+post-Build-20 Meniscus change replaces the fixed central YO action/rise with
+five destinations: **Home, Rooms, Chats, Your Moments, More**. Their stable
+content identities are `0, 3, 1, 5` and a More action; desktop slot identities
+and the full More menu stay intact. Rooms uses the real Discover root, with
+a visible Create room control preserving the Community/Broadcast chooser.
+Your Moments keeps the unified Voice/Reels feed; it is not an own-only filter.
+Its navigation label is localized in all 43 locales without renaming the
+existing YO Moments product heading. Mobile creation onboarding highlights
+the real Rooms control, including replay after scrolling and layout changes.
 
-The control's visible top edge remains tappable, all five actions keep at least
-48x48 logical pixels, and safe-area reservation belongs to the dock rather
-than each hosting screen. Dark and Pearl use the same geometry with semantic
-navigation surfaces. Ordered keyboard traversal is Home, Chats, YO, Moments,
-More; the focused YO action owns a temporary two-pixel semantic focus ring.
-The compact layout is icon-only while localized labels remain in semantics.
-At 160% text and above the dock grows and exposes fitted labels without
-shrinking the requested scale. One 52x52, r18 capsule follows only a
-parent-accepted destination; adjacent moves stretch gently, cross-YO moves
-fade behind the transparent action, and rapid changes retarget from the
-currently rendered position. Reduced motion commits capsule and icon state
-immediately and disables the YO ripple.
+One circular bead and a continuous concave socket share a spring-driven
+position. The trailing shoulder length reacts to velocity; upright icons lift
+into the bead and the active label appears below. Tap requests a destination;
+drag previews only the chrome and commits once on release. Cancellation,
+denied navigation and external route changes restore parent-authoritative
+selection. No content query or route is opened while passing intermediate
+icons. Reduced Motion settles immediately; there is no idle animation.
+
+The normal dock is 92 px plus 4 px top clearance and safe bottom reservation,
+capped at 460 px wide with 14 px outer gutters. Beads are 44/48 px with five
+non-overlapping touch controls of at least 48 px width. End sockets clear
+the 14 px endcaps. Larger text uses a full-width active-label row rather
+than shrinking the requested scale. Semantics and ordered keyboard traversal
+expose all five localized labels; focus uses the semantic two-pixel boundary.
+RTL mirrors visual order and unread placement. Dark/Pearl share geometry,
+semantic chrome and theme-invariant brand accents. No YO logo remains in
+the navigation bar.
 
 When a real room is minimized, a non-interactive copy of the same transparent
 mark rises from the centre axis and resolves into the one real compact room
@@ -80,6 +84,42 @@ Chat/Mic/More/Return surface, direct calls are excluded, and Reduce Motion
 shows the settled bar immediately. Pushed destinations temporarily own that
 bar while the covered shell suppresses its copy, so there is one voice listener
 and one latest-message subscription throughout route transitions.
+
+### Normal-page brand canvas
+
+`YoPageBackground` renders the official transparent YO asset once, behind
+normal page content, static and excluded from hit testing and semantics.
+The optional `YoPageSection` selects original bundled scenery: Home welcome
+lounge, Rooms sofa/podcast lounge, Chats private corner, Moments recording
+studio and More/Settings quiet study. Scenery replaces the standalone mark
+(it does not stack another neon/logo over it), at `.18/.07` Dark/Pearl alpha.
+Five optimized WebP assets total 224,674 bytes; decode width is capped at
+864 px and there are no network reads, animated backgrounds or blur filters.
+High contrast omits all decorative imagery. Nested feed canvases paint once.
+Normal Friends/profile, own Profile, Clubs and the notification inbox retain
+the standalone logo at `.025/.018`. Immersive call/media/camera/auth stages
+keep their own backgrounds. The mobile More sheet has scenery behind its
+controls; the small desktop More popover remains a plain semantic surface.
+Deeper settings routes are not claimed as converted.
+
+### Live-first Home
+
+The approved Home concept is implemented as real widgets, not a screenshot:
+compact greeting and own/followed playable-Moment avatars, one leading real
+room, two Create room/Friends actions, a genuine followed-Moment recap, recent
+chats and preserved owned-room management. Additional real rooms remain below.
+No mockup names, room titles, online counts or users are production content.
+Missing room data shows loading/error/empty independently; an empty account
+does not acquire a fake live hero. Actual room covers take precedence over the
+decorative lounge fallback. All existing join/create/profile/message callbacks
+and Community/Broadcast separation remain in their original owners.
+
+Home uses a single column at compact widths and deliberate 3:2 columns when
+the desktop content slot has at least 850 px. At enlarged text, actions stack
+and primary text wraps. Chats can scroll its header/search/friend rail together
+with the lazy conversation list on short screens; enlarged-text conversation
+names receive their own full-width row. Decorative live-room pulses stop for
+Reduced Motion, accessible navigation and offstage content.
 
 ## Semantic colour ownership
 

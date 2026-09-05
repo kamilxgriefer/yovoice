@@ -1,7 +1,9 @@
 import 'translations_global.dart';
 import 'translations_global_extended.dart';
 import 'translations_global_extended_overrides.dart';
+import 'translations_home.dart';
 import 'translations_language_names.dart';
+import 'translations_mobile_navigation.dart';
 import 'translations_reels.dart';
 import 'translations_auth_call_release.dart';
 import 'translations_chinese_traditional.dart';
@@ -202,6 +204,8 @@ const appTranslationKeys = <String>{
   ...directCallRefusalTranslationKeys,
   ...reelsTranslationKeys,
   ...yoMomentsTranslationKeys,
+  ...mobileNavigationTranslationKeys,
+  ...homeTranslationKeys,
 };
 
 final appTranslations = <String, Map<String, String>>{
@@ -222,6 +226,8 @@ final appTranslations = <String, Map<String, String>>{
       ...directCallRefusalTranslations[entry.key]!,
       ...reelsTranslations[entry.key]!,
       ...yoMomentsTranslations[entry.key]!,
+      ...mobileNavigationTranslations[entry.key]!,
+      ...homeTranslations[entry.key]!,
       ...localizedExtendedLanguageNames[entry.key]!,
     }),
 };

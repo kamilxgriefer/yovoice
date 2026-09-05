@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:ui' as ui;
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
@@ -7,6 +8,9 @@ import 'package:firebase_storage_mocks/firebase_storage_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:yovoice/core/theme/app_theme.dart';
+import 'package:yovoice/core/theme/role_identity.dart';
+import 'package:yovoice/shared/widgets/backgrounds/yo_page_background.dart';
 
 import 'package:yovoice/features/clubs/data/models/club.dart';
 import 'package:yovoice/features/clubs/data/services/club_chat_service.dart';
@@ -14,7 +18,7 @@ import 'package:yovoice/features/clubs/data/services/club_service.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/home/data/services/home_feed_service.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/desktop_home.dart';
-import 'package:yovoice/features/home/presentation/widgets/desktop/desktop_moments_strip.dart';
+import 'package:yovoice/features/home/presentation/widgets/mobile/mobile_home_sections.dart';
 import 'package:yovoice/features/home/presentation/widgets/shared/home_room_board.dart';
 import 'package:yovoice/features/messages/data/models/conversation.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
@@ -26,8 +30,10 @@ import 'package:yovoice/features/profile/data/services/profile_media_service.dar
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
+import 'package:yovoice/features/staff/data/staff_capabilities.dart';
 
 import 'voice_moment_test_doubles.dart';
+import 'home_watermark_visual_capture.dart';
 
 class _RoomStreams extends RoomService {
   _RoomStreams({required List<VoiceRoom> live, required List<VoiceRoom> owned})
@@ -53,12 +59,20 @@ class _RoomStreams extends RoomService {
       Stream.multi((controller) => controller.add(_owned), isBroadcast: true);
 }
 
+class _ControlledRoomStream extends _RoomStreams {
+  _ControlledRoomStream(this.stream) : super(live: [], owned: []);
+  final Stream<List<VoiceRoom>> stream;
+  @override
+  Stream<List<VoiceRoom>> watchLivePublicRooms() => stream;
+}
+
 /// Pulse Home (desktop) coverage: every module must render REAL data,
 /// the section actions must delegate to the shell's fixed-slot
 /// navigation (never a route), and the whole screen must fit every
 /// supported desktop size without overflow.
 void main() {
   const uid = 'me-uid';
+  setUpAll(loadHomeWatermarkFonts);
 
   late FakeFirebaseFirestore db;
 
@@ -307,6 +321,61 @@ void main() {
     addTearDown(tester.view.reset);
   }
 
+  for (final (name, theme) in [
+    ('dark', AppTheme.darkTheme),
+    ('pearl', AppTheme.lightTheme),
+  ]) {
+    testWidgets('production Home watermark desktop $name', (tester) async {
+      const size = Size(1440, 900);
+      useDesktop(tester, size);
+      final capture = GlobalKey();
+      await tester.pumpWidget(
+        RepaintBoundary(
+          key: capture,
+          child: MaterialApp(
+            debugShowCheckedModeBanner: false,
+            theme: theme,
+            home: Scaffold(body: buildHome()),
+          ),
+        ),
+      );
+      await tester.runAsync(
+        () => precacheImage(
+          AssetImage(YoPageSection.home.asset),
+          capture.currentContext!,
+        ),
+      );
+      await tester.pumpAndSettle();
+      final mark = find.descendant(
+        of: find.byType(DesktopHome),
+        matching: find.byKey(const ValueKey('yo-atmosphere-home')),
+      );
+      expect(mark, findsOneWidget);
+      final canvas = tester.widget<YoPageBackground>(
+        find.descendant(
+          of: find.byType(DesktopHome),
+          matching: find.byType(YoPageBackground),
+        ),
+      );
+      expect(
+        canvas.decoration,
+        const BoxDecoration(),
+        reason: 'desktop shell retains the canvas',
+      );
+      expect(tester.getSize(find.byType(YoPageBackground)), size);
+      await captureHomeWatermarkFrame(
+        tester,
+        capture,
+        'yo-watermark-desktop-home-$name',
+      );
+      final before = tester.getRect(mark);
+      await tester.drag(find.byType(ListView).first, const Offset(0, -240));
+      await tester.pumpAndSettle();
+      expect(tester.getRect(mark), before);
+      expect(tester.takeException(), isNull);
+    });
+  }
+
   setUp(ProfileService.resetCurrentProfileCache);
   tearDown(() {
     ProfileService.resetCurrentProfileCache();
@@ -322,7 +391,7 @@ void main() {
     }
 
     for (final heading in [
-      'Rooms for you',
+      'Live for you',
       'Your active rooms',
       'Your recent chats',
     ]) {
@@ -330,8 +399,8 @@ void main() {
     }
 
     double y(String label) => tester.getTopLeft(find.text(label)).dy;
-    expect(y('Rooms for you'), lessThan(y('Your active rooms')));
-    expect(y('Your active rooms'), lessThan(y('Your recent chats')));
+    expect(y('Live for you'), lessThan(y('Your active rooms')));
+    expect(y('Your recent chats'), lessThan(y('Your active rooms')));
 
     // The removed compositions must not come back.
     for (final gone in [
@@ -344,6 +413,38 @@ void main() {
     ]) {
       expect(find.text(gone), findsNothing, reason: '\$gone returned');
     }
+  });
+
+  testWidgets('live loading, true empty and error are distinct states', (
+    tester,
+  ) async {
+    useDesktop(tester, const Size(1100, 900));
+    final controller = StreamController<List<VoiceRoom>>.broadcast();
+    addTearDown(controller.close);
+    await tester.pumpWidget(
+      host(buildHome(roomService: _ControlledRoomStream(controller.stream))),
+    );
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(find.byKey(const ValueKey('home-rooms-loading')), findsOneWidget);
+    expect(find.textContaining('No rooms to show yet'), findsNothing);
+    expect(find.byType(HomeRoomBanner), findsNothing);
+    controller.add([]);
+    await tester.pump();
+    expect(find.byKey(const ValueKey('home-rooms-loading')), findsNothing);
+    expect(find.textContaining('No rooms to show yet'), findsOneWidget);
+    controller.addError(StateError('test connection loss'));
+    await tester.pump();
+    expect(find.textContaining('No rooms to show yet'), findsNothing);
+    expect(
+      find.textContaining('Live rooms could not be loaded'),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('home-quick-create-room')),
+      findsOneWidget,
+    );
+    expect(find.byType(HomeRoomBanner), findsNothing);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('the room board is ONE deduplicated column — a room the '
@@ -376,7 +477,12 @@ void main() {
     final first = tester.getTopLeft(find.text('Evening Talks'));
     final second = tester.getTopLeft(find.text('Night Shift'));
     expect(second.dy, greaterThan(first.dy));
-    expect(second.dx, closeTo(first.dx, 1));
+    // The hero has a more generous text inset; both actual cards align.
+    final banners = find.byType(HomeRoomBanner);
+    expect(
+      tester.getTopLeft(banners.at(1)).dx,
+      closeTo(tester.getTopLeft(banners.first).dx, 1),
+    );
 
     // One primary action per room.
     expect(find.text('Join room'), findsNWidgets(2));
@@ -397,6 +503,164 @@ void main() {
     await tester.pump();
     expect(opened?.name, 'Evening Talks');
   });
+
+  for (final theme in [AppTheme.darkTheme, AppTheme.lightTheme]) {
+    for (final width in [320.0, 768.0, 1440.0]) {
+      testWidgets(
+        'featured room bright uploaded cover retains long text contrast '
+        '${theme.brightness.name} ${width.toInt()} at 200%',
+        (tester) async {
+          useDesktop(tester, Size(width, 900));
+          const title =
+              'An unusually long real room title that must remain '
+              'fully readable when the room cover is entirely white';
+          const description =
+              'A long user supplied room description should '
+              'wrap naturally at enlarged text sizes without entering a '
+              'weak part of the photo scrim or losing any of its content. '
+              'The user photo remains visible above these details.';
+          const coverUrl = 'https://example.test/bright-home-room.png';
+          await seedRoom(
+            id: 'bright',
+            name: title,
+            description: description,
+            hostId: uid,
+          );
+          var manageOpens = 0;
+          final room = VoiceRoom.fromFirestore(
+            await db.collection('rooms').doc('bright').get(),
+          ).withResolvedImageUrl(coverUrl);
+          // Populate the real NetworkImage cache with an all-white upload.
+          // This exercises production cover precedence without network I/O.
+          final recorder = ui.PictureRecorder();
+          Canvas(recorder).drawColor(Colors.white, BlendMode.src);
+          final picture = recorder.endRecording();
+          final whiteImage = await tester.runAsync(() => picture.toImage(2, 2));
+          picture.dispose();
+          final uploadImage = NetworkImage(coverUrl);
+          PaintingBinding.instance.imageCache.putIfAbsent(
+            uploadImage,
+            () => OneFrameImageStreamCompleter(
+              Future.value(ImageInfo(image: whiteImage!)),
+            ),
+          );
+          await tester.pumpWidget(
+            MaterialApp(
+              theme: theme,
+              home: MediaQuery(
+                data: MediaQueryData(
+                  size: Size(width, 900),
+                  textScaler: const TextScaler.linear(2),
+                ),
+                child: Scaffold(
+                  body: SingleChildScrollView(
+                    padding: const EdgeInsets.all(16),
+                    child: HomeRoomBanner(
+                      room: room,
+                      featured: true,
+                      compact: width < 600,
+                      onJoin: (_) {},
+                      currentUserId: uid,
+                      onManageOwnedRoom: () => manageOpens++,
+                      staffCapabilities: const StaffCapabilities(
+                        staffRole: 'moderator',
+                        endPublicRoomWithReason: true,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          );
+          await tester.pumpAndSettle();
+          expect(tester.takeException(), isNull);
+          expect(
+            tester.widget<RoomVisual>(find.byType(RoomVisual)).room.imageUrl,
+            coverUrl,
+          );
+          expect(
+            find.byWidgetPredicate(
+              (widget) => widget is Image && widget.image == uploadImage,
+            ),
+            findsOneWidget,
+            reason: 'A decorative asset must not replace a real room cover.',
+          );
+          final backing = find.byKey(
+            const ValueKey('home-featured-text-backing'),
+          );
+          final panel = tester.widget<DecoratedBox>(backing);
+          final panelColor = (panel.decoration as BoxDecoration).color!;
+          // White is the worst-case uploaded photo luminance. This lower
+          // bound does not rely on the card-wide proportional gradient.
+          final worstBackground = Color.alphaBlend(panelColor, Colors.white);
+          final panelBounds = tester.getRect(backing);
+          for (final content in [title, description]) {
+            final text = tester.widget<Text>(find.text(content));
+            final contrast =
+                (text.style!.color!.computeLuminance() + .05) /
+                (worstBackground.computeLuminance() + .05);
+            expect(contrast, greaterThanOrEqualTo(4.5));
+            expect(text.maxLines, isNull);
+            expect(text.overflow, TextOverflow.visible);
+            final bounds = tester.getRect(find.text(content));
+            expect(panelBounds.contains(bounds.topLeft), isTrue);
+            expect(panelBounds.contains(bounds.bottomRight), isTrue);
+          }
+          expect(
+            panelBounds.top - tester.getTopLeft(find.byType(HomeRoomBanner)).dy,
+            greaterThan(48),
+            reason: 'The art remains visible above the text backing.',
+          );
+          final actions = find.byKey(
+            const ValueKey('home-featured-actions-backing'),
+          );
+          final actionPanel = tester.widget<DecoratedBox>(actions);
+          final actionBackground = Color.alphaBlend(
+            (actionPanel.decoration as BoxDecoration).color!,
+            Colors.white,
+          );
+          final actionIcons = tester.widgetList<Icon>(
+            find.descendant(of: actions, matching: find.byType(Icon)),
+          );
+          expect(
+            actionIcons.map((icon) => icon.icon),
+            containsAll([Icons.more_horiz_rounded, Icons.shield_rounded]),
+          );
+          for (final foreground in [
+            ...actionIcons.map((icon) => icon.color!),
+            RoleIdentity.ownerColor,
+            RoleIdentity.superModeratorColor,
+            RoleIdentity.moderatorColor,
+          ]) {
+            expect(
+              (foreground.computeLuminance() + .05) /
+                  (actionBackground.computeLuminance() + .05),
+              greaterThanOrEqualTo(3),
+              reason: 'All role tier icons remain identifiable over white.',
+            );
+          }
+          for (final tooltip in ['Manage your room', 'Staff actions']) {
+            final target = find.byTooltip(tooltip);
+            // Preserve the native theme's compact 44px menu target. The
+            // decorative backing must neither shrink nor replace that action.
+            expect(tester.getSize(target).width, greaterThanOrEqualTo(44));
+            expect(tester.getSize(target).height, greaterThanOrEqualTo(44));
+          }
+          await tester.tap(find.byTooltip('Manage your room'));
+          await tester.pumpAndSettle();
+          await tester.tap(find.text('Room settings'));
+          await tester.pumpAndSettle();
+          expect(manageOpens, 1);
+          await tester.tap(find.byTooltip('Staff actions'));
+          await tester.pumpAndSettle();
+          expect(find.text('End public room…'), findsOneWidget);
+          expect(tester.takeException(), isNull);
+          await tester.pumpWidget(const SizedBox.shrink());
+          PaintingBinding.instance.imageCache.evict(uploadImage);
+        },
+      );
+    }
+  }
 
   testWidgets('a banner shows the real listener count, and its face pile '
       'opens the real roster on demand', (tester) async {
@@ -534,15 +798,19 @@ void main() {
     // The tile sits AFTER the room this account owns. The owner-only
     // settings button is the unambiguous marker for that card — the
     // room's name also appears on its banner in the board above.
-    expect(find.text('Create room'), findsOneWidget);
+    final ownedCreate = find.descendant(
+      of: find.byType(HomeActiveRooms),
+      matching: find.text('Create room'),
+    );
+    expect(ownedCreate, findsOneWidget);
     expect(
-      tester.getTopLeft(find.text('Create room')).dx,
+      tester.getTopLeft(ownedCreate).dx,
       greaterThan(
         tester.getTopLeft(find.byTooltip('Manage your room').last).dx,
       ),
     );
 
-    await tester.tap(find.text('Create room'));
+    await tester.tap(ownedCreate);
     await tester.pump();
     expect(started, 1);
   });
@@ -670,7 +938,7 @@ void main() {
 
       void expectFullName(String name) {
         final finder = find.descendant(
-          of: find.byType(DesktopMomentsStrip),
+          of: find.byType(MobileMomentsStrip),
           matching: find.text(name),
         );
         expect(finder, findsOneWidget);
@@ -764,9 +1032,9 @@ void main() {
         await tester.pump(const Duration(milliseconds: 60));
       }
 
-      expect(find.text('YO Moments'), findsOneWidget);
+      expect(find.text('You'), findsOneWidget);
       expect(find.text('Ola'), findsWidgets);
-      expect(find.text('Marek'), findsOneWidget);
+      expect(find.text('Marek'), findsWidgets);
       // Nobody outside friends/following/self may appear.
       expect(find.text('Nobody'), findsNothing);
       expect(find.text('Friend only'), findsNothing);
@@ -774,11 +1042,10 @@ void main() {
       // with NO expiresAt is permanent and shows — the amended
       // availability contract, not a regression.
       expect(find.text('Bartek'), findsNothing);
-      expect(find.text('Celina'), findsOneWidget);
-      // Real state only: fresh Moments read "New", older ones show their
-      // real duration.
-      expect(find.text('New'), findsWidgets);
-      expect(find.text('0:55'), findsOneWidget);
+      expect(find.text('Celina'), findsWidgets);
+      // Compact Home avatars carry no invented presence or redundant status.
+      expect(find.text('New'), findsNothing);
+      expect(find.text('Your circle'), findsOneWidget);
     });
 
     testWidgets('a Moment tile opens the existing viewer and the plus opens '
@@ -817,13 +1084,11 @@ void main() {
       expect(opened?.mediaGeneration, isNull);
       expect(opened?.hasAuthorizedMedia, isTrue);
 
-      await tester.tap(find.byTooltip('Record a Voice Moment'));
+      await tester.tap(find.byKey(const ValueKey('home-record-moment')));
       await tester.pump();
       expect(created, 1);
 
-      await tester.tap(find.text('See all').first);
-      await tester.pump();
-      expect(seeAllMoments, 1);
+      expect(seeAllMoments, 0, reason: 'avatar actions open their real Moment');
     });
 
     testWidgets('never shows profile-only suggestions in the Moments rail', (
@@ -839,7 +1104,7 @@ void main() {
         await tester.pump(const Duration(milliseconds: 60));
       }
 
-      expect(find.text('YO Moments'), findsOneWidget);
+      expect(find.text('You'), findsOneWidget);
       expect(find.text('Ola'), findsNothing);
       expect(find.text('Marek'), findsNothing);
       expect(find.text('Follow'), findsNothing);
@@ -854,8 +1119,8 @@ void main() {
         await tester.pump(const Duration(milliseconds: 60));
       }
 
-      expect(find.text('YO Moments from your circle'), findsOneWidget);
-      expect(find.text('YO Moments'), findsOneWidget);
+      expect(find.text('YO Moments from your circle'), findsNothing);
+      expect(find.text('You'), findsOneWidget);
       expect(
         find.textContaining('No Moments from your circle yet'),
         findsNothing,
