@@ -9,6 +9,7 @@ import 'package:yovoice/app/app.dart';
 import 'package:yovoice/features/messages/data/services/active_conversation_registry.dart';
 import 'package:yovoice/features/notifications/data/models/app_notification.dart';
 import 'package:yovoice/features/notifications/data/services/push_notification_service.dart';
+import 'package:yovoice/features/notifications/presentation/widgets/yo_top_notification_host.dart';
 
 /// The global in-app notification banner must not depend on FCM: any
 /// unread notification document arriving on the Firestore feed after the
@@ -40,35 +41,30 @@ void main() {
     final auth = StreamController<User?>.broadcast();
     final feed = StreamController<List<AppNotification>>.broadcast();
     final shown = <String>[];
-    final messengerKey = GlobalKey<ScaffoldMessengerState>();
+    final topNotifications = YoTopNotificationController();
+    addTearDown(topNotifications.dispose);
 
     final source = ForegroundNotificationStreamSource(
       authStates: auth.stream,
       watchNotifications: () => feed.stream,
-      // The production glue minus the sound: the real banner widget on
-      // the app-level messenger.
+      // The production glue minus the sound: the real app-level top host.
       showBanner: (arrival) {
         shown.add(arrival.id);
-        messengerKey.currentState!
-          ..hideCurrentSnackBar()
-          ..showSnackBar(
-            buildForegroundNotificationBanner(
-              title: arrival.title,
-              body: null,
-              type: arrival.type,
-              targetId: arrival.targetId,
-              actorId: arrival.actorId,
-              openLabel: 'Open',
-            ),
-          );
-        return true;
+        return topNotifications.show(
+          YoTopNotification(
+            title: arrival.title,
+            type: arrival.type,
+            onOpen: () {},
+          ),
+        );
       },
     )..start();
     addTearDown(source.dispose);
 
     await tester.pumpWidget(
       MaterialApp(
-        scaffoldMessengerKey: messengerKey,
+        builder: (context, child) =>
+            YoTopNotificationHost(controller: topNotifications, child: child!),
         home: const Scaffold(body: SizedBox.expand()),
       ),
     );
@@ -81,7 +77,10 @@ void main() {
     feed.add([notification('pre-existing')]);
     await tester.pump();
     expect(shown, isEmpty);
-    expect(find.byType(SnackBar), findsNothing);
+    expect(
+      find.byKey(const ValueKey('yo-top-notification-card')),
+      findsNothing,
+    );
 
     // A genuinely new arrival banners exactly once.
     feed.add([notification('fresh'), notification('pre-existing')]);
@@ -94,7 +93,10 @@ void main() {
     feed.add([notification('fresh'), notification('pre-existing')]);
     await tester.pump();
     expect(shown, ['fresh']);
-    expect(find.byType(SnackBar), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('yo-top-notification-card')),
+      findsOneWidget,
+    );
 
     // Let the banner's auto-dismiss timer expire before the test ends.
     await tester.pump(const Duration(seconds: 6));

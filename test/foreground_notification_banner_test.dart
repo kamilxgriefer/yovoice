@@ -1,176 +1,135 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:yovoice/app/app.dart';
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_theme.dart';
 import 'package:yovoice/features/notifications/data/models/app_notification.dart';
+import 'package:yovoice/features/notifications/presentation/widgets/yo_top_notification_host.dart';
 
 void main() {
-  testWidgets('foreground notification banner follows Pearl semantics', (
-    tester,
-  ) async {
-    final messengerKey = GlobalKey<ScaffoldMessengerState>();
-    await tester.pumpWidget(
-      MaterialApp(
-        theme: AppTheme.lightTheme,
-        scaffoldMessengerKey: messengerKey,
-        home: const Scaffold(body: SizedBox.expand()),
-      ),
-    );
-    messengerKey.currentState!.showSnackBar(
-      buildForegroundNotificationBanner(
-        title: 'A new message',
-        body: 'Open the conversation.',
-        type: NotificationType.directMessage,
-        targetId: 'conversation-pearl',
-        actorId: 'friend',
-        openLabel: 'Otwórz',
-        palette: AppPalette.light,
-      ),
-    );
-    await tester.pump();
-
-    final snackBar = tester.widget<SnackBar>(find.byType(SnackBar));
-    expect(snackBar.backgroundColor, AppPalette.light.surfaceRaised);
-    expect(snackBar.action?.textColor, AppPalette.light.interactiveForeground);
-    expect(find.text('Otwórz'), findsOneWidget);
-    expect(tester.takeException(), isNull);
-  });
-
-  for (final size in const [Size(320, 640), Size(390, 844), Size(430, 932)]) {
-    testWidgets('foreground notification banner fits ${size.width}px', (
-      tester,
-    ) async {
-      await tester.binding.setSurfaceSize(size);
-      addTearDown(() => tester.binding.setSurfaceSize(null));
-
-      final messengerKey = GlobalKey<ScaffoldMessengerState>();
-      await tester.pumpWidget(
-        MaterialApp(
-          scaffoldMessengerKey: messengerKey,
-          home: const Scaffold(body: SizedBox.expand()),
-        ),
-      );
-      messengerKey.currentState!.showSnackBar(
-        buildForegroundNotificationBanner(
-          title: 'Alex sent you a message with a deliberately long title',
-          body: 'Tap to open YO Voice and see the full conversation.',
-          type: NotificationType.directMessage,
-          targetId: 'conversation-1',
-          actorId: 'alex',
-          openLabel: 'Open',
-        ),
-      );
-      await tester.pump();
-
-      expect(find.text('Open'), findsOneWidget);
-      expect(find.byIcon(Icons.notifications_active_rounded), findsOneWidget);
-      expect(tester.takeException(), isNull);
-    });
-  }
-
-  testWidgets(
-    'foreground notification stays above a scaled voice-room control dock',
-    (tester) async {
-      const size = Size(320, 844);
-      tester.view.devicePixelRatio = 1;
-      tester.view.physicalSize = size;
-      addTearDown(tester.view.reset);
-
-      final messengerKey = GlobalKey<ScaffoldMessengerState>();
-      const dockKey = ValueKey('scaled-room-control-dock');
-      await tester.pumpWidget(
-        MaterialApp(
-          scaffoldMessengerKey: messengerKey,
-          builder: (context, child) => MediaQuery(
-            data: MediaQuery.of(
-              context,
-            ).copyWith(textScaler: const TextScaler.linear(2)),
-            child: child!,
+  for (final theme in [AppTheme.darkTheme, AppTheme.lightTheme]) {
+    for (final width in [320.0, 390.0, 768.0, 1440.0]) {
+      testWidgets('top notification ${theme.brightness.name} $width at 200%', (
+        tester,
+      ) async {
+        final size = Size(width, 844);
+        tester.view.devicePixelRatio = 1;
+        tester.view.physicalSize = size;
+        addTearDown(tester.view.reset);
+        final controller = YoTopNotificationController();
+        var opened = 0;
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: theme,
+            locale: const Locale('pl'),
+            supportedLocales: AppLocalizations.supportedLocales,
+            localizationsDelegates: const [
+              AppLocalizationsDelegate(),
+              GlobalMaterialLocalizations.delegate,
+              GlobalWidgetsLocalizations.delegate,
+              GlobalCupertinoLocalizations.delegate,
+            ],
+            builder: (context, child) => MediaQuery(
+              data: MediaQuery.of(context).copyWith(
+                padding: const EdgeInsets.only(top: 47),
+                viewPadding: const EdgeInsets.only(top: 47),
+                textScaler: const TextScaler.linear(2),
+              ),
+              child: YoTopNotificationHost(
+                controller: controller,
+                child: child!,
+              ),
+            ),
+            home: const Scaffold(body: SizedBox.expand()),
           ),
-          home: const Scaffold(
-            body: Stack(
-              children: [
-                Positioned(
-                  left: 0,
-                  right: 0,
-                  bottom: 0,
-                  height: 160,
-                  child: ColoredBox(key: dockKey, color: Color(0xFF120A19)),
-                ),
-              ],
+        );
+        expect(
+          controller.show(
+            YoTopNotification(
+              title:
+                  'Aleksandra przesłała Ci wiadomość z bardzo długim tytułem',
+              body:
+                  'Otwórz rozmowę, aby zobaczyć całą wiadomość i odpowiedzieć. '
+                  'Ta treść powinna pozostać czytelna przy powiększeniu tekstu.',
+              type: NotificationType.directMessage,
+              onOpen: () => opened++,
             ),
           ),
-        ),
-      );
-      messengerKey.currentState!.showSnackBar(
-        buildForegroundNotificationBanner(
-          title: 'Achievement unlocked: Room Opener',
-          body: 'Tap to open YO Voice',
-          type: NotificationType.achievementUnlocked,
-          targetId: 'room-opener',
-          actorId: null,
-          openLabel: 'Open',
-          bottomClearance: foregroundNotificationBottomClearance(
-            const TextScaler.linear(2),
+          isTrue,
+        );
+        await tester.pumpAndSettle();
+        final card = find.byKey(const ValueKey('yo-top-notification-card'));
+        final rect = tester.getRect(card);
+        expect(rect.top, 57);
+        expect(rect.left, greaterThanOrEqualTo(16));
+        expect(rect.right, lessThanOrEqualTo(width - 16));
+        expect(rect.width, lessThanOrEqualTo(520));
+        expect(rect.height, lessThanOrEqualTo(360));
+        final palette = theme.brightness == Brightness.dark
+            ? AppPalette.dark
+            : AppPalette.light;
+        expect(tester.widget<Material>(card).color, palette.surfaceRaised);
+        expect(find.text('Otwórz'), findsOneWidget);
+        expect(find.byTooltip('Zamknij'), findsOneWidget);
+        for (final key in [
+          'yo-top-notification-open',
+          'yo-top-notification-close',
+        ]) {
+          final size = tester.getSize(find.byKey(ValueKey(key)));
+          expect(size.width, greaterThanOrEqualTo(44));
+          expect(size.height, greaterThanOrEqualTo(44));
+        }
+        for (final text in tester.widgetList<Text>(
+          find.descendant(
+            of: find.byKey(const ValueKey('yo-top-notification-scroll')),
+            matching: find.byType(Text),
           ),
-        ),
-      );
-      await tester.pump();
-
-      final dockRect = tester.getRect(find.byKey(dockKey));
-      final titleRect = tester.getRect(
-        find.text('Achievement unlocked: Room Opener'),
-      );
-      final toastRect = tester.getRect(
-        find.byKey(const ValueKey('achievement-toast')),
-      );
-      final snackBar = tester.widget<SnackBar>(find.byType(SnackBar));
-      expect(snackBar.margin, const EdgeInsets.fromLTRB(12, 12, 12, 176));
-      expect(snackBar.duration, const Duration(seconds: 2));
-      expect(toastRect.width, lessThanOrEqualTo(380));
-      expect(find.text('Tap to open YO Voice'), findsNothing);
-      expect(find.text('Open'), findsNothing);
-      expect(titleRect.overlaps(dockRect), isFalse);
-      expect(toastRect.overlaps(dockRect), isFalse);
-      expect(titleRect.bottom, lessThanOrEqualTo(dockRect.top));
-      expect(toastRect.bottom, lessThanOrEqualTo(dockRect.top));
-      expect(tester.takeException(), isNull);
-    },
-  );
-
-  testWidgets('achievement toast disappears after two seconds', (tester) async {
-    const size = Size(1440, 900);
-    tester.view.devicePixelRatio = 1;
-    tester.view.physicalSize = size;
-    addTearDown(tester.view.reset);
-
-    final messengerKey = GlobalKey<ScaffoldMessengerState>();
+        )) {
+          expect(text.maxLines, isNull);
+          expect(text.overflow, isNot(TextOverflow.ellipsis));
+        }
+        await tester.tap(
+          find.byKey(const ValueKey('yo-top-notification-open')),
+        );
+        await tester.pump();
+        expect(opened, 1);
+        expect(card, findsNothing);
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox.shrink());
+        controller.dispose();
+      });
+    }
+  }
+  testWidgets('achievement uses title-only trophy and two-second lifetime', (
+    tester,
+  ) async {
+    final controller = YoTopNotificationController();
     await tester.pumpWidget(
       MaterialApp(
-        scaffoldMessengerKey: messengerKey,
+        builder: (context, child) =>
+            YoTopNotificationHost(controller: controller, child: child!),
         home: const Scaffold(body: SizedBox.expand()),
       ),
     );
-    messengerKey.currentState!.showSnackBar(
-      buildForegroundNotificationBanner(
+    controller.show(
+      YoTopNotification(
         title: 'Achievement unlocked: First Word',
-        body: 'Tap to open YO Voice',
+        body: 'Unused duplicate body',
         type: NotificationType.achievementUnlocked,
-        targetId: 'first-word',
-        actorId: null,
-        openLabel: 'Open',
+        onOpen: () {},
       ),
     );
     await tester.pumpAndSettle();
-
-    final toast = find.byKey(const ValueKey('achievement-toast'));
-    expect(toast, findsOneWidget);
-    expect(tester.getSize(toast).width, lessThanOrEqualTo(380));
-
+    expect(find.byIcon(Icons.emoji_events_rounded), findsOneWidget);
+    expect(find.text('Unused duplicate body'), findsNothing);
     await tester.pump(const Duration(seconds: 2));
-    await tester.pump(const Duration(milliseconds: 300));
     await tester.pumpAndSettle();
-    expect(toast, findsNothing);
+    expect(
+      find.byKey(const ValueKey('yo-top-notification-card')),
+      findsNothing,
+    );
+    await tester.pumpWidget(const SizedBox.shrink());
+    controller.dispose();
   });
 }

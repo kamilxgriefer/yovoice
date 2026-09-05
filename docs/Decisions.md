@@ -8992,3 +8992,93 @@ and art direction, not a source of fictional production records.
 - Artwork provenance and the prompt set are retained in
   `assets/images/atmospheres/README.md`; original generated PNGs are preserved.
 - A source commit is not a store or Hosting release. No publication is implied.
+
+## ADR-143: Foreground arrivals share one session-bound top notification host
+
+**Date:** 2026-09-05
+**Status:** Source, independent QA/visual and local Simulator verified; not deployed
+
+### Context
+
+The owner requested attractive animated notifications at the top of the app.
+Activity used bottom SnackBars, native foreground pushes preferred OS alerts,
+and MainShell messages had a separate top overlay. Moving only one surface
+would retain inconsistent placement and allow visible cards to stack.
+
+### Decision
+
+Use one app-level controller/host above Navigator routes, with a separate
+notification-only tooltip overlay. MainShell contributes its existing message
+arrival through that controller using a source token for scoped cleanup.
+No backend query, routing authority, unread baseline or delivery arbitration is
+moved into the presentation widget. Latest arrivals replace previous content;
+there is no hidden widget-owned queue or recurring animation.
+
+Foreground non-call pushes prefer the in-app host and preserve native fallback.
+Calls remain native-first and OS background handling is untouched. Capture UID
+and identity epoch before delivery; check both before each presentation attempt,
+including retry after an asynchronous native failure. The host immediately
+clears on auth exit and backgrounding. A native alert already accepted by the
+platform before auth exit cannot be retracted by this presentation selector.
+
+### Reasoning
+
+One surface gives consistent placement, motion and accessibility while retaining
+the existing source-of-truth delivery contracts. Bounded, safe-area-aware layout
+keeps controls reachable; a truthful rejection allows existing retry/fallback
+logic to act when the host has insufficient space. Session-bound attempts avoid
+showing stale content to a later signed-in account.
+
+### Consequences
+
+- Ordinary action success/error SnackBars are not migrated.
+- Existing notification sound and settings remain unchanged; no new audio assets
+  or recipient/fan-out policy is introduced.
+- Real push delivery, physical devices and native assistive technologies remain
+  separate acceptance gates from widget and local Simulator verification.
+- This source work does not publish a store build, deploy Hosting or send mail.
+
+## ADR-144: Mobile root Back uses bounded history without duplicating routes
+
+**Date:** 2026-09-05
+**Status:** Source, independent QA/visual and local Simulator verified; not deployed
+
+### Context
+
+The owner requested returning by swiping instead of repeatedly selecting Home.
+Ordinary pushed Material pages already have Cupertino edge navigation, but
+the main mobile sections are retained content slots rather than pushed routes.
+Their animation's previous index is not a usable navigation history.
+
+### Decision
+
+Keep native pushed-route gestures and all existing pop/confirmation guards.
+Add a session-local history for retained roots Home, Rooms, Chats, Moments and
+Friends, capped at 24 entries while preserving the Home baseline. An explicit
+Home selection clears history. Back applies the existing tab-selection path
+without recording itself, so no duplicate pages, listeners or room sessions
+are created. Normalize history on mobile/desktop layout transitions and seed
+guided onboarding's visible destination rather than recording tour movements.
+
+Only the mobile root body receives a leading-edge touch gesture. The dock is
+outside that detector. A translucent edge listener feeds a horizontal recognizer
+before underlying media, retaining normal vertical-scroll/tap competition. It
+commits on release, checks current route and navigation identity again, and
+honors pointer cancellation. System Back consumes the same root history; child
+routes and modals keep their own normal Navigator priority. Returning clears
+input focus on the departing retained tab without discarding its state.
+
+### Reasoning
+
+This fills the missing root behavior without weakening protected recording,
+camera/cropping, call or authentication exits. Limiting recognition to the edge
+avoids turning center-screen carousels, stories and dock drags into navigation.
+
+### Consequences
+
+- Root-history Back uses the existing short tab transition, not a fabricated
+  live screenshot of the previous page; Reduced Motion retains its instant path.
+- Full-screen dialogs and guarded flows retain their explicit close/confirmation
+  semantics. This is not an assertion that every screen can be swiped away.
+- History is transient per MainShell session, not a persisted cross-account trail.
+- No backend, permission, push, store release or production deployment changes.

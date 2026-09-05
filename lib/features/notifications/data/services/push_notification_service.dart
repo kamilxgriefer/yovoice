@@ -79,6 +79,49 @@ Future<bool> presentForegroundNotificationDecision({
   }
 }
 
+/// Foreground social/activity deliveries share the app's animated banner on
+/// every platform. Calls retain their native-first alert behavior; background
+/// delivery is handled by the OS and never enters this selector.
+///
+/// A missing/unready host must not consume a delivery. Native fallback and the
+/// caller's reservation completion remain based on actual presentation.
+@visibleForTesting
+Future<bool> presentForegroundNotificationSurface({
+  required bool isWeb,
+  required bool isCall,
+  required bool Function() presentInApp,
+  required Future<void> Function() presentNative,
+  bool Function()? isCurrent,
+}) async {
+  bool tryInApp() {
+    if (isCurrent?.call() == false) return false;
+    try {
+      return presentInApp();
+    } catch (error) {
+      debugPrint(
+        'PushNotificationService: foreground app surface unavailable '
+        '(${error.runtimeType}).',
+      );
+      return false;
+    }
+  }
+
+  if (isWeb) return tryInApp();
+  if (!isCall && tryInApp()) return true;
+  if (isCurrent?.call() == false) return false;
+  try {
+    await presentNative();
+    return true;
+  } catch (error) {
+    debugPrint(
+      'PushNotificationService: foreground native surface unavailable '
+      '(${error.runtimeType}).',
+    );
+    // The host may have mounted while the platform Future was in flight.
+    return tryInApp();
+  }
+}
+
 /// Direct-message pushes stay enabled for background delivery, but are
 /// redundant while their conversation is open. Incoming-call arbitration is
 /// handled separately by [DirectCallAlertRegistry], because FCM must remain a
@@ -257,10 +300,10 @@ class PushNotificationService {
   ForegroundNotificationClaimDecision Function(String? notificationId)?
   claimForegroundNotification;
 
-  /// Web browsers do not automatically present a `notification` payload
-  /// while the tab is focused, so they always use this in-app path. Native
-  /// normally uses a local system notification; this hook is also its safe
-  /// fallback when that platform presentation throws.
+  /// Ordinary foreground notifications prefer this shared in-app surface on
+  /// every platform. Native presentation remains a fallback when the host is
+  /// unavailable, and the first choice for incoming calls. Web has no native
+  /// local-notification fallback. Background OS delivery is unchanged.
   ///
   /// [notificationId] is the Firestore notification document id carried in
   /// the push payload — the app layer dedupes against its stream-driven
@@ -778,6 +821,13 @@ class PushNotificationService {
   Future<void> _showLocalNotification(RemoteMessage message) async {
     final notification = message.notification;
     if (notification == null) return;
+    final deliveryUserId = _auth.currentUser?.uid;
+    final deliveryEpoch = _identityEpochGuard.epoch;
+    bool isCurrentDelivery() =>
+        deliveryUserId != null &&
+        deliveryUserId == _auth.currentUser?.uid &&
+        deliveryEpoch == _identityEpochGuard.epoch;
+    if (!isCurrentDelivery()) return;
     final type = NotificationType.fromName(message.data['type'] as String?);
     final targetId = message.data['targetId'] as String?;
     final isCall = type == NotificationType.directCall;
@@ -837,15 +887,15 @@ class PushNotificationService {
 
         var presented = false;
         try {
-          if (kIsWeb) {
-            presented = _tryShowInAppForegroundNotification(
+          presented = await presentForegroundNotificationSurface(
+            isWeb: kIsWeb,
+            isCall: isCall,
+            isCurrent: isCurrentDelivery,
+            presentInApp: () => _tryShowInAppForegroundNotification(
               message,
               notificationId: notificationId,
-            );
-            return presented;
-          }
-          try {
-            await _localNotifications.show(
+            ),
+            presentNative: () => _localNotifications.show(
               id: notification.hashCode,
               title: notification.title,
               body: notification.body,
@@ -879,23 +929,9 @@ class PushNotificationService {
                   '${message.data['targetId'] ?? ''}|'
                   '${message.data['actorId'] ?? ''}|'
                   '${message.data['notificationId'] ?? ''}',
-            );
-            presented = true;
-            return true;
-          } catch (error) {
-            // The native path did not accept a presentation. Try the in-app
-            // surface, and release both reservations if that surface is not
-            // mounted either.
-            debugPrint(
-              'PushNotificationService: could not present a foreground '
-              'notification (${error.runtimeType}).',
-            );
-            presented = _tryShowInAppForegroundNotification(
-              message,
-              notificationId: notificationId,
-            );
-            return presented;
-          }
+            ),
+          );
+          return presented;
         } finally {
           if (callAlertClaim != null) {
             DirectCallAlertRegistry.complete(

@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:yovoice/core/helpers/error_messages.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/navigation/app_route_observer.dart';
+import 'package:yovoice/core/navigation/mobile_destination_history.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 
 import 'package:yovoice/features/auth/data/auth_service.dart';
@@ -34,6 +35,8 @@ import 'package:yovoice/features/home/presentation/widgets/more_sheet.dart';
 import 'package:yovoice/features/home/presentation/widgets/navigation/yo_floating_navigation_dock.dart';
 import 'package:yovoice/features/home/presentation/widgets/navigation/yo_preserving_tab_transition.dart';
 import 'package:yovoice/features/notifications/data/services/notification_service.dart';
+import 'package:yovoice/features/notifications/data/models/app_notification.dart';
+import 'package:yovoice/features/notifications/presentation/widgets/yo_top_notification_host.dart';
 import 'package:yovoice/features/notifications/presentation/screens/notifications_screen.dart';
 import 'package:yovoice/features/onboarding/data/guided_onboarding_progress.dart';
 import 'package:yovoice/features/onboarding/presentation/guided_onboarding_tour.dart';
@@ -62,6 +65,7 @@ import 'package:yovoice/features/rooms/presentation/screens/room_type_selector_s
 import 'package:yovoice/features/rooms/presentation/widgets/room_mini_bar.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
+import 'package:yovoice/shared/widgets/navigation/yo_edge_back_gesture.dart';
 
 @visibleForTesting
 bool shouldPresentIncomingMessageOverlay({
@@ -268,10 +272,12 @@ class _MainShellState extends State<MainShell>
 
   final Map<String, int> _previousUnreadCounts = <String, int>{};
 
-  OverlayEntry? _messageOverlay;
-  Timer? _messageOverlayTimer;
+  final _messageNotificationSource = Object();
+  YoTopNotificationController? _messageNotificationController;
 
   int _selectedIndex = 0;
+  final _mobileHistory = MobileDestinationHistory();
+  bool? _lastDesktopLayout;
   int _previousSelectedIndex = 0;
   int _tabDirection = 1;
   int _unreadConversationCount = 0;
@@ -748,7 +754,10 @@ class _MainShellState extends State<MainShell>
     // removed centre-logo action. Desktop introduces its rail from Home.
     // Preparing either layout invokes no creation, entry or media permission.
     final tourIndex = desktop ? 0 : _discoverSlot;
-    if (_selectedIndex != tourIndex) _onDestinationSelected(tourIndex);
+    if (_selectedIndex != tourIndex) {
+      _mobileHistory.resetTo(tourIndex);
+      _onDestinationSelected(tourIndex, recordHistory: false);
+    }
     await WidgetsBinding.instance.endOfFrame;
     if (!mounted ||
         !_onboardingOpen ||
@@ -964,61 +973,32 @@ class _MainShellState extends State<MainShell>
     final senderName = conversation.displayNameFor(otherUserId);
     final photoUrl = conversation.photoUrlFor(otherUserId);
     final preview = conversation.previewFor(currentUserId);
-
     _removeMessageOverlay();
-
-    final overlay = Overlay.of(context, rootOverlay: true);
-
-    _messageOverlay = OverlayEntry(
-      builder: (overlayContext) {
-        final topPadding = MediaQuery.paddingOf(overlayContext).top;
-
-        return Positioned(
-          top: topPadding + 10,
-          left: 12,
-          right: 12,
-          child: Material(
-            color: Colors.transparent,
-            child: TweenAnimationBuilder<double>(
-              tween: Tween<double>(begin: -1, end: 0),
-              duration: const Duration(milliseconds: 320),
-              curve: Curves.easeOutCubic,
-              builder: (context, value, child) {
-                return Transform.translate(
-                  offset: Offset(0, value * 90),
-                  child: Opacity(opacity: 1 + value, child: child),
-                );
-              },
-              child: _IncomingMessageBanner(
-                senderName: senderName,
-                photoUrl: photoUrl,
-                preview: preview,
-                onTap: () {
-                  _removeMessageOverlay();
-                  if (mounted) _onDestinationSelected(1);
-                },
-                onClose: _removeMessageOverlay,
-              ),
-            ),
-          ),
-        );
-      },
+    final controller = YoTopNotificationHost.maybeOf(context);
+    // Tests/embedded shells without the app host retain the existing unread
+    // badge/inbox as fallback; never create a second overlay or bottom toast.
+    if (controller == null) return;
+    final accepted = controller.show(
+      YoTopNotification(
+        title: senderName,
+        body: preview,
+        type: NotificationType.directMessage,
+        source: _messageNotificationSource,
+        leading: _IncomingMessageAvatar(
+          senderName: senderName,
+          photoUrl: photoUrl,
+        ),
+        onOpen: () {
+          if (mounted) _onDestinationSelected(1);
+        },
+      ),
     );
-
-    overlay.insert(_messageOverlay!);
-
-    _messageOverlayTimer = Timer(
-      const Duration(seconds: 4),
-      _removeMessageOverlay,
-    );
+    if (accepted) _messageNotificationController = controller;
   }
 
   void _removeMessageOverlay() {
-    _messageOverlayTimer?.cancel();
-    _messageOverlayTimer = null;
-
-    _messageOverlay?.remove();
-    _messageOverlay = null;
+    _messageNotificationController?.clear(source: _messageNotificationSource);
+    _messageNotificationController = null;
   }
 
   // Drives a paint-only directional fade-through. The retained tab layers
@@ -1029,7 +1009,7 @@ class _MainShellState extends State<MainShell>
     value: 1,
   );
 
-  void _onDestinationSelected(int index) {
+  void _onDestinationSelected(int index, {bool recordHistory = true}) {
     if (_selectedIndex == index) {
       return;
     }
@@ -1041,6 +1021,7 @@ class _MainShellState extends State<MainShell>
     _removeMessageOverlay();
 
     final desktop = MainShell.usesDesktopLayout(MediaQuery.sizeOf(context));
+    if (!desktop && recordHistory) _mobileHistory.select(index);
     setState(() {
       _previousSelectedIndex = _selectedIndex;
       _tabDirection = desktop
@@ -1060,6 +1041,26 @@ class _MainShellState extends State<MainShell>
       _tabTransition.value = 1;
     } else {
       _tabTransition.forward(from: 0);
+    }
+  }
+
+  bool get _canReturnThroughMobileHistory =>
+      _mobileHistory.canGoBack &&
+      !_isMoreMenuActive &&
+      !_onboardingOpen &&
+      !_permissionSetupOpen &&
+      !_hostedDestinationActive;
+
+  void _returnThroughMobileHistory() {
+    if (!_canReturnThroughMobileHistory ||
+        ModalRoute.of(context)?.isCurrent == false ||
+        _tabTransition.isAnimating) {
+      return;
+    }
+    final previous = _mobileHistory.back();
+    if (previous != null) {
+      FocusManager.instance.primaryFocus?.unfocus();
+      _onDestinationSelected(previous, recordHistory: false);
     }
   }
 
@@ -1469,6 +1470,10 @@ class _MainShellState extends State<MainShell>
   Widget build(BuildContext context) {
     final viewport = MediaQuery.sizeOf(context);
     final isDesktop = MainShell.usesDesktopLayout(viewport);
+    if (_lastDesktopLayout != isDesktop) {
+      _mobileHistory.resetTo(isDesktop ? 0 : _mobileIndex);
+      _lastDesktopLayout = isDesktop;
+    }
 
     HomeScreen.openDiscoverTab = () => _onDestinationSelected(_discoverSlot);
 
@@ -1554,43 +1559,54 @@ class _MainShellState extends State<MainShell>
       );
     }
 
-    return Scaffold(
-      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
-      body: Column(
-        children: [
-          if (_showVerificationBanner)
-            EmailVerificationBanner(onTap: _openVerifyEmail),
-          Expanded(
-            child: _tabContent(
-              index: _mobileIndex,
-              previousIndex: _mobileIndexFor(_previousSelectedIndex),
-              isDesktop: false,
+    return PopScope<Object?>(
+      canPop: !_mobileHistory.canGoBack,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) _returnThroughMobileHistory();
+      },
+      child: Scaffold(
+        backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+        body: YoEdgeBackGesture(
+          enabled: _canReturnThroughMobileHistory,
+          navigationIdentity: _mobileIndex,
+          onBack: _returnThroughMobileHistory,
+          child: Column(
+            children: [
+              if (_showVerificationBanner)
+                EmailVerificationBanner(onTap: _openVerifyEmail),
+              Expanded(
+                child: _tabContent(
+                  index: _mobileIndex,
+                  previousIndex: _mobileIndexFor(_previousSelectedIndex),
+                  isDesktop: false,
+                ),
+              ),
+            ],
+          ),
+        ),
+        bottomNavigationBar: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // A hosted destination owns the visible persistent chrome while
+            // this covered shell is suspended, preserving one room listener.
+            if (!_hostedDestinationActive) const RoomMiniBar(),
+            YoFloatingNavigationDock(
+              tourDestinationKeys: {
+                2: _onboardingAnchors[GuidedOnboardingTarget.chats]!,
+                3: _onboardingAnchors[GuidedOnboardingTarget.moments]!,
+                4: _onboardingAnchors[GuidedOnboardingTarget.more]!,
+              },
+              selectedTabIndex: _mobileIndex,
+              roomsTabIndex: _discoverSlot,
+              momentsTabIndex: _momentsSlot,
+              unreadConversationCount: _unreadConversationCount,
+              onDestinationSelected: _onDestinationSelected,
+              onVoicePressed: _openVoiceAction,
+              onMorePressed: _openMoreMenu,
+              moreSelected: _isMoreMenuActive,
             ),
-          ),
-        ],
-      ),
-      bottomNavigationBar: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          // A hosted destination owns the visible persistent chrome while
-          // this covered shell is suspended, preserving one room listener.
-          if (!_hostedDestinationActive) const RoomMiniBar(),
-          YoFloatingNavigationDock(
-            tourDestinationKeys: {
-              2: _onboardingAnchors[GuidedOnboardingTarget.chats]!,
-              3: _onboardingAnchors[GuidedOnboardingTarget.moments]!,
-              4: _onboardingAnchors[GuidedOnboardingTarget.more]!,
-            },
-            selectedTabIndex: _mobileIndex,
-            roomsTabIndex: _discoverSlot,
-            momentsTabIndex: _momentsSlot,
-            unreadConversationCount: _unreadConversationCount,
-            onDestinationSelected: _onDestinationSelected,
-            onVoicePressed: _openVoiceAction,
-            onMorePressed: _openMoreMenu,
-            moreSelected: _isMoreMenuActive,
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -1862,150 +1878,40 @@ class _MoreDestinationHostState extends State<MoreDestinationHost> {
   }
 }
 
-class _IncomingMessageBanner extends StatelessWidget {
-  const _IncomingMessageBanner({
+class _IncomingMessageAvatar extends StatelessWidget {
+  const _IncomingMessageAvatar({
     required this.senderName,
     required this.photoUrl,
-    required this.preview,
-    required this.onTap,
-    required this.onClose,
   });
-
   final String senderName;
   final String photoUrl;
-  final String preview;
-  final VoidCallback onTap;
-  final VoidCallback onClose;
 
   @override
   Widget build(BuildContext context) {
-    final copy = AppLocalizations.of(context);
-    final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
-    final hasPhoto = photoUrl.trim().isNotEmpty;
     final initial = senderName.trim().isEmpty
         ? '?'
-        : senderName.trim()[0].toUpperCase();
-
-    return Material(
-      key: const ValueKey('incoming-message-banner'),
-      color: palette.surfaceRaised,
-      elevation: 18,
-      shadowColor: palette.shadow.withValues(alpha: .42),
-      borderRadius: BorderRadius.circular(20),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(20),
-        child: Container(
-          padding: const EdgeInsets.fromLTRB(12, 11, 8, 11),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: palette.borderStrong),
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [
-                Color.lerp(palette.surfaceRaised, colors.primary, .055)!,
-                palette.surface,
-              ],
-            ),
-          ),
-          child: Row(
-            children: [
-              Stack(
-                clipBehavior: Clip.none,
-                children: [
-                  CircleAvatar(
-                    radius: 23,
-                    backgroundColor: colors.primary,
-                    backgroundImage: hasPhoto ? NetworkImage(photoUrl) : null,
-                    child: hasPhoto
-                        ? null
-                        : Text(
-                            initial,
-                            style: TextStyle(
-                              color: colors.onPrimary,
-                              fontWeight: FontWeight.w900,
-                            ),
-                          ),
-                  ),
-                  Positioned(
-                    right: -1,
-                    bottom: -1,
-                    child: Container(
-                      width: 16,
-                      height: 16,
-                      decoration: BoxDecoration(
-                        color: colors.primary,
-                        shape: BoxShape.circle,
-                        border: Border.all(
-                          color: palette.surfaceRaised,
-                          width: 2,
-                        ),
-                      ),
-                      child: Icon(
-                        Icons.chat_bubble_rounded,
-                        color: colors.onPrimary,
-                        size: 9,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            senderName,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: palette.textPrimary,
-                              fontSize: 14,
-                              fontWeight: FontWeight.w900,
-                            ),
-                          ),
-                        ),
-                        Text(
-                          copy.text('now', 'teraz'),
-                          style: TextStyle(
-                            color: palette.textTertiary,
-                            fontSize: 10,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      preview,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: palette.textSecondary,
-                        fontSize: 12,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              IconButton(
-                onPressed: onClose,
-                visualDensity: VisualDensity.compact,
-                icon: Icon(
-                  Icons.close_rounded,
-                  color: palette.textTertiary,
-                  size: 19,
-                ),
-              ),
-            ],
+        : senderName.trim().characters.first.toUpperCase();
+    final fallback = ColoredBox(
+      color: colors.primary,
+      child: Center(
+        child: Text(
+          initial,
+          style: TextStyle(
+            color: colors.onPrimary,
+            fontWeight: FontWeight.w800,
           ),
         ),
       ),
+    );
+    return ClipOval(
+      child: photoUrl.trim().isEmpty
+          ? fallback
+          : Image.network(
+              photoUrl,
+              fit: BoxFit.cover,
+              errorBuilder: (_, _, _) => fallback,
+            ),
     );
   }
 }

@@ -46,6 +46,47 @@ and 2560 px where relevant, plus a 2.0 text scale. The acceptance bar is no
 overflow, no clipped primary text, 44x44 minimum interactive targets,
 keyboard/focus access on desktop, and preserved safe-area/keyboard insets.
 
+## Foreground notification banner
+
+`YoTopNotificationHost` owns one top-centered arrival card above the Navigator,
+including pushed routes and dialogs. Its tooltip overlay is a sibling of the
+Navigator, not its ancestor, so existing root-overlay chat controls cannot
+intercept the notification. Normal success/error SnackBars are unchanged.
+
+The card sits 10 px below the safe top inset, with 16 px side gutters and a
+520 px maximum width. It uses the shared raised surface, strong boundary and
+semantic foregrounds in Dark and Pearl. A type icon or actual message avatar
+leads the text; localized Open and Close controls have 44 px targets. Long
+content wraps and scrolls within the remaining keyboard-safe height. If there
+is insufficient space for the controls, the host rejects presentation rather
+than accepting an invisible card; the existing stream can retry when space
+returns.
+
+Entry is a 300 ms fade/18 px slide with a restrained .98-to-1 scale; dismissal
+is 160 ms. Reduced Motion settles instantly, with no idle animation. Latest
+arrivals replace the card; generation-bound timers cannot close a newer one.
+Achievements retain their 2-second title-only presentation, other arrivals
+use 5 seconds. Hover/focus pauses dismissal; accessible navigation keeps the
+card until dismissal. The live region does not request focus on arrival.
+F6/Shift-F6 explicitly moves to the notification controls or returns to the
+previous focused control; Tab cycles Close/Open within that region. Escape
+only dismisses when focus is in the card, preserving modal Escape outside it.
+Arrow/Page/Home/End keys scroll long notification content only while focused
+inside that region. Replacing a scrolled card resets content to the top while
+preserving control focus. Session clear/Open discard the old focus-return target.
+The visual F6 hint is shown on desktop or after actual keyboard input, not in
+the ordinary touch-phone presentation.
+Auth exit and app backgrounding clear content immediately, without an exit
+animation. Open clears the card before invoking the existing route callback.
+
+Firestore activity, foreground social pushes and MainShell message arrivals
+share this presentation. Existing deduplication, unread baselines, active-chat
+suppression and route payloads retain their owners. Native foreground social
+delivery prefers this card, with the existing native fallback if unavailable;
+calls remain native-first and OS background delivery is unchanged. Delayed
+foreground fallback rechecks the captured authenticated UID and identity epoch
+before presenting, preventing a stale retry after sign-out/account change.
+
 ## Floating mobile navigation
 
 `YoFloatingNavigationDock` is the only mobile shell navigation surface. The
@@ -84,6 +125,27 @@ Chat/Mic/More/Return surface, direct calls are excluded, and Reduce Motion
 shows the settled bar immediately. Pushed destinations temporarily own that
 bar while the covered shell suppresses its copy, so there is one voice listener
 and one latest-message subscription throughout route transitions.
+
+### Mobile Back behavior
+
+Ordinary pushed pages retain Flutter's native Cupertino leading-edge Back and
+their existing pop guards. Retained mobile root sections additionally keep a
+session-local, bounded history: Home → Rooms → Chats returns Chats → Rooms →
+Home. Selecting Home explicitly clears the trail. Back applies the original
+selection callback without recording a new visit, preserving mounted tab state
+and service ownership; focus is released from the departing root.
+
+`YoEdgeBackGesture` listens only in the leading 24 px (or larger safe inset),
+mirrored for RTL, and only for touch input. Its translucent edge listener joins
+the horizontal gesture arena ahead of child media while preserving vertical
+scrolling and taps. Center-screen media gestures and the separate dock are not
+claimed. A small safe-inset-aware Back indicator follows drag progress; release
+commits once after distance/velocity acceptance. Cancellation, a changed
+destination, a covering route or disabled state cannot commit stale navigation.
+System Back consumes root history before normal root exit behavior. Desktop
+layout changes normalize the trail; onboarding seeds its actual visible root
+instead of recording artificial tour visits. Call, recording, processing and
+full-screen media dismissal/confirmation rules are unchanged.
 
 ### Normal-page brand canvas
 

@@ -24,160 +24,13 @@ import 'package:yovoice/features/notifications/data/services/notification_servic
 import 'package:yovoice/features/notifications/data/services/push_notification_service.dart';
 import 'package:yovoice/features/notifications/data/models/app_notification.dart';
 import 'package:yovoice/features/notifications/presentation/notification_router.dart';
-
-double foregroundNotificationBottomClearance(TextScaler textScaler) {
-  final textScale = textScaler.scale(1);
-  return 104.0 + 72.0 * ((textScale - 1.0).clamp(0.0, 1.0));
-}
+import 'package:yovoice/features/notifications/presentation/widgets/yo_top_notification_host.dart';
 
 @visibleForTesting
 void clearSessionSnackBars(ScaffoldMessengerState messenger) {
-  // clearSnackBars removes the queue but animates the current banner away.
-  // removeCurrentSnackBar completes that removal in this same frame so copy
-  // from account A can never paint over Login or account B.
+  // Remove queued and visible business feedback synchronously on auth exit.
   messenger.clearSnackBars();
   messenger.removeCurrentSnackBar();
-}
-
-SnackBar buildForegroundNotificationBanner({
-  required String title,
-  required String? body,
-  required NotificationType type,
-  required String? targetId,
-  required String? actorId,
-  required String openLabel,
-  String? notificationId,
-  double bottomClearance = 104,
-  AppPalette? palette,
-}) {
-  final semanticPalette = palette ?? AppPalette.dark;
-  final isAchievement = type == NotificationType.achievementUnlocked;
-  if (isAchievement) {
-    return SnackBar(
-      behavior: SnackBarBehavior.floating,
-      margin: EdgeInsets.fromLTRB(12, 12, 12, bottomClearance),
-      padding: EdgeInsets.zero,
-      elevation: 0,
-      duration: const Duration(seconds: 2),
-      backgroundColor: Colors.transparent,
-      content: Align(
-        alignment: Alignment.bottomRight,
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 380),
-          child: Material(
-            key: const ValueKey('achievement-toast'),
-            color: semanticPalette.surfaceRaised,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(16),
-              side: BorderSide(color: semanticPalette.borderStrong),
-            ),
-            clipBehavior: Clip.antiAlias,
-            child: InkWell(
-              onTap: () => NotificationRouter.route(
-                type: type,
-                targetId: targetId,
-                actorId: actorId,
-                notificationId: notificationId,
-              ),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 14,
-                  vertical: 12,
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      Icons.emoji_events_rounded,
-                      size: 22,
-                      color: semanticPalette.warningForeground,
-                    ),
-                    const SizedBox(width: 10),
-                    Flexible(
-                      child: Text(
-                        title,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: semanticPalette.textPrimary,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Icon(
-                      Icons.chevron_right_rounded,
-                      size: 20,
-                      color: semanticPalette.interactiveForeground,
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  return SnackBar(
-    behavior: SnackBarBehavior.floating,
-    margin: EdgeInsets.fromLTRB(16, 16, 16, bottomClearance),
-    duration: const Duration(seconds: 5),
-    backgroundColor: semanticPalette.surfaceRaised,
-    shape: RoundedRectangleBorder(
-      borderRadius: BorderRadius.circular(16),
-      side: BorderSide(color: semanticPalette.borderStrong),
-    ),
-    content: Row(
-      children: [
-        Icon(
-          Icons.notifications_active_rounded,
-          color: semanticPalette.interactiveForeground,
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                title,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: semanticPalette.textPrimary,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-              if (body?.trim().isNotEmpty == true) ...[
-                const SizedBox(height: 2),
-                Text(
-                  body!,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: semanticPalette.textSecondary,
-                    fontSize: 12,
-                  ),
-                ),
-              ],
-            ],
-          ),
-        ),
-      ],
-    ),
-    action: SnackBarAction(
-      label: openLabel,
-      textColor: semanticPalette.interactiveForeground,
-      onPressed: () => NotificationRouter.route(
-        type: type,
-        targetId: targetId,
-        actorId: actorId,
-        notificationId: notificationId,
-      ),
-    ),
-  );
 }
 
 /// Decides which Firestore-delivered notifications earn a foreground
@@ -395,11 +248,11 @@ class YoVoiceApp extends StatefulWidget {
 
 class _YoVoiceAppState extends State<YoVoiceApp> {
   final _messengerKey = GlobalKey<ScaffoldMessengerState>();
+  final _topNotifications = YoTopNotificationController();
   ForegroundNotificationStreamSource? _streamNotifications;
   late final AuthEpochRouteResetter _authRouteResetter;
   StreamSubscription<User?>? _authRouteSubscription;
   bool _foregroundRetryScheduled = false;
-  Locale _resolvedLocale = const Locale('en');
 
   @override
   void initState() {
@@ -407,7 +260,7 @@ class _YoVoiceAppState extends State<YoVoiceApp> {
     _authRouteResetter = AuthEpochRouteResetter(
       navigatorKey: notificationNavigatorKey,
       routeFactory: _authBoundaryRoute,
-      onPrincipalExit: _disconnectVoiceForAuthEpoch,
+      onPrincipalExit: _clearPresentationAndDisconnectForAuthEpoch,
     );
     _authRouteSubscription = FirebaseAuth.instance.authStateChanges().listen(
       (user) => _authRouteResetter.handlePrincipal(user?.uid),
@@ -459,6 +312,7 @@ class _YoVoiceAppState extends State<YoVoiceApp> {
 
   @override
   void dispose() {
+    _topNotifications.dispose();
     PushNotificationService.instance.claimForegroundNotification = null;
     PushNotificationService.instance.onInAppForegroundNotification = null;
     unawaited(_authRouteSubscription?.cancel());
@@ -484,8 +338,7 @@ class _YoVoiceAppState extends State<YoVoiceApp> {
     // ScaffoldMessenger lives above AuthGate, so banners from the previous
     // account would otherwise survive the route reset and appear on Login or
     // on the next account.
-    final messenger = _messengerKey.currentState;
-    if (messenger != null) clearSessionSnackBars(messenger);
+    _clearSessionPresentation();
 
     return PageRouteBuilder<void>(
       settings: const RouteSettings(name: '/auth-session'),
@@ -504,7 +357,16 @@ class _YoVoiceAppState extends State<YoVoiceApp> {
     );
   }
 
-  void _disconnectVoiceForAuthEpoch() {
+  void _clearSessionPresentation() {
+    _topNotifications.clear();
+    final messenger = _messengerKey.currentState;
+    if (messenger != null) clearSessionSnackBars(messenger);
+  }
+
+  void _clearPresentationAndDisconnectForAuthEpoch() {
+    // Runs before a potentially deferred Navigator reset. No private banner
+    // or exit animation can cross into Login/the next account's first frame.
+    _clearSessionPresentation();
     final voice = VoiceCallService.instance;
     if (voice.roomId == null && voice.status == VoiceCallStatus.disconnected) {
       return;
@@ -537,39 +399,24 @@ class _YoVoiceAppState extends State<YoVoiceApp> {
     )) {
       return true;
     }
-    final messenger = _messengerKey.currentState;
-    if (messenger == null) {
-      _scheduleForegroundBannerRetry();
-      return false;
-    }
-    final navigatorContext = notificationNavigatorKey.currentContext;
-    final copy = navigatorContext == null
-        ? AppLocalizations(_resolvedLocale)
-        : AppLocalizations.of(navigatorContext);
-    // Voice-room control docks grow with accessibility text scaling.
-    // Keep foreground notifications above them instead of covering the
-    // microphone, people, chat or leave actions.
-    final bottomClearance = foregroundNotificationBottomClearance(
-      navigatorContext == null
-          ? TextScaler.noScaling
-          : MediaQuery.textScalerOf(navigatorContext),
-    );
     try {
-      messenger
-        ..hideCurrentSnackBar()
-        ..showSnackBar(
-          buildForegroundNotificationBanner(
-            title: title,
-            body: body,
+      final accepted = _topNotifications.show(
+        YoTopNotification(
+          title: title,
+          body: body,
+          type: type,
+          onOpen: () => NotificationRouter.route(
             type: type,
             targetId: targetId,
             actorId: actorId,
-            openLabel: copy.text('Open', 'Otwórz'),
             notificationId: notificationId,
-            bottomClearance: bottomClearance,
-            palette: navigatorContext?.appPalette,
           ),
-        );
+        ),
+      );
+      if (!accepted) {
+        _scheduleForegroundBannerRetry();
+        return false;
+      }
     } catch (error) {
       debugPrint(
         'YoVoiceApp: foreground banner was not accepted '
@@ -622,14 +469,17 @@ class _YoVoiceAppState extends State<YoVoiceApp> {
           ],
           builder: (context, child) {
             final locale = Localizations.localeOf(context);
-            _resolvedLocale = locale;
             unawaited(FirebaseAuthLanguageSync.instance.synchronize(locale));
             updateDocumentLanguage(locale);
             final theme = Theme.of(context);
             final palette = context.appPalette;
             return AnnotatedRegion<SystemUiOverlayStyle>(
               value: AppTheme.systemOverlayStyle(theme.brightness, palette),
-              child: child ?? const SizedBox.shrink(),
+              child: YoTopNotificationHost(
+                controller: _topNotifications,
+                onReady: () => _streamNotifications?.retryPendingBanners(),
+                child: child ?? const SizedBox.shrink(),
+              ),
             );
           },
           home: _authBoundary(),

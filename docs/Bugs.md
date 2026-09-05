@@ -20,6 +20,17 @@ about things that are broken, risky, or need verification.
 
 ## Build 20 fixes and remaining acceptance gaps (2026-09-05; invited testing)
 
+The later top-notification/mobile-Back work is source-only. Local review resolved
+competing arrival surfaces, tooltip/root-overlay interception, insufficient
+keyboard-space acceptance, unreachable notification keyboard controls, inherited
+long-content scroll offset and stale foreground fallback after an identity change.
+Retained mobile roots now have bounded Back history with canceled/stale gesture
+guards and a landscape-safe indicator. Existing native protected exits are not
+relaxed. Full evidence and remaining physical-device/push/assistive-technology
+limits are recorded in
+[the notification/Back session](Sessions/2026-09-05-top-notifications-mobile-back.md);
+these changes are not claimed as part of the already-distributed Build 20.
+
 Post-Build-20 Meniscus development found two local interaction regressions:
 recognized pointer cancellation could commit a drag destination, and the
 unread badge remained right-aligned in RTL. Raw pointer cancellation now
