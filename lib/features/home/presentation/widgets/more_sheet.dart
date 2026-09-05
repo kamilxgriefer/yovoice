@@ -194,12 +194,6 @@ Future<MoreDestination?> showDesktopMoreMenu(
   // it here as well would show the same destination twice.
   final items = <(MoreDestination, IconData, String, String)>[
     (
-      MoreDestination.reels,
-      Icons.smart_display_rounded,
-      copy.text('Reels', 'Reels'),
-      copy.text('Photos, video and sound', 'Zdjęcia, filmy i dźwięk'),
-    ),
-    (
       MoreDestination.clubs,
       Icons.groups_2_rounded,
       copy.text('Clubs', 'Kluby'),
@@ -475,12 +469,6 @@ class _MoreSheetState extends State<MoreSheet> {
         subtitle: copy.text('People to follow', 'Osoby warte obserwowania'),
       ),
       _MoreEntry(
-        destination: MoreDestination.reels,
-        icon: Icons.smart_display_rounded,
-        label: copy.text('Reels', 'Reels'),
-        subtitle: copy.text('Create and watch', 'Twórz i oglądaj'),
-      ),
-      _MoreEntry(
         destination: MoreDestination.clubs,
         icon: Icons.groups_2_rounded,
         label: copy.text('Clubs', 'Kluby'),
@@ -613,14 +601,14 @@ class _MoreSheetState extends State<MoreSheet> {
                         physics: const NeverScrollableScrollPhysics(),
                         mainAxisSpacing: 8,
                         crossAxisSpacing: 8,
-                        // Five compact rows (including Reels) still fit in
-                        // the first owner view on a 390x844 phone, while
+                        // Compact rows keep the visible product destinations
+                        // in the first owner view on a 390x844 phone while
                         // preserving a comfortable 44px+ touch target.
                         mainAxisExtent: 65,
                         children: [
                           // Moments took the dock slot Friends held, so
                           // Friends takes the grid slot Moments held — a
-                          // 1:1 swap, still eight tiles, no layout churn.
+                          // 1:1 swap without changing the route contract.
                           // Friends also remains primary tab index 2 with
                           // its state alive, and one tap from Home's
                           // "Your circle".

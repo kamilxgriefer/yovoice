@@ -73,7 +73,49 @@ media bytes were deleted. Identifiers, URLs and token material are not recorded
 here. The operational detail is in
 [DEPLOYMENT.md](DEPLOYMENT.md#completed-production-data-prerequisite-voice-moments).
 
-## Post-Build-19 P0 source candidate (2026-09-04; not deployed)
+## Build 20 source-complete release candidate (2026-09-05; HELD)
+
+This is the current source evidence for the coordinated `1.0.0 (20)`
+candidate. The YO Moments destination, strict Voice Moment v2 read boundary,
+Reels availability/retention and canonical moderation work are source-complete.
+They are **not deployed, uploaded, assigned to testers or physically
+accepted**. Build 19 remains the deployed tester baseline above.
+
+| Gate | Measured result | What it proves |
+|---|---:|---|
+| Flutter analysis | clean | current source analyzes without diagnostics |
+| Complete Flutter VM | **2255/2255** | one complete final-tree Flutter gate |
+| Chrome browser | **18/18** | selected browser widget/runtime behavior |
+| Production Flutter Web build | **PASS** | release-mode Web artifact compiles |
+| Playwright built-artifact smoke | **2/2 PASS** | selected browser smoke passes against the built artifact |
+| YO Moments screenshot harness | **50/50 PASS** | 320–1440 px plus populated, empty, error, loading, following, story, detail and 200% text renders |
+| Dock Dark/Pearl screenshot harness | **8/8 PASS** | 320/390/430 px, 200% text and 99+ renders |
+| Independent Voice re-review | **84/84 — APPROVE** | no P0, P1 or P2 finding in the targeted source/runtime scope |
+| Cloud Functions | **1277/1277** | complete non-overlapping shards after the monolithic emulator run hit a transaction-lock hang |
+| Firestore Rules | **524/524** | current authorization behavior in the Firestore emulator |
+| Storage Rules | **67/67** | current object-path, metadata and media authorization boundary |
+| Family media | **11/11** | combined Firestore/Storage media contract |
+| Functions smoke | **PASS** | local Functions/Auth/Firestore emulator boundary |
+| Sound asset check | **PASS** | generated assets match the deterministic sound manifest/check |
+| Functions production dependency audit | **0 vulnerabilities** | production dependency tree reported no known npm advisory finding |
+| Firestore-test production dependency audit | **0 vulnerabilities** | rules-harness production dependency tree reported no known npm advisory finding |
+
+The Functions total is the complete non-overlapping sharded result. Sharding
+was required because the monolithic emulator process stopped on a transaction-
+lock hang; the room-control 32/32 and tail 174/174 boundaries also passed in
+isolation and are included in, not added to, 1277/1277. These automated gates
+do not prove production index/TTL readiness, deployed Rules/Functions,
+friendship reconciliation, signed artifact/store-number uniqueness, rendered
+or physical-device quality, store processing, tester availability or
+notification delivery. Those boundaries keep Build 20 operationally
+**HELD**.
+
+The generated screenshot PNGs were inspected. Frame Echo Clean has no internal
+lines or skew, and no overlap was observed in the bounded YO Moments and
+dock matrices. This remains source-rendered evidence, not physical-device,
+keyboard, RTL or full-app visual acceptance.
+
+## Earlier Post-Build-19 P0 checkpoint (2026-09-04; not deployed)
 
 Tester reports after Build 19 exposed two production-only compatibility gaps:
 some legitimate legacy friendships predated the server-owned
@@ -84,13 +126,13 @@ track timelines. The same
 tester wave also exposed duplicated Friends/Requests reads, stale avatar-grant
 invalidation and profile routes that could be stacked by rapid taps.
 
-This row is evidence for the current unreleased `1.0.0 (20)` source tree only.
-It does not replace the exact Build 19 evidence above and does not claim that
-production or either tester channel already contains the repair.
+This table records the earlier P0-only checkpoint that preceded the complete
+Build 20 evidence above. It does not replace the exact Build 19 evidence and
+does not claim that production or either tester channel contains the repair.
 
 | Gate | Measured result | What it proves |
 |---|---:|---|
-| Flutter analysis | clean | current source analyzes without diagnostics |
+| Flutter analysis | clean | checkpoint source analyzes without diagnostics |
 | Complete Flutter | **2192/2192** | one full-tree VM invocation after the final P0 fixes |
 | Direct-call + localization Flutter | **67/67** | mixed-device UX and all 43 selectable locale variants' current-release call copy |
 | Friend recovery Flutter | **22/22** | child profile/presence recovery, stale generations, remove/re-add, auth isolation and timer cleanup |
@@ -98,8 +140,8 @@ production or either tester channel already contains the repair.
 | DM media/outbox focused aggregate | **68/68** | authoritative rotation, exact canonical reconciliation and retry/restart cleanup |
 | Independent cleanup re-review | **41/41** | delete failure, restart, concurrency and wrong sender/type/conversation; no P0/P1/P2 finding |
 | Cloud Functions | **1218/1218** | 118 suites on fresh Auth + Firestore emulators |
-| Firestore Rules | **523/523** | current authorization rules against the Firestore emulator |
-| Storage Rules | **67/67** | current media-path, size, type and read boundaries |
+| Firestore Rules | **523/523** | checkpoint authorization rules against the Firestore emulator |
+| Storage Rules | **67/67** | checkpoint media-path, size, type and read boundaries |
 | Family media | **11/11** | combined Firestore/Storage family-media boundary |
 | Direct media integrity | **39/39** | generation-bound finalization, MOV/MP4 equivalence and duration corroboration |
 | Focused trusted media probe | **29/29** | timing plus sample maps, self-contained data references, `mdat` bounds and overlap rejection |
@@ -142,10 +184,12 @@ aggregate-only friendship dry-run/apply/post-check for the independently
 verified affected pairs, and physical two-device iOS/Android checks for calls,
 avatar visibility and real camera/library codecs. The simulator/UI pass is
 also still pending because the host was locked when screen automation was
-attempted. The npm advisory endpoint also returned `socket hang up` on all three
-current candidate attempts; dependency audit is therefore **unavailable** and
-must be rerun, not inferred from Build 19. Automated success is not presented
-as physical-device success.
+attempted. At that checkpoint, the npm advisory endpoint also returned
+`socket hang up` on all three attempts, so its dependency audit was
+**unavailable** rather than inferred from Build 19. The complete 2026-09-05
+candidate above supersedes that audit state with two successful production
+audits at 0 vulnerabilities. Automated success is not presented as physical-
+device success.
 
 ## Current counts
 
@@ -177,6 +221,20 @@ media/crop/Reels gate passed **39/39**; the production Web artifact built and
 its Hosting workflow/live route checks passed. The Functions and Rules-harness
 production-dependency audits reported **0 known vulnerabilities**. Historical
 count movement remains below.
+
+> **Movement, 2026-09-05 (Build 20 source-complete candidate; operationally
+> HELD).** The complete current gate is Flutter VM **2255/2255**, Chrome
+> **18/18**, production Flutter Web build **PASS**, Playwright built-artifact
+> smoke **2/2 PASS**, YO Moments screenshots **50/50 PASS**, dock Dark/Pearl
+> screenshots **8/8 PASS**, Voice re-review **84/84 APPROVE**, Functions
+> **1277/1277** in non-overlapping shards after an emulator transaction-lock
+> hang, Firestore Rules **524/524**, Storage Rules **67/67** and Family media
+> **11/11**. Functions smoke and the deterministic sound-asset check pass;
+> production npm audits report **0 vulnerabilities** in both `functions` and
+> `firestore-tests`. This movement records source evidence only: Build 20 is
+> not deployed or available to testers, and production configuration,
+> reconciliation, signed artifacts, rendered/physical QA and distribution
+> remain open.
 
 > **Movement, 2026-09-03 (Build 19 coordinated tester release).** Flutter VM
 > **2044 → 2123**, Functions **1100 → 1166**, Firestore Rules **522 → 523**,

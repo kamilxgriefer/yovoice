@@ -2,6 +2,132 @@ import 'package:flutter/foundation.dart';
 
 import 'package:yovoice/features/reels/data/models/reel_composition.dart';
 
+/// Author-selected lifetime of one Reel.
+///
+/// The wire contract accepts whole hours from 24 through 720, or the literal
+/// `permanent`. Presets live here so composer, retry state and service cannot
+/// silently disagree about the value reserved by the backend.
+@immutable
+class ReelAvailabilityChoice {
+  const ReelAvailabilityChoice._(this.hours);
+
+  static const int minimumHours = 24;
+  static const int maximumHours = 720;
+  static const ReelAvailabilityChoice hours24 = ReelAvailabilityChoice._(24);
+  static const ReelAvailabilityChoice days7 = ReelAvailabilityChoice._(168);
+  static const ReelAvailabilityChoice days30 = ReelAvailabilityChoice._(720);
+  static const ReelAvailabilityChoice permanent = ReelAvailabilityChoice._(
+    null,
+  );
+  static const ReelAvailabilityChoice fallback = hours24;
+
+  /// Null means "keep until deleted".
+  final int? hours;
+
+  bool get isPermanent => hours == null;
+  Object get wireValue => hours ?? 'permanent';
+
+  factory ReelAvailabilityChoice.timedHours(int hours) {
+    if (hours < minimumHours || hours > maximumHours) {
+      throw RangeError.range(hours, minimumHours, maximumHours, 'hours');
+    }
+    return ReelAvailabilityChoice._(hours);
+  }
+
+  factory ReelAvailabilityChoice.fromWire(Object? value) {
+    if (value == 'permanent') return permanent;
+    if (value is! int || value < minimumHours || value > maximumHours) {
+      throw const FormatException('Invalid Reel availability.');
+    }
+    return ReelAvailabilityChoice.timedHours(value);
+  }
+
+  @override
+  bool operator ==(Object other) =>
+      other is ReelAvailabilityChoice && other.hours == hours;
+
+  @override
+  int get hashCode => hours.hashCode;
+}
+
+/// Server-stamped public availability carried by each v2 feed item.
+@immutable
+class ReelAvailability {
+  const ReelAvailability({
+    required this.schemaVersion,
+    required this.choice,
+    required this.contentExpiresAt,
+  });
+
+  static const ReelAvailability legacyPermanent = ReelAvailability(
+    schemaVersion: 1,
+    choice: ReelAvailabilityChoice.permanent,
+    contentExpiresAt: null,
+  );
+
+  final int schemaVersion;
+  final ReelAvailabilityChoice choice;
+
+  /// Null only for permanent content. Timed content always has a server-owned
+  /// absolute deadline; clients must not derive it from local publish time.
+  final DateTime? contentExpiresAt;
+
+  bool get isPermanent => choice.isPermanent;
+
+  bool isAvailableAt(DateTime now) =>
+      contentExpiresAt == null || contentExpiresAt!.isAfter(now.toUtc());
+
+  @override
+  bool operator ==(Object other) =>
+      other is ReelAvailability &&
+      other.schemaVersion == schemaVersion &&
+      other.choice == choice &&
+      other.contentExpiresAt == contentExpiresAt;
+
+  @override
+  int get hashCode => Object.hash(schemaVersion, choice, contentExpiresAt);
+
+  factory ReelAvailability.fromWire(Object? value) {
+    final map = _map(value, 'availability');
+    _keys(map, const <String>{
+      'schemaVersion',
+      'availabilityHours',
+      'expiresAtMillis',
+    }, 'availability');
+    final schemaVersion = _integer(
+      map['schemaVersion'],
+      'availability.schemaVersion',
+    );
+    if (schemaVersion != 1 && schemaVersion != 2) {
+      throw const FormatException('Unsupported Reel availability schema.');
+    }
+    final choice = ReelAvailabilityChoice.fromWire(map['availabilityHours']);
+    final rawExpiry = map['expiresAtMillis'];
+    if (choice.isPermanent) {
+      if (rawExpiry != null ||
+          (schemaVersion == 1 && choice != ReelAvailabilityChoice.permanent)) {
+        throw const FormatException('Malformed permanent Reel availability.');
+      }
+      return ReelAvailability(
+        schemaVersion: schemaVersion,
+        choice: choice,
+        contentExpiresAt: null,
+      );
+    }
+    if (schemaVersion != 2 || rawExpiry is! int || rawExpiry <= 0) {
+      throw const FormatException('Malformed timed Reel availability.');
+    }
+    return ReelAvailability(
+      schemaVersion: schemaVersion,
+      choice: choice,
+      contentExpiresAt: DateTime.fromMillisecondsSinceEpoch(
+        rawExpiry,
+        isUtc: true,
+      ),
+    );
+  }
+}
+
 @immutable
 class ReelMediaDescriptor {
   const ReelMediaDescriptor({
@@ -103,6 +229,7 @@ class Reel {
     required this.publishedAt,
     required this.sortKey,
     this.backingAudio,
+    this.availability = ReelAvailability.legacyPermanent,
   });
 
   final String id;
@@ -113,6 +240,7 @@ class Reel {
   final ReelComposition composition;
   final DateTime publishedAt;
   final String sortKey;
+  final ReelAvailability availability;
 
   factory Reel.fromWire(Object? value) {
     final map = _map(value, 'reel');
@@ -155,6 +283,39 @@ class Reel {
     }
     return reel;
   }
+
+  /// Strict v2 parser. The legacy parser intentionally remains available for
+  /// old call sites/tests, but the live service uses this shape exclusively.
+  factory Reel.fromV2Wire(Object? value) {
+    final map = _map(value, 'reel');
+    _keys(map, const <String>{
+      'id',
+      'authorId',
+      'authorName',
+      'media',
+      'backingAudio',
+      'composition',
+      'publishedAtMillis',
+      'sortKey',
+      'availability',
+    }, 'reel');
+    final legacyShape = <String, Object?>{
+      for (final entry in map.entries)
+        if (entry.key != 'availability') entry.key: entry.value,
+    };
+    final legacy = Reel.fromWire(legacyShape);
+    return Reel(
+      id: legacy.id,
+      authorId: legacy.authorId,
+      authorName: legacy.authorName,
+      media: legacy.media,
+      backingAudio: legacy.backingAudio,
+      composition: legacy.composition,
+      publishedAt: legacy.publishedAt,
+      sortKey: legacy.sortKey,
+      availability: ReelAvailability.fromWire(map['availability']),
+    );
+  }
 }
 
 @immutable
@@ -177,6 +338,26 @@ class ReelFeedPage {
     }
     return ReelFeedPage(
       items: rawItems.map(Reel.fromWire).toList(growable: false),
+      nextCursor: cursor as String?,
+    );
+  }
+
+  factory ReelFeedPage.fromV2Wire(Object? value) {
+    final map = _map(value, 'feed');
+    _keys(map, const <String>{'schemaVersion', 'items', 'nextCursor'}, 'feed');
+    if (map['schemaVersion'] != 2) {
+      throw const FormatException('Unsupported Reel feed schema.');
+    }
+    final rawItems = map['items'];
+    if (rawItems is! List || rawItems.length > 20) {
+      throw const FormatException('Malformed reel feed page.');
+    }
+    final cursor = map['nextCursor'];
+    if (cursor != null && cursor is! String) {
+      throw const FormatException('Malformed reel feed cursor.');
+    }
+    return ReelFeedPage(
+      items: rawItems.map(Reel.fromV2Wire).toList(growable: false),
       nextCursor: cursor as String?,
     );
   }

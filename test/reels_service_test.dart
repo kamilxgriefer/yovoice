@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:yovoice/features/reels/data/models/reel.dart';
 import 'package:yovoice/features/reels/data/models/reel_composition.dart';
 import 'package:yovoice/features/reels/data/services/reel_service.dart';
 import 'package:yovoice/features/reels/data/services/reel_upload.dart';
@@ -25,6 +26,34 @@ MockFirebaseAuth _auth() => MockFirebaseAuth(
   signedIn: true,
 );
 
+const _contentExpiry = 2000000000000;
+
+Map<Object?, Object?> _reservation({
+  String reelId = 'reel_1',
+  Object availabilityHours = 24,
+  int? contentExpiresAtMillis = _contentExpiry,
+}) => <Object?, Object?>{
+  'schemaVersion': 2,
+  'reelId': reelId,
+  'mediaStoragePath': 'reels/creator-1/$reelId/media.jpg',
+  'backingAudioStoragePath': null,
+  'expiresAtMillis': 1900000900000,
+  'availabilityHours': availabilityHours,
+  'contentExpiresAtMillis': contentExpiresAtMillis,
+};
+
+Map<Object?, Object?> _finalized({
+  String reelId = 'reel_1',
+  Object availabilityHours = 24,
+  int? expiresAtMillis = _contentExpiry,
+}) => <Object?, Object?>{
+  'schemaVersion': 2,
+  'reelId': reelId,
+  'published': true,
+  'availabilityHours': availabilityHours,
+  'expiresAtMillis': expiresAtMillis,
+};
+
 void main() {
   test(
     'publish executes reserve, canonical upload and finalize in order',
@@ -34,16 +63,13 @@ void main() {
         auth: _auth(),
         callableInvoker: (name, payload) async {
           calls.add(name);
-          if (name == 'reserveReelDraft') {
-            return <Object?, Object?>{
-              'reelId': 'reel_1',
-              'mediaStoragePath': 'reels/creator-1/reel_1/media.jpg',
-              'backingAudioStoragePath': null,
-            };
+          if (name == 'reserveReelDraftV2') {
+            expect(payload['availabilityHours'], 24);
+            return _reservation();
           }
-          expect(name, 'finalizeReelDraft');
+          expect(name, 'finalizeReelDraftV2');
           expect(payload['mediaGeneration'], '123');
-          return <Object?, Object?>{'reelId': 'reel_1', 'published': true};
+          return _finalized();
         },
         uploadInvoker:
             ({
@@ -73,9 +99,9 @@ void main() {
 
       expect(await service.publish(session), 'reel_1');
       expect(calls, <String>[
-        'reserveReelDraft',
+        'reserveReelDraftV2',
         'upload',
-        'finalizeReelDraft',
+        'finalizeReelDraftV2',
       ]);
     },
   );
@@ -89,17 +115,13 @@ void main() {
       final service = ReelService(
         auth: _auth(),
         callableInvoker: (name, payload) async {
-          if (name == 'reserveReelDraft') {
+          if (name == 'reserveReelDraftV2') {
             reserveCount += 1;
-            return <Object?, Object?>{
-              'reelId': 'reel_retry',
-              'mediaStoragePath': 'reels/creator-1/reel_retry/media.jpg',
-              'backingAudioStoragePath': null,
-            };
+            return _reservation(reelId: 'reel_retry');
           }
           finalizeCount += 1;
           if (finalizeCount == 1) throw StateError('lost response');
-          return <Object?, Object?>{'reelId': 'reel_retry', 'published': true};
+          return _finalized(reelId: 'reel_retry');
         },
         uploadInvoker:
             ({
@@ -134,6 +156,7 @@ void main() {
       final service = ReelService(
         auth: _auth(),
         callableInvoker: (name, payload) async => <Object?, Object?>{
+          'schemaVersion': 2,
           'items': <Object?>[
             <String, Object?>{
               'id': 'reel_1',
@@ -153,12 +176,191 @@ void main() {
               ).toWire(),
               'publishedAtMillis': 1900000000000,
               'sortKey': '1900000000000_reel_1',
+              'availability': <String, Object?>{
+                'schemaVersion': 2,
+                'availabilityHours': 24,
+                'expiresAtMillis': _contentExpiry,
+              },
             },
           ],
           'nextCursor': null,
         },
       );
       await expectLater(service.fetchFeed(), throwsFormatException);
+    },
+  );
+
+  test('availability accepts exact boundary hours and permanent only', () {
+    expect(ReelAvailabilityChoice.timedHours(24).wireValue, 24);
+    expect(ReelAvailabilityChoice.timedHours(720).wireValue, 720);
+    expect(
+      ReelAvailabilityChoice.fromWire('permanent'),
+      ReelAvailabilityChoice.permanent,
+    );
+    expect(() => ReelAvailabilityChoice.timedHours(23), throwsRangeError);
+    expect(() => ReelAvailabilityChoice.timedHours(721), throwsRangeError);
+    expect(() => ReelAvailabilityChoice.fromWire(24.0), throwsFormatException);
+  });
+
+  test('permanent v2 publish stays locked to its retry session', () async {
+    final payloads = <Map<String, Object?>>[];
+    var finalizeCount = 0;
+    final service = ReelService(
+      auth: _auth(),
+      callableInvoker: (name, payload) async {
+        payloads.add(Map<String, Object?>.of(payload));
+        if (name == 'reserveReelDraftV2') {
+          return _reservation(
+            reelId: 'reel_permanent',
+            availabilityHours: 'permanent',
+            contentExpiresAtMillis: null,
+          );
+        }
+        expect(name, 'finalizeReelDraftV2');
+        finalizeCount += 1;
+        if (finalizeCount == 1) throw StateError('lost response');
+        return _finalized(
+          reelId: 'reel_permanent',
+          availabilityHours: 'permanent',
+          expiresAtMillis: null,
+        );
+      },
+      uploadInvoker:
+          ({
+            required storagePath,
+            required payload,
+            required metadata,
+            onProgress,
+          }) async => '789',
+    );
+    final session = ReelPublishSession(
+      plan: ReelDraftPlan(
+        media: _photo(),
+        composition: const ReelComposition(originalAudioVolume: 0),
+        availability: ReelAvailabilityChoice.permanent,
+      ),
+      requestId: 'request-permanent-1',
+    );
+
+    await expectLater(service.publish(session), throwsStateError);
+    expect(session.plan.availability, ReelAvailabilityChoice.permanent);
+    expect(await service.publish(session), 'reel_permanent');
+    expect(
+      payloads
+          .where((item) => item.containsKey('availabilityHours'))
+          .single['availabilityHours'],
+      'permanent',
+    );
+  });
+
+  test('reserve response is exact and cannot change selected availability', () {
+    final extra = _reservation()..['unexpected'] = true;
+    final mismatched = _reservation(availabilityHours: 168);
+    Future<void> run(Map<Object?, Object?> response) async {
+      final service = ReelService(
+        auth: _auth(),
+        callableInvoker: (name, payload) async => response,
+      );
+      await service.publish(
+        ReelPublishSession(
+          plan: ReelDraftPlan(
+            media: _photo(),
+            composition: const ReelComposition(originalAudioVolume: 0),
+          ),
+        ),
+      );
+    }
+
+    expect(run(extra), throwsFormatException);
+    expect(run(mismatched), throwsFormatException);
+  });
+
+  test(
+    'v2 feed parses timed and legacy-permanent availability safely',
+    () async {
+      final service = ReelService(
+        auth: _auth(),
+        callableInvoker: (name, payload) async {
+          expect(name, 'listReelsV2');
+          return <Object?, Object?>{
+            'schemaVersion': 2,
+            'items': <Object?>[
+              _feedItem(
+                id: 'timed',
+                availability: <String, Object?>{
+                  'schemaVersion': 2,
+                  'availabilityHours': 168,
+                  'expiresAtMillis': _contentExpiry,
+                },
+              ),
+              _feedItem(
+                id: 'legacy',
+                availability: <String, Object?>{
+                  'schemaVersion': 1,
+                  'availabilityHours': 'permanent',
+                  'expiresAtMillis': null,
+                },
+              ),
+            ],
+            'nextCursor': null,
+          };
+        },
+      );
+
+      final page = await service.fetchFeed();
+      expect(page.items.first.availability.choice.hours, 168);
+      expect(
+        page.items.first.availability.contentExpiresAt?.millisecondsSinceEpoch,
+        _contentExpiry,
+      );
+      expect(page.items.last.availability, ReelAvailability.legacyPermanent);
+    },
+  );
+
+  test('v2 media access rejects grants beyond content expiry', () async {
+    final now = DateTime.now().toUtc().millisecondsSinceEpoch;
+    final service = ReelService(
+      auth: _auth(),
+      callableInvoker: (name, payload) async {
+        expect(name, 'getReelMediaAccessV2');
+        return <Object?, Object?>{
+          'schemaVersion': 2,
+          'url': 'https://storage.googleapis.com/bucket/reel.jpg?token=x',
+          'expiresAtMillis': now + 120000,
+          'generation': '123',
+          'availabilityHours': 24,
+          'contentExpiresAtMillis': now + 60000,
+        };
+      },
+    );
+
+    await expectLater(
+      service.resolveMediaUri('grant_after_expiry'),
+      throwsFormatException,
+    );
+  });
+
+  test(
+    'delete retry reuses its request id after a lost acknowledgement',
+    () async {
+      final requestIds = <String>[];
+      var calls = 0;
+      final service = ReelService(
+        auth: _auth(),
+        callableInvoker: (name, payload) async {
+          expect(name, 'deleteReel');
+          calls += 1;
+          requestIds.add(payload['requestId']! as String);
+          if (calls == 1) throw StateError('lost acknowledgement');
+          return <Object?, Object?>{'reelId': 'reel_1', 'deleted': true};
+        },
+      );
+
+      await expectLater(service.deleteReel('reel_1'), throwsStateError);
+      await service.deleteReel('reel_1');
+
+      expect(requestIds, hasLength(2));
+      expect(requestIds.first, requestIds.last);
     },
   );
 
@@ -206,3 +408,24 @@ void main() {
     );
   });
 }
+
+Map<String, Object?> _feedItem({
+  required String id,
+  required Map<String, Object?> availability,
+}) => <String, Object?>{
+  'id': id,
+  'authorId': 'creator-1',
+  'authorName': 'Creator',
+  'media': <String, Object>{
+    'kind': 'image',
+    'contentType': 'image/jpeg',
+    'size': 1024,
+    'generation': '123',
+    'durationMs': 0,
+  },
+  'backingAudio': null,
+  'composition': const ReelComposition(originalAudioVolume: 0).toWire(),
+  'publishedAtMillis': 1900000000000,
+  'sortKey': '1900000000000_$id',
+  'availability': availability,
+};

@@ -2,10 +2,12 @@ import 'dart:async';
 
 import 'package:audioplayers/audioplayers.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
 import 'package:share_plus/share_plus.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
+import 'package:yovoice/core/navigation/app_route_observer.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/home/data/services/home_feed_service.dart';
 import 'package:yovoice/features/moderation/data/services/content_report_service.dart';
@@ -24,6 +26,22 @@ import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
 import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
+enum _MomentDetailRefreshTrigger {
+  initial,
+  appResume,
+  routeReturn,
+  mutation,
+  retry,
+}
+
+bool _momentDetailIsGoneError(Object error) =>
+    error is FirebaseFunctionsException &&
+    const <String>{
+      'permission-denied',
+      'not-found',
+      'gone',
+    }.contains(error.code);
+
 /// One Voice Moment, full page: author identity, the caption as the
 /// heading, a real player with a position-fed waveform, engagement,
 /// the likers' avatar row, and the comment thread with its composer.
@@ -31,8 +49,8 @@ import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 /// Every fact rendered is a document's fact. Moments carry no separate
 /// title and no tags, so the caption IS the heading and no tag chips
 /// exist; there is no play counter in the schema, so none is printed;
-/// the "Top reactions" avatars are the real `likes/{uid}` documents
-/// resolved through the public profile projection, best-effort.
+/// the "Top reactions" avatars come from the same privacy-filtered v2
+/// projection as the Moment, best-effort.
 ///
 /// Pushed as a plain route it carries its own Back control; the shell
 /// hosts it inside the persistent bottom navigation (Moments active) on
@@ -73,13 +91,13 @@ class MomentDetailScreen extends StatefulWidget {
   State<MomentDetailScreen> createState() => _MomentDetailScreenState();
 }
 
-class _MomentDetailScreenState extends State<MomentDetailScreen> {
+class _MomentDetailScreenState extends State<MomentDetailScreen>
+    with RouteAware, WidgetsBindingObserver {
   MomentService? _moments;
   HomeFeedService? _feed;
   MomentViewsService? _views;
 
   late VoiceMoment _moment = widget.moment;
-  StreamSubscription<VoiceMoment?>? _liveSubscription;
 
   /// The document disappeared. Either it never loaded (opened from a
   /// stale reference) or it was deleted while open — both render the
@@ -87,11 +105,21 @@ class _MomentDetailScreenState extends State<MomentDetailScreen> {
   bool _missing = false;
   bool _selfDeleted = false;
   bool _deleting = false;
+  bool _liking = false;
   late final MomentExpiryScheduler _expiry;
   DateTime? _expiredThrough;
   bool _expiredByDeadline = false;
 
   Future<List<MomentReactor>>? _reactions;
+  List<MomentComment>? _comments;
+  bool _commentsTruncated = false;
+  String? _nextCommentCursor;
+  Object? _commentsError;
+  bool _loadingMoreComments = false;
+  ModalRoute<void>? _observedRoute;
+  final Set<_MomentDetailRefreshTrigger> _canonicalRefreshesInFlight =
+      <_MomentDetailRefreshTrigger>{};
+  int _viewLoadGeneration = 0;
 
   AudioPlayer? _player;
   final List<StreamSubscription<dynamic>> _playerSubscriptions =
@@ -123,6 +151,7 @@ class _MomentDetailScreenState extends State<MomentDetailScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _expiry = MomentExpiryScheduler(
       onDeadline: _handleExpiryDeadline,
       clock: widget.expiryClock,
@@ -151,59 +180,122 @@ class _MomentDetailScreenState extends State<MomentDetailScreen> {
 
     final moments = _moments;
     if (moments != null) {
-      _liveSubscription = moments
-          .watchMomentOrMissing(widget.moment.id)
-          .listen(
-            (moment) {
-              if (!mounted) return;
-              if (moment == null) {
-                final previousFocus = FocusManager.instance.primaryFocus;
-                final recoverFocus = momentExpiryFocusIsWithin(
-                  context,
-                  previousFocus,
-                );
-                _expiry.schedule(const <VoiceMoment>[]);
-                _stopPlaybackForGone();
-                setState(() => _missing = true);
-                _announceGone(
-                  previousFocus: recoverFocus ? previousFocus : null,
-                );
-                return;
-              }
-              final expired = !moment.isActiveAt(_effectiveNow());
-              final previousFocus = expired
-                  ? FocusManager.instance.primaryFocus
-                  : null;
-              final recoverFocus =
-                  expired && momentExpiryFocusIsWithin(context, previousFocus);
-              setState(() {
-                _missing = false;
-                _moment = moment;
-                _expiredByDeadline = expired;
-              });
-              _expiry.schedule(expired ? const <VoiceMoment>[] : [moment]);
-              if (expired) {
-                _stopPlaybackForGone();
-                _announceGone(
-                  previousFocus: recoverFocus ? previousFocus : null,
-                );
-              }
-            },
-            onError: (Object _) {
-              // A dead stream keeps the Moment the caller passed: real,
-              // just not live.
-            },
-          );
-      // One-shot on purpose: the row is a snapshot of who reacted, not a
-      // live board, and each entry costs a profile read.
-      _reactions = moments.topReactions(widget.moment.id);
+      unawaited(_loadView(trigger: _MomentDetailRefreshTrigger.initial));
     }
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final route = ModalRoute.of<void>(context);
+    if (identical(route, _observedRoute)) return;
+    if (_observedRoute != null) appRouteObserver.unsubscribe(this);
+    _observedRoute = route;
+    if (route != null) appRouteObserver.subscribe(this, route);
+  }
+
+  @override
+  void didPopNext() {
+    unawaited(_loadView(trigger: _MomentDetailRefreshTrigger.routeReturn));
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) return;
+    unawaited(_loadView(trigger: _MomentDetailRefreshTrigger.appResume));
+  }
+
+  Future<void> _loadView({
+    String? commentCursor,
+    bool append = false,
+    _MomentDetailRefreshTrigger trigger = _MomentDetailRefreshTrigger.retry,
+  }) async {
+    final service = _moments;
+    if (service == null || (append && _loadingMoreComments)) return;
+    if (!append && !_canonicalRefreshesInFlight.add(trigger)) return;
+    final requestGeneration = append
+        ? _viewLoadGeneration
+        : ++_viewLoadGeneration;
+    if (append && mounted) {
+      setState(() {
+        _loadingMoreComments = true;
+        _commentsError = null;
+      });
+    }
+    try {
+      final view = await service.loadMomentView(
+        widget.moment.id,
+        commentCursor: commentCursor,
+      );
+      if (!mounted || requestGeneration != _viewLoadGeneration) return;
+      final expired = !view.moment.isActiveAt(_effectiveNow());
+      final previous = _comments ?? const <MomentComment>[];
+      final merged = <String, MomentComment>{
+        if (append)
+          for (final comment in previous) comment.id: comment,
+        for (final comment in view.comments) comment.id: comment,
+      }.values.toList(growable: false);
+      setState(() {
+        _missing = false;
+        _moment = view.moment;
+        _expiredByDeadline = expired;
+        _comments = merged;
+        _commentsTruncated = view.commentsTruncated;
+        _nextCommentCursor = view.nextCommentCursor;
+        _commentsError = null;
+        _loadingMoreComments = false;
+        _reactions = Future<List<MomentReactor>>.value(view.topReactions);
+      });
+      _expiry.schedule(expired ? const <VoiceMoment>[] : [view.moment]);
+      if (expired) {
+        _stopPlaybackForGone();
+        _announceGone(previousFocus: null);
+      }
+    } catch (error) {
+      if (!mounted || requestGeneration != _viewLoadGeneration) return;
+      if (_momentDetailIsGoneError(error)) {
+        _clearProjectionAndShowGone();
+      } else {
+        setState(() => _commentsError = error);
+      }
+    } finally {
+      if (!append) _canonicalRefreshesInFlight.remove(trigger);
+      if (mounted && append && _loadingMoreComments) {
+        setState(() => _loadingMoreComments = false);
+      }
+    }
+  }
+
+  void _clearProjectionAndShowGone() {
+    final previousFocus = FocusManager.instance.primaryFocus;
+    final recoverFocus = momentExpiryFocusIsWithin(context, previousFocus);
+    _expiry.schedule(const <VoiceMoment>[]);
+    _stopPlaybackForGone(notify: false);
+    setState(() {
+      _missing = true;
+      _comments = null;
+      _commentsTruncated = false;
+      _nextCommentCursor = null;
+      _commentsError = null;
+      _loadingMoreComments = false;
+      _reactions = null;
+      _playbackError = null;
+    });
+    _announceGone(previousFocus: recoverFocus ? previousFocus : null);
+  }
+
+  Future<void> _loadMoreComments() async {
+    final cursor = _nextCommentCursor;
+    if (!_commentsTruncated || cursor == null) return;
+    await _loadView(commentCursor: cursor, append: true);
+  }
+
+  @override
   void dispose() {
+    _viewLoadGeneration += 1;
+    WidgetsBinding.instance.removeObserver(this);
+    appRouteObserver.unsubscribe(this);
     _expiry.dispose();
-    unawaited(_liveSubscription?.cancel());
     for (final subscription in _playerSubscriptions) {
       unawaited(subscription.cancel());
     }
@@ -222,17 +314,23 @@ class _MomentDetailScreenState extends State<MomentDetailScreen> {
     return floor != null && floor.isAfter(now) ? floor : now;
   }
 
-  void _stopPlaybackForGone() {
+  void _stopPlaybackForGone({bool notify = true}) {
     final player = _player;
     if (player != null) {
       unawaited(player.stop().catchError((Object _) {}));
     }
     if (!mounted) return;
-    setState(() {
+    void clearPlaybackState() {
       _isPlaying = false;
       _position = Duration.zero;
       _duration = null;
-    });
+    }
+
+    if (notify) {
+      setState(clearPlaybackState);
+    } else {
+      clearPlaybackState();
+    }
   }
 
   void _handleExpiryDeadline(DateTime deadline) {
@@ -389,7 +487,10 @@ class _MomentDetailScreenState extends State<MomentDetailScreen> {
     await reportContent(
       context: context,
       service: widget.contentReportService,
-      content: ReportedContent.voiceMoment(momentId: _moment.id),
+      content: ReportedContent.voiceMoment(
+        momentId: _moment.id,
+        reportReceipt: _moment.reportReceipt,
+      ),
       title: copy.text('Report this Voice Moment', 'Zgłoś ten Voice Moment'),
       subtitle: copy.text(
         'Your report goes to the YO Voice moderation team with this '
@@ -502,6 +603,7 @@ class _MomentDetailScreenState extends State<MomentDetailScreen> {
     try {
       await service.createTextComment(momentId: _moment.id, text: text);
       _composer.clear();
+      await _loadView(trigger: _MomentDetailRefreshTrigger.mutation);
     } catch (_) {
       if (!mounted) return;
       ScaffoldMessenger.maybeOf(context)
@@ -559,6 +661,7 @@ class _MomentDetailScreenState extends State<MomentDetailScreen> {
                           child: ConstrainedBox(
                             constraints: const BoxConstraints(maxWidth: 640),
                             child: ListView(
+                              key: const ValueKey('moment-detail-scroll'),
                               padding: EdgeInsets.fromLTRB(side, 4, side, 24),
                               children: [
                                 _authorBlock(),
@@ -820,30 +923,22 @@ class _MomentDetailScreenState extends State<MomentDetailScreen> {
             onTap: null,
           )
         else
-          StreamBuilder<bool>(
-            stream: feed.watchLiked(moment.id),
-            builder: (context, snapshot) {
-              final liked = snapshot.hasError
-                  ? false
-                  : (snapshot.data ?? false);
-              return _ActionChip(
-                key: const ValueKey('moment-detail-like'),
-                icon: liked
-                    ? Icons.favorite_rounded
-                    : Icons.favorite_border_rounded,
-                label: moment.likeCount == 0
-                    ? copy.text('Like', 'Lubię to')
-                    : '${moment.likeCount}',
-                active: liked,
-                semanticLabel: liked
-                    ? copy.text(
-                        'Unlike this Moment',
-                        'Usuń polubienie tego Momentu',
-                      )
-                    : copy.text('Like this Moment', 'Polub ten Moment'),
-                onTap: () => unawaited(_toggleLike(feed)),
-              );
-            },
+          _ActionChip(
+            key: const ValueKey('moment-detail-like'),
+            icon: moment.callerLiked
+                ? Icons.favorite_rounded
+                : Icons.favorite_border_rounded,
+            label: moment.likeCount == 0
+                ? copy.text('Like', 'Lubię to')
+                : '${moment.likeCount}',
+            active: moment.callerLiked,
+            semanticLabel: moment.callerLiked
+                ? copy.text(
+                    'Unlike this Moment',
+                    'Usuń polubienie tego Momentu',
+                  )
+                : copy.text('Like this Moment', 'Polub ten Moment'),
+            onTap: _liking ? null : () => unawaited(_toggleLike(feed)),
           ),
         _ActionChip(
           key: const ValueKey('moment-detail-comments'),
@@ -896,10 +991,32 @@ class _MomentDetailScreenState extends State<MomentDetailScreen> {
   }
 
   Future<void> _toggleLike(HomeFeedService feed) async {
+    if (_liking) return;
     final messenger = ScaffoldMessenger.maybeOf(context);
+    final previous = _moment;
+    final desiredLiked = !previous.callerLiked;
+    setState(() {
+      _liking = true;
+      _moment = previous.copyWith(
+        callerLiked: desiredLiked,
+        likeCount: (previous.likeCount + (desiredLiked ? 1 : -1)).clamp(
+          0,
+          1 << 31,
+        ),
+      );
+    });
     try {
-      await feed.toggleLike(_moment.id);
+      await feed.setLike(previous.id, liked: desiredLiked);
+      if (!mounted || _moment.id != previous.id) return;
+      setState(() => _liking = false);
+      await _loadView(trigger: _MomentDetailRefreshTrigger.mutation);
     } catch (_) {
+      if (mounted && _moment.id == previous.id) {
+        setState(() {
+          _moment = previous;
+          _liking = false;
+        });
+      }
       messenger
         ?..hideCurrentSnackBar()
         ..showSnackBar(
@@ -916,10 +1033,9 @@ class _MomentDetailScreenState extends State<MomentDetailScreen> {
     }
   }
 
-  /// The likers' avatar row: real `likes/{uid}` documents resolved
-  /// through the public profile projection. Absent while loading, absent
-  /// when nobody has liked, absent when no identity could be resolved —
-  /// never a spinner, never an invented face.
+  /// The likers' avatar row from the server-owned v2 projection. Absent while
+  /// loading, absent when nobody has liked, absent when no identity could be
+  /// safely projected — never a spinner, never an invented face.
   Widget _reactionsSection() {
     final reactions = _reactions;
     final likeCount = _moment.likeCount;
@@ -997,8 +1113,6 @@ class _MomentDetailScreenState extends State<MomentDetailScreen> {
     );
   }
 
-  int? _loadedCommentCount;
-
   Widget _commentsSection() {
     final service = _moments;
     final palette = context.appPalette;
@@ -1008,18 +1122,9 @@ class _MomentDetailScreenState extends State<MomentDetailScreen> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          // The header counts what the STREAM shows once it has loaded
-          // (falling back to the doc counter only while loading), so a
-          // drifted counter can never render "Comments (1)" directly above
-          // "Be the first to comment." — the contradiction the review
-          // photographed.
-          _loadedCommentCount == null
-              ? (_moment.commentCount > 0
-                    ? '$commentsLabel (${_moment.commentCount})'
-                    : commentsLabel)
-              : (_loadedCommentCount! > 0
-                    ? '$commentsLabel ($_loadedCommentCount)'
-                    : commentsLabel),
+          _moment.commentCount > 0
+              ? '$commentsLabel (${_moment.commentCount})'
+              : commentsLabel,
           style: TextStyle(
             color: palette.textPrimary,
             fontSize: 14,
@@ -1035,55 +1140,58 @@ class _MomentDetailScreenState extends State<MomentDetailScreen> {
             ),
             style: TextStyle(color: palette.textTertiary, fontSize: 12.5),
           )
+        else if (_commentsError != null && _comments == null)
+          TextButton.icon(
+            key: const ValueKey('moment-comments-retry'),
+            onPressed: () => unawaited(
+              _loadView(trigger: _MomentDetailRefreshTrigger.retry),
+            ),
+            icon: const Icon(Icons.refresh_rounded),
+            label: Text(
+              copy.text(
+                'Could not load comments. Try again.',
+                'Nie udało się wczytać komentarzy. Spróbuj ponownie.',
+              ),
+            ),
+          )
+        else if (_comments == null)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 14),
+            child: Center(
+              child: SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            ),
+          )
+        else if (_comments!.isEmpty)
+          Text(
+            copy.text('Be the first to comment.', 'Napisz pierwszy komentarz.'),
+            style: TextStyle(color: palette.textTertiary, fontSize: 12.5),
+          )
         else
-          StreamBuilder<List<MomentComment>>(
-            stream: service.watchComments(_moment.id),
-            builder: (context, snapshot) {
-              if (snapshot.hasError) {
-                return Text(
-                  copy.text(
-                    'Could not load comments.',
-                    'Nie udało się wczytać komentarzy.',
-                  ),
-                  style: TextStyle(color: palette.textTertiary, fontSize: 12.5),
-                );
-              }
-              if (!snapshot.hasData) {
-                return const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 14),
-                  child: Center(
-                    child: SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    ),
-                  ),
-                );
-              }
-              final comments = snapshot.data!;
-              if (_loadedCommentCount != comments.length) {
-                WidgetsBinding.instance.addPostFrameCallback((_) {
-                  if (mounted) {
-                    setState(() => _loadedCommentCount = comments.length);
-                  }
-                });
-              }
-              if (comments.isEmpty) {
-                return Text(
-                  copy.text(
-                    'Be the first to comment.',
-                    'Napisz pierwszy komentarz.',
-                  ),
-                  style: TextStyle(color: palette.textTertiary, fontSize: 12.5),
-                );
-              }
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  for (final comment in comments) _CommentRow(comment: comment),
-                ],
-              );
-            },
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              for (final comment in _comments!) _CommentRow(comment: comment),
+              if (_commentsTruncated || _loadingMoreComments) ...[
+                const SizedBox(height: 8),
+                TextButton.icon(
+                  key: const ValueKey('moment-comments-load-more'),
+                  onPressed: _loadingMoreComments
+                      ? null
+                      : () => unawaited(_loadMoreComments()),
+                  icon: _loadingMoreComments
+                      ? const SizedBox.square(
+                          dimension: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.expand_more_rounded),
+                  label: Text(copy.text('Load more', 'Wczytaj więcej')),
+                ),
+              ],
+            ],
           ),
       ],
     );

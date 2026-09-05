@@ -16,6 +16,7 @@ if (getApps().length === 0) initializeApp();
 
 const {
   DEFAULT_LIMITS,
+  VOICE_MOMENT_V2_READ_BUDGETS,
   canonicalCommentId,
   createMomentIntegrityService,
   momentStoragePath,
@@ -154,6 +155,7 @@ async function reset() {
       db.doc(`publicProfiles/${uid}`).delete(),
       db.doc(`restrictions/${uid}`).delete(),
       db.doc(`momentCapacityLedgers/${uid}`).delete(),
+      deleteTree(db.doc(`friendshipGuards/${uid}`)),
       deleteQuery(db.collection("voiceMoments").where("authorId", "==", uid)),
       deleteQuery(
         db.collection("integrityOperationLedgers").where("ownerId", "==", uid),
@@ -171,6 +173,11 @@ async function reset() {
       ),
       deleteQuery(db.collection("reports").where("reporterId", "==", uid)),
       deleteQuery(
+        db
+          .collection("voiceMomentReportReceipts")
+          .where("ownerId", "==", uid),
+      ),
+      deleteQuery(
         db.collection("contentCleanupOutbox").where("requestedBy", "==", uid),
       ),
     ]);
@@ -179,6 +186,7 @@ async function reset() {
     for (const second of USERS) {
       if (first !== second) {
         await db.doc(`users/${first}/blocked/${second}`).delete();
+        await db.doc(`users/${first}/following/${second}`).delete();
       }
     }
   }
@@ -276,6 +284,623 @@ beforeEach(async () => {
 });
 
 after(reset);
+
+test("Voice Moment v2 read budgets stay below the release latency gates", () => {
+  assert.deepEqual(VOICE_MOMENT_V2_READ_BUDGETS, {
+    feedTypical: 85,
+    feedFollowingTypical: 95,
+    feedWorst: 115,
+    viewTypical: 98,
+    viewWorst: 126,
+  });
+  assert.ok(VOICE_MOMENT_V2_READ_BUDGETS.feedTypical < 100);
+  assert.ok(VOICE_MOMENT_V2_READ_BUDGETS.feedFollowingTypical < 100);
+  assert.ok(VOICE_MOMENT_V2_READ_BUDGETS.viewTypical < 100);
+  assert.ok(VOICE_MOMENT_V2_READ_BUDGETS.feedWorst < 180);
+  assert.ok(VOICE_MOMENT_V2_READ_BUDGETS.viewWorst < 180);
+});
+
+test("v2 feed and detail project safe current identity without media secrets", async () => {
+  const service = momentService();
+  const published = await publish(service);
+  await db.doc(`publicProfiles/${B}`).update({
+    displayName: "Current public Bob",
+    photoUrl: "https://public.invalid/current-bob.png",
+  });
+
+  const feed = await service.getVoiceMomentsFeedV2(request(A, {}));
+  assert.equal(feed.schemaVersion, 2);
+  assert.equal(feed.moments.length, 1);
+  assert.equal(feed.moments[0].momentId, published.momentId);
+  assert.equal(feed.moments[0].authorName, "Current public Bob");
+  assert.equal(feed.moments[0].authorPhotoUrl, null);
+  assert.match(feed.moments[0].reportReceipt, /^[A-Za-z0-9_-]{43}$/u);
+  for (const forbidden of [
+    "audioUrl",
+    "storagePath",
+    "mediaGeneration",
+    "mediaContentType",
+    "mediaSize",
+  ]) {
+    assert.equal(Object.hasOwn(feed.moments[0], forbidden), false);
+  }
+
+  const view = await service.getVoiceMomentViewV2(
+    request(A, { momentId: published.momentId }),
+  );
+  assert.equal(view.moment.momentId, published.momentId);
+  assert.equal(view.moment.authorName, "Current public Bob");
+  assert.match(view.moment.reportReceipt, /^[A-Za-z0-9_-]{43}$/u);
+  assert.equal(Object.hasOwn(view.moment, "audioUrl"), false);
+  assert.equal(Object.hasOwn(view.moment, "storagePath"), false);
+});
+
+test("v2 feed cursor pages a stable order without duplicates", async () => {
+  const service = momentService();
+  const published = [];
+  for (let index = 0; index < 5; index += 1) {
+    nowMs += 1_000;
+    published.push(await publish(service, {
+      reserveRequestId: `reserve-page-${index}`,
+      finalizeRequestId: `finalize-page-${index}`,
+      caption: `Page ${index}`,
+      generation: `${2_000 + index}`,
+    }));
+  }
+
+  const first = await service.getVoiceMomentsFeedV2(request(A, { limit: 2 }));
+  assert.deepEqual(Object.keys(first).sort(), [
+    "hasMore",
+    "moments",
+    "nextCursor",
+    "scannedCount",
+    "schemaVersion",
+  ]);
+  assert.equal(first.hasMore, true);
+  assert.equal(typeof first.nextCursor, "string");
+  assert.equal(first.scannedCount, 2);
+
+  const second = await service.getVoiceMomentsFeedV2(request(A, {
+    limit: 2,
+    cursor: first.nextCursor,
+  }));
+  const third = await service.getVoiceMomentsFeedV2(request(A, {
+    limit: 2,
+    cursor: second.nextCursor,
+  }));
+  const ids = [...first.moments, ...second.moments, ...third.moments]
+    .map((moment) => moment.momentId);
+  assert.equal(new Set(ids).size, 5);
+  assert.deepEqual(ids, published.reverse().map((item) => item.momentId));
+  assert.equal(second.hasMore, true);
+  assert.equal(third.hasMore, false);
+  assert.equal(third.nextCursor, null);
+  assert.equal(third.scannedCount, 1);
+
+  await Promise.all(published.map((item, index) =>
+    db.doc(`voiceMoments/${item.momentId}`).update({
+      likeCount: index * 10,
+    })));
+  const popularFirst = await service.getVoiceMomentsFeedV2(request(A, {
+    limit: 2,
+    sortMode: "popular",
+  }));
+  const popularSecond = await service.getVoiceMomentsFeedV2(request(A, {
+    limit: 2,
+    sortMode: "popular",
+    cursor: popularFirst.nextCursor,
+  }));
+  const popularCounts = [...popularFirst.moments, ...popularSecond.moments]
+    .map((moment) => moment.likeCount);
+  assert.deepEqual(popularCounts, [40, 30, 20, 10]);
+  await assert.rejects(
+    service.getVoiceMomentsFeedV2(request(A, {
+      limit: 2,
+      sortMode: "recent",
+      cursor: popularFirst.nextCursor,
+    })),
+    (error) => error.code === "invalid-argument",
+  );
+
+  await assert.rejects(
+    service.getVoiceMomentsFeedV2(request(A, {
+      limit: 2,
+      feedMode: "following",
+      cursor: first.nextCursor,
+    })),
+    (error) => error.code === "invalid-argument",
+  );
+
+  await assert.rejects(
+    service.getVoiceMomentsFeedV2(request(A, {
+      limit: 2,
+      cursor: "not-a-real-cursor",
+    })),
+    (error) => error.code === "invalid-argument",
+  );
+});
+
+test("v2 following feed accepts only canonical social edges after audience gates", async () => {
+  const service = momentService();
+  const bob = await publish(service, {
+    reserveRequestId: "reserve-following-bob",
+    finalizeRequestId: "finalize-following-bob",
+  });
+  nowMs += 1_000;
+  const charlie = await publish(service, {
+    uid: C,
+    reserveRequestId: "reserve-following-charlie",
+    finalizeRequestId: "finalize-following-charlie",
+    generation: "3001",
+  });
+
+  assert.deepEqual(
+    (await service.getVoiceMomentsFeedV2(request(A, {
+      feedMode: "following",
+    }))).moments,
+    [],
+  );
+  await db.doc(`users/${A}/following/${B}`).set({ uid: B });
+  assert.deepEqual(
+    (await service.getVoiceMomentsFeedV2(request(A, {
+      feedMode: "following",
+    }))).moments,
+    [],
+  );
+  await db.doc(`users/${A}/following/${B}`).set({
+    uid: B,
+    followedAt: Timestamp.fromMillis(nowMs),
+  });
+  await Promise.all([
+    db.doc(`friendshipGuards/${A}/friends/${C}`).set({
+      schemaVersion: 1,
+      ownerId: A,
+      friendId: C,
+      establishedAt: Timestamp.fromMillis(nowMs),
+    }),
+    db.doc(`friendshipGuards/${C}/friends/${A}`).set({
+      schemaVersion: 1,
+      ownerId: C,
+      friendId: A,
+      establishedAt: Timestamp.fromMillis(nowMs),
+    }),
+  ]);
+  const social = await service.getVoiceMomentsFeedV2(request(A, {
+    feedMode: "following",
+  }));
+  assert.deepEqual(
+    social.moments.map((moment) => moment.momentId),
+    [charlie.momentId, bob.momentId],
+  );
+
+  await db.doc(`users/${B}`).update({ profileVisibility: "private" });
+  const privateFiltered = await service.getVoiceMomentsFeedV2(request(A, {
+    feedMode: "following",
+  }));
+  assert.deepEqual(
+    privateFiltered.moments.map((moment) => moment.momentId),
+    [charlie.momentId],
+  );
+  await assert.rejects(
+    service.getVoiceMomentsFeedV2(request(A, {
+      feedMode: "following",
+      sortMode: "popular",
+    })),
+    (error) => error.code === "invalid-argument",
+  );
+});
+
+test("v2 detail cursor pages comments and is bound to its parent", async () => {
+  const service = momentService();
+  const firstMoment = await publish(service, {
+    reserveRequestId: "reserve-comment-page-root",
+    finalizeRequestId: "finalize-comment-page-root",
+  });
+  const secondMoment = await publish(service, {
+    uid: C,
+    reserveRequestId: "reserve-comment-page-other",
+    finalizeRequestId: "finalize-comment-page-other",
+    generation: "3001",
+  });
+  const created = [];
+  for (let index = 0; index < 5; index += 1) {
+    nowMs += 1_000;
+    created.push(await service.createMomentComment(request(A, {
+      momentId: firstMoment.momentId,
+      text: `Comment ${index}`,
+      requestId: `comment-page-${index}`,
+    })));
+  }
+
+  const first = await service.getVoiceMomentViewV2(request(A, {
+    momentId: firstMoment.momentId,
+    commentLimit: 2,
+  }));
+  assert.deepEqual(Object.keys(first).sort(), [
+    "comments",
+    "commentsTruncated",
+    "moment",
+    "nextCommentCursor",
+    "schemaVersion",
+    "topReactions",
+  ]);
+  assert.equal(first.commentsTruncated, true);
+  assert.equal(typeof first.nextCommentCursor, "string");
+
+  const second = await service.getVoiceMomentViewV2(request(A, {
+    momentId: firstMoment.momentId,
+    commentLimit: 2,
+    commentCursor: first.nextCommentCursor,
+  }));
+  const third = await service.getVoiceMomentViewV2(request(A, {
+    momentId: firstMoment.momentId,
+    commentLimit: 2,
+    commentCursor: second.nextCommentCursor,
+  }));
+  assert.deepEqual(
+    [...first.comments, ...second.comments, ...third.comments]
+      .map((comment) => comment.commentId),
+    created.map((comment) => comment.commentId),
+  );
+  assert.equal(third.commentsTruncated, false);
+  assert.equal(third.nextCommentCursor, null);
+
+  await assert.rejects(
+    service.getVoiceMomentViewV2(request(A, {
+      momentId: secondMoment.momentId,
+      commentCursor: first.nextCommentCursor,
+    })),
+    (error) => error.code === "invalid-argument",
+  );
+});
+
+test("v2 audience is fail-closed for private, one-sided friendship and blocks", async () => {
+  const service = momentService();
+  const published = await publish(service);
+  await db.doc(`users/${B}`).update({ profileVisibility: "private" });
+  assert.deepEqual(
+    (await service.getVoiceMomentsFeedV2(request(A, {}))).moments,
+    [],
+  );
+  await assert.rejects(
+    service.getVoiceMomentViewV2(
+      request(A, { momentId: published.momentId }),
+    ),
+    (error) => error.code === "permission-denied",
+  );
+  assert.equal(
+    (await service.getVoiceMomentsFeedV2(request(B, {}))).moments.length,
+    1,
+  );
+
+  await db.doc(`users/${B}`).update({ profileVisibility: "friends" });
+  await db.doc(`friendshipGuards/${A}/friends/${B}`).set({
+    schemaVersion: 1,
+    ownerId: A,
+    friendId: B,
+    establishedAt: Timestamp.fromMillis(nowMs),
+  });
+  assert.deepEqual(
+    (await service.getVoiceMomentsFeedV2(request(A, {}))).moments,
+    [],
+  );
+  await db.doc(`friendshipGuards/${B}/friends/${A}`).set({
+    schemaVersion: 1,
+    ownerId: B,
+    friendId: A,
+    establishedAt: Timestamp.fromMillis(nowMs),
+  });
+  assert.equal(
+    (await service.getVoiceMomentsFeedV2(request(A, {}))).moments.length,
+    1,
+  );
+
+  await db.doc(`users/${B}/blocked/${A}`).set({ createdAt: Timestamp.now() });
+  assert.deepEqual(
+    (await service.getVoiceMomentsFeedV2(request(A, {}))).moments,
+    [],
+  );
+});
+
+test("v2 reads reject inactive or restricted principals and the exact expiry boundary", async () => {
+  const service = momentService();
+  const published = await publish(service);
+
+  await db.doc(`restrictions/${B}`).set({ type: "communicationMute" });
+  assert.deepEqual(
+    (await service.getVoiceMomentsFeedV2(request(A, {}))).moments,
+    [],
+  );
+  await db.doc(`restrictions/${B}`).delete();
+  await db.doc(`users/${B}`).update({ disabled: true });
+  assert.deepEqual(
+    (await service.getVoiceMomentsFeedV2(request(A, {}))).moments,
+    [],
+  );
+  await db.doc(`users/${B}`).update({ disabled: false });
+
+  await db.doc(`restrictions/${A}`).set({ type: "communicationMute" });
+  await assert.rejects(
+    service.getVoiceMomentViewV2(
+      request(A, { momentId: published.momentId }),
+    ),
+    (error) => error.code === "permission-denied",
+  );
+  await db.doc(`restrictions/${A}`).delete();
+
+  nowMs += 24 * 60 * 60_000;
+  await assert.rejects(
+    service.getVoiceMomentViewV2(
+      request(A, { momentId: published.momentId }),
+    ),
+    (error) => error.code === "permission-denied",
+  );
+  assert.deepEqual(
+    (await service.getVoiceMomentsFeedV2(request(A, {}))).moments,
+    [],
+  );
+});
+
+test("v2 rechecks expiry at response time instead of request admission", async () => {
+  const published = await publish(momentService(), {
+    reserveRequestId: "reserve-response-expiry",
+    finalizeRequestId: "finalize-response-expiry",
+  });
+  const expiresAt = (await db.doc(`voiceMoments/${published.momentId}`).get())
+    .data().expiresAt.toMillis();
+  const expiringService = () => {
+    let calls = 0;
+    return momentService({}, {
+      clock: () => calls++ === 0 ? expiresAt - 1 : expiresAt,
+    });
+  };
+
+  assert.deepEqual(
+    (await expiringService().getVoiceMomentsFeedV2(request(A, {}))).moments,
+    [],
+  );
+  await assert.rejects(
+    expiringService().getVoiceMomentViewV2(
+      request(A, { momentId: published.momentId }),
+    ),
+    (error) => error.code === "permission-denied",
+  );
+});
+
+test("private Voice Moments cannot leak through playback or engagement", async () => {
+  const service = momentService();
+  const published = await publish(service);
+  await db.doc(`users/${B}`).update({ profileVisibility: "private" });
+
+  for (const operation of [
+    () => service.getVoiceMomentMediaAccess(
+      request(A, { momentId: published.momentId }),
+    ),
+    () => service.setMomentLike(
+      request(A, {
+        momentId: published.momentId,
+        liked: true,
+        requestId: "private-like-01",
+      }),
+    ),
+    () => service.createMomentComment(
+      request(A, {
+        momentId: published.momentId,
+        text: "must stay private",
+        requestId: "private-comment-01",
+      }),
+    ),
+  ]) {
+    await assert.rejects(operation(), (error) =>
+      ["permission-denied", "failed-precondition"].includes(error.code));
+  }
+  assert.equal(storage.signedGrants.length, 0);
+});
+
+test("detail hides comments and reaction identities after their authors become private", async () => {
+  const service = momentService();
+  const published = await publish(service);
+  await service.createMomentComment(
+    request(C, {
+      momentId: published.momentId,
+      text: "visible before privacy change",
+      requestId: "comment-child-privacy",
+    }),
+  );
+  await service.setMomentLike(
+    request(C, {
+      momentId: published.momentId,
+      liked: true,
+      requestId: "reaction-child-privacy",
+    }),
+  );
+  await db.doc(`users/${C}`).update({ profileVisibility: "private" });
+
+  const view = await service.getVoiceMomentViewV2(
+    request(A, { momentId: published.momentId }),
+  );
+  assert.deepEqual(view.comments, []);
+  assert.deepEqual(view.topReactions, []);
+  assert.equal(view.moment.commentCount, 1);
+  assert.equal(view.moment.likeCount, 1);
+});
+
+test("Voice Moment reporting has no missing/private/blocked/expired oracle", async () => {
+  const service = momentService();
+  const published = await publish(service);
+  const report = (momentId, requestId) =>
+    service.createContentReport(
+      request(A, {
+        targetType: "voiceMoment",
+        momentId,
+        reason: "safety report",
+        requestId,
+      }, false),
+    );
+  const expectHidden = (promise) =>
+    assert.rejects(promise, (error) => error.code === "permission-denied");
+
+  await db.doc(`users/${B}`).update({ profileVisibility: "private" });
+  await expectHidden(report(published.momentId, "report-private-01"));
+  await expectHidden(report("missing-moment", "report-missing-01"));
+
+  await db.doc(`users/${B}`).update({ profileVisibility: "public" });
+  await db.doc(`users/${A}/blocked/${B}`).set({ createdAt: Timestamp.now() });
+  await expectHidden(report(published.momentId, "report-blocked-01"));
+  await db.doc(`users/${A}/blocked/${B}`).delete();
+
+  nowMs += 24 * 60 * 60_000;
+  await expectHidden(report(published.momentId, "report-expired-01"));
+});
+
+test("reporting cannot reveal a guessed comment hidden by its author's privacy", async () => {
+  const service = momentService();
+  const published = await publish(service);
+  const comment = await service.createMomentComment(
+    request(C, {
+      momentId: published.momentId,
+      text: "later hidden",
+      requestId: "hidden-report-comment",
+    }),
+  );
+  const report = (commentId, requestId) =>
+    service.createContentReport(
+      request(A, {
+        targetType: "voiceMomentComment",
+        momentId: published.momentId,
+        commentId,
+        reason: "safety report",
+        requestId,
+      }, false),
+    );
+  const expectHidden = (promise) =>
+    assert.rejects(promise, (error) => error.code === "permission-denied");
+
+  await db.doc(`users/${C}`).update({ profileVisibility: "private" });
+  await expectHidden(report(comment.commentId, "report-private-child"));
+  await expectHidden(report("guessed-comment-id", "report-missing-child"));
+
+  await db.doc(`users/${C}`).update({ profileVisibility: "public" });
+  await db.doc(`users/${C}/blocked/${A}`).set({ createdAt: Timestamp.now() });
+  await expectHidden(report(comment.commentId, "report-blocked-child"));
+});
+
+test("v2 report receipt preserves safety reporting across block and mute races", async () => {
+  const service = momentService();
+  const published = await publish(service, {
+    reserveRequestId: "reserve-receipt-report",
+    finalizeRequestId: "finalize-receipt-report",
+  });
+  const projected = await service.getVoiceMomentViewV2(
+    request(A, { momentId: published.momentId }),
+  );
+  const receipt = projected.moment.reportReceipt;
+  assert.match(receipt, /^[A-Za-z0-9_-]{43}$/u);
+
+  await Promise.all([
+    db.doc(`users/${B}/blocked/${A}`).set({
+      createdAt: Timestamp.fromMillis(nowMs),
+    }),
+    db.doc(`restrictions/${A}`).set({ type: "communicationMute" }),
+  ]);
+  const reportRequest = request(A, {
+    targetType: "voiceMoment",
+    momentId: published.momentId,
+    reason: "harassment",
+    requestId: "receipt-report-01",
+    reportReceipt: receipt,
+  }, false);
+  const created = await service.createContentReport(reportRequest);
+  const report = (await db.doc(`reports/${created.reportId}`).get()).data();
+  assert.equal(report.targetId, published.momentId);
+  assert.equal(report.reportedUserId, B);
+  assert.equal(report.contextPath, `voiceMoments/${published.momentId}`);
+  assert.equal(
+    (await db.collection("voiceMomentReportReceipts")
+      .where("ownerId", "==", A).get()).empty,
+    true,
+  );
+  // Lost-ack retry replays from the operation ledger after the one-shot
+  // capability has been consumed.
+  assert.deepEqual(await service.createContentReport(reportRequest), created);
+});
+
+test("v2 comment receipt is target-bound and hides guessed or expired tokens", async () => {
+  const service = momentService();
+  const published = await publish(service, {
+    reserveRequestId: "reserve-comment-receipt",
+    finalizeRequestId: "finalize-comment-receipt",
+  });
+  const comment = await service.createMomentComment(request(C, {
+    momentId: published.momentId,
+    text: "reportable reply",
+    requestId: "comment-receipt-create",
+  }));
+  const secondComment = await service.createMomentComment(request(C, {
+    momentId: published.momentId,
+    text: "second reportable reply",
+    requestId: "comment-receipt-create-02",
+  }));
+  const projected = await service.getVoiceMomentViewV2(
+    request(A, { momentId: published.momentId }),
+  );
+  const receipt = projected.comments
+    .find((item) => item.commentId === comment.commentId)
+    .reportReceipt;
+  const secondReceipt = projected.comments
+    .find((item) => item.commentId === secondComment.commentId)
+    .reportReceipt;
+  await db.doc(`users/${C}/blocked/${A}`).set({
+    createdAt: Timestamp.fromMillis(nowMs),
+  });
+
+  const created = await service.createContentReport(request(A, {
+    targetType: "voiceMomentComment",
+    momentId: published.momentId,
+    commentId: comment.commentId,
+    reason: "harassment",
+    requestId: "comment-receipt-report",
+    reportReceipt: receipt,
+  }, false));
+  const report = (await db.doc(`reports/${created.reportId}`).get()).data();
+  assert.equal(report.targetId, comment.commentId);
+  assert.equal(report.reportedUserId, C);
+  assert.equal(
+    report.contextPath,
+    `voiceMoments/${published.momentId}/comments/${comment.commentId}`,
+  );
+
+  await assert.rejects(
+    service.createContentReport(request(A, {
+      targetType: "voiceMomentComment",
+      momentId: published.momentId,
+      commentId: "guessed-comment-id",
+      reason: "harassment",
+      requestId: "guessed-receipt-01",
+      reportReceipt: secondReceipt,
+    }, false)),
+    (error) => error.code === "permission-denied",
+  );
+  nowMs += 10 * 60_000;
+  await assert.rejects(
+    service.createContentReport(request(A, {
+      targetType: "voiceMomentComment",
+      momentId: published.momentId,
+      commentId: secondComment.commentId,
+      reason: "harassment",
+      requestId: "expired-receipt-01",
+      reportReceipt: secondReceipt,
+    }, false)),
+    (error) => error.code === "permission-denied",
+  );
+
+  nowMs -= 10 * 60_000;
+  const refreshed = await service.getVoiceMomentViewV2(
+    request(A, { momentId: published.momentId }),
+  );
+  // The comment author block correctly prevents issuing a fresh receipt.
+  assert.deepEqual(refreshed.comments, []);
+});
 
 test("draft reservation and finalize bind canonical identity and immutable media", async () => {
   const service = momentService();

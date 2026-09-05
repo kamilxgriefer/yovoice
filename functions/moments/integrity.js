@@ -1,3 +1,5 @@
+const crypto = require("node:crypto");
+
 const {
   SAFE_ID,
   activeProfile,
@@ -31,12 +33,18 @@ const {
   momentCapacityLedgerReference,
   touchMomentCapacityLedger,
 } = require("./capacity");
+const {
+  exactFriendshipGuard,
+  profileVisibilityOf,
+} = require("../profile/media_contract");
 
 const DEFAULT_LIMITS = Object.freeze({
   uploadReserve: { maxEvents: 5, windowMs: 10 * 60_000 },
   finalize: { maxEvents: 10, windowMs: 10 * 60_000 },
   mediaAccess: { maxEvents: 30, windowMs: 60_000 },
   mediaAccessHourly: { maxEvents: 300, windowMs: 60 * 60_000 },
+  read: { maxEvents: 60, windowMs: 60_000 },
+  readHourly: { maxEvents: 1_000, windowMs: 60 * 60_000 },
   like: { maxEvents: 60, windowMs: 60_000 },
   comment: { maxEvents: 20, windowMs: 60_000 },
   delete: { maxEvents: 10, windowMs: 60_000 },
@@ -151,6 +159,58 @@ const MIN_AUDIO_BYTES = 512;
 // the Moment's own expiry. Sixty seconds of audio plus network startup fits in
 // ninety seconds without turning one playback into a durable capability.
 const MEDIA_ACCESS_TTL_MS = 90_000;
+// A report receipt is a server-issued capability proving that this viewer saw
+// this exact Voice Moment target through the privacy-filtered v2 projection.
+// It is deliberately short-lived: long enough to open the safety sheet and
+// submit it after a block/mute race, but not a durable bypass of later privacy.
+const VOICE_REPORT_RECEIPT_TTL_MS = 10 * 60_000;
+const VOICE_REPORT_RECEIPT_TOKEN = /^[A-Za-z0-9_-]{43}$/u;
+const MAX_FEED_LIMIT = 10;
+const MAX_THREAD_COMMENTS = 7;
+const MAX_THREAD_REACTIONS = 3;
+const MAX_PAGE_CURSOR_LENGTH = 256;
+const VOICE_MOMENT_V2_READ_BUDGETS = Object.freeze({
+  // Two reads happen in the separate minute/hour limiter transaction.
+  // A feed candidate costs one query read, one caller-like read and either
+  // five (public) or seven (friends-only) author-context reads.
+  // The feed query reads one look-ahead document so `hasMore` is exact.
+  // The v2 response also reads one server-only report-receipt row per
+  // candidate. `following` mode adds one canonical following edge per author.
+  feedTypical: 2 + 3 + MAX_FEED_LIMIT * 8,
+  feedFollowingTypical: 2 + 3 + MAX_FEED_LIMIT * 9,
+  feedWorst: 2 + 3 + MAX_FEED_LIMIT * 11,
+  viewTypical:
+    2 +
+    4 +
+    (MAX_THREAD_COMMENTS + 1) +
+    MAX_THREAD_REACTIONS * 2 +
+    (1 + MAX_THREAD_COMMENTS + MAX_THREAD_REACTIONS * 2) * 5 +
+    (1 + MAX_THREAD_COMMENTS),
+  viewWorst:
+    2 +
+    4 +
+    (MAX_THREAD_COMMENTS + 1) +
+    MAX_THREAD_REACTIONS * 2 +
+    (1 + MAX_THREAD_COMMENTS + MAX_THREAD_REACTIONS * 2) * 7 +
+    (1 + MAX_THREAD_COMMENTS),
+});
+
+function exactFollowingEdge(snapshot, targetId) {
+  if (!snapshot?.exists) return false;
+  const data = snapshot.data() ?? {};
+  const keys = Object.keys(data).sort();
+  const allowed = new Set(["followedAt", "notificationId", "uid"]);
+  return keys.length >= 2 &&
+    keys.every((key) => allowed.has(key)) &&
+    keys.includes("followedAt") &&
+    keys.includes("uid") &&
+    data.uid === targetId &&
+    timestampMillis(data.followedAt) !== null &&
+    (!("notificationId" in data) ||
+      (typeof data.notificationId === "string" &&
+        data.notificationId.length > 0 &&
+        data.notificationId.length <= 320));
+}
 
 function canonicalMomentId(uid, requestId) {
   return digest("voice-moment", uid, requestId).slice(0, 20);
@@ -553,6 +613,162 @@ function validateComment(snapshot, momentId) {
   return data;
 }
 
+function validateMomentLike(snapshot, momentId, userId) {
+  if (!snapshot?.exists) return false;
+  const data = snapshot.data() ?? {};
+  const keys = Object.keys(data).sort();
+  const expected = ["createdAt", "momentId", "schemaVersion", "userId"];
+  if (
+    keys.length !== expected.length ||
+    keys.some((key, index) => key !== expected[index]) ||
+    data.schemaVersion !== 1 ||
+    data.userId !== userId ||
+    data.momentId !== momentId ||
+    timestampMillis(data.createdAt) === null
+  ) {
+    fail("data-loss", "The like edge is not canonical.");
+  }
+  return true;
+}
+
+function voiceMomentProjection(
+  momentId,
+  data,
+  publicProfile,
+  callerLiked,
+  reportReceipt,
+) {
+  const identity = canonicalPublicProfile(publicProfile, data.authorId);
+  const createdAtMillis = timestampMillis(data.createdAt);
+  const publishedAtMillis = timestampMillis(data.publishedAt) ?? createdAtMillis;
+  const expiresAtMillis = Object.prototype.hasOwnProperty.call(data, "expiresAt")
+    ? timestampMillis(data.expiresAt)
+    : null;
+  return {
+    schemaVersion: 2,
+    momentId,
+    authorId: data.authorId,
+    authorName: identity.displayName,
+    // Profile artwork is intentionally resolved through its own short-lived,
+    // viewer-authorized grant. Never copy a durable profile URL into this
+    // content projection.
+    authorPhotoUrl: identity.photoUrl,
+    caption: data.caption,
+    durationSeconds: data.durationSeconds,
+    likeCount: data.likeCount ?? 0,
+    commentCount: data.commentCount ?? 0,
+    callerLiked,
+    reportReceipt,
+    createdAtMillis,
+    publishedAtMillis,
+    expiresAtMillis,
+  };
+}
+
+function voiceMomentCommentProjection(
+  commentId,
+  data,
+  publicProfile,
+  reportReceipt,
+) {
+  const identity = canonicalPublicProfile(publicProfile, data.authorId);
+  return {
+    schemaVersion: 2,
+    commentId,
+    type: data.type,
+    authorId: data.authorId,
+    authorName: identity.displayName,
+    authorPhotoUrl: identity.photoUrl,
+    text: data.text,
+    durationSeconds: data.durationSeconds,
+    createdAtMillis: timestampMillis(data.createdAt),
+    reportReceipt,
+  };
+}
+
+function encodeVoiceMomentPageCursor({
+  kind,
+  id,
+  createdAtMillis,
+  momentId = null,
+  sortMode = null,
+  feedMode = null,
+  orderValue = null,
+}) {
+  if (
+    !Number.isSafeInteger(createdAtMillis) ||
+    createdAtMillis < 0 ||
+    (sortMode !== null &&
+      (!Number.isSafeInteger(orderValue) || orderValue < 0))
+  ) {
+    fail("data-loss", "The Voice Moment page boundary is malformed.");
+  }
+  return Buffer.from(JSON.stringify({
+    schemaVersion: 1,
+    kind,
+    id,
+    createdAtMillis,
+    ...(momentId === null ? {} : { momentId }),
+    ...(sortMode === null ? {} : { sortMode, feedMode, orderValue }),
+  }), "utf8").toString("base64url");
+}
+
+function decodeVoiceMomentPageCursor(
+  value,
+  { kind, momentId = null, sortMode = null, feedMode = null },
+) {
+  if (
+    typeof value !== "string" ||
+    value.length < 1 ||
+    value.length > MAX_PAGE_CURSOR_LENGTH ||
+    !/^[A-Za-z0-9_-]+$/u.test(value)
+  ) {
+    fail("invalid-argument", "The Voice Moment page cursor is invalid.");
+  }
+  try {
+    const decoded = Buffer.from(value, "base64url");
+    if (
+      decoded.length > MAX_PAGE_CURSOR_LENGTH ||
+      decoded.toString("base64url") !== value
+    ) {
+      fail("invalid-argument", "The Voice Moment page cursor is invalid.");
+    }
+    const cursor = JSON.parse(decoded.toString("utf8"));
+    const expectedKeys = [
+      "createdAtMillis",
+      "id",
+      "kind",
+      ...(momentId === null ? [] : ["momentId"]),
+      ...(sortMode === null ? [] : ["feedMode", "orderValue", "sortMode"]),
+      "schemaVersion",
+    ].sort();
+    const keys = cursor && typeof cursor === "object" && !Array.isArray(cursor)
+      ? Object.keys(cursor).sort()
+      : [];
+    if (
+      keys.length !== expectedKeys.length ||
+      keys.some((key, index) => key !== expectedKeys[index]) ||
+      cursor.schemaVersion !== 1 ||
+      cursor.kind !== kind ||
+      !Number.isSafeInteger(cursor.createdAtMillis) ||
+      cursor.createdAtMillis < 0 ||
+      (momentId !== null && cursor.momentId !== momentId) ||
+      (sortMode !== null &&
+        (cursor.sortMode !== sortMode ||
+          cursor.feedMode !== feedMode ||
+          !Number.isSafeInteger(cursor.orderValue) ||
+          cursor.orderValue < 0))
+    ) {
+      fail("invalid-argument", "The Voice Moment page cursor is invalid.");
+    }
+    requireId(cursor.id, "cursor id");
+    return cursor;
+  } catch (error) {
+    if (error?.code === "invalid-argument") throw error;
+    fail("invalid-argument", "The Voice Moment page cursor is invalid.");
+  }
+}
+
 function customMetadataOf(metadata) {
   const custom = metadata?.metadata ?? metadata?.customMetadata ?? {};
   return isPlainObject(custom) ? custom : {};
@@ -733,6 +949,712 @@ function createMomentIntegrityService({
       consume(transaction, minute, minuteRef, "mediaAccess", uid, timing);
       consume(transaction, hour, hourRef, "mediaAccessHourly", uid, timing);
     });
+  }
+
+  async function beginVoiceMomentReadAttempt(uid, timing) {
+    return db.runTransaction(async (transaction) => {
+      const minuteRef = limitReference("read", uid);
+      const hourRef = limitReference("readHourly", uid);
+      const [minute, hour] = await transactionGetAll(
+        transaction,
+        minuteRef,
+        hourRef,
+      );
+      consume(transaction, minute, minuteRef, "read", uid, timing);
+      consume(transaction, hour, hourRef, "readHourly", uid, timing);
+    });
+  }
+
+  async function loadVoiceAudienceContexts(
+    transaction,
+    viewerId,
+    authorIds,
+    { includeSocialEdges = false } = {},
+  ) {
+    const descriptors = [];
+    const baseReferences = [];
+    for (const authorId of [...new Set(authorIds)]) {
+      if (!isValidOpaqueUid(authorId)) {
+        fail("data-loss", "The Voice Moment author is invalid.");
+      }
+      const descriptor = {
+        authorId,
+        baseStart: baseReferences.length,
+        sharedIdentity: authorId === viewerId,
+      };
+      baseReferences.push(
+        db.doc(`users/${authorId}`),
+        db.doc(`restrictions/${authorId}`),
+        db.doc(`publicProfiles/${authorId}`),
+      );
+      descriptors.push(descriptor);
+    }
+    const baseSnapshots = baseReferences.length === 0
+      ? []
+      : await transactionGetAll(transaction, ...baseReferences);
+    const relationshipReferences = [];
+    for (const descriptor of descriptors) {
+      if (descriptor.sharedIdentity) continue;
+      descriptor.blockStart = relationshipReferences.length;
+      relationshipReferences.push(
+        db.doc(`users/${viewerId}/blocked/${descriptor.authorId}`),
+        db.doc(`users/${descriptor.authorId}/blocked/${viewerId}`),
+      );
+      if (includeSocialEdges) {
+        descriptor.followingStart = relationshipReferences.length;
+        relationshipReferences.push(
+          db.doc(`users/${viewerId}/following/${descriptor.authorId}`),
+        );
+      }
+      const authorProfile = baseSnapshots[descriptor.baseStart];
+      if (
+        includeSocialEdges ||
+        profileVisibilityOf(authorProfile?.data()) === "friends"
+      ) {
+        descriptor.friendshipStart = relationshipReferences.length;
+        relationshipReferences.push(
+          db.doc(
+            `friendshipGuards/${viewerId}/friends/${descriptor.authorId}`,
+          ),
+          db.doc(
+            `friendshipGuards/${descriptor.authorId}/friends/${viewerId}`,
+          ),
+        );
+      }
+    }
+    const relationshipSnapshots = relationshipReferences.length === 0
+      ? []
+      : await transactionGetAll(transaction, ...relationshipReferences);
+    const contexts = new Map();
+    for (const descriptor of descriptors) {
+      const {
+        authorId,
+        baseStart,
+        blockStart,
+        friendshipStart,
+        followingStart,
+        sharedIdentity,
+      } = descriptor;
+      contexts.set(authorId, {
+        authorProfile: baseSnapshots[baseStart],
+        authorRestriction: baseSnapshots[baseStart + 1],
+        publicProfile: baseSnapshots[baseStart + 2],
+        viewerBlock: sharedIdentity
+          ? null
+          : relationshipSnapshots[blockStart],
+        authorBlock: sharedIdentity
+          ? null
+          : relationshipSnapshots[blockStart + 1],
+        following: followingStart === undefined
+          ? null
+          : relationshipSnapshots[followingStart],
+        forwardFriendship: friendshipStart === undefined
+          ? null
+          : relationshipSnapshots[friendshipStart],
+        reverseFriendship: friendshipStart === undefined
+          ? null
+          : relationshipSnapshots[friendshipStart + 1],
+      });
+    }
+    return contexts;
+  }
+
+  function assertVoiceMomentSocialRelationship(viewerId, authorId, context) {
+    if (viewerId === authorId) return;
+    if (
+      exactFollowingEdge(context?.following, authorId) ||
+      (exactFriendshipGuard(context?.forwardFriendship, viewerId, authorId) &&
+        exactFriendshipGuard(context?.reverseFriendship, authorId, viewerId))
+    ) {
+      return;
+    }
+    fail("permission-denied", "This Voice Moment is unavailable.");
+  }
+
+  function assertVoiceMomentAudienceFromContext({
+    viewerId,
+    viewerProfile,
+    viewerRestriction,
+    authorId,
+    context,
+    nowMs,
+  }) {
+    activeProfile(viewerProfile, "Your");
+    assertNotRestricted(viewerRestriction, "Your", nowMs);
+    if (!context) fail("data-loss", "The Voice Moment access context is missing.");
+    const author = activeProfile(context.authorProfile, "The author");
+    assertNotRestricted(context.authorRestriction, "The author", nowMs);
+    if (viewerId === authorId) return context;
+    assertNotBlocked(context.viewerBlock, context.authorBlock);
+    const visibility = profileVisibilityOf(author);
+    if (visibility === "public") return context;
+    if (
+      visibility === "friends" &&
+      exactFriendshipGuard(context.forwardFriendship, viewerId, authorId) &&
+      exactFriendshipGuard(context.reverseFriendship, authorId, viewerId)
+    ) {
+      return context;
+    }
+    fail("permission-denied", "This Voice Moment is unavailable.");
+  }
+
+  async function assertVoiceMomentAudience(transaction, {
+    viewerId,
+    authorId,
+    nowMs,
+    viewerProfile = undefined,
+    viewerRestriction = undefined,
+  }) {
+    let resolvedProfile = viewerProfile;
+    let resolvedRestriction = viewerRestriction;
+    if (resolvedProfile === undefined || resolvedRestriction === undefined) {
+      [resolvedProfile, resolvedRestriction] = await transactionGetAll(
+        transaction,
+        db.doc(`users/${viewerId}`),
+        db.doc(`restrictions/${viewerId}`),
+      );
+    }
+    const contexts = await loadVoiceAudienceContexts(
+      transaction,
+      viewerId,
+      [authorId],
+    );
+    return assertVoiceMomentAudienceFromContext({
+      viewerId,
+      viewerProfile: resolvedProfile,
+      viewerRestriction: resolvedRestriction,
+      authorId,
+      context: contexts.get(authorId),
+      nowMs,
+    });
+  }
+
+  function publishedMomentForRead(snapshot, momentId, nowMs) {
+    const legacy = snapshot.data()?.schemaVersion !== 2;
+    return legacy
+      ? validateLegacyMomentForPlayback(snapshot, momentId, nowMs)
+      : validateMoment(snapshot, momentId, {
+          published: true,
+          activeAtMs: nowMs,
+        });
+  }
+
+  function voiceReportReceiptReference(viewerId, target) {
+    const receiptId = digest(
+      "voice-moment-report-receipt",
+      viewerId,
+      target.targetType,
+      target.momentId,
+      target.commentId ?? "",
+    ).slice(0, 40);
+    return db.doc(`voiceMomentReportReceipts/${receiptId}`);
+  }
+
+  function exactVoiceReportReceipt(snapshot, target, viewerId, nowMs) {
+    if (!snapshot?.exists) return null;
+    const data = snapshot.data() ?? {};
+    const expected = [
+      "commentId",
+      "expiresAt",
+      "issuedAt",
+      "momentId",
+      "ownerId",
+      "schemaVersion",
+      "targetAuthorId",
+      "targetType",
+      "token",
+    ].sort();
+    const keys = Object.keys(data).sort();
+    const issuedAtMs = timestampMillis(data.issuedAt);
+    const expiresAtMs = timestampMillis(data.expiresAt);
+    if (
+      keys.length !== expected.length ||
+      keys.some((key, index) => key !== expected[index]) ||
+      data.schemaVersion !== 1 ||
+      data.ownerId !== viewerId ||
+      data.targetType !== target.targetType ||
+      data.momentId !== target.momentId ||
+      data.commentId !== (target.commentId ?? null) ||
+      !isValidOpaqueUid(data.targetAuthorId) ||
+      typeof data.token !== "string" ||
+      !VOICE_REPORT_RECEIPT_TOKEN.test(data.token) ||
+      issuedAtMs === null ||
+      expiresAtMs === null ||
+      issuedAtMs > nowMs ||
+      expiresAtMs - issuedAtMs !== VOICE_REPORT_RECEIPT_TTL_MS ||
+      expiresAtMs <= nowMs
+    ) {
+      return null;
+    }
+    return data;
+  }
+
+  function receiptTokenMatches(expected, received) {
+    if (
+      typeof expected !== "string" ||
+      typeof received !== "string" ||
+      !VOICE_REPORT_RECEIPT_TOKEN.test(expected) ||
+      !VOICE_REPORT_RECEIPT_TOKEN.test(received)
+    ) {
+      return false;
+    }
+    return crypto.timingSafeEqual(
+      Buffer.from(expected, "ascii"),
+      Buffer.from(received, "ascii"),
+    );
+  }
+
+  function issueVoiceReportReceipt(
+    transaction,
+    snapshot,
+    { reference, target, targetAuthorId, viewerId, timing },
+  ) {
+    const current = exactVoiceReportReceipt(
+      snapshot,
+      target,
+      viewerId,
+      timing.nowMs,
+    );
+    if (current !== null && current.targetAuthorId === targetAuthorId) {
+      return current.token;
+    }
+    const token = crypto.randomBytes(32).toString("base64url");
+    transaction.set(reference, {
+      schemaVersion: 1,
+      ownerId: viewerId,
+      targetType: target.targetType,
+      momentId: target.momentId,
+      commentId: target.commentId ?? null,
+      targetAuthorId,
+      token,
+      issuedAt: timing.now,
+      expiresAt: Timestamp.fromMillis(
+        timing.nowMs + VOICE_REPORT_RECEIPT_TTL_MS,
+      ),
+    });
+    return token;
+  }
+
+  function voiceMomentReportTarget(momentId, commentId = null) {
+    return {
+      targetType: commentId === null ? "voiceMoment" : "voiceMomentComment",
+      momentId,
+      commentId,
+    };
+  }
+
+  async function getVoiceMomentsFeedV2(request) {
+    const auth = requireActor(request, { verified: false });
+    const data = requireExactInput(
+      request.data,
+      ["cursor", "feedMode", "limit", "sortMode"],
+      [],
+    );
+    const sortMode = data.sortMode ?? "recent";
+    if (sortMode !== "recent" && sortMode !== "popular") {
+      fail("invalid-argument", "sortMode must be recent or popular.");
+    }
+    const feedMode = data.feedMode ?? "discover";
+    if (feedMode !== "discover" && feedMode !== "following") {
+      fail("invalid-argument", "feedMode must be discover or following.");
+    }
+    if (feedMode === "following" && sortMode !== "recent") {
+      fail("invalid-argument", "following feedMode only supports recent sortMode.");
+    }
+    const limit = data.limit === undefined
+      ? MAX_FEED_LIMIT
+      : requireSafeInteger(data.limit, "limit", { min: 1, max: MAX_FEED_LIMIT });
+    const cursor = data.cursor === undefined
+      ? null
+      : decodeVoiceMomentPageCursor(data.cursor, {
+          kind: "feed",
+          sortMode,
+          feedMode,
+        });
+    const timing = time();
+    await beginVoiceMomentReadAttempt(auth.uid, timing);
+    const scanLimit = limit;
+
+    return db.runTransaction(async (transaction) => {
+      const [viewerProfile, viewerRestriction] = await transactionGetAll(
+        transaction,
+        db.doc(`users/${auth.uid}`),
+        db.doc(`restrictions/${auth.uid}`),
+      );
+      activeProfile(viewerProfile, "Your");
+      assertNotRestricted(viewerRestriction, "Your", timing.nowMs);
+      let query = db.collection("voiceMoments").where("isPublished", "==", true);
+      query = sortMode === "popular"
+        ? query
+            .orderBy("likeCount", "desc")
+            .orderBy(FieldPath.documentId(), "desc")
+        : query
+            .orderBy("createdAt", "desc")
+            .orderBy(FieldPath.documentId(), "desc");
+      if (cursor !== null) {
+        query = sortMode === "popular"
+          ? query.startAfter(cursor.orderValue, cursor.id)
+          : query.startAfter(
+              Timestamp.fromMillis(cursor.createdAtMillis),
+              cursor.id,
+            );
+      }
+      query = query.limit(scanLimit + 1);
+      const snapshot = await transaction.get(query);
+      const pageDocuments = snapshot.docs.slice(0, scanLimit);
+      const candidates = [];
+      for (const document of pageDocuments) {
+        try {
+          candidates.push({
+            document,
+            data: publishedMomentForRead(document, document.id, timing.nowMs),
+          });
+        } catch (_) {
+          // A corrupt, expired, deleting or otherwise non-canonical root is
+          // omitted. The projection must fail closed per item rather than
+          // widening access because a scheduled sweep is late.
+        }
+      }
+      const contexts = await loadVoiceAudienceContexts(
+        transaction,
+        auth.uid,
+        candidates.map((candidate) => candidate.data.authorId),
+        { includeSocialEdges: feedMode === "following" },
+      );
+      const likeSnapshots = candidates.length === 0
+        ? []
+        : await transactionGetAll(
+            transaction,
+            ...candidates.map((candidate) =>
+              candidate.document.ref.collection("likes").doc(auth.uid)),
+          );
+      const receiptReferences = candidates.map((candidate) =>
+        voiceReportReceiptReference(
+          auth.uid,
+          voiceMomentReportTarget(candidate.document.id),
+        ));
+      const receiptSnapshots = receiptReferences.length === 0
+        ? []
+        : await transactionGetAll(transaction, ...receiptReferences);
+      // Re-sample server time only after every transactional read. An item
+      // expiring while the callable was resolving privacy must never escape in
+      // the response merely because it was alive at request admission.
+      const responseTiming = time();
+      activeProfile(viewerProfile, "Your");
+      assertNotRestricted(
+        viewerRestriction,
+        "Your",
+        responseTiming.nowMs,
+      );
+      const moments = [];
+      for (let index = 0; index < candidates.length; index += 1) {
+        const candidate = candidates[index];
+        try {
+          const activeData = publishedMomentForRead(
+            candidate.document,
+            candidate.document.id,
+            responseTiming.nowMs,
+          );
+          const context = assertVoiceMomentAudienceFromContext({
+            viewerId: auth.uid,
+            viewerProfile,
+            viewerRestriction,
+            authorId: activeData.authorId,
+            context: contexts.get(activeData.authorId),
+            nowMs: responseTiming.nowMs,
+          });
+          if (feedMode === "following") {
+            assertVoiceMomentSocialRelationship(
+              auth.uid,
+              activeData.authorId,
+              context,
+            );
+          }
+          const callerLiked = validateMomentLike(
+            likeSnapshots[index],
+            candidate.document.id,
+            auth.uid,
+          );
+          const target = voiceMomentReportTarget(candidate.document.id);
+          const reportReceipt = issueVoiceReportReceipt(
+            transaction,
+            receiptSnapshots[index],
+            {
+              reference: receiptReferences[index],
+              target,
+              targetAuthorId: activeData.authorId,
+              viewerId: auth.uid,
+              timing: responseTiming,
+            },
+          );
+          moments.push(
+            voiceMomentProjection(
+              candidate.document.id,
+              activeData,
+              context.publicProfile,
+              callerLiked,
+              reportReceipt,
+            ),
+          );
+        } catch (_) {
+          // Per-author privacy and integrity failures stay indistinguishable
+          // from absence in a multi-item feed.
+        }
+        if (moments.length === limit) break;
+      }
+      const hasMore = snapshot.size > scanLimit;
+      const lastDocument = pageDocuments.at(-1) ?? null;
+      const nextCursor = hasMore && lastDocument !== null
+        ? encodeVoiceMomentPageCursor({
+            kind: "feed",
+            id: lastDocument.id,
+            createdAtMillis: timestampMillis(lastDocument.get("createdAt")),
+            sortMode,
+            feedMode,
+            orderValue: sortMode === "popular"
+              ? lastDocument.get("likeCount")
+              : timestampMillis(lastDocument.get("createdAt")),
+          })
+        : null;
+      return {
+        schemaVersion: 2,
+        moments,
+        scannedCount: pageDocuments.length,
+        hasMore,
+        nextCursor,
+      };
+    });
+  }
+
+  async function getVoiceMomentViewV2(request) {
+    const auth = requireActor(request, { verified: false });
+    const data = requireExactInput(
+      request.data,
+      ["commentCursor", "commentLimit", "momentId", "reactionLimit"],
+      ["momentId"],
+    );
+    const momentId = requireId(data.momentId, "momentId");
+    const commentCursor = data.commentCursor === undefined
+      ? null
+      : decodeVoiceMomentPageCursor(data.commentCursor, {
+          kind: "comment",
+          momentId,
+        });
+    const commentLimit = data.commentLimit === undefined
+      ? MAX_THREAD_COMMENTS
+      : requireSafeInteger(data.commentLimit, "commentLimit", {
+          min: 1,
+          max: MAX_THREAD_COMMENTS,
+        });
+    const reactionLimit = data.reactionLimit === undefined
+      ? MAX_THREAD_REACTIONS
+      : requireSafeInteger(data.reactionLimit, "reactionLimit", {
+          min: 1,
+          max: MAX_THREAD_REACTIONS,
+        });
+    const timing = time();
+    await beginVoiceMomentReadAttempt(auth.uid, timing);
+
+    try {
+      return await db.runTransaction(async (transaction) => {
+        const momentRef = db.doc(`voiceMoments/${momentId}`);
+        const [moment, viewerProfile, viewerRestriction, callerLike] =
+          await transactionGetAll(
+            transaction,
+            momentRef,
+            db.doc(`users/${auth.uid}`),
+            db.doc(`restrictions/${auth.uid}`),
+            momentRef.collection("likes").doc(auth.uid),
+          );
+        const momentData = publishedMomentForRead(moment, momentId, timing.nowMs);
+        activeProfile(viewerProfile, "Your");
+        assertNotRestricted(viewerRestriction, "Your", timing.nowMs);
+
+        let commentQuery = momentRef
+          .collection("comments")
+          .orderBy("createdAt", "asc")
+          .orderBy(FieldPath.documentId(), "asc");
+        if (commentCursor !== null) {
+          commentQuery = commentQuery.startAfter(
+            Timestamp.fromMillis(commentCursor.createdAtMillis),
+            commentCursor.id,
+          );
+        }
+        commentQuery = commentQuery.limit(commentLimit + 1);
+        const reactionQuery = momentRef
+          .collection("likes")
+          .orderBy("createdAt", "desc")
+          .limit(reactionLimit * 2);
+        const commentSnapshot = await transaction.get(commentQuery);
+        const reactionSnapshot = await transaction.get(reactionQuery);
+        const commentDocuments = commentSnapshot.docs.slice(0, commentLimit);
+        const comments = [];
+        for (const document of commentDocuments) {
+          try {
+            comments.push({
+              document,
+              data: validateComment(document, momentId),
+            });
+          } catch (_) {
+            // A malformed child is never projected.
+          }
+        }
+        const reactions = [];
+        for (const document of reactionSnapshot.docs) {
+          try {
+            if (validateMomentLike(document, momentId, document.id)) {
+              reactions.push({ document, userId: document.id });
+            }
+          } catch (_) {
+            // A malformed like edge is never used as an identity oracle.
+          }
+        }
+        const authorIds = [
+          momentData.authorId,
+          ...comments.map((comment) => comment.data.authorId),
+          ...reactions.map((reaction) => reaction.userId),
+        ];
+        const contexts = await loadVoiceAudienceContexts(
+          transaction,
+          auth.uid,
+          authorIds,
+        );
+        const receiptTargets = [
+          voiceMomentReportTarget(momentId),
+          ...comments.map((comment) =>
+            voiceMomentReportTarget(momentId, comment.document.id)),
+        ];
+        const receiptReferences = receiptTargets.map((target) =>
+          voiceReportReceiptReference(auth.uid, target));
+        const receiptSnapshots = await transactionGetAll(
+          transaction,
+          ...receiptReferences,
+        );
+        const responseTiming = time();
+        const responseMomentData = publishedMomentForRead(
+          moment,
+          momentId,
+          responseTiming.nowMs,
+        );
+        activeProfile(viewerProfile, "Your");
+        assertNotRestricted(
+          viewerRestriction,
+          "Your",
+          responseTiming.nowMs,
+        );
+        const parentContext = assertVoiceMomentAudienceFromContext({
+          viewerId: auth.uid,
+          viewerProfile,
+          viewerRestriction,
+          authorId: responseMomentData.authorId,
+          context: contexts.get(responseMomentData.authorId),
+          nowMs: responseTiming.nowMs,
+        });
+        const momentReportReceipt = issueVoiceReportReceipt(
+          transaction,
+          receiptSnapshots[0],
+          {
+            reference: receiptReferences[0],
+            target: receiptTargets[0],
+            targetAuthorId: responseMomentData.authorId,
+            viewerId: auth.uid,
+            timing: responseTiming,
+          },
+        );
+        const projectedComments = [];
+        for (let index = 0; index < comments.length; index += 1) {
+          const comment = comments[index];
+          try {
+            const context = assertVoiceMomentAudienceFromContext({
+              viewerId: auth.uid,
+              viewerProfile,
+              viewerRestriction,
+              authorId: comment.data.authorId,
+              context: contexts.get(comment.data.authorId),
+              nowMs: responseTiming.nowMs,
+            });
+            const reportReceipt = issueVoiceReportReceipt(
+              transaction,
+              receiptSnapshots[index + 1],
+              {
+                reference: receiptReferences[index + 1],
+                target: receiptTargets[index + 1],
+                targetAuthorId: comment.data.authorId,
+                viewerId: auth.uid,
+                timing: responseTiming,
+              },
+            );
+            projectedComments.push(
+              voiceMomentCommentProjection(
+                comment.document.id,
+                comment.data,
+                context.publicProfile,
+                reportReceipt,
+              ),
+            );
+          } catch (_) {
+            // A later block/privacy/restriction change hides that comment.
+          }
+        }
+        const topReactions = [];
+        for (const reaction of reactions) {
+          if (topReactions.length === reactionLimit) break;
+          try {
+            const context = assertVoiceMomentAudienceFromContext({
+              viewerId: auth.uid,
+              viewerProfile,
+              viewerRestriction,
+              authorId: reaction.userId,
+              context: contexts.get(reaction.userId),
+              nowMs: responseTiming.nowMs,
+            });
+            const identity = canonicalPublicProfile(
+              context.publicProfile,
+              reaction.userId,
+            );
+            topReactions.push({
+              userId: reaction.userId,
+              displayName: identity.displayName,
+              photoUrl: identity.photoUrl,
+            });
+          } catch (_) {
+            // Hidden identities remain included only in the aggregate count.
+          }
+        }
+        const commentsTruncated = commentSnapshot.size > commentLimit;
+        const lastComment = commentDocuments.at(-1) ?? null;
+        const nextCommentCursor = commentsTruncated && lastComment !== null
+          ? encodeVoiceMomentPageCursor({
+              kind: "comment",
+              id: lastComment.id,
+              createdAtMillis: timestampMillis(lastComment.get("createdAt")),
+              momentId,
+            })
+          : null;
+        return {
+          schemaVersion: 2,
+          moment: voiceMomentProjection(
+            momentId,
+            responseMomentData,
+            parentContext.publicProfile,
+            validateMomentLike(callerLike, momentId, auth.uid),
+            momentReportReceipt,
+          ),
+          comments: projectedComments,
+          commentsTruncated,
+          nextCommentCursor,
+          topReactions,
+        };
+      });
+    } catch (error) {
+      if (
+        ["not-found", "failed-precondition", "permission-denied", "data-loss"]
+          .includes(error?.code)
+      ) {
+        fail("permission-denied", "This Voice Moment is unavailable.");
+      }
+      throw error;
+    }
   }
 
   async function beginStoragePreflight({
@@ -1080,8 +2002,6 @@ function createMomentIntegrityService({
         db.doc(`users/${auth.uid}`),
         db.doc(`restrictions/${auth.uid}`),
       );
-      activeProfile(caller, "Your");
-      assertNotRestricted(callerRestriction, "Your", timing.nowMs);
       const legacyMoment = moment.data()?.schemaVersion !== 2;
       const momentData = legacyMoment
         ? validateLegacyMomentForPlayback(moment, momentId, timing.nowMs)
@@ -1115,34 +2035,24 @@ function createMomentIntegrityService({
       }
 
       // A reply remains part of the parent Moment, but its own author is an
-      // independent privacy principal. Re-check both authors so a block,
-      // deletion or sanction on either side cannot be bypassed by requesting
-      // the reply through somebody else's published Moment.
-      const relevantAuthors = [
-        ...new Set([momentData.authorId, mediaAuthorId]),
-      ];
-      const authorSnapshots = await transactionGetAll(
+      // independent privacy principal. Re-check account state, profile
+      // audience, exact mutual friendship (when needed), and both block
+      // directions for every relevant author before issuing a bearer grant.
+      const relevantAuthors = [...new Set([momentData.authorId, mediaAuthorId])];
+      const contexts = await loadVoiceAudienceContexts(
         transaction,
-        ...relevantAuthors.flatMap((authorId) => [
-          db.doc(`users/${authorId}`),
-          db.doc(`restrictions/${authorId}`),
-          db.doc(`users/${auth.uid}/blocked/${authorId}`),
-          db.doc(`users/${authorId}/blocked/${auth.uid}`),
-        ]),
+        auth.uid,
+        relevantAuthors,
       );
-      for (let index = 0; index < relevantAuthors.length; index += 1) {
-        const offset = index * 4;
-        const label =
-          relevantAuthors[index] === mediaAuthorId &&
-          mediaAuthorId !== momentData.authorId
-            ? "The reply author"
-            : "The author";
-        activeProfile(authorSnapshots[offset], label);
-        assertNotRestricted(authorSnapshots[offset + 1], label, timing.nowMs);
-        assertNotBlocked(
-          authorSnapshots[offset + 2],
-          authorSnapshots[offset + 3],
-        );
+      for (const authorId of relevantAuthors) {
+        assertVoiceMomentAudienceFromContext({
+          viewerId: auth.uid,
+          viewerProfile: caller,
+          viewerRestriction: callerRestriction,
+          authorId,
+          context: contexts.get(authorId),
+          nowMs: timing.nowMs,
+        });
       }
 
       const momentExpiryMs = Object.prototype.hasOwnProperty.call(
@@ -1312,49 +2222,13 @@ function createMomentIntegrityService({
         activeAtMs: timing.nowMs,
       });
       const authorId = momentData.authorId;
-      const [
-        actorProfile,
-        authorProfile,
-        actorRestriction,
-        authorRestriction,
-        actorBlock,
-        authorBlock,
-      ] = await transactionGetAll(
-        transaction,
-        db.doc(`users/${auth.uid}`),
-        db.doc(`users/${authorId}`),
-        db.doc(`restrictions/${auth.uid}`),
-        db.doc(`restrictions/${authorId}`),
-        db.doc(`users/${auth.uid}/blocked/${authorId}`),
-        db.doc(`users/${authorId}/blocked/${auth.uid}`),
-      );
-      activeProfile(actorProfile, "Your");
-      activeProfile(authorProfile, "The author");
-      assertNotRestricted(actorRestriction, "Your", timing.nowMs);
-      assertNotRestricted(authorRestriction, "The author", timing.nowMs);
-      assertNotBlocked(actorBlock, authorBlock);
+      await assertVoiceMomentAudience(transaction, {
+        viewerId: auth.uid,
+        authorId,
+        nowMs: timing.nowMs,
+      });
       const currentCount = nonNegativeCount(momentData.likeCount, "likeCount");
-      const currentlyLiked = like.exists;
-      if (currentlyLiked) {
-        const likeData = like.data() ?? {};
-        const likeKeys = Object.keys(likeData).sort();
-        const expectedLikeKeys = [
-          "createdAt",
-          "momentId",
-          "schemaVersion",
-          "userId",
-        ];
-        if (
-          likeKeys.length !== expectedLikeKeys.length ||
-          likeKeys.some((key, index) => key !== expectedLikeKeys[index]) ||
-          likeData.schemaVersion !== 1 ||
-          likeData.userId !== auth.uid ||
-          likeData.momentId !== momentId ||
-          timestampMillis(likeData.createdAt) === null
-        ) {
-          fail("data-loss", "The like edge is not canonical.");
-        }
-      }
+      const currentlyLiked = validateMomentLike(like, momentId, auth.uid);
       const changed = currentlyLiked !== liked;
       let likeCount = currentCount;
       if (changed && liked) {
@@ -1457,19 +2331,13 @@ function createMomentIntegrityService({
         activeAtMs: timing.nowMs,
       });
       const authorId = momentData.authorId;
-      const [authorProfile, authorRestriction, actorBlock, authorBlock] =
-        await transactionGetAll(
-          transaction,
-          db.doc(`users/${authorId}`),
-          db.doc(`restrictions/${authorId}`),
-          db.doc(`users/${auth.uid}/blocked/${authorId}`),
-          db.doc(`users/${authorId}/blocked/${auth.uid}`),
-        );
-      activeProfile(actorProfile, "Your");
-      activeProfile(authorProfile, "The author");
-      assertNotRestricted(actorRestriction, "Your", timing.nowMs);
-      assertNotRestricted(authorRestriction, "The author", timing.nowMs);
-      assertNotBlocked(actorBlock, authorBlock);
+      await assertVoiceMomentAudience(transaction, {
+        viewerId: auth.uid,
+        authorId,
+        nowMs: timing.nowMs,
+        viewerProfile: actorProfile,
+        viewerRestriction: actorRestriction,
+      });
       if (reservation.exists) {
         fail(
           "data-loss",
@@ -1626,19 +2494,13 @@ function createMomentIntegrityService({
         );
       }
       const authorId = momentData.authorId;
-      const [authorProfile, authorRestriction, actorBlock, authorBlock] =
-        await transactionGetAll(
-          transaction,
-          db.doc(`users/${authorId}`),
-          db.doc(`restrictions/${authorId}`),
-          db.doc(`users/${auth.uid}/blocked/${authorId}`),
-          db.doc(`users/${authorId}/blocked/${auth.uid}`),
-        );
-      activeProfile(actorProfile, "Your");
-      activeProfile(authorProfile, "The author");
-      assertNotRestricted(actorRestriction, "Your", timing.nowMs);
-      assertNotRestricted(authorRestriction, "The author", timing.nowMs);
-      assertNotBlocked(actorBlock, authorBlock);
+      await assertVoiceMomentAudience(transaction, {
+        viewerId: auth.uid,
+        authorId,
+        nowMs: timing.nowMs,
+        viewerProfile: actorProfile,
+        viewerRestriction: actorRestriction,
+      });
       const canonical = canonicalPublicProfile(publicProfile, auth.uid);
       transaction.create(commentRef, {
         schemaVersion: 2,
@@ -1736,19 +2598,13 @@ function createMomentIntegrityService({
         activeAtMs: timing.nowMs,
       });
       const authorId = momentData.authorId;
-      const [authorProfile, authorRestriction, actorBlock, authorBlock] =
-        await transactionGetAll(
-          transaction,
-          db.doc(`users/${authorId}`),
-          db.doc(`restrictions/${authorId}`),
-          db.doc(`users/${auth.uid}/blocked/${authorId}`),
-          db.doc(`users/${authorId}/blocked/${auth.uid}`),
-        );
-      activeProfile(actorProfile, "Your");
-      activeProfile(authorProfile, "The author");
-      assertNotRestricted(actorRestriction, "Your", timing.nowMs);
-      assertNotRestricted(authorRestriction, "The author", timing.nowMs);
-      assertNotBlocked(actorBlock, authorBlock);
+      await assertVoiceMomentAudience(transaction, {
+        viewerId: auth.uid,
+        authorId,
+        nowMs: timing.nowMs,
+        viewerProfile: actorProfile,
+        viewerRestriction: actorRestriction,
+      });
       if (existingComment.exists) {
         fail("data-loss", "A comment exists without its idempotency ledger.");
       }
@@ -2018,6 +2874,7 @@ function createMomentIntegrityService({
         "momentId",
         "note",
         "reason",
+        "reportReceipt",
         "requestId",
         "roomId",
         "targetType",
@@ -2047,6 +2904,22 @@ function createMomentIntegrityService({
             allowEmpty: true,
           }) || null;
     const target = reportTarget(data);
+    const isVoiceTarget =
+      target.targetType === "voiceMoment" ||
+      target.targetType === "voiceMomentComment";
+    const reportReceipt = data.reportReceipt ?? null;
+    if (
+      (reportReceipt !== null &&
+        (typeof reportReceipt !== "string" ||
+          !VOICE_REPORT_RECEIPT_TOKEN.test(reportReceipt))) ||
+      (!isVoiceTarget && reportReceipt !== null)
+    ) {
+      fail("invalid-argument", "reportReceipt is invalid for this target.");
+    }
+    // reportReceipt is intentionally NOT part of reportIdentityInput. It is
+    // short-lived authorization for the same stable target, not part of the
+    // idempotent operation identity. A lost acknowledgement must still replay
+    // after the receipt has been atomically consumed.
     const input = reportIdentityInput(target, reason, note);
     const identity = operationIdentity(
       "content.report",
@@ -2069,21 +2942,58 @@ function createMomentIntegrityService({
       const ledgerRef = ledgerReference(identity);
       const reportRef = db.doc(`reports/${reportId}`);
       const targetRef = reportTargetReference(db, target);
-      const [ledger, existing, profile, targetSnapshot] =
-        await transactionGetAll(
-          transaction,
-          ledgerRef,
-          reportRef,
-          db.doc(`users/${auth.uid}`),
-          targetRef,
-        );
+      const receiptRef = isVoiceTarget
+        ? voiceReportReceiptReference(auth.uid, target)
+        : null;
+      const snapshots = await transactionGetAll(
+        transaction,
+        ledgerRef,
+        reportRef,
+        db.doc(`users/${auth.uid}`),
+        db.doc(`restrictions/${auth.uid}`),
+        targetRef,
+        ...(receiptRef === null ? [] : [receiptRef]),
+      );
+      const [
+        ledger,
+        existing,
+        profile,
+        reporterRestriction,
+        targetSnapshot,
+        receiptSnapshot,
+      ] = snapshots;
       const replay = assertLedgerReplay(ledger, {
         kind: "content.report",
         uid: auth.uid,
         inputHash: identity.inputHash,
       });
       if (replay) return replay;
+      const reportTiming = time();
       activeProfile(profile, "Your");
+      const receiptData = reportReceipt === null || receiptRef === null
+        ? null
+        : exactVoiceReportReceipt(
+            receiptSnapshot,
+            target,
+            auth.uid,
+            reportTiming.nowMs,
+          );
+      const authorizedByReceipt = receiptData !== null && receiptTokenMatches(
+        receiptData.token,
+        reportReceipt,
+      );
+      if (reportReceipt !== null && !authorizedByReceipt) {
+        // One normalized refusal for a guessed, expired, consumed, malformed or
+        // target-mismatched capability. Never disclose receipt/target state.
+        fail("permission-denied", "You cannot report this Voice Moment.");
+      }
+      if (!authorizedByReceipt) {
+        assertNotRestricted(
+          reporterRestriction,
+          "Your",
+          reportTiming.nowMs,
+        );
+      }
       // ACCESS BEFORE EXISTENCE, deliberately.
       //
       // The target is the one input a caller fully controls, so the order
@@ -2095,9 +3005,43 @@ function createMomentIntegrityService({
       // — permission-denied — whether or not the thing they named is
       // real. Existence is only reported to somebody already entitled to
       // see it.
-      await assertReportTargetVisible(transaction, target, auth.uid);
+      if (!authorizedByReceipt) {
+        await assertReportTargetVisible(transaction, target, auth.uid, {
+          targetSnapshot,
+          viewerProfile: profile,
+          viewerRestriction: reporterRestriction,
+          nowMs: reportTiming.nowMs,
+        });
+      }
       if (!targetSnapshot.exists)
         fail("not-found", "The reported content is missing.");
+      let voiceTargetMetadata = null;
+      if (target.targetType === "voiceMoment") {
+        const moment = publishedMomentForRead(
+          targetSnapshot,
+          target.momentId,
+          reportTiming.nowMs,
+        );
+        voiceTargetMetadata = {
+          targetId: target.momentId,
+          reportedUserId: moment.authorId,
+          contextPath: `voiceMoments/${target.momentId}`,
+        };
+      } else if (target.targetType === "voiceMomentComment") {
+        const comment = validateComment(targetSnapshot, target.momentId);
+        voiceTargetMetadata = {
+          targetId: target.commentId,
+          reportedUserId: comment.authorId,
+          contextPath:
+            `voiceMoments/${target.momentId}/comments/${target.commentId}`,
+        };
+      }
+      if (
+        authorizedByReceipt &&
+        voiceTargetMetadata.reportedUserId !== receiptData.targetAuthorId
+      ) {
+        fail("permission-denied", "You cannot report this Voice Moment.");
+      }
       if (existing.exists)
         fail("data-loss", "A report exists without its ledger.");
       transaction.create(reportRef, {
@@ -2111,12 +3055,14 @@ function createMomentIntegrityService({
         roomId: target.roomId,
         clubId: target.clubId,
         channelId: target.channelId,
+        ...(voiceTargetMetadata ?? {}),
         note: note ?? "",
         reason,
         status: "open",
-        createdAt: timing.now,
-        updatedAt: timing.now,
+        createdAt: reportTiming.now,
+        updatedAt: reportTiming.now,
       });
+      if (authorizedByReceipt) transaction.delete(receiptRef);
       const result = { reportId, created: true };
       transaction.create(
         ledgerRef,
@@ -2126,7 +3072,7 @@ function createMomentIntegrityService({
           requestId,
           inputHash: identity.inputHash,
           result,
-          now: timing.now,
+          now: reportTiming.now,
         }),
       );
       return result;
@@ -2157,9 +3103,15 @@ function createMomentIntegrityService({
   /// Each branch re-reads the container server-side and mirrors the
   /// Firestore rule that governs reading that container's messages. It
   /// deliberately does not consult a client-supplied membership claim of
-  /// any kind, and it does not consult blocks either — being blocked by
-  /// the person you are reporting must not stop you reporting them.
-  async function assertReportTargetVisible(transaction, target, uid) {
+  /// any kind. Voice Moments additionally re-use the same account,
+  /// restriction, bilateral-block, audience and expiry boundary as the v2
+  /// feed. Other message surfaces keep their own container semantics.
+  async function assertReportTargetVisible(
+    transaction,
+    target,
+    uid,
+    { targetSnapshot, viewerProfile, viewerRestriction, nowMs },
+  ) {
     switch (target.targetType) {
       case "directMessage":
         validateConversationForReport(
@@ -2180,12 +3132,55 @@ function createMomentIntegrityService({
           "You cannot report this Club message.",
         );
         return;
+      case "voiceMoment":
+      case "voiceMomentComment": {
+        const message = "You cannot report this Voice Moment.";
+        try {
+          const momentSnapshot = target.targetType === "voiceMoment"
+            ? targetSnapshot
+            : await transaction.get(db.doc(`voiceMoments/${target.momentId}`));
+          const moment = publishedMomentForRead(
+            momentSnapshot,
+            target.momentId,
+            nowMs,
+          );
+          await assertVoiceMomentAudience(transaction, {
+            viewerId: uid,
+            authorId: moment.authorId,
+            nowMs,
+            viewerProfile,
+            viewerRestriction,
+          });
+          if (target.targetType === "voiceMomentComment") {
+            // Detail v2 applies privacy independently to each comment author.
+            // Keep guessed/missing ids inside the same normalized refusal so
+            // reporting cannot become an oracle for a now-hidden reply.
+            const comment = validateComment(targetSnapshot, target.momentId);
+            await assertVoiceMomentAudience(transaction, {
+              viewerId: uid,
+              authorId: comment.authorId,
+              nowMs,
+              viewerProfile,
+              viewerRestriction,
+            });
+          }
+          return;
+        } catch (error) {
+          if (
+            [
+              "not-found",
+              "failed-precondition",
+              "permission-denied",
+              "data-loss",
+            ].includes(error?.code)
+          ) {
+            fail("permission-denied", message);
+          }
+          throw error;
+        }
+      }
       default:
-      // voiceMoment and voiceMomentComment are public content: a
-      // published Moment and its comments are readable by every active
-      // account, so activeProfile() above is already the whole test.
-      // Adding a narrower one here would make public content
-      // unreportable by the people most likely to see it.
+        fail("invalid-argument", "targetType is invalid.");
     }
   }
 
@@ -2693,7 +3688,9 @@ function createMomentIntegrityService({
     expireAbandonedVoiceCommentDrafts,
     finalizeVoiceCommentDraft,
     finalizeMomentDraft,
+    getVoiceMomentViewV2,
     getVoiceMomentMediaAccess,
+    getVoiceMomentsFeedV2,
     processCleanupOutbox,
     reserveMomentDraft,
     reserveVoiceCommentDraft,
@@ -2882,6 +3879,7 @@ module.exports = {
   MIN_MOMENT_AVAILABILITY_HOURS,
   MOMENT_TTL_MS,
   PERMANENT_AVAILABILITY,
+  VOICE_MOMENT_V2_READ_BUDGETS,
   canonicalCommentId,
   canonicalMomentId,
   createBucketStorageAdapter,
@@ -2890,6 +3888,7 @@ module.exports = {
   validateComment,
   validateLegacyMomentForPlayback,
   validateMoment,
+  validateMomentLike,
   validateStoredAudio,
   voiceReplyStoragePath,
 };

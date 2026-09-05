@@ -18,6 +18,50 @@ about things that are broken, risky, or need verification.
 > before believing the code.
 > [ADR-082](Decisions.md#adr-082-a-feature-is-not-shipped-until-a-user-can-reach-it--reachability-is-part-of-done-and-a-green-suite-cannot-prove-it).
 
+## Build 20 source fixes and release gaps (2026-09-05; HELD)
+
+The coordinated Build 20 candidate is source-complete, with clean analysis,
+Flutter 2255/2255, Chrome 18/18 and an independent Voice re-review of 84/84
+APPROVE. It is **not deployed or available to testers**, so the entries below
+separate fixed source defects from operational and physical evidence that is
+still missing:
+
+- **FIXED IN SOURCE — Build 20 Voice Moment reads no longer treat foreign
+  published Firestore documents as an audience-safe feed.** Feed and detail
+  use bounded, server-owned v2 projections, recheck viewer/author visibility,
+  restrictions, blocks, expiry and exact friendship authority, and omit
+  durable media/avatar bearer data. Like/report mutations are server-owned;
+  lifecycle refresh discards stale auth generations and inaccessible content
+  fails closed. The legacy v1 direct-read path remains a documented Build 19
+  compatibility residual until adoption telemetry and a separately reviewed
+  minimum-version/rules cutover permit its removal; this source fix does not
+  claim that residual is closed in production.
+- **FIXED IN SOURCE — Reels expiry cleanup and Voice Moment report receipts
+  lacked the complete Build 20 production retention boundary.** Reels now use
+  bounded availability plus retry/lease cleanup, while canonical moderation
+  validates server-known content rather than a client-supplied object path.
+  The required source configuration includes four new composite indexes and
+  both managed TTL overrides: `reelCleanupOutbox.deleteAfter` and
+  `voiceMomentReportReceipts.expiresAt`.
+- **OUTSTANDING PRODUCTION GATE — green emulators do not prove the new
+  resources exist or are ready.** Read back the four required composite
+  indexes as `READY` and both named TTL overrides as enabled before deploying
+  their producers; then deploy additive Functions, run the explicit legacy-
+  friendship allowlist as dry-run/reviewed digest/apply/no-op post-check,
+  deploy/read back Firestore Rules, deploy Storage Rules only if changed, and
+  release Hosting only after exact-commit CI and backend health.
+- **OUTSTANDING PHYSICAL/DISTRIBUTION GATE — automated success is not device
+  acceptance.** The bounded YO Moments 50/50 and dock Dark/Pearl 8/8
+  screenshot harnesses pass; inspected Frame Echo Clean PNGs have no internal
+  lines/skew or observed overlap. Remaining app-wide keyboard/RTL and physical
+  visual QA, two-account iOS/Android and mixed-version Voice/DM/Reels/call
+  testing, signed artifact inspection and store-number uniqueness, uploads,
+  processing, tester assignment, non-owner availability and notification
+  outcomes remain unverified.
+
+The authoritative operational checklist is the
+[Build 20 release-candidate session](Sessions/2026-09-05-build-20-release-candidate.md).
+
 ## Build 19 tester-acceptance gaps (2026-09-03)
 
 Build `1.0.0 (19)` is now available to the bounded TestFlight and Google Play

@@ -13384,6 +13384,36 @@ async function main() {
   );
 
   await check(
+    "VOICE MOMENT SECURITY: short-lived report receipts are opaque and " +
+      "server-only",
+    async () => {
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await setDoc(
+          doc(ctx.firestore(), "voiceMomentReportReceipts/receipt-probe"),
+          {
+            schemaVersion: 1,
+            ownerId: "host-uid",
+            targetType: "voiceMoment",
+            momentId: "moment-probe",
+            commentId: null,
+            targetAuthorId: "other-uid",
+            token: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            issuedAt: Timestamp.fromMillis(1_800_000_000_000),
+            expiresAt: Timestamp.fromMillis(1_800_000_600_000),
+          },
+        );
+      });
+      const reference = doc(
+        host.firestore(),
+        "voiceMomentReportReceipts/receipt-probe",
+      );
+      await assertFails(getDoc(reference));
+      await assertFails(setDoc(reference, { forged: true }));
+      await assertFails(deleteDoc(reference));
+    },
+  );
+
+  await check(
     "REELS SECURITY: content, reservations, cleanup and ledgers are opaque " +
       "and server-only",
     async () => {
@@ -13398,6 +13428,10 @@ async function main() {
             ownerId: "host-uid",
             status: "uploading",
           }),
+          setDoc(doc(db, "reelAvailability/reel-security"), {
+            ownerId: "host-uid",
+            status: "published",
+          }),
           setDoc(doc(db, "reelCleanupOutbox/reel-security"), {
             ownerId: "host-uid",
             status: "pending",
@@ -13411,6 +13445,7 @@ async function main() {
       for (const path of [
         "reels/reel-security",
         "reelUploadReservations/reel-security",
+        "reelAvailability/reel-security",
         "reelCleanupOutbox/reel-security",
         "integrityOperationLedgers/reel-security",
       ]) {

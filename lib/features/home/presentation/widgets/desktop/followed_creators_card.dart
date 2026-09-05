@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
@@ -48,6 +49,7 @@ class FollowedCreatorsCard extends StatefulWidget {
     this.followService,
     this.feedService,
     this.roomService,
+    this.isVisible,
     super.key,
   });
 
@@ -62,6 +64,7 @@ class FollowedCreatorsCard extends StatefulWidget {
   final FollowService? followService;
   final HomeFeedService? feedService;
   final RoomService? roomService;
+  final ValueListenable<bool>? isVisible;
 
   /// A Moment is worth calling out for a day after it is posted.
   static const Duration recentWindow = Duration(hours: 24);
@@ -77,6 +80,7 @@ class FollowedCreatorsCard extends StatefulWidget {
 class _FollowedCreatorsCardState extends State<FollowedCreatorsCard> {
   Stream<List<FollowUser>>? _following;
   Stream<List<VoiceMoment>>? _moments;
+  HomeFeedService? _feedSource;
   Stream<List<VoiceRoom>>? _liveRooms;
 
   @override
@@ -91,16 +95,46 @@ class _FollowedCreatorsCardState extends State<FollowedCreatorsCard> {
     } catch (_) {
       _following = null;
     }
-    try {
-      _moments = (widget.feedService ?? HomeFeedService()).watchSocialMoments();
-    } catch (_) {
-      _moments = null;
-    }
+    _loadMoments();
+    widget.isVisible?.addListener(_handleVisibility);
     try {
       _liveRooms = (widget.roomService ?? RoomService()).watchLivePublicRooms();
     } catch (_) {
       _liveRooms = null;
     }
+  }
+
+  void _loadMoments() {
+    try {
+      _feedSource ??= widget.feedService ?? HomeFeedService();
+      _moments = _feedSource!.watchSocialMoments();
+    } catch (_) {
+      _moments = null;
+    }
+  }
+
+  void _handleVisibility() {
+    if (!mounted || widget.isVisible?.value != true) return;
+    setState(_loadMoments);
+  }
+
+  @override
+  void didUpdateWidget(covariant FollowedCreatorsCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.isVisible != widget.isVisible) {
+      oldWidget.isVisible?.removeListener(_handleVisibility);
+      widget.isVisible?.addListener(_handleVisibility);
+    }
+    if (oldWidget.feedService != widget.feedService) {
+      _feedSource = null;
+      setState(_loadMoments);
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.isVisible?.removeListener(_handleVisibility);
+    super.dispose();
   }
 
   @override

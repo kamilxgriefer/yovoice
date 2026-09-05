@@ -6,6 +6,8 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:audioplayers/audioplayers.dart';
+import 'package:cloud_firestore/cloud_firestore.dart' show Timestamp;
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:firebase_storage/firebase_storage.dart';
@@ -13,9 +15,174 @@ import 'package:firebase_storage_mocks/firebase_storage_mocks.dart';
 import 'package:record/record.dart' show Amplitude, AudioEncoder, RecordConfig;
 
 import 'package:yovoice/features/moments/data/models/moment_availability.dart';
+import 'package:yovoice/features/moments/data/models/voice_moment.dart';
 import 'package:yovoice/features/moments/data/services/audio_capture/audio_capture.dart';
 import 'package:yovoice/features/moments/data/services/moment_service.dart';
 import 'package:yovoice/features/moments/data/services/recorded_audio.dart';
+import 'package:yovoice/features/moments/data/services/voice_moment_read_service.dart';
+
+const fakeVoiceMomentReportReceipt =
+    'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+
+Map<Object?, Object?> _fakeMomentProjection(VoiceMoment moment) =>
+    <Object?, Object?>{
+      'schemaVersion': 2,
+      'momentId': moment.id,
+      'authorId': moment.authorId,
+      'authorName': moment.authorName,
+      'authorPhotoUrl': null,
+      'caption': moment.caption,
+      'durationSeconds': moment.durationSeconds,
+      'likeCount': moment.likeCount,
+      'commentCount': moment.commentCount,
+      'callerLiked': moment.callerLiked,
+      'createdAtMillis': moment.createdAt!.millisecondsSinceEpoch,
+      'publishedAtMillis': moment.createdAt!.millisecondsSinceEpoch,
+      'expiresAtMillis': moment.expiresAt?.millisecondsSinceEpoch,
+      'reportReceipt': fakeVoiceMomentReportReceipt,
+    };
+
+/// Strict-shape test transport for Build 20 Voice Moment views.
+///
+/// It deliberately lives outside production code: widget tests can seed fake
+/// Firestore as their server fixture without reintroducing a client Firestore
+/// fallback into [VoiceMomentReadService].
+VoiceMomentViewInvoker fakeVoiceMomentViewInvoker({
+  required FakeFirebaseFirestore firestore,
+  String viewerUid = 'me',
+}) => (request) async {
+  final momentId = request['momentId'] as String;
+  final momentSnapshot = await firestore
+      .collection('voiceMoments')
+      .doc(momentId)
+      .get();
+  if (!momentSnapshot.exists) {
+    throw FirebaseFunctionsException(
+      code: 'permission-denied',
+      message: 'This Voice Moment is unavailable.',
+    );
+  }
+  late final VoiceMoment moment;
+  try {
+    moment = VoiceMoment.fromFirestore(momentSnapshot);
+  } on Object {
+    throw FirebaseFunctionsException(
+      code: 'permission-denied',
+      message: 'This Voice Moment is unavailable.',
+    );
+  }
+  if (!moment.isCanonicalPublished || moment.createdAt == null) {
+    throw FirebaseFunctionsException(
+      code: 'permission-denied',
+      message: 'This Voice Moment is unavailable.',
+    );
+  }
+
+  final commentLimit = request['commentLimit'] as int? ?? 7;
+  final rawCursor = request['commentCursor'] as String?;
+  final offset = rawCursor == null
+      ? 0
+      : int.tryParse(rawCursor.replaceFirst('test_comment_', '')) ?? 0;
+  final commentSnapshot = await momentSnapshot.reference
+      .collection('comments')
+      .orderBy('createdAt')
+      .get();
+  final commentDocs = commentSnapshot.docs
+      .skip(offset)
+      .take(commentLimit)
+      .toList(growable: false);
+  final comments = <Map<Object?, Object?>>[
+    for (final document in commentDocs)
+      <Object?, Object?>{
+        'schemaVersion': 2,
+        'commentId': document.id,
+        'type': document.data()['type'] as String? ?? 'text',
+        'authorId': document.data()['authorId'] as String? ?? viewerUid,
+        'authorName':
+            document.data()['authorName'] as String? ?? 'YO Voice viewer',
+        'authorPhotoUrl': null,
+        'text': document.data()['text'] as String? ?? '',
+        'durationSeconds': document.data()['durationSeconds'] as int?,
+        'createdAtMillis':
+            (document.data()['createdAt'] as Timestamp).millisecondsSinceEpoch,
+        'reportReceipt': fakeVoiceMomentReportReceipt,
+      },
+  ];
+
+  final reactionLimit = request['reactionLimit'] as int? ?? 3;
+  final likes = await momentSnapshot.reference
+      .collection('likes')
+      .orderBy('createdAt', descending: true)
+      .limit(reactionLimit)
+      .get();
+  final reactions = <Map<Object?, Object?>>[];
+  for (final like in likes.docs) {
+    final profile = await firestore
+        .collection('publicProfiles')
+        .doc(like.id)
+        .get();
+    reactions.add(<Object?, Object?>{
+      'userId': like.id,
+      'displayName': profile.data()?['displayName'] as String? ?? like.id,
+      'photoUrl': null,
+    });
+  }
+  final callerLike = await momentSnapshot.reference
+      .collection('likes')
+      .doc(viewerUid)
+      .get();
+  final projected = moment.copyWith(callerLiked: callerLike.exists);
+  final nextOffset = offset + commentDocs.length;
+  final truncated = nextOffset < commentSnapshot.docs.length;
+  return <Object?, Object?>{
+    'schemaVersion': 2,
+    'moment': _fakeMomentProjection(projected),
+    'comments': comments,
+    'commentsTruncated': truncated,
+    'nextCommentCursor': truncated ? 'test_comment_$nextOffset' : null,
+    'topReactions': reactions,
+  };
+};
+
+/// Strict-shape feed transport for fake-Firestore widget tests.
+VoiceMomentFeedInvoker fakeVoiceMomentFeedInvoker({
+  required FakeFirebaseFirestore firestore,
+}) => (request) async {
+  final snapshot = await firestore.collection('voiceMoments').get();
+  final moments = <VoiceMoment>[];
+  for (final document in snapshot.docs) {
+    try {
+      final moment = VoiceMoment.fromFirestore(document);
+      if (moment.isCanonicalPublished &&
+          moment.createdAt != null &&
+          moment.hasMediaReference) {
+        moments.add(moment);
+      }
+    } on Object {
+      // Mirrors the callable's fail-closed projection boundary.
+    }
+  }
+  if (request['sortMode'] == 'popular') {
+    moments.sort((a, b) => b.likeCount.compareTo(a.likeCount));
+  } else {
+    moments.sort((a, b) => b.createdAt!.compareTo(a.createdAt!));
+  }
+  final rawCursor = request['cursor'] as String?;
+  final offset = rawCursor == null
+      ? 0
+      : int.tryParse(rawCursor.replaceFirst('test_feed_', '')) ?? 0;
+  final limit = request['limit'] as int;
+  final page = moments.skip(offset).take(limit).toList(growable: false);
+  final nextOffset = offset + page.length;
+  final hasMore = nextOffset < moments.length;
+  return <Object?, Object?>{
+    'schemaVersion': 2,
+    'moments': page.map(_fakeMomentProjection).toList(growable: false),
+    'scannedCount': page.length,
+    'hasMore': hasMore,
+    'nextCursor': hasMore ? 'test_feed_$nextOffset' : null,
+  };
+};
 
 /// Valid short-lived private-media grant used by playback widget tests.
 ///

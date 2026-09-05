@@ -21,8 +21,11 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:yovoice/features/home/data/services/home_feed_service.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
 import 'package:yovoice/features/moments/data/services/moment_service.dart';
+import 'package:yovoice/features/moments/data/services/voice_moment_read_service.dart';
 import 'package:yovoice/features/moments/presentation/screens/moment_detail_screen.dart';
 import 'package:yovoice/shared/identity/public_identity_repository.dart';
+
+import 'voice_moment_test_doubles.dart';
 
 const _viewer = 'me';
 
@@ -113,6 +116,22 @@ class _SilentPlayer implements audio.AudioPlayer {
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _ControlledLikeFeed extends HomeFeedService {
+  _ControlledLikeFeed({
+    required FakeFirebaseFirestore firestore,
+    required FirebaseAuth auth,
+  }) : super(firestore: firestore, auth: auth);
+
+  final List<(String, bool)> requests = <(String, bool)>[];
+  final Completer<void> completion = Completer<void>();
+
+  @override
+  Future<void> setLike(String momentId, {required bool liked}) async {
+    requests.add((momentId, liked));
+    await completion.future;
+  }
 }
 
 void main() {
@@ -306,6 +325,55 @@ void main() {
         1,
       );
     });
+
+    testWidgets('comment pagination appends the next safe v2 page', (
+      tester,
+    ) async {
+      final s = services();
+      final moment = _moment('m1', comments: 9);
+      final momentRef = s.db.collection('voiceMoments').doc('m1');
+      await momentRef.set(_doc(moment));
+      for (var index = 0; index < 9; index += 1) {
+        await momentRef.collection('comments').doc('comment_$index').set({
+          'schemaVersion': 2,
+          'type': 'text',
+          'authorId': 'author_$index',
+          'authorName': 'Author $index',
+          'authorPhotoUrl': null,
+          'text': 'Comment $index',
+          'durationSeconds': null,
+          'createdAt': Timestamp.fromMillisecondsSinceEpoch(
+            1_800_000_000_000 + index,
+          ),
+        });
+      }
+
+      await pumpDetail(
+        tester,
+        moment: moment,
+        moments: s.moments,
+        feed: s.feed,
+      );
+
+      expect(find.text('Comment 0'), findsOneWidget);
+      expect(find.text('Comment 8'), findsNothing);
+      final loadMore = find.byKey(const ValueKey('moment-comments-load-more'));
+      await tester.scrollUntilVisible(
+        loadMore,
+        180,
+        scrollable: find.descendant(
+          of: find.byKey(const ValueKey('moment-detail-scroll')),
+          matching: find.byType(Scrollable),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(loadMore.hitTestable());
+      for (var i = 0; i < 6; i++) {
+        await tester.pump(const Duration(milliseconds: 60));
+      }
+      expect(find.text('Comment 8'), findsOneWidget);
+      expect(loadMore, findsNothing);
+    });
   });
 
   group('availability', () {
@@ -396,6 +464,27 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('moment-detail-gone-back')));
       await tester.pumpAndSettle();
       expect(find.text('FEED'), findsOneWidget);
+    });
+
+    testWidgets('like is optimistic and sends an exact desired state', (
+      tester,
+    ) async {
+      final s = services();
+      final moment = _moment('m-like', likes: 3);
+      await s.db.collection('voiceMoments').doc(moment.id).set(_doc(moment));
+      final feed = _ControlledLikeFeed(firestore: s.db, auth: auth());
+
+      await pumpDetail(tester, moment: moment, moments: s.moments, feed: feed);
+      await tester.tap(find.byKey(const ValueKey('moment-detail-like')));
+      await tester.pump();
+
+      expect(feed.requests, <(String, bool)>[(moment.id, true)]);
+      expect(find.byIcon(Icons.favorite_rounded), findsOneWidget);
+      expect(find.text('4'), findsOneWidget);
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      feed.completion.complete();
+      await tester.pump(const Duration(milliseconds: 1));
     });
 
     testWidgets('a MISSING document renders the graceful gone-state', (
@@ -554,6 +643,9 @@ class _CallableDeleteService extends MomentService {
          auth: auth,
          storage: storage,
          functions: _MomentDetailFunctions(db),
+         readService: VoiceMomentReadService(
+           viewInvoker: fakeVoiceMomentViewInvoker(firestore: db),
+         ),
        );
 
   final FakeFirebaseFirestore db;
@@ -582,6 +674,9 @@ class _MomentDetailFunctions implements FirebaseFunctions {
       _MomentDetailCallable((parameters) => _call(name, parameters));
 
   Future<Object?> _call(String name, Object? parameters) async {
+    if (name == 'getVoiceMomentViewV2') {
+      return _voiceMomentView(Map<String, dynamic>.from(parameters as Map));
+    }
     if (name != 'createMomentComment') {
       throw FirebaseFunctionsException(
         code: 'not-found',
@@ -621,6 +716,97 @@ class _MomentDetailFunctions implements FirebaseFunctions {
       });
     });
     return <String, Object?>{'commentId': commentId};
+  }
+
+  Future<Map<Object?, Object?>> _voiceMomentView(
+    Map<String, dynamic> request,
+  ) async {
+    final momentId = request['momentId'] as String;
+    final moment = await db.collection('voiceMoments').doc(momentId).get();
+    if (!moment.exists) {
+      throw FirebaseFunctionsException(
+        code: 'permission-denied',
+        message: 'This Voice Moment is unavailable.',
+      );
+    }
+    final data = moment.data()!;
+    final createdAt = data['createdAt']! as Timestamp;
+    final commentLimit = request['commentLimit'] as int? ?? 8;
+    final commentsSnapshot = await moment.reference
+        .collection('comments')
+        .orderBy('createdAt')
+        .get();
+    final commentOffset = request['commentCursor'] == null ? 0 : commentLimit;
+    final pageComments = commentsSnapshot.docs
+        .skip(commentOffset)
+        .take(commentLimit)
+        .toList(growable: false);
+    final comments = <Map<Object?, Object?>>[];
+    for (final document in pageComments) {
+      final comment = document.data();
+      comments.add(<Object?, Object?>{
+        'schemaVersion': 2,
+        'commentId': document.id,
+        'type': comment['type'] as String? ?? 'text',
+        'authorId': comment['authorId'] as String? ?? _viewer,
+        'authorName': comment['authorName'] as String? ?? 'YO Voice viewer',
+        'authorPhotoUrl': null,
+        'text': comment['text'] as String? ?? '',
+        'durationSeconds': comment['durationSeconds'] as int?,
+        'createdAtMillis':
+            (comment['createdAt']! as Timestamp).millisecondsSinceEpoch,
+      });
+    }
+    final likes = await moment.reference
+        .collection('likes')
+        .orderBy('createdAt', descending: true)
+        .limit(request['reactionLimit'] as int? ?? 3)
+        .get();
+    final reactors = <Map<Object?, Object?>>[];
+    for (final like in likes.docs) {
+      final userId = like.id;
+      final publicProfile = await db
+          .collection('publicProfiles')
+          .doc(userId)
+          .get();
+      reactors.add(<Object?, Object?>{
+        'userId': userId,
+        'displayName':
+            publicProfile.data()?['displayName'] as String? ?? userId,
+        'photoUrl': null,
+      });
+    }
+    final callerLike = await moment.reference
+        .collection('likes')
+        .doc(_viewer)
+        .get();
+    return <Object?, Object?>{
+      'schemaVersion': 2,
+      'moment': <Object?, Object?>{
+        'schemaVersion': 2,
+        'momentId': moment.id,
+        'authorId': data['authorId'],
+        'authorName': data['authorName'],
+        'authorPhotoUrl': null,
+        'caption': data['caption'],
+        'durationSeconds': data['durationSeconds'],
+        'likeCount': data['likeCount'],
+        'commentCount': data['commentCount'],
+        'callerLiked': callerLike.exists,
+        'createdAtMillis': createdAt.millisecondsSinceEpoch,
+        'publishedAtMillis': createdAt.millisecondsSinceEpoch,
+        'expiresAtMillis':
+            (data['expiresAt'] as Timestamp?)?.millisecondsSinceEpoch,
+      },
+      'comments': comments,
+      'commentsTruncated':
+          commentsSnapshot.docs.length > commentOffset + pageComments.length,
+      'nextCommentCursor':
+          commentsSnapshot.docs.length > commentOffset + pageComments.length
+          ? 'test_comment_cursor'
+          : null,
+      'topReactions': reactors,
+    };
   }
 
   @override

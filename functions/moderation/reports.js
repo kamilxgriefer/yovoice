@@ -10,6 +10,26 @@ const { db, normalizeText } = require("../utils/firestore");
 const { USER_ROLES } = require("../utils/roles");
 const { isValidOpaqueUid } = require("../achievements/identity");
 const { REEL_SCHEMA_VERSION } = require("../reels/contract");
+const {
+  MAX_REEL_AVAILABILITY_HOURS,
+  MIN_REEL_AVAILABILITY_HOURS,
+} = require("../reels/availability");
+const {
+  digest,
+  nonNegativeCount,
+  timestampMillis,
+} = require("../integrity/guards");
+const {
+  momentStoragePath,
+  validateComment,
+  validateLegacyMomentForPlayback,
+  validateMoment,
+  voiceReplyStoragePath,
+} = require("../moments/integrity");
+const {
+  momentCapacityLedgerReference,
+  touchMomentCapacityLedger,
+} = require("../moments/capacity");
 
 const REGION = "europe-west1";
 
@@ -77,6 +97,7 @@ const TRANSITIONS = {
 const MAX_MODERATOR_NOTE = 500;
 const SAFE_REPORT_ID = /^[A-Za-z0-9_-]{1,256}$/u;
 const SAFE_REEL_ID = /^[A-Za-z0-9_-]{1,128}$/u;
+const SAFE_VOICE_CONTENT_ID = /^[A-Za-z0-9_-]{1,128}$/u;
 const SAFE_REQUEST_ID = /^[A-Za-z0-9_-]{8,64}$/u;
 const REPORT_STAFF_ROLES = new Set([
   USER_ROLES.MODERATOR,
@@ -117,7 +138,67 @@ function canonicalReelReference(report) {
   return db.collection("reels").doc(reelId);
 }
 
-function canonicalPublishedReel(snapshot, report) {
+function hasExactKeys(value, expectedKeys) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const actual = Object.keys(value).sort();
+  const expected = [...expectedKeys].sort();
+  return actual.length === expected.length &&
+    actual.every((key, index) => key === expected[index]);
+}
+
+function canonicalPurgedReelEvidence(reel, report) {
+  const evidence = reel?.moderationEvidence;
+  const expiredAtMs = timestampMillis(reel?.expiredAt);
+  const purgedAtMs = timestampMillis(reel?.purgedAt);
+  const publishedAtMs = timestampMillis(evidence?.publishedAt);
+  if (
+    !hasExactKeys(reel, [
+      "schemaVersion",
+      "status",
+      "authorId",
+      "moderationStatusAtExpiry",
+      "moderationEvidence",
+      "expiredAt",
+      "purgedAt",
+      "updatedAt",
+    ]) ||
+    !hasExactKeys(evidence, [
+      "evidenceVersion",
+      "publishedAt",
+      "expiredAt",
+      "availabilityHours",
+      "metadataFingerprint",
+    ]) ||
+    reel.schemaVersion !== REEL_SCHEMA_VERSION ||
+    reel.status !== "expired" ||
+    reel.authorId !== report.reportedUserId ||
+    (reel.moderationStatusAtExpiry !== "visible" &&
+      reel.moderationStatusAtExpiry !== "hidden") ||
+    evidence.evidenceVersion !== 1 ||
+    publishedAtMs === null ||
+    expiredAtMs === null ||
+    timestampMillis(evidence.expiredAt) !== expiredAtMs ||
+    !Number.isSafeInteger(evidence.availabilityHours) ||
+    evidence.availabilityHours < MIN_REEL_AVAILABILITY_HOURS ||
+    evidence.availabilityHours > MAX_REEL_AVAILABILITY_HOURS ||
+    typeof evidence.metadataFingerprint !== "string" ||
+    !/^[a-f0-9]{64}$/u.test(evidence.metadataFingerprint) ||
+    purgedAtMs === null ||
+    publishedAtMs > expiredAtMs ||
+    purgedAtMs < expiredAtMs ||
+    timestampMillis(reel.updatedAt) !== purgedAtMs
+  ) {
+    throw new HttpsError(
+      "failed-precondition",
+      "The reported Reel evidence is invalid.",
+    );
+  }
+  return { reel, isPurgedEvidence: true };
+}
+
+function canonicalModeratableReel(snapshot, report) {
   if (!snapshot.exists) {
     throw new HttpsError(
       "failed-precondition",
@@ -126,18 +207,141 @@ function canonicalPublishedReel(snapshot, report) {
   }
   const reel = snapshot.data();
   if (
+    reel?.status === "expired" &&
+    Object.prototype.hasOwnProperty.call(reel, "purgedAt")
+  ) {
+    return canonicalPurgedReelEvidence(reel, report);
+  }
+  if (
     reel.schemaVersion !== REEL_SCHEMA_VERSION ||
-    reel.status !== "published" ||
+    (reel.status !== "published" && reel.status !== "expired") ||
     reel.authorId !== report.reportedUserId ||
     (reel.moderationStatus !== "visible" &&
       reel.moderationStatus !== "hidden")
   ) {
     throw new HttpsError(
       "failed-precondition",
-      "The reported Reel is not a canonical published Reel.",
+      "The reported Reel is not canonical moderatable evidence.",
     );
   }
-  return reel;
+  return { reel, isPurgedEvidence: false };
+}
+
+function canonicalVoiceReportTarget(report) {
+  const isMoment = report.targetType === "voiceMoment";
+  const isComment = report.targetType === "voiceMomentComment";
+  const unusedPathIds = [
+    "channelId",
+    "clubId",
+    "conversationId",
+    "messageId",
+    "roomId",
+  ];
+  const momentId = report.momentId;
+  const commentId = isComment ? report.commentId : null;
+  const expectedTargetId = isComment ? commentId : momentId;
+  const expectedContextPath = isComment
+    ? `voiceMoments/${momentId}/comments/${commentId}`
+    : `voiceMoments/${momentId}`;
+  const legacyTargetSnapshot =
+    (report.targetId === undefined || report.targetId === null) &&
+    (report.reportedUserId === undefined || report.reportedUserId === null) &&
+    (report.contextPath === undefined || report.contextPath === null);
+  const selfContainedTargetSnapshot =
+    report.targetId === expectedTargetId &&
+    isValidOpaqueUid(report.reportedUserId) &&
+    report.contextPath === expectedContextPath;
+  if (
+    report.schemaVersion !== 2 ||
+    !isValidOpaqueUid(report.reporterId) ||
+    timestampMillis(report.createdAt) === null ||
+    timestampMillis(report.updatedAt) === null ||
+    typeof report.reason !== "string" ||
+    report.reason.length === 0 ||
+    report.reason.length > 500 ||
+    typeof report.note !== "string" ||
+    report.note.length > 300 ||
+    (!isMoment && !isComment) ||
+    typeof momentId !== "string" ||
+    !SAFE_VOICE_CONTENT_ID.test(momentId) ||
+    (isMoment && report.commentId !== null) ||
+    (isComment &&
+      (typeof commentId !== "string" ||
+        !SAFE_VOICE_CONTENT_ID.test(commentId))) ||
+    unusedPathIds.some((field) => report[field] !== null) ||
+    (!legacyTargetSnapshot && !selfContainedTargetSnapshot)
+  ) {
+    throw new HttpsError(
+      "failed-precondition",
+      "The reported Voice Moment reference is invalid.",
+    );
+  }
+  return {
+    momentId,
+    commentId,
+    reportedUserId: selfContainedTargetSnapshot
+      ? report.reportedUserId
+      : null,
+  };
+}
+
+// A server-created report proves the target existed when the report was
+// filed. If its root has since disappeared, or is in the canonical one-way
+// deletion state, another report/author deletion already won the race. That
+// is a successful moderation convergence, not a reason to strand the report
+// open forever.
+function voiceMomentAlreadyRemoved(snapshot, momentId) {
+  if (!snapshot.exists) return true;
+  const data = snapshot.data() ?? {};
+  return (
+    data.status === "deleting" &&
+    data.isDeleted === true &&
+    data.isPublished === false &&
+    isValidOpaqueUid(data.authorId) &&
+    data.storagePath === momentStoragePath(data.authorId, momentId)
+  );
+}
+
+function canonicalModeratableVoiceMoment(snapshot, momentId) {
+  if (snapshot.exists && snapshot.data()?.schemaVersion !== 2) {
+    const legacy = snapshot.data() ?? {};
+    if (legacy.status === "expired" && legacy.isPublished === false) {
+      // The expiry sweep changes only lifecycle fields. Reconstruct the
+      // preceding published state solely for the legacy integrity validator,
+      // then return the untouched evidence. This keeps old Build 19 reports
+      // removable after expiry without accepting drafts or arbitrary roots.
+      validateLegacyMomentForPlayback(
+        {
+          exists: true,
+          id: snapshot.id,
+          data: () => ({
+            ...legacy,
+            isPublished: true,
+            status: "published",
+          }),
+        },
+        momentId,
+        0,
+      );
+      return legacy;
+    }
+    // Existing reports remain actionable even if their deadline passed
+    // between report creation and staff review. The validator still proves
+    // the full legacy publication/media identity; zero only disables the
+    // current-time availability decision for this evidence-preserving path.
+    return validateLegacyMomentForPlayback(snapshot, momentId, 0);
+  }
+  const moment = validateMoment(snapshot, momentId, { allowExpired: true });
+  const published =
+    moment.status === "published" && moment.isPublished === true;
+  const expired = moment.status === "expired" && moment.isPublished === false;
+  if (!published && !expired) {
+    throw new HttpsError(
+      "failed-precondition",
+      "The reported Voice Moment is not moderatable content.",
+    );
+  }
+  return moment;
 }
 
 function moderationAuditId(reportId, requestId) {
@@ -208,7 +412,11 @@ const moderateReport = onCall(
       // Idempotency: the same requestId replayed returns the result of
       // the original call without touching anything.
       if (report.lastRequestId === requestId) {
-        return { status: report.status, replayed: true, contentRemoved: false };
+        return {
+          status: report.status,
+          replayed: true,
+          contentRemoved: report.contentRemoved === true,
+        };
       }
 
       // A report written before `status` existed is Open. No migration
@@ -274,22 +482,171 @@ const moderateReport = onCall(
         } else if (report.targetType === "reel") {
           const reelReference = canonicalReelReference(report);
           const reelSnapshot = await transaction.get(reelReference);
-          const reel = canonicalPublishedReel(reelSnapshot, report);
+          const target = canonicalModeratableReel(reelSnapshot, report);
+          const reel = target.reel;
 
           // Media descriptors and bytes remain intact for evidence and a
           // future reviewed appeal. Reads fail closed because every Reel
           // playback/feed path requires moderationStatus == "visible".
-          if (reel.moderationStatus !== "hidden") {
+          // A purged expiry tombstone contains no public content to hide and
+          // remains byte-stable as immutable moderation evidence.
+          if (
+            !target.isPurgedEvidence &&
+            reel.moderationStatus !== "hidden"
+          ) {
             transaction.update(reelReference, {
               moderationStatus: "hidden",
               updatedAt: FieldValue.serverTimestamp(),
             });
             contentRemoved = true;
           }
+        } else if (
+          report.targetType === "voiceMoment" ||
+          report.targetType === "voiceMomentComment"
+        ) {
+          const target = canonicalVoiceReportTarget(report);
+          const momentReference = db
+            .collection("voiceMoments")
+            .doc(target.momentId);
+          const momentSnapshot = await transaction.get(momentReference);
+          const now = FieldValue.serverTimestamp();
+
+          if (voiceMomentAlreadyRemoved(momentSnapshot, target.momentId)) {
+            if (
+              momentSnapshot.exists &&
+              target.commentId === null &&
+              target.reportedUserId !== null &&
+              target.reportedUserId !== momentSnapshot.data().authorId
+            ) {
+              throw new HttpsError(
+                "failed-precondition",
+                "The reported Voice Moment author is inconsistent.",
+              );
+            }
+            contentRemoved = true;
+          } else {
+            const moment = canonicalModeratableVoiceMoment(
+              momentSnapshot,
+              target.momentId,
+            );
+
+            if (
+              target.commentId === null &&
+              target.reportedUserId !== null &&
+              target.reportedUserId !== moment.authorId
+            ) {
+              throw new HttpsError(
+                "failed-precondition",
+                "The reported Voice Moment author is inconsistent.",
+              );
+            }
+
+            if (target.commentId === null) {
+              const capacityReference = momentCapacityLedgerReference(
+                db,
+                moment.authorId,
+              );
+              const capacity = await transaction.get(capacityReference);
+              touchMomentCapacityLedger(
+                transaction,
+                capacityReference,
+                capacity,
+                moment.authorId,
+                now,
+              );
+              transaction.update(momentReference, {
+                isDeleted: true,
+                isPublished: false,
+                status: "deleting",
+                updatedAt: now,
+              });
+              const outboxId = digest("moment-cleanup", target.momentId);
+              transaction.set(db.doc(`contentCleanupOutbox/${outboxId}`), {
+                schemaVersion: 1,
+                kind: "voiceMoment",
+                rootPath: `voiceMoments/${target.momentId}`,
+                objectPaths: [
+                  momentStoragePath(moment.authorId, target.momentId),
+                ],
+                status: "pending",
+                attemptCount: 0,
+                requestedBy: moment.authorId,
+                requestedReason: "staffModeration",
+                createdAt: now,
+                updatedAt: now,
+              });
+              contentRemoved = true;
+            } else {
+              const commentReference = momentReference
+                .collection("comments")
+                .doc(target.commentId);
+              const commentSnapshot = await transaction.get(commentReference);
+
+              if (!commentSnapshot.exists) {
+                contentRemoved = true;
+              } else {
+                const comment = validateComment(
+                  commentSnapshot,
+                  target.momentId,
+                );
+                if (
+                  target.reportedUserId !== null &&
+                  target.reportedUserId !== comment.authorId
+                ) {
+                  throw new HttpsError(
+                    "failed-precondition",
+                    "The reported Voice Moment comment author is inconsistent.",
+                  );
+                }
+                const commentCount = nonNegativeCount(
+                  moment.commentCount,
+                  "Voice Moment commentCount",
+                );
+                if (commentCount === 0) {
+                  throw new HttpsError(
+                    "failed-precondition",
+                    "The Voice Moment comment count is inconsistent.",
+                  );
+                }
+                transaction.delete(commentReference);
+                transaction.update(momentReference, {
+                  commentCount: commentCount - 1,
+                  updatedAt: now,
+                });
+                if (comment.type === "voice") {
+                  const outboxId = digest(
+                    "comment-cleanup",
+                    target.momentId,
+                    target.commentId,
+                  );
+                  transaction.set(db.doc(`contentCleanupOutbox/${outboxId}`), {
+                    schemaVersion: 1,
+                    kind: "voiceMomentComment",
+                    rootPath:
+                      `voiceMoments/${target.momentId}/comments/${target.commentId}`,
+                    objectPaths: [
+                      voiceReplyStoragePath(
+                        comment.authorId,
+                        target.momentId,
+                        target.commentId,
+                      ),
+                    ],
+                    status: "pending",
+                    attemptCount: 0,
+                    requestedBy: comment.authorId,
+                    requestedReason: "staffModeration",
+                    createdAt: now,
+                    updatedAt: now,
+                  });
+                }
+                contentRemoved = true;
+              }
+            }
+          }
         } else {
           throw new HttpsError(
             "failed-precondition",
-            "Only a Global Chat message or Reel can be removed this way.",
+            "Only supported messages, Reels, or Voice Moments can be removed this way.",
           );
         }
       }

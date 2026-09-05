@@ -70,9 +70,11 @@ class MemoryQuery {
   }
 
   where(field, operator, value) {
-    if (operator !== "==") throw new Error(`unsupported operator: ${operator}`);
+    if (operator !== "==" && operator !== "<=") {
+      throw new Error(`unsupported operator: ${operator}`);
+    }
     return this._copy({
-      filters: [...this.config.filters, { field, value }],
+      filters: [...this.config.filters, { field, operator, value }],
     });
   }
 
@@ -97,8 +99,16 @@ class MemoryQuery {
     let entries = [...this.database._documents.entries()]
       .filter(([path]) => directChild(path, this.collectionPath));
     for (const filter of this.config.filters) {
-      entries = entries.filter(([, record]) =>
-        record.data?.[filter.field] === filter.value);
+      entries = entries.filter(([, record]) => {
+        const left = record.data?.[filter.field];
+        if (left === undefined) return false;
+        if (filter.operator === "==") return left === filter.value;
+        const normalizedLeft = left instanceof Date ? left.getTime() : left;
+        const normalizedRight = filter.value instanceof Date
+          ? filter.value.getTime()
+          : filter.value;
+        return normalizedLeft <= normalizedRight;
+      });
     }
     const orderBys = this.config.orderBys.length === 0
       ? [{ field: "__name__", direction: "asc" }]

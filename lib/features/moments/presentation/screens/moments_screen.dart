@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
+import 'package:yovoice/core/navigation/app_route_observer.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/home/data/services/home_feed_service.dart';
 import 'package:yovoice/features/moderation/data/services/content_report_service.dart';
@@ -16,6 +17,12 @@ import 'package:yovoice/features/moments/data/services/moment_service.dart';
 import 'package:yovoice/features/moments/data/services/moment_views_service.dart';
 import 'package:yovoice/features/moments/presentation/screens/record_voice_moment_screen.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moments_feed_view.dart';
+import 'package:yovoice/features/reels/data/services/reel_service.dart';
+import 'package:yovoice/features/reels/presentation/screens/reel_composer_screen.dart';
+import 'package:yovoice/features/reels/presentation/screens/reels_feed_screen.dart';
+import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
+import 'package:yovoice/shared/widgets/navigation/yo_moments_icon.dart';
+import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
 
 /// [MomentCard] used to live in this file and is imported from here by the
 /// creator, profile and Home surfaces. It has its own file and is
@@ -36,6 +43,11 @@ enum MomentsTab {
   /// The personal slice: your own Moments plus friends and follows.
   following,
 }
+
+/// The two content formats that live inside the single YO Moments
+/// destination. Voice Moment remains the audio format name; YO Moments is the
+/// section that brings audio and Reels together.
+enum YoMomentsFormat { voice, reels }
 
 /// The Voice Moments destination — a stories-style audio feed.
 ///
@@ -62,6 +74,9 @@ class MomentsScreen extends StatefulWidget {
     this.playerFactory,
     this.expiryClock,
     this.expiryTimerFactory,
+    this.reelService,
+    this.initialFormat = YoMomentsFormat.voice,
+    this.onCreateReel,
     super.key,
   });
 
@@ -109,11 +124,105 @@ class MomentsScreen extends StatefulWidget {
   @visibleForTesting
   final MomentExpiryTimerFactory? expiryTimerFactory;
 
+  /// Injection seam for the existing Reels adapter. It is constructed lazily:
+  /// a user who stays on Voice does not start the Reels network request.
+  final ReelService? reelService;
+
+  final YoMomentsFormat initialFormat;
+
+  /// Test/host seam for the existing Reel composer route.
+  final Future<void> Function()? onCreateReel;
+
   @override
   State<MomentsScreen> createState() => _MomentsScreenState();
 }
 
-class _MomentsScreenState extends State<MomentsScreen> {
+class _MomentsScreenState extends State<MomentsScreen> with RouteAware {
+  late YoMomentsFormat _format = widget.initialFormat;
+  late bool _voiceHasBeenOpened = _format == YoMomentsFormat.voice;
+  late bool _reelsHasBeenOpened = _format == YoMomentsFormat.reels;
+  int _reelsRevision = 0;
+  late final ValueNotifier<bool> _voiceVisible = ValueNotifier<bool>(false);
+  late final ValueNotifier<bool> _reelsVisible = ValueNotifier<bool>(false);
+  ModalRoute<void>? _observedRoute;
+  bool _routeIsCurrent = true;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.isVisible?.addListener(_syncVisibility);
+    _syncVisibility();
+  }
+
+  @override
+  void didUpdateWidget(MomentsScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.isVisible != widget.isVisible) {
+      oldWidget.isVisible?.removeListener(_syncVisibility);
+      widget.isVisible?.addListener(_syncVisibility);
+    }
+    _syncVisibility();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final route = ModalRoute.of<void>(context);
+    if (identical(route, _observedRoute)) return;
+    if (_observedRoute != null) appRouteObserver.unsubscribe(this);
+    _observedRoute = route;
+    _routeIsCurrent = route?.isCurrent ?? true;
+    if (route != null) appRouteObserver.subscribe(this, route);
+    _syncVisibility();
+  }
+
+  @override
+  void didPush() => _setRouteCurrent(true);
+
+  @override
+  void didPopNext() => _setRouteCurrent(true);
+
+  @override
+  void didPushNext() => _setRouteCurrent(false);
+
+  @override
+  void didPop() => _setRouteCurrent(false);
+
+  void _setRouteCurrent(bool value) {
+    if (_routeIsCurrent == value) return;
+    _routeIsCurrent = value;
+    _syncVisibility();
+  }
+
+  @override
+  void dispose() {
+    appRouteObserver.unsubscribe(this);
+    widget.isVisible?.removeListener(_syncVisibility);
+    _voiceVisible.dispose();
+    _reelsVisible.dispose();
+    super.dispose();
+  }
+
+  bool get _destinationVisible =>
+      (widget.isVisible?.value ?? true) && _routeIsCurrent;
+
+  void _syncVisibility() {
+    _voiceVisible.value =
+        _destinationVisible && _format == YoMomentsFormat.voice;
+    _reelsVisible.value =
+        _destinationVisible && _format == YoMomentsFormat.reels;
+  }
+
+  void _selectFormat(YoMomentsFormat format) {
+    if (_format == format) return;
+    setState(() {
+      _format = format;
+      if (format == YoMomentsFormat.voice) _voiceHasBeenOpened = true;
+      if (format == YoMomentsFormat.reels) _reelsHasBeenOpened = true;
+    });
+    _syncVisibility();
+  }
+
   Future<void> _createMoment() async {
     final created = await Navigator.of(context).push<bool>(
       MaterialPageRoute<bool>(builder: (_) => const RecordVoiceMomentScreen()),
@@ -127,6 +236,48 @@ class _MomentsScreenState extends State<MomentsScreen> {
           ),
         ),
       );
+    }
+  }
+
+  Future<void> _openReelComposer() async {
+    final override = widget.onCreateReel;
+    if (override != null) {
+      await override();
+      return;
+    }
+    await Navigator.of(context).push<String>(
+      MaterialPageRoute<String>(builder: (_) => const ReelComposerScreen()),
+    );
+  }
+
+  Future<void> _createReelFromHeader() async {
+    _selectFormat(YoMomentsFormat.reels);
+    await _openReelComposer();
+    if (mounted) setState(() => _reelsRevision += 1);
+  }
+
+  Future<void> _showCreateChooser() async {
+    final palette = context.appPalette;
+    final choice = await showModalBottomSheet<_YoMomentsCreateChoice>(
+      context: context,
+      useSafeArea: true,
+      showDragHandle: false,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      barrierColor: palette.scrim.withValues(alpha: .72),
+      constraints: ResponsiveContentFrame.adaptiveModalConstraints(
+        context,
+        maxWidth: 560,
+      ),
+      builder: (context) => const _YoMomentsCreateSheet(),
+    );
+    if (!mounted || choice == null) return;
+    switch (choice) {
+      case _YoMomentsCreateChoice.voice:
+        _selectFormat(YoMomentsFormat.voice);
+        await _createMoment();
+      case _YoMomentsCreateChoice.reel:
+        await _createReelFromHeader();
     }
   }
 
@@ -144,28 +295,57 @@ class _MomentsScreenState extends State<MomentsScreen> {
       body: SafeArea(
         child: Column(
           children: [
-            _MomentsHeader(
-              // The shell owns the chrome when this is a root tab; a
-              // pushed route keeps a real Back button.
-              showBack: !widget.isRootTab && Navigator.of(context).canPop(),
-              onCreate: () => unawaited(_createMoment()),
+            ResponsiveContentFrame(
+              width: ResponsiveContentWidth.feed,
+              fillHeight: false,
+              child: _MomentsHeader(
+                // The shell owns the chrome when this is a root tab; a
+                // pushed route keeps a real Back button.
+                showBack: !widget.isRootTab && Navigator.of(context).canPop(),
+                selectedFormat: _format,
+                onFormatSelected: _selectFormat,
+                onCreate: () => unawaited(_showCreateChooser()),
+              ),
             ),
             Expanded(
-              child: MomentsFeedView(
-                key: const ValueKey('moments-feed'),
-                initialFilter: _initialFilter,
-                discoveryService: widget.discoveryService,
-                feedService: widget.feedService,
-                momentService: widget.momentService,
-                viewsService: widget.viewsService,
-                contentReportService: widget.contentReportService,
-                auth: widget.auth,
-                isVisible: widget.isVisible,
-                onOpenDetail: widget.onOpenDetail,
-                playerFactory: widget.playerFactory,
-                expiryClock: widget.expiryClock,
-                expiryTimerFactory: widget.expiryTimerFactory,
-                onRecord: () => unawaited(_createMoment()),
+              child: IndexedStack(
+                key: const ValueKey<String>('yo-moments-format-stack'),
+                index: _format.index,
+                children: <Widget>[
+                  if (_voiceHasBeenOpened)
+                    MomentsFeedView(
+                      key: const ValueKey('moments-feed'),
+                      initialFilter: _initialFilter,
+                      discoveryService: widget.discoveryService,
+                      feedService: widget.feedService,
+                      momentService: widget.momentService,
+                      viewsService: widget.viewsService,
+                      contentReportService: widget.contentReportService,
+                      auth: widget.auth,
+                      isVisible: _voiceVisible,
+                      onOpenDetail: widget.onOpenDetail,
+                      playerFactory: widget.playerFactory,
+                      expiryClock: widget.expiryClock,
+                      expiryTimerFactory: widget.expiryTimerFactory,
+                      onRecord: () => unawaited(_createMoment()),
+                    )
+                  else
+                    const SizedBox.shrink(
+                      key: ValueKey<String>('yo-moments-voice-lazy'),
+                    ),
+                  if (_reelsHasBeenOpened)
+                    ReelsFeedScreen(
+                      key: ValueKey<String>('yo-moments-reels-$_reelsRevision'),
+                      embedded: true,
+                      service: widget.reelService,
+                      isVisible: _reelsVisible,
+                      onCreate: _openReelComposer,
+                    )
+                  else
+                    const SizedBox.shrink(
+                      key: ValueKey<String>('yo-moments-reels-lazy'),
+                    ),
+                ],
               ),
             ),
           ],
@@ -182,9 +362,16 @@ class _MomentsScreenState extends State<MomentsScreen> {
 /// surfaces its refusal honestly. A client that pre-guesses the cap goes
 /// stale the day the server changes it.
 class _MomentsHeader extends StatelessWidget {
-  const _MomentsHeader({required this.showBack, required this.onCreate});
+  const _MomentsHeader({
+    required this.showBack,
+    required this.selectedFormat,
+    required this.onFormatSelected,
+    required this.onCreate,
+  });
 
   final bool showBack;
+  final YoMomentsFormat selectedFormat;
+  final ValueChanged<YoMomentsFormat> onFormatSelected;
   final VoidCallback onCreate;
 
   @override
@@ -198,10 +385,39 @@ class _MomentsHeader extends StatelessWidget {
         // would squeeze the title into a per-character vertical wrap on
         // a 768 pt tablet. The icon CTA keeps its 48 pt target either
         // way.
-        final scale = MediaQuery.textScalerOf(
-          context,
-        ).scale(14).clamp(14.0, 28.0);
+        final textScaler = MediaQuery.textScalerOf(context);
+        final scale = textScaler.scale(14).clamp(14.0, 28.0);
         final compact = constraints.maxWidth < 600 * (scale / 14);
+        final accessibilityLayout =
+            textScaler.scale(1) >= 1.6 && constraints.maxWidth < 720;
+        final title = Semantics(
+          header: true,
+          child: Text(
+            copy.moments,
+            key: const ValueKey<String>('yo-moments-title'),
+            // At accessibility sizes the header owns its own row, so let the
+            // title take its natural height. A line cap would still truncate
+            // some font/locale combinations at 200% even without ellipsis.
+            maxLines: accessibilityLayout ? null : 1,
+            softWrap: accessibilityLayout,
+            overflow: accessibilityLayout
+                ? TextOverflow.visible
+                : TextOverflow.ellipsis,
+            textWidthBasis: TextWidthBasis.parent,
+            style: TextStyle(
+              color: palette.textPrimary,
+              fontSize: 26,
+              height: 1.04,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+        );
+        final backButton = IconButton(
+          onPressed: () => Navigator.of(context).pop(),
+          icon: const Icon(Icons.arrow_back_rounded),
+          color: palette.textPrimary,
+          tooltip: copy.text('Back', 'Wstecz'),
+        );
         return Padding(
           padding: EdgeInsets.fromLTRB(
             compact ? 16 : 24,
@@ -209,51 +425,75 @@ class _MomentsHeader extends StatelessWidget {
             compact ? 16 : 24,
             8,
           ),
-          child: Row(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              if (showBack)
-                Padding(
-                  padding: const EdgeInsets.only(right: 6),
-                  child: IconButton(
-                    onPressed: () => Navigator.of(context).pop(),
-                    icon: const Icon(Icons.arrow_back_rounded),
-                    color: palette.textPrimary,
-                    tooltip: copy.text('Back', 'Wstecz'),
+              if (accessibilityLayout) ...[
+                if (showBack)
+                  Align(
+                    alignment: AlignmentDirectional.centerStart,
+                    child: backButton,
                   ),
+                SizedBox(width: double.infinity, child: title),
+                const SizedBox(height: 8),
+                Align(
+                  alignment: AlignmentDirectional.centerEnd,
+                  child: _CreateMomentButton(onTap: onCreate, compact: true),
                 ),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+              ] else
+                Row(
                   children: [
-                    Text(
-                      copy.text('Voice Moments', 'Voice Moments'),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: palette.textPrimary,
-                        fontSize: 26,
-                        fontWeight: FontWeight.w900,
+                    if (showBack)
+                      Padding(
+                        padding: const EdgeInsetsDirectional.only(end: 6),
+                        child: backButton,
                       ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      copy.text(
-                        'Real voices. Real moments.',
-                        'Prawdziwe głosy. Prawdziwe chwile.',
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: palette.textSecondary,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
+                    Expanded(child: title),
+                    const SizedBox(width: 10),
+                    _CreateMomentButton(onTap: onCreate, compact: compact),
                   ],
                 ),
+              const SizedBox(height: 10),
+              SizedBox(
+                width: compact ? double.infinity : 340,
+                child: SegmentedButton<YoMomentsFormat>(
+                  key: const ValueKey<String>('yo-moments-format-tabs'),
+                  showSelectedIcon: false,
+                  segments: <ButtonSegment<YoMomentsFormat>>[
+                    ButtonSegment<YoMomentsFormat>(
+                      value: YoMomentsFormat.voice,
+                      icon: const Icon(Icons.mic_rounded, size: 18),
+                      label: Text(
+                        copy.contextualText(
+                          'yoMoments.voiceFormat',
+                          'Voice',
+                          'Głos',
+                        ),
+                      ),
+                    ),
+                    ButtonSegment<YoMomentsFormat>(
+                      value: YoMomentsFormat.reels,
+                      icon: const Icon(Icons.smart_display_rounded, size: 18),
+                      label: Text(copy.text('Reels', 'Reels')),
+                    ),
+                  ],
+                  selected: <YoMomentsFormat>{selectedFormat},
+                  onSelectionChanged: (selection) {
+                    if (selection.isNotEmpty) {
+                      onFormatSelected(selection.first);
+                    }
+                  },
+                  style: ButtonStyle(
+                    minimumSize: const WidgetStatePropertyAll<Size>(
+                      Size(48, 44),
+                    ),
+                    visualDensity: VisualDensity.compact,
+                    side: WidgetStatePropertyAll<BorderSide>(
+                      BorderSide(color: palette.borderStrong),
+                    ),
+                  ),
+                ),
               ),
-              const SizedBox(width: 10),
-              _CreateMomentButton(onTap: onCreate, compact: compact),
             ],
           ),
         );
@@ -278,7 +518,7 @@ class _CreateMomentButton extends StatelessWidget {
       return IconButton.filled(
         key: const ValueKey('moments-create-cta'),
         onPressed: onTap,
-        tooltip: copy.text('Create your Moment', 'Utwórz swój Voice Moment'),
+        tooltip: copy.text('CREATE', 'UTWÓRZ'),
         style: IconButton.styleFrom(backgroundColor: colors.primary),
         icon: Icon(Icons.mic_rounded, color: colors.onPrimary),
       );
@@ -294,8 +534,154 @@ class _CreateMomentButton extends StatelessWidget {
       ),
       icon: Icon(Icons.mic_rounded, size: 18, color: colors.onPrimary),
       label: Text(
-        copy.text('Create your Moment', 'Utwórz Voice Moment'),
+        copy.text('CREATE', 'UTWÓRZ'),
         style: TextStyle(color: colors.onPrimary, fontWeight: FontWeight.w800),
+      ),
+    );
+  }
+}
+
+enum _YoMomentsCreateChoice { voice, reel }
+
+class _YoMomentsCreateSheet extends StatelessWidget {
+  const _YoMomentsCreateSheet();
+
+  @override
+  Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
+    final palette = context.appPalette;
+    final voiceLabel = copy.text('Create Voice Moment', 'Nagraj Voice Moment');
+    final reelLabel = copy.text('Create Reel', 'Utwórz Reel');
+
+    return Material(
+      key: const ValueKey<String>('yo-moments-create-sheet'),
+      color: palette.surfaceRaised,
+      borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+      clipBehavior: Clip.antiAlias,
+      child: SafeArea(
+        top: false,
+        child: SingleChildScrollView(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 18),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                YoModalSheetChrome(
+                  sheetLabel: copy.moments,
+                  surfaceColor: palette.surfaceRaised,
+                  closeColor: palette.textSecondary,
+                ),
+                _YoMomentsCreateTile(
+                  key: const ValueKey<String>('create-voice-moment-choice'),
+                  icon: const YoMomentsIcon(
+                    state: YoMomentsIconState.active,
+                    size: 28,
+                  ),
+                  label: voiceLabel,
+                  subtitle: copy.text(
+                    'Moments are short voice updates from people you follow.',
+                    'Momenty to krótkie aktualizacje głosowe od obserwowanych osób.',
+                  ),
+                  onTap: () =>
+                      Navigator.of(context).pop(_YoMomentsCreateChoice.voice),
+                ),
+                const SizedBox(height: 10),
+                _YoMomentsCreateTile(
+                  key: const ValueKey<String>('create-reel-choice'),
+                  icon: Icon(
+                    Icons.smart_display_rounded,
+                    size: 28,
+                    color: palette.interactiveForeground,
+                  ),
+                  label: reelLabel,
+                  subtitle: copy.text(
+                    'Published photos and short videos will appear here.',
+                    'Opublikowane zdjęcia i krótkie filmy pojawią się tutaj.',
+                  ),
+                  onTap: () =>
+                      Navigator.of(context).pop(_YoMomentsCreateChoice.reel),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _YoMomentsCreateTile extends StatelessWidget {
+  const _YoMomentsCreateTile({
+    required this.icon,
+    required this.label,
+    required this.subtitle,
+    required this.onTap,
+    super.key,
+  });
+
+  final Widget icon;
+  final String label;
+  final String subtitle;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    return Semantics(
+      container: true,
+      button: true,
+      label: label,
+      hint: subtitle,
+      onTap: onTap,
+      excludeSemantics: true,
+      child: Material(
+        color: palette.surface,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(18),
+          side: BorderSide(color: palette.border),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: onTap,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minHeight: 72),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              child: Row(
+                children: <Widget>[
+                  SizedBox.square(dimension: 36, child: Center(child: icon)),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: <Widget>[
+                        Text(
+                          label,
+                          style: Theme.of(context).textTheme.titleMedium
+                              ?.copyWith(
+                                color: palette.textPrimary,
+                                fontWeight: FontWeight.w800,
+                              ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          subtitle,
+                          style: Theme.of(context).textTheme.bodySmall
+                              ?.copyWith(color: palette.textSecondary),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Icon(
+                    Icons.chevron_right_rounded,
+                    color: palette.textSecondary,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }

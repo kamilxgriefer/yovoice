@@ -1,10 +1,12 @@
 import 'dart:math';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
+import 'package:yovoice/features/moments/data/services/voice_moment_read_service.dart';
 
 /// Why a Moment was dropped from the discovery pool. Kept as data rather
 /// than folded into a single count, so the screen can tell the two
@@ -43,6 +45,8 @@ class MomentDiscoveryFeed {
     required this.drops,
     required this.seed,
     required this.poolExhausted,
+    this.nextCursor,
+    this.loadMore,
   });
 
   /// Ranked, weighted-shuffled and author-spaced. Ready to page through.
@@ -66,6 +70,18 @@ class MomentDiscoveryFeed {
   /// hold IS the entire published corpus and the end-of-stack copy may
   /// say so without lying.
   final bool poolExhausted;
+
+  /// Opaque server cursor. The app never decodes it and only sends it back to
+  /// the same v2 callable through [loadMore].
+  final String? nextCursor;
+
+  /// Lazily reads the next privacy-filtered server page and returns a merged,
+  /// re-ranked immutable feed. Null means the server proved there is no next
+  /// page (or the caller's requested pool bound has been reached).
+  final Future<MomentDiscoveryFeed> Function()? loadMore;
+
+  bool get canLoadMore =>
+      poolExhausted && nextCursor != null && loadMore != null;
 
   bool get isEmpty => moments.isEmpty;
 
@@ -121,12 +137,22 @@ class MomentEngagement {
 /// added `score` field would not be an additive optional field: it would
 /// break liking, commenting and deleting on every document carrying it.
 class MomentDiscoveryService {
-  MomentDiscoveryService({FirebaseFirestore? firestore, FirebaseAuth? auth})
-    : _firestore = firestore ?? FirebaseFirestore.instance,
-      _auth = auth ?? FirebaseAuth.instance;
+  MomentDiscoveryService({
+    // Retained as source-compatible injection parameters for existing test
+    // harnesses. Build 20 foreign-content reads never use them.
+    FirebaseFirestore? firestore,
+    FirebaseAuth? auth,
+    FirebaseFunctions? functions,
+    VoiceMomentReadService? readService,
+    VoiceMomentFeedInvoker? feedInvoker,
+  }) : _readService =
+           readService ??
+           VoiceMomentReadService(
+             functions: functions,
+             feedInvoker: feedInvoker,
+           );
 
-  final FirebaseFirestore _firestore;
-  final FirebaseAuth _auth;
+  final VoiceMomentReadService _readService;
 
   /// How many documents each pool query fetches. Two pools, so a load
   /// costs at most 2x this in reads.
@@ -139,21 +165,15 @@ class MomentDiscoveryService {
 
   /// Comments count for half a like in the weighting.
   ///
-  /// Not because a comment is worth less attention — because
-  /// `commentCount` is the weaker signal of the two. The client-side
-  /// Firestore rule that guards it (`firestore.rules`, the voiceMoments
-  /// update block) permits a signed-in caller to increment it WITHOUT
-  /// proving a comment document was created, while the like branch is
-  /// bound to a `likes/{uid}` document. See the report accompanying this
-  /// change for the proposed rule text that closes it.
+  /// Not because a comment is worth less attention — because it is the
+  /// weaker signal of the two. Both counters are now mutated only by
+  /// server-owned, idempotent callables; Build 20 never derives engagement
+  /// state by reading a foreign Moment subcollection.
   static const double commentWeight = 0.5;
 
   /// Sets how strongly engagement bends the shuffle. See
   /// [discoveryWeight].
   static const double popularityGain = 3.0;
-
-  CollectionReference<Map<String, dynamic>> get _moments =>
-      _firestore.collection('voiceMoments');
 
   /// The weight a Moment carries in the shuffle. Strictly increasing in
   /// both counters — more popular really does surface more — but
@@ -335,17 +355,6 @@ class MomentDiscoveryService {
   /// unreadable to the blocked party, and `setUserBlock` writes no
   /// reciprocal mirror. A global feed therefore cannot filter that
   /// direction from the client at all. See the report.
-  Future<Set<String>> _blockedAuthorIds() async {
-    final uid = _auth.currentUser?.uid;
-    if (uid == null || uid.isEmpty) return const <String>{};
-    final snapshot = await _firestore
-        .collection('users')
-        .doc(uid)
-        .collection('blocked')
-        .get();
-    return snapshot.docs.map((doc) => doc.id).toSet();
-  }
-
   /// The most-liked published Moments, in order, unshuffled.
   ///
   /// For a small supporting module that says "Most liked" and means it.
@@ -356,17 +365,12 @@ class MomentDiscoveryService {
   /// Uses the same `isPublished ASC + likeCount DESC` composite index as
   /// the discovery pool, so it adds no index surface of its own.
   Future<List<VoiceMoment>> topLikedMoments({int limit = 3}) async {
-    // Over-fetch, because unplayable documents are dropped below and a
-    // module that asks for 3 and shows 1 looks broken.
-    final snapshot = await _moments
-        .where('isPublished', isEqualTo: true)
-        .orderBy('likeCount', descending: true)
-        .limit(limit * 4)
-        .get();
-    final moments = snapshot.docs
-        .map(VoiceMoment.fromFirestore)
-        .toList(growable: false);
-    return filterPlayable(moments).kept.take(limit).toList(growable: false);
+    if (limit < 1) return const <VoiceMoment>[];
+    final page = await _readService.loadFeedPage(
+      limit: (limit * 3).clamp(1, 10),
+      sort: VoiceMomentFeedSort.popular,
+    );
+    return page.moments.take(limit).toList(growable: false);
   }
 
   /// Fetches both pools, unions them, filters, weights and shuffles.
@@ -386,63 +390,68 @@ class MomentDiscoveryService {
     int? seed,
   }) async {
     final effectiveSeed = seed ?? DateTime.now().microsecondsSinceEpoch;
-
-    // Two pools, because one is not enough:
-    //
-    //  * popularity alone freezes the feed into a hall of fame the
-    //    moment the corpus outgrows the pool — nothing new is ever
-    //    reachable, which is the opposite of discovery;
-    //  * recency alone is not what was asked for.
-    //
-    // The union is what makes "weighted so the popular surface more"
-    // and "from ALL users" both true at once.
-    final results = await Future.wait([
-      _moments
-          .where('isPublished', isEqualTo: true)
-          .orderBy('likeCount', descending: true)
-          .limit(poolSize)
-          .get(),
-      _moments
-          .where('isPublished', isEqualTo: true)
-          .orderBy('createdAt', descending: true)
-          .limit(poolSize)
-          .get(),
-    ]);
-
-    final byId = <String, VoiceMoment>{};
-    var anyPoolFull = false;
-    for (final snapshot in results) {
-      if (snapshot.docs.length >= poolSize) anyPoolFull = true;
-      for (final document in snapshot.docs) {
-        final moment = VoiceMoment.fromFirestore(document);
-        byId[moment.id] = moment;
-      }
-    }
-
-    Set<String> blocked = const <String>{};
-    try {
-      blocked = await _blockedAuthorIds();
-    } catch (_) {
-      // A block list that will not load must not take the feed down with
-      // it, but it must not be treated as "nobody is blocked" either.
-      // Fail closed on the only thing we can: hide nothing extra, and
-      // let the caller know the list is unavailable by leaving it empty.
-      // The alternative — failing the whole load — hides every Moment
-      // because one small read failed, which is worse.
-      blocked = const <String>{};
-    }
-
-    final fetched = byId.values.toList(growable: false);
-    final filtered = filterPlayable(fetched, blockedAuthorIds: blocked);
-    final ranked = weightedShuffle(filtered.kept, Random(effectiveSeed));
-
-    return MomentDiscoveryFeed(
-      moments: spaceAuthors(ranked),
-      fetchedCount: fetched.length,
-      drops: filtered.drops,
+    final boundedPoolSize = poolSize.clamp(1, defaultPoolSize);
+    var result = await _loadV2Page(
+      poolSize: boundedPoolSize,
       seed: effectiveSeed,
-      poolExhausted: anyPoolFull,
     );
+    // A server page can consist entirely of hidden authors. Advance a small,
+    // fixed number of pages so a private first page does not masquerade as an
+    // empty product, without turning initial paint into an unbounded crawl.
+    for (
+      var attempt = 0;
+      attempt < 2 && result.moments.isEmpty && result.canLoadMore;
+      attempt += 1
+    ) {
+      result = await result.loadMore!();
+    }
+    return result;
+  }
+
+  Future<MomentDiscoveryFeed> _loadV2Page({
+    required int poolSize,
+    required int seed,
+    String? cursor,
+    List<VoiceMoment> previous = const <VoiceMoment>[],
+    int scannedBefore = 0,
+    Map<String, MomentDropReason> previousDrops =
+        const <String, MomentDropReason>{},
+  }) async {
+    final remaining = poolSize - previous.length;
+    final page = await _readService.loadFeedPage(
+      limit: remaining.clamp(1, 10),
+      cursor: cursor,
+    );
+    final byId = <String, VoiceMoment>{
+      for (final moment in previous) moment.id: moment,
+      for (final moment in page.moments) moment.id: moment,
+    };
+    final filtered = filterPlayable(byId.values.toList(growable: false));
+    final ranked = spaceAuthors(weightedShuffle(filtered.kept, Random(seed)));
+    final canContinue = page.hasMore && ranked.length < poolSize;
+    late final MomentDiscoveryFeed result;
+    result = MomentDiscoveryFeed(
+      moments: List<VoiceMoment>.unmodifiable(ranked),
+      fetchedCount: scannedBefore + page.scannedCount,
+      drops: Map<String, MomentDropReason>.unmodifiable({
+        ...previousDrops,
+        ...filtered.drops,
+      }),
+      seed: seed,
+      poolExhausted: page.hasMore,
+      nextCursor: page.nextCursor,
+      loadMore: canContinue
+          ? () => _loadV2Page(
+              poolSize: poolSize,
+              seed: seed,
+              cursor: page.nextCursor,
+              previous: ranked,
+              scannedBefore: scannedBefore + page.scannedCount,
+              previousDrops: {...previousDrops, ...filtered.drops},
+            )
+          : null,
+    );
+    return result;
   }
 
   /// Live `likeCount` / `commentCount` for the Moments on screen.
@@ -466,21 +475,11 @@ class MomentDiscoveryService {
   Stream<Map<String, MomentEngagement>> watchEngagement({
     int poolSize = defaultPoolSize,
   }) {
-    return _moments
-        .where('isPublished', isEqualTo: true)
-        .orderBy('createdAt', descending: true)
-        .limit(poolSize)
-        .snapshots()
-        .map((snapshot) {
-          final counters = <String, MomentEngagement>{};
-          for (final document in snapshot.docs) {
-            final data = document.data();
-            counters[document.id] = MomentEngagement(
-              likeCount: (data['likeCount'] as num?)?.toInt() ?? 0,
-              commentCount: (data['commentCount'] as num?)?.toInt() ?? 0,
-            );
-          }
-          return counters;
-        });
+    // Foreign root documents are no longer subscribed to directly in Build
+    // 20. Counts refresh with the bounded projection page instead of opening
+    // a second metadata path around the audience gate.
+    return Stream<Map<String, MomentEngagement>>.value(
+      const <String, MomentEngagement>{},
+    );
   }
 }

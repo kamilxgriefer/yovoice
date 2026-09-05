@@ -204,7 +204,6 @@ class MainShell extends StatefulWidget {
     10: MoreDestination.moderation,
     11: MoreDestination.staffCenter,
     12: MoreDestination.findCreators,
-    13: MoreDestination.reels,
   };
 
   @override
@@ -310,7 +309,7 @@ class _MainShellState extends State<MainShell>
 
   /// The notifications FEED (the bell) is its own screen rather than a
   /// MoreDestination — Alerts (preferences) is the one in the popover.
-  static const int _slotCount = 14;
+  static const int _slotCount = 13;
 
   /// Slots are built on FIRST visit and then kept alive, so switching
   /// back is instant and scroll position survives — without mounting
@@ -323,6 +322,7 @@ class _MainShellState extends State<MainShell>
   /// built once and cached, so the flag has to be a listenable the
   /// screen subscribes to rather than a constructor argument.
   final ValueNotifier<bool> _momentsVisible = ValueNotifier<bool>(false);
+  final ValueNotifier<bool> _homeVisible = ValueNotifier<bool>(true);
 
   Widget _buildSlot(int index) {
     if (index == _notificationsSlot) {
@@ -366,6 +366,7 @@ class _MainShellState extends State<MainShell>
   /// below are the shell's existing ones; this only changes what Home
   /// renders inside slot 0.
   Widget get _mobileHome => MobileHome(
+    isVisible: _homeVisible,
     unreadNotificationCount: _unreadNotificationCount,
     onOpenRoom: (room) => unawaited(_openRoom(room)),
     onOpenDiscover: () =>
@@ -401,6 +402,7 @@ class _MainShellState extends State<MainShell>
   /// push (a room, a chat, a club) are the flows that already own a
   /// full-screen route everywhere else in the app.
   Widget _desktopHome({Widget? trailingContent}) => DesktopHome(
+    isVisible: _homeVisible,
     currentUserId: _currentUserId,
     onOpenRoom: (room) => unawaited(_openRoom(room)),
     onSeeAllRooms: () => _onDestinationSelected(_discoverSlot),
@@ -822,6 +824,7 @@ class _MainShellState extends State<MainShell>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     appRouteObserver.unsubscribe(this);
+    _homeVisible.dispose();
     _momentsVisible.dispose();
     _tabTransition.dispose();
     _conversationSubscription?.cancel();
@@ -986,6 +989,7 @@ class _MainShellState extends State<MainShell>
       _selectedIndex = index;
     });
     _momentsVisible.value = index == _momentsSlot;
+    _homeVisible.value = index == 0;
     if (MediaQuery.disableAnimationsOf(context)) {
       _tabTransition.value = 1;
     } else {
@@ -1175,10 +1179,10 @@ class _MainShellState extends State<MainShell>
       MoreDestination.discover => DesktopNavItem.discover,
       MoreDestination.findCreators => DesktopNavItem.findCreators,
       MoreDestination.friends => DesktopNavItem.friends,
-      MoreDestination.moments => DesktopNavItem.moments,
+      MoreDestination.moments ||
+      MoreDestination.reels => DesktopNavItem.moments,
       // Everything reached THROUGH the More popover keeps More lit.
       MoreDestination.clubs ||
-      MoreDestination.reels ||
       MoreDestination.creatorStudio ||
       MoreDestination.achievements ||
       MoreDestination.notifications ||
@@ -1344,6 +1348,7 @@ class _MainShellState extends State<MainShell>
 
   Widget _buildDesktopHomeExtras() {
     return _DesktopHomeExtras(
+      isVisible: _homeVisible,
       currentUserId: _currentUserId,
       onOpenRoom: (room) => unawaited(
         Navigator.of(context).push<void>(
@@ -1531,6 +1536,7 @@ class _MainShellState extends State<MainShell>
 /// last two are different questions and are kept as separate modules.
 class _DesktopHomeExtras extends StatelessWidget {
   const _DesktopHomeExtras({
+    required this.isVisible,
     required this.currentUserId,
     required this.onOpenRoom,
     required this.onSeeAll,
@@ -1540,6 +1546,7 @@ class _DesktopHomeExtras extends StatelessWidget {
     required this.onViewAllCreators,
   });
 
+  final ValueListenable<bool> isVisible;
   final String currentUserId;
   final ValueChanged<VoiceRoom> onOpenRoom;
 
@@ -1561,12 +1568,14 @@ class _DesktopHomeExtras extends StatelessWidget {
         // People first, Premium last: the supplementary modules support
         // the primary feed rather than selling over it.
         FollowedCreatorsCard(
+          isVisible: isVisible,
           currentUserId: currentUserId,
           onOpenCreator: onOpenCreator,
           onViewAll: onViewAllCreators,
         ),
         const SizedBox(height: 16),
         VoiceTrendingCard(
+          isVisible: isVisible,
           onOpenRoom: onOpenRoom,
           onSeeAll: onSeeAll,
           onSeeAllRooms: onSeeAllRooms,

@@ -15,6 +15,7 @@ import 'dart:math';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
+import 'package:firebase_storage_mocks/firebase_storage_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -23,7 +24,9 @@ import 'package:yovoice/features/home/presentation/screens/main_shell.dart';
 import 'package:yovoice/features/home/presentation/widgets/more_sheet.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
 import 'package:yovoice/features/moments/data/services/moment_discovery_service.dart';
+import 'package:yovoice/features/moments/data/services/moment_service.dart';
 import 'package:yovoice/features/moments/presentation/screens/moments_screen.dart';
+import 'package:yovoice/features/moments/presentation/widgets/moments_feed_view.dart';
 import 'package:yovoice/shared/identity/public_identity_repository.dart';
 
 /// One fixed reading of "now" for the whole file, so every fixture's
@@ -335,8 +338,73 @@ void main() {
         signedIn: true,
         mockUser: MockUser(uid: 'me'),
       );
+      Future<Map<Object?, Object?>> invoke(Map<String, Object?> request) async {
+        final snapshot = await db
+            .collection('voiceMoments')
+            .where('isPublished', isEqualTo: true)
+            .get();
+        final blocked = await db
+            .collection('users')
+            .doc(auth.currentUser!.uid)
+            .collection('blocked')
+            .get();
+        final blockedIds = blocked.docs.map((document) => document.id).toSet();
+        final candidates = snapshot.docs
+            .map(VoiceMoment.fromFirestore)
+            .toList(growable: true);
+        if (request['sortMode'] == 'popular') {
+          candidates.sort((a, b) => b.likeCount.compareTo(a.likeCount));
+        } else {
+          candidates.sort(
+            (a, b) => (b.createdAt ?? DateTime(0)).compareTo(
+              a.createdAt ?? DateTime(0),
+            ),
+          );
+        }
+        final limit = request['limit']! as int;
+        final scanned = candidates.take(limit).toList(growable: false);
+        final projections = <Map<Object?, Object?>>[];
+        for (final moment in scanned) {
+          // Mirrors the server-owned projection boundary: malformed media,
+          // expired content and blocked authors consume a scan slot but are
+          // not disclosed to the client as typed drop reasons.
+          if (!moment.hasMediaReference ||
+              !moment.isActiveAt(_anchor) ||
+              blockedIds.contains(moment.authorId)) {
+            continue;
+          }
+          projections.add(<Object?, Object?>{
+            'schemaVersion': 2,
+            'momentId': moment.id,
+            'authorId': moment.authorId,
+            'authorName': moment.authorName,
+            'authorPhotoUrl': null,
+            'caption': moment.caption,
+            'durationSeconds': moment.durationSeconds,
+            'likeCount': moment.likeCount,
+            'commentCount': moment.commentCount,
+            'callerLiked': false,
+            'createdAtMillis': moment.createdAt!.millisecondsSinceEpoch,
+            'publishedAtMillis': moment.createdAt!.millisecondsSinceEpoch,
+            'expiresAtMillis': moment.expiresAt?.millisecondsSinceEpoch,
+            'reportReceipt': 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+          });
+        }
+        return <Object?, Object?>{
+          'schemaVersion': 2,
+          'moments': projections,
+          'scannedCount': scanned.length,
+          'hasMore': false,
+          'nextCursor': null,
+        };
+      }
+
       return (
-        service: MomentDiscoveryService(firestore: db, auth: auth),
+        service: MomentDiscoveryService(
+          firestore: db,
+          auth: auth,
+          feedInvoker: invoke,
+        ),
         db: db,
       );
     }
@@ -398,7 +466,7 @@ void main() {
 
         final feed = await harness.service.loadDiscoveryFeed(seed: 1);
         expect(feed.moments.map((m) => m.id).toSet(), {'live', 'forever'});
-        expect(feed.drops['dead'], MomentDropReason.expired);
+        expect(feed.drops.containsKey('dead'), isFalse);
         expect(feed.drops.containsKey('forever'), isFalse);
         // All three WERE fetched: the empty-state arithmetic depends on
         // the distinction between "not published" and "published but dead".
@@ -448,7 +516,11 @@ void main() {
 
       final feed = await harness.service.loadDiscoveryFeed(seed: 1);
       expect(feed.moments.map((m) => m.id), ['fine']);
-      expect(feed.drops['nope'], MomentDropReason.blockedAuthor);
+      expect(
+        feed.drops.containsKey('nope'),
+        isFalse,
+        reason: 'hidden authors are not disclosed as a client-side oracle',
+      );
     });
 
     test('the same seed produces the same order — the stack does not '
@@ -700,6 +772,114 @@ void main() {
       expect(find.textContaining('Expires in'), findsWidgets);
     });
 
+    testWidgets('the footer requests and renders the next opaque page', (
+      tester,
+    ) async {
+      final firstMoment = _moment('page-one', author: 'first');
+      final secondMoment = _moment('page-two', author: 'second');
+      final discovery = _StaticDiscovery(
+        <VoiceMoment>[firstMoment],
+        nextPage: () async => MomentDiscoveryFeed(
+          moments: <VoiceMoment>[firstMoment, secondMoment],
+          fetchedCount: 2,
+          drops: const <String, MomentDropReason>{},
+          seed: 1,
+          poolExhausted: false,
+        ),
+      );
+      await tester.pumpWidget(
+        host(MomentsScreen(feedService: feed, discoveryService: discovery)),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      final loadMore = find.byKey(const ValueKey('moments-load-more'));
+      await tester.scrollUntilVisible(
+        loadMore,
+        240,
+        scrollable: find
+            .descendant(
+              of: find.byKey(const ValueKey('moments-feed-scroll')),
+              matching: find.byType(Scrollable),
+            )
+            .first,
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(loadMore.hitTestable());
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(find.byKey(const ValueKey('moment-row-page-two')), findsOneWidget);
+      expect(loadMore, findsNothing);
+    });
+
+    testWidgets('returning to the kept-alive destination reloads v2 data', (
+      tester,
+    ) async {
+      final visible = ValueNotifier<bool>(false);
+      addTearDown(visible.dispose);
+      final discovery = _StaticDiscovery(<VoiceMoment>[_moment('reload')]);
+      await tester.pumpWidget(
+        host(
+          MomentsScreen(
+            isVisible: visible,
+            feedService: feed,
+            discoveryService: discovery,
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(discovery.loadCalls, 1);
+
+      visible.value = true;
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(discovery.loadCalls, 2);
+
+      visible.value = false;
+      await tester.pump();
+      expect(discovery.loadCalls, 2);
+    });
+
+    testWidgets('inline detail comments cache across parent rebuilds', (
+      tester,
+    ) async {
+      final comments = _CountingMomentService();
+      late StateSetter rebuildParent;
+      var revision = 0;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: StatefulBuilder(
+            builder: (context, setState) {
+              rebuildParent = setState;
+              return Column(
+                children: [
+                  Text('revision $revision'),
+                  MomentCommentsInline(
+                    momentId: 'moment-cache',
+                    momentService: comments,
+                  ),
+                ],
+              );
+            },
+          ),
+        ),
+      );
+      await tester.pump();
+      expect(comments.watchCalls, 1);
+
+      rebuildParent(() => revision += 1);
+      await tester.pump();
+      expect(comments.watchCalls, 1);
+
+      tester
+          .state<MomentCommentsInlineState>(find.byType(MomentCommentsInline))
+          .refresh();
+      await tester.pump();
+      expect(comments.watchCalls, 2);
+    });
+
     for (final size in <Size>[
       Size(390, 844), // phone
       Size(834, 1112), // tablet
@@ -824,7 +1004,7 @@ void main() {
 
       // Compact dock labels stay available to assistive technologies even
       // though the visual treatment is intentionally icon-only.
-      for (final label in ['Home', 'Chats', 'Moments', 'More']) {
+      for (final label in ['Home', 'Chats', 'YO Moments', 'More']) {
         expect(
           find.bySemanticsLabel(label),
           findsOneWidget,
@@ -849,7 +1029,7 @@ void main() {
         (widget) => widget is Semantics && widget.properties.selected == true,
       );
       expect(lit, findsOneWidget);
-      expect(tester.widget<Semantics>(lit).properties.label, 'Moments');
+      expect(tester.widget<Semantics>(lit).properties.label, 'YO Moments');
 
       // Friends is primary tab 2 and mobile Home's "Your circle" selects
       // it. It owns no dock slot, so the bar must light NOTHING rather
@@ -875,7 +1055,7 @@ void main() {
         dockHost(selectedIndex: 0, onSelect: (index) => selected = index),
       );
       await tester.pumpAndSettle();
-      await tester.tap(find.bySemanticsLabel('Moments'));
+      await tester.tap(find.bySemanticsLabel('YO Moments'));
       await tester.pumpAndSettle();
 
       expect(selected, momentsSlot);
@@ -883,12 +1063,13 @@ void main() {
   });
 
   group('the like control is real', () {
-    testWidgets('tapping the heart calls toggleLike exactly once', (
+    testWidgets('heart updates immediately and sends one exact desired state', (
       tester,
     ) async {
       // The defect this pins: the Moments screen rendered a heart and a
       // like count as static text with NO tap target, while
-      // HomeFeedService.toggleLike worked and Home already used it.
+      // HomeFeedService.setLike owns a server-authorized desired-state
+      // mutation; the card must never read the caller's like document.
       final db = FakeFirebaseFirestore();
       final auth = MockFirebaseAuth(
         signedIn: true,
@@ -917,7 +1098,10 @@ void main() {
       await tester.tap(heart);
       await tester.pump();
 
-      expect(feed.toggleCalls, ['m1']);
+      expect(feed.setCalls, ['m1']);
+      expect(feed.desiredStates, [true]);
+      expect(find.byIcon(Icons.favorite_rounded), findsOneWidget);
+      expect(find.text('5'), findsOneWidget);
     });
 
     testWidgets('with no feed service the heart is inert rather than a '
@@ -973,6 +1157,7 @@ class _StaticDiscovery implements MomentDiscoveryService {
     int? fetchedCount,
     this.delay,
     this.drops = const <String, MomentDropReason>{},
+    this.nextPage,
   }) : fetchedCount = fetchedCount ?? moments.length;
 
   final List<VoiceMoment> moments;
@@ -986,6 +1171,8 @@ class _StaticDiscovery implements MomentDiscoveryService {
   /// Lets a test observe the loading state, which otherwise resolves
   /// inside the same microtask drain as the first pump.
   final Duration? delay;
+  final Future<MomentDiscoveryFeed> Function()? nextPage;
+  int loadCalls = 0;
 
   /// No counter stream at all — what the board must survive without
   /// losing the counts it loaded. `moments_board_test.dart` owns the
@@ -1000,13 +1187,16 @@ class _StaticDiscovery implements MomentDiscoveryService {
     int poolSize = MomentDiscoveryService.defaultPoolSize,
     int? seed,
   }) async {
+    loadCalls += 1;
     if (delay != null) await Future<void>.delayed(delay!);
     return MomentDiscoveryFeed(
       moments: moments,
       fetchedCount: fetchedCount,
       drops: drops,
       seed: seed ?? 0,
-      poolExhausted: false,
+      poolExhausted: nextPage != null,
+      nextCursor: nextPage == null ? null : 'test_next_page',
+      loadMore: nextPage,
     );
   }
 
@@ -1018,16 +1208,42 @@ class _StaticDiscovery implements MomentDiscoveryService {
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
+class _CountingMomentService extends MomentService {
+  _CountingMomentService()
+    : super(
+        firestore: FakeFirebaseFirestore(),
+        auth: MockFirebaseAuth(
+          signedIn: true,
+          mockUser: MockUser(uid: 'viewer'),
+        ),
+        storage: MockFirebaseStorage(),
+      );
+
+  int watchCalls = 0;
+
+  @override
+  Stream<List<MomentComment>> watchComments(String momentId, {int limit = 80}) {
+    watchCalls += 1;
+    return Stream<List<MomentComment>>.value(const <MomentComment>[]);
+  }
+}
+
 class _CountingFeedService extends HomeFeedService {
   _CountingFeedService({super.firestore, super.auth});
 
-  final List<String> toggleCalls = <String>[];
+  final List<String> setCalls = <String>[];
+  final List<bool> desiredStates = <bool>[];
+
+  @override
+  Stream<List<VoiceMoment>> watchSocialMoments({int limit = 40}) =>
+      Stream<List<VoiceMoment>>.value(const <VoiceMoment>[]);
 
   @override
   Stream<bool> watchLiked(String momentId) => Stream<bool>.value(false);
 
   @override
-  Future<void> toggleLike(String momentId) async {
-    toggleCalls.add(momentId);
+  Future<void> setLike(String momentId, {required bool liked}) async {
+    setCalls.add(momentId);
+    desiredStates.add(liked);
   }
 }

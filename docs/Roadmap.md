@@ -1464,11 +1464,52 @@ someone decide what to pick up next.
 
 ## In Progress
 
+### Build 20 YO Moments, Voice read v2, Reels retention and moderation candidate
+
+- **Status**: **Source-complete and independently reviewed on 2026-09-05;
+  operationally HELD. Not deployed, uploaded or assigned to testers.** The
+  final Voice re-review passed 84/84 with APPROVE and no P0, P1 or P2 finding
+  in scope.
+- **Description**: Build 20 presents Voice Moments and Reels through one
+  localized YO Moments destination. Foreign Voice Moment feed/detail data now
+  comes from bounded, server-owned v2 projections; likes use server-owned
+  mutation and stale auth/lifecycle generations fail closed. The legacy v1
+  direct-read compatibility boundary remains deliberately available for Build
+  19 until observed adoption and a separately authorized cutover. Reels adds
+  bounded availability, retry/lease cleanup and moderation-safe retention;
+  canonical Voice Moment reports can be actioned without trusting client object
+  paths. The source adds four required composite indexes plus managed TTL on
+  `reelCleanupOutbox.deleteAfter` and
+  `voiceMomentReportReceipts.expiresAt`.
+- **Measured evidence**: analysis clean; complete Flutter 2255/2255; Chrome
+  18/18; production Flutter Web build PASS; Playwright built-artifact smoke
+  2/2 PASS; YO Moments screenshot harness 50/50; dock Dark/Pearl screenshot
+  harness 8/8; Voice re-review 84/84 APPROVE; Functions 1277/1277 in non-
+  overlapping shards after an emulator transaction-lock hang; Firestore Rules
+  524/524; Storage Rules 67/67; Family media 11/11; Functions smoke and
+  deterministic sound-asset checks PASS. Inspected PNGs show Frame Echo Clean
+  without internal lines/skew or observed overlap. Production npm audits
+  report 0 vulnerabilities in both `functions` and `firestore-tests`; physical
+  visual acceptance remains pending.
+- **Dependencies**: Freeze one exact commit; deploy and read back all required
+  indexes plus both TTL overrides first, waiting for indexes to report `READY`;
+  deploy additive Functions; execute the explicit reviewed friendship
+  allowlist as dry-run → digest → apply → no-op post-check; then deploy/read
+  back Firestore Rules, Storage Rules only if changed, and Hosting only after
+  exact-commit CI plus backend health. Inspect unique signed IPA/AAB artifacts,
+  complete Dark/Pearl rendered and two-account physical/mixed-version QA, then
+  upload, process, assign and verify non-owner tester availability before any
+  notification is claimed.
+- **Priority**: Critical release integrity. Source completion is not shipment;
+  keep the candidate HELD until the operational and physical evidence is
+  recorded in the
+  [Build 20 session ledger](Sessions/2026-09-05-build-20-release-candidate.md).
+
 ### Post-Build-19 P0 tester compatibility repair
 
-- **Status**: **Implemented as the `1.0.0 (20)` successor and automated-tested
-  in source on 2026-09-04; not deployed or assigned to tester channels.** The
-  current unreleased tree passes Flutter 2192/2192,
+- **Status**: **Implemented at the 2026-09-04 P0 checkpoint and now incorporated
+  into the coordinated Build 20 candidate above; not deployed or assigned to
+  tester channels.** That intermediate checkpoint passed Flutter 2192/2192,
   direct-call plus localization Flutter 67/67,
   friend recovery 22/22, Functions 1218/1218 across 118 suites, Firestore Rules
   523/523, Storage Rules 67/67, Family media 11/11, direct-call backend 47/47,
@@ -1477,8 +1518,10 @@ someone decide what to pick up next.
   syntax checks, 615 Dart files formatted with zero changes and
   `git diff --check`. Avatar/profile review passes 91/91 without P0/P1, the DM
   media/outbox focused aggregate passes 68/68 and the independent cleanup
-  re-review passes 41/41 without P0/P1/P2. The dependency audit is unavailable:
-  all three npm advisory requests ended with `socket hang up`.
+  re-review passes 41/41 without P0/P1/P2. At that checkpoint the dependency
+  audit was unavailable because all three npm advisory requests ended with
+  `socket hang up`; the later complete Build 20 candidate records both current
+  production dependency audits at 0 vulnerabilities.
 - **Description**: Repair the production failures reported from Build 19
   without weakening the privacy boundary. Direct-call refusals now carry safe,
   localized reason codes; video compatibility remains additive for older
@@ -1530,10 +1573,10 @@ someone decide what to pick up next.
   races; both were repaired and are regression-tested. The target-scoped avatar
   epoch map has one non-blocking P2 housekeeping item: it may grow across a very
   long session with many unique target evictions, but is cleared globally/on
-  logout and does not weaken privacy or correctness. Next, rerun the
-  currently unavailable npm advisory audit, commit and deploy the additive
-  Functions revision with read-back; prepare and independently review
-  the minimum explicit allowlist; run dry-run, controlled apply and post-apply
+  logout and does not weaken privacy or correctness. Next, freeze the exact
+  commit and deploy the additive Functions revision with read-back; prepare
+  and independently review the minimum explicit allowlist; run dry-run,
+  controlled apply and post-apply
   no-op evidence; then execute physical mixed-version two-device audio/video,
   avatar and iOS camera/library media checks. The locked host prevented the
   final automated screen-control pass, so visual/native acceptance is still a

@@ -129,6 +129,8 @@ class _MomentsFeedViewState extends State<MomentsFeedView> {
   _Phase _phase = _Phase.loading;
   Object? _error;
   MomentDiscoveryFeed? _result;
+  bool _loadingMore = false;
+  Object? _loadMoreError;
 
   // The personal slice is subscribed EAGERLY in initState and cached
   // here, not read through a StreamBuilder mounted on filter switch:
@@ -320,13 +322,22 @@ class _MomentsFeedViewState extends State<MomentsFeedView> {
   }
 
   void _handleVisibility() {
-    if (widget.isVisible?.value == false) unawaited(_stopPanelPlayback());
+    if (widget.isVisible?.value == false) {
+      unawaited(_stopPanelPlayback());
+      return;
+    }
+    // Build 20 projections are intentionally bounded one-shot snapshots, not
+    // foreign Firestore listeners. Returning to this kept-alive destination is
+    // therefore an explicit safe refresh point.
+    unawaited(_refreshAll());
   }
 
   Future<void> _load() async {
     setState(() {
       _phase = _Phase.loading;
       _error = null;
+      _loadMoreError = null;
+      _loadingMore = false;
     });
     await _stopPanelPlayback();
     try {
@@ -343,6 +354,32 @@ class _MomentsFeedViewState extends State<MomentsFeedView> {
         _error = error;
         _phase = _Phase.error;
       });
+    }
+  }
+
+  Future<void> _refreshAll() async {
+    _retrySocial();
+    await _load();
+  }
+
+  Future<void> _loadMore() async {
+    final current = _result;
+    final loadMore = current?.loadMore;
+    if (current == null || loadMore == null || _loadingMore) return;
+    setState(() {
+      _loadingMore = true;
+      _loadMoreError = null;
+    });
+    try {
+      final next = await loadMore();
+      if (!mounted) return;
+      setState(() => _result = next);
+      _expireAt(_expiry.now());
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _loadMoreError = error);
+    } finally {
+      if (mounted) setState(() => _loadingMore = false);
     }
   }
 
@@ -585,7 +622,10 @@ class _MomentsFeedViewState extends State<MomentsFeedView> {
     await reportContent(
       context: context,
       service: widget.contentReportService,
-      content: ReportedContent.voiceMoment(momentId: moment.id),
+      content: ReportedContent.voiceMoment(
+        momentId: moment.id,
+        reportReceipt: moment.reportReceipt,
+      ),
       title: copy.text('Report this Voice Moment', 'Zgłoś ten Voice Moment'),
       subtitle: copy.text(
         'Your report goes to the YO Voice moderation team with this '
@@ -618,6 +658,8 @@ class _MomentsFeedViewState extends State<MomentsFeedView> {
       drops: result.drops,
       seed: result.seed,
       poolExhausted: result.poolExhausted,
+      nextCursor: result.nextCursor,
+      loadMore: result.loadMore,
     );
     if (_selectedId != null && ids.contains(_selectedId)) _selectedId = null;
     if (_playingId != null && ids.contains(_playingId)) {
@@ -824,6 +866,8 @@ class _MomentsFeedViewState extends State<MomentsFeedView> {
             },
             seed: result.seed,
             poolExhausted: result.poolExhausted,
+            nextCursor: result.nextCursor,
+            loadMore: result.loadMore,
           );
         }
         _mineData = nextMine;
@@ -938,7 +982,7 @@ class _MomentsFeedViewState extends State<MomentsFeedView> {
               _FilterChips(
                 filter: _filter,
                 onFilter: _setFilter,
-                onRefresh: _load,
+                onRefresh: _refreshAll,
                 compact: compact,
                 recoveryFocusNode: _expiryRecoveryFocus,
               ),
@@ -1060,7 +1104,14 @@ class _MomentsFeedViewState extends State<MomentsFeedView> {
       moments: list,
       selectedId: wide ? (_selectedId ?? list.first.id) : null,
       currentUserId: _uid,
-      footer: _PoolFooter(total: list.length, moreExists: result.poolExhausted),
+      footer: _PoolFooter(
+        total: list.length,
+        moreExists: result.poolExhausted,
+        canLoadMore: result.canLoadMore,
+        loading: _loadingMore,
+        hasError: _loadMoreError != null,
+        onLoadMore: _loadMore,
+      ),
       onOpenChain: (chain) => unawaited(_openChain(chain)),
       onTapMoment: (moment) => _select(moment, wide: wide),
       onPlayMoment: (moment) => _select(moment, wide: wide, play: true),
@@ -1374,6 +1425,7 @@ class _FeedColumn extends StatelessWidget {
     final side = compact ? 16.0 : 24.0;
     final copy = AppLocalizations.of(context);
     return ListView(
+      key: const ValueKey('moments-feed-scroll'),
       padding: EdgeInsets.fromLTRB(side, 4, side, 32),
       children: [
         if (chains.isNotEmpty) ...[
@@ -2201,38 +2253,76 @@ class _MomentRow extends StatelessWidget {
   }
 }
 
-/// What the feed actually holds, counted rather than estimated. There is
-/// no "Load more": the pool is a bounded one-shot load with no pagination
-/// cursor, and a button that pretends otherwise would be a lie.
+/// What the feed actually holds, counted rather than estimated. Build 20 uses
+/// the server's opaque cursor; the UI never invents a next page or decodes the
+/// privacy boundary.
 class _PoolFooter extends StatelessWidget {
-  const _PoolFooter({required this.total, required this.moreExists});
+  const _PoolFooter({
+    required this.total,
+    required this.moreExists,
+    required this.canLoadMore,
+    required this.loading,
+    required this.hasError,
+    required this.onLoadMore,
+  });
 
   final int total;
   final bool moreExists;
+  final bool canLoadMore;
+  final bool loading;
+  final bool hasError;
+  final VoidCallback onLoadMore;
 
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     final copy = AppLocalizations.of(context);
     final noun = total == 1 ? 'Moment' : 'Moments';
-    return Text(
-      copy.text(
-        moreExists
-            ? '$total live $noun loaded — more are published than fit one '
-                  'load. Reload to draw again.'
-            : (total == 1
-                  ? 'That is the only live Moment right now.'
-                  : 'That is all $total live Moments right now.'),
-        moreExists
-            ? '$total — tyle aktywnych Voice Momentów wczytano. '
-                  'Opublikowano ich więcej, niż mieści się w jednym zestawie. '
-                  'Odśwież, aby pobrać inny zestaw.'
-            : (total == 1
-                  ? 'To jedyny aktywny Moment w tej chwili.'
-                  : 'To wszystkie aktywne Momenty w tej chwili: $total.'),
-      ),
-      textAlign: TextAlign.center,
-      style: TextStyle(color: palette.textTertiary, fontSize: 12, height: 1.4),
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          copy.text(
+            moreExists
+                ? '$total live $noun loaded.'
+                : (total == 1
+                      ? 'That is the only live Moment right now.'
+                      : 'That is all $total live Moments right now.'),
+            moreExists
+                ? 'Wczytano aktywne Momenty: $total.'
+                : (total == 1
+                      ? 'To jedyny aktywny Moment w tej chwili.'
+                      : 'To wszystkie aktywne Momenty w tej chwili: $total.'),
+          ),
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            color: palette.textTertiary,
+            fontSize: 12,
+            height: 1.4,
+          ),
+        ),
+        if (canLoadMore || loading || hasError) ...[
+          const SizedBox(height: 10),
+          OutlinedButton.icon(
+            key: const ValueKey('moments-load-more'),
+            onPressed: loading ? null : onLoadMore,
+            icon: loading
+                ? const SizedBox.square(
+                    dimension: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : Icon(
+                    hasError ? Icons.refresh_rounded : Icons.expand_more,
+                    size: 18,
+                  ),
+            label: Text(
+              hasError
+                  ? copy.text('Try again', 'Spróbuj ponownie')
+                  : copy.text('Load more', 'Wczytaj więcej'),
+            ),
+          ),
+        ],
+      ],
     );
   }
 }
@@ -2327,6 +2417,8 @@ class MomentDetailPanel extends StatefulWidget {
 
 class _MomentDetailPanelState extends State<MomentDetailPanel> {
   final TextEditingController _composer = TextEditingController();
+  final GlobalKey<MomentCommentsInlineState> _commentsKey =
+      GlobalKey<MomentCommentsInlineState>();
   bool _sending = false;
 
   AppLocalizations get _copy => AppLocalizations.of(context);
@@ -2345,6 +2437,7 @@ class _MomentDetailPanelState extends State<MomentDetailPanel> {
     try {
       await service.createTextComment(momentId: widget.moment.id, text: text);
       _composer.clear();
+      _commentsKey.currentState?.refresh();
     } catch (_) {
       if (!mounted) return;
       ScaffoldMessenger.maybeOf(context)
@@ -2643,6 +2736,7 @@ class _MomentDetailPanelState extends State<MomentDetailPanel> {
                     ],
                   ),
                   MomentCommentsInline(
+                    key: _commentsKey,
                     momentId: moment.id,
                     momentService: widget.momentService,
                   ),
@@ -2718,7 +2812,7 @@ class _MomentDetailPanelState extends State<MomentDetailPanel> {
   }
 }
 
-class _DetailActions extends StatelessWidget {
+class _DetailActions extends StatefulWidget {
   const _DetailActions({
     required this.moment,
     required this.feedService,
@@ -2741,8 +2835,34 @@ class _DetailActions extends StatelessWidget {
   final VoidCallback? onDelete;
 
   @override
+  State<_DetailActions> createState() => _DetailActionsState();
+}
+
+class _DetailActionsState extends State<_DetailActions> {
+  late bool _liked = widget.moment.callerLiked;
+  late int _likeCount = widget.moment.likeCount;
+  bool _pending = false;
+  bool _hasLocalOverride = false;
+
+  @override
+  void didUpdateWidget(covariant _DetailActions oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.moment.id != widget.moment.id) {
+      _liked = widget.moment.callerLiked;
+      _likeCount = widget.moment.likeCount;
+      _pending = false;
+      _hasLocalOverride = false;
+    } else if (!_pending &&
+        (!_hasLocalOverride || widget.moment.callerLiked == _liked)) {
+      _liked = widget.moment.callerLiked;
+      _likeCount = widget.moment.likeCount;
+      _hasLocalOverride = false;
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final service = feedService;
+    final service = widget.feedService;
     final copy = AppLocalizations.of(context);
     return Wrap(
       spacing: 8,
@@ -2751,37 +2871,29 @@ class _DetailActions extends StatelessWidget {
         if (service == null)
           _SmallChip(
             icon: Icons.favorite_border_rounded,
-            label: moment.likeCount == 0
+            label: _likeCount == 0
                 ? copy.text('Like', 'Lubię to')
-                : '${moment.likeCount}',
+                : '$_likeCount',
             active: false,
             onTap: null,
           )
         else
-          StreamBuilder<bool>(
-            stream: service.watchLiked(moment.id),
-            builder: (context, snapshot) {
-              final liked = snapshot.hasError
-                  ? false
-                  : (snapshot.data ?? false);
-              return _SmallChip(
-                key: const ValueKey('detail-like'),
-                icon: liked
-                    ? Icons.favorite_rounded
-                    : Icons.favorite_border_rounded,
-                label: moment.likeCount == 0
-                    ? copy.text('Like', 'Lubię to')
-                    : '${moment.likeCount}',
-                active: liked,
-                semanticLabel: liked
-                    ? copy.text(
-                        'Unlike this Moment',
-                        'Usuń polubienie tego Momentu',
-                      )
-                    : copy.text('Like this Moment', 'Polub ten Moment'),
-                onTap: () => unawaited(_toggle(context, service)),
-              );
-            },
+          _SmallChip(
+            key: const ValueKey('detail-like'),
+            icon: _liked
+                ? Icons.favorite_rounded
+                : Icons.favorite_border_rounded,
+            label: _likeCount == 0
+                ? copy.text('Like', 'Lubię to')
+                : '$_likeCount',
+            active: _liked,
+            semanticLabel: _liked
+                ? copy.text(
+                    'Unlike this Moment',
+                    'Usuń polubienie tego Momentu',
+                  )
+                : copy.text('Like this Moment', 'Polub ten Moment'),
+            onTap: _pending ? null : () => unawaited(_toggle(service)),
           ),
         _SmallChip(
           key: const ValueKey('detail-share'),
@@ -2792,11 +2904,11 @@ class _DetailActions extends StatelessWidget {
             'Share this Moment',
             'Udostępnij ten Moment',
           ),
-          onTap: onShare,
+          onTap: widget.onShare,
         ),
-        if (canReport)
+        if (widget.canReport)
           _SmallChip(
-            key: ValueKey('detail-report-${moment.id}'),
+            key: ValueKey('detail-report-${widget.moment.id}'),
             icon: Icons.flag_outlined,
             label: copy.text('Report', 'Zgłoś'),
             active: false,
@@ -2804,11 +2916,11 @@ class _DetailActions extends StatelessWidget {
               'Report this Voice Moment',
               'Zgłoś ten Voice Moment',
             ),
-            onTap: onReport,
+            onTap: widget.onReport,
           ),
-        if (canDelete)
+        if (widget.canDelete)
           _SmallChip(
-            key: ValueKey('detail-delete-${moment.id}'),
+            key: ValueKey('detail-delete-${widget.moment.id}'),
             icon: Icons.delete_outline_rounded,
             label: copy.text('Delete', 'Usuń'),
             active: false,
@@ -2817,18 +2929,38 @@ class _DetailActions extends StatelessWidget {
               'Delete this Voice Moment',
               'Usuń ten Voice Moment',
             ),
-            onTap: onDelete,
+            onTap: widget.onDelete,
           ),
       ],
     );
   }
 
-  Future<void> _toggle(BuildContext context, HomeFeedService service) async {
+  Future<void> _toggle(HomeFeedService service) async {
+    if (_pending) return;
     final messenger = ScaffoldMessenger.maybeOf(context);
     final copy = AppLocalizations.of(context);
+    final previousLiked = _liked;
+    final previousCount = _likeCount;
+    final desiredLiked = !previousLiked;
+    setState(() {
+      _liked = desiredLiked;
+      _likeCount = (previousCount + (desiredLiked ? 1 : -1)).clamp(0, 1 << 31);
+      _pending = true;
+      _hasLocalOverride = true;
+    });
     try {
-      await service.toggleLike(moment.id);
+      await service.setLike(widget.moment.id, liked: desiredLiked);
+      if (!mounted) return;
+      setState(() => _pending = false);
     } catch (_) {
+      if (mounted) {
+        setState(() {
+          _liked = previousLiked;
+          _likeCount = previousCount;
+          _pending = false;
+          _hasLocalOverride = false;
+        });
+      }
       messenger
         ?..hideCurrentSnackBar()
         ..showSnackBar(
@@ -2914,7 +3046,7 @@ class _SmallChip extends StatelessWidget {
 
 /// The comment thread rendered inline in the detail panel — the same
 /// documents, via [MomentService.watchComments].
-class MomentCommentsInline extends StatelessWidget {
+class MomentCommentsInline extends StatefulWidget {
   const MomentCommentsInline({
     required this.momentId,
     required this.momentService,
@@ -2925,10 +3057,40 @@ class MomentCommentsInline extends StatelessWidget {
   final MomentService? momentService;
 
   @override
+  State<MomentCommentsInline> createState() => MomentCommentsInlineState();
+}
+
+class MomentCommentsInlineState extends State<MomentCommentsInline> {
+  Stream<List<MomentComment>>? _comments;
+
+  @override
+  void initState() {
+    super.initState();
+    _comments = _load();
+  }
+
+  @override
+  void didUpdateWidget(covariant MomentCommentsInline oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.momentId != widget.momentId ||
+        !identical(oldWidget.momentService, widget.momentService)) {
+      _comments = _load();
+    }
+  }
+
+  Stream<List<MomentComment>>? _load() =>
+      widget.momentService?.watchComments(widget.momentId);
+
+  void refresh() {
+    if (!mounted) return;
+    setState(() => _comments = _load());
+  }
+
+  @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     final copy = AppLocalizations.of(context);
-    final service = momentService;
+    final service = widget.momentService;
     if (service == null) {
       return Padding(
         padding: const EdgeInsets.symmetric(vertical: 10),
@@ -2942,7 +3104,7 @@ class MomentCommentsInline extends StatelessWidget {
       );
     }
     return StreamBuilder<List<MomentComment>>(
-      stream: service.watchComments(momentId),
+      stream: _comments,
       builder: (context, snapshot) {
         if (snapshot.hasError) {
           return Padding(

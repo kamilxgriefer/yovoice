@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import 'package:firebase_auth/firebase_auth.dart';
@@ -77,6 +78,7 @@ class DesktopHome extends StatefulWidget {
     this.firebaseAuth,
     this.capabilityService,
     this.trailingContent,
+    this.isVisible,
     super.key,
   });
 
@@ -124,6 +126,9 @@ class DesktopHome extends StatefulWidget {
   /// shell is too narrow to keep a useful 344 px right rail. Nothing is
   /// hidden; only the composition changes with available width.
   final Widget? trailingContent;
+
+  /// Retained-shell visibility used by one-shot Voice Moment projections.
+  final ValueListenable<bool>? isVisible;
 
   @override
   State<DesktopHome> createState() => _DesktopHomeState();
@@ -301,6 +306,7 @@ class _DesktopHomeState extends State<DesktopHome> {
                 const SizedBox(height: 20),
                 // 1. Which followed voices have a Moment I can hear?
                 DesktopMomentsStrip(
+                  isVisible: widget.isVisible,
                   profile: _profile,
                   feedService: widget.feedService,
                   friendService: widget.friendService,

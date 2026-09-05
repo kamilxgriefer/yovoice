@@ -9,6 +9,7 @@ import 'package:video_player/video_player.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
+import 'package:yovoice/features/reels/data/models/reel.dart';
 import 'package:yovoice/features/reels/data/models/reel_composition.dart';
 import 'package:yovoice/features/reels/data/services/reel_service.dart';
 import 'package:yovoice/features/reels/data/services/reel_upload.dart';
@@ -61,10 +62,13 @@ class _ReelComposerScreenState extends State<ReelComposerScreen> {
   ReelUploadPayload? _backingAudio;
   ReelComposition _composition = const ReelComposition(originalAudioVolume: 0);
   ReelPublishSession? _session;
+  ReelAvailabilityChoice _availability = ReelAvailabilityChoice.fallback;
   bool _selecting = false;
   bool _publishing = false;
   double _progress = 0;
   String? _error;
+
+  bool get _draftContractLocked => _session != null || _publishing;
 
   @override
   void dispose() {
@@ -73,6 +77,7 @@ class _ReelComposerScreenState extends State<ReelComposerScreen> {
   }
 
   Future<void> _showSourcePicker() async {
+    if (_draftContractLocked) return;
     final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
     final source = await showModalBottomSheet<_SourceChoice>(
@@ -140,7 +145,7 @@ class _ReelComposerScreenState extends State<ReelComposerScreen> {
         ),
       ),
     );
-    if (source == null || _selecting) return;
+    if (source == null || _selecting || _draftContractLocked) return;
     setState(() {
       _selecting = true;
       _error = null;
@@ -163,7 +168,10 @@ class _ReelComposerScreenState extends State<ReelComposerScreen> {
         file,
         durationMs: durationMs,
       );
-      if (!mounted) return;
+      // The native picker/probe can complete after a publish attempt has
+      // already reserved this draft. Discard that late result so it cannot
+      // reset the retry-stable session or replace the frozen upload plan.
+      if (!mounted || _draftContractLocked) return;
       setState(() {
         _media = payload;
         _backingAudio = null;
@@ -184,10 +192,11 @@ class _ReelComposerScreenState extends State<ReelComposerScreen> {
   }
 
   Future<void> _pickBackingAudio() async {
+    if (_draftContractLocked) return;
     final picker = widget.backingAudioPicker ?? _pickLocalBackingAudio;
     try {
       final result = await picker();
-      if (!mounted || result == null) return;
+      if (!mounted || result == null || _draftContractLocked) return;
       if (!result.contentType.startsWith('audio/')) {
         throw const FormatException('Choose a supported audio file.');
       }
@@ -242,6 +251,7 @@ class _ReelComposerScreenState extends State<ReelComposerScreen> {
   }
 
   Future<void> _addTextOverlay() async {
+    if (_draftContractLocked) return;
     final copy = AppLocalizations.of(context);
     final controller = TextEditingController();
     final text = await showDialog<String>(
@@ -268,9 +278,8 @@ class _ReelComposerScreenState extends State<ReelComposerScreen> {
       ),
     );
     controller.dispose();
-    if (text == null || text.isEmpty) return;
+    if (text == null || text.isEmpty || _draftContractLocked) return;
     setState(() {
-      _session = null;
       _composition = _composition.copyWith(
         textOverlays: <ReelTextOverlay>[
           ..._composition.textOverlays,
@@ -286,6 +295,7 @@ class _ReelComposerScreenState extends State<ReelComposerScreen> {
   }
 
   Future<void> _addLinkOverlay() async {
+    if (_draftContractLocked) return;
     final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
     final label = TextEditingController();
@@ -360,11 +370,10 @@ class _ReelComposerScreenState extends State<ReelComposerScreen> {
     );
     label.dispose();
     url.dispose();
-    if (result == null) return;
+    if (result == null || _draftContractLocked) return;
     final uri = Uri.tryParse(result.$2);
     if (uri == null || !isSafePublicHttpsUri(uri) || result.$1.isEmpty) return;
     setState(() {
-      _session = null;
       _composition = _composition.copyWith(
         linkOverlays: <ReelLinkOverlay>[
           ..._composition.linkOverlays,
@@ -381,6 +390,7 @@ class _ReelComposerScreenState extends State<ReelComposerScreen> {
   }
 
   Future<void> _editTextOverlay(ReelTextOverlay source) async {
+    if (_draftContractLocked) return;
     final copy = AppLocalizations.of(context);
     final controller = TextEditingController(text: source.text);
     var x = source.x;
@@ -469,9 +479,8 @@ class _ReelComposerScreenState extends State<ReelComposerScreen> {
       ),
     );
     controller.dispose();
-    if (result == null) return;
+    if (result == null || _draftContractLocked) return;
     setState(() {
-      _session = null;
       _composition = _composition.copyWith(
         textOverlays: _composition.textOverlays
             .map((item) => item.id == result.id ? result : item)
@@ -481,6 +490,7 @@ class _ReelComposerScreenState extends State<ReelComposerScreen> {
   }
 
   Future<void> _editLinkOverlay(ReelLinkOverlay source) async {
+    if (_draftContractLocked) return;
     final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
     final label = TextEditingController(text: source.label);
@@ -567,9 +577,8 @@ class _ReelComposerScreenState extends State<ReelComposerScreen> {
     );
     label.dispose();
     url.dispose();
-    if (result == null) return;
+    if (result == null || _draftContractLocked) return;
     setState(() {
-      _session = null;
       _composition = _composition.copyWith(
         linkOverlays: _composition.linkOverlays
             .map((item) => item.id == result.id ? result : item)
@@ -581,24 +590,28 @@ class _ReelComposerScreenState extends State<ReelComposerScreen> {
   Future<void> _publish() async {
     final media = _media;
     if (media == null || _publishing) return;
-    final composition = _composition.copyWith(caption: _caption.text);
-    final plan = ReelDraftPlan(
-      media: media,
-      backingAudio: _backingAudio,
-      composition: composition,
-    );
+    final existingSession = _session;
+    final plan =
+        existingSession?.plan ??
+        ReelDraftPlan(
+          media: media,
+          backingAudio: _backingAudio,
+          composition: _composition.copyWith(caption: _caption.text),
+          availability: _availability,
+        );
     final problem = plan.validate();
     if (problem != null) {
       setState(() => _error = problem);
       return;
     }
+    final session = existingSession ?? ReelPublishSession(plan: plan);
     setState(() {
+      _session = session;
       _publishing = true;
       _error = null;
       _progress = 0;
     });
     try {
-      final session = _session ??= ReelPublishSession(plan: plan);
       final reelId = await _service.publish(
         session,
         onProgress: (progress) {
@@ -631,29 +644,34 @@ class _ReelComposerScreenState extends State<ReelComposerScreen> {
                 media: _media,
                 composition: _composition,
                 selecting: _selecting,
-                onSelect: _showSourcePicker,
+                onSelect: _draftContractLocked ? null : _showSourcePicker,
               );
               final editor = _Editor(
                 media: _media,
                 backingAudio: _backingAudio,
                 composition: _composition,
                 caption: _caption,
+                availability: _availability,
+                availabilityLocked: _draftContractLocked,
+                draftLocked: _draftContractLocked,
                 canPickAudio: true,
                 audioPlayerFactory: widget.audioPlayerFactory,
                 onCaptionChanged: (_) {
-                  if (_session != null) setState(() => _session = null);
+                  if (_draftContractLocked) return;
+                },
+                onAvailabilityChanged: (value) {
+                  if (_draftContractLocked) return;
+                  setState(() => _availability = value);
                 },
                 onComposition: (value) {
-                  setState(() {
-                    _composition = value;
-                    _session = null;
-                  });
+                  if (_draftContractLocked) return;
+                  setState(() => _composition = value);
                 },
                 onPickAudio: _pickBackingAudio,
                 onRemoveAudio: () {
+                  if (_draftContractLocked) return;
                   setState(() {
                     _backingAudio = null;
-                    _session = null;
                     _composition = _composition.copyWith(
                       backingAudioVolume: 0,
                       audioTrimStartMs: 0,
@@ -747,7 +765,7 @@ class _Preview extends StatelessWidget {
   final ReelUploadPayload? media;
   final ReelComposition composition;
   final bool selecting;
-  final VoidCallback onSelect;
+  final VoidCallback? onSelect;
 
   @override
   Widget build(BuildContext context) {
@@ -1021,9 +1039,13 @@ class _Editor extends StatelessWidget {
     required this.backingAudio,
     required this.composition,
     required this.caption,
+    required this.availability,
+    required this.availabilityLocked,
+    required this.draftLocked,
     required this.canPickAudio,
     required this.audioPlayerFactory,
     required this.onCaptionChanged,
+    required this.onAvailabilityChanged,
     required this.onComposition,
     required this.onPickAudio,
     required this.onRemoveAudio,
@@ -1037,9 +1059,13 @@ class _Editor extends StatelessWidget {
   final ReelUploadPayload? backingAudio;
   final ReelComposition composition;
   final TextEditingController caption;
+  final ReelAvailabilityChoice availability;
+  final bool availabilityLocked;
+  final bool draftLocked;
   final bool canPickAudio;
   final AudioPlayer Function()? audioPlayerFactory;
   final ValueChanged<String> onCaptionChanged;
+  final ValueChanged<ReelAvailabilityChoice> onAvailabilityChanged;
   final ValueChanged<ReelComposition> onComposition;
   final VoidCallback onPickAudio;
   final VoidCallback onRemoveAudio;
@@ -1065,13 +1091,20 @@ class _Editor extends StatelessWidget {
           children: <Widget>[
             TextField(
               controller: caption,
-              onChanged: onCaptionChanged,
+              readOnly: draftLocked,
+              onChanged: draftLocked ? null : onCaptionChanged,
               maxLength: 2200,
               maxLines: 4,
               decoration: InputDecoration(
                 labelText: copy.text('Caption', 'Opis'),
                 alignLabelWithHint: true,
               ),
+            ),
+            const SizedBox(height: 14),
+            _ReelAvailabilityPicker(
+              value: availability,
+              locked: availabilityLocked,
+              onChanged: onAvailabilityChanged,
             ),
             const SizedBox(height: 12),
             Text(copy.text('Crop and position', 'Kadr i położenie')),
@@ -1086,7 +1119,7 @@ class _Editor extends StatelessWidget {
                 label: '${composition.crop.scale.toStringAsFixed(1)}×',
                 semanticFormatterCallback: (value) =>
                     '${value.toStringAsFixed(1)}×',
-                onChanged: media == null
+                onChanged: media == null || draftLocked
                     ? null
                     : (value) => onComposition(
                         composition.copyWith(
@@ -1110,7 +1143,7 @@ class _Editor extends StatelessWidget {
                       max: 1,
                       semanticFormatterCallback: (value) =>
                           '${(value * 100).round()}%',
-                      onChanged: media == null
+                      onChanged: media == null || draftLocked
                           ? null
                           : (value) => onComposition(
                               composition.copyWith(
@@ -1133,7 +1166,7 @@ class _Editor extends StatelessWidget {
                       max: 1,
                       semanticFormatterCallback: (value) =>
                           '${(value * 100).round()}%',
-                      onChanged: media == null
+                      onChanged: media == null || draftLocked
                           ? null
                           : (value) => onComposition(
                               composition.copyWith(
@@ -1156,7 +1189,7 @@ class _Editor extends StatelessWidget {
                     (filter) => ChoiceChip(
                       label: Text(localizedReelFilter(copy, filter)),
                       selected: composition.filter == filter,
-                      onSelected: media == null
+                      onSelected: media == null || draftLocked
                           ? null
                           : (_) => onComposition(
                               composition.copyWith(filter: filter),
@@ -1183,12 +1216,14 @@ class _Editor extends StatelessWidget {
                     '${composition.trimStartMs ~/ 1000}s',
                     '${composition.trimEndMs ~/ 1000}s',
                   ),
-                  onChanged: (values) => onComposition(
-                    composition.copyWith(
-                      trimStartMs: (values.start * 1000).round(),
-                      trimEndMs: (values.end * 1000).round(),
-                    ),
-                  ),
+                  onChanged: draftLocked
+                      ? null
+                      : (values) => onComposition(
+                          composition.copyWith(
+                            trimStartMs: (values.start * 1000).round(),
+                            trimEndMs: (values.end * 1000).round(),
+                          ),
+                        ),
                 ),
               ),
               Text(copy.text('Original video audio', 'Dźwięk z filmu')),
@@ -1205,9 +1240,13 @@ class _Editor extends StatelessWidget {
                   divisions: 20,
                   label: '${composition.originalAudioVolume}%',
                   semanticFormatterCallback: (value) => '${value.round()}%',
-                  onChanged: (value) => onComposition(
-                    composition.copyWith(originalAudioVolume: value.round()),
-                  ),
+                  onChanged: draftLocked
+                      ? null
+                      : (value) => onComposition(
+                          composition.copyWith(
+                            originalAudioVolume: value.round(),
+                          ),
+                        ),
                 ),
               ),
             ],
@@ -1217,14 +1256,14 @@ class _Editor extends StatelessWidget {
               runSpacing: 8,
               children: <Widget>[
                 OutlinedButton.icon(
-                  onPressed: composition.textOverlays.length >= 8
+                  onPressed: draftLocked || composition.textOverlays.length >= 8
                       ? null
                       : onAddText,
                   icon: const Icon(Icons.text_fields_rounded),
                   label: Text(copy.text('Add text', 'Dodaj tekst')),
                 ),
                 OutlinedButton.icon(
-                  onPressed: composition.linkOverlays.length >= 4
+                  onPressed: draftLocked || composition.linkOverlays.length >= 4
                       ? null
                       : onAddLink,
                   icon: const Icon(Icons.link_rounded),
@@ -1232,7 +1271,7 @@ class _Editor extends StatelessWidget {
                 ),
                 if (canPickAudio && backingAudio == null)
                   OutlinedButton.icon(
-                    onPressed: onPickAudio,
+                    onPressed: draftLocked ? null : onPickAudio,
                     icon: const Icon(Icons.music_note_rounded),
                     label: Text(
                       copy.text('Add your audio', 'Dodaj własny dźwięk'),
@@ -1249,28 +1288,32 @@ class _Editor extends StatelessWidget {
                   ...composition.textOverlays.map(
                     (item) => InputChip(
                       label: Text(item.text),
-                      onPressed: () => onEditText(item),
-                      onDeleted: () => onComposition(
-                        composition.copyWith(
-                          textOverlays: composition.textOverlays
-                              .where((entry) => entry.id != item.id)
-                              .toList(growable: false),
-                        ),
-                      ),
+                      onPressed: draftLocked ? null : () => onEditText(item),
+                      onDeleted: draftLocked
+                          ? null
+                          : () => onComposition(
+                              composition.copyWith(
+                                textOverlays: composition.textOverlays
+                                    .where((entry) => entry.id != item.id)
+                                    .toList(growable: false),
+                              ),
+                            ),
                     ),
                   ),
                   ...composition.linkOverlays.map(
                     (item) => InputChip(
                       avatar: const Icon(Icons.link_rounded, size: 18),
                       label: Text(item.label),
-                      onPressed: () => onEditLink(item),
-                      onDeleted: () => onComposition(
-                        composition.copyWith(
-                          linkOverlays: composition.linkOverlays
-                              .where((entry) => entry.id != item.id)
-                              .toList(growable: false),
-                        ),
-                      ),
+                      onPressed: draftLocked ? null : () => onEditLink(item),
+                      onDeleted: draftLocked
+                          ? null
+                          : () => onComposition(
+                              composition.copyWith(
+                                linkOverlays: composition.linkOverlays
+                                    .where((entry) => entry.id != item.id)
+                                    .toList(growable: false),
+                              ),
+                            ),
                     ),
                   ),
                 ],
@@ -1282,6 +1325,7 @@ class _Editor extends StatelessWidget {
                 payload: backingAudio!,
                 composition: composition,
                 playerFactory: audioPlayerFactory,
+                editingEnabled: !draftLocked,
                 onComposition: onComposition,
                 onRemove: onRemoveAudio,
               ),
@@ -1293,10 +1337,233 @@ class _Editor extends StatelessWidget {
   }
 }
 
+class _ReelAvailabilityPicker extends StatelessWidget {
+  const _ReelAvailabilityPicker({
+    required this.value,
+    required this.locked,
+    required this.onChanged,
+  });
+
+  final ReelAvailabilityChoice value;
+  final bool locked;
+  final ValueChanged<ReelAvailabilityChoice> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
+    final palette = context.appPalette;
+    const choices = <ReelAvailabilityChoice>[
+      ReelAvailabilityChoice.hours24,
+      ReelAvailabilityChoice.days7,
+      ReelAvailabilityChoice.days30,
+      ReelAvailabilityChoice.permanent,
+    ];
+    String label(ReelAvailabilityChoice choice) {
+      if (choice == ReelAvailabilityChoice.hours24) {
+        return copy.text('24 hours', '24 godziny');
+      }
+      if (choice == ReelAvailabilityChoice.days7) {
+        return copy.text('7 days', '7 dni');
+      }
+      if (choice == ReelAvailabilityChoice.days30) {
+        return copy.text('30 days', '30 dni');
+      }
+      if (choice.isPermanent) {
+        return copy.text('Until deleted', 'Do usunięcia');
+      }
+      return copy.template(
+        '{hours} hours',
+        '{hours} godz.',
+        values: <String, Object>{'hours': choice.hours!},
+      );
+    }
+
+    final description = locked
+        ? copy.text(
+            'Availability is locked for this retry.',
+            'Dostępność jest zablokowana dla tej ponownej próby.',
+          )
+        : copy.text(
+            'Choose how long this Reel remains available.',
+            'Wybierz, jak długo ten Reel ma być dostępny.',
+          );
+    return Semantics(
+      key: const ValueKey<String>('reel-availability-picker'),
+      container: true,
+      label: copy.text('Available for', 'Dostępny przez'),
+      value: label(value),
+      hint: description,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          Text(
+            copy.text('Available for', 'Dostępny przez'),
+            style: Theme.of(context).textTheme.titleSmall?.copyWith(
+              color: palette.textPrimary,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            description,
+            style: Theme.of(
+              context,
+            ).textTheme.bodySmall?.copyWith(color: palette.textSecondary),
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: <Widget>[
+              for (final choice in choices)
+                ChoiceChip(
+                  key: ValueKey<String>(
+                    'reel-availability-${choice.hours ?? 'permanent'}',
+                  ),
+                  label: Text(label(choice)),
+                  selected: value == choice,
+                  onSelected: locked ? null : (_) => onChanged(choice),
+                ),
+              ChoiceChip(
+                key: const ValueKey<String>('reel-availability-custom'),
+                avatar: const Icon(Icons.tune_rounded, size: 18),
+                label: Text(
+                  choices.contains(value)
+                      ? copy.text('Custom', 'Własny czas')
+                      : copy.template(
+                          'Custom · {hours}h',
+                          'Własny · {hours} godz.',
+                          values: <String, Object>{'hours': value.hours!},
+                        ),
+                ),
+                selected: !choices.contains(value),
+                onSelected: locked
+                    ? null
+                    : (_) async {
+                        final selected = await _showCustomAvailabilityDialog(
+                          context,
+                          current: value,
+                        );
+                        if (selected != null) onChanged(selected);
+                      },
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+enum _ReelAvailabilityUnit { hours, days }
+
+Future<ReelAvailabilityChoice?> _showCustomAvailabilityDialog(
+  BuildContext context, {
+  required ReelAvailabilityChoice current,
+}) async {
+  final copy = AppLocalizations.of(context);
+  final controller = TextEditingController(
+    text: current.hours?.toString() ?? '24',
+  );
+  var unit = _ReelAvailabilityUnit.hours;
+  String? error;
+  final result = await showDialog<ReelAvailabilityChoice>(
+    context: context,
+    builder: (context) => StatefulBuilder(
+      builder: (context, setDialogState) {
+        void submit() {
+          final amount = int.tryParse(controller.text.trim());
+          final hours = amount == null
+              ? null
+              : unit == _ReelAvailabilityUnit.hours
+              ? amount
+              : amount * 24;
+          if (amount == null ||
+              amount <= 0 ||
+              hours == null ||
+              hours < ReelAvailabilityChoice.minimumHours ||
+              hours > ReelAvailabilityChoice.maximumHours) {
+            setDialogState(() {
+              error = copy.text(
+                'Choose 24–720 whole hours or 1–30 whole days.',
+                'Wybierz 24–720 pełnych godzin lub 1–30 pełnych dni.',
+              );
+            });
+            return;
+          }
+          Navigator.of(context).pop(ReelAvailabilityChoice.timedHours(hours));
+        }
+
+        return AlertDialog(
+          title: Text(copy.text('Custom availability', 'Własny czas')),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                TextField(
+                  key: const ValueKey<String>('reel-availability-amount'),
+                  controller: controller,
+                  autofocus: true,
+                  keyboardType: TextInputType.number,
+                  textInputAction: TextInputAction.done,
+                  onSubmitted: (_) => submit(),
+                  decoration: InputDecoration(
+                    labelText: copy.text('Duration', 'Czas'),
+                    errorText: error,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                DropdownButtonFormField<_ReelAvailabilityUnit>(
+                  key: const ValueKey<String>('reel-availability-unit'),
+                  initialValue: unit,
+                  decoration: InputDecoration(
+                    labelText: copy.text('Unit', 'Jednostka'),
+                  ),
+                  items: <DropdownMenuItem<_ReelAvailabilityUnit>>[
+                    DropdownMenuItem<_ReelAvailabilityUnit>(
+                      value: _ReelAvailabilityUnit.hours,
+                      child: Text(copy.text('Hours', 'Godziny')),
+                    ),
+                    DropdownMenuItem<_ReelAvailabilityUnit>(
+                      value: _ReelAvailabilityUnit.days,
+                      child: Text(copy.text('Days', 'Dni')),
+                    ),
+                  ],
+                  onChanged: (value) {
+                    if (value == null) return;
+                    setDialogState(() {
+                      unit = value;
+                      error = null;
+                    });
+                  },
+                ),
+              ],
+            ),
+          ),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: Text(copy.text('Cancel', 'Anuluj')),
+            ),
+            FilledButton(
+              key: const ValueKey<String>('reel-availability-apply'),
+              onPressed: submit,
+              child: Text(copy.text('Apply', 'Zastosuj')),
+            ),
+          ],
+        );
+      },
+    ),
+  );
+  controller.dispose();
+  return result;
+}
+
 class _BackingAudioControls extends StatefulWidget {
   const _BackingAudioControls({
     required this.payload,
     required this.composition,
+    required this.editingEnabled,
     required this.onComposition,
     required this.onRemove,
     this.playerFactory,
@@ -1304,6 +1571,7 @@ class _BackingAudioControls extends StatefulWidget {
 
   final ReelUploadPayload payload;
   final ReelComposition composition;
+  final bool editingEnabled;
   final ValueChanged<ReelComposition> onComposition;
   final VoidCallback onRemove;
   final AudioPlayer Function()? playerFactory;
@@ -1494,7 +1762,7 @@ class _BackingAudioControlsState extends State<_BackingAudioControls> {
                 ),
                 IconButton(
                   tooltip: copy.text('Remove audio', 'Usuń dźwięk'),
-                  onPressed: widget.onRemove,
+                  onPressed: widget.editingEnabled ? widget.onRemove : null,
                   icon: const Icon(Icons.close_rounded),
                 ),
               ],
@@ -1527,11 +1795,13 @@ class _BackingAudioControlsState extends State<_BackingAudioControls> {
                 divisions: 20,
                 label: '${widget.composition.backingAudioVolume}%',
                 semanticFormatterCallback: (value) => '${value.round()}%',
-                onChanged: (value) => widget.onComposition(
-                  widget.composition.copyWith(
-                    backingAudioVolume: value.round(),
-                  ),
-                ),
+                onChanged: widget.editingEnabled
+                    ? (value) => widget.onComposition(
+                        widget.composition.copyWith(
+                          backingAudioVolume: value.round(),
+                        ),
+                      )
+                    : null,
               ),
             ),
             Text(copy.text('Audio start', 'Początek podkładu')),
@@ -1553,7 +1823,7 @@ class _BackingAudioControlsState extends State<_BackingAudioControls> {
                 label: '${widget.composition.audioTrimStartMs ~/ 1000} s',
                 semanticFormatterCallback: (value) =>
                     '${(value / 1000).round()} s',
-                onChanged: maxTrimStartMs <= 0
+                onChanged: maxTrimStartMs <= 0 || !widget.editingEnabled
                     ? null
                     : (value) => widget.onComposition(
                         widget.composition.copyWith(
@@ -1565,11 +1835,13 @@ class _BackingAudioControlsState extends State<_BackingAudioControls> {
             CheckboxListTile(
               contentPadding: EdgeInsets.zero,
               value: widget.composition.audioRightsAttested,
-              onChanged: (value) => widget.onComposition(
-                widget.composition.copyWith(
-                  audioRightsAttested: value ?? false,
-                ),
-              ),
+              onChanged: widget.editingEnabled
+                  ? (value) => widget.onComposition(
+                      widget.composition.copyWith(
+                        audioRightsAttested: value ?? false,
+                      ),
+                    )
+                  : null,
               title: Text(
                 copy.text(
                   'I created this audio or have permission to use it.',

@@ -302,13 +302,13 @@ class _MobileShell extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: 36),
-              const _PreviewHeading('Moments from your circle'),
+              const _PreviewHeading('YO Moments from your circle'),
               const SizedBox(height: 14),
               Wrap(
                 spacing: 18,
                 runSpacing: 12,
                 children: const [
-                  _MomentAvatar(initial: '+', label: 'Your Moment'),
+                  _MomentAvatar(initial: '+', label: 'YO Moments'),
                   _MomentAvatar(initial: 'M', label: 'Maya'),
                   _MomentAvatar(initial: 'L', label: 'Leo'),
                 ],

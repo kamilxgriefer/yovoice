@@ -437,7 +437,6 @@ void main() {
         MoreDestination.profile: 'Profile, You',
         MoreDestination.discover: 'Discover, Find rooms',
         MoreDestination.findCreators: 'Find creators, People to follow',
-        MoreDestination.reels: 'Reels, Create and watch',
         MoreDestination.clubs: 'Clubs, Communities, Premium required',
         MoreDestination.notifications: 'Alerts, Updates',
         MoreDestination.achievements: 'Awards, Progress',
@@ -445,6 +444,10 @@ void main() {
         MoreDestination.settings:
             'Settings, Privacy, account and application preferences',
       };
+      expect(
+        find.byKey(const ValueKey('more-destination-reels')),
+        findsNothing,
+      );
       for (final entry in compactActions.entries) {
         final target = find.byKey(
           ValueKey('more-destination-${entry.key.name}'),
@@ -484,7 +487,7 @@ void main() {
         expect(find.text(label), findsOneWidget, reason: label);
       }
       expect(
-        find.text('Moments'),
+        find.text('YO Moments'),
         findsNothing,
         reason: 'Moments is a dock destination now, not a More sheet tile',
       );

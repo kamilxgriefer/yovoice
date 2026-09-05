@@ -10,6 +10,10 @@ import 'package:yovoice/core/security/ephemeral_media_access_registry.dart';
 import 'package:yovoice/features/moments/data/models/moment_availability.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
 import 'package:yovoice/features/moments/data/services/recorded_audio.dart';
+import 'package:yovoice/features/moments/data/services/voice_moment_read_service.dart';
+
+export 'package:yovoice/features/moments/data/services/voice_moment_read_service.dart'
+    show MomentComment, MomentReactor, VoiceMomentViewV2;
 
 typedef MomentMediaAccessInvoker =
     Future<Map<Object?, Object?>> Function(Map<String, Object?> request);
@@ -21,18 +25,26 @@ class MomentService {
     FirebaseStorage? storage,
     FirebaseFunctions? functions,
     MomentMediaAccessInvoker? mediaAccessInvoker,
+    VoiceMomentReadService? readService,
     this.callableTimeout = const Duration(seconds: 20),
   }) : _firestore = firestore ?? FirebaseFirestore.instance,
        _auth = auth ?? FirebaseAuth.instance,
        _storage = storage ?? FirebaseStorage.instance,
        _functionsOverride = functions,
-       _mediaAccessInvoker = mediaAccessInvoker;
+       _mediaAccessInvoker = mediaAccessInvoker,
+       _readService =
+           readService ??
+           VoiceMomentReadService(
+             functions: functions,
+             callableTimeout: callableTimeout,
+           );
 
   final FirebaseFirestore _firestore;
   final FirebaseAuth _auth;
   final FirebaseStorage _storage;
   final FirebaseFunctions? _functionsOverride;
   final MomentMediaAccessInvoker? _mediaAccessInvoker;
+  final VoiceMomentReadService _readService;
   final Duration callableTimeout;
   // Playback surfaces create short-lived MomentService instances. Keep the
   // bearer-grant cache process-wide so logout can invalidate every surface in
@@ -228,24 +240,13 @@ class MomentService {
   void clearMediaAccessCache() => clearAllMediaAccessCaches();
 
   Stream<List<VoiceMoment>> watchPublishedMoments({int limit = 30}) {
-    return _moments
-        .where('isPublished', isEqualTo: true)
-        .limit(limit)
-        .snapshots()
-        .map((snapshot) {
-          final moments = snapshot.docs
-              .map(VoiceMoment.fromFirestore)
-              .toList(growable: false);
-          moments.sort((a, b) {
-            final aDate = a.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
-            final bDate = b.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
-            return bDate.compareTo(aDate);
-          });
-          return moments;
-        });
+    final bounded = limit.clamp(1, 10);
+    return Stream<List<VoiceMoment>>.fromFuture(
+      _readService.loadFeedPage(limit: bounded).then((page) => page.moments),
+    );
   }
 
-  /// ONE Moment, live.
+  /// One server-authorized snapshot of a Moment.
   ///
   /// For a surface that was handed a Moment fetched some time ago and
   /// then lets you act on it — the player sheet, where you can like it
@@ -253,19 +254,17 @@ class MomentService {
   /// they were when the tile was tapped, so your own like did not appear
   /// until the surface was rebuilt from somewhere else.
   ///
-  /// Emits nothing for a document that does not exist (or no longer
-  /// does); the caller keeps what it already had rather than rendering an
-  /// empty Moment.
+  /// This deliberately does not claim to be a foreign Firestore listener.
+  /// Surfaces that remain mounted refresh after their own mutations or when
+  /// they become visible again.
   Stream<VoiceMoment> watchMoment(String momentId) {
-    return _moments
-        .doc(momentId)
-        .snapshots()
-        .where((document) => document.exists)
-        .map(VoiceMoment.fromFirestore);
+    return Stream<VoiceMoment>.fromFuture(
+      loadMomentView(momentId).then((view) => view.moment),
+    );
   }
 
-  /// Like [watchMoment], but a missing document emits `null` instead of
-  /// nothing.
+  /// Like [watchMoment], but the callable's normalized unavailable result
+  /// emits `null` instead of an error.
   ///
   /// For the detail screen, which must tell "this Moment is live" apart
   /// from "this Moment was deleted while you were looking at it" — the
@@ -273,69 +272,61 @@ class MomentService {
   /// keeps rendering a deleted Moment forever is showing something that
   /// no longer exists.
   Stream<VoiceMoment?> watchMomentOrMissing(String momentId) {
-    return _moments
-        .doc(momentId)
-        .snapshots()
-        .map(
-          (document) =>
-              document.exists ? VoiceMoment.fromFirestore(document) : null,
-        );
+    return Stream<VoiceMoment?>.fromFuture(
+      loadMomentView(momentId)
+          .then<VoiceMoment?>((view) => view.moment)
+          .onError((Object error, StackTrace stackTrace) {
+            if (error is FirebaseFunctionsException &&
+                error.code == 'permission-denied') {
+              return null;
+            }
+            Error.throwWithStackTrace(error, stackTrace);
+          }),
+    );
   }
+
+  Future<VoiceMomentViewV2> loadMomentView(
+    String momentId, {
+    String? commentCursor,
+    int commentLimit = 7,
+    int reactionLimit = 3,
+  }) => _readService.loadView(
+    momentId: momentId,
+    commentCursor: commentCursor,
+    commentLimit: commentLimit,
+    reactionLimit: reactionLimit,
+  );
 
   /// Up to [limit] uids that liked this Moment, most recent first.
   ///
-  /// Reads the real `voiceMoments/{id}/likes/{uid}` documents — readable
-  /// by any signed-in account per the deployed rules (`allow read: if
-  /// isSignedIn()`), which is what makes the detail screen's
-  /// "Top reactions" row honest rather than invented. The caller resolves
-  /// display identities separately (public profile projection),
-  /// best-effort per liker.
+  /// Returned by the same server-owned v2 detail projection as the Moment.
+  /// The server resolves only identities this viewer may see and retains the
+  /// aggregate count for the hidden remainder; Build 20 never reads a foreign
+  /// like subcollection or public-profile root directly.
   Future<List<String>> likerIds(String momentId, {int limit = 5}) async {
-    final snapshot = await _moments
-        .doc(momentId)
-        .collection('likes')
-        .orderBy('createdAt', descending: true)
-        .limit(limit)
-        .get();
-    return snapshot.docs.map((doc) => doc.id).toList(growable: false);
+    final view = await loadMomentView(
+      momentId,
+      reactionLimit: limit.clamp(1, 3),
+    );
+    return view.topReactions
+        .map((reactor) => reactor.uid)
+        .toList(growable: false);
   }
 
   /// The identities behind [likerIds], best-effort.
   ///
-  /// Each liker's display identity comes from the server-owned
-  /// `publicProfiles/{uid}` projection — the same source every other
-  /// foreign-profile surface reads. A profile the deployed rules refuse
-  /// (private visibility, a block either way) or that no longer exists is
-  /// SKIPPED, never invented: the like itself stays counted in the "+N"
-  /// remainder the caller derives from `likeCount`.
+  /// A private/blocked/restricted/deleted reactor is omitted by the callable,
+  /// never invented: the like itself stays counted in the "+N" remainder the
+  /// caller derives from `likeCount`.
   Future<List<MomentReactor>> topReactions(
     String momentId, {
     int limit = 5,
   }) async {
-    final ids = await likerIds(momentId, limit: limit);
-    final reactors = <MomentReactor>[];
-    for (final uid in ids) {
-      try {
-        final profile = await _firestore
-            .collection('publicProfiles')
-            .doc(uid)
-            .get();
-        if (!profile.exists) continue;
-        final data = profile.data();
-        final name = (data?['displayName'] as String?)?.trim();
-        reactors.add(
-          MomentReactor(
-            uid: uid,
-            displayName: name == null || name.isEmpty ? 'YO Voice user' : name,
-            photoUrl: (data?['photoUrl'] as String?)?.trim(),
-          ),
-        );
-      } catch (_) {
-        // Unreadable profile: the like is real, the identity is not ours
-        // to show.
-      }
-    }
-    return reactors;
+    final view = await loadMomentView(
+      momentId,
+      reactionLimit: limit.clamp(1, 3),
+    );
+    return view.topReactions;
   }
 
   /// The signed-in user's own Voice Moments, published and unpublished
@@ -364,15 +355,12 @@ class MomentService {
   /// the desktop detail panel can render the thread inline without
   /// duplicating the Firestore path or the field names.
   Stream<List<MomentComment>> watchComments(String momentId, {int limit = 80}) {
-    return _commentsFor(momentId)
-        .orderBy('createdAt', descending: false)
-        .limit(limit)
-        .snapshots()
-        .map(
-          (snapshot) => snapshot.docs
-              .map(MomentComment.fromDocument)
-              .toList(growable: false),
-        );
+    return Stream<List<MomentComment>>.fromFuture(
+      loadMomentView(
+        momentId,
+        commentLimit: limit.clamp(1, 7),
+      ).then((view) => view.comments),
+    );
   }
 
   /// Publishes a finished recording.
@@ -755,68 +743,6 @@ class MomentService {
       'momentId': moment.id,
       'requestId': _newRequestId(),
     });
-  }
-
-  CollectionReference<Map<String, dynamic>> _commentsFor(String momentId) =>
-      _moments.doc(momentId).collection('comments');
-}
-
-/// One person who liked a Moment — the detail screen's "Top reactions"
-/// row renders REAL likers resolved from voiceMoments/{id}/likes.
-class MomentReactor {
-  const MomentReactor({
-    required this.uid,
-    required this.displayName,
-    required this.photoUrl,
-  });
-
-  final String uid;
-  final String displayName;
-  final String? photoUrl;
-}
-
-/// One comment under a Voice Moment, exactly as stored — no field is
-/// invented and a missing author falls back the same way the comments
-/// screen falls back.
-class MomentComment {
-  const MomentComment({
-    required this.id,
-    required this.type,
-    required this.authorId,
-    required this.authorName,
-    required this.authorPhotoUrl,
-    required this.text,
-    required this.durationSeconds,
-    required this.createdAt,
-  });
-
-  final String id;
-
-  /// `'text'` or `'voice'`.
-  final String type;
-  final String authorId;
-  final String authorName;
-  final String? authorPhotoUrl;
-  final String text;
-  final int durationSeconds;
-  final DateTime? createdAt;
-
-  bool get isVoice => type == 'voice';
-
-  factory MomentComment.fromDocument(
-    DocumentSnapshot<Map<String, dynamic>> document,
-  ) {
-    final data = document.data() ?? const <String, dynamic>{};
-    return MomentComment(
-      id: document.id,
-      type: data['type'] as String? ?? 'text',
-      authorId: data['authorId'] as String? ?? '',
-      authorName: data['authorName'] as String? ?? 'YO Voice user',
-      authorPhotoUrl: data['authorPhotoUrl'] as String?,
-      text: data['text'] as String? ?? '',
-      durationSeconds: (data['durationSeconds'] as num?)?.toInt() ?? 0,
-      createdAt: (data['createdAt'] as Timestamp?)?.toDate(),
-    );
   }
 }
 

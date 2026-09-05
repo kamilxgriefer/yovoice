@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
@@ -45,6 +46,7 @@ class DesktopMomentsStrip extends StatefulWidget {
     this.followService,
     this.currentUserId,
     this.expiryClock,
+    this.isVisible,
     super.key,
   });
 
@@ -85,6 +87,9 @@ class DesktopMomentsStrip extends StatefulWidget {
   /// Uses the same instant as an injected [HomeFeedService] in widget tests.
   final DateTime Function()? expiryClock;
 
+  /// A rising edge replaces the completed v2 feed stream with a fresh one.
+  final ValueListenable<bool>? isVisible;
+
   /// A Moment counts as "new" for a day after it is posted.
   static const Duration newWindow = Duration(hours: 24);
 
@@ -94,6 +99,7 @@ class DesktopMomentsStrip extends StatefulWidget {
 
 class _DesktopMomentsStripState extends State<DesktopMomentsStrip> {
   Stream<List<VoiceMoment>>? _moments;
+  HomeFeedService? _feedSource;
   Stream<List<FriendUser>>? _friends;
   Stream<List<FollowUser>>? _following;
 
@@ -102,12 +108,8 @@ class _DesktopMomentsStripState extends State<DesktopMomentsStrip> {
   @override
   void initState() {
     super.initState();
-    try {
-      _moments = (widget.feedService ?? HomeFeedService()).watchSocialMoments();
-    } catch (_) {
-      // No session (or a preview harness): the strip renders its empty
-      // state rather than throwing inside the shell.
-    }
+    _loadMoments();
+    widget.isVisible?.addListener(_handleVisibility);
     try {
       _friends = (widget.friendService ?? FriendService()).watchFriends();
     } catch (_) {
@@ -119,6 +121,41 @@ class _DesktopMomentsStripState extends State<DesktopMomentsStrip> {
     } catch (_) {
       _following = null;
     }
+  }
+
+  void _loadMoments() {
+    try {
+      _feedSource ??= widget.feedService ?? HomeFeedService();
+      _moments = _feedSource!.watchSocialMoments();
+    } catch (_) {
+      // No session (or a preview harness): the strip renders its empty
+      // state rather than throwing inside the shell.
+      _moments = null;
+    }
+  }
+
+  void _handleVisibility() {
+    if (!mounted || widget.isVisible?.value != true) return;
+    setState(_loadMoments);
+  }
+
+  @override
+  void didUpdateWidget(covariant DesktopMomentsStrip oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.isVisible != widget.isVisible) {
+      oldWidget.isVisible?.removeListener(_handleVisibility);
+      widget.isVisible?.addListener(_handleVisibility);
+    }
+    if (oldWidget.feedService != widget.feedService) {
+      _feedSource = null;
+      setState(_loadMoments);
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.isVisible?.removeListener(_handleVisibility);
+    super.dispose();
   }
 
   @override
@@ -306,17 +343,11 @@ class _StripHeading extends StatelessWidget {
             child: MomentExpiryFocusTarget(
               key: const ValueKey('desktop-home-moments-heading'),
               focusNode: expiryRecoveryFocus,
-              semanticLabel: copy.text(
-                'Moments from your circle',
-                'Momenty z Twojego kręgu',
-              ),
+              semanticLabel: copy.yoMomentsFromYourCircle,
               child: Align(
                 alignment: Alignment.centerLeft,
                 child: Text(
-                  copy.text(
-                    'Moments from your circle',
-                    'Momenty z Twojego kręgu',
-                  ),
+                  copy.yoMomentsFromYourCircle,
                   style: TextStyle(
                     color: palette.textPrimary,
                     fontSize: 16.5,
@@ -768,7 +799,7 @@ class _YourMomentTile extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 7),
-              _MomentNameLabel(name: copy.text('Your Moment', 'Twój Moment')),
+              const _MomentNameLabel(name: 'YO Moments'),
               const SizedBox(height: 2),
               SizedBox(
                 height: _MomentTile.actionHeightFor(context),

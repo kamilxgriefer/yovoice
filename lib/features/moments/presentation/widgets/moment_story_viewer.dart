@@ -185,7 +185,8 @@ class MomentStoryViewer extends StatefulWidget {
   State<MomentStoryViewer> createState() => _MomentStoryViewerState();
 }
 
-class _MomentStoryViewerState extends State<MomentStoryViewer> {
+class _MomentStoryViewerState extends State<MomentStoryViewer>
+    with WidgetsBindingObserver {
   AudioPlayer? _player;
   final List<StreamSubscription<dynamic>> _subscriptions =
       <StreamSubscription<dynamic>>[];
@@ -193,6 +194,8 @@ class _MomentStoryViewerState extends State<MomentStoryViewer> {
   MomentViewsService? _views;
   MomentService? _moments;
   HomeFeedService? _feed;
+  StreamSubscription<VoiceMoment>? _momentSnapshotSubscription;
+  String? _momentSnapshotId;
 
   /// The chain as THIS viewer shows it. A local copy on purpose: when the
   /// author deletes a link mid-story, the remaining links keep playing —
@@ -207,6 +210,7 @@ class _MomentStoryViewerState extends State<MomentStoryViewer> {
   Duration? _duration;
   String? _playbackError;
   bool _deleting = false;
+  String? _likePendingMomentId;
   final FocusNode _storyFocus = FocusNode(debugLabel: 'Voice Moment story');
   final MomentExpiryAnnouncer _expiryAnnouncer = MomentExpiryAnnouncer();
 
@@ -252,6 +256,7 @@ class _MomentStoryViewerState extends State<MomentStoryViewer> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _expiry = MomentExpiryScheduler(
       onDeadline: _expireAt,
       clock: widget.expiryClock,
@@ -282,6 +287,7 @@ class _MomentStoryViewerState extends State<MomentStoryViewer> {
     } catch (_) {
       _feed = null;
     }
+    _refreshCurrentMomentSnapshot();
     if (_chainMoments.isEmpty) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) _closeEmptyViewer();
@@ -295,13 +301,63 @@ class _MomentStoryViewerState extends State<MomentStoryViewer> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _expiry.dispose();
+    unawaited(_momentSnapshotSubscription?.cancel());
     for (final subscription in _subscriptions) {
       unawaited(subscription.cancel());
     }
     _player?.dispose();
     _storyFocus.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && mounted) {
+      _refreshCurrentMomentSnapshot(force: true);
+    }
+  }
+
+  /// Owns the one server-authorized snapshot subscription for the current
+  /// story link. In particular this is never called from [build]: player
+  /// position ticks may rebuild dozens of times per second but must not create
+  /// a callable per frame. A fresh snapshot is requested only on entry,
+  /// navigation, an explicit return from a child surface, or a mutation.
+  void _refreshCurrentMomentSnapshot({bool force = false}) {
+    final service = _moments;
+    if (_chainMoments.isEmpty || service == null) {
+      _momentSnapshotId = null;
+      unawaited(_momentSnapshotSubscription?.cancel());
+      _momentSnapshotSubscription = null;
+      return;
+    }
+    final momentId = _current.id;
+    if (!force && _momentSnapshotId == momentId) return;
+    _momentSnapshotId = momentId;
+    unawaited(_momentSnapshotSubscription?.cancel());
+    try {
+      final stream = service.watchMoment(momentId);
+      _momentSnapshotSubscription = stream.listen(
+        (fresh) {
+          if (!mounted ||
+              _chainMoments.isEmpty ||
+              _current.id != momentId ||
+              fresh.id != momentId ||
+              _likePendingMomentId == momentId) {
+            return;
+          }
+          setState(() => _chainMoments[_index] = fresh);
+          _expiry.schedule(_chainMoments);
+        },
+        onError: (Object _, StackTrace __) {
+          // The chain already carries a valid snapshot. A refresh failure is
+          // intentionally non-destructive and never starts a fallback read.
+        },
+      );
+    } catch (_) {
+      _momentSnapshotSubscription = null;
+    }
   }
 
   AudioPlayer _ensurePlayer() {
@@ -407,6 +463,7 @@ class _MomentStoryViewerState extends State<MomentStoryViewer> {
     _expiry.schedule(_chainMoments);
 
     if (_chainMoments.isEmpty) {
+      _refreshCurrentMomentSnapshot(force: true);
       _expiryAnnouncer.announce(
         context,
         transition: 'story-expiry-${deadline.microsecondsSinceEpoch}',
@@ -417,6 +474,9 @@ class _MomentStoryViewerState extends State<MomentStoryViewer> {
       );
       _closeEmptyViewer();
       return;
+    }
+    if (!currentSurvives) {
+      _refreshCurrentMomentSnapshot(force: true);
     }
     _expiryAnnouncer.announce(
       context,
@@ -561,6 +621,7 @@ class _MomentStoryViewerState extends State<MomentStoryViewer> {
       _duration = null;
       _playbackError = null;
     });
+    _refreshCurrentMomentSnapshot(force: true);
     if (play) await _play(_current);
   }
 
@@ -577,6 +638,9 @@ class _MomentStoryViewerState extends State<MomentStoryViewer> {
         ),
       ),
     );
+    if (mounted && _chainMoments.isNotEmpty && _current.id == moment.id) {
+      _refreshCurrentMomentSnapshot(force: true);
+    }
   }
 
   Future<void> _report(VoiceMoment moment) async {
@@ -584,7 +648,10 @@ class _MomentStoryViewerState extends State<MomentStoryViewer> {
     await reportContent(
       context: context,
       service: widget.contentReportService,
-      content: ReportedContent.voiceMoment(momentId: moment.id),
+      content: ReportedContent.voiceMoment(
+        momentId: moment.id,
+        reportReceipt: moment.reportReceipt,
+      ),
       title: copy.text('Report this Voice Moment', 'Zgłoś ten Voice Moment'),
       subtitle: copy.text(
         'Your report goes to the YO Voice moderation team with this '
@@ -594,6 +661,59 @@ class _MomentStoryViewerState extends State<MomentStoryViewer> {
             '${moment.authorName} nie dowie się, kto je wysłał.',
       ),
     );
+  }
+
+  Future<void> _toggleLike(VoiceMoment moment) async {
+    final service = _feed;
+    if (service == null || _likePendingMomentId != null) return;
+    final momentIndex = _chainMoments.indexWhere(
+      (item) => item.id == moment.id,
+    );
+    if (momentIndex < 0) return;
+    final previous = _chainMoments[momentIndex];
+    final desiredLiked = !previous.callerLiked;
+    final optimistic = previous.copyWith(
+      callerLiked: desiredLiked,
+      likeCount: (previous.likeCount + (desiredLiked ? 1 : -1)).clamp(
+        0,
+        1 << 31,
+      ),
+    );
+    setState(() {
+      _likePendingMomentId = previous.id;
+      _chainMoments[momentIndex] = optimistic;
+    });
+    try {
+      await service.setLike(previous.id, liked: desiredLiked);
+      if (!mounted) return;
+      setState(() => _likePendingMomentId = null);
+      if (_chainMoments.isNotEmpty && _current.id == previous.id) {
+        _refreshCurrentMomentSnapshot(force: true);
+      }
+    } catch (_) {
+      if (!mounted) return;
+      final currentIndex = _chainMoments.indexWhere(
+        (item) => item.id == previous.id,
+      );
+      setState(() {
+        _likePendingMomentId = null;
+        if (currentIndex >= 0) _chainMoments[currentIndex] = previous;
+      });
+      final messenger = ScaffoldMessenger.maybeOf(context);
+      messenger
+        ?..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            behavior: SnackBarBehavior.floating,
+            content: Text(
+              _copy.text(
+                'Your like could not be saved. Try again.',
+                'Nie udało się zapisać polubienia. Spróbuj ponownie.',
+              ),
+            ),
+          ),
+        );
+    }
   }
 
   /// Closes the viewer FIRST, then opens the detail page, so Back from
@@ -705,6 +825,7 @@ class _MomentStoryViewerState extends State<MomentStoryViewer> {
     if (index >= 0) _chainMoments.removeAt(index);
     _expiry.schedule(_chainMoments);
     if (_chainMoments.isEmpty) {
+      _refreshCurrentMomentSnapshot(force: true);
       await navigator.maybePop();
       return;
     }
@@ -716,6 +837,7 @@ class _MomentStoryViewerState extends State<MomentStoryViewer> {
       _duration = null;
       _playbackError = null;
     });
+    _refreshCurrentMomentSnapshot(force: true);
     if (widget.autoPlay) await _play(_current);
   }
 
@@ -758,87 +880,70 @@ class _MomentStoryViewerState extends State<MomentStoryViewer> {
       return const YoImmersiveDarkSurface(child: SizedBox.shrink());
     }
 
-    final loaded = _current;
+    final moment = _current;
     final uid = _uid;
-    final live = _moments?.watchMoment(loaded.id);
-
+    final isOwn = uid.isNotEmpty && uid == moment.authorId;
     final content = Focus(
       focusNode: _storyFocus,
       autofocus: true,
       onKeyEvent: _handleKey,
-      child: StreamBuilder<VoiceMoment>(
-        stream: live,
-        initialData: loaded,
-        builder: (context, snapshot) {
-          // A failed or empty document stream keeps the Moment the chain
-          // carried: real, just not live.
-          final moment = (snapshot.hasData && snapshot.data!.id == loaded.id)
-              ? snapshot.data!
-              : loaded;
-          final isOwn = uid.isNotEmpty && uid == moment.authorId;
-          return SafeArea(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(14, 12, 14, 0),
-                  child: _ProgressBars(
-                    key: const ValueKey('story-progress-bars'),
-                    count: _chainMoments.length,
-                    fillFor: (i) => _fillFor(i, moment),
-                  ),
-                ),
-                _StoryHeader(
-                  moment: moment,
-                  isOwn: isOwn,
-                  position: _index,
-                  total: _chainMoments.length,
-                  onOpenDetail: widget.onOpenDetail == null
-                      ? null
-                      : () => unawaited(_openDetails(moment)),
-                  onClose: () => Navigator.of(context).maybePop(),
-                ),
-                Expanded(
-                  child: _StoryStage(
-                    moment: moment,
-                    isPlaying: _isPlaying,
-                    position: _position,
-                    duration: _duration,
-                    playbackError: _playbackError,
-                    onToggle: () => unawaited(_togglePlay()),
-                    onPreviousZone: _index > 0
-                        ? () => unawaited(
-                            _goTo(_index - 1, play: widget.autoPlay),
-                          )
-                        : null,
-                    onNextZone: _index < _chainMoments.length - 1
-                        ? () => unawaited(
-                            _goTo(_index + 1, play: widget.autoPlay),
-                          )
-                        : null,
-                  ),
-                ),
-                _StoryActions(
-                  moment: moment,
-                  feedService: _feed,
-                  canReport: uid.isNotEmpty && !isOwn,
-                  canDelete: isOwn && !_deleting,
-                  onComments: () => unawaited(_openComments(moment)),
-                  onReport: () => unawaited(_report(moment)),
-                  onDelete: () => unawaited(_deleteCurrent(moment)),
-                  onPrevious: _index > 0
-                      ? () =>
-                            unawaited(_goTo(_index - 1, play: widget.autoPlay))
-                      : null,
-                  onNext: _index < _chainMoments.length - 1
-                      ? () =>
-                            unawaited(_goTo(_index + 1, play: widget.autoPlay))
-                      : null,
-                ),
-              ],
+      child: SafeArea(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(14, 12, 14, 0),
+              child: _ProgressBars(
+                key: const ValueKey('story-progress-bars'),
+                count: _chainMoments.length,
+                fillFor: (i) => _fillFor(i, moment),
+              ),
             ),
-          );
-        },
+            _StoryHeader(
+              moment: moment,
+              isOwn: isOwn,
+              position: _index,
+              total: _chainMoments.length,
+              onOpenDetail: widget.onOpenDetail == null
+                  ? null
+                  : () => unawaited(_openDetails(moment)),
+              onClose: () => Navigator.of(context).maybePop(),
+            ),
+            Expanded(
+              child: _StoryStage(
+                moment: moment,
+                isPlaying: _isPlaying,
+                position: _position,
+                duration: _duration,
+                playbackError: _playbackError,
+                onToggle: () => unawaited(_togglePlay()),
+                onPreviousZone: _index > 0
+                    ? () => unawaited(_goTo(_index - 1, play: widget.autoPlay))
+                    : null,
+                onNextZone: _index < _chainMoments.length - 1
+                    ? () => unawaited(_goTo(_index + 1, play: widget.autoPlay))
+                    : null,
+              ),
+            ),
+            _StoryActions(
+              moment: moment,
+              canLike: _feed != null,
+              likePending: _likePendingMomentId == moment.id,
+              canReport: uid.isNotEmpty && !isOwn,
+              canDelete: isOwn && !_deleting,
+              onLike: () => unawaited(_toggleLike(moment)),
+              onComments: () => unawaited(_openComments(moment)),
+              onReport: () => unawaited(_report(moment)),
+              onDelete: () => unawaited(_deleteCurrent(moment)),
+              onPrevious: _index > 0
+                  ? () => unawaited(_goTo(_index - 1, play: widget.autoPlay))
+                  : null,
+              onNext: _index < _chainMoments.length - 1
+                  ? () => unawaited(_goTo(_index + 1, play: widget.autoPlay))
+                  : null,
+            ),
+          ],
+        ),
       ),
     );
     return YoImmersiveDarkSurface(child: content);
@@ -1240,9 +1345,11 @@ class StoryWaveform extends StatelessWidget {
 class _StoryActions extends StatelessWidget {
   const _StoryActions({
     required this.moment,
-    required this.feedService,
+    required this.canLike,
+    required this.likePending,
     required this.canReport,
     required this.canDelete,
+    required this.onLike,
     required this.onComments,
     required this.onReport,
     required this.onDelete,
@@ -1251,12 +1358,14 @@ class _StoryActions extends StatelessWidget {
   });
 
   final VoiceMoment moment;
-  final HomeFeedService? feedService;
+  final bool canLike;
+  final bool likePending;
   final bool canReport;
 
   /// Own Moments only: the author's exit, and for a permanent Moment the
   /// only one.
   final bool canDelete;
+  final VoidCallback onLike;
   final VoidCallback onComments;
   final VoidCallback onReport;
   final VoidCallback onDelete;
@@ -1265,7 +1374,6 @@ class _StoryActions extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final service = feedService;
     final copy = AppLocalizations.of(context);
     return Padding(
       padding: const EdgeInsets.fromLTRB(14, 4, 14, 12),
@@ -1295,48 +1403,25 @@ class _StoryActions extends StatelessWidget {
             child: Row(
               mainAxisAlignment: MainAxisAlignment.end,
               children: [
-                if (service == null)
-                  Flexible(
-                    child: _ActionChip(
-                      icon: Icons.favorite_border_rounded,
-                      label: moment.likeCount == 0
-                          ? copy.text('Like', 'Lubię to')
-                          : '${moment.likeCount}',
-                      active: false,
-                      onTap: null,
-                    ),
-                  )
-                else
-                  Flexible(
-                    child: StreamBuilder<bool>(
-                      stream: service.watchLiked(moment.id),
-                      builder: (context, snapshot) {
-                        final liked = snapshot.hasError
-                            ? false
-                            : (snapshot.data ?? false);
-                        return _ActionChip(
-                          key: const ValueKey('story-like'),
-                          icon: liked
-                              ? Icons.favorite_rounded
-                              : Icons.favorite_border_rounded,
-                          label: moment.likeCount == 0
-                              ? copy.text('Like', 'Lubię to')
-                              : '${moment.likeCount}',
-                          active: liked,
-                          semanticLabel: liked
-                              ? copy.text(
-                                  'Unlike this Moment',
-                                  'Usuń polubienie tego Momentu',
-                                )
-                              : copy.text(
-                                  'Like this Moment',
-                                  'Polub ten Moment',
-                                ),
-                          onTap: () => unawaited(_toggleLike(context, service)),
-                        );
-                      },
-                    ),
+                Flexible(
+                  child: _ActionChip(
+                    key: const ValueKey('story-like'),
+                    icon: moment.callerLiked
+                        ? Icons.favorite_rounded
+                        : Icons.favorite_border_rounded,
+                    label: moment.likeCount == 0
+                        ? copy.text('Like', 'Lubię to')
+                        : '${moment.likeCount}',
+                    active: moment.callerLiked,
+                    semanticLabel: moment.callerLiked
+                        ? copy.text(
+                            'Unlike this Moment',
+                            'Usuń polubienie tego Momentu',
+                          )
+                        : copy.text('Like this Moment', 'Polub ten Moment'),
+                    onTap: !canLike || likePending ? null : onLike,
                   ),
+                ),
                 const SizedBox(width: 6),
                 Flexible(
                   child: _ActionChip(
@@ -1391,31 +1476,6 @@ class _StoryActions extends StatelessWidget {
         ],
       ),
     );
-  }
-
-  Future<void> _toggleLike(
-    BuildContext context,
-    HomeFeedService service,
-  ) async {
-    final messenger = ScaffoldMessenger.maybeOf(context);
-    final copy = AppLocalizations.of(context);
-    try {
-      await service.toggleLike(moment.id);
-    } catch (_) {
-      messenger
-        ?..hideCurrentSnackBar()
-        ..showSnackBar(
-          SnackBar(
-            behavior: SnackBarBehavior.floating,
-            content: Text(
-              copy.text(
-                'Your like could not be saved. Try again.',
-                'Nie udało się zapisać polubienia. Spróbuj ponownie.',
-              ),
-            ),
-          ),
-        );
-    }
   }
 }
 

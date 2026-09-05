@@ -494,7 +494,7 @@ void main() {
     });
 
     test(
-      'toggleLike refuses loudly and never runs a direct-write fallback',
+      'setLike refuses loudly and never runs a direct-read/write fallback',
       () async {
         final service = HomeFeedService(
           firestore: firestore,
@@ -503,7 +503,7 @@ void main() {
         );
 
         await expectLater(
-          service.toggleLike(momentId),
+          service.setLike(momentId, liked: true),
           throwsA(
             isA<StateError>().having(
               (error) => error.message,
@@ -537,7 +537,7 @@ void main() {
             .doc(uid)
             .set({'userId': uid});
         await expectLater(
-          service.toggleLike(momentId),
+          service.setLike(momentId, liked: false),
           throwsA(isA<StateError>()),
         );
         expect(
@@ -549,6 +549,66 @@ void main() {
                   .get())
               .exists,
           true,
+        );
+      },
+    );
+
+    test(
+      'setLike sends exact desired state through the callable only',
+      () async {
+        final functions = _EngagementFunctions();
+        final service = HomeFeedService(
+          firestore: firestore,
+          auth: auth,
+          functions: functions,
+        );
+
+        await service.setLike(momentId, liked: true);
+        await service.setLike(momentId, liked: false);
+
+        expect(functions.calls, const <String>[
+          'setMomentLike',
+          'setMomentLike',
+        ]);
+        expect(functions.payloads, hasLength(2));
+        final liked = Map<Object?, Object?>.from(
+          functions.payloads.first! as Map,
+        );
+        final unliked = Map<Object?, Object?>.from(
+          functions.payloads.last! as Map,
+        );
+        expect(liked.keys.toSet(), {'momentId', 'liked', 'requestId'});
+        expect(unliked.keys.toSet(), {'momentId', 'liked', 'requestId'});
+        expect(liked['momentId'], momentId);
+        expect(unliked['momentId'], momentId);
+        expect(liked['liked'], isTrue);
+        expect(unliked['liked'], isFalse);
+        expect(
+          liked['requestId'],
+          isA<String>().having((id) => id, 'id', isNotEmpty),
+        );
+        expect(
+          unliked['requestId'],
+          isA<String>().having(
+            (id) => id,
+            'id',
+            isNot(equals(liked['requestId'])),
+          ),
+        );
+        expect(
+          (await firestore
+                  .collection('voiceMoments')
+                  .doc(momentId)
+                  .collection('likes')
+                  .doc(uid)
+                  .get())
+              .exists,
+          false,
+        );
+        expect(
+          (await firestore.collection('voiceMoments').doc(momentId).get())
+              .data()?['likeCount'],
+          0,
         );
       },
     );
@@ -1200,6 +1260,7 @@ class _EngagementFunctions implements FirebaseFunctions {
   final String commentId;
   final String voiceReplyStoragePath;
   final List<String> calls = <String>[];
+  final List<Object?> payloads = <Object?>[];
 
   @override
   HttpsCallable httpsCallable(String name, {HttpsCallableOptions? options}) =>
@@ -1207,6 +1268,7 @@ class _EngagementFunctions implements FirebaseFunctions {
 
   Future<Object?> _call(String name, Object? parameters) async {
     calls.add(name);
+    payloads.add(parameters);
     if (errorCode != null) {
       throw FirebaseFunctionsException(
         code: errorCode!,
@@ -1215,7 +1277,8 @@ class _EngagementFunctions implements FirebaseFunctions {
     }
     switch (name) {
       case 'setMomentLike':
-        return <String, Object?>{'liked': true};
+        final payload = Map<Object?, Object?>.from(parameters! as Map);
+        return <String, Object?>{'liked': payload['liked']};
       case 'createMomentComment':
         return <String, Object?>{'commentId': commentId};
       case 'reserveVoiceCommentDraft':

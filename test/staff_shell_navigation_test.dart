@@ -44,7 +44,7 @@ void useSize(WidgetTester tester, Size size) {
 
 void main() {
   group('desktop slot contract', () {
-    test('every More destination except friends and profile owns a slot — '
+    test('every visible desktop More destination owns a slot — '
         'Staff Center may never fall back to a pushed route again', () {
       final slotted = MainShell.desktopSlots.values.toSet();
       final expected = MoreDestination.values.toSet().difference({
@@ -52,6 +52,8 @@ void main() {
         MoreDestination.friends,
         // Pushes on purpose: it keeps a real Back button.
         MoreDestination.profile,
+        // Compatibility-only deep link; Reels is a format inside YO Moments.
+        MoreDestination.reels,
       });
       expect(slotted, expected);
       // Slot indices are unique and contiguous above the three shared

@@ -100,7 +100,7 @@ function serviceWithPublishedReel({
     deletions,
     service: createReelService({
       db,
-      FieldPath: { documentId() {} },
+      FieldPath: { documentId: () => "__name__" },
       Timestamp: { fromMillis: (value) => new Date(value) },
       storage,
       clock: () => NOW_MS,
@@ -302,7 +302,11 @@ test("feed scan amplification is capped and repeated authors are request-cached"
       repeated.db.metrics.queryCalls,
       Math.ceil(MAX_REEL_SCAN_PER_REQUEST / REEL_FEED_BATCH_SIZE),
     );
-    assert.equal(repeated.db.metrics.getAllDocumentReads, 4);
+    assert.equal(
+      repeated.db.metrics.getAllDocumentReads,
+      MAX_REEL_SCAN_PER_REQUEST + 4,
+      "each scanned Reel adds one server-only availability read",
+    );
 
     const unique = serviceWithPublishedReel({ seedDefault: false });
     for (let rank = 0; rank < 30; rank += 1) {
@@ -327,12 +331,12 @@ test("feed scan amplification is capped and repeated authors are request-cached"
     );
     assert.equal(
       unique.db.metrics.getAllDocumentReads,
-      MAX_REEL_AUTHORS_PER_REQUEST * 4,
+      MAX_REEL_AUTHORS_PER_REQUEST * 5,
     );
     assert.ok(
       unique.db.metrics.queryDocumentReads +
         unique.db.metrics.getAllDocumentReads <=
-        MAX_REEL_SCAN_PER_REQUEST + MAX_REEL_AUTHORS_PER_REQUEST * 4,
+        MAX_REEL_SCAN_PER_REQUEST + MAX_REEL_AUTHORS_PER_REQUEST * 5,
     );
     const nextUniquePage = await unique.service.listReels(listRequest({
       cursor: uniquePage.nextCursor,
@@ -398,6 +402,97 @@ test("an author can delete a hidden Reel without retaining public content",
     assert.deepEqual(db.data("adminAuditLogs/reel-audit-evidence"), audit);
   });
 
+test("an unverified communication-muted active author can delete their Reel",
+  async () => {
+    const { db, service } = serviceWithPublishedReel();
+    db.seed(`restrictions/${AUTHOR}`, {
+      type: "communicationMute",
+      expiresAt: null,
+    });
+
+    assert.deepEqual(await service.deleteReel({
+      auth: { uid: AUTHOR, token: { email_verified: false } },
+      data: { reelId: REEL_ID, requestId: "delete-muted-reel-0001" },
+    }), { reelId: REEL_ID, deleted: true });
+    assert.equal(db.data(`reels/${REEL_ID}`).status, "deleted");
+    assert.equal(db.paths("reelCleanupOutbox/").length, 1);
+    assert.equal(rateState(db, "reel.delete").count, 1);
+  });
+
+test("relaxed deletion still rejects an inactive owner", async () => {
+  const { db, service } = serviceWithPublishedReel();
+  db.seed(`users/${AUTHOR}`, { uid: AUTHOR, disabled: true });
+  db.seed(`restrictions/${AUTHOR}`, {
+    type: "communicationMute",
+    expiresAt: null,
+  });
+
+  await assert.rejects(
+    service.deleteReel({
+      auth: { uid: AUTHOR, token: { email_verified: false } },
+      data: { reelId: REEL_ID, requestId: "delete-inactive-reel-0001" },
+    }),
+    (error) => error.code === "permission-denied",
+  );
+  assert.equal(db.data(`reels/${REEL_ID}`).status, "published");
+  assert.equal(db.paths("reelCleanupOutbox/").length, 0);
+  assert.equal(rateState(db, "reel.delete"), undefined);
+});
+
+test("delete converges after a lost acknowledgement with a fresh request id",
+  async () => {
+    const { db, service } = serviceWithPublishedReel({
+      moderationStatus: "hidden",
+    });
+    const first = await service.deleteReel({
+      auth: { uid: AUTHOR, token: { email_verified: true } },
+      data: { reelId: REEL_ID, requestId: "delete-lost-ack-0001" },
+    });
+    const tombstone = structuredClone(db.data(`reels/${REEL_ID}`));
+    const second = await service.deleteReel({
+      auth: { uid: AUTHOR, token: { email_verified: true } },
+      data: { reelId: REEL_ID, requestId: "delete-lost-ack-0002" },
+    });
+
+    assert.deepEqual(second, first);
+    assert.deepEqual(db.data(`reels/${REEL_ID}`), tombstone);
+    assert.equal(db.paths("reelCleanupOutbox/").length, 1);
+    assert.equal(rateState(db, "reel.delete").count, 2);
+  });
+
+test("delete reconciliation rejects foreign and malformed tombstones",
+  async () => {
+    const foreign = serviceWithPublishedReel({ moderationStatus: "hidden" });
+    await foreign.service.deleteReel({
+      auth: { uid: AUTHOR, token: { email_verified: true } },
+      data: { reelId: REEL_ID, requestId: "delete-owned-first-0001" },
+    });
+    await assert.rejects(
+      foreign.service.deleteReel({
+        auth: { uid: VIEWER, token: { email_verified: true } },
+        data: { reelId: REEL_ID, requestId: "delete-foreign-second-0001" },
+      }),
+      (error) => error.code === "permission-denied",
+    );
+
+    const malformed = serviceWithPublishedReel({ moderationStatus: "hidden" });
+    await malformed.service.deleteReel({
+      auth: { uid: AUTHOR, token: { email_verified: true } },
+      data: { reelId: REEL_ID, requestId: "delete-malformed-first-0001" },
+    });
+    malformed.db.seed(`reels/${REEL_ID}`, {
+      ...malformed.db.data(`reels/${REEL_ID}`),
+      caption: "must not survive deletion",
+    });
+    await assert.rejects(
+      malformed.service.deleteReel({
+        auth: { uid: AUTHOR, token: { email_verified: true } },
+        data: { reelId: REEL_ID, requestId: "delete-malformed-second-0001" },
+      }),
+      (error) => error.code === "data-loss",
+    );
+  });
+
 test("Reel deletion rejects other authors and cross-Reel cleanup paths",
   async () => {
     const foreign = serviceWithPublishedReel({ moderationStatus: "hidden" });
@@ -423,9 +518,16 @@ test("Reel deletion rejects other authors and cross-Reel cleanup paths",
         generation: "123",
       }],
     });
-    await assert.rejects(
-      corrupt.service.processCleanupOutbox(outboxPath.split("/").at(-1)),
-      (error) => error.code === "data-loss",
+    assert.deepEqual(
+      await corrupt.service.processCleanupOutbox(outboxPath.split("/").at(-1)),
+      {
+        outboxId: outboxPath.split("/").at(-1),
+        completed: false,
+        deadLetter: true,
+        code: "data-loss",
+      },
     );
+    assert.equal(corrupt.db.data(outboxPath).status, "deadLetter");
+    assert.equal(corrupt.db.data(outboxPath).lastErrorCode, "data-loss");
     assert.deepEqual(corrupt.deletions, []);
   });

@@ -125,7 +125,7 @@ void main() {
       selectedIndex: _momentsSlot,
     );
 
-    expect(_isSelected(tester, 'Moments'), isTrue);
+    expect(_isSelected(tester, 'YO Moments'), isTrue);
     expect(_isSelected(tester, 'Home'), isFalse);
     semantics.dispose();
   });
@@ -149,10 +149,10 @@ void main() {
     // The persistent dock, with Moments lit.
     expect(find.text('Home'), findsNothing);
     expect(find.text('Chats'), findsNothing);
-    expect(find.text('Moments'), findsNothing);
+    expect(find.text('YO Moments'), findsNothing);
     expect(find.text('More'), findsNothing);
     expect(find.byKey(const ValueKey('dock-logo')), findsOneWidget);
-    expect(_isSelected(tester, 'Moments'), isTrue);
+    expect(_isSelected(tester, 'YO Moments'), isTrue);
     semantics.dispose();
   });
 

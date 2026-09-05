@@ -11,11 +11,18 @@ const { createReelService } = require("./service");
 const { createReelStorageAdapter } = require("./storage");
 
 const REGION = "europe-west1";
+const REEL_EXPIRY_BATCH_SIZE = 200;
+const REEL_CLEANUP_BATCH_SIZE = 50;
+const REEL_CLEANUP_MAX_BATCHES = 4;
 const REEL_CALLABLE_METHODS = Object.freeze({
   reserveReelDraft: "reserveReelDraft",
+  reserveReelDraftV2: "reserveReelDraftV2",
   finalizeReelDraft: "finalizeReelDraft",
+  finalizeReelDraftV2: "finalizeReelDraftV2",
   listReels: "listReels",
+  listReelsV2: "listReelsV2",
   getReelMediaAccess: "getReelMediaAccess",
+  getReelMediaAccessV2: "getReelMediaAccessV2",
   deleteReel: "deleteReel",
   createReelReport: "createReelReport",
 });
@@ -65,12 +72,18 @@ function authBoundRequest(request) {
   };
 }
 
+function safeCleanupResultCode(result) {
+  const code = typeof result?.code === "string" ? result.code : "internal";
+  return /^[a-z0-9-]{1,64}$/u.test(code) ? code : "internal";
+}
+
 function createReelFunctions({
   runtime = null,
   registrars = defaultRegistrars(),
   enforceAppCheck = false,
   log = logger,
-  cleanupBatchSize = 20,
+  cleanupBatchSize = REEL_CLEANUP_BATCH_SIZE,
+  cleanupMaxBatches = REEL_CLEANUP_MAX_BATCHES,
 } = {}) {
   for (const name of ["onCall", "onDocumentCreated", "onSchedule"]) {
     if (typeof registrars?.[name] !== "function") {
@@ -79,6 +92,10 @@ function createReelFunctions({
   }
   if (!Number.isSafeInteger(cleanupBatchSize) || cleanupBatchSize < 1 || cleanupBatchSize > 50) {
     throw new TypeError("cleanupBatchSize must be an integer from 1 to 50.");
+  }
+  if (!Number.isSafeInteger(cleanupMaxBatches) ||
+      cleanupMaxBatches < 1 || cleanupMaxBatches > 10) {
+    throw new TypeError("cleanupMaxBatches must be an integer from 1 to 10.");
   }
   const resolved = runtime ?? createReelRuntime();
   if (!resolved?.db || !resolved?.FieldPath?.documentId || !resolved?.service) {
@@ -108,32 +125,62 @@ function createReelFunctions({
     { ...scheduleOptions, schedule: "every 10 minutes" },
     () => resolved.service.expireAbandonedReelDrafts({ limit: 100 }),
   );
+  exportsMap.expirePublishedReelsSchedule = registrars.onSchedule(
+    { ...scheduleOptions, schedule: "every 10 minutes" },
+    async () => {
+      const result = await resolved.service.expirePublishedReels({
+        limit: REEL_EXPIRY_BATCH_SIZE,
+      });
+      for (const failure of result.failed ?? []) {
+        log.error?.("Reel availability expiry failed", failure);
+      }
+      if (result.hasMore === true) {
+        log.warn?.("Reel availability expiry reached its scan bound", {
+          expired: result.expired?.length ?? 0,
+          failed: result.failed?.length ?? 0,
+        });
+      }
+      return result;
+    },
+  );
   exportsMap.processPendingReelCleanupSchedule = registrars.onSchedule(
     { ...scheduleOptions, schedule: "every 5 minutes" },
     async () => {
-      const snapshot = await resolved.db
-        .collection("reelCleanupOutbox")
-        .where("status", "==", "pending")
-        .limit(cleanupBatchSize)
-        .get();
-      const results = await Promise.all(
-        snapshot.docs.map(async (document) => {
-          try {
-            return await resolved.service.processCleanupOutbox(document.id);
-          } catch (error) {
-            log.error?.("Reel cleanup failed", {
-              outboxId: document.id,
-              code: error?.code ?? "internal",
-            });
-            return { outboxId: document.id, completed: false };
-          }
-        }),
-      );
-      return {
-        processed: results.length,
-        completed: results.filter(({ completed }) => completed === true).length,
-        hasMore: snapshot.size === cleanupBatchSize,
+      const aggregate = {
+        processed: 0,
+        completed: 0,
+        failed: [],
+        hasMore: false,
+        batches: 0,
+        batchSize: cleanupBatchSize,
       };
+      for (let batch = 0; batch < cleanupMaxBatches; batch += 1) {
+        const page = await resolved.service.processReadyCleanupOutbox({
+          limit: cleanupBatchSize,
+        });
+        aggregate.batches += 1;
+        aggregate.processed += page.processed ?? 0;
+        aggregate.completed += page.completed ?? 0;
+        aggregate.failed.push(...(page.failed ?? []));
+        aggregate.hasMore = page.hasMore === true;
+        // `hasMore` can be true while a legacy compatibility page contains
+        // only future-dated modern rows. Its durable scan cursor still made
+        // progress, so keep draining within the explicit batch cap.
+        if (page.hasMore !== true) break;
+      }
+      for (const failure of aggregate.failed) {
+        log.error?.("Reel cleanup failed", failure);
+      }
+      if (aggregate.hasMore === true) {
+        log.warn?.("Reel cleanup reached its scan bound", {
+          processed: aggregate.processed,
+          completed: aggregate.completed,
+          failed: aggregate.failed.length,
+          batches: aggregate.batches,
+          capacity: cleanupBatchSize * cleanupMaxBatches,
+        });
+      }
+      return aggregate;
     },
   );
   exportsMap.onReelCleanupOutboxCreated = registrars.onDocumentCreated(
@@ -148,7 +195,15 @@ function createReelFunctions({
     async (event) => {
       if (!event.data?.exists) return { skipped: true };
       const outboxId = requireId(event.params?.outboxId, "outboxId");
-      return resolved.service.processCleanupOutbox(outboxId);
+      const result = await resolved.service.processCleanupOutbox(outboxId);
+      if (result?.deadLetter === true) {
+        log.error?.("Reel cleanup trigger reached dead letter", {
+          outboxId,
+          deadLetter: true,
+          code: safeCleanupResultCode(result),
+        });
+      }
+      return result;
     },
   );
   return Object.freeze(exportsMap);
@@ -156,7 +211,10 @@ function createReelFunctions({
 
 module.exports = {
   REGION,
+  REEL_CLEANUP_BATCH_SIZE,
+  REEL_CLEANUP_MAX_BATCHES,
   REEL_CALLABLE_METHODS,
+  REEL_EXPIRY_BATCH_SIZE,
   authBoundRequest,
   createReelFunctions,
   createReelRuntime,

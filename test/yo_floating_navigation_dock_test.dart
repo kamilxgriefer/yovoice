@@ -3,7 +3,8 @@ import 'dart:ui' show PointerDeviceKind, SemanticsAction;
 
 import 'package:flutter/foundation.dart' show ValueListenable, ValueNotifier;
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart' show RenderBox, SemanticsNode;
+import 'package:flutter/rendering.dart'
+    show RenderBox, RenderParagraph, SemanticsNode;
 import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -35,6 +36,30 @@ bool _selected(WidgetTester tester, String label) {
         ),
       )
       .any((widget) => widget.properties.selected == true);
+}
+
+void _expectFullyScaledText(WidgetTester tester, Finder finder) {
+  final text = tester.widget<Text>(finder);
+  final context = tester.element(finder);
+  final paragraph = tester.renderObject<RenderParagraph>(finder);
+  final effectiveStyle = DefaultTextStyle.of(context).style.merge(text.style);
+  final painter = TextPainter(
+    text: TextSpan(text: text.data, style: effectiveStyle),
+    textDirection: Directionality.of(context),
+    textScaler: MediaQuery.textScalerOf(context),
+    maxLines: text.maxLines,
+  )..layout(maxWidth: paragraph.size.width);
+
+  expect(
+    painter.didExceedMaxLines,
+    isFalse,
+    reason: '${text.data} was clipped',
+  );
+  expect(
+    painter.height,
+    lessThanOrEqualTo(paragraph.size.height + .01),
+    reason: '${text.data} did not receive its full scaled line height',
+  );
 }
 
 int _actionableButtonCount(SemanticsNode root) {
@@ -210,7 +235,7 @@ void main() {
             theme: theme,
             reduceMotion: true,
           );
-          for (final label in ['Home', 'Chats', 'Moments', 'More']) {
+          for (final label in ['Home', 'Chats', 'YO Moments', 'More']) {
             expect(find.text(label), findsNothing);
           }
           for (final slot in [0, 1, 3, 4]) {
@@ -225,7 +250,7 @@ void main() {
             find.bySemanticsLabel('Chats, 3 unread conversations'),
             findsOneWidget,
           );
-          expect(find.bySemanticsLabel('Moments'), findsOneWidget);
+          expect(find.bySemanticsLabel('YO Moments'), findsOneWidget);
           expect(find.bySemanticsLabel('More'), findsOneWidget);
           expect(tester.takeException(), isNull);
           semantics.dispose();
@@ -369,7 +394,7 @@ void main() {
 
       expect(_selected(tester, 'Home'), isTrue);
       expect(_selected(tester, 'Chats, 3 unread conversations'), isFalse);
-      expect(_selected(tester, 'Moments'), isFalse);
+      expect(_selected(tester, 'YO Moments'), isFalse);
       expect(_selected(tester, 'More'), isFalse);
       expect(
         find.byKey(const ValueKey('yo-active-capsule-position')),
@@ -390,12 +415,12 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('yo-destination-3')));
       await tester.pump();
       expect(find.text('Selected 5'), findsOneWidget);
-      expect(_selected(tester, 'Moments'), isTrue);
+      expect(_selected(tester, 'YO Moments'), isTrue);
 
       await tester.tap(find.byKey(const ValueKey('yo-destination-4')));
       await tester.pump();
       expect(_selected(tester, 'More'), isTrue);
-      expect(_selected(tester, 'Moments'), isFalse);
+      expect(_selected(tester, 'YO Moments'), isFalse);
       expect(haptics, hasLength(3));
       expect(
         haptics.map((call) => call.arguments),
@@ -404,7 +429,7 @@ void main() {
 
       await tester.tap(find.text('Close More'));
       await tester.pump();
-      expect(_selected(tester, 'Moments'), isTrue);
+      expect(_selected(tester, 'YO Moments'), isTrue);
       expect(_selected(tester, 'More'), isFalse);
       semantics.dispose();
     },
@@ -623,7 +648,7 @@ void main() {
       'Home',
       'Chats, 3 unread conversations',
       'Open voice actions',
-      'Moments',
+      'YO Moments',
       'More',
     ]) {
       final node = tester.getSemantics(find.bySemanticsLabel(label));
@@ -817,13 +842,24 @@ void main() {
           isFalse,
           reason: 'destination $slot must not enter the central YO zone',
         );
-      }
-      for (final label in ['Home', 'Chats', 'Moments', 'More']) {
-        final text = tester.widget<Text>(find.text(label));
-        expect(text.maxLines, 1);
-        expect(text.overflow, TextOverflow.visible);
         expect(
-          tester.getRect(find.text(label)).overlaps(button),
+          find.descendant(
+            of: find.byKey(ValueKey('yo-destination-label-$slot')),
+            matching: find.byType(FittedBox),
+          ),
+          findsNothing,
+          reason: 'destination $slot must not scale its label down',
+        );
+      }
+      for (final label in ['Home', 'Chats', 'YO Moments', 'More']) {
+        final finder = find.text(label);
+        final text = tester.widget<Text>(find.text(label));
+        expect(text.maxLines, 3);
+        expect(text.overflow, TextOverflow.visible);
+        expect(text.textScaler, isNull);
+        _expectFullyScaledText(tester, finder);
+        expect(
+          tester.getRect(finder).overlaps(button),
           isFalse,
           reason: '$label must remain clear of the central YO control',
         );
@@ -847,9 +883,70 @@ void main() {
     expect(YoFloatingNavigationDock.reservedHeightFor(safeBottom: 34), 142);
     expect(
       YoFloatingNavigationDock.reservedHeightFor(safeBottom: 34, textScale: 2),
-      150,
+      234,
     );
   });
+
+  testWidgets(
+    'RTL mirrors the dock and keeps logical Home to More focus traversal',
+    (tester) async {
+      final semantics = await _pumpDock(
+        tester,
+        locale: const Locale('ar'),
+        width: 390,
+        height: 700,
+        reduceMotion: true,
+      );
+
+      final home = tester.getRect(
+        find.byKey(const ValueKey('yo-destination-0')),
+      );
+      final chats = tester.getRect(
+        find.byKey(const ValueKey('yo-destination-1')),
+      );
+      final center = tester.getRect(
+        find.byKey(const ValueKey('yo-center-action-hit-target')),
+      );
+      final moments = tester.getRect(
+        find.byKey(const ValueKey('yo-destination-3')),
+      );
+      final more = tester.getRect(
+        find.byKey(const ValueKey('yo-destination-4')),
+      );
+      expect(home.center.dx, greaterThan(chats.center.dx));
+      expect(chats.center.dx, greaterThan(center.center.dx));
+      expect(center.center.dx, greaterThan(moments.center.dx));
+      expect(moments.center.dx, greaterThan(more.center.dx));
+
+      final badge = tester.getRect(
+        find.byKey(const ValueKey('yo-chats-unread-badge')),
+      );
+      expect(
+        badge.center.dx,
+        lessThan(chats.center.dx),
+        reason: 'the unread badge belongs on the directional end in RTL',
+      );
+
+      final homeInk = tester.widget<InkWell>(
+        find.byKey(const ValueKey('yo-destination-0')),
+      );
+      homeInk.focusNode!.requestFocus();
+      await tester.pump();
+      expect(FocusManager.instance.primaryFocus?.debugLabel, 'YO dock 0');
+      for (final expected in <String>[
+        'YO dock 1',
+        'YO dock 2',
+        'YO dock 3',
+        'YO dock 4',
+      ]) {
+        await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+        await tester.pump();
+        expect(FocusManager.instance.primaryFocus?.debugLabel, expected);
+      }
+      expect(tester.takeException(), isNull);
+      semantics.dispose();
+    },
+  );
 
   testWidgets(
     'the dock is bounded on a tablet and survives a raised keyboard',

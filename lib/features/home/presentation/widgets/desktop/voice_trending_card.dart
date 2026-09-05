@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
@@ -43,6 +44,7 @@ class VoiceTrendingCard extends StatefulWidget {
     this.socialGraphService,
     this.profileService,
     this.discoveryService,
+    this.isVisible,
     super.key,
   });
 
@@ -57,6 +59,7 @@ class VoiceTrendingCard extends StatefulWidget {
   final SocialGraphService? socialGraphService;
   final ProfileService? profileService;
   final MomentDiscoveryService? discoveryService;
+  final ValueListenable<bool>? isVisible;
 
   @override
   State<VoiceTrendingCard> createState() => _VoiceTrendingCardState();
@@ -65,6 +68,7 @@ class VoiceTrendingCard extends StatefulWidget {
 class _VoiceTrendingCardState extends State<VoiceTrendingCard> {
   RoomService? _rooms;
   Future<List<VoiceMoment>>? _topMoments;
+  MomentDiscoveryService? _discovery;
   final FocusNode _expiryRecoveryFocus = FocusNode(
     debugLabel: 'View all Moments after trending expiry',
   );
@@ -81,19 +85,42 @@ class _VoiceTrendingCardState extends State<VoiceTrendingCard> {
     } catch (_) {
       _rooms = null;
     }
+    _loadTopMoments();
+    widget.isVisible?.addListener(_handleVisibility);
+  }
+
+  void _loadTopMoments() {
     try {
-      // One-shot, not a listener: a globally ordered popularity query
-      // re-delivers documents on any like anywhere near the boundary,
-      // and a supporting card must not pay for that.
-      _topMoments = (widget.discoveryService ?? MomentDiscoveryService())
-          .topLikedMoments();
+      // One-shot, not a listener: refresh only when retained Home becomes
+      // visible instead of subscribing to every like near the boundary.
+      _discovery ??= widget.discoveryService ?? MomentDiscoveryService();
+      _topMoments = _discovery!.topLikedMoments();
     } catch (_) {
       _topMoments = null;
     }
   }
 
+  void _handleVisibility() {
+    if (!mounted || widget.isVisible?.value != true) return;
+    setState(_loadTopMoments);
+  }
+
+  @override
+  void didUpdateWidget(covariant VoiceTrendingCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.isVisible != widget.isVisible) {
+      oldWidget.isVisible?.removeListener(_handleVisibility);
+      widget.isVisible?.addListener(_handleVisibility);
+    }
+    if (oldWidget.discoveryService != widget.discoveryService) {
+      _discovery = null;
+      setState(_loadTopMoments);
+    }
+  }
+
   @override
   void dispose() {
+    widget.isVisible?.removeListener(_handleVisibility);
     _expiryRecoveryFocus.dispose();
     super.dispose();
   }

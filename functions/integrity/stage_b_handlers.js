@@ -28,6 +28,8 @@ const USER_CALLABLE_METHODS = Object.freeze({
   startRoomVoice: ["roomCreation", "startRoomVoice"],
   reserveMomentDraft: ["moments", "reserveMomentDraft"],
   finalizeMomentDraft: ["moments", "finalizeMomentDraft"],
+  getVoiceMomentsFeedV2: ["moments", "getVoiceMomentsFeedV2"],
+  getVoiceMomentViewV2: ["moments", "getVoiceMomentViewV2"],
   getVoiceMomentMediaAccess: ["moments", "getVoiceMomentMediaAccess"],
   setMomentLike: ["moments", "setMomentLike"],
   createMomentComment: ["moments", "createMomentComment"],

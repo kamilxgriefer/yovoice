@@ -86,12 +86,18 @@ class _MomentCardState extends State<MomentCard> {
   bool _downloaded = false;
   bool _downloading = false;
   int _downloadLookupGeneration = 0;
+  late bool _liked;
+  late int _likeCount;
+  bool _likePending = false;
+  bool _hasLocalLikeOverride = false;
 
   AppLocalizations get _copy => AppLocalizations.of(context);
 
   @override
   void initState() {
     super.initState();
+    _liked = widget.moment.callerLiked;
+    _likeCount = widget.moment.likeCount;
     if (widget.mediaUriResolver == null) {
       try {
         _moments = widget.momentService ?? MomentService();
@@ -107,7 +113,16 @@ class _MomentCardState extends State<MomentCard> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.moment.id != widget.moment.id) {
       _downloaded = false;
+      _liked = widget.moment.callerLiked;
+      _likeCount = widget.moment.likeCount;
+      _likePending = false;
+      _hasLocalLikeOverride = false;
       _refreshDownloadState();
+    } else if (!_likePending &&
+        (!_hasLocalLikeOverride || widget.moment.callerLiked == _liked)) {
+      _liked = widget.moment.callerLiked;
+      _likeCount = widget.moment.likeCount;
+      _hasLocalLikeOverride = false;
     }
   }
 
@@ -248,11 +263,28 @@ class _MomentCardState extends State<MomentCard> {
 
   Future<void> _toggleLike() async {
     final service = widget.feedService;
-    if (service == null) return;
+    if (service == null || _likePending) return;
+    final previousLiked = _liked;
+    final previousCount = _likeCount;
+    final desiredLiked = !previousLiked;
+    setState(() {
+      _liked = desiredLiked;
+      _likeCount = (previousCount + (desiredLiked ? 1 : -1)).clamp(0, 1 << 31);
+      _likePending = true;
+      _hasLocalLikeOverride = true;
+    });
     try {
-      await service.toggleLike(widget.moment.id);
+      await service.setLike(widget.moment.id, liked: desiredLiked);
+      if (!mounted) return;
+      setState(() => _likePending = false);
     } catch (_) {
       if (!mounted) return;
+      setState(() {
+        _liked = previousLiked;
+        _likeCount = previousCount;
+        _likePending = false;
+        _hasLocalLikeOverride = false;
+      });
       ScaffoldMessenger.of(context)
         ..hideCurrentSnackBar()
         ..showSnackBar(
@@ -280,7 +312,10 @@ class _MomentCardState extends State<MomentCard> {
     await reportContent(
       context: context,
       service: widget.contentReportService,
-      content: ReportedContent.voiceMoment(momentId: widget.moment.id),
+      content: ReportedContent.voiceMoment(
+        momentId: widget.moment.id,
+        reportReceipt: widget.moment.reportReceipt,
+      ),
       title: copy.text('Report this Voice Moment', 'Zgłoś ten Voice Moment'),
       subtitle: copy.text(
         'Your report goes to the YO Voice moderation team with this '
@@ -431,10 +466,10 @@ class _MomentCardState extends State<MomentCard> {
           Row(
             children: [
               _LikeControl(
-                momentId: moment.id,
-                likeCount: moment.likeCount,
+                liked: _liked,
+                likeCount: _likeCount,
                 feedService: widget.feedService,
-                onToggle: _toggleLike,
+                onToggle: _likePending ? null : _toggleLike,
               ),
               const SizedBox(width: 6),
               TextButton.icon(
@@ -526,16 +561,16 @@ class _MomentCardState extends State<MomentCard> {
 /// `setMomentLike` callable worked and Home already used them.
 class _LikeControl extends StatelessWidget {
   const _LikeControl({
-    required this.momentId,
+    required this.liked,
     required this.likeCount,
     required this.feedService,
     required this.onToggle,
   });
 
-  final String momentId;
+  final bool liked;
   final int likeCount;
   final HomeFeedService? feedService;
-  final VoidCallback onToggle;
+  final VoidCallback? onToggle;
 
   @override
   Widget build(BuildContext context) {
@@ -545,15 +580,10 @@ class _LikeControl extends StatelessWidget {
     // no hiding the control either.
     final label = likeCount == 0 ? copy.text('Like', 'Lubię to') : '$likeCount';
 
-    if (service == null) {
-      return _LikeButton(liked: false, label: label, onTap: null);
-    }
-    return StreamBuilder<bool>(
-      stream: service.watchLiked(momentId),
-      builder: (context, snapshot) {
-        final liked = snapshot.hasError ? false : (snapshot.data ?? false);
-        return _LikeButton(liked: liked, label: label, onTap: onToggle);
-      },
+    return _LikeButton(
+      liked: liked,
+      label: label,
+      onTap: service == null ? null : onToggle,
     );
   }
 }

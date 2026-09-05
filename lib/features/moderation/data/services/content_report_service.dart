@@ -38,6 +38,7 @@ class ReportedContent {
     this.messageId,
     this.momentId,
     this.commentId,
+    this.reportReceipt,
   });
 
   /// A direct message. Reportable only by a participant of
@@ -52,16 +53,24 @@ class ReportedContent {
          messageId: messageId,
        );
 
-  const ReportedContent.voiceMoment({required String momentId})
-    : this._(type: ReportedContentType.voiceMoment, momentId: momentId);
+  const ReportedContent.voiceMoment({
+    required String momentId,
+    String? reportReceipt,
+  }) : this._(
+         type: ReportedContentType.voiceMoment,
+         momentId: momentId,
+         reportReceipt: reportReceipt,
+       );
 
   const ReportedContent.voiceMomentComment({
     required String momentId,
     required String commentId,
+    String? reportReceipt,
   }) : this._(
          type: ReportedContentType.voiceMomentComment,
          momentId: momentId,
          commentId: commentId,
+         reportReceipt: reportReceipt,
        );
 
   final ReportedContentType type;
@@ -69,6 +78,7 @@ class ReportedContent {
   final String? messageId;
   final String? momentId;
   final String? commentId;
+  final String? reportReceipt;
 
   /// The noun this content is called in user-facing copy. Kept next to
   /// the target so a new content type cannot ship with a sentence that
@@ -90,6 +100,7 @@ class ReportedContent {
     if (messageId != null) 'messageId': messageId,
     if (momentId != null) 'momentId': momentId,
     if (commentId != null) 'commentId': commentId,
+    if (reportReceipt != null) 'reportReceipt': reportReceipt,
   };
 
   /// Stable identity of the reported document, used to derive the

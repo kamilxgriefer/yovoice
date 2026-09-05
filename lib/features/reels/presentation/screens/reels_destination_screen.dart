@@ -1,27 +1,29 @@
 import 'package:flutter/material.dart';
 
-import 'package:yovoice/features/reels/presentation/screens/reel_composer_screen.dart';
-import 'package:yovoice/features/reels/presentation/screens/reels_feed_screen.dart';
+import 'package:yovoice/features/moments/presentation/screens/moments_screen.dart';
+import 'package:yovoice/features/reels/data/services/reel_service.dart';
 
 /// Stable shell destination for Reels.
 ///
-/// The feed owns refresh-after-compose, while this wrapper owns the route so
-/// both a pushed mobile destination and the persistent desktop slot share the
-/// exact same product flow.
+/// Kept only for old deep links and enum callers. Reels now lives inside the
+/// unified YO Moments destination; using that screen here also preserves its
+/// host + format + current-route playback visibility contract.
 class ReelsDestinationScreen extends StatelessWidget {
-  const ReelsDestinationScreen({this.isRootTab = false, super.key});
+  const ReelsDestinationScreen({
+    this.isRootTab = false,
+    this.reelService,
+    super.key,
+  });
 
   final bool isRootTab;
+  final ReelService? reelService;
 
   @override
   Widget build(BuildContext context) {
-    return ReelsFeedScreen(
-      embedded: isRootTab,
-      onCreate: () async {
-        await Navigator.of(context).push<String>(
-          MaterialPageRoute<String>(builder: (_) => const ReelComposerScreen()),
-        );
-      },
+    return MomentsScreen(
+      isRootTab: isRootTab,
+      initialFormat: YoMomentsFormat.reels,
+      reelService: reelService,
     );
   }
 }

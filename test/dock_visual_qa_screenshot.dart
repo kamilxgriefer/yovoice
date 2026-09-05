@@ -181,21 +181,21 @@ void main() {
       await _render(
         tester,
         captureKey: captureKey,
-        size: const Size(320, 200),
+        size: const Size(320, 260),
         theme: theme,
         textScale: 2,
         unreadConversationCount: 123,
       );
 
       expect(find.text('99+'), findsOneWidget);
-      for (final label in ['Home', 'Chats', 'Moments', 'More']) {
+      for (final label in ['Home', 'Chats', 'YO Moments', 'More']) {
         expect(find.text(label), findsOneWidget);
       }
       final dockSize = tester.getSize(
         find.byKey(const ValueKey('yo-floating-navigation-dock')),
       );
       expect(dockSize.width, closeTo(292, .01));
-      expect(dockSize.height, 112);
+      expect(dockSize.height, YoFloatingNavigationDock.accessibleVisualHeight);
 
       final file = await _shoot(tester, captureKey: captureKey, name: label);
       expect(file.existsSync(), isTrue);

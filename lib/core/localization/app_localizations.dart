@@ -46,6 +46,15 @@ class AppLocalizations {
     return translatedPhrase(localeKey, english) ?? english;
   }
 
+  /// Resolves copy by a stable, feature-scoped catalog key while keeping the
+  /// displayed English phrase independent from that key. Use this when a short
+  /// word has different meanings in different product contexts.
+  String contextualText(String key, String english, String polish) {
+    if (locale.languageCode == 'en') return english;
+    if (isPolish) return polish;
+    return translatedPhrase(localeKey, key) ?? english;
+  }
+
   /// Resolves a stable catalog template and substitutes runtime values only
   /// after localization.
   ///
@@ -191,7 +200,15 @@ class AppLocalizations {
   );
 
   String get home => text('Home', 'Główna');
-  String get moments => text('Moments', 'Momenty');
+
+  /// Product destination name. Brand names stay invariant in every locale;
+  /// "Voice Moment" and "Reel" remain the localized format names inside it.
+  String get moments => 'YO Moments';
+  String get yoMomentsFromYourCircle => contextualText(
+    'yoMoments.fromCircle',
+    'YO Moments from your circle',
+    'YO Moments z Twojego kręgu',
+  );
   String get discover => text('Discover', 'Odkrywaj');
   String get findCreators => text('Find creators', 'Znajdź twórców');
   String get chats => text('Chats', 'Czaty');

@@ -1273,11 +1273,15 @@ abstract final class _Filters {
     final english = switch (target) {
       ReportTargetType.globalMessage => 'Message',
       ReportTargetType.reel => 'Reel',
+      ReportTargetType.voiceMoment => 'Voice Moment',
+      ReportTargetType.voiceMomentComment => 'Voice Moment comment',
       ReportTargetType.user => 'Account',
     };
     final polish = switch (target) {
       ReportTargetType.globalMessage => 'Wiadomość',
       ReportTargetType.reel => 'Rolka',
+      ReportTargetType.voiceMoment => 'Voice Moment',
+      ReportTargetType.voiceMomentComment => 'Komentarz Voice Momentu',
       ReportTargetType.user => 'Konto',
     };
     return copy?.text(english, polish) ?? english;
@@ -1755,6 +1759,7 @@ class _DetailState extends State<_Detail> {
     Future<ModerationResult> Function(String requestId) action, {
     String? confirmTitle,
     String? confirmBody,
+    String? confirmActionLabel,
   }) async {
     if (_busy) return;
     final copy = AppLocalizations.of(context);
@@ -1762,7 +1767,11 @@ class _DetailState extends State<_Detail> {
     if (confirmTitle != null) {
       final confirmed = await showDialog<bool>(
         context: context,
-        builder: (_) => _ConfirmDialog(title: confirmTitle, body: confirmBody!),
+        builder: (_) => _ConfirmDialog(
+          title: confirmTitle,
+          body: confirmBody!,
+          actionLabel: confirmActionLabel,
+        ),
       );
       if (confirmed != true || !mounted) return;
     }
@@ -1794,15 +1803,24 @@ class _DetailState extends State<_Detail> {
                 ),
                 ReportStatus.resolved =>
                   result.contentRemoved
-                      ? widget.report.targetType == ReportTargetType.reel
-                            ? copy.text(
-                                'Reel hidden and report resolved.',
-                                'Rolka ukryta, a zgłoszenie rozstrzygnięte.',
-                              )
-                            : copy.text(
-                                'Message removed and report resolved.',
-                                'Wiadomość usunięta, a zgłoszenie rozstrzygnięte.',
-                              )
+                      ? switch (widget.report.targetType) {
+                          ReportTargetType.reel => copy.text(
+                            'Reel hidden and report resolved.',
+                            'Rolka ukryta, a zgłoszenie rozstrzygnięte.',
+                          ),
+                          ReportTargetType.voiceMoment => copy.text(
+                            'Voice Moment removed and report resolved.',
+                            'Voice Moment usunięty, a zgłoszenie rozstrzygnięte.',
+                          ),
+                          ReportTargetType.voiceMomentComment => copy.text(
+                            'Voice Moment comment removed and report resolved.',
+                            'Komentarz Voice Momentu usunięty, a zgłoszenie rozstrzygnięte.',
+                          ),
+                          _ => copy.text(
+                            'Message removed and report resolved.',
+                            'Wiadomość usunięta, a zgłoszenie rozstrzygnięte.',
+                          ),
+                        }
                       : copy.text(
                           'Report resolved.',
                           'Zgłoszenie rozstrzygnięte.',
@@ -1881,7 +1899,21 @@ class _DetailState extends State<_Detail> {
           value: report.createdAt?.toLocal().toString().split('.').first ?? '—',
         ),
         const SizedBox(height: 12),
-        _ReportedAccount(userId: report.reportedUserId, service: service),
+        if (report.targetType == ReportTargetType.voiceMoment ||
+            report.targetType == ReportTargetType.voiceMomentComment) ...[
+          _TargetReference(report: report),
+          const SizedBox(height: 12),
+        ],
+        if (report.reportedUserId.isNotEmpty)
+          _ReportedAccount(userId: report.reportedUserId, service: service)
+        else
+          _Field(
+            label: copy.text('Reported account', 'Zgłoszone konto'),
+            value: copy.text(
+              'Author identity was not retained in this earlier report.',
+              'To wcześniejsze zgłoszenie nie zawiera identyfikatora autora.',
+            ),
+          ),
         if (report.targetType == ReportTargetType.globalMessage) ...[
           const SizedBox(height: 12),
           _TargetMessage(messageId: report.targetId, service: service),
@@ -1940,8 +1972,14 @@ class _DetailState extends State<_Detail> {
     final copy = AppLocalizations.of(context);
     final service = widget.service;
     final isReel = report.targetType == ReportTargetType.reel;
+    final isVoiceMoment = report.targetType == ReportTargetType.voiceMoment;
+    final isVoiceComment =
+        report.targetType == ReportTargetType.voiceMomentComment;
     final canRemove =
-        report.targetType == ReportTargetType.globalMessage || isReel;
+        report.targetType == ReportTargetType.globalMessage ||
+        isReel ||
+        isVoiceMoment ||
+        isVoiceComment;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -2044,15 +2082,24 @@ class _DetailState extends State<_Detail> {
             ),
             if (canRemove)
               _ActionButton(
-                label: isReel
-                    ? copy.text(
-                        'Hide Reel and resolve',
-                        'Ukryj rolkę i rozstrzygnij',
-                      )
-                    : copy.text(
-                        'Remove message and resolve',
-                        'Usuń wiadomość i rozstrzygnij',
-                      ),
+                label: switch (report.targetType) {
+                  ReportTargetType.reel => copy.text(
+                    'Hide Reel and resolve',
+                    'Ukryj rolkę i rozstrzygnij',
+                  ),
+                  ReportTargetType.voiceMoment => copy.text(
+                    'Remove Voice Moment and resolve',
+                    'Usuń Voice Moment i rozstrzygnij',
+                  ),
+                  ReportTargetType.voiceMomentComment => copy.text(
+                    'Remove Voice Moment comment and resolve',
+                    'Usuń komentarz Voice Momentu i rozstrzygnij',
+                  ),
+                  _ => copy.text(
+                    'Remove message and resolve',
+                    'Usuń wiadomość i rozstrzygnij',
+                  ),
+                },
                 icon: Icons.delete_outline_rounded,
                 danger: true,
                 busy: _busy,
@@ -2062,12 +2109,39 @@ class _DetailState extends State<_Detail> {
                     requestId: id,
                     note: _note.text,
                   ),
-                  confirmTitle: isReel
-                      ? copy.text('Hide this Reel?', 'Ukryć tę rolkę?')
-                      : copy.text(
-                          'Remove this message?',
-                          'Usunąć tę wiadomość?',
-                        ),
+                  confirmTitle: switch (report.targetType) {
+                    ReportTargetType.reel => copy.text(
+                      'Hide this Reel?',
+                      'Ukryć tę rolkę?',
+                    ),
+                    ReportTargetType.voiceMoment => copy.text(
+                      'Remove this Voice Moment?',
+                      'Usunąć ten Voice Moment?',
+                    ),
+                    ReportTargetType.voiceMomentComment => copy.text(
+                      'Remove this Voice Moment comment?',
+                      'Usunąć ten komentarz Voice Momentu?',
+                    ),
+                    _ => copy.text(
+                      'Remove this message?',
+                      'Usunąć tę wiadomość?',
+                    ),
+                  },
+                  confirmActionLabel: switch (report.targetType) {
+                    ReportTargetType.reel => copy.text(
+                      'Hide Reel',
+                      'Ukryj rolkę',
+                    ),
+                    ReportTargetType.voiceMoment => copy.text(
+                      'Remove Voice Moment',
+                      'Usuń Voice Moment',
+                    ),
+                    ReportTargetType.voiceMomentComment => copy.text(
+                      'Remove comment',
+                      'Usuń komentarz',
+                    ),
+                    _ => copy.text('Remove message', 'Usuń wiadomość'),
+                  },
                   confirmBody: isReel
                       ? copy.text(
                           'The Reel is hidden from feeds and playback while its '
@@ -2077,6 +2151,16 @@ class _DetailState extends State<_Detail> {
                               'media zachowane jako dowód. Ta czynność zostanie '
                               'przypisana do Twojego konta w dzienniku audytu '
                               'moderacji.',
+                        )
+                      : isVoiceMoment || isVoiceComment
+                      ? copy.text(
+                          'The reported Voice content is removed and its media '
+                              'cleanup is queued. This is recorded against your '
+                              'account in the moderation audit log.',
+                          'Zgłoszona treść głosowa zostanie usunięta, a jej media '
+                              'przekazane do bezpiecznego czyszczenia. Ta czynność '
+                              'zostanie przypisana do Twojego konta w dzienniku '
+                              'audytu moderacji.',
                         )
                       : copy.text(
                           'The message is hidden from the community and kept '
@@ -2184,6 +2268,43 @@ String _englishModerationFailure(
     'That action could not be completed. Check your connection and try again.',
 };
 
+/// Immutable target identity copied into the report at creation time.
+///
+/// Voice content may already be deleting or fully gone when a moderator opens
+/// the queue. Rendering these report-owned ids keeps the evidence useful and,
+/// critically, never turns the panel into a second read path for private media.
+class _TargetReference extends StatelessWidget {
+  const _TargetReference({required this.report});
+
+  final ModerationReport report;
+
+  @override
+  Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
+    final type = report.targetType;
+    final label = switch (type) {
+      ReportTargetType.voiceMoment => copy.text(
+        'Reported Voice Moment',
+        'Zgłoszony Voice Moment',
+      ),
+      ReportTargetType.voiceMomentComment => copy.text(
+        'Reported Voice Moment comment',
+        'Zgłoszony komentarz Voice Momentu',
+      ),
+      _ => copy.text('Reported target', 'Zgłoszony cel'),
+    };
+    final value = switch (type) {
+      ReportTargetType.voiceMoment =>
+        '${copy.text('Moment ID', 'ID Momentu')}: ${report.momentId ?? report.targetId}',
+      ReportTargetType.voiceMomentComment =>
+        '${copy.text('Moment ID', 'ID Momentu')}: ${report.momentId ?? '—'}\n'
+            '${copy.text('Comment ID', 'ID komentarza')}: ${report.commentId ?? report.targetId}',
+      _ => report.targetId.isEmpty ? '—' : report.targetId,
+    };
+    return _Field(label: label, value: value, meta: report.contextPath);
+  }
+}
+
 /// The reported account's PUBLIC summary only. No email, no phone, no
 /// provider data, no internal fields — this reads the same profile
 /// document any signed-in member can already read, through the service
@@ -2208,6 +2329,7 @@ class _ReportedAccount extends StatelessWidget {
               'This account no longer exists.',
               'To konto już nie istnieje.',
             ),
+            meta: userId,
           );
         }
         final profile = snapshot.data;
@@ -2458,10 +2580,15 @@ class _Banner extends StatelessWidget {
 }
 
 class _ConfirmDialog extends StatelessWidget {
-  const _ConfirmDialog({required this.title, required this.body});
+  const _ConfirmDialog({
+    required this.title,
+    required this.body,
+    this.actionLabel,
+  });
 
   final String title;
   final String body;
+  final String? actionLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -2505,7 +2632,7 @@ class _ConfirmDialog extends StatelessWidget {
             ),
           ),
           child: Text(
-            copy.text('Remove message', 'Usuń wiadomość'),
+            actionLabel ?? copy.text('Remove message', 'Usuń wiadomość'),
             style: const TextStyle(
               color: Colors.white,
               fontWeight: FontWeight.w800,

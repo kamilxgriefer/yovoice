@@ -32,11 +32,13 @@ class ReelDraftPlan {
     required this.media,
     required this.composition,
     this.backingAudio,
+    this.availability = ReelAvailabilityChoice.fallback,
   });
 
   final ReelUploadPayload media;
   final ReelUploadPayload? backingAudio;
   final ReelComposition composition;
+  final ReelAvailabilityChoice availability;
 
   String? validate() {
     if (media.mediaKind == ReelMediaKind.image &&
@@ -66,7 +68,7 @@ class ReelDraftPlan {
 /// duplicate Reels or orphan uploads.
 class ReelPublishSession {
   ReelPublishSession({required this.plan, String? requestId})
-    : requestId = requestId ?? _newRequestId();
+    : requestId = requestId ?? newRequestId();
 
   final ReelDraftPlan plan;
   final String requestId;
@@ -75,8 +77,10 @@ class ReelPublishSession {
   String? backingAudioStoragePath;
   String? mediaGeneration;
   String? backingAudioGeneration;
+  DateTime? reservationExpiresAt;
+  DateTime? contentExpiresAt;
 
-  static String _newRequestId() {
+  static String newRequestId() {
     final random = Random.secure();
     return List<int>.generate(
       16,
@@ -107,6 +111,7 @@ class ReelService {
   static final Map<String, _CachedReelGrant> _grantCache = {};
   static int _grantEpoch = 0;
   final Map<String, Future<Uri>> _pendingGrants = {};
+  final Map<String, String> _deleteRequestIds = <String, String>{};
 
   FirebaseFunctions get _functions =>
       _functionsOverride ??
@@ -136,7 +141,7 @@ class ReelService {
     if (session.reelId == null || session.mediaStoragePath == null) {
       final plan = session.plan;
       final audio = plan.backingAudio;
-      final reserved = await _call('reserveReelDraft', <String, Object?>{
+      final reserved = await _call('reserveReelDraftV2', <String, Object?>{
         'requestId': session.requestId,
         'mediaKind': plan.media.mediaKind.name,
         'mediaContentType': plan.media.contentType,
@@ -146,19 +151,34 @@ class ReelService {
         'audioContentType': audio?.contentType,
         'audioSize': audio?.size,
         'audioDurationMs': audio?.durationMs,
+        'availabilityHours': plan.availability.wireValue,
       });
+      final reservation = _ReelReservationV2.fromWire(reserved);
+      if (reservation.availability != plan.availability) {
+        throw const FormatException(
+          'The Reel reservation availability is inconsistent.',
+        );
+      }
+      final now = DateTime.now().toUtc();
+      if (!reservation.reservationExpiresAt.isAfter(now) ||
+          (reservation.contentExpiresAt != null &&
+              !reservation.contentExpiresAt!.isAfter(now))) {
+        throw const FormatException('The Reel reservation already expired.');
+      }
       session
-        ..reelId = _requiredSafeId(reserved['reelId'], 'reelId')
-        ..mediaStoragePath = _requiredPath(
-          reserved['mediaStoragePath'],
-          'mediaStoragePath',
-        )
+        ..reelId = reservation.reelId
+        ..mediaStoragePath = reservation.mediaStoragePath
         ..backingAudioStoragePath = audio == null
             ? null
-            : _requiredPath(
-                reserved['backingAudioStoragePath'],
-                'backingAudioStoragePath',
-              );
+            : reservation.backingAudioStoragePath
+        ..reservationExpiresAt = reservation.reservationExpiresAt
+        ..contentExpiresAt = reservation.contentExpiresAt;
+      if ((audio == null && reservation.backingAudioStoragePath != null) ||
+          (audio != null && reservation.backingAudioStoragePath == null)) {
+        throw const FormatException(
+          'The Reel audio reservation is inconsistent.',
+        );
+      }
     }
 
     final reelId = session.reelId!;
@@ -191,15 +211,17 @@ class ReelService {
       );
     }
 
-    final finalized = await _call('finalizeReelDraft', <String, Object?>{
+    final finalized = await _call('finalizeReelDraftV2', <String, Object?>{
       'requestId': session.requestId,
       'reelId': reelId,
       'mediaGeneration': session.mediaGeneration,
       'backingAudioGeneration': session.backingAudioGeneration,
       'composition': session.plan.composition.toWire(),
     });
-    final finalizedId = _requiredSafeId(finalized['reelId'], 'reelId');
-    if (finalizedId != reelId) {
+    final result = _ReelFinalizeResultV2.fromWire(finalized);
+    if (result.reelId != reelId ||
+        result.availability != session.plan.availability ||
+        result.contentExpiresAt != session.contentExpiresAt) {
       throw const FormatException('The Reel publish response is inconsistent.');
     }
     onProgress?.call(1);
@@ -306,11 +328,18 @@ class ReelService {
         'Use a page size from 1 to 20.',
       );
     }
-    final response = await _call('listReels', <String, Object?>{
+    final response = await _call('listReelsV2', <String, Object?>{
       'cursor': cursor,
       'limit': limit,
     });
-    return ReelFeedPage.fromWire(response);
+    final page = ReelFeedPage.fromV2Wire(response);
+    final now = DateTime.now().toUtc();
+    return ReelFeedPage(
+      items: page.items
+          .where((reel) => reel.availability.isAvailableAt(now))
+          .toList(growable: false),
+      nextCursor: page.nextCursor,
+    );
   }
 
   Future<Uri> resolveMediaUri(
@@ -330,38 +359,28 @@ class ReelService {
     return _pendingGrants.putIfAbsent(key, () async {
       final epoch = _grantEpoch;
       try {
-        final response = await _call('getReelMediaAccess', <String, Object?>{
+        final response = await _call('getReelMediaAccessV2', <String, Object?>{
           'reelId': cleanId,
           'asset': asset.name,
         });
         if (_auth.currentUser?.uid != uid || epoch != _grantEpoch) {
           throw StateError('Reel media access was cleared. Try again.');
         }
-        final rawUrl = response['url'];
-        final rawExpiry = response['expiresAtMillis'];
-        final generation = response['generation'];
-        if (response['schemaVersion'] != 1 ||
-            rawUrl is! String ||
-            rawExpiry is! int ||
-            generation is! String ||
-            !RegExp(r'^[0-9]{1,30}$').hasMatch(generation)) {
-          throw const FormatException('Malformed Reel media grant.');
+        final grant = _ReelMediaGrantV2.fromWire(response);
+        final checkedAt = DateTime.now().toUtc();
+        if (!grant.expiresAt.isAfter(checkedAt) ||
+            !grant.availability.isAvailableAt(checkedAt) ||
+            (grant.availability.contentExpiresAt != null &&
+                grant.expiresAt.isAfter(
+                  grant.availability.contentExpiresAt!,
+                ))) {
+          throw const FormatException('Expired Reel media grant.');
         }
-        final uri = Uri.tryParse(rawUrl);
-        final expiry = DateTime.fromMillisecondsSinceEpoch(
-          rawExpiry,
-          isUtc: true,
+        _grantCache[key] = _CachedReelGrant(
+          uri: grant.uri,
+          expiresAt: grant.expiresAt,
         );
-        if (uri == null ||
-            uri.scheme != 'https' ||
-            uri.host != 'storage.googleapis.com' ||
-            uri.userInfo.isNotEmpty ||
-            uri.hasPort ||
-            !expiry.isAfter(DateTime.now().toUtc())) {
-          throw const FormatException('Unsafe Reel media grant.');
-        }
-        _grantCache[key] = _CachedReelGrant(uri: uri, expiresAt: expiry);
-        return uri;
+        return grant.uri;
       } finally {
         _pendingGrants.remove(key);
       }
@@ -370,10 +389,24 @@ class ReelService {
 
   Future<void> deleteReel(String reelId, {String? requestId}) async {
     final id = _requiredSafeId(reelId, 'reelId');
-    await _call('deleteReel', <String, Object?>{
+    final stableRequestId = requestId == null
+        ? _deleteRequestIds.putIfAbsent(id, ReelPublishSession.newRequestId)
+        : _requiredSafeId(requestId, 'requestId');
+    final response = await _call('deleteReel', <String, Object?>{
       'reelId': id,
-      'requestId': requestId ?? ReelPublishSession._newRequestId(),
+      'requestId': stableRequestId,
     });
+    final result = _exactWireMap(response, const <String>{
+      'reelId',
+      'deleted',
+    }, 'Reel deletion');
+    if (_requiredSafeId(result['reelId'], 'reelId') != id ||
+        result['deleted'] != true) {
+      throw const FormatException('Malformed Reel deletion response.');
+    }
+    if (_deleteRequestIds[id] == stableRequestId) {
+      _deleteRequestIds.remove(id);
+    }
     _grantCache.removeWhere((key, _) => key.contains(':$id:'));
   }
 
@@ -414,7 +447,7 @@ class ReelService {
     }
     final response = await _call('createReelReport', <String, Object?>{
       'reelId': id,
-      'requestId': requestId ?? ReelPublishSession._newRequestId(),
+      'requestId': requestId ?? ReelPublishSession.newRequestId(),
       'reason': cleanReason,
       'note': cleanNote,
     });
@@ -438,6 +471,199 @@ class _CachedReelGrant {
 
   final Uri uri;
   final DateTime expiresAt;
+}
+
+@immutable
+class _ReelReservationV2 {
+  const _ReelReservationV2({
+    required this.reelId,
+    required this.mediaStoragePath,
+    required this.backingAudioStoragePath,
+    required this.reservationExpiresAt,
+    required this.availability,
+    required this.contentExpiresAt,
+  });
+
+  final String reelId;
+  final String mediaStoragePath;
+  final String? backingAudioStoragePath;
+  final DateTime reservationExpiresAt;
+  final ReelAvailabilityChoice availability;
+  final DateTime? contentExpiresAt;
+
+  factory _ReelReservationV2.fromWire(Map<Object?, Object?> raw) {
+    final map = _exactWireMap(raw, const <String>{
+      'schemaVersion',
+      'reelId',
+      'mediaStoragePath',
+      'backingAudioStoragePath',
+      'expiresAtMillis',
+      'availabilityHours',
+      'contentExpiresAtMillis',
+    }, 'Reel reservation');
+    if (map['schemaVersion'] != 2) {
+      throw const FormatException('Unsupported Reel reservation schema.');
+    }
+    final choice = ReelAvailabilityChoice.fromWire(map['availabilityHours']);
+    final contentExpiresAt = _contentExpiry(
+      choice,
+      map['contentExpiresAtMillis'],
+      'contentExpiresAtMillis',
+    );
+    final rawAudioPath = map['backingAudioStoragePath'];
+    if (rawAudioPath != null && rawAudioPath is! String) {
+      throw const FormatException('backingAudioStoragePath is invalid.');
+    }
+    return _ReelReservationV2(
+      reelId: _requiredSafeId(map['reelId'], 'reelId'),
+      mediaStoragePath: _requiredPath(
+        map['mediaStoragePath'],
+        'mediaStoragePath',
+      ),
+      backingAudioStoragePath: rawAudioPath == null
+          ? null
+          : _requiredPath(rawAudioPath, 'backingAudioStoragePath'),
+      reservationExpiresAt: _positiveTimestamp(
+        map['expiresAtMillis'],
+        'expiresAtMillis',
+      ),
+      availability: choice,
+      contentExpiresAt: contentExpiresAt,
+    );
+  }
+}
+
+@immutable
+class _ReelFinalizeResultV2 {
+  const _ReelFinalizeResultV2({
+    required this.reelId,
+    required this.availability,
+    required this.contentExpiresAt,
+  });
+
+  final String reelId;
+  final ReelAvailabilityChoice availability;
+  final DateTime? contentExpiresAt;
+
+  factory _ReelFinalizeResultV2.fromWire(Map<Object?, Object?> raw) {
+    final map = _exactWireMap(raw, const <String>{
+      'schemaVersion',
+      'reelId',
+      'published',
+      'availabilityHours',
+      'expiresAtMillis',
+    }, 'Reel finalize result');
+    if (map['schemaVersion'] != 2 || map['published'] != true) {
+      throw const FormatException('Malformed Reel finalize result.');
+    }
+    final choice = ReelAvailabilityChoice.fromWire(map['availabilityHours']);
+    return _ReelFinalizeResultV2(
+      reelId: _requiredSafeId(map['reelId'], 'reelId'),
+      availability: choice,
+      contentExpiresAt: _contentExpiry(
+        choice,
+        map['expiresAtMillis'],
+        'expiresAtMillis',
+      ),
+    );
+  }
+}
+
+@immutable
+class _ReelMediaGrantV2 {
+  const _ReelMediaGrantV2({
+    required this.uri,
+    required this.expiresAt,
+    required this.generation,
+    required this.availability,
+  });
+
+  final Uri uri;
+  final DateTime expiresAt;
+  final String generation;
+  final ReelAvailability availability;
+
+  factory _ReelMediaGrantV2.fromWire(Map<Object?, Object?> raw) {
+    final map = _exactWireMap(raw, const <String>{
+      'schemaVersion',
+      'url',
+      'expiresAtMillis',
+      'generation',
+      'availabilityHours',
+      'contentExpiresAtMillis',
+    }, 'Reel media grant');
+    if (map['schemaVersion'] != 2) {
+      throw const FormatException('Unsupported Reel media grant schema.');
+    }
+    final rawUrl = map['url'];
+    final rawGeneration = map['generation'];
+    if (rawUrl is! String ||
+        rawGeneration is! String ||
+        !RegExp(r'^[0-9]{1,30}$').hasMatch(rawGeneration)) {
+      throw const FormatException('Malformed Reel media grant.');
+    }
+    final uri = Uri.tryParse(rawUrl);
+    if (uri == null ||
+        uri.scheme != 'https' ||
+        uri.host != 'storage.googleapis.com' ||
+        uri.userInfo.isNotEmpty ||
+        uri.hasPort) {
+      throw const FormatException('Unsafe Reel media grant.');
+    }
+    final choice = ReelAvailabilityChoice.fromWire(map['availabilityHours']);
+    final contentExpiresAt = _contentExpiry(
+      choice,
+      map['contentExpiresAtMillis'],
+      'contentExpiresAtMillis',
+    );
+    return _ReelMediaGrantV2(
+      uri: uri,
+      expiresAt: _positiveTimestamp(map['expiresAtMillis'], 'expiresAtMillis'),
+      generation: rawGeneration,
+      availability: ReelAvailability(
+        schemaVersion: 2,
+        choice: choice,
+        contentExpiresAt: contentExpiresAt,
+      ),
+    );
+  }
+}
+
+Map<String, Object?> _exactWireMap(
+  Map<Object?, Object?> raw,
+  Set<String> expected,
+  String label,
+) {
+  final map = <String, Object?>{};
+  for (final entry in raw.entries) {
+    final key = entry.key;
+    if (key is! String) throw FormatException('$label has an invalid key.');
+    map[key] = entry.value;
+  }
+  if (map.keys.toSet().difference(expected).isNotEmpty ||
+      expected.difference(map.keys.toSet()).isNotEmpty) {
+    throw FormatException('$label has an unsupported shape.');
+  }
+  return map;
+}
+
+DateTime _positiveTimestamp(Object? raw, String label) {
+  if (raw is! int || raw <= 0) {
+    throw FormatException('$label must be a positive integer.');
+  }
+  return DateTime.fromMillisecondsSinceEpoch(raw, isUtc: true);
+}
+
+DateTime? _contentExpiry(
+  ReelAvailabilityChoice choice,
+  Object? raw,
+  String label,
+) {
+  if (choice.isPermanent) {
+    if (raw != null) throw FormatException('$label must be null.');
+    return null;
+  }
+  return _positiveTimestamp(raw, label);
 }
 
 String _requiredSafeId(Object? value, String label) {

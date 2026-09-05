@@ -1,3 +1,6 @@
+import 'dart:async';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
@@ -5,6 +8,7 @@ import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/reels/data/models/reel.dart';
 import 'package:yovoice/features/reels/data/services/reel_service.dart';
 import 'package:yovoice/features/reels/presentation/widgets/reel_card.dart';
+import 'package:yovoice/features/reels/presentation/widgets/reel_playback_coordinator.dart';
 import 'package:yovoice/shared/widgets/buttons/yo_button.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
@@ -12,29 +16,51 @@ import 'package:yovoice/shared/widgets/states/yo_empty_state.dart';
 import 'package:yovoice/shared/widgets/states/yo_error_state.dart';
 import 'package:yovoice/shared/widgets/states/yo_loading_indicator.dart';
 
+typedef ReelExpiryTimerFactory =
+    Timer Function(Duration duration, void Function() callback);
+
 class ReelsFeedScreen extends StatefulWidget {
   const ReelsFeedScreen({
     this.service,
     this.videoBuilder,
+    this.audioPlaybackFactory,
     this.onCreate,
+    this.isVisible,
+    this.now,
+    this.expiryTimerFactory,
     this.embedded = false,
     super.key,
   });
 
   final ReelService? service;
   final ReelVideoBuilder? videoBuilder;
+  final ReelAudioPlaybackFactory? audioPlaybackFactory;
 
   /// Opens the composer and completes when it closes. The feed reloads after
   /// completion so a newly published Reel appears without reopening the tab.
   final Future<void> Function()? onCreate;
+
+  /// False while the host shell or the YO Moments format switch is showing a
+  /// different surface. The selected Reel remains mounted, but its player is
+  /// inactive so video and audio cannot continue behind another destination.
+  final ValueListenable<bool>? isVisible;
+  final DateTime Function()? now;
+  final ReelExpiryTimerFactory? expiryTimerFactory;
   final bool embedded;
 
   @override
   State<ReelsFeedScreen> createState() => _ReelsFeedScreenState();
 }
 
-class _ReelsFeedScreenState extends State<ReelsFeedScreen> {
+class _ReelsFeedScreenState extends State<ReelsFeedScreen>
+    with WidgetsBindingObserver {
   static const int _maxEmptyPagesPerLoad = 4;
+  // Browsers clamp timer delays to a signed 32-bit millisecond value. Reels
+  // can remain available for 30 days, so arming the whole remaining duration
+  // on web can overflow and wake immediately in a tight reschedule loop.
+  static const Duration _maximumExpiryTimerDelay = Duration(
+    milliseconds: 0x7fffffff,
+  );
 
   late final ReelService _service = widget.service ?? ReelService();
   final PageController _pageController = PageController();
@@ -47,17 +73,99 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen> {
   bool _creating = false;
   int _selected = 0;
   final Set<String> _reporting = <String>{};
+  final Set<String> _deleting = <String>{};
+  final Map<String, String> _deleteRequestIds = <String, String>{};
+  Timer? _expiryTimer;
+
+  DateTime get _now => (widget.now ?? DateTime.now)().toUtc();
+  ReelExpiryTimerFactory get _timerFactory =>
+      widget.expiryTimerFactory ?? Timer.new;
+  bool get _isHostVisible => widget.isVisible?.value ?? true;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    widget.isVisible?.addListener(_handleHostVisibilityChanged);
     _load(reset: true);
   }
 
   @override
+  void didUpdateWidget(covariant ReelsFeedScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.isVisible, widget.isVisible)) {
+      oldWidget.isVisible?.removeListener(_handleHostVisibilityChanged);
+      widget.isVisible?.addListener(_handleHostVisibilityChanged);
+      if (_isHostVisible) _revalidateAvailability();
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && _isHostVisible) {
+      _revalidateAvailability();
+    }
+  }
+
+  void _handleHostVisibilityChanged() {
+    if (_isHostVisible) _revalidateAvailability();
+  }
+
+  @override
   void dispose() {
+    _expiryTimer?.cancel();
+    widget.isVisible?.removeListener(_handleHostVisibilityChanged);
+    WidgetsBinding.instance.removeObserver(this);
     _pageController.dispose();
     super.dispose();
+  }
+
+  void _revalidateAvailability() {
+    _expiryTimer?.cancel();
+    _expiryTimer = null;
+    if (!mounted) return;
+    final now = _now;
+    final available = _items
+        .where((item) => item.availability.isAvailableAt(now))
+        .toList(growable: false);
+    final changed = available.length != _items.length;
+    if (changed) {
+      final selected = available.isEmpty
+          ? 0
+          : _selected.clamp(0, available.length - 1);
+      setState(() {
+        _items = available;
+        _selected = selected;
+      });
+      if (available.isNotEmpty) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted || !_pageController.hasClients) return;
+          final current = _pageController.page?.round();
+          if (current != selected) _pageController.jumpToPage(selected);
+        });
+      }
+    }
+    DateTime? nearest;
+    for (final item in available) {
+      final deadline = item.availability.contentExpiresAt;
+      if (deadline != null && (nearest == null || deadline.isBefore(nearest))) {
+        nearest = deadline;
+      }
+    }
+    if (nearest == null) return;
+    final remaining = nearest.difference(now);
+    final delay = remaining > _maximumExpiryTimerDelay
+        ? _maximumExpiryTimerDelay
+        : remaining.isNegative
+        ? Duration.zero
+        : remaining;
+    _expiryTimer = _timerFactory(delay, () {
+      _expiryTimer = null;
+      // A long availability window is deliberately split into browser-safe
+      // chunks. Re-read the wall clock after each chunk; only the exact
+      // deadline removes content.
+      _revalidateAvailability();
+    });
   }
 
   Future<void> _load({required bool reset}) async {
@@ -99,6 +207,7 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen> {
             ? const _ReelFeedScanPaused()
             : null;
       });
+      _revalidateAvailability();
     } catch (error) {
       if (mounted) setState(() => _error = error);
     } finally {
@@ -174,6 +283,7 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen> {
   }
 
   Future<void> _delete(Reel reel) async {
+    if (_deleting.contains(reel.id)) return;
     final copy = AppLocalizations.of(context);
     final confirmed = await showDialog<bool>(
       context: context,
@@ -198,13 +308,20 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen> {
       ),
     );
     if (confirmed != true || !mounted) return;
+    final requestId = _deleteRequestIds.putIfAbsent(
+      reel.id,
+      ReelPublishSession.newRequestId,
+    );
+    setState(() => _deleting.add(reel.id));
     try {
-      await _service.deleteReel(reel.id);
+      await _service.deleteReel(reel.id, requestId: requestId);
       if (!mounted) return;
+      _deleteRequestIds.remove(reel.id);
       setState(() {
         _items = _items.where((item) => item.id != reel.id).toList();
         _selected = _items.isEmpty ? 0 : _selected.clamp(0, _items.length - 1);
       });
+      _revalidateAvailability();
       ScaffoldMessenger.of(context)
         ..hideCurrentSnackBar()
         ..showSnackBar(
@@ -228,6 +345,8 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen> {
             ),
           ),
         );
+    } finally {
+      if (mounted) setState(() => _deleting.remove(reel.id));
     }
   }
 
@@ -241,44 +360,64 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen> {
         top: widget.embedded,
         child: LayoutBuilder(
           builder: (context, constraints) {
+            Widget scrollableState(Widget child) {
+              return SingleChildScrollView(
+                primary: false,
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(
+                    minHeight: constraints.hasBoundedHeight
+                        ? constraints.maxHeight
+                        : 0,
+                  ),
+                  child: child,
+                ),
+              );
+            }
+
             if (_loading || (_items.isEmpty && _loadingMore)) {
               return YoLoadingIndicator.fullscreen(
                 message: copy.text('Loading Reels', 'Ładowanie Reels'),
               );
             }
             if (_error is _ReelFeedScanPaused && _items.isEmpty) {
-              return YoEmptyState(
-                icon: Icons.travel_explore_rounded,
-                title: copy.text('Loading Reels', 'Ładowanie Reels'),
-                subtitle: copy.text(
-                  'Something went wrong. Please try again.',
-                  'Coś poszło nie tak. Spróbuj ponownie.',
+              return scrollableState(
+                YoEmptyState(
+                  icon: Icons.travel_explore_rounded,
+                  title: copy.text('Loading Reels', 'Ładowanie Reels'),
+                  subtitle: copy.text(
+                    'Something went wrong. Please try again.',
+                    'Coś poszło nie tak. Spróbuj ponownie.',
+                  ),
+                  actionLabel: copy.text('Try again', 'Spróbuj ponownie'),
+                  onAction: () => _load(reset: false),
                 ),
-                actionLabel: copy.text('Try again', 'Spróbuj ponownie'),
-                onAction: () => _load(reset: false),
               );
             }
             if (_error != null && _items.isEmpty) {
-              return YoErrorState(
-                error: _error,
-                onRetry: () => _load(reset: _cursor == null),
+              return scrollableState(
+                YoErrorState(
+                  error: _error,
+                  onRetry: () => _load(reset: _cursor == null),
+                ),
               );
             }
             if (_items.isEmpty) {
-              return YoEmptyState(
-                icon: Icons.movie_creation_outlined,
-                title: copy.text('No Reels yet', 'Nie ma jeszcze Reels'),
-                subtitle: copy.text(
-                  'Published photos and short videos will appear here.',
-                  'Opublikowane zdjęcia i krótkie filmy pojawią się tutaj.',
+              return scrollableState(
+                YoEmptyState(
+                  icon: Icons.movie_creation_outlined,
+                  title: copy.text('No Reels yet', 'Nie ma jeszcze Reels'),
+                  subtitle: copy.text(
+                    'Published photos and short videos will appear here.',
+                    'Opublikowane zdjęcia i krótkie filmy pojawią się tutaj.',
+                  ),
+                  actionLabel: widget.onCreate == null
+                      ? null
+                      : copy.text('Create Reel', 'Utwórz Reel'),
+                  onAction: _creating ? null : _create,
                 ),
-                actionLabel: widget.onCreate == null
-                    ? null
-                    : copy.text('Create Reel', 'Utwórz Reel'),
-                onAction: _creating ? null : _create,
               );
             }
-            final feed = Stack(
+            Widget buildFeed({required bool visible}) => Stack(
               children: <Widget>[
                 Positioned.fill(
                   child: _FeedPager(
@@ -286,7 +425,9 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen> {
                     controller: _pageController,
                     service: _service,
                     selectedIndex: _selected,
+                    isVisible: visible,
                     videoBuilder: widget.videoBuilder,
+                    audioPlaybackFactory: widget.audioPlaybackFactory,
                     onReport: _report,
                     onDelete: _delete,
                     onChanged: (index) {
@@ -313,6 +454,14 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen> {
                   ),
               ],
             );
+            final visibility = widget.isVisible;
+            final feed = visibility == null
+                ? buildFeed(visible: true)
+                : ValueListenableBuilder<bool>(
+                    valueListenable: visibility,
+                    builder: (context, visible, child) =>
+                        buildFeed(visible: visible),
+                  );
             if (constraints.maxWidth < 1100) {
               return Center(
                 child: ConstrainedBox(
@@ -370,20 +519,24 @@ class _FeedPager extends StatelessWidget {
     required this.controller,
     required this.service,
     required this.selectedIndex,
+    required this.isVisible,
     required this.onChanged,
     required this.onReport,
     required this.onDelete,
     this.videoBuilder,
+    this.audioPlaybackFactory,
   });
 
   final List<Reel> items;
   final PageController controller;
   final ReelService service;
   final int selectedIndex;
+  final bool isVisible;
   final ValueChanged<int> onChanged;
   final Future<void> Function(Reel reel) onReport;
   final Future<void> Function(Reel reel) onDelete;
   final ReelVideoBuilder? videoBuilder;
+  final ReelAudioPlaybackFactory? audioPlaybackFactory;
 
   @override
   Widget build(BuildContext context) {
@@ -399,8 +552,9 @@ class _FeedPager extends StatelessWidget {
             key: ValueKey<String>(items[index].id),
             reel: items[index],
             service: service,
-            isActive: index == selectedIndex,
+            isActive: isVisible && index == selectedIndex,
             videoBuilder: videoBuilder,
+            audioPlaybackFactory: audioPlaybackFactory,
             onReport: service.isCurrentUserAuthor(items[index])
                 ? null
                 : () => onReport(items[index]),

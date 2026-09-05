@@ -199,7 +199,7 @@ class MobileMomentsStrip extends StatelessWidget {
         final yours = _MomentBubble(
           key: const ValueKey('home-your-moment'),
           focusNode: mine == null ? null : tileFocusNode(mine.id),
-          label: copy.text('Your Moment', 'Twój Moment'),
+          label: 'YO Moments',
           userId: profile?.uid ?? currentUserId,
           // The profile is authoritative. A Moment's denormalized photo can
           // be older than a newly saved avatar.
@@ -238,16 +238,8 @@ class MobileMomentsStrip extends StatelessWidget {
             MomentExpiryFocusTarget(
               key: const ValueKey('mobile-home-moments-heading'),
               focusNode: recoveryFocus,
-              semanticLabel: copy.text(
-                'Moments from your circle',
-                'Momenty z Twojego kręgu',
-              ),
-              child: MobileSectionHeader(
-                title: copy.text(
-                  'Moments from your circle',
-                  'Momenty z Twojego kręgu',
-                ),
-              ),
+              semanticLabel: copy.yoMomentsFromYourCircle,
+              child: MobileSectionHeader(title: copy.yoMomentsFromYourCircle),
             ),
             // This is a story rail, not an empty-state card. The signed-in
             // avatar is always first; every other avatar proves that person

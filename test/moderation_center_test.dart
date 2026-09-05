@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:yovoice/features/home/presentation/widgets/more_sheet.dart';
+import 'package:yovoice/features/moderation/data/models/moderation_audit_event.dart';
 import 'package:yovoice/features/moderation/data/models/moderation_report.dart';
 import 'package:yovoice/features/moderation/data/services/moderation_service.dart';
 import 'package:yovoice/features/moderation/data/services/report_service.dart';
@@ -314,6 +315,119 @@ void main() {
       expect(find.text('Remove message and resolve'), findsNothing);
     });
 
+    testWidgets('a self-contained Voice comment renders without its source and '
+        'calls removeAndResolve', (tester) async {
+      useDesktop(tester);
+      await seedAccount(mod, role: 'moderator');
+      await db.collection('reports').doc('voice-comment-report').set({
+        'schemaVersion': 2,
+        'reporterId': 'reporter-uid',
+        'targetType': 'voiceMomentComment',
+        'targetId': 'comment-1',
+        'reportedUserId': 'voice-author',
+        'contextPath': 'voiceMoments/moment-1/comments/comment-1',
+        'conversationId': null,
+        'messageId': null,
+        'momentId': 'moment-1',
+        'commentId': 'comment-1',
+        'roomId': null,
+        'clubId': null,
+        'channelId': null,
+        'reason': 'harassment',
+        'note': 'immutable report evidence',
+        'createdAt': Timestamp.now(),
+        'updatedAt': Timestamp.now(),
+        'status': 'open',
+      });
+      final recordingService = _RecordingVoiceModerationService(
+        firestore: db,
+        auth: authFor(mod, role: 'moderator'),
+      );
+
+      await tester.pumpWidget(
+        host(ModerationCenterScreen(moderationService: recordingService)),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.bySemanticsLabel(RegExp(r'Harassment or bullying, Open')),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Reported Voice Moment comment'), findsOneWidget);
+      expect(find.textContaining('Moment ID: moment-1'), findsOneWidget);
+      expect(find.textContaining('Comment ID: comment-1'), findsOneWidget);
+      expect(
+        find.text('voiceMoments/moment-1/comments/comment-1'),
+        findsOneWidget,
+      );
+      expect(find.text('voice-author'), findsOneWidget);
+
+      final remove = find.text('Remove Voice Moment comment and resolve');
+      expect(remove, findsOneWidget);
+      await tester.ensureVisible(remove);
+      await tester.tap(remove);
+      await tester.pumpAndSettle();
+
+      expect(find.text('Remove this Voice Moment comment?'), findsOneWidget);
+      await tester.tap(find.text('Remove comment'));
+      await tester.pumpAndSettle();
+
+      expect(recordingService.removedReportId, 'voice-comment-report');
+      expect(recordingService.removalRequestId, isNotNull);
+      expect(recordingService.removalRequestId, isNotEmpty);
+      expect(recordingService.removalNote, isEmpty);
+      expect(
+        find.text('Voice Moment comment removed and report resolved.'),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('a self-contained Voice Moment exposes its removal action', (
+      tester,
+    ) async {
+      useDesktop(tester);
+      await seedAccount(mod, role: 'moderator');
+      await db.collection('reports').doc('voice-moment-report').set({
+        'schemaVersion': 2,
+        'reporterId': 'reporter-uid',
+        'targetType': 'voiceMoment',
+        'targetId': 'moment-2',
+        'reportedUserId': 'voice-author',
+        'contextPath': 'voiceMoments/moment-2',
+        'conversationId': null,
+        'messageId': null,
+        'momentId': 'moment-2',
+        'commentId': null,
+        'roomId': null,
+        'clubId': null,
+        'channelId': null,
+        'reason': 'spam',
+        'note': '',
+        'createdAt': Timestamp.now(),
+        'updatedAt': Timestamp.now(),
+        'status': 'open',
+      });
+
+      await tester.pumpWidget(
+        host(
+          ModerationCenterScreen(
+            moderationService: _RecordingVoiceModerationService(
+              firestore: db,
+              auth: authFor(mod, role: 'moderator'),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.bySemanticsLabel(RegExp(r'Spam or scam, Open')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Reported Voice Moment'), findsOneWidget);
+      expect(find.textContaining('Moment ID: moment-2'), findsOneWidget);
+      expect(find.text('voiceMoments/moment-2'), findsOneWidget);
+      expect(find.text('Remove Voice Moment and resolve'), findsOneWidget);
+    });
+
     testWidgets('the status filter narrows to that status only', (
       tester,
     ) async {
@@ -419,6 +533,90 @@ void main() {
 
   group('report model', () {
     test(
+      'a self-contained v2 Voice comment keeps immutable target identity',
+      () async {
+        await db.collection('reports').doc('voice-comment-v2').set({
+          'schemaVersion': 2,
+          'reporterId': 'reporter-uid',
+          'targetType': 'voiceMomentComment',
+          'targetId': 'comment-1',
+          'reportedUserId': 'comment-author',
+          'contextPath': 'voiceMoments/moment-1/comments/comment-1',
+          'momentId': 'moment-1',
+          'commentId': 'comment-1',
+          'reason': 'harassment',
+          'note': '',
+          'createdAt': Timestamp.now(),
+          'status': 'open',
+        });
+
+        final report = ModerationReport.fromFirestore(
+          await db.collection('reports').doc('voice-comment-v2').get(),
+        );
+
+        expect(report.schemaVersion, 2);
+        expect(report.targetType, ReportTargetType.voiceMomentComment);
+        expect(report.targetId, 'comment-1');
+        expect(report.momentId, 'moment-1');
+        expect(report.commentId, 'comment-1');
+        expect(report.reportedUserId, 'comment-author');
+        expect(report.contextPath, 'voiceMoments/moment-1/comments/comment-1');
+      },
+    );
+
+    test('an earlier v2 Voice report derives a safe reference without '
+        'loading its target', () async {
+      await db.collection('reports').doc('voice-legacy-v2').set({
+        'schemaVersion': 2,
+        'reporterId': 'reporter-uid',
+        'targetType': 'voiceMoment',
+        'momentId': 'moment-legacy',
+        'commentId': null,
+        'reason': 'spam',
+        'note': '',
+        'createdAt': Timestamp.now(),
+        'status': 'open',
+      });
+
+      final report = ModerationReport.fromFirestore(
+        await db.collection('reports').doc('voice-legacy-v2').get(),
+      );
+
+      expect(report.targetType, ReportTargetType.voiceMoment);
+      expect(report.targetId, 'moment-legacy');
+      expect(report.momentId, 'moment-legacy');
+      expect(report.commentId, isNull);
+      expect(report.reportedUserId, isEmpty);
+      expect(report.contextPath, 'voiceMoments/moment-legacy');
+    });
+
+    test('an earlier v2 Voice comment derives its comment reference', () async {
+      await db.collection('reports').doc('voice-comment-legacy-v2').set({
+        'schemaVersion': 2,
+        'reporterId': 'reporter-uid',
+        'targetType': 'voiceMomentComment',
+        'momentId': 'moment-legacy',
+        'commentId': 'comment-legacy',
+        'reason': 'spam',
+        'note': '',
+        'createdAt': Timestamp.now(),
+        'status': 'open',
+      });
+
+      final report = ModerationReport.fromFirestore(
+        await db.collection('reports').doc('voice-comment-legacy-v2').get(),
+      );
+
+      expect(report.targetType, ReportTargetType.voiceMomentComment);
+      expect(report.targetId, 'comment-legacy');
+      expect(report.reportedUserId, isEmpty);
+      expect(
+        report.contextPath,
+        'voiceMoments/moment-legacy/comments/comment-legacy',
+      );
+    });
+
+    test(
       'a canonical Reel target remains typed in the moderation queue',
       () async {
         await db.collection('reports').doc('reel').set({
@@ -492,4 +690,38 @@ void main() {
       expect(ids.every((id) => id.length >= 16), isTrue);
     });
   });
+}
+
+class _RecordingVoiceModerationService extends ModerationService {
+  _RecordingVoiceModerationService({
+    required FakeFirebaseFirestore firestore,
+    required MockFirebaseAuth auth,
+  }) : super(firestore: firestore, auth: auth);
+
+  String? removedReportId;
+  String? removalRequestId;
+  String? removalNote;
+
+  @override
+  Future<ModerationAuditPage> reportAuditTrail(
+    String reportId, {
+    int limit = ModerationService.auditPageSize,
+    String? cursor,
+  }) async => ModerationAuditPage.empty;
+
+  @override
+  Future<ModerationResult> removeContentAndResolve(
+    String reportId, {
+    required String requestId,
+    String note = '',
+  }) async {
+    removedReportId = reportId;
+    removalRequestId = requestId;
+    removalNote = note;
+    return const ModerationResult(
+      status: ReportStatus.resolved,
+      contentRemoved: true,
+      replayed: false,
+    );
+  }
 }

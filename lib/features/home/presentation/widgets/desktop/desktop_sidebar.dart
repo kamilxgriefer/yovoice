@@ -8,7 +8,16 @@ import 'package:yovoice/features/profile/data/models/user_profile.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
 import 'package:yovoice/features/staff/data/staff_capabilities.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
+import 'package:yovoice/shared/widgets/navigation/yo_moments_icon.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
+
+typedef _DesktopNavIconBuilder =
+    Widget Function(
+      BuildContext context, {
+      required bool active,
+      required bool pressed,
+      required Color color,
+    });
 
 /// The desktop-only left rail. Presentation shell for the SAME
 /// destinations the mobile dock and More sheet already own — it holds no
@@ -211,7 +220,22 @@ class DesktopSidebar extends StatelessWidget {
                       DesktopNavItem.moments,
                       _NavTile(
                         item: DesktopNavItem.moments,
-                        icon: Icons.graphic_eq_rounded,
+                        icon: Icons.play_arrow_rounded,
+                        iconBuilder:
+                            (
+                              context, {
+                              required active,
+                              required pressed,
+                              required color,
+                            }) => YoMomentsIcon(
+                              state: pressed
+                                  ? YoMomentsIconState.pressed
+                                  : active
+                                  ? YoMomentsIconState.active
+                                  : YoMomentsIconState.inactive,
+                              color: color,
+                              size: 20,
+                            ),
                         label: copy.moments,
                         active: active == DesktopNavItem.moments,
                         onTap: onSelect,
@@ -513,6 +537,7 @@ class _NavTile extends StatefulWidget {
     required this.onTap,
     this.badge = 0,
     this.trailingChevron = false,
+    this.iconBuilder,
     super.key,
   });
 
@@ -521,6 +546,7 @@ class _NavTile extends StatefulWidget {
   final String label;
   final bool active;
   final int badge;
+  final _DesktopNavIconBuilder? iconBuilder;
 
   /// The More row hints that it opens a popover rather than swapping the
   /// content slot.
@@ -538,6 +564,7 @@ class _NavTileState extends State<_NavTile> {
   );
   bool _hovered = false;
   bool _focused = false;
+  bool _pressed = false;
 
   @override
   void dispose() {
@@ -567,6 +594,7 @@ class _NavTileState extends State<_NavTile> {
             borderRadius: BorderRadius.circular(10),
             onHover: (value) => setState(() => _hovered = value),
             onFocusChange: (value) => setState(() => _focused = value),
+            onHighlightChanged: (value) => setState(() => _pressed = value),
             onTap: () => widget.onTap(widget.item),
             child: AnimatedContainer(
               key: ValueKey('desktop-nav-focus-${widget.item.name}'),
@@ -601,12 +629,24 @@ class _NavTileState extends State<_NavTile> {
                     ),
                   ),
                   const SizedBox(width: 9),
-                  Icon(
-                    widget.icon,
-                    size: 19,
-                    color: active
-                        ? colors.onPrimaryContainer
-                        : colors.onSurfaceVariant,
+                  SizedBox.square(
+                    dimension: 20,
+                    child:
+                        widget.iconBuilder?.call(
+                          context,
+                          active: active,
+                          pressed: _pressed,
+                          color: active
+                              ? colors.onPrimaryContainer
+                              : colors.onSurfaceVariant,
+                        ) ??
+                        Icon(
+                          widget.icon,
+                          size: 19,
+                          color: active
+                              ? colors.onPrimaryContainer
+                              : colors.onSurfaceVariant,
+                        ),
                   ),
                   const SizedBox(width: 11),
                   Expanded(

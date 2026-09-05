@@ -1,10 +1,14 @@
+import 'dart:async';
+
 import 'package:audioplayers/audioplayers.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/helpers/error_messages.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
+import 'package:yovoice/core/navigation/app_route_observer.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/moderation/data/services/content_report_service.dart';
 import 'package:yovoice/features/moderation/presentation/report_content_flow.dart';
@@ -15,6 +19,23 @@ import 'package:yovoice/features/moments/presentation/widgets/moment_expiry_acce
 import 'package:yovoice/features/moments/presentation/widgets/moment_expiry_boundary.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
+import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
+
+enum _MomentCommentsRefreshTrigger {
+  initial,
+  appResume,
+  routeReturn,
+  mutation,
+  retry,
+}
+
+bool _momentCommentsIsGoneError(Object error) =>
+    error is FirebaseFunctionsException &&
+    const <String>{
+      'permission-denied',
+      'not-found',
+      'gone',
+    }.contains(error.code);
 
 class MomentCommentsScreen extends StatefulWidget {
   const MomentCommentsScreen({
@@ -46,17 +67,27 @@ class MomentCommentsScreen extends StatefulWidget {
   State<MomentCommentsScreen> createState() => _MomentCommentsScreenState();
 }
 
-class _MomentCommentsScreenState extends State<MomentCommentsScreen> {
+class _MomentCommentsScreenState extends State<MomentCommentsScreen>
+    with RouteAware, WidgetsBindingObserver {
   final TextEditingController _controller = TextEditingController();
-  late final FirebaseFirestore _firestore =
-      widget.firestore ?? FirebaseFirestore.instance;
   late final FirebaseAuth? _auth = _resolveAuth();
   late final MomentService? _momentService = _resolveMomentService();
+  late VoiceMoment _moment = widget.moment;
   final FocusNode _goneBackFocus = FocusNode(
     debugLabel: 'Expired Moment comments back',
   );
   final MomentExpiryAnnouncer _expiryAnnouncer = MomentExpiryAnnouncer();
   bool _sending = false;
+  List<MomentComment>? _comments;
+  bool _commentsTruncated = false;
+  String? _nextCommentCursor;
+  Object? _loadError;
+  bool _loadingMore = false;
+  bool _unavailable = false;
+  ModalRoute<void>? _observedRoute;
+  final Set<_MomentCommentsRefreshTrigger> _canonicalRefreshesInFlight =
+      <_MomentCommentsRefreshTrigger>{};
+  int _viewLoadGeneration = 0;
 
   /// Both guarded the way MomentsScreen guards its services: without a
   /// Firebase app these throw, and the screen must still render its
@@ -81,25 +112,119 @@ class _MomentCommentsScreenState extends State<MomentCommentsScreen> {
 
   String get _currentUid => _auth?.currentUser?.uid ?? '';
 
-  CollectionReference<Map<String, dynamic>> get _comments => _firestore
-      .collection('voiceMoments')
-      .doc(widget.moment.id)
-      .collection('comments');
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    unawaited(_loadComments(trigger: _MomentCommentsRefreshTrigger.initial));
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final route = ModalRoute.of<void>(context);
+    if (identical(route, _observedRoute)) return;
+    if (_observedRoute != null) appRouteObserver.unsubscribe(this);
+    _observedRoute = route;
+    if (route != null) appRouteObserver.subscribe(this, route);
+  }
+
+  @override
+  void didPopNext() {
+    unawaited(
+      _loadComments(trigger: _MomentCommentsRefreshTrigger.routeReturn),
+    );
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) return;
+    unawaited(_loadComments(trigger: _MomentCommentsRefreshTrigger.appResume));
+  }
+
+  Future<void> _loadComments({
+    String? cursor,
+    bool append = false,
+    _MomentCommentsRefreshTrigger trigger = _MomentCommentsRefreshTrigger.retry,
+  }) async {
+    final service = _momentService;
+    if (service == null || (append && _loadingMore)) return;
+    if (!append && !_canonicalRefreshesInFlight.add(trigger)) return;
+    final requestGeneration = append
+        ? _viewLoadGeneration
+        : ++_viewLoadGeneration;
+    if (append && mounted) setState(() => _loadingMore = true);
+    try {
+      final view = await service.loadMomentView(
+        _moment.id,
+        commentCursor: cursor,
+      );
+      if (!mounted || requestGeneration != _viewLoadGeneration) return;
+      final byId = <String, MomentComment>{
+        if (append)
+          for (final comment in _comments ?? const <MomentComment>[])
+            comment.id: comment,
+        for (final comment in view.comments) comment.id: comment,
+      };
+      setState(() {
+        _moment = view.moment;
+        _unavailable = false;
+        _comments = byId.values.toList(growable: false);
+        _commentsTruncated = view.commentsTruncated;
+        _nextCommentCursor = view.nextCommentCursor;
+        _loadError = null;
+        _loadingMore = false;
+      });
+    } catch (error) {
+      if (!mounted || requestGeneration != _viewLoadGeneration) return;
+      if (_momentCommentsIsGoneError(error)) {
+        _clearCommentsAndShowGone();
+      } else {
+        setState(() => _loadError = error);
+      }
+    } finally {
+      if (!append) _canonicalRefreshesInFlight.remove(trigger);
+      if (mounted && append && _loadingMore) {
+        setState(() => _loadingMore = false);
+      }
+    }
+  }
 
   @override
   void dispose() {
+    _viewLoadGeneration += 1;
+    WidgetsBinding.instance.removeObserver(this);
+    appRouteObserver.unsubscribe(this);
     _controller.dispose();
     _goneBackFocus.dispose();
     super.dispose();
   }
 
   void _handleExpired() {
+    _clearCommentsAndShowGone(announce: false);
+    _announceGone();
+  }
+
+  void _clearCommentsAndShowGone({bool announce = true}) {
+    if (!mounted) return;
+    setState(() {
+      _unavailable = true;
+      _comments = null;
+      _commentsTruncated = false;
+      _nextCommentCursor = null;
+      _loadError = null;
+      _loadingMore = false;
+    });
+    if (announce) _announceGone();
+  }
+
+  void _announceGone() {
     final copy = AppLocalizations.of(context);
     final previousFocus = FocusManager.instance.primaryFocus;
     final recoverFocus = momentExpiryFocusIsWithin(context, previousFocus);
     _expiryAnnouncer.announce(
       context,
-      transition: 'comments-gone-${widget.moment.id}',
+      transition: 'comments-gone-${_moment.id}',
       message: copy.text(
         'Voice Moment expired. Comments are now unavailable.',
         'Voice Moment wygasł. Komentarze nie są już dostępne.',
@@ -121,14 +246,16 @@ class _MomentCommentsScreenState extends State<MomentCommentsScreen> {
         user == null ||
         service == null ||
         _sending ||
-        !widget.moment.isActiveAt(now)) {
+        _unavailable ||
+        !_moment.isActiveAt(now)) {
       return;
     }
 
     setState(() => _sending = true);
     try {
-      await service.createTextComment(momentId: widget.moment.id, text: text);
+      await service.createTextComment(momentId: _moment.id, text: text);
       _controller.clear();
+      await _loadComments(trigger: _MomentCommentsRefreshTrigger.mutation);
     } catch (error) {
       if (!mounted) return;
       final copy = AppLocalizations.of(context);
@@ -167,168 +294,204 @@ class _MomentCommentsScreenState extends State<MomentCommentsScreen> {
         title: Text(copy.text('Comments', 'Komentarze')),
       ),
       body: SafeArea(
-        child: MomentExpiryBoundary(
-          moment: widget.moment,
-          clock: widget.expiryClock,
-          timerFactory: widget.expiryTimerFactory,
-          onExpired: _handleExpired,
-          expired: Center(
-            key: const ValueKey('moment-comments-gone'),
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.all(24),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    copy.text(
-                      'This Voice Moment is no longer available.',
-                      'Ten Voice Moment nie jest już dostępny.',
-                    ),
-                    textAlign: TextAlign.center,
-                    style: TextStyle(color: palette.textSecondary),
-                  ),
-                  const SizedBox(height: 16),
-                  FilledButton(
-                    key: const ValueKey('moment-comments-gone-back'),
-                    focusNode: _goneBackFocus,
-                    onPressed: () => Navigator.of(context).maybePop(),
-                    child: Text(
-                      copy.text('Back to Moments', 'Wróć do Momentów'),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          child: ResponsiveContentFrame(
-            width: ResponsiveContentWidth.form,
-            child: Column(
-              children: [
-                Expanded(
-                  child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-                    stream: _comments
-                        .orderBy('createdAt', descending: false)
-                        .snapshots(),
-                    builder: (context, snapshot) {
-                      if (snapshot.hasError) {
-                        return Center(
-                          child: Text(
-                            copy.text(
-                              'Could not load comments.',
-                              'Nie udało się wczytać komentarzy.',
-                            ),
-                            style: TextStyle(color: palette.textSecondary),
-                          ),
-                        );
-                      }
-                      if (!snapshot.hasData) {
-                        return Center(
-                          child: CircularProgressIndicator(
-                            color: colors.primary,
-                          ),
-                        );
-                      }
-                      final comments = snapshot.data!.docs;
-                      if (comments.isEmpty) {
-                        return Center(
-                          child: Text(
-                            copy.text(
-                              'Be the first to comment.',
-                              'Napisz pierwszy komentarz.',
-                            ),
-                            style: TextStyle(color: palette.textSecondary),
-                          ),
-                        );
-                      }
-                      return ListView.separated(
-                        padding: const EdgeInsets.all(16),
-                        itemCount: comments.length,
-                        separatorBuilder: (_, __) => const SizedBox(height: 10),
-                        itemBuilder: (context, index) {
-                          final data = comments[index].data();
-                          final name =
-                              data['authorName'] as String? ??
-                              copy.text('YO Voice user', 'Użytkownik YO Voice');
-                          final photo = data['authorPhotoUrl'] as String?;
-                          final type = data['type'] as String? ?? 'text';
-                          final authorId = data['authorId'] as String? ?? '';
-                          return _CommentCard(
-                            name: name,
-                            authorId: authorId,
-                            photo: photo,
-                            data: data,
-                            isVoice: type == 'voice',
-                            momentId: widget.moment.id,
-                            commentId: comments[index].id,
-                            isOwn:
-                                authorId.isNotEmpty && authorId == _currentUid,
-                            momentService: _momentService,
-                            contentReportService: widget.contentReportService,
-                          );
-                        },
-                      );
-                    },
-                  ),
-                ),
-                Container(
-                  padding: const EdgeInsets.fromLTRB(14, 10, 14, 12),
-                  decoration: BoxDecoration(
-                    color: palette.surfaceRaised,
-                    border: Border(top: BorderSide(color: palette.border)),
-                  ),
-                  child: Row(
+        child: _unavailable
+            ? _commentsGoneState(copy, palette)
+            : MomentExpiryBoundary(
+                moment: _moment,
+                clock: widget.expiryClock,
+                timerFactory: widget.expiryTimerFactory,
+                onExpired: _handleExpired,
+                expired: _commentsGoneState(copy, palette),
+                child: ResponsiveContentFrame(
+                  width: ResponsiveContentWidth.form,
+                  child: Column(
                     children: [
                       Expanded(
-                        child: TextField(
-                          controller: _controller,
-                          minLines: 1,
-                          maxLines: 4,
-                          textInputAction: TextInputAction.send,
-                          onSubmitted: (_) => _sendComment(),
-                          style: TextStyle(color: palette.textPrimary),
-                          decoration: InputDecoration(
-                            hintText: copy.text(
-                              'Write a comment...',
-                              'Napisz komentarz…',
-                            ),
-                            hintStyle: TextStyle(color: palette.textTertiary),
-                            filled: true,
-                            fillColor: palette.surfaceSunken,
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(18),
-                              borderSide: BorderSide.none,
-                            ),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      IconButton.filled(
-                        onPressed: _sending ? null : _sendComment,
-                        tooltip: copy.text(
-                          'Post comment',
-                          'Opublikuj komentarz',
-                        ),
-                        style: IconButton.styleFrom(
-                          backgroundColor: colors.primary,
-                          foregroundColor: colors.onPrimary,
-                        ),
-                        icon: _sending
-                            ? SizedBox(
-                                width: 18,
-                                height: 18,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: colors.onPrimary,
+                        child: _loadError != null && _comments == null
+                            ? Center(
+                                child: TextButton.icon(
+                                  key: const ValueKey(
+                                    'moment-comments-page-retry',
+                                  ),
+                                  onPressed: () => _loadComments(
+                                    trigger:
+                                        _MomentCommentsRefreshTrigger.retry,
+                                  ),
+                                  icon: const Icon(Icons.refresh_rounded),
+                                  label: Text(
+                                    copy.text(
+                                      'Could not load comments. Try again.',
+                                      'Nie udało się wczytać komentarzy. Spróbuj ponownie.',
+                                    ),
+                                  ),
                                 ),
                               )
-                            : const Icon(Icons.send_rounded),
+                            : _comments == null
+                            ? Center(
+                                child: CircularProgressIndicator(
+                                  color: colors.primary,
+                                ),
+                              )
+                            : _comments!.isEmpty
+                            ? Center(
+                                child: Text(
+                                  copy.text(
+                                    'Be the first to comment.',
+                                    'Napisz pierwszy komentarz.',
+                                  ),
+                                  style: TextStyle(
+                                    color: palette.textSecondary,
+                                  ),
+                                ),
+                              )
+                            : ListView.separated(
+                                padding: const EdgeInsets.all(16),
+                                itemCount:
+                                    _comments!.length +
+                                    ((_commentsTruncated || _loadingMore)
+                                        ? 1
+                                        : 0),
+                                separatorBuilder: (_, __) =>
+                                    const SizedBox(height: 10),
+                                itemBuilder: (context, index) {
+                                  if (index == _comments!.length) {
+                                    return Center(
+                                      child: TextButton.icon(
+                                        key: const ValueKey(
+                                          'moment-comments-page-load-more',
+                                        ),
+                                        onPressed: _loadingMore
+                                            ? null
+                                            : () => _loadComments(
+                                                cursor: _nextCommentCursor,
+                                                append: true,
+                                              ),
+                                        icon: _loadingMore
+                                            ? const SizedBox.square(
+                                                dimension: 16,
+                                                child:
+                                                    CircularProgressIndicator(
+                                                      strokeWidth: 2,
+                                                    ),
+                                              )
+                                            : const Icon(
+                                                Icons.expand_more_rounded,
+                                              ),
+                                        label: Text(
+                                          copy.text(
+                                            'Load more',
+                                            'Wczytaj więcej',
+                                          ),
+                                        ),
+                                      ),
+                                    );
+                                  }
+                                  final comment = _comments![index];
+                                  return _CommentCard(
+                                    comment: comment,
+                                    momentId: _moment.id,
+                                    isOwn:
+                                        comment.authorId.isNotEmpty &&
+                                        comment.authorId == _currentUid,
+                                    momentService: _momentService,
+                                    contentReportService:
+                                        widget.contentReportService,
+                                  );
+                                },
+                              ),
+                      ),
+                      Container(
+                        padding: const EdgeInsets.fromLTRB(14, 10, 14, 12),
+                        decoration: BoxDecoration(
+                          color: palette.surfaceRaised,
+                          border: Border(
+                            top: BorderSide(color: palette.border),
+                          ),
+                        ),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: TextField(
+                                controller: _controller,
+                                minLines: 1,
+                                maxLines: 4,
+                                textInputAction: TextInputAction.send,
+                                onSubmitted: (_) => _sendComment(),
+                                style: TextStyle(color: palette.textPrimary),
+                                decoration: InputDecoration(
+                                  hintText: copy.text(
+                                    'Write a comment...',
+                                    'Napisz komentarz…',
+                                  ),
+                                  hintStyle: TextStyle(
+                                    color: palette.textTertiary,
+                                  ),
+                                  filled: true,
+                                  fillColor: palette.surfaceSunken,
+                                  border: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(18),
+                                    borderSide: BorderSide.none,
+                                  ),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            IconButton.filled(
+                              onPressed: _sending ? null : _sendComment,
+                              tooltip: copy.text(
+                                'Post comment',
+                                'Opublikuj komentarz',
+                              ),
+                              style: IconButton.styleFrom(
+                                backgroundColor: colors.primary,
+                                foregroundColor: colors.onPrimary,
+                              ),
+                              icon: _sending
+                                  ? SizedBox(
+                                      width: 18,
+                                      height: 18,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        color: colors.onPrimary,
+                                      ),
+                                    )
+                                  : const Icon(Icons.send_rounded),
+                            ),
+                          ],
+                        ),
                       ),
                     ],
                   ),
                 ),
-              ],
+              ),
+      ),
+    );
+  }
+
+  Widget _commentsGoneState(AppLocalizations copy, AppPalette palette) {
+    return Center(
+      key: const ValueKey('moment-comments-gone'),
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              copy.text(
+                'This Voice Moment is no longer available.',
+                'Ten Voice Moment nie jest już dostępny.',
+              ),
+              textAlign: TextAlign.center,
+              style: TextStyle(color: palette.textSecondary),
             ),
-          ),
+            const SizedBox(height: 16),
+            FilledButton(
+              key: const ValueKey('moment-comments-gone-back'),
+              focusNode: _goneBackFocus,
+              onPressed: () => Navigator.of(context).maybePop(),
+              child: Text(copy.text('Back to Moments', 'Wróć do Momentów')),
+            ),
+          ],
         ),
       ),
     );
@@ -337,24 +500,14 @@ class _MomentCommentsScreenState extends State<MomentCommentsScreen> {
 
 class _CommentCard extends StatefulWidget {
   const _CommentCard({
-    required this.name,
-    required this.authorId,
-    required this.photo,
-    required this.data,
-    required this.isVoice,
+    required this.comment,
     required this.momentId,
-    required this.commentId,
     required this.isOwn,
     required this.momentService,
     this.contentReportService,
   });
-  final String name;
-  final String authorId;
-  final String? photo;
-  final Map<String, dynamic> data;
-  final bool isVoice;
+  final MomentComment comment;
   final String momentId;
-  final String commentId;
   final bool isOwn;
   final MomentService? momentService;
   final ContentReportService? contentReportService;
@@ -370,7 +523,7 @@ class _CommentCardState extends State<_CommentCard> {
   @override
   void initState() {
     super.initState();
-    if (!widget.isVoice) return;
+    if (!widget.comment.isVoice) return;
     final player = AudioPlayer();
     _player = player;
     player.onPlayerComplete.listen((_) {
@@ -395,7 +548,7 @@ class _CommentCardState extends State<_CommentCard> {
         if (moments == null) return;
         final uri = await moments.resolveMediaUri(
           momentId: widget.momentId,
-          commentId: widget.commentId,
+          commentId: widget.comment.id,
         );
         if (!mounted) return;
         await player.play(UrlSource(uri.toString()));
@@ -434,14 +587,15 @@ class _CommentCardState extends State<_CommentCard> {
       service: widget.contentReportService,
       content: ReportedContent.voiceMomentComment(
         momentId: widget.momentId,
-        commentId: widget.commentId,
+        commentId: widget.comment.id,
+        reportReceipt: widget.comment.reportReceipt,
       ),
       title: copy.text('Report this comment', 'Zgłoś ten komentarz'),
       subtitle: copy.text(
         'Your report goes to the YO Voice moderation team with this '
-            'comment attached. ${widget.name} is not told who reported it.',
+            'comment attached. ${widget.comment.authorName} is not told who reported it.',
         'Zgłoszenie wraz z komentarzem trafi do zespołu moderacji YO Voice. '
-            '${widget.name} nie dowie się, kto dokonał zgłoszenia.',
+            '${widget.comment.authorName} nie dowie się, kto dokonał zgłoszenia.',
       ),
     );
   }
@@ -449,12 +603,13 @@ class _CommentCardState extends State<_CommentCard> {
   @override
   Widget build(BuildContext context) {
     final copy = AppLocalizations.of(context);
-    final text = widget.data['text'] as String? ?? '';
-    final duration = widget.data['durationSeconds'] as int? ?? 0;
+    final comment = widget.comment;
+    final text = comment.text;
+    final duration = comment.durationSeconds;
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
     return Container(
-      key: ValueKey('moment-comment-card-${widget.commentId}'),
+      key: ValueKey('moment-comment-card-${comment.id}'),
       padding: const EdgeInsets.all(13),
       decoration: BoxDecoration(
         color: palette.surface,
@@ -464,18 +619,11 @@ class _CommentCardState extends State<_CommentCard> {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          CircleAvatar(
+          UserAvatar(
             radius: 20,
-            backgroundColor: colors.primary,
-            foregroundColor: colors.onPrimary,
-            backgroundImage: widget.photo?.isNotEmpty == true
-                ? NetworkImage(widget.photo!)
-                : null,
-            child: widget.photo?.isNotEmpty == true
-                ? null
-                : Text(
-                    widget.name.isNotEmpty ? widget.name[0].toUpperCase() : 'Y',
-                  ),
+            userId: comment.authorId,
+            photoUrl: comment.authorPhotoUrl,
+            displayName: comment.authorName,
           ),
           const SizedBox(width: 11),
           Expanded(
@@ -487,17 +635,17 @@ class _CommentCardState extends State<_CommentCard> {
                   crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
                     Text(
-                      widget.name,
+                      comment.authorName,
                       style: TextStyle(
                         color: palette.textPrimary,
                         fontWeight: FontWeight.w800,
                       ),
                     ),
-                    if (widget.authorId.isNotEmpty)
-                      UserIdentityBadges(uid: widget.authorId),
+                    if (comment.authorId.isNotEmpty)
+                      UserIdentityBadges(uid: comment.authorId),
                   ],
                 ),
-                if (widget.isVoice) ...[
+                if (comment.isVoice) ...[
                   const SizedBox(height: 8),
                   InkWell(
                     onTap: _toggle,
@@ -559,9 +707,9 @@ class _CommentCardState extends State<_CommentCard> {
           // off the card by a long comment or a large text scale. Hidden
           // on your own comment for the same reason as elsewhere:
           // self-reports are queue noise, not signal.
-          if (!widget.isOwn && widget.commentId.isNotEmpty)
+          if (!widget.isOwn && widget.comment.id.isNotEmpty)
             IconButton(
-              key: ValueKey('report-comment-${widget.commentId}'),
+              key: ValueKey('report-comment-${widget.comment.id}'),
               constraints: const BoxConstraints.tightFor(width: 40, height: 40),
               padding: EdgeInsets.zero,
               tooltip: copy.text('Report this comment', 'Zgłoś ten komentarz'),

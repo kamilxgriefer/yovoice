@@ -5,6 +5,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
+import 'package:firebase_storage_mocks/firebase_storage_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -12,10 +13,14 @@ import 'package:yovoice/features/home/data/services/home_feed_service.dart';
 import 'package:yovoice/features/moderation/data/services/content_report_service.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
 import 'package:yovoice/features/moments/data/services/moment_discovery_service.dart';
+import 'package:yovoice/features/moments/data/services/moment_service.dart';
 import 'package:yovoice/features/moments/data/services/offline_voice_moment_service.dart';
+import 'package:yovoice/features/moments/data/services/voice_moment_read_service.dart';
 import 'package:yovoice/features/moments/presentation/screens/moment_comments_screen.dart';
 import 'package:yovoice/features/moments/presentation/screens/moments_screen.dart';
 import 'package:yovoice/shared/identity/public_identity_repository.dart';
+
+import 'voice_moment_test_doubles.dart';
 
 /// `voiceMoment` and `voiceMomentComment` are the other two targets the
 /// deployed `createContentReport` accepts, and nothing in the app reached
@@ -376,15 +381,47 @@ void main() {
       Size size = const Size(390, 844),
     }) async {
       useSize(tester, size);
+      final root = db.collection('voiceMoments').doc('v1');
+      if (!(await root.get()).exists) {
+        final fixture = moment();
+        await root.set(<String, dynamic>{
+          'schemaVersion': 2,
+          'status': 'published',
+          'isDeleted': false,
+          'isPublished': true,
+          'authorId': fixture.authorId,
+          'authorName': fixture.authorName,
+          'authorPhotoUrl': null,
+          'caption': fixture.caption,
+          'audioUrl': fixture.audioUrl,
+          'durationSeconds': fixture.durationSeconds,
+          'likeCount': fixture.likeCount,
+          'commentCount': fixture.commentCount,
+          'createdAt': Timestamp.fromDate(fixture.createdAt!),
+          'expiresAt': Timestamp.fromDate(fixture.expiresAt!),
+        });
+      }
+      final threadAuth = MockFirebaseAuth(
+        signedIn: true,
+        mockUser: MockUser(uid: viewerUid),
+      );
       await tester.pumpWidget(
         MaterialApp(
           theme: ThemeData.dark(useMaterial3: true),
           home: MomentCommentsScreen(
             moment: moment(),
             firestore: db,
-            auth: MockFirebaseAuth(
-              signedIn: true,
-              mockUser: MockUser(uid: viewerUid),
+            auth: threadAuth,
+            momentService: MomentService(
+              firestore: db,
+              auth: threadAuth,
+              storage: MockFirebaseStorage(),
+              readService: VoiceMomentReadService(
+                viewInvoker: fakeVoiceMomentViewInvoker(
+                  firestore: db,
+                  viewerUid: viewerUid,
+                ),
+              ),
             ),
             contentReportService: ContentReportService(functions: functions),
           ),
@@ -415,6 +452,7 @@ void main() {
         'targetType': 'voiceMomentComment',
         'momentId': 'v1',
         'commentId': 'c-theirs',
+        'reportReceipt': fakeVoiceMomentReportReceipt,
         'reason': 'harassment',
         'requestId': ContentReportService.requestIdFor(
           const ReportedContent.voiceMomentComment(

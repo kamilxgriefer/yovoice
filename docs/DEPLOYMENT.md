@@ -15,6 +15,103 @@ deployables described in
 | Storage rules | `firebase deploy --only storage` | Manual |
 | `yovoice-website` | Vercel | Automatic, on push to `main` (separate repo) |
 
+### Build 20 coordinated tester release candidate — 2026-09-05
+
+**HELD — SOURCE, WEB AND EMULATOR GATES PASS; NO BUILD 20 DEPLOYMENT, STORE
+UPLOAD, TESTER ASSIGNMENT OR NOTIFICATION IS RECORDED HERE.** The candidate
+remains blocked on the production index/TTL-override, Functions, Rules and
+Hosting sequence plus read-backs; the explicit production friendship
+reconciliation; signed-artifact/store-number checks; rendered and physical QA;
+and the actual uploads, assignments and notifications. The independent Voice
+re-review is complete at 84/84 with an APPROVE decision; the exact release
+commit still must be frozen after the shared candidate tree stops moving.
+
+The order below applies specifically to Build 20. It corrects the Build 19
+sequence for this candidate because its new query/retention producers depend
+on Firestore indexes and both managed TTL overrides being available first. It
+does not rewrite the completed Build 19 history below.
+
+#### Required Build 20 production order
+
+1. Freeze and record the exact reviewed commit, production baselines and
+   recoverable rule/configuration sources. Re-run the final source gates and
+   confirm that the completed 84/84 Voice APPROVE still applies to the frozen
+   runtime tree. A dirty or moving candidate is not deployable.
+2. Deploy only the required `firestore.indexes.json` changes. The Build 20
+   composite indexes are `reelAvailability(status ASC, expiresAt ASC)`,
+   `reels(status ASC, sortKey DESC)`,
+   `reelCleanupOutbox(status ASC, nextAttemptAt ASC)` and
+   `reelCleanupOutbox(status ASC, leaseUntil ASC)`. The two new managed TTL
+   overrides are `reelCleanupOutbox.deleteAfter` and
+   `voiceMomentReportReceipts.expiresAt`. Read the production index and field-
+   override configuration back, wait until every required composite index
+   reports `READY`, and verify that both named TTL overrides are enabled. Do
+   not start a producer that depends on any of these resources while it is
+   creating, missing or inconsistent with the pinned source.
+3. Deploy the additive, backward-compatible Cloud Functions from that same
+   commit. Confirm every intended revision is active, no unintended export
+   changed, prior revisions drained safely, and the protected Functions smoke
+   passes against the deployed boundary.
+4. Reconcile only the independently reviewed legacy friendship pairs. The
+   operator input must be an explicit allowlist; never discover candidates by
+   scanning or treat historical client mirrors as authority. Run a no-write
+   dry-run, review and retain its aggregate result plus digest, apply only the
+   exact digest that was reviewed, then repeat the run as a no-op post-check.
+   Any changed digest, conflict, block/restriction, missing bilateral mirror
+   or non-no-op post-check stops the release. Shared documentation must not
+   contain account ids, pair ids, tokens or manifest contents.
+5. Deploy Firestore Rules only after Functions and reconciliation are
+   healthy. Read the released source back exactly and repeat the relevant
+   allow/deny and production smokes before moving on.
+6. Deploy Storage Rules only if the final pinned Build 20 diff actually
+   changes `storage.rules`. If it is unchanged, record that fact and do not
+   perform a ceremonial Storage deploy. If changed, require the matching
+   Storage and family-media gates, an exact source read-back and authenticated
+   plus cross-account denial smokes.
+7. Release Firebase Hosting only after the exact commit has passed CI and all
+   required backend stages/read-backs above are green. Verify the workflow
+   artifact and live bytes; update the separate website only from observed
+   release facts.
+8. Produce signed iOS and Android artifacts from the same pinned commit.
+   Inspect package identity, signing, entitlements/permissions and embedded
+   `1.0.0 (20)` / version code `20`, then verify that number is unused in both
+   store consoles. Upload once, wait for processing, assign the persistent
+   tester cohorts, enable the native tester notification where appropriate,
+   and verify availability from a non-owner tester account before sending any
+   separate release note.
+
+#### Measured candidate gates
+
+| Gate | Result | Evidence boundary |
+|---|---:|---|
+| Flutter static analysis | clean | source only |
+| Complete Flutter VM suite | 2255/2255 | final-tree invocation |
+| Chrome browser suite | 18/18 | browser widget/runtime gate |
+| Production Flutter Web build | PASS | release-mode artifact compilation |
+| Playwright built-artifact smoke | 2/2 PASS | selected smoke against the production Web artifact |
+| YO Moments screenshot harness | 50/50 PASS | 320–1440 px, content/error/loading/following/story/detail and 200% text source renders |
+| Dock Dark/Pearl screenshot harness | 8/8 PASS | 320/390/430 px, 200% text and 99+ source renders |
+| Independent Voice re-review | 84/84, APPROVE | final targeted source/runtime review |
+| Cloud Functions | 1277/1277 | non-overlapping shards after an emulator transaction-lock hang; room-control 32/32 and tail 174/174 also passed in isolation |
+| Firestore Rules | 524/524 | emulator authorization gate |
+| Storage Rules | 67/67 | emulator authorization gate |
+| Family media | 11/11 | combined media contract |
+| Functions smoke | PASS | local Functions/Auth/Firestore emulator boundary |
+| Sound assets | PASS | deterministic asset check |
+| Functions production dependency audit | 0 vulnerabilities | completed npm production audit |
+| Firestore-test production dependency audit | 0 vulnerabilities | completed npm production audit |
+
+These automated results do not establish production deployment, signed
+artifact integrity, store acceptance, tester availability, email delivery,
+app-wide/physical visual quality, real notification delivery or two-device
+media/call behavior. The bounded PNG review found Frame Echo Clean without
+internal lines, skew or observed overlap; it is not physical-device evidence.
+The release remains **HELD** until every pending boundary named above is
+directly observed and recorded in the Build 20 session ledger.
+
+Detailed candidate ledger:
+[Build 20 release-candidate session](Sessions/2026-09-05-build-20-release-candidate.md).
+
 ### Build 19 coordinated tester release — 2026-09-03
 
 **TESTER ROLLOUT COMPLETE; NOT A PUBLIC APP STORE OR GOOGLE PLAY RELEASE.**

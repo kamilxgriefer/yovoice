@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
@@ -67,6 +68,7 @@ class MobileHome extends StatefulWidget {
     this.messageService,
     this.capabilityService,
     this.currentUserId,
+    this.isVisible,
     super.key,
   });
 
@@ -112,6 +114,11 @@ class MobileHome extends StatefulWidget {
   /// The signed-in uid. Optional so tests need no Firebase app.
   final String? currentUserId;
 
+  /// Home is retained in the shell. A rising edge requests a fresh v2
+  /// projection because Voice Moment reads are intentionally one-shot rather
+  /// than foreign Firestore listeners.
+  final ValueListenable<bool>? isVisible;
+
   @override
   State<MobileHome> createState() => _MobileHomeState();
 }
@@ -124,6 +131,7 @@ class _MobileHomeState extends State<MobileHome> {
   ProfileService? _profiles;
   final Map<String, Stream<String>> _recentChatPhotoStreams = {};
   Stream<List<VoiceMoment>>? _feed;
+  HomeFeedService? _feedSource;
 
   Stream<List<Conversation>>? _conversations;
   Stream<List<VoiceRoom>>? _owned;
@@ -153,11 +161,8 @@ class _MobileHomeState extends State<MobileHome> {
       _profiles = null;
       _profile = null;
     }
-    try {
-      _feed = (widget.feedService ?? HomeFeedService()).watchSocialMoments();
-    } catch (_) {
-      _feed = null;
-    }
+    _loadFeed();
+    widget.isVisible?.addListener(_handleVisibility);
     try {
       _conversations = (widget.messageService ?? MessageService.live)
           .watchConversations();
@@ -180,6 +185,39 @@ class _MobileHomeState extends State<MobileHome> {
     } catch (_) {
       return '';
     }
+  }
+
+  void _loadFeed() {
+    try {
+      _feedSource ??= widget.feedService ?? HomeFeedService();
+      _feed = _feedSource!.watchSocialMoments();
+    } catch (_) {
+      _feed = null;
+    }
+  }
+
+  void _handleVisibility() {
+    if (!mounted || widget.isVisible?.value != true) return;
+    setState(_loadFeed);
+  }
+
+  @override
+  void didUpdateWidget(covariant MobileHome oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.isVisible != widget.isVisible) {
+      oldWidget.isVisible?.removeListener(_handleVisibility);
+      widget.isVisible?.addListener(_handleVisibility);
+    }
+    if (oldWidget.feedService != widget.feedService) {
+      _feedSource = null;
+      setState(_loadFeed);
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.isVisible?.removeListener(_handleVisibility);
+    super.dispose();
   }
 
   Stream<String> _recentChatPhotoStream(String userId) {

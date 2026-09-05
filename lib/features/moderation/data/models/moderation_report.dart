@@ -26,9 +26,12 @@ enum ReportResolution {
 class ModerationReport {
   const ModerationReport({
     required this.id,
+    required this.schemaVersion,
     required this.reporterId,
     required this.targetType,
     required this.targetId,
+    required this.momentId,
+    required this.commentId,
     required this.reportedUserId,
     required this.contextPath,
     required this.reason,
@@ -45,6 +48,7 @@ class ModerationReport {
   });
 
   final String id;
+  final int? schemaVersion;
 
   /// Kept for the audit trail, NOT surfaced to the reported account or
   /// any ordinary client — reports are unreadable outside staff.
@@ -52,6 +56,8 @@ class ModerationReport {
 
   final ReportTargetType? targetType;
   final String targetId;
+  final String? momentId;
+  final String? commentId;
   final String reportedUserId;
   final String? contextPath;
   final ReportReason? reason;
@@ -74,19 +80,43 @@ class ModerationReport {
     DocumentSnapshot<Map<String, dynamic>> document,
   ) {
     final data = document.data() ?? const <String, dynamic>{};
+    final targetType = _enumByName(
+      ReportTargetType.values,
+      data['targetType'] as String?,
+    );
+    final schemaVersion = (data['schemaVersion'] as num?)?.toInt();
+    final momentId = _nonEmptyString(data['momentId']);
+    final commentId = _nonEmptyString(data['commentId']);
+    final storedTargetId = _nonEmptyString(data['targetId']);
+    final targetId =
+        storedTargetId ??
+        switch (targetType) {
+          ReportTargetType.voiceMoment => momentId ?? '',
+          ReportTargetType.voiceMomentComment => commentId ?? momentId ?? '',
+          _ => '',
+        };
+    final storedContextPath = _nonEmptyString(data['contextPath']);
+    final contextPath =
+        storedContextPath ??
+        switch (targetType) {
+          ReportTargetType.voiceMoment when momentId != null =>
+            'voiceMoments/$momentId',
+          ReportTargetType.voiceMomentComment
+              when momentId != null && commentId != null =>
+            'voiceMoments/$momentId/comments/$commentId',
+          _ => null,
+        };
 
     return ModerationReport(
       id: document.id,
+      schemaVersion: schemaVersion,
       reporterId: data['reporterId'] as String? ?? '',
-      targetType: _enumByName(
-        ReportTargetType.values,
-        data['targetType'] as String?,
-      ),
-      targetId: data['targetId'] as String? ?? '',
-      reportedUserId: data['reportedUserId'] as String? ?? '',
-      contextPath: (data['contextPath'] as String?)?.trim().isNotEmpty == true
-          ? data['contextPath'] as String
-          : null,
+      targetType: targetType,
+      targetId: targetId,
+      momentId: momentId,
+      commentId: commentId,
+      reportedUserId: _nonEmptyString(data['reportedUserId']) ?? '',
+      contextPath: contextPath,
       reason: _enumByName(ReportReason.values, data['reason'] as String?),
       note: data['note'] as String? ?? '',
       createdAt: (data['createdAt'] as Timestamp?)?.toDate(),
@@ -115,5 +145,11 @@ class ModerationReport {
       if (value.name == name) return value;
     }
     return null;
+  }
+
+  static String? _nonEmptyString(Object? value) {
+    if (value is! String) return null;
+    final trimmed = value.trim();
+    return trimmed.isEmpty ? null : trimmed;
   }
 }

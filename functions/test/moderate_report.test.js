@@ -202,6 +202,29 @@ async function seedReel(overrides = {}) {
   });
 }
 
+async function seedPurgedExpiredReel(overrides = {}) {
+  const publishedAt = Timestamp.fromMillis(1778000000000);
+  const expiredAt = Timestamp.fromMillis(1778086400000);
+  const purgedAt = Timestamp.fromMillis(1780678400000);
+  await db.doc(REEL).set({
+    schemaVersion: 1,
+    status: "expired",
+    authorId: AUTHOR,
+    moderationStatusAtExpiry: "visible",
+    moderationEvidence: {
+      evidenceVersion: 1,
+      publishedAt,
+      expiredAt,
+      availabilityHours: 24,
+      metadataFingerprint: "a".repeat(64),
+    },
+    expiredAt,
+    purgedAt,
+    updatedAt: purgedAt,
+    ...overrides,
+  });
+}
+
 async function clearAudits() {
   const entries = await db
     .collection("adminAuditLogs")
@@ -646,6 +669,88 @@ describe("moderateReport", () => {
       assert.equal(report.targetId, REEL_ID, "reporter evidence is immutable");
       assert.equal(report.reportedUserId, AUTHOR);
     });
+
+    test("an expired Reel remains moderatable while retained evidence exists",
+      async () => {
+        await seedReelReport();
+        await seedReel({ status: "expired" });
+
+        const result = await run(request(MOD, "moderator", {
+          reportId: REEL_REPORT_ID,
+          action: "removeAndResolve",
+          requestId: "req-hide-expired-reel",
+          resolution: "contentRemoved",
+        }));
+
+        assert.equal(result.status, "resolved");
+        assert.equal(result.contentRemoved, true);
+        const reel = (await db.doc(REEL).get()).data();
+        assert.equal(reel.status, "expired");
+        assert.equal(reel.moderationStatus, "hidden");
+        assert.ok(reel.media, "retained evidence remains available to staff");
+        assert.equal(
+          (await db.doc(`reports/${REEL_REPORT_ID}`).get()).data().status,
+          "resolved",
+        );
+      });
+
+    test("a purged expired Reel report resolves without rewriting its "
+      + "immutable evidence tombstone", async () => {
+      await seedReelReport();
+      await seedPurgedExpiredReel();
+      const before = (await db.doc(REEL).get()).data();
+      const requestId = "req-resolve-purged-reel";
+
+      const result = await run(request(MOD, "moderator", {
+        reportId: REEL_REPORT_ID,
+        action: "removeAndResolve",
+        requestId,
+        resolution: "contentRemoved",
+      }));
+
+      assert.equal(result.status, "resolved");
+      assert.equal(result.contentRemoved, false, "the media was already purged");
+      assert.deepEqual(
+        (await db.doc(REEL).get()).data(),
+        before,
+        "purged moderation evidence must remain byte-stable",
+      );
+      const report = (await db.doc(`reports/${REEL_REPORT_ID}`).get()).data();
+      assert.equal(report.status, "resolved");
+      assert.equal(report.contentRemoved, false);
+      const auditId = moderationAuditId(REEL_REPORT_ID, requestId);
+      const audit = await db.doc(`adminAuditLogs/${auditId}`).get();
+      assert.equal(audit.exists, true);
+      assert.equal(audit.data().details.contentRemoved, false);
+    });
+
+    test("malformed purged Reel evidence fails closed without resolving",
+      async () => {
+        await seedReelReport();
+        await seedPurgedExpiredReel({
+          moderationEvidence: {
+            evidenceVersion: 1,
+            publishedAt: Timestamp.fromMillis(1778000000000),
+            expiredAt: Timestamp.fromMillis(1778086400000),
+            availabilityHours: 24,
+            metadataFingerprint: "not-a-canonical-fingerprint",
+          },
+        });
+
+        await expectRejection(
+          run(request(MOD, "moderator", {
+            reportId: REEL_REPORT_ID,
+            action: "removeAndResolve",
+            requestId: "req-malformed-purged-reel",
+            resolution: "contentRemoved",
+          })),
+          "failed-precondition",
+        );
+        assert.equal(
+          (await db.doc(`reports/${REEL_REPORT_ID}`).get()).data().status,
+          "open",
+        );
+      });
 
     test("a forged Reel report cannot hide another author's Reel or close "
       + "the report", async () => {

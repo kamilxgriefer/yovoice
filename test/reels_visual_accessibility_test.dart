@@ -386,8 +386,9 @@ ReelService _feedService() {
   return ReelService(
     auth: auth,
     callableInvoker: (name, payload) async {
-      if (name == 'listReels') {
+      if (name == 'listReelsV2') {
         return <Object?, Object?>{
+          'schemaVersion': 2,
           'items': <Object?>[
             <String, Object?>{
               'id': 'reel_feed_1',
@@ -404,20 +405,27 @@ ReelService _feedService() {
               'composition': composition.toWire(),
               'publishedAtMillis': 1725000000000,
               'sortKey': '1725000000000_reel_feed_1',
+              'availability': <String, Object?>{
+                'schemaVersion': 1,
+                'availabilityHours': 'permanent',
+                'expiresAtMillis': null,
+              },
             },
           ],
           'nextCursor': null,
         };
       }
-      if (name == 'getReelMediaAccess') {
+      if (name == 'getReelMediaAccessV2') {
         return <Object?, Object?>{
-          'schemaVersion': 1,
+          'schemaVersion': 2,
           'url': 'https://storage.googleapis.com/yovoice/reel.mp4?token=test',
           'expiresAtMillis': DateTime.now()
               .toUtc()
               .add(const Duration(minutes: 5))
               .millisecondsSinceEpoch,
           'generation': '7',
+          'availabilityHours': 'permanent',
+          'contentExpiresAtMillis': null,
         };
       }
       throw StateError('Unexpected callable $name with $payload');

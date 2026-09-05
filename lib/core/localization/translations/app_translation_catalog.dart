@@ -9,6 +9,7 @@ import 'translations_current_release.dart';
 import 'translations_direct_call_refusals.dart';
 import 'translations_slavic_nordic.dart';
 import 'translations_western.dart';
+import 'translations_yo_moments.dart';
 
 /// English source phrases used by the production localization layer.
 ///
@@ -200,6 +201,7 @@ const appTranslationKeys = <String>{
   ...authCallReleaseTranslationKeys,
   ...directCallRefusalTranslationKeys,
   ...reelsTranslationKeys,
+  ...yoMomentsTranslationKeys,
 };
 
 final appTranslations = <String, Map<String, String>>{
@@ -219,6 +221,7 @@ final appTranslations = <String, Map<String, String>>{
       ...authCallReleaseTranslations[entry.key]!,
       ...directCallRefusalTranslations[entry.key]!,
       ...reelsTranslations[entry.key]!,
+      ...yoMomentsTranslations[entry.key]!,
       ...localizedExtendedLanguageNames[entry.key]!,
     }),
 };

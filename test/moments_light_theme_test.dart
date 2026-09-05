@@ -1,5 +1,7 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
+import 'package:firebase_storage_mocks/firebase_storage_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -7,10 +9,14 @@ import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_theme.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
 import 'package:yovoice/features/moments/data/services/moment_discovery_service.dart';
+import 'package:yovoice/features/moments/data/services/moment_service.dart';
+import 'package:yovoice/features/moments/data/services/voice_moment_read_service.dart';
 import 'package:yovoice/features/moments/presentation/screens/moment_comments_screen.dart';
 import 'package:yovoice/features/moments/presentation/screens/moment_detail_screen.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_card.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moments_feed_view.dart';
+
+import 'voice_moment_test_doubles.dart';
 
 VoiceMoment _moment(String id) {
   final createdAt = DateTime.now().subtract(const Duration(hours: 1));
@@ -31,6 +37,24 @@ VoiceMoment _moment(String id) {
     status: 'published',
   );
 }
+
+Map<String, dynamic> _momentDocument(VoiceMoment moment) => <String, dynamic>{
+  'authorId': moment.authorId,
+  'authorName': moment.authorName,
+  'caption': moment.caption,
+  'mediaGeneration': '1700000000000001',
+  'mediaContentType': 'audio/mp4',
+  'mediaSize': 4096,
+  'durationSeconds': moment.durationSeconds,
+  'likeCount': moment.likeCount,
+  'commentCount': moment.commentCount,
+  'isPublished': moment.isPublished,
+  'createdAt': Timestamp.fromDate(moment.createdAt!),
+  'expiresAt': Timestamp.fromDate(moment.expiresAt!),
+  'schemaVersion': moment.schemaVersion,
+  'status': moment.status,
+  'isDeleted': false,
+};
 
 class _StaticDiscovery implements MomentDiscoveryService {
   const _StaticDiscovery(this.moments);
@@ -169,15 +193,31 @@ void main() {
       expect(tester.takeException(), isNull);
 
       final firestore = FakeFirebaseFirestore();
+      await firestore
+          .collection('voiceMoments')
+          .doc(moment.id)
+          .set(_momentDocument(moment));
+      final auth = MockFirebaseAuth(
+        signedIn: true,
+        mockUser: MockUser(uid: 'viewer'),
+      );
       await tester.pumpWidget(
         _host(
           brightness: brightness,
           child: MomentCommentsScreen(
             moment: moment,
             firestore: firestore,
-            auth: MockFirebaseAuth(
-              signedIn: true,
-              mockUser: MockUser(uid: 'viewer'),
+            auth: auth,
+            momentService: MomentService(
+              firestore: firestore,
+              auth: auth,
+              storage: MockFirebaseStorage(),
+              readService: VoiceMomentReadService(
+                viewInvoker: fakeVoiceMomentViewInvoker(
+                  firestore: firestore,
+                  viewerUid: 'viewer',
+                ),
+              ),
             ),
           ),
         ),

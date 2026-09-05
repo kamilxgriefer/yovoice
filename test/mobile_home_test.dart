@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -11,12 +12,15 @@ import 'package:yovoice/features/home/data/services/home_feed_service.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/home/presentation/widgets/mobile/mobile_home.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
+import 'package:yovoice/features/moments/data/services/voice_moment_read_service.dart';
 import 'package:yovoice/features/profile/data/models/follow_user.dart';
 import 'package:yovoice/features/profile/data/services/follow_service.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
 import 'package:yovoice/features/staff/data/staff_capabilities.dart';
+
+import 'voice_moment_test_doubles.dart';
 
 /// Mobile Home ("Voice Briefing") coverage: real data in every module,
 /// the retired hero composition gone, honest empty states, and clean
@@ -182,6 +186,8 @@ void main() {
     ValueChanged<Conversation>? onOpenConversation,
     StaffCapabilityService? capabilityService,
     FollowService? followService,
+    HomeFeedService? feedService,
+    ValueListenable<bool>? isVisible,
     int unreadNotificationCount = 0,
   }) {
     final firebaseAuth = auth();
@@ -205,10 +211,19 @@ void main() {
       followService:
           followService ?? FollowService(firestore: db, auth: firebaseAuth),
       profileService: ProfileService(firestore: db, auth: firebaseAuth),
-      feedService: HomeFeedService(firestore: db, auth: firebaseAuth),
+      feedService:
+          feedService ??
+          HomeFeedService(
+            firestore: db,
+            auth: firebaseAuth,
+            voiceMomentReadService: VoiceMomentReadService(
+              feedInvoker: fakeVoiceMomentFeedInvoker(firestore: db),
+            ),
+          ),
       messageService: MessageService(firestore: db, auth: firebaseAuth),
       capabilityService: capabilityService,
       currentUserId: uid,
+      isVisible: isVisible,
     );
   }
 
@@ -238,13 +253,13 @@ void main() {
     expect(find.text('Kamil'), findsOneWidget);
     expect(find.textContaining('👋'), findsNothing);
     // The four questions Home answers, in order, and nothing else.
-    expect(find.text('Moments from your circle'), findsOneWidget);
+    expect(find.text('YO Moments from your circle'), findsOneWidget);
     expect(find.text('Rooms for you'), findsOneWidget);
     expect(find.text('Your active rooms'), findsOneWidget);
     expect(find.text('Your recent chats'), findsOneWidget);
 
     double y(String label) => tester.getTopLeft(find.text(label)).dy;
-    expect(y('Moments from your circle'), lessThan(y('Rooms for you')));
+    expect(y('YO Moments from your circle'), lessThan(y('Rooms for you')));
     expect(y('Rooms for you'), lessThan(y('Your active rooms')));
     expect(y('Your active rooms'), lessThan(y('Your recent chats')));
 
@@ -398,6 +413,46 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('returning to retained Home refreshes the one-shot v2 feed', (
+    tester,
+  ) async {
+    usePhone(tester, const Size(390, 844));
+    final visible = ValueNotifier<bool>(true);
+    addTearDown(visible.dispose);
+    var requests = 0;
+    final firebaseAuth = auth();
+    final feedService = HomeFeedService(
+      firestore: db,
+      auth: firebaseAuth,
+      voiceMomentReadService: VoiceMomentReadService(
+        feedInvoker: (request) async {
+          requests += 1;
+          return <Object?, Object?>{
+            'schemaVersion': 2,
+            'moments': const <Object?>[],
+            'scannedCount': 0,
+            'hasMore': false,
+            'nextCursor': null,
+          };
+        },
+      ),
+    );
+
+    await tester.pumpWidget(
+      host(buildHome(feedService: feedService, isVisible: visible)),
+    );
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(requests, 1);
+
+    visible.value = false;
+    await tester.pump();
+    expect(requests, 1);
+
+    visible.value = true;
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(requests, 2);
+  });
+
   testWidgets('Moments rail is self plus followed authors with private media', (
     tester,
   ) async {
@@ -450,9 +505,10 @@ void main() {
     expect(openedChain, isNotNull);
     expect(openedChain!.every((moment) => moment.audioUrl == null), isTrue);
     expect(
-      openedChain!.every((moment) => moment.mediaGeneration != null),
+      openedChain!.every((moment) => moment.mediaGeneration == null),
       isTrue,
     );
+    expect(openedChain!.every((moment) => moment.hasAuthorizedMedia), isTrue);
   });
 
   testWidgets('initial following stream failure fails closed to the own tile', (

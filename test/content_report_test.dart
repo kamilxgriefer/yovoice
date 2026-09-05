@@ -115,6 +115,26 @@ void main() {
       );
     });
 
+    test('a Voice receipt is forwarded but does not change retry identity', () {
+      const receipt = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+      const withoutReceipt = ReportedContent.voiceMoment(momentId: 'v1');
+      const withReceipt = ReportedContent.voiceMoment(
+        momentId: 'v1',
+        reportReceipt: receipt,
+      );
+
+      expect(withReceipt.callablePayload, <String, Object?>{
+        'targetType': 'voiceMoment',
+        'momentId': 'v1',
+        'reportReceipt': receipt,
+      });
+      expect(
+        ContentReportService.requestIdFor(withReceipt),
+        ContentReportService.requestIdFor(withoutReceipt),
+        reason: 'receipt rotation must replay one report operation',
+      );
+    });
+
     test('the request id matches the server regex', () {
       // requireRequestId: /^[A-Za-z0-9_-]{8,128}$/
       final pattern = RegExp(r'^[A-Za-z0-9_-]{8,128}$');

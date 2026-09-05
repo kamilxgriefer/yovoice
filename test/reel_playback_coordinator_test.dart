@@ -183,10 +183,10 @@ void main() {
     final service = ReelService(
       auth: MockFirebaseAuth(signedIn: true, mockUser: MockUser(uid: 'viewer')),
       callableInvoker: (name, payload) async {
-        expect(name, 'getReelMediaAccess');
+        expect(name, 'getReelMediaAccessV2');
         final isAudio = payload['asset'] == 'backingAudio';
         return <Object?, Object?>{
-          'schemaVersion': 1,
+          'schemaVersion': 2,
           'url': isAudio
               ? 'https://storage.googleapis.com/yovoice/photo-audio.mp3'
               : 'https://storage.googleapis.com/yovoice/photo.jpg',
@@ -195,6 +195,8 @@ void main() {
               .add(const Duration(minutes: 5))
               .millisecondsSinceEpoch,
           'generation': isAudio ? '4' : '3',
+          'availabilityHours': 'permanent',
+          'contentExpiresAtMillis': null,
         };
       },
     );

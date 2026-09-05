@@ -18,6 +18,9 @@ class VoiceMoment {
     this.schemaVersion = 0,
     this.status = 'legacy',
     this.isDeleted = false,
+    this.callerLiked = false,
+    this.hasAuthorizedMedia = false,
+    this.reportReceipt,
   });
 
   final String id;
@@ -51,6 +54,19 @@ class VoiceMoment {
   final String status;
   final bool isDeleted;
 
+  /// Per-viewer state supplied only by the server-owned v2 projection.
+  final bool callerLiked;
+
+  /// The v2 projection deliberately omits Storage paths, generations and
+  /// bearer URLs. This flag records only that the server validated a playable
+  /// canonical object; playback still obtains a short-lived media grant.
+  final bool hasAuthorizedMedia;
+
+  /// Short-lived, server-issued proof that this viewer saw this exact target
+  /// through the privacy-filtered v2 projection. It authorizes only the safety
+  /// report action and is deliberately absent from legacy Firestore models.
+  final String? reportReceipt;
+
   bool get isCanonicalPublished =>
       schemaVersion == 2 && status == 'published' && isPublished && !isDeleted;
 
@@ -58,6 +74,7 @@ class VoiceMoment {
   /// in-memory legacy/test fixtures; Firestore parsing never retains the
   /// durable bearer URL itself.
   bool get hasMediaReference =>
+      hasAuthorizedMedia ||
       (mediaGeneration?.trim().isNotEmpty ?? false) ||
       (audioUrl?.trim().isNotEmpty ?? false);
 
@@ -114,6 +131,7 @@ class VoiceMoment {
       schemaVersion: (data['schemaVersion'] as num?)?.toInt() ?? 0,
       status: data['status'] as String? ?? 'legacy',
       isDeleted: data['isDeleted'] as bool? ?? false,
+      reportReceipt: null,
     );
   }
 
@@ -137,6 +155,9 @@ class VoiceMoment {
     int? schemaVersion,
     String? status,
     bool? isDeleted,
+    bool? callerLiked,
+    bool? hasAuthorizedMedia,
+    String? reportReceipt,
   }) {
     return VoiceMoment(
       id: id ?? this.id,
@@ -155,6 +176,9 @@ class VoiceMoment {
       schemaVersion: schemaVersion ?? this.schemaVersion,
       status: status ?? this.status,
       isDeleted: isDeleted ?? this.isDeleted,
+      callerLiked: callerLiked ?? this.callerLiked,
+      hasAuthorizedMedia: hasAuthorizedMedia ?? this.hasAuthorizedMedia,
+      reportReceipt: reportReceipt ?? this.reportReceipt,
     );
   }
 

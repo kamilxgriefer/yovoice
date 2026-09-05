@@ -601,7 +601,6 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _voiceStories() {
-    final copy = AppLocalizations.of(context);
     return StreamBuilder<List<VoiceMoment>>(
       stream: _moments,
       builder: (context, snapshot) {
@@ -634,7 +633,7 @@ class _HomeScreenState extends State<HomeScreen> {
               StreamBuilder<UserProfile>(
                 stream: _profile,
                 builder: (context, profileSnapshot) => _StoryBubble(
-                  label: copy.text('Your Moment', 'Twój Moment'),
+                  label: 'YO Moments',
                   photoUrl:
                       myLatestMoment?.authorPhotoUrl ??
                       profileSnapshot.data?.photoUrl,
@@ -1062,13 +1061,35 @@ class _VoiceMomentCardState extends State<_VoiceMomentCard> {
   final AudioPlayer _player = AudioPlayer();
   StreamSubscription<PlayerState>? _stateSubscription;
   bool _playing = false;
+  late bool _liked;
+  late int _likeCount;
+  bool _likePending = false;
+  bool _hasLocalLikeOverride = false;
 
   @override
   void initState() {
     super.initState();
+    _liked = widget.moment.callerLiked;
+    _likeCount = widget.moment.likeCount;
     _stateSubscription = _player.onPlayerStateChanged.listen((state) {
       if (mounted) setState(() => _playing = state == PlayerState.playing);
     });
+  }
+
+  @override
+  void didUpdateWidget(covariant _VoiceMomentCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.moment.id != widget.moment.id) {
+      _liked = widget.moment.callerLiked;
+      _likeCount = widget.moment.likeCount;
+      _likePending = false;
+      _hasLocalLikeOverride = false;
+    } else if (!_likePending &&
+        (!_hasLocalLikeOverride || widget.moment.callerLiked == _liked)) {
+      _liked = widget.moment.callerLiked;
+      _likeCount = widget.moment.likeCount;
+      _hasLocalLikeOverride = false;
+    }
   }
 
   @override
@@ -1097,6 +1118,45 @@ class _VoiceMomentCardState extends State<_VoiceMomentCard> {
       await _player.pause();
     } else {
       await _player.play(UrlSource(url));
+    }
+  }
+
+  Future<void> _toggleLike() async {
+    if (_likePending) return;
+    final previousLiked = _liked;
+    final previousCount = _likeCount;
+    final desiredLiked = !previousLiked;
+    setState(() {
+      _liked = desiredLiked;
+      _likeCount = (previousCount + (desiredLiked ? 1 : -1)).clamp(0, 1 << 31);
+      _likePending = true;
+      _hasLocalLikeOverride = true;
+    });
+    try {
+      await widget.feedService.setLike(widget.moment.id, liked: desiredLiked);
+      if (!mounted) return;
+      setState(() => _likePending = false);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _liked = previousLiked;
+        _likeCount = previousCount;
+        _likePending = false;
+        _hasLocalLikeOverride = false;
+      });
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            behavior: SnackBarBehavior.floating,
+            content: Text(
+              AppLocalizations.of(context).text(
+                'Your like could not be saved. Try again.',
+                'Nie udało się zapisać polubienia. Spróbuj ponownie.',
+              ),
+            ),
+          ),
+        );
     }
   }
 
@@ -1285,19 +1345,13 @@ class _VoiceMomentCardState extends State<_VoiceMomentCard> {
           Row(
             children: [
               Expanded(
-                child: StreamBuilder<bool>(
-                  stream: widget.feedService.watchLiked(moment.id),
-                  builder: (context, snapshot) {
-                    final liked = snapshot.data ?? false;
-                    return _Action(
-                      icon: liked
-                          ? Icons.favorite_rounded
-                          : Icons.favorite_border_rounded,
-                      label: '${moment.likeCount}',
-                      active: liked,
-                      onTap: () => widget.feedService.toggleLike(moment.id),
-                    );
-                  },
+                child: _Action(
+                  icon: _liked
+                      ? Icons.favorite_rounded
+                      : Icons.favorite_border_rounded,
+                  label: '$_likeCount',
+                  active: _liked,
+                  onTap: _likePending ? null : _toggleLike,
                 ),
               ),
               Expanded(
@@ -1367,7 +1421,7 @@ class _Action extends StatelessWidget {
   });
   final IconData icon;
   final String label;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
   final bool active;
   @override
   Widget build(BuildContext context) {

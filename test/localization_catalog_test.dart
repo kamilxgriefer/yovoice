@@ -9,6 +9,7 @@ import 'package:yovoice/core/localization/translations/translations_auth_call_re
 import 'package:yovoice/core/localization/translations/translations_current_release.dart';
 import 'package:yovoice/core/localization/translations/translations_direct_call_refusals.dart';
 import 'package:yovoice/core/localization/translations/translations_reels.dart';
+import 'package:yovoice/core/localization/translations/translations_yo_moments.dart';
 
 final _placeholderPattern = RegExp(r'\{[a-zA-Z][a-zA-Z0-9_]*\}');
 
@@ -41,6 +42,76 @@ const _extendedLanguagePreferences = <AppLanguagePreference>[
 
 void main() {
   group('localization catalog integrity', () {
+    test('YO Moments copy is explicit in every translated locale', () {
+      final translatedLocaleKeys = selectableAppLanguages
+          .where(
+            (language) =>
+                language != AppLanguagePreference.english &&
+                language != AppLanguagePreference.polish,
+          )
+          .map((language) => language.localeKey)
+          .toSet();
+
+      expect(yoMomentsTranslations.keys.toSet(), translatedLocaleKeys);
+      expect(yoMomentsTranslationKeys, const <String>[
+        'yoMoments.voiceFormat',
+        'yoMoments.fromCircle',
+      ]);
+      for (final localeKey in translatedLocaleKeys) {
+        for (final key in yoMomentsTranslationKeys) {
+          final value = translatedPhrase(localeKey, key);
+          expect(
+            value,
+            isNotNull,
+            reason: '$localeKey must explicitly translate $key.',
+          );
+          expect(value!.trim(), isNotEmpty);
+        }
+      }
+    });
+
+    test('circle heading is localized across all 43 selectable locales', () {
+      for (final locale in AppLocalizations.supportedLocales) {
+        final copy = AppLocalizations(locale);
+        final value = copy.yoMomentsFromYourCircle;
+        expect(value.trim(), isNotEmpty, reason: locale.toLanguageTag());
+        if (locale.languageCode != 'en') {
+          expect(
+            value,
+            isNot('YO Moments from your circle'),
+            reason: '${locale.toLanguageTag()} must not use English fallback.',
+          );
+        }
+      }
+    });
+
+    test('YO Moments brand name is invariant in all 43 locales', () {
+      for (final locale in AppLocalizations.supportedLocales) {
+        expect(AppLocalizations(locale).moments, 'YO Moments');
+      }
+    });
+
+    test('Voice format translation cannot leak into unrelated Voice copy', () {
+      const german = AppLocalizations(Locale('de'));
+      expect(
+        german.contextualText('yoMoments.voiceFormat', 'Voice', 'Głos'),
+        'Stimme',
+      );
+      expect(german.text('Voice', 'Głos'), 'Voice');
+      expect(
+        const AppLocalizations(
+          Locale('en'),
+        ).contextualText('yoMoments.voiceFormat', 'Voice', 'Głos'),
+        'Voice',
+      );
+      expect(
+        const AppLocalizations(
+          Locale('pl'),
+        ).contextualText('yoMoments.voiceFormat', 'Voice', 'Głos'),
+        'Głos',
+      );
+    });
+
     test('canonical keys are stable templates, never interpolated values', () {
       for (final key in appTranslationKeys) {
         expect(

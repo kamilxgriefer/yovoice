@@ -20,6 +20,7 @@ import 'package:yovoice/features/moments/data/models/voice_moment.dart';
 import 'package:yovoice/features/moments/data/services/moment_discovery_service.dart';
 import 'package:yovoice/features/moments/data/services/moment_expiry_scheduler.dart';
 import 'package:yovoice/features/moments/data/services/moment_service.dart';
+import 'package:yovoice/features/moments/data/services/voice_moment_read_service.dart';
 import 'package:yovoice/features/moments/presentation/screens/moment_comments_screen.dart';
 import 'package:yovoice/features/moments/presentation/screens/moment_detail_screen.dart';
 import 'package:yovoice/features/moments/presentation/screens/moments_screen.dart';
@@ -214,6 +215,68 @@ class _FakeAudioPlayer implements audio.AudioPlayer {
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _TickingAudioPlayer extends _FakeAudioPlayer {
+  final StreamController<Duration> _positionController =
+      StreamController<Duration>.broadcast(sync: true);
+
+  @override
+  Stream<Duration> get onPositionChanged => _positionController.stream;
+
+  void emitPosition(Duration position) => _positionController.add(position);
+
+  @override
+  Future<void> dispose() async {
+    await _positionController.close();
+    await super.dispose();
+  }
+}
+
+class _CountingStoryMomentService extends MomentService {
+  _CountingStoryMomentService({
+    required List<VoiceMoment> moments,
+    required MockFirebaseAuth auth,
+  }) : _byId = <String, VoiceMoment>{
+         for (final moment in moments) moment.id: moment,
+       },
+       super(
+         firestore: FakeFirebaseFirestore(),
+         auth: auth,
+         storage: MockFirebaseStorage(),
+       );
+
+  final Map<String, VoiceMoment> _byId;
+  final List<String> snapshotRequests = <String>[];
+
+  @override
+  Stream<VoiceMoment> watchMoment(String momentId) {
+    snapshotRequests.add(momentId);
+    return Stream<VoiceMoment>.value(_byId[momentId]!);
+  }
+
+  @override
+  Future<Uri> resolveMediaUri({
+    required String momentId,
+    String? commentId,
+  }) async => Uri.parse(
+    'https://storage.googleapis.com/yovoice-test/$momentId.m4a'
+    '?X-Goog-Signature=test',
+  );
+}
+
+class _ControlledLikeFeed extends HomeFeedService {
+  _ControlledLikeFeed(MockFirebaseAuth auth)
+    : super(firestore: FakeFirebaseFirestore(), auth: auth);
+
+  final List<(String, bool)> requests = <(String, bool)>[];
+  final Completer<void> completion = Completer<void>();
+
+  @override
+  Future<void> setLike(String momentId, {required bool liked}) async {
+    requests.add((momentId, liked));
+    await completion.future;
+  }
 }
 
 class _StaticDiscovery extends MomentDiscoveryService {
@@ -540,6 +603,9 @@ void main() {
     final service = HomeFeedService(
       firestore: db,
       auth: auth,
+      voiceMomentReadService: VoiceMomentReadService(
+        feedInvoker: fakeVoiceMomentFeedInvoker(firestore: db),
+      ),
       expiryClock: () => clock.now,
       expiryTimerFactory: clock.create,
     );
@@ -717,6 +783,136 @@ void main() {
     ]);
     await tester.pump(const Duration(milliseconds: 1));
     semantics.dispose();
+  });
+
+  testWidgets(
+    'Story viewer caches one v2 snapshot across player ticks and rebuilds, '
+    'then reads once for the next link',
+    (tester) async {
+      final player = _TickingAudioPlayer();
+      final first = _moment('story-cache-first');
+      final second = _moment(
+        'story-cache-second',
+        createdAt: _anchor.add(const Duration(minutes: 1)),
+      );
+      final service = _CountingStoryMomentService(
+        moments: <VoiceMoment>[first, second],
+        auth: auth,
+      );
+      final chain = buildMomentChains(<VoiceMoment>[first, second]).single;
+      late StateSetter rebuildHost;
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: StatefulBuilder(
+            builder: (context, setState) {
+              rebuildHost = setState;
+              return Scaffold(
+                body: MomentStoryViewer(
+                  key: const ValueKey('cached-story-viewer'),
+                  chain: chain,
+                  auth: auth,
+                  momentService: service,
+                  playerFactory: () => player,
+                ),
+              );
+            },
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+      expect(service.snapshotRequests, <String>[first.id]);
+      expect(player.playCount, 1, reason: 'the position stream must be active');
+
+      for (var index = 1; index <= 12; index += 1) {
+        player.emitPosition(Duration(milliseconds: index * 300));
+        await tester.pump();
+      }
+      for (var index = 0; index < 8; index += 1) {
+        rebuildHost(() {});
+        await tester.pump();
+      }
+      expect(
+        service.snapshotRequests,
+        <String>[first.id],
+        reason:
+            'a player tick or retained rebuild must never create a callable',
+      );
+
+      await tester.ensureVisible(find.byKey(const ValueKey('story-next')));
+      await tester.tap(find.byKey(const ValueKey('story-next')));
+      await tester.pump();
+      await tester.pump();
+      expect(service.snapshotRequests, <String>[first.id, second.id]);
+      expect(player.playCount, 2);
+
+      for (var index = 1; index <= 6; index += 1) {
+        player.emitPosition(Duration(milliseconds: index * 200));
+        await tester.pump();
+      }
+      expect(service.snapshotRequests, <String>[first.id, second.id]);
+
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pump();
+      await tester.pump();
+      expect(
+        service.snapshotRequests,
+        <String>[first.id, second.id, second.id],
+        reason: 'returning to a visible story requests one canonical refresh',
+      );
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump(const Duration(milliseconds: 1));
+    },
+  );
+
+  testWidgets('Story like is optimistic and refreshes one canonical snapshot', (
+    tester,
+  ) async {
+    final moment = _moment('story-like-desired');
+    final service = _CountingStoryMomentService(
+      moments: <VoiceMoment>[moment],
+      auth: auth,
+    );
+    final feed = _ControlledLikeFeed(auth);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: MomentStoryViewer(
+            chain: buildMomentChains(<VoiceMoment>[moment]).single,
+            auth: auth,
+            autoPlay: false,
+            momentService: service,
+            feedService: feed,
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+    expect(service.snapshotRequests, <String>[moment.id]);
+
+    await tester.ensureVisible(find.byKey(const ValueKey('story-like')));
+    await tester.tap(find.byKey(const ValueKey('story-like')));
+    await tester.pump();
+
+    expect(feed.requests, <(String, bool)>[(moment.id, true)]);
+    expect(find.byIcon(Icons.favorite_rounded), findsOneWidget);
+    expect(find.text('1'), findsOneWidget);
+    expect(
+      service.snapshotRequests,
+      <String>[moment.id],
+      reason: 'optimistic state must not wait for an extra read',
+    );
+
+    feed.completion.complete();
+    await tester.pump();
+    await tester.pump();
+    expect(service.snapshotRequests, <String>[moment.id, moment.id]);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(milliseconds: 1));
   });
 
   testWidgets('Story viewer keeps the first live successor when one wake-up '
@@ -1091,6 +1287,9 @@ void main() {
       firestore: db,
       auth: auth,
       mutationInvoker: (_) async => const <String, dynamic>{},
+      voiceMomentReadService: VoiceMomentReadService(
+        viewInvoker: fakeVoiceMomentViewInvoker(firestore: db, viewerUid: 'me'),
+      ),
     );
 
     await tester.pumpWidget(
@@ -1155,6 +1354,9 @@ void main() {
       firestore: db,
       auth: auth,
       mutationInvoker: (_) async => const <String, dynamic>{},
+      voiceMomentReadService: VoiceMomentReadService(
+        viewInvoker: fakeVoiceMomentViewInvoker(firestore: db, viewerUid: 'me'),
+      ),
     );
 
     await tester.pumpWidget(

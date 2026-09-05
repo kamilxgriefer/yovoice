@@ -45,6 +45,7 @@ import 'package:yovoice/features/moments/data/models/voice_moment.dart';
 import 'package:yovoice/features/moments/data/services/moment_discovery_service.dart';
 import 'package:yovoice/features/moments/data/services/moment_service.dart';
 import 'package:yovoice/features/moments/data/services/moment_views_service.dart';
+import 'package:yovoice/features/moments/data/services/voice_moment_read_service.dart';
 import 'package:yovoice/features/moments/presentation/screens/moments_screen.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_story_viewer.dart';
 import 'package:yovoice/shared/identity/public_identity_repository.dart';
@@ -128,11 +129,18 @@ void main() {
       MockFirebaseAuth(signedIn: true, mockUser: MockUser(uid: _me));
 
   MomentService privateMoments({FakeFirebaseFirestore? firestore}) {
+    final database = firestore ?? FakeFirebaseFirestore();
     return MomentService(
-      firestore: firestore ?? FakeFirebaseFirestore(),
+      firestore: database,
       auth: authMe(),
       storage: MockFirebaseStorage(),
       mediaAccessInvoker: fakeMomentMediaAccessInvoker(),
+      readService: VoiceMomentReadService(
+        viewInvoker: fakeVoiceMomentViewInvoker(
+          firestore: database,
+          viewerUid: _me,
+        ),
+      ),
     );
   }
 
@@ -514,10 +522,31 @@ void main() {
           await tester.pump(const Duration(milliseconds: 50));
 
           expect(tester.takeException(), isNull);
+          // At 200% text the header legitimately consumes more than one
+          // phone viewport, so a lazy ListView does not build the first row
+          // until it is approached. Prove reachability by actually scrolling
+          // the feed instead of equating "not mounted yet" with "missing".
+          final firstRow = find.byKey(const ValueKey('moment-row-m0'));
+          if (firstRow.evaluate().isEmpty) {
+            await tester.scrollUntilVisible(
+              firstRow,
+              240,
+              scrollable: find.descendant(
+                of: find.byKey(const ValueKey('moments-feed-scroll')),
+                matching: find.byWidgetPredicate(
+                  (widget) =>
+                      widget is Scrollable &&
+                      widget.axisDirection == AxisDirection.down,
+                ),
+              ),
+            );
+            await tester.pump();
+          }
+          expect(tester.takeException(), isNull);
           // The list is the surface: the first row is reachable at every
           // width, and the detail panel is a desktop-only composition —
           // never a stretched phone extra.
-          expect(find.byKey(const ValueKey('moment-row-m0')), findsOneWidget);
+          expect(firstRow, findsOneWidget);
           if (width >= 1100) {
             expect(
               find.byKey(const ValueKey('moments-detail-panel')),
@@ -529,6 +558,11 @@ void main() {
               findsNothing,
             );
           }
+          // Rows mounted by the accessibility scroll queue identity-badge
+          // resolution on a one-millisecond batch timer. Drain that real
+          // post-mount work rather than leaving a timer past tree disposal.
+          await tester.pump(const Duration(milliseconds: 20));
+          await tester.pump(const Duration(milliseconds: 20));
         });
       }
     }
@@ -863,6 +897,7 @@ void main() {
       required MomentService moments,
       List<VoiceMoment> social = const [],
       Size size = const Size(390, 844),
+      _QuietFeed? feedService,
     }) async {
       await tester.binding.setSurfaceSize(size);
       addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -873,7 +908,7 @@ void main() {
             initialTab: MomentsTab.following,
             momentService: moments,
             auth: authMe(),
-            feedService: feed(social: social),
+            feedService: feedService ?? feed(social: social),
             discoveryService: _StaticDiscovery(const []),
           ),
         ),
@@ -968,8 +1003,10 @@ void main() {
       expect(find.byIcon(Icons.play_arrow_rounded), findsWidgets);
     });
 
-    testWidgets('the open sheet re-reads its own Moment, so a like made '
-        'inside it moves its own counter', (tester) async {
+    testWidgets('the open sheet uses the v2 snapshot and a like made inside '
+        'it moves its own counter without a foreign Firestore listener', (
+      tester,
+    ) async {
       final moments = await seeded([
         _moment(
           'mine-1',
@@ -979,8 +1016,13 @@ void main() {
           age: const Duration(hours: 1),
         ),
       ]);
+      final interactionFeed = _QuietFeed(firestore: db, auth: authMe());
 
-      await pumpFollowing(tester, moments: moments);
+      await pumpFollowing(
+        tester,
+        moments: moments,
+        feedService: interactionFeed,
+      );
 
       await tester.tap(find.byKey(const ValueKey('moment-row-mine-1')));
       await tester.pumpAndSettle();
@@ -991,19 +1033,16 @@ void main() {
         findsOneWidget,
       );
 
-      // The counter changes on the server the way a like does.
-      await db.collection('voiceMoments').doc('mine-1').update(
-        <String, dynamic>{'likeCount': 3, 'commentCount': 5},
-      );
+      // Build 20 intentionally does not subscribe to another account's
+      // Firestore document. The desired-state callable is issued once and
+      // the sheet owns the optimistic counter until its next safe refresh.
+      await tester.tap(find.byKey(const ValueKey('like-moment-2-false')));
       await tester.pump();
       await tester.pump();
 
+      expect(interactionFeed.likeWrites, const ['mine-1:true']);
       expect(
         find.descendant(of: card, matching: find.text('3')),
-        findsOneWidget,
-      );
-      expect(
-        find.descendant(of: card, matching: find.text('5')),
         findsOneWidget,
       );
     });
@@ -1112,6 +1151,7 @@ class _QuietFeed extends HomeFeedService {
   _QuietFeed({super.firestore, super.auth, this.social = const []});
 
   final List<VoiceMoment> social;
+  final List<String> likeWrites = <String>[];
 
   @override
   Stream<List<VoiceMoment>> watchSocialMoments({int limit = 40}) =>
@@ -1122,6 +1162,11 @@ class _QuietFeed extends HomeFeedService {
 
   @override
   Future<void> toggleLike(String momentId) async {}
+
+  @override
+  Future<void> setLike(String momentId, {required bool liked}) async {
+    likeWrites.add('$momentId:$liked');
+  }
 }
 
 /// An [audio.AudioPlayer] that reports a real position shortly after play

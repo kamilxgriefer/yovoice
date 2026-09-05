@@ -2,12 +2,24 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/calls/data/services/voice_call_service.dart';
+import 'package:yovoice/shared/widgets/navigation/yo_moments_icon.dart';
+
+typedef YoNavigationDestinationIconBuilder =
+    Widget Function(
+      BuildContext context, {
+      required bool selected,
+      required bool pressed,
+      required bool enabled,
+      required Color color,
+      required double size,
+    });
 
 @immutable
 class YoNavigationDestinationConfig {
@@ -20,6 +32,8 @@ class YoNavigationDestinationConfig {
     required this.isSelected,
     required this.onPressed,
     this.badgeCount = 0,
+    this.iconBuilder,
+    this.enabled = true,
   });
 
   final String label;
@@ -30,6 +44,8 @@ class YoNavigationDestinationConfig {
   final bool isSelected;
   final VoidCallback onPressed;
   final int badgeCount;
+  final YoNavigationDestinationIconBuilder? iconBuilder;
+  final bool enabled;
 }
 
 /// The production mobile navigation surface shared by [MainShell] and every
@@ -56,7 +72,7 @@ class YoFloatingNavigationDock extends StatefulWidget {
   static const double topClearance = 4;
   static const double minimumBottomClearance = 10;
   static const double visualHeight = 104;
-  static const double accessibleVisualHeight = 112;
+  static const double accessibleVisualHeight = 196;
   static const double cornerRadius = 31;
   static const double centralRise = 30;
   static const double expandedLabelScaleThreshold = 1.6;
@@ -392,6 +408,7 @@ class _YoFloatingNavigationDockState extends State<YoFloatingNavigationDock>
   }
 
   void _select(YoNavigationDestinationConfig destination) {
+    if (!destination.enabled) return;
     if (!destination.isSelected) {
       _pendingSelectionSlot = destination.visualSlot;
       _pendingSelectionExpiry?.cancel();
@@ -456,8 +473,27 @@ class _YoFloatingNavigationDockState extends State<YoFloatingNavigationDock>
       YoNavigationDestinationConfig(
         label: copy.moments,
         semanticLabel: copy.moments,
-        icon: Icons.graphic_eq_outlined,
-        selectedIcon: Icons.graphic_eq_rounded,
+        icon: Icons.play_arrow_rounded,
+        selectedIcon: Icons.play_arrow_rounded,
+        iconBuilder:
+            (
+              context, {
+              required selected,
+              required pressed,
+              required enabled,
+              required color,
+              required size,
+            }) => YoMomentsIcon(
+              state: !enabled
+                  ? YoMomentsIconState.disabled
+                  : pressed
+                  ? YoMomentsIconState.pressed
+                  : selected
+                  ? YoMomentsIconState.active
+                  : YoMomentsIconState.inactive,
+              color: color,
+              size: size,
+            ),
         visualSlot: 3,
         isSelected:
             !widget.moreSelected && selectedTabIndex == widget.momentsTabIndex,
@@ -513,14 +549,6 @@ class _YoFloatingNavigationDockState extends State<YoFloatingNavigationDock>
                           final width = constraints.maxWidth;
                           final narrow = width < 332;
                           final slotWidth = width / 5;
-                          final destinationWidth = math.min(
-                            narrow ? 52.0 : 56.0,
-                            slotWidth - 2,
-                          );
-                          final destinationHeight = expandedLabels
-                              ? 68.0
-                              : 52.0;
-                          final destinationTop = expandedLabels ? 37.0 : 41.0;
                           final centerDiameter = narrow ? 64.0 : 68.0;
                           final centerLogoAssetSize = narrow ? 68.0 : 76.0;
                           const centerLogoOpticalOffset = 19.0;
@@ -533,6 +561,38 @@ class _YoFloatingNavigationDockState extends State<YoFloatingNavigationDock>
                             centerLogoTop + centerLogoAssetSize,
                           );
                           final centerHitLeft = (width - centerHitWidth) / 2;
+                          final textDirection = Directionality.of(context);
+                          final destinationWidth = expandedLabels
+                              ? (width - centerHitWidth - 8) / 2
+                              : math.min(narrow ? 52.0 : 56.0, slotWidth - 2);
+                          final destinationHeight = expandedLabels
+                              ? 92.0
+                              : 52.0;
+
+                          double destinationLeft(int slot) {
+                            if (expandedLabels) {
+                              final logicalLeading = slot == 0 || slot == 3;
+                              final onPhysicalLeft =
+                                  textDirection == TextDirection.ltr
+                                  ? logicalLeading
+                                  : !logicalLeading;
+                              return onPhysicalLeft
+                                  ? 0
+                                  : width - destinationWidth;
+                            }
+                            final physicalSlot =
+                                textDirection == TextDirection.ltr
+                                ? slot
+                                : 4 - slot;
+                            return slotWidth * (physicalSlot + .5) -
+                                destinationWidth / 2;
+                          }
+
+                          double destinationTop(int slot) {
+                            if (!expandedLabels) return 41;
+                            return slot == 0 || slot == 1 ? 4 : 100;
+                          }
+
                           final shape = _YoSculptedDockShape(
                             cornerRadius: YoFloatingNavigationDock.cornerRadius,
                             riseHeight: YoFloatingNavigationDock.centralRise,
@@ -648,10 +708,8 @@ class _YoFloatingNavigationDockState extends State<YoFloatingNavigationDock>
                                   key: ValueKey(
                                     'yo-destination-position-$slot',
                                   ),
-                                  left:
-                                      slotWidth * (slot + .5) -
-                                      destinationWidth / 2,
-                                  top: destinationTop,
+                                  left: destinationLeft(slot),
+                                  top: destinationTop(slot),
                                   width: destinationWidth,
                                   height: destinationHeight,
                                   child: _tourDestinationAnchor(
@@ -1023,6 +1081,7 @@ class _YoDockDestinationState extends State<_YoDockDestination> {
   Widget build(BuildContext context) {
     final config = widget.config;
     final selected = config.isSelected;
+    final enabled = config.enabled;
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
     final iconColor = selected
@@ -1033,9 +1092,12 @@ class _YoDockDestinationState extends State<_YoDockDestination> {
             context,
           ).navigationUnreadLabel(config.semanticLabel, config.badgeCount)
         : config.semanticLabel;
+    final horizontalDirection = Directionality.of(context) == TextDirection.rtl
+        ? -1.0
+        : 1.0;
     final selectedSlide = switch (config.visualSlot) {
       0 => const Offset(0, -.06),
-      1 => const Offset(.025, -.035),
+      1 => Offset(.025 * horizontalDirection, -.035),
       3 => const Offset(0, -.045),
       4 => const Offset(0, -.02),
       _ => Offset.zero,
@@ -1048,15 +1110,21 @@ class _YoDockDestinationState extends State<_YoDockDestination> {
         child: Semantics(
           button: true,
           selected: selected,
+          enabled: enabled,
           label: semanticsLabel,
-          onTap: widget.onPressed,
+          sortKey: OrdinalSortKey(config.visualSlot.toDouble()),
+          onTap: enabled ? widget.onPressed : null,
           excludeSemantics: true,
           child: AnimatedScale(
             duration: widget.reduceMotion
                 ? Duration.zero
                 : Duration(milliseconds: _pressed ? 90 : 190),
             curve: _premiumCurve,
-            scale: _pressed ? .96 : 1,
+            // Standard destinations keep the historic whole-control press.
+            // Frame Echo Clean owns its pressed state internally, avoiding a
+            // compounded scale that would make the bespoke mark look smaller
+            // than its neighbours.
+            scale: enabled && _pressed && config.iconBuilder == null ? .96 : 1,
             child: Material(
               key: ValueKey('yo-destination-focus-${config.visualSlot}'),
               type: MaterialType.transparency,
@@ -1070,8 +1138,9 @@ class _YoDockDestinationState extends State<_YoDockDestination> {
               child: InkWell(
                 key: ValueKey('yo-destination-${config.visualSlot}'),
                 focusNode: _focusNode,
-                onTap: widget.onPressed,
+                onTap: enabled ? widget.onPressed : null,
                 onHighlightChanged: (pressed) {
+                  if (!enabled) return;
                   if (_pressed == pressed) return;
                   setState(() => _pressed = pressed);
                 },
@@ -1090,9 +1159,12 @@ class _YoDockDestinationState extends State<_YoDockDestination> {
                   clipBehavior: Clip.none,
                   alignment: Alignment.center,
                   children: [
-                    Column(
+                    Flex(
+                      direction: Axis.vertical,
                       mainAxisAlignment: MainAxisAlignment.center,
-                      mainAxisSize: MainAxisSize.min,
+                      mainAxisSize: widget.expandedLabel
+                          ? MainAxisSize.max
+                          : MainAxisSize.min,
                       children: [
                         AnimatedSlide(
                           key: ValueKey(
@@ -1132,35 +1204,49 @@ class _YoDockDestinationState extends State<_YoDockDestination> {
                                   ),
                                 );
                               },
-                              child: Icon(
-                                selected ? config.selectedIcon : config.icon,
+                              child: KeyedSubtree(
                                 key: ValueKey('${config.visualSlot}-$selected'),
-                                color: iconColor,
-                                size: selected ? 26 : 25,
+                                child:
+                                    config.iconBuilder?.call(
+                                      context,
+                                      selected: selected,
+                                      pressed: _pressed,
+                                      enabled: enabled,
+                                      color: iconColor,
+                                      size: selected ? 26 : 25,
+                                    ) ??
+                                    Icon(
+                                      selected
+                                          ? config.selectedIcon
+                                          : config.icon,
+                                      color: iconColor,
+                                      size: selected ? 26 : 25,
+                                    ),
                               ),
                             ),
                           ),
                         ),
                         if (widget.expandedLabel) ...[
                           const SizedBox(height: 3),
-                          SizedBox(
-                            width: 52,
-                            height: 18,
-                            child: FittedBox(
-                              fit: BoxFit.scaleDown,
-                              child: Text(
-                                config.label,
-                                maxLines: 1,
-                                overflow: TextOverflow.visible,
-                                style: TextStyle(
-                                  color: selected
-                                      ? colors.onPrimaryContainer
-                                      : palette.navigationInactive,
-                                  fontSize: 11,
-                                  fontWeight: selected
-                                      ? FontWeight.w700
-                                      : FontWeight.w600,
-                                ),
+                          Flexible(
+                            child: Text(
+                              config.label,
+                              key: ValueKey(
+                                'yo-destination-label-${config.visualSlot}',
+                              ),
+                              maxLines: 3,
+                              softWrap: true,
+                              overflow: TextOverflow.visible,
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                color: selected
+                                    ? colors.onPrimaryContainer
+                                    : palette.navigationInactive,
+                                fontSize: 10.5,
+                                height: 1,
+                                fontWeight: selected
+                                    ? FontWeight.w700
+                                    : FontWeight.w600,
                               ),
                             ),
                           ),
@@ -1192,9 +1278,9 @@ class _YoDockDestinationState extends State<_YoDockDestination> {
                       ),
                     ),
                     if (config.badgeCount > 0)
-                      Positioned(
+                      PositionedDirectional(
                         top: -6,
-                        right: 2,
+                        end: 2,
                         child: _UnreadBadge(count: config.badgeCount),
                       ),
                   ],
@@ -1347,6 +1433,7 @@ class _YoCenterActionButtonState extends State<_YoCenterActionButton>
         key: const ValueKey('yo-center-action-hit-target'),
         button: true,
         label: semanticLabel,
+        sortKey: const OrdinalSortKey(2),
         onTap: _activate,
         excludeSemantics: true,
         child: Stack(

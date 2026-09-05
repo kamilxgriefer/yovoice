@@ -13,7 +13,10 @@ import 'package:yovoice/features/creator/presentation/screens/creator_pinned_pos
 import 'package:yovoice/features/creator/presentation/widgets/creator_pinned_moment_card.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
 import 'package:yovoice/features/moments/data/services/moment_service.dart';
+import 'package:yovoice/features/moments/data/services/voice_moment_read_service.dart';
 import 'package:yovoice/features/moments/presentation/screens/moments_screen.dart';
+
+import 'voice_moment_test_doubles.dart';
 
 void main() {
   const creatorId = 'creator-1';
@@ -80,6 +83,12 @@ void main() {
     firestore: db,
     auth: auth,
     mutationInvoker: mutationInvoker ?? (_) async => const {},
+    voiceMomentReadService: VoiceMomentReadService(
+      viewInvoker: fakeVoiceMomentViewInvoker(
+        firestore: db,
+        viewerUid: creatorId,
+      ),
+    ),
   );
 
   MomentService momentService() =>
@@ -143,7 +152,7 @@ void main() {
   );
 
   test(
-    'public stream switches its exact Moment listener on a fast re-pin',
+    'public stream reloads its server projection on a fast re-pin',
     () async {
       await seedMoment('m1');
       await seedMoment(
@@ -222,6 +231,7 @@ void main() {
         'isPublished': false,
         'isDeleted': true,
       });
+      await seedPin('m2');
       await tester.pump(const Duration(milliseconds: 50));
       await tester.pump(const Duration(milliseconds: 50));
       expect(find.text('PINNED VOICE MOMENT'), findsNothing);

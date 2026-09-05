@@ -19,12 +19,15 @@ import 'package:yovoice/features/home/presentation/widgets/shared/home_room_boar
 import 'package:yovoice/features/messages/data/models/conversation.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
+import 'package:yovoice/features/moments/data/services/voice_moment_read_service.dart';
 import 'package:yovoice/features/notifications/data/services/notification_service.dart';
 import 'package:yovoice/features/profile/data/services/follow_service.dart';
 import 'package:yovoice/features/profile/data/services/profile_media_service.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
+
+import 'voice_moment_test_doubles.dart';
 
 class _RoomStreams extends RoomService {
   _RoomStreams({required List<VoiceRoom> live, required List<VoiceRoom> owned})
@@ -275,7 +278,13 @@ void main() {
       followService: FollowService(firestore: db, auth: firebaseAuth),
       profileService: ProfileService(firestore: db, auth: firebaseAuth),
       profileMediaService: profileMediaService,
-      feedService: HomeFeedService(firestore: db, auth: firebaseAuth),
+      feedService: HomeFeedService(
+        firestore: db,
+        auth: firebaseAuth,
+        voiceMomentReadService: VoiceMomentReadService(
+          feedInvoker: fakeVoiceMomentFeedInvoker(firestore: db),
+        ),
+      ),
       messageService: MessageService(
         firestore: db,
         auth: firebaseAuth,
@@ -705,7 +714,7 @@ void main() {
         authorName: 'Marek',
         caption: 'Studio update',
         age: const Duration(days: 3),
-        durationSeconds: 95,
+        durationSeconds: 55,
         // Older than the 24-hour "New" window but explicitly still live:
         // the claim under test is that a non-fresh Moment shows its REAL
         // duration, and the strip trusts the document's expiresAt rather
@@ -755,7 +764,7 @@ void main() {
         await tester.pump(const Duration(milliseconds: 60));
       }
 
-      expect(find.text('Your Moment'), findsOneWidget);
+      expect(find.text('YO Moments'), findsOneWidget);
       expect(find.text('Ola'), findsWidgets);
       expect(find.text('Marek'), findsOneWidget);
       // Nobody outside friends/following/self may appear.
@@ -769,7 +778,7 @@ void main() {
       // Real state only: fresh Moments read "New", older ones show their
       // real duration.
       expect(find.text('New'), findsWidgets);
-      expect(find.text('1:35'), findsOneWidget);
+      expect(find.text('0:55'), findsOneWidget);
     });
 
     testWidgets('a Moment tile opens the existing viewer and the plus opens '
@@ -805,7 +814,8 @@ void main() {
       await tester.pump();
       expect(opened?.id, 'm1');
       expect(opened?.audioUrl, isNull);
-      expect(opened?.mediaGeneration, '1700000000000001');
+      expect(opened?.mediaGeneration, isNull);
+      expect(opened?.hasAuthorizedMedia, isTrue);
 
       await tester.tap(find.byTooltip('Record a Voice Moment'));
       await tester.pump();
@@ -829,7 +839,7 @@ void main() {
         await tester.pump(const Duration(milliseconds: 60));
       }
 
-      expect(find.text('Your Moment'), findsOneWidget);
+      expect(find.text('YO Moments'), findsOneWidget);
       expect(find.text('Ola'), findsNothing);
       expect(find.text('Marek'), findsNothing);
       expect(find.text('Follow'), findsNothing);
@@ -844,8 +854,8 @@ void main() {
         await tester.pump(const Duration(milliseconds: 60));
       }
 
-      expect(find.text('Moments from your circle'), findsOneWidget);
-      expect(find.text('Your Moment'), findsOneWidget);
+      expect(find.text('YO Moments from your circle'), findsOneWidget);
+      expect(find.text('YO Moments'), findsOneWidget);
       expect(
         find.textContaining('No Moments from your circle yet'),
         findsNothing,

@@ -11,6 +11,13 @@ enum ReportTargetType {
   /// A published Reel created through the server-authoritative Reel flow.
   reel,
 
+  /// A published Voice Moment reported through `createContentReport`.
+  voiceMoment,
+
+  /// One comment attached to a Voice Moment, reported through
+  /// `createContentReport`.
+  voiceMomentComment,
+
   /// An account, independent of any one message.
   user,
 }

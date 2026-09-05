@@ -8,23 +8,27 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:yovoice/features/clubs/data/models/club.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
 import 'package:yovoice/features/moments/data/services/moment_expiry_scheduler.dart';
+import 'package:yovoice/features/moments/data/services/voice_moment_read_service.dart';
 
 class HomeFeedService {
   HomeFeedService({
     FirebaseFirestore? firestore,
     FirebaseAuth? auth,
     FirebaseFunctions? functions,
+    VoiceMomentReadService? voiceMomentReadService,
     MomentExpiryClock? expiryClock,
     MomentExpiryTimerFactory? expiryTimerFactory,
   }) : _firestore = firestore ?? FirebaseFirestore.instance,
        _auth = auth ?? FirebaseAuth.instance,
        _functionsOverride = functions,
+       _voiceMomentReadServiceOverride = voiceMomentReadService,
        _expiryClock = expiryClock,
        _expiryTimerFactory = expiryTimerFactory;
 
   final FirebaseFirestore _firestore;
   final FirebaseAuth _auth;
   final FirebaseFunctions? _functionsOverride;
+  final VoiceMomentReadService? _voiceMomentReadServiceOverride;
   final MomentExpiryClock? _expiryClock;
   final MomentExpiryTimerFactory? _expiryTimerFactory;
 
@@ -40,12 +44,6 @@ class HomeFeedService {
           rethrow;
         }
       })();
-
-  String get _uid {
-    final user = _auth.currentUser;
-    if (user == null) throw StateError('User is not signed in.');
-    return user.uid;
-  }
 
   String _newRequestId() {
     final random = Random.secure();
@@ -63,10 +61,15 @@ class HomeFeedService {
             error.code == 'no-app');
   }
 
+  VoiceMomentReadService get _voiceMomentReads =>
+      _voiceMomentReadServiceOverride ??
+      VoiceMomentReadService(functions: _functionsOverride);
+
   Stream<List<VoiceMoment>> watchSocialMoments({int limit = 40}) {
+    if (limit < 1 || limit > 40) {
+      throw RangeError.range(limit, 1, 40, 'limit');
+    }
     final controller = StreamController<List<VoiceMoment>>.broadcast();
-    var friendIds = <String>{};
-    var followingIds = <String>{};
     var moments = <VoiceMoment>[];
     DateTime? expiredThrough;
     late final MomentExpiryScheduler expiry;
@@ -77,7 +80,6 @@ class HomeFeedService {
           (expiredThrough == null || deadline.isAfter(expiredThrough!))) {
         expiredThrough = deadline;
       }
-      final allowedAuthors = <String>{_uid, ...friendIds, ...followingIds};
       // Expiry is enforced client-side on every surface this stream feeds
       // (Home strips, the social feed, the Following filter): a Moment
       // past its `expiresAt` must not render during the sweeper's
@@ -89,11 +91,7 @@ class HomeFeedService {
       final floor = expiredThrough;
       final now = floor != null && floor.isAfter(wallNow) ? floor : wallNow;
       final filtered = moments
-          .where(
-            (moment) =>
-                allowedAuthors.contains(moment.authorId) &&
-                moment.isActiveAt(now),
-          )
+          .where((moment) => moment.isActiveAt(now))
           .toList(growable: false);
       filtered.sort((a, b) {
         final aDate = a.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
@@ -113,63 +111,43 @@ class HomeFeedService {
       timerFactory: _expiryTimerFactory,
     );
 
-    final subscriptions = <StreamSubscription<dynamic>>[];
+    Future<void> load() async {
+      final reads = _voiceMomentReads;
+      final loaded = <VoiceMoment>[];
+      final seen = <String>{};
+      String? cursor;
+      var scanned = 0;
+      do {
+        final remaining = limit - scanned;
+        final page = await reads.loadFeedPage(
+          limit: remaining > 10 ? 10 : remaining,
+          cursor: cursor,
+          mode: VoiceMomentFeedMode.following,
+        );
+        scanned += page.scannedCount;
+        for (final moment in page.moments) {
+          if (seen.add(moment.id)) loaded.add(moment);
+        }
+        cursor = page.hasMore ? page.nextCursor : null;
+      } while (cursor != null && scanned < limit);
+      if (controller.isClosed) return;
+      moments = List<VoiceMoment>.unmodifiable(loaded);
+      emit();
+    }
 
-    subscriptions.add(
-      _firestore
-          .collection('users')
-          .doc(_uid)
-          .collection('friends')
-          .snapshots()
-          .listen((snapshot) {
-            friendIds = snapshot.docs.map((doc) => doc.id).toSet();
-            emit();
-          }, onError: controller.addError),
-    );
+    var started = false;
+    controller.onListen = () {
+      if (started) return;
+      started = true;
+      unawaited(
+        load().catchError((Object error, StackTrace stackTrace) {
+          if (!controller.isClosed) controller.addError(error, stackTrace);
+        }),
+      );
+    };
 
-    subscriptions.add(
-      _firestore
-          .collection('users')
-          .doc(_uid)
-          .collection('following')
-          .snapshots()
-          .listen((snapshot) {
-            followingIds = snapshot.docs.map((doc) => doc.id).toSet();
-            emit();
-          }, onError: controller.addError),
-    );
-
-    subscriptions.add(
-      _firestore
-          .collection('voiceMoments')
-          .where('isPublished', isEqualTo: true)
-          // Ordered NEWEST-FIRST, deliberately. Without an orderBy this
-          // limit(40) returned the 40 LOWEST DOCUMENT IDS among published
-          // docs — an arbitrary slice — so a friend's genuinely live
-          // Moment whose id sorts late would silently never reach Home or
-          // the Following feed. Freshest-first makes the window exactly
-          // the 40 most recent. Note that under the amended availability
-          // contract a permanent Moment ("keep until deleted", no
-          // expiresAt) legitimately occupies the window until it ages out
-          // of the 40 or its author deletes it — that is the product
-          // behaviour, not squatting. The (isPublished ASC, createdAt
-          // DESC) composite this needs is deployed and query-proved.
-          .orderBy('createdAt', descending: true)
-          .limit(limit)
-          .snapshots()
-          .listen((snapshot) {
-            moments = snapshot.docs
-                .map(VoiceMoment.fromFirestore)
-                .toList(growable: false);
-            emit();
-          }, onError: controller.addError),
-    );
-
-    controller.onCancel = () async {
+    controller.onCancel = () {
       expiry.dispose();
-      for (final subscription in subscriptions) {
-        await subscription.cancel();
-      }
     };
     return controller.stream;
   }
@@ -220,25 +198,30 @@ class HomeFeedService {
         });
   }
 
-  Stream<bool> watchLiked(String momentId) {
-    return _firestore
-        .collection('voiceMoments')
-        .doc(momentId)
-        .collection('likes')
-        .doc(_uid)
-        .snapshots()
-        .map((document) => document.exists);
-  }
+  /// Compatibility snapshot for older callers.
+  ///
+  /// Build 20 surfaces render [VoiceMoment.callerLiked] from the v2 projection
+  /// and call [setLike] with an explicit desired state. This method deliberately
+  /// uses the same server-owned projection rather than reading
+  /// `voiceMoments/{id}/likes/{uid}` directly; it therefore cannot bypass the
+  /// Moment audience/block/restriction checks.
+  Stream<bool> watchLiked(String momentId) => Stream<bool>.fromFuture(
+    _voiceMomentReads
+        .loadView(momentId: momentId, commentLimit: 1, reactionLimit: 1)
+        .then((view) => view.moment.callerLiked),
+  );
 
-  Future<void> toggleLike(String momentId) async {
-    final like = _firestore
-        .collection('voiceMoments')
-        .doc(momentId)
-        .collection('likes')
-        .doc(_uid);
-
+  /// Sets the caller's like to an explicit desired state through the callable.
+  ///
+  /// There is intentionally no read-before-write. A local toggle based on a
+  /// direct like document both leaked a Firestore access path and raced across
+  /// slow connections. The callable is idempotent for the desired boolean and
+  /// every UI surface updates optimistically from its v2 `callerLiked` value.
+  Future<void> setLike(String momentId, {required bool liked}) async {
+    if (_auth.currentUser == null) {
+      throw StateError('User is not signed in.');
+    }
     try {
-      final snapshot = await like.get();
       final requestId = _newRequestId();
       final functions = _functions;
       if (functions == null) {
@@ -248,11 +231,14 @@ class HomeFeedService {
         );
       }
       final callable = functions.httpsCallable('setMomentLike');
-      await callable.call<Map<Object?, Object?>>({
+      final response = await callable.call<Map<Object?, Object?>>({
         'momentId': momentId,
-        'liked': !snapshot.exists,
+        'liked': liked,
         'requestId': requestId,
       });
+      if (response.data['liked'] != liked) {
+        throw const FormatException('Malformed server like response.');
+      }
       return;
     } catch (error) {
       if (!_isCallableUnavailable(error)) {
@@ -264,5 +250,19 @@ class HomeFeedService {
       'Liking needs the YO Voice server right now and it could not be '
       'reached. Try again in a moment.',
     );
+  }
+
+  /// Backwards-compatible toggle for non-UI integrations.
+  ///
+  /// It remains privacy-safe by deriving the current state from v2 and then
+  /// delegating to the callable-only desired-state mutation. Production UI
+  /// does not use this extra round trip.
+  Future<void> toggleLike(String momentId) async {
+    final current = await _voiceMomentReads.loadView(
+      momentId: momentId,
+      commentLimit: 1,
+      reactionLimit: 1,
+    );
+    await setLike(momentId, liked: !current.moment.callerLiked);
   }
 }

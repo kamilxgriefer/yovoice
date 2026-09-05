@@ -219,11 +219,11 @@ void main() {
 
       // The state the report described: a Moment posted minutes ago, so
       // the tile reads "Your Moment / New".
-      expect(find.text('Your Moment'), findsOneWidget);
+      expect(find.text('YO Moments'), findsOneWidget);
       expect(find.text('New'), findsOneWidget);
 
       // Before the fix this fired nothing at all.
-      await tester.tap(find.text('Your Moment'));
+      await tester.tap(find.text('YO Moments'));
       await tester.pump();
       expect(calls.opened, ['mine']);
       expect(calls.created, isEmpty);
@@ -306,7 +306,7 @@ void main() {
       final calls = await pumpStrip(tester, moments: const []);
 
       expect(find.text('Record'), findsOneWidget);
-      await tester.tap(find.text('Your Moment'));
+      await tester.tap(find.text('YO Moments'));
       await tester.pump();
 
       expect(calls.created, hasLength(1));
@@ -382,7 +382,7 @@ void main() {
       controller.addError(StateError('following unavailable'));
       await tester.pump(const Duration(milliseconds: 10));
       expect(find.text('Ola'), findsNothing);
-      expect(find.text('Your Moment'), findsOneWidget);
+      expect(find.text('YO Moments'), findsOneWidget);
     });
   });
 

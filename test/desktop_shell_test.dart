@@ -114,7 +114,7 @@ void main() {
       await tester.pump();
 
       final wordmarkBefore = tester.getTopLeft(find.text('YO Voice'));
-      final navBefore = tester.getTopLeft(find.text('Moments'));
+      final navBefore = tester.getTopLeft(find.text('YO Moments'));
 
       expect(
         find.descendant(
@@ -128,7 +128,7 @@ void main() {
       await tester.pump();
 
       expect(tester.getTopLeft(find.text('YO Voice')), wordmarkBefore);
-      expect(tester.getTopLeft(find.text('Moments')), navBefore);
+      expect(tester.getTopLeft(find.text('YO Moments')), navBefore);
     });
 
     testWidgets('the rail has no scrollable menu at any supported height', (
@@ -255,7 +255,7 @@ void main() {
       for (final target in [
         find.byTooltip('Home'),
         find.byTooltip('Notifications'),
-        find.text('Moments'),
+        find.text('YO Moments'),
         find.text('Discover'),
         find.text('Find creators'),
         find.text('Chats'),
@@ -312,7 +312,7 @@ void main() {
       await tester.pump();
 
       for (final label in [
-        'Moments',
+        'YO Moments',
         'Discover',
         'Find creators',
         'Chats',
@@ -341,7 +341,7 @@ void main() {
       );
       expect(
         tester.getCenter(find.byTooltip('Notifications')).dy,
-        lessThan(tester.getCenter(find.text('Moments')).dy),
+        lessThan(tester.getCenter(find.text('YO Moments')).dy),
         reason: 'both icon actions live above the fixed menu',
       );
       // The Create and More section labels frame their blocks.
@@ -358,7 +358,7 @@ void main() {
       // Moments sits DIRECTLY above Discover — the operator's ordering,
       // and the rail is the only place the two coexist in one list.
       expect(
-        tester.getCenter(find.text('Moments')).dy,
+        tester.getCenter(find.text('YO Moments')).dy,
         lessThan(tester.getCenter(find.text('Discover')).dy),
         reason: 'Moments must sit directly above Discover on the rail',
       );
@@ -784,7 +784,7 @@ void main() {
       await tester.tap(find.byTooltip('Home'));
       await tester.pump();
       for (final label in [
-        'Moments',
+        'YO Moments',
         'Discover',
         'Find creators',
         'Chats',
@@ -874,7 +874,7 @@ void main() {
       for (final target in [
         find.byTooltip('Home'),
         find.byTooltip('Notifications'),
-        find.text('Moments'),
+        find.text('YO Moments'),
         find.text('Discover'),
         find.text('Find creators'),
         find.text('Chats'),
@@ -951,7 +951,7 @@ void main() {
       for (final target in [
         find.byTooltip('Główna'),
         find.byTooltip('Powiadomienia'),
-        find.text('Momenty'),
+        find.text('YO Moments'),
         find.text('Odkrywaj'),
         find.text('Znajdź twórców'),
         find.text('Czaty'),
@@ -1059,7 +1059,6 @@ void main() {
         // Anything else MUST be listed in the desktop More popover, or it
         // would become unreachable at desktop width.
         const inMorePopover = {
-          MoreDestination.reels,
           MoreDestination.clubs,
           MoreDestination.creatorStudio,
           MoreDestination.achievements,
@@ -1073,13 +1072,15 @@ void main() {
           // protected owner (capabilities.manageRoles).
           MoreDestination.staffCenter,
         };
+        const compatibilityOnly = {MoreDestination.reels};
 
         final unreachable = MoreDestination.values
             .where(
               (destination) =>
                   !railOwned.contains(destination) &&
                   !profileCardOwned.contains(destination) &&
-                  !inMorePopover.contains(destination),
+                  !inMorePopover.contains(destination) &&
+                  !compatibilityOnly.contains(destination),
             )
             .toList();
 
@@ -1140,7 +1141,7 @@ void main() {
       await tester.pump();
 
       for (final label in [
-        'Moments',
+        'YO Moments',
         'Discover',
         'Find creators',
         'Chats',
@@ -1596,7 +1597,7 @@ void main() {
       // rather than filtered through desktopRailDestinations, so this is
       // the assertion that catches it appearing twice.
       expect(
-        find.text('Moments'),
+        find.text('YO Moments'),
         findsNothing,
         reason: 'Moments is a rail item; listing it here duplicates it',
       );
@@ -1656,7 +1657,7 @@ void main() {
       // rather than filtered through desktopRailDestinations, so this is
       // the assertion that catches it appearing twice.
       expect(
-        find.text('Moments'),
+        find.text('YO Moments'),
         findsNothing,
         reason: 'Moments is a rail item; listing it here duplicates it',
       );

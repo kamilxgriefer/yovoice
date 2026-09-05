@@ -45,7 +45,7 @@ void main() {
         );
         await tester.pump(const Duration(milliseconds: 60));
 
-        expect(find.text('Moments from your circle'), findsOneWidget);
+        expect(find.text('YO Moments from your circle'), findsOneWidget);
         expect(find.byKey(const ValueKey('home-your-moment')), findsOneWidget);
         expect(
           find.textContaining('No Moments from your circle yet'),

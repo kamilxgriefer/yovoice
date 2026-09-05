@@ -3721,9 +3721,16 @@ service cloud.firestore {
             );
       }
 
+      // LEGACY V1 COMPATIBILITY BOUNDARY (Build 19 and older).
       // Draft, expired and deleting roots are private to their author.
-      // Published roots remain readable by signed-in users and therefore
-      // queryable by the existing `isPublished == true` feeds.
+      // Published metadata remains directly readable so already-installed
+      // clients can keep running their `isPublished == true` collection
+      // query. Build 20 must use getVoiceMomentsFeedV2 / getVoiceMomentViewV2,
+      // which project safe fields and enforce active account, restriction,
+      // audience, mutual-friend and bilateral-block semantics server-side.
+      // Do not mistake this bridge for the final privacy boundary: retire it
+      // only in a separately tested min-version cutover after Build 19 usage
+      // has drained. Storage audio is never made directly readable here.
       allow read: if isSignedIn() &&
           (
             resource.data.authorId == request.auth.uid ||
@@ -3757,6 +3764,13 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // Short-lived server-issued capabilities used only to preserve the safety
+    // report action across a block/mute race. Tokens are returned by the v2
+    // projection; their backing records are never directly readable/writable.
+    match /voiceMomentReportReceipts/{receiptId} {
+      allow read, write: if false;
+    }
+
     // Reels use server-authoritative reserve/finalize, feed, access, report
     // and deletion callables. Clients never read or mutate these operational
     // collections directly; published media is exposed only through a short-
@@ -3766,6 +3780,10 @@ service cloud.firestore {
     }
 
     match /reelUploadReservations/{reelId} {
+      allow read, write: if false;
+    }
+
+    match /reelAvailability/{reelId} {
       allow read, write: if false;
     }
 

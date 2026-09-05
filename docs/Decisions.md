@@ -8832,3 +8832,71 @@ state.
   session that evicts many unique targets. Global/auth clearing, including
   logout, bounds account lifetime and prevents any privacy/correctness impact;
   an in-session bound remains housekeeping.
+
+## ADR-140: Voice Moment privacy moves to bounded v2 projections before the legacy direct-read cutover
+
+**Status**: Accepted in source; backend deployment and Build 20 client migration pending
+**Date**: 2026-09-04
+
+### Context
+
+Build 19 and older query published `voiceMoments` and their children directly.
+Those rules can preserve the existing `isPublished == true` collection query,
+or enforce per-viewer profile visibility, exact mutual friendship, bilateral
+blocks, account state, restrictions and an exact deadline; they cannot do both
+safely. Closing the read rule now would strand installed Build 19 clients.
+Leaving it open means published metadata is not yet a private audience surface,
+even though Storage audio already requires a short-lived server grant.
+
+Reports had two related gaps: a guessed Voice Moment/comment id could reach a
+different existence response than inaccessible content, and the canonical
+moderation transaction could not remove a reported root or comment. A report
+may also outlive the content deadline and must remain actionable without
+resurrecting the expired item or trusting an arbitrary object path.
+
+### Decision
+
+Build 20 reads Voice Moments through `getVoiceMomentsFeedV2` and
+`getVoiceMomentViewV2`. Both return allowlisted projections only, resolve the
+current public identity without copying a durable avatar URL, enforce active
+viewer and author state, active communication restrictions, exact expiry,
+profile visibility, exact bilateral friendship guards when required and both
+block directions. Comments and displayed reaction identities repeat the gate
+for their own authors. Audio remains a separate generation-bound grant and is
+re-authorized after signing before its bearer URL is returned.
+
+The first page is deliberately bounded to 10 roots; detail is bounded to 8
+comments and 3 visible reaction identities with at most 6 reaction candidates.
+Author contexts are deduplicated and loaded in two phases: three identity/state
+documents always, bilateral block documents for non-self authors, and mutual
+friendship documents only for friends-only authors. The documented read budget
+is 74 typical / 94 worst for feed and 96 typical / 126 worst for detail,
+including the two-read rate-limit transaction.
+
+Voice report creation performs access before existence. Missing, malformed,
+expired, private, blocked or restricted roots — and hidden comment authors —
+share one `permission-denied` result. Moderation accepts exact schema-v2 report
+references and canonical published or expired content, reconstructs Storage
+paths from validated author/content identities, updates counters/capacity and
+queues cleanup in the same transaction. Canonical legacy schema 0/1 published
+roots remain removable so an old report cannot become permanent evidence staff
+cannot act on.
+
+The direct Firestore read remains explicitly as a **legacy v1 compatibility
+boundary**, not as a privacy guarantee. It is removed only after Build 20 is
+deployed, its callers are migrated, production telemetry shows Build 19 usage
+has drained and a separately reviewed minimum-version cutover is approved.
+
+### Consequences
+
+- Build 19 keeps loading public Voice Moment metadata; no minimum version or
+  global kill switch is introduced by this change.
+- Build 20 has a server-owned, rate-limited projection contract and cannot
+  receive storage paths, media generations, durable audio URLs or durable
+  avatar URLs from it.
+- Until the direct-read cutover, profile-restricted published metadata remains
+  observable to a modified or legacy client. Product copy and release evidence
+  must not claim that this residual boundary is closed.
+- Deployment order is backend first, then Build 20 client migration, telemetry
+  and physical two-account acceptance, and only then a separately authorized
+  rule/min-version cutover.
