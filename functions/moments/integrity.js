@@ -3348,7 +3348,10 @@ function createMomentIntegrityService({
         segments[1] !== data.requestedBy ||
         segments[2] !== conversationId ||
         !SAFE_ID.test(conversationId) ||
-        !new RegExp(`^${messageId}[.](jpg|png|webp|m4a)$`, "u").test(
+        !new RegExp(
+          `^${messageId}[.](jpg|png|webp|m4a|mp4|mov|webm)$`,
+          "u",
+        ).test(
           segments[3],
         )
       ) {

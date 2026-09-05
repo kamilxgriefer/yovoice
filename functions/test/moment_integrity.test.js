@@ -22,6 +22,10 @@ const {
   momentStoragePath,
   voiceReplyStoragePath,
 } = require("../moments/integrity");
+const {
+  createDirectMessagingService,
+  directMediaStoragePath,
+} = require("../messaging/direct_integrity");
 const { createMomentMigrationService } = require("../moments/migration");
 const { operationIdentity } = require("../integrity/guards");
 
@@ -169,6 +173,11 @@ async function reset() {
       deleteQuery(
         db
           .collection("voiceMomentUploadReservations")
+          .where("ownerId", "==", uid),
+      ),
+      deleteQuery(
+        db
+          .collection("directMessageUploadReservations")
           .where("ownerId", "==", uid),
       ),
       deleteQuery(db.collection("reports").where("reporterId", "==", uid)),
@@ -2432,6 +2441,108 @@ test("generic cleanup worker removes private direct-message attachment objects",
   assert.equal(result.completed, true);
   assert.deepEqual(storage.deleted, [objectPath]);
   assert.equal(storage.objects.has(objectPath), false);
+});
+
+test("expired direct video reservations clean every canonical video format", async () => {
+  const directService = createDirectMessagingService({
+    db,
+    Timestamp,
+    storage,
+    clock: () => nowMs,
+  });
+  const fixtures = [
+    { contentType: "video/mp4", extension: "mp4", hex: "a" },
+    { contentType: "video/quicktime", extension: "mov", hex: "b" },
+    { contentType: "video/webm", extension: "webm", hex: "c" },
+  ];
+
+  for (const fixture of fixtures) {
+    const conversationId = `direct-video-cleanup-${fixture.extension}`;
+    const messageId = `m_${fixture.hex.repeat(40)}`;
+    const objectPath = directMediaStoragePath(
+      A,
+      conversationId,
+      messageId,
+      "video",
+      fixture.contentType,
+    );
+    storage.objects.set(objectPath, {
+      contentType: fixture.contentType,
+      generation: "1",
+      size: "4096",
+      metadata: {},
+    });
+    await db.doc(`directMessageUploadReservations/${messageId}`).set({
+      schemaVersion: 1,
+      ownerId: A,
+      conversationId,
+      messageId,
+      storagePath: objectPath,
+      type: "video",
+      contentType: fixture.contentType,
+      status: "uploading",
+      expiresAt: Timestamp.fromMillis(nowMs - 1),
+    });
+  }
+
+  const expired = await directService.expireAbandonedAttachmentReservations({
+    limit: 10,
+  });
+  assert.deepEqual(expired.expired.sort(), fixtures.map(
+    (fixture) => `m_${fixture.hex.repeat(40)}`,
+  ));
+  assert.deepEqual(expired.malformed, []);
+
+  const outboxes = await db
+    .collection("contentCleanupOutbox")
+    .where("requestedReason", "==", "expiredUploadReservation")
+    .get();
+  assert.equal(outboxes.size, fixtures.length);
+  for (const outbox of outboxes.docs) {
+    const [objectPath] = outbox.data().objectPaths;
+    const result = await momentService().processCleanupOutbox(outbox.id);
+    assert.equal(result.completed, true);
+    assert.equal(storage.objects.has(objectPath), false);
+  }
+});
+
+test("direct video cleanup rejects noncanonical extensions and paths", async () => {
+  const messageId = `m_${"d".repeat(40)}`;
+  const conversationId = "direct-video-cleanup-denial";
+  const canonicalPrefix = `message_attachments/${A}/${conversationId}/${messageId}`;
+  const maliciousPaths = [
+    `${canonicalPrefix}.exe`,
+    `message_attachments/${B}/${conversationId}/${messageId}.mov`,
+    `${canonicalPrefix}.mov/escape`,
+  ];
+
+  for (const [index, objectPath] of maliciousPaths.entries()) {
+    storage.objects.set(objectPath, {
+      contentType: "video/quicktime",
+      generation: "1",
+      size: "4096",
+      metadata: {},
+    });
+    const outboxId = `direct-video-cleanup-denial-${index}`;
+    await db.doc(`contentCleanupOutbox/${outboxId}`).set({
+      schemaVersion: 1,
+      kind: "directMessageAttachmentReservation",
+      rootPath: `directMessageUploadReservations/${messageId}`,
+      objectPaths: [objectPath],
+      status: "pending",
+      attemptCount: 0,
+      requestedBy: A,
+      requestedReason: "expiredUploadReservation",
+      createdAt: Timestamp.fromMillis(nowMs),
+      updatedAt: Timestamp.fromMillis(nowMs),
+    });
+    await assert.rejects(
+      momentService().processCleanupOutbox(outboxId),
+      (error) => error.code === "data-loss",
+    );
+    assert.equal(storage.objects.has(objectPath), true);
+    assert.equal(storage.deleted.includes(objectPath), false);
+  }
 });
 
 test("expired voice reservation cannot finalize and scheduler deletes its orphan", async () => {
