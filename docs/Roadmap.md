@@ -17,8 +17,8 @@ someone decide what to pick up next.
 ## Done
 
 - **Account-bound Reels and staged Moments creation** (2026-09-06,
-  ADR-145; **SOURCE + LOCAL VISUAL QA VERIFIED, NOT PUBLISHED**; source revision
-  in the [session record](Sessions/2026-09-06-reels-moments-creation.md)):
+  source commit `2f964640`, ADR-145; **SOURCE + LOCAL VISUAL QA VERIFIED, NOT
+  PUBLISHED**; [session record](Sessions/2026-09-06-reels-moments-creation.md)):
   Discover/Your Reels preserves canonical author identity and always exposes
   Create. Drafts, retry sessions and asynchronous results are account-bound.
   Reel Media → Edit → Review shares a 9:16 composition/playback contract, with

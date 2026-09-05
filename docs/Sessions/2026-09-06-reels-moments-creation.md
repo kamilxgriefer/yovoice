@@ -108,7 +108,12 @@ two-party uploads/playback, native assistive technology or deployed tester build
   in the bounded source review; the installed-client report remains a live
   acceptance gate, not a claimed reproduced server reassignment.
 
-Source revision: recorded after commit. GitHub verification results follow.
+Source revision: `2f9646401638080680b4be818042a0cef48427cc`.
+GitHub Actions independently runs CodeQL, browser smoke and verification/build
+on `main`, including this documentation-only follow-up. Final remote check
+results are reported in the task handoff; the local evidence above does not
+stand in for a green remote run. Despite its historical name, the Hosting
+workflow's deployment job is gated to an explicit manual dispatch, not pushes.
 
 No Hosting/Functions/rules/store deployment or tester email was requested or sent
 in this change.
