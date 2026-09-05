@@ -1,5 +1,7 @@
 # Meniscus navigation, live-first Home and destination atmospheres
 
+Source implementation: `315bfef` (2026-09-05).
+
 ## Scope and approval
 
 The owner requested the supplied Meniscus-style mobile navigation, selected

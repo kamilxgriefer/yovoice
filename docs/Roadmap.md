@@ -17,7 +17,8 @@ someone decide what to pick up next.
 ## Done
 
 - **Meniscus mobile navigation and approved live-first Home** (2026-09-05,
-  ADR-141/142; **SOURCE + VISUAL QA VERIFIED, NOT PUBLISHED**): Home → Rooms →
+  source commit `315bfef`, ADR-141/142; **SOURCE + VISUAL QA VERIFIED, NOT
+  PUBLISHED**): Home → Rooms →
   Chats → Your Moments → More replaces the fixed center-logo action. The
   moving bead/socket supports tap, drag release/cancel, keyboard, RTL and
   Reduced Motion while preserving stable page identities and desktop
