@@ -17,14 +17,61 @@ deployables described in
 
 ### Build 20 coordinated tester release candidate — 2026-09-05
 
-**HELD — SOURCE, WEB AND EMULATOR GATES PASS; NO BUILD 20 DEPLOYMENT, STORE
-UPLOAD, TESTER ASSIGNMENT OR NOTIFICATION IS RECORDED HERE.** The candidate
-remains blocked on the production index/TTL-override, Functions, Rules and
-Hosting sequence plus read-backs; the explicit production friendship
-reconciliation; signed-artifact/store-number checks; rendered and physical QA;
-and the actual uploads, assignments and notifications. The independent Voice
-re-review is complete at 84/84 with an APPROVE decision; the exact release
-commit still must be frozen after the shared candidate tree stops moving.
+**WEB AND BOTH INVITED TESTER CHANNELS RELEASED; ACCEPTANCE GAPS REMAIN.**
+The Build 20 mobile/Web runtime is frozen at
+`941376ef8029030aeec27e1e8ef28a4cead8697b`; CI runs `33950203890` and
+`33950203943` and CodeQL run `33950203888` are green. The four required
+composite indexes are `READY`, both required TTL overrides are `ACTIVE`, all
+173 exported Functions are active, the explicit one-pair friendship repair is
+complete with a no-op repeat, and Firestore Rules are deployed and read back
+exactly. Storage Rules were unchanged and correctly skipped. Hosting workflow
+`33954305037` succeeded; both Hosting domains serve the verified Build 20
+artifact bytes and required security headers.
+
+Both signed `1.0.0 (20)` artifacts were inspected and uploaded once after
+confirming the build number was unused. Google Play shows Build 20 available
+to the existing internal cohort of 15 testers, published on 2026-09-05 at
+10:36 CEST. The iOS upload succeeded at 10:29:40 CEST, finished processing and
+was subsequently released with `Testing` status to the existing external
+TestFlight cohort of six; the internal cohort of one remains assigned. Five
+non-owner TestFlight testers show `Installed 20`, observed at 12:07, 12:11 and
+12:13 CEST. The user separately confirmed availability. Automatic TestFlight
+notification was enabled/triggered with the submission; inbox delivery is not
+verified. Twenty individual plain-text English emails were sent to twenty
+unique recipients; Gmail `SENT` and a sent-mail search confirm all twenty
+submissions, not delivery. Four Apple-cohort emails have confirmed hard bounces
+(`5.7.1`, `Message rejected`, referencing Gmail help 69585). The user also
+reports blocked Apple messages and Android spam placement. Manual resends were
+paused immediately; **email rollout is not complete and deliverability remains
+blocked** while the Gmail policy rejection is investigated. A separate
+owner-only probe from the existing authorized `hello@yovoice.app` Workspace
+alias reached Inbox in twelve seconds, with SPF, DKIM (`yovoice.app`) and
+DMARC all PASS in its original headers. This is not tester delivery or a
+verified explanation of the earlier rejection; no tester resend occurred.
+Native TestFlight notification remains enabled. Marketing commit `975e5c6`
+was pushed to its repo's `main`, deployed successfully on Vercel and passed
+live read-back: home, updates, download and features return HTTP 200; Build 20
+content/anchors are present and the historical Build 19 updates anchor remains.
+Android non-owner installation and functional two-device
+acceptance are not inferred from these observations.
+
+The temporary hold followed a post-deploy log review, not an artifact or
+signing failure: the existing shared cleanup worker rejected valid expired `.mov` direct-message
+reservations because its extension allowlist omits video. The narrow
+backend-only fix `06e94c6` adds `mp4|mov|webm` without relaxing canonical
+path/owner checks. It has independent APPROVE, focused 2/2, Moment 76/76 and a
+fresh full Functions emulator pass of 1279/1279 across 118 suites. The scoped
+deployment of `processPendingContentCleanupSchedule` and `onContentCleanupOutboxCreated`
+completed successfully by 09:39:39 UTC on 2026-09-05. Independent production
+review APPROVED recovery at 09:59:13 UTC: both latest revisions serve 100% of
+traffic, the old reservation completed naturally at 09:41:05.343 UTC on its
+first attempt, pending aggregate is zero, and four scheduler invocations
+returned HTTP 200 with zero ERROR entries in either worker over more than
+19 minutes. The cleanup hold was lifted before external TestFlight advanced.
+No manual outbox or media mutation was performed.
+This server follow-up does not require rebuilding or re-uploading the frozen
+mobile/Web runtime. Physical/mixed-version QA and authenticated live smoke
+remain separate, explicit residuals.
 
 The order below applies specifically to Build 20. It corrects the Build 19
 sequence for this candidate because its new query/retention producers depend
@@ -93,6 +140,9 @@ does not rewrite the completed Build 19 history below.
 | Dock Dark/Pearl screenshot harness | 8/8 PASS | 320/390/430 px, 200% text and 99+ source renders |
 | Independent Voice re-review | 84/84, APPROVE | final targeted source/runtime review |
 | Cloud Functions | 1277/1277 | non-overlapping shards after an emulator transaction-lock hang; room-control 32/32 and tail 174/174 also passed in isolation |
+| Backend cleanup follow-up | 1279/1279 across 118 suites; 0 failed/skipped | fresh Auth/Firestore emulator run, 196.7 s, for the follow-up diff; separate from the frozen runtime gate above |
+| Cleanup focused/independent review | 2/2 and Moment 76/76; APPROVE | video-extension regression and unchanged canonical cleanup boundaries |
+| Cleanup production recovery | APPROVE at 09:59:13 UTC | both latest revisions at 100% traffic; natural completion, pending aggregate 0; four HTTP 200 scheduler runs and 0 worker ERROR entries over more than 19 minutes |
 | Firestore Rules | 524/524 | emulator authorization gate |
 | Storage Rules | 67/67 | emulator authorization gate |
 | Family media | 11/11 | combined media contract |
@@ -106,8 +156,90 @@ artifact integrity, store acceptance, tester availability, email delivery,
 app-wide/physical visual quality, real notification delivery or two-device
 media/call behavior. The bounded PNG review found Frame Echo Clean without
 internal lines, skew or observed overlap; it is not physical-device evidence.
-The release remains **HELD** until every pending boundary named above is
-directly observed and recorded in the Build 20 session ledger.
+The production progress recorded after those automated gates is:
+
+- all four required Build 20 indexes are `READY`, and
+  `reelCleanupOutbox.deleteAfter` plus
+  `voiceMomentReportReceipts.expiresAt` are `ACTIVE`;
+- 173/173 Functions are active; 17 critical Cloud Run services use their
+  latest ready revision at 100% traffic; seven unauthenticated callable probes
+  returned `401`;
+- the explicit reviewed reconciliation repaired one pair by creating two
+  canonical guards, and the repeat run was a no-op;
+- Firestore Rules deployed successfully on 2026-09-05 at 07:44 UTC. The
+  byte-exact production source read-back matches SHA-256
+  `b396c54ca9ccded08e2e2484e9551e5c55a5ed5deb7d98f10c967882a2cce114`,
+  and four anonymous probes against server-owned collections returned `403`;
+- Storage Rules were unchanged and were not deployed;
+- Hosting workflow `33954305037` succeeded. `app.yovoice.app` and
+  `yovoice-ec54a.web.app` match its artifact for `main.dart.js`, `index.html`,
+  `version.json` and `flutter_service_worker.js`; live version is `1.0.0`,
+  build `20`. `main.dart.js` is 8,588,352 bytes, SHA-256
+  `11d7b9570834fd0897f1ffee1987d6c25052e8e15732d821efa37b6de01509af`.
+  Required cache and security headers were verified;
+- the fresh signed Android AAB is 115,597,935 bytes with SHA-256
+  `bf61bb8438b5db8c89d3894019d007b06ce88dd39dc1143d310667f214e3ddd9`;
+  Play confirms code 20 available to the existing 15-person internal cohort
+  at 10:36 CEST on 2026-09-05, without observed non-owner installation;
+- the signed IPA is 56,657,912 bytes with SHA-256
+  `3cd39243d6900997ebd91e375ded9e7f79a98a8f39608d932baba9d9502c66cd`;
+  signing, identity and entitlements passed inspection, upload succeeded at
+  10:29:40 CEST and processing completed. Internal cohort one is assigned;
+  the external cohort of six now has Build 20 `Testing`, and five non-owner
+  testers show `Installed 20` (12:07/12:11/12:13 CEST observations). Missing
+  dSYMs for seven vendored libraries are a non-blocking symbolication residual,
+  not a failed upload;
+- post-deploy logs identified the older video cleanup allowlist defect on
+  both prior and new worker revisions. The minimal, independently reviewed
+  follow-up `06e94c6` passed its fresh 1279/1279 full suite and both cleanup
+  workers deployed successfully by 09:39:39 UTC. Independent review APPROVED
+  at 09:59:13 UTC after natural completion at 09:41:05.343 UTC, pending
+  aggregate zero, four HTTP 200 scheduler runs and zero ERROR entries across
+  both workers over more than 19 minutes. Their latest ready revisions are
+  `oncontentcleanupoutboxcreated-00012-xoj` and
+  `processpendingcontentcleanupschedule-00012-rum`, both at 100% traffic;
+- automatic TestFlight notification was enabled/triggered on submission;
+  recipient inbox delivery is not verified. The user separately confirmed
+  availability. Twenty separate plain-text emails to unique recipients have
+  verified Gmail `SENT` records and a matching twenty-message sent search;
+  this is submission evidence only. Four Apple-cohort hard bounces confirm
+  `5.7.1 Message rejected` with Gmail help 69585. The user's Android spam
+  report is not independently verified in recipient mailboxes. Manual resends
+  are paused and deliverability is blocked, not complete;
+- a separate owner-only probe using the existing authorized
+  `hello@yovoice.app` Workspace alias was sent at 13:05:51 CEST on 2026-09-05
+  and received in Inbox at 13:06:03, twelve seconds later. Its original
+  headers show SPF PASS, DKIM PASS with `yovoice.app`, and DMARC PASS. An
+  independent recipient-side Gmail read confirms Inbox placement and actual
+  From `hello@yovoice.app`. No DNS,
+  sender, account or security configuration changed. No tester resend was
+  performed, and this single result does not resolve the prior bounces/spam;
+- marketing-site commit `975e5c6` was pushed to its own `main`, deployed
+  successfully on Vercel and passed live read-back. `/`, `/updates`,
+  `/download` and `/features` return HTTP 200; the first three include the
+  Build 20 release content/anchor, and `/updates` retains the historical
+  Build 19 anchor.
+
+Future tester email is intended to use the existing authenticated domain
+mailbox and its authorized public alias `hello@yovoice.app`, not the personal
+Gmail sender. A personal Gmail connector must not assume that it is authorized
+to send as the company alias. Keep tester resends paused: the owner-only probe
+proves one authenticated inbox delivery, not recipient-wide deliverability or
+the cause of the original `5.7.1` rejection. Obtain explicit user direction
+before any bounded tester retry; none has been performed.
+
+Anonymous denial probes are not an authenticated production smoke. Dedicated
+QA credentials are not available for that remaining boundary. This is a
+coordinated invited-testing release, not a public store release or complete
+physical acceptance. **Both tester channels are available; separate email
+deliverability is blocked after twenty verified sends; the domain-sender probe
+passed for the owner only, and the marketing-site deployment/live read-back
+are complete.** Browser CI
+`33958465500` and CodeQL `33958465503` passed for follow-up `06e94c6`; full verification run
+`33958465563` succeeded at 09:50:19 UTC, including Flutter, rules, Functions,
+smoke and Web-build gates. Its Hosting deploy correctly skipped. The follow-up
+commit, deployed revisions and observed recovery remain separate from runtime
+`941376e` in the Build 20 session ledger.
 
 Detailed candidate ledger:
 [Build 20 release-candidate session](Sessions/2026-09-05-build-20-release-candidate.md).

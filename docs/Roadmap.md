@@ -1466,10 +1466,25 @@ someone decide what to pick up next.
 
 ### Build 20 YO Moments, Voice read v2, Reels retention and moderation candidate
 
-- **Status**: **Source-complete and independently reviewed on 2026-09-05;
-  operationally HELD. Not deployed, uploaded or assigned to testers.** The
-  final Voice re-review passed 84/84 with APPROVE and no P0, P1 or P2 finding
-  in scope.
+- **Status**: **Both invited tester channels available on 2026-09-05;
+  functional acceptance remains open.** Mobile/Web runtime `941376e` is live
+  on both Hosting domains; Google Play code 20 is
+  available to the existing 15-person internal cohort (10:36 CEST). Both
+  signed artifacts were uploaded once; iOS processing completed and its
+  internal cohort of one is assigned and the existing external cohort of six
+  has Build 20 `Testing`. Five non-owner TestFlight testers show `Installed 20`
+  at 12:07/12:11/12:13 CEST observations, and the user separately confirmed
+  availability. The older cleanup P1 found in post-deploy logs is repaired
+  with independently verified recovery; external TestFlight advanced afterward.
+  Twenty separate plain-text emails have verified Gmail `SENT` evidence, but
+  four confirmed hard bounces and reported spam leave email deliverability
+  blocked. Manual resends are paused. One owner-only probe from the authorized
+  `hello@yovoice.app` domain alias reached Inbox in twelve seconds with
+  SPF/DKIM/DMARC PASS; tester deliverability remains unresolved. Marketing
+  commit `975e5c6` was pushed to its own `main`, deployed successfully on
+  Vercel and passed live HTTP 200/content read-backs for home, updates, download
+  and features, preserving the historical Build 19 updates anchor.
+  This is not public-store or physical-device acceptance.
 - **Description**: Build 20 presents Voice Moments and Reels through one
   localized YO Moments destination. Foreign Voice Moment feed/detail data now
   comes from bounded, server-owned v2 projections; likes use server-owned
@@ -1490,27 +1505,65 @@ someone decide what to pick up next.
   deterministic sound-asset checks PASS. Inspected PNGs show Frame Echo Clean
   without internal lines/skew or observed overlap. Production npm audits
   report 0 vulnerabilities in both `functions` and `firestore-tests`; physical
-  visual acceptance remains pending.
-- **Dependencies**: Freeze one exact commit; deploy and read back all required
-  indexes plus both TTL overrides first, waiting for indexes to report `READY`;
-  deploy additive Functions; execute the explicit reviewed friendship
-  allowlist as dry-run → digest → apply → no-op post-check; then deploy/read
-  back Firestore Rules, Storage Rules only if changed, and Hosting only after
-  exact-commit CI plus backend health. Inspect unique signed IPA/AAB artifacts,
-  complete Dark/Pearl rendered and two-account physical/mixed-version QA, then
-  upload, process, assign and verify non-owner tester availability before any
-  notification is claimed.
-- **Priority**: Critical release integrity. Source completion is not shipment;
-  keep the candidate HELD until the operational and physical evidence is
-  recorded in the
+  visual acceptance remains pending. CI `33950203890`, browser smoke
+  `33950203943`, CodeQL `33950203888` and Hosting `33954305037` are green for
+  the frozen runtime. Both live domains match the Hosting artifact and
+  required headers. Index/TTL readiness, Functions/Rules read-backs and the
+  explicit one-pair reconciliation/no-op post-check are complete; unchanged
+  Storage Rules were not redeployed.
+- **Backend follow-up**: `06e94c6` fixes the shared cleanup allowlist for
+  expired direct-message video reservations (`mp4|mov|webm`), retaining all
+  canonical path/owner checks. The older defect produced repeated scheduled
+  errors on both prior and new revisions. Focused 2/2, independent Moment
+  76/76 and fresh full Functions 1279/1279 across 118 suites pass; required
+  reviews APPROVE. Scoped deployment of the two cleanup workers succeeded
+  by 09:39:39 UTC; independent recovery APPROVED 09:59:13 UTC after automatic
+  completion on attempt one, pending aggregate zero, four scheduler HTTP 200
+  results and zero worker ERROR entries over more than 19 minutes. Both latest
+  ready revisions serve 100% traffic. This does not change runtime `941376e`
+  or require another mobile upload. Follow-up browser CI `33958465500` and
+  CodeQL `33958465503` passed; full verification `33958465563` succeeded at
+  09:50:19 UTC and its Hosting deployment correctly skipped.
+- **Remaining dependencies**: Resolve tester email deliverability before
+  any manual resend. Twenty individual plain-text emails to unique recipients
+  have Gmail `SENT` records and a matching sent-mail search count, but four
+  Apple-cohort hard bounces confirm `5.7.1 Message rejected` referencing Gmail
+  help 69585. The user reports Android spam placement; recipient mailboxes
+  were not independently inspected. Sending is not delivery, the remaining
+  sixteen messages are not assumed delivered, and email rollout is not
+  complete. Gmail policy rejection is under investigation; manual resends are
+  paused. A separate owner-only test from the existing authorized
+  `hello@yovoice.app` Workspace alias was sent at 13:05:51 CEST on 2026-09-05,
+  reached Inbox at 13:06:03 and had original SPF/DKIM/DMARC PASS. No DNS,
+  sender, account or security settings changed; no tester resend occurred.
+  Independent recipient-side Gmail read confirms Inbox-only placement, actual
+  From `hello@yovoice.app` and the same original authentication results.
+  This single authenticated delivery neither resolves the earlier rejection
+  nor proves tester-wide delivery. Future tester email is intended to use the
+  domain mailbox's authorized alias; a personal Gmail connector cannot assume
+  company-sender authority. Obtain explicit user direction before any bounded
+  tester retry; none has occurred. Marketing `975e5c6` deployment and live
+  read-back are complete. Finish authenticated production smoke with
+  dedicated QA accounts, non-owner Android installation, physical two-account
+  and mixed-version call/media testing, and app-wide keyboard/RTL visual QA.
+  Seven unavailable vendor iOS dSYMs remain a crash-symbolication limitation,
+  not an upload failure. Native TestFlight notification was enabled/triggered
+  with submission; recipient inbox delivery is unverified. Record separate
+  email send/delivery outcomes distinctly; no inbox-placement guarantee is made.
+- **Priority**: Critical release integrity. Cleanup recovery and both invited
+  channel releases are verified; record announcement outcomes as observed and
+  retain the remaining physical acceptance gaps explicitly in the
   [Build 20 session ledger](Sessions/2026-09-05-build-20-release-candidate.md).
 
 ### Post-Build-19 P0 tester compatibility repair
 
 - **Status**: **Implemented at the 2026-09-04 P0 checkpoint and now incorporated
-  into the coordinated Build 20 candidate above; not deployed or assigned to
-  tester channels.** That intermediate checkpoint passed Flutter 2192/2192,
-  direct-call plus localization Flutter 67/67,
+  into the Build 20 runtime `941376e` above: Web and Google Play internal
+  testing released; iOS internally assigned and external TestFlight `Testing`,
+  with five non-owner Build 20 installations observed after verified cleanup
+  recovery. Physical/mixed-version acceptance is still pending.** That
+  intermediate checkpoint passed Flutter
+  2192/2192, direct-call plus localization Flutter 67/67,
   friend recovery 22/22, Functions 1218/1218 across 118 suites, Firestore Rules
   523/523, Storage Rules 67/67, Family media 11/11, direct-call backend 47/47,
   direct-media integrity 39/39, focused media probing 29/29 and reviewed

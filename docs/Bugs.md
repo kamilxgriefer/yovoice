@@ -18,17 +18,68 @@ about things that are broken, risky, or need verification.
 > before believing the code.
 > [ADR-082](Decisions.md#adr-082-a-feature-is-not-shipped-until-a-user-can-reach-it--reachability-is-part-of-done-and-a-green-suite-cannot-prove-it).
 
-## Build 20 source fixes and release gaps (2026-09-05; HELD)
+## Build 20 fixes and remaining acceptance gaps (2026-09-05; invited testing)
 
-The coordinated Build 20 candidate is source-complete, with clean analysis,
-Flutter 2255/2255, Chrome 18/18 and an independent Voice re-review of 84/84
-APPROVE. It is **not deployed or available to testers**, so the entries below
-separate fixed source defects from operational and physical evidence that is
-still missing:
+Runtime `941376e` is deployed on Firebase Hosting and available to the existing
+Google Play internal cohort of 15 testers. Both signed Build 20 artifacts were
+uploaded once; iOS completed processing, has its internal cohort of one
+assigned and is `Testing` for its existing external cohort of six. Five
+non-owner TestFlight testers show `Installed 20` (observed at 12:07/12:11/12:13
+CEST), and the user separately confirmed availability. The older P1 cleanup
+defect found during post-deploy log review is now repaired and independently
+verified recovered; external TestFlight advanced only after that hold was
+lifted. Twenty separate tester emails have verified sender-side `SENT` evidence,
+but tester email deliverability is blocked, not complete. One authorized-domain
+probe reached the owner's Inbox with SPF/DKIM/DMARC PASS; this does not resolve
+the cohort's bounces/spam. Marketing commit `975e5c6` is published with a
+successful Vercel deployment and live read-back. This is not a public store release
+or complete physical acceptance.
 
-- **FIXED IN SOURCE — Build 20 Voice Moment reads no longer treat foreign
-  published Firestore documents as an audience-safe feed.** Feed and detail
-  use bounded, server-owned v2 projections, recheck viewer/author visibility,
+- **OPEN — separate tester-email deliverability is blocked.** Twenty unique
+  recipients were each sent one plain-text email; Gmail `SENT` records and a
+  separate sent-mail search verify twenty submissions, not deliveries. The
+  user reports blocked Apple-cohort messages and Android spam placement.
+  Mailbox inspection confirms four Apple-cohort hard bounces with status
+  `5.7.1`, `Message rejected` and a reference to Gmail help 69585. Android spam
+  is user-reported, not independently recipient-mailbox verified; the other
+  sixteen emails are not assumed delivered. Manual resends were paused
+  immediately while Gmail policy rejection is investigated. Native automatic
+  TestFlight notification stays enabled; no tester-wide deliverability fix or
+  completed email rollout is claimed. A separate owner-only probe from the
+  existing authorized `hello@yovoice.app` Workspace alias was sent at
+  13:05:51 CEST and received in Inbox at 13:06:03 on 2026-09-05 (twelve seconds),
+  with original SPF PASS, DKIM PASS for `yovoice.app` and DMARC PASS. No DNS,
+  sender, account or security settings changed and no tester resend occurred.
+  Independent recipient-side Gmail read confirms Inbox placement, actual
+  From `hello@yovoice.app` and the same authentication results.
+  This proves one domain-sender inbox delivery, not the cause of the earlier
+  `5.7.1` rejection. Future tester email is intended to use that authorized
+  domain mailbox; a personal Gmail connector cannot assume company-alias
+  authority. Resends remain paused and the four bounces/Android spam report
+  remain unresolved. Obtain explicit user direction before a bounded tester
+  retry; none has occurred. No recipient addresses are recorded here.
+- **FIXED AND PRODUCTION RECOVERY VERIFIED — shared cleanup rejected
+  valid expired direct-message video reservations.** One pending canonical
+  `.mov` reservation exposed an allowlist limited to `jpg|png|webp|m4a` in the
+  shared cleanup validator. The five-minute scheduled errors predate Build 20
+  and persisted on its new worker revision; the exact read-only outbox query
+  succeeds, so this case is not an index failure. Backend-only commit
+  `06e94c6` adds the already-supported `mp4|mov|webm` formats while preserving
+  canonical root, owner, conversation, message and path checks. Focused
+  regression 2/2, independent Moment 76/76 and the fresh full Functions suite
+  1279/1279 across 118 suites pass, with required independent reviews APPROVE.
+  Scoped deployment of `processPendingContentCleanupSchedule` and
+  `onContentCleanupOutboxCreated` succeeded by 09:39:39 UTC on 2026-09-05.
+  Independent review APPROVED recovery at 09:59:13 UTC: latest ready revisions
+  at 100% traffic, the old reservation completed automatically at 09:41:05.343
+  on attempt one, pending aggregate zero, four scheduler HTTP 200 results and
+  zero ERROR entries in either worker over more than 19 minutes. The cleanup
+  hold is lifted. Follow-up full CI `33958465563`, browser CI `33958465500`
+  and CodeQL `33958465503` passed; Hosting correctly skipped. No manual
+  outbox/media mutation or mobile rebuild was needed.
+- **FIXED IN RELEASED RUNTIME — Build 20 Voice Moment reads no longer treat
+  foreign published Firestore documents as an audience-safe feed.** Feed and
+  detail use bounded, server-owned v2 projections, recheck viewer/author visibility,
   restrictions, blocks, expiry and exact friendship authority, and omit
   durable media/avatar bearer data. Like/report mutations are server-owned;
   lifecycle refresh discards stale auth generations and inaccessible content
@@ -36,28 +87,42 @@ still missing:
   compatibility residual until adoption telemetry and a separately reviewed
   minimum-version/rules cutover permit its removal; this source fix does not
   claim that residual is closed in production.
-- **FIXED IN SOURCE — Reels expiry cleanup and Voice Moment report receipts
-  lacked the complete Build 20 production retention boundary.** Reels now use
-  bounded availability plus retry/lease cleanup, while canonical moderation
+- **FIXED IN RELEASED RUNTIME — Reels expiry cleanup and Voice Moment report
+  receipts lacked the complete Build 20 production retention boundary.** Reels
+  now use bounded availability plus retry/lease cleanup, while canonical moderation
   validates server-known content rather than a client-supplied object path.
   The required source configuration includes four new composite indexes and
   both managed TTL overrides: `reelCleanupOutbox.deleteAfter` and
   `voiceMomentReportReceipts.expiresAt`.
-- **OUTSTANDING PRODUCTION GATE — green emulators do not prove the new
-  resources exist or are ready.** Read back the four required composite
-  indexes as `READY` and both named TTL overrides as enabled before deploying
-  their producers; then deploy additive Functions, run the explicit legacy-
-  friendship allowlist as dry-run/reviewed digest/apply/no-op post-check,
-  deploy/read back Firestore Rules, deploy Storage Rules only if changed, and
-  release Hosting only after exact-commit CI and backend health.
+- **PRODUCTION PREREQUISITES VERIFIED, AUTHENTICATED SMOKE STILL OPEN.** All
+  four required composite indexes are `READY`, both TTL overrides are
+  `ACTIVE`, additive Functions and Firestore Rules are deployed/read back,
+  the explicit one-pair friendship repair completed with a no-op repeat, and
+  unchanged Storage Rules were correctly skipped. Hosting `33954305037`
+  succeeded and both domains match its artifact bytes/security headers.
+  Anonymous callable `401` and server-owned collection `403` probes are not
+  authenticated allow-path or cross-account acceptance; dedicated production
+  QA credentials are still unavailable. ACTIVE worker status likewise did
+  not prove the shared cleanup path healthy, as the finding above demonstrates.
 - **OUTSTANDING PHYSICAL/DISTRIBUTION GATE — automated success is not device
   acceptance.** The bounded YO Moments 50/50 and dock Dark/Pearl 8/8
   screenshot harnesses pass; inspected Frame Echo Clean PNGs have no internal
   lines/skew or observed overlap. Remaining app-wide keyboard/RTL and physical
-  visual QA, two-account iOS/Android and mixed-version Voice/DM/Reels/call
-  testing, signed artifact inspection and store-number uniqueness, uploads,
-  processing, tester assignment, non-owner availability and notification
-  outcomes remain unverified.
+  visual QA and two-account iOS/Android and mixed-version Voice/DM/Reels/call
+  testing remain unverified. Signed artifact inspection, store-number
+  uniqueness and both uploads/processing are complete. Play internal
+  availability and the user's separate confirmation do not establish
+  non-owner Android installation. External TestFlight `Testing` and five
+  non-owner `Installed 20` observations establish bounded distribution, not
+  functional two-device acceptance. The seven unavailable vendored iOS dSYMs
+  limit third-party crash symbolication but did
+  not block upload/processing. Automatic TestFlight notification was enabled/
+  triggered with submission, but recipient inbox delivery is unverified.
+  The twenty separate email submissions and four confirmed hard bounces are
+  tracked above; manual resends are paused. Marketing commit `975e5c6` is
+  published: Vercel deployment succeeded and live home/updates/download/features
+  HTTP 200 read-backs passed, including Build 20 content/anchors and preserved
+  Build 19 updates history.
 
 The authoritative operational checklist is the
 [Build 20 release-candidate session](Sessions/2026-09-05-build-20-release-candidate.md).
