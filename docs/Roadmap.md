@@ -16,6 +16,23 @@ someone decide what to pick up next.
 
 ## Done
 
+- **Animated top notifications and mobile edge Back** (2026-09-05,
+  source commit `e99bed73`, ADR-143/144; **SOURCE + LOCAL VISUAL/SIMULATOR
+  VERIFIED, NOT PUBLISHED**): activity, foreground social pushes and incoming
+  MainShell messages share one safe-area-aware Dark/Pearl card, with localized
+  Open/Close controls, restrained motion, Reduced Motion, readable long content,
+  explicit keyboard region access and session-bound cleanup. Native call and
+  OS background handling remain unchanged. Retained mobile tabs have bounded
+  visit history and leading-edge Back; center media gestures, the dock and
+  guarded recording/call exits retain their existing contracts. Independent
+  source/QA/visual review approved both changes, including 98 inspected render
+  states. Full-tree analysis is clean and **2426/2426 Flutter tests pass**.
+  Local iPhone Simulator previews confirmed Chats → Rooms → Home by gesture,
+  Dark/Pearl top notifications, opening and native detail Back. This is not
+  physical-device, native assistive-technology or live-push acceptance. No store
+  build, Hosting deployment or tester email was sent.
+  [Evidence and limits](Sessions/2026-09-05-top-notifications-mobile-back.md).
+
 - **Meniscus mobile navigation and approved live-first Home** (2026-09-05,
   source commit `315bfef`, ADR-141/142; **SOURCE + VISUAL QA VERIFIED, NOT
   PUBLISHED**): Home → Rooms →

@@ -1,5 +1,7 @@
 # Top notifications and mobile Back
 
+Source implementation: `e99bed73` (2026-09-05).
+
 ## Scope
 
 The owner requested an attractive animated notification surface at the top of
