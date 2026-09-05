@@ -1541,8 +1541,10 @@ someone decide what to pick up next.
   This single authenticated delivery neither resolves the earlier rejection
   nor proves tester-wide delivery. Future tester email is intended to use the
   domain mailbox's authorized alias; a personal Gmail connector cannot assume
-  company-sender authority. Obtain explicit user direction before any bounded
-  tester retry; none has occurred. Marketing `975e5c6` deployment and live
+  company-sender authority. On 2026-09-05 the maintainer declined current
+  resends and confirmed the domain sender for subsequent update notifications,
+  following the delivery-test procedure in DEPLOYMENT.md. No tester retry
+  occurred. Marketing `975e5c6` deployment and live
   read-back are complete. Finish authenticated production smoke with
   dedicated QA accounts, non-owner Android installation, physical two-account
   and mixed-version call/media testing, and app-wide keyboard/RTL visual QA.

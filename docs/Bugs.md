@@ -55,9 +55,10 @@ or complete physical acceptance.
   This proves one domain-sender inbox delivery, not the cause of the earlier
   `5.7.1` rejection. Future tester email is intended to use that authorized
   domain mailbox; a personal Gmail connector cannot assume company-alias
-  authority. Resends remain paused and the four bounces/Android spam report
-  remain unresolved. Obtain explicit user direction before a bounded tester
-  retry; none has occurred. No recipient addresses are recorded here.
+  authority. On 2026-09-05 the maintainer declined current resends and confirmed
+  that future updates must use the domain sender and delivery-test procedure
+  in DEPLOYMENT.md. No retry occurred; the four bounces/Android spam report
+  remain unresolved. No recipient addresses are recorded here.
 - **FIXED AND PRODUCTION RECOVERY VERIFIED — shared cleanup rejected
   valid expired direct-message video reservations.** One pending canonical
   `.mov` reservation exposed an allowlist limited to `jpg|png|webp|m4a` in the

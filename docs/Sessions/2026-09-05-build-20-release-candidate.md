@@ -212,9 +212,11 @@ mailbox, not delivery to the tester cohort, an inbox-placement guarantee or
 the cause of the earlier `5.7.1` rejection. The intended sender for future
 tester email is the existing domain mailbox's authorized `hello@yovoice.app`
 alias. A personal Gmail connector cannot assume that company-sender authority.
-All tester resends remain paused; the four hard bounces and Android spam report
-remain unresolved. Obtain explicit user direction before any bounded tester
-retry; no such retry has been performed.
+The maintainer declined current Build 20 resends on 2026-09-05 and confirmed
+the authenticated domain sender for subsequent update notifications. No tester
+retry was performed; the four hard bounces and Android spam report are not
+retrospectively marked resolved. Follow the standing delivery-test and sender
+procedure in [DEPLOYMENT.md](../DEPLOYMENT.md) for future authorized updates.
 
 ### P1 found during post-deploy cleanup observation
 
@@ -412,8 +414,9 @@ bounces and reported spam prevent a completed-delivery claim. Manual resends
 are paused; a separate authorized-domain probe reached the owner's Inbox with
 SPF/DKIM/DMARC PASS but does not resolve tester delivery. Native TestFlight
 notification is unchanged. Marketing commit `975e5c6` deployed successfully
-and passed live read-back. A bounded tester retry awaits explicit user
-direction; none has been performed. Web, Android internal testing
+and passed live read-back. The maintainer declined current tester resends and
+confirmed the domain sender for future updates; no retry was performed.
+Web, Android internal testing
 and external TestFlight are released. Five non-owner TestFlight testers have
 Build 20 installed; Android non-owner installation remains unobserved. The
 production cleanup follow-up `06e94c6` is separate from frozen mobile/Web

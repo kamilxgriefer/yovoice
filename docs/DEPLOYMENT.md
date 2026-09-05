@@ -220,13 +220,17 @@ The production progress recorded after those automated gates is:
   Build 20 release content/anchor, and `/updates` retains the historical
   Build 19 anchor.
 
-Future tester email is intended to use the existing authenticated domain
-mailbox and its authorized public alias `hello@yovoice.app`, not the personal
-Gmail sender. A personal Gmail connector must not assume that it is authorized
-to send as the company alias. Keep tester resends paused: the owner-only probe
-proves one authenticated inbox delivery, not recipient-wide deliverability or
-the cause of the original `5.7.1` rejection. Obtain explicit user direction
-before any bounded tester retry; none has been performed.
+**Maintainer instruction — 2026-09-05:** do not resend the current Build 20
+emails. For subsequent authorized updates, use the existing authenticated
+Workspace mailbox and its authorized public alias `hello@yovoice.app`, never
+the personal Gmail sender. Keep the message short, in English, with the
+verified platform update link for the assigned Apple and Android testers.
+Before each wave, send one owner-only delivery test and inspect the received
+message's SPF, DKIM, DMARC and inbox placement. Stop on a failure; record
+submissions separately from deliveries and do not repeatedly resend rejected
+messages. A personal Gmail connector must not assume company-alias authority.
+The successful owner-only probe is not a recipient-wide inbox guarantee or
+the cause of the original `5.7.1` rejection. No tester retry was performed.
 
 Anonymous denial probes are not an authenticated production smoke. Dedicated
 QA credentials are not available for that remaining boundary. This is a
