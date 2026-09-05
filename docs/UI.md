@@ -46,6 +46,39 @@ and 2560 px where relevant, plus a 2.0 text scale. The acceptance bar is no
 overflow, no clipped primary text, 44x44 minimum interactive targets,
 keyboard/focus access on desktop, and preserved safe-area/keyboard insets.
 
+## YO Moments creation and Reel identity
+
+Reels has separate Discover and Your Reels filters, a persistent labeled Create
+Reel action and an explicit refresh. Your Reels compares canonical author IDs
+with the authenticated viewer, never display names. It scans the existing
+authorized paginated feed in bounded batches; a scan with more pages offers
+Load more rather than claiming the user's library is empty. The format chooser
+uses a plus instead of implying that Reels can only create microphone content.
+
+The Reel composer keeps one local draft through Media, Edit and Review stages.
+Crop, Audio, Text and links, and Filter expose one tool panel at a time. Preview
+and playback use the same 390-unit 9:16 composition canvas. Pinch/drag maps to
+the existing normalized crop, with labeled sliders and Reset as alternatives;
+pan requires spare pixels from zoom. Local video/original audio/backing audio
+share the published playback coordinator, including trim, volume and lifecycle
+pause. Native playback controls remain outside the scaled canvas. Imported
+audio is user-owned/licensed MP3/M4A/WAV within existing limits, not a streaming
+music catalogue. Media replacement retains caption, audio and overlays while
+explicitly resetting incompatible crop/trim. Publication remains explicit and
+retry-stable, never triggered by editing or preview.
+
+Voice recording has distinct Capture and Review surfaces. Review places real
+playback before caption/lifetime and exposes a persistent publication footer
+when space permits; short/large-text layouts scroll. Tablet keyboard reflow
+retains the actual caption editor and focus. The existing recording, silence,
+permission, reply, lifetime, retry and microphone-cleanup state machine remains
+the owner of behavior. This is a documented immersive-dark atom in either theme.
+
+Creation copy, errors, permission guidance and meter semantics use explicit
+locale catalog entries and stable named placeholders. Arbitrary backend errors
+are not rendered as user instructions. Sample previews/captures are development
+fixtures, not evidence of production upload or physical multi-account delivery.
+
 ## Foreground notification banner
 
 `YoTopNotificationHost` owns one top-centered arrival card above the Navigator,

@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -13,6 +14,108 @@ import 'package:yovoice/features/reels/presentation/widgets/reel_card.dart';
 import 'package:yovoice/features/reels/presentation/widgets/reel_playback_coordinator.dart';
 
 void main() {
+  testWidgets('foreign author stays foreign and creation remains reachable', (
+    tester,
+  ) async {
+    var creates = 0;
+    final service = _service((_) async => _page([_reelWire(1)], null));
+    await _pumpFeed(
+      tester,
+      service,
+      onCreate: () async {
+        creates++;
+      },
+    );
+    final card = tester.widget<ReelCard>(find.byType(ReelCard));
+    expect(card.reel.authorId, 'creator_1');
+    expect(card.onDelete, isNull);
+    expect(card.onReport, isNotNull);
+    await tester.tap(find.byKey(const ValueKey('reels-create-persistent')));
+    await tester.pumpAndSettle();
+    expect(creates, 1);
+  });
+
+  testWidgets(
+    'own filter scans past others and never assigns foreign ownership',
+    (tester) async {
+      final own = _reelWire(2)..['authorId'] = 'viewer';
+      final service = _service(
+        (cursor) async =>
+            cursor == null ? _page([_reelWire(1)], 'next') : _page([own], null),
+      );
+      await _pumpFeed(tester, service);
+      await tester.tap(find.byKey(const ValueKey('reels-own-filter')));
+      await tester.pumpAndSettle();
+      final card = tester.widget<ReelCard>(find.byType(ReelCard));
+      expect(card.reel.authorId, 'viewer');
+      expect(card.reel.authorName, 'Creator 2');
+      expect(card.onDelete, isNotNull);
+      expect(card.onReport, isNull);
+      expect(find.text('Creator 1'), findsNothing);
+    },
+  );
+
+  testWidgets('own empty feed does not prevent creating', (tester) async {
+    final service = _service((_) async => _page([_reelWire(1)], null));
+    await _pumpFeed(tester, service, onCreate: () async {});
+    await tester.tap(find.byKey(const ValueKey('reels-own-filter')));
+    await tester.pumpAndSettle();
+    expect(find.text('No Reels of your own yet'), findsOneWidget);
+    expect(
+      tester
+          .widget<FilledButton>(
+            find.byKey(const ValueKey('reels-create-persistent')),
+          )
+          .onPressed,
+      isNotNull,
+    );
+  });
+
+  testWidgets('refresh invalidates a late earlier response', (tester) async {
+    final pending = Completer<Map<Object?, Object?>>();
+    var calls = 0;
+    final service = _service((_) {
+      calls++;
+      return calls == 1
+          ? pending.future
+          : Future.value(_page([_reelWire(2)], null));
+    });
+    await _pumpFeed(tester, service, settle: false);
+    await tester.tap(find.byKey(const ValueKey('reels-own-filter')));
+    await tester.pumpAndSettle();
+    pending.complete(_page([_reelWire(1)], null));
+    await tester.pumpAndSettle();
+    expect(find.text('Creator 1'), findsNothing);
+    expect(find.text('No Reels of your own yet'), findsOneWidget);
+  });
+
+  testWidgets('account switch clears old feed before next account loads', (
+    tester,
+  ) async {
+    final auth = _SwitchableAuth();
+    addTearDown(auth.close);
+    final next = Completer<Map<Object?, Object?>>();
+    var calls = 0;
+    final service = ReelService(
+      auth: auth,
+      callableInvoker: (name, _) async {
+        if (name == 'listReelsV2') {
+          return ++calls == 1 ? _page([_reelWire(1)], null) : next.future;
+        }
+        throw StateError('media intentionally unavailable in identity test');
+      },
+    );
+    await _pumpFeed(tester, service);
+    expect(find.text('Creator 1'), findsOneWidget);
+    auth.switchTo('viewer_two');
+    await tester.pump();
+    expect(find.text('Creator 1'), findsNothing);
+    next.complete(_page([_reelWire(2)], null));
+    await tester.pumpAndSettle();
+    expect(find.text('Creator 2'), findsOneWidget);
+    expect(tester.widget<ReelCard>(find.byType(ReelCard)).onDelete, isNull);
+  });
+
   testWidgets('skips bounded empty pages before showing the empty state', (
     tester,
   ) async {
@@ -266,6 +369,8 @@ Future<void> _pumpFeed(
   DateTime Function()? now,
   ReelExpiryTimerFactory? expiryTimerFactory,
   ReelAudioPlaybackFactory? audioPlaybackFactory,
+  Future<void> Function()? onCreate,
+  bool settle = true,
 }) async {
   tester.view.physicalSize = const Size(390, 844);
   tester.view.devicePixelRatio = 1;
@@ -280,11 +385,31 @@ Future<void> _pumpFeed(
         now: now,
         expiryTimerFactory: expiryTimerFactory,
         audioPlaybackFactory: audioPlaybackFactory,
+        onCreate: onCreate,
         videoBuilder: (_, _, _) => const ColoredBox(color: Colors.black),
       ),
     ),
   );
-  await tester.pumpAndSettle();
+  if (settle) {
+    await tester.pumpAndSettle();
+  } else {
+    await tester.pump();
+  }
+}
+
+class _SwitchableAuth extends MockFirebaseAuth {
+  User? _current = MockUser(uid: 'viewer', isEmailVerified: true);
+  final _changes = StreamController<User?>.broadcast(sync: true);
+  @override
+  User? get currentUser => _current;
+  @override
+  Stream<User?> userChanges() => _changes.stream;
+  void switchTo(String uid) {
+    _current = MockUser(uid: uid, isEmailVerified: true);
+    _changes.add(_current);
+  }
+
+  Future<void> close() => _changes.close();
 }
 
 ReelService _service(

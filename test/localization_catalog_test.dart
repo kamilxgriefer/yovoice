@@ -10,6 +10,7 @@ import 'package:yovoice/core/localization/translations/translations_current_rele
 import 'package:yovoice/core/localization/translations/translations_direct_call_refusals.dart';
 import 'package:yovoice/core/localization/translations/translations_home.dart';
 import 'package:yovoice/core/localization/translations/translations_mobile_navigation.dart';
+import 'package:yovoice/core/localization/translations/translations_moments_creation.dart';
 import 'package:yovoice/core/localization/translations/translations_reels.dart';
 import 'package:yovoice/core/localization/translations/translations_yo_moments.dart';
 
@@ -44,6 +45,313 @@ const _extendedLanguagePreferences = <AppLanguagePreference>[
 
 void main() {
   group('localization catalog integrity', () {
+    test('Moment creation copy covers all 43 selectable locale variants', () {
+      final translatedLocaleKeys = selectableAppLanguages
+          .where(
+            (language) =>
+                language != AppLanguagePreference.english &&
+                language != AppLanguagePreference.polish,
+          )
+          .map((language) => language.localeKey)
+          .toSet();
+      expect(AppLocalizations.supportedLocales, hasLength(43));
+      expect(momentsCreationTranslations.keys.toSet(), translatedLocaleKeys);
+      expect(momentsCreationTranslationKeys.toSet(), hasLength(156));
+      expect(momentsCreationTranslationKeys, hasLength(156));
+      expect(appTranslationKeys, containsAll(momentsCreationTranslationKeys));
+      for (final localeKey in translatedLocaleKeys) {
+        final entries = momentsCreationTranslations[localeKey]!;
+        expect(entries.keys.toSet(), momentsCreationTranslationKeys.toSet());
+        for (final key in momentsCreationTranslationKeys) {
+          final value = entries[key]!;
+          expect(value.trim(), isNotEmpty, reason: '$localeKey: $key');
+          expect(_placeholders(value), _placeholders(key));
+          expect(translatedPhrase(localeKey, key), value);
+          if (key.length > 10) {
+            expect(value, isNot(key), reason: '$localeKey: no fallback');
+          }
+        }
+      }
+    });
+
+    test(
+      'Moment creation keys do not override existing release terminology',
+      () {
+        final existingFeatureKeys = <String>{
+          ...currentReleaseTranslationKeys,
+          ...currentReleaseCompactTranslationKeys,
+          ...currentReleaseChatMediaTranslationKeys,
+          ...authCallReleaseTranslationKeys,
+          ...directCallRefusalTranslationKeys,
+          ...reelsTranslationKeys,
+          ...yoMomentsTranslationKeys,
+          ...mobileNavigationTranslationKeys,
+          ...homeTranslationKeys,
+        };
+        expect(
+          momentsCreationTranslationKeys.toSet().intersection(
+            existingFeatureKeys,
+          ),
+          isEmpty,
+        );
+      },
+    );
+
+    test('creation stages preserve the reviewed English and Polish copy', () {
+      const copyPairs = <String, String>{
+        "This draft belongs to a previous session. Discard it and create a new Reel.":
+            "Ten szkic pochodzi z poprzedniej sesji. Odrzuć go i utwórz nowego Reela.",
+        'Record': 'Nagraj',
+        'Review': 'Sprawdź',
+        'Your recording': 'Twoje nagranie',
+        'Media': 'Multimedia',
+        'Edit': 'Edytuj',
+        'Crop': 'Kadr',
+        'Audio': 'Dźwięk',
+        'Text and links': 'Tekst i linki',
+        'Reset crop': 'Resetuj kadr',
+        'Pinch to zoom, drag to position.':
+            'Uszczypnij, aby powiększyć, i przeciągnij, aby ustawić kadr.',
+        'Zoom in to reposition the frame.':
+            'Powiększ, aby zmienić położenie kadru.',
+        'Preview Reel': 'Podgląd Reela',
+        'Retry preview': 'Ponów podgląd',
+        'Play preview': 'Odtwórz podgląd',
+        'Pause preview': 'Wstrzymaj podgląd',
+        'Photos up to 10 MB. Videos: 1–90 seconds, up to 100 MB.':
+            'Zdjęcia do 10 MB. Filmy: 1–90 sekund, do 100 MB.',
+        'Use your own MP3, M4A or WAV: 1–90 seconds, up to 15 MB.':
+            'Dodaj własny plik MP3, M4A lub WAV: 1–90 sekund, do 15 MB.',
+        'Preparing audio': 'Przygotowywanie dźwięku',
+        'Your Reels': 'Twoje Reels',
+        'No Reels of your own yet': 'Nie masz jeszcze własnych Reels',
+        'More Reels are available to check.': 'Możesz sprawdzić kolejne Reels.',
+        'Load more': 'Wczytaj więcej',
+        'Replace media?': 'Zmienić multimedia?',
+        'Your caption, audio and overlays stay. Crop and video trim will reset.':
+            'Opis, dźwięk i nakładki zostaną zachowane. Kadr i przycięcie filmu zostaną zresetowane.',
+        'Discard this draft?': 'Odrzucić ten szkic?',
+        'Your unpublished changes will be lost.':
+            'Nieopublikowane zmiany zostaną utracone.',
+        'Audio credit (optional)': 'Autor dźwięku (opcjonalnie)',
+        'Sign in again before publishing.':
+            'Zaloguj się ponownie przed publikacją.',
+        'Check your email verification and account permissions before publishing.':
+            'Przed publikacją sprawdź weryfikację adresu e-mail i uprawnienia konta.',
+        'You have reached the publishing limit. Try again later.':
+            'Osiągnięto limit publikacji. Spróbuj ponownie później.',
+        'Check your media and audio rights, then try again.':
+            'Sprawdź multimedia i prawa do dźwięku, a następnie spróbuj ponownie.',
+        'Check your connection and retry. Your draft is kept.':
+            'Sprawdź połączenie i ponów próbę. Twój szkic został zachowany.',
+        'Confirm that you may use the backing audio.':
+            'Potwierdź, że masz prawo użyć podkładu dźwiękowego.',
+        'The Reel could not be prepared. Try again.':
+            'Nie udało się przygotować Reela. Spróbuj ponownie.',
+        "Choose Reel media": "Wybierz multimedia Reela",
+        "Enter a label and a public HTTPS link.":
+            "Wpisz nazwę i publiczny link HTTPS.",
+        "Text size": "Rozmiar tekstu",
+        "Crop zoom": "Powiększenie kadru",
+        "Horizontal crop position": "Pozioma pozycja kadru",
+        "Vertical crop position": "Pionowa pozycja kadru",
+        "Video trim range": "Zakres przycięcia filmu",
+        "Original video audio": "Dźwięk z filmu",
+        "Original video audio volume": "Głośność dźwięku z filmu",
+        "24 hours": "24 godziny",
+        "7 days": "7 dni",
+        "30 days": "30 dni",
+        "Until deleted": "Do usunięcia",
+        "{hours} hours": "{hours} godz.",
+        "Availability is locked for this retry.":
+            "Dostępność jest zablokowana dla tej ponownej próby.",
+        "Choose how long this Reel remains available.":
+            "Wybierz, jak długo ten Reel ma być dostępny.",
+        "Available for": "Dostępny przez",
+        "Custom": "Własny czas",
+        "Custom · {hours}h": "Własny · {hours} godz.",
+        "Choose 24–720 whole hours or 1–30 whole days.":
+            "Wybierz 24–720 pełnych godzin lub 1–30 pełnych dni.",
+        "Custom availability": "Własny czas",
+        "Duration": "Czas",
+        "Unit": "Jednostka",
+        "Hours": "Godziny",
+        "Days": "Dni",
+        "Apply": "Zastosuj",
+        "Backing audio volume": "Głośność podkładu",
+        "Audio start": "Początek podkładu",
+        "Backing audio start position": "Początek podkładu dźwiękowego",
+        "Refresh": "Odśwież",
+        "Enter a whole number.": "Wpisz liczbę całkowitą.",
+        "Choose between 24 and 720 hours.": "Wybierz od 24 do 720 godzin.",
+        "Choose between 1 and 30 days.": "Wybierz od 1 do 30 dni.",
+        "Choose a valid duration.": "Wybierz prawidłowy czas dostępności.",
+        "Preview could not be played on this device. You can try again, record a new take, or publish this one.":
+            "Nie udało się odtworzyć podglądu na tym urządzeniu. Spróbuj ponownie, nagraj nową wersję albo opublikuj tę.",
+        "Recording could not be started.":
+            "Nie udało się rozpocząć nagrywania.",
+        "Try again.": "Spróbuj ponownie.",
+        "Ten seconds left.": "Pozostało dziesięć sekund.",
+        "No sound is reaching the microphone. Check that the right microphone is selected and not muted.":
+            "Mikrofon nie odbiera dźwięku. Sprawdź, czy wybrano właściwy mikrofon i czy nie jest wyciszony.",
+        "Microphone level is unavailable, so YO Voice cannot tell you whether sound is being picked up. Recording continues.":
+            "Poziom mikrofonu jest niedostępny, więc YO Voice nie może sprawdzić, czy dźwięk jest odbierany. Nagrywanie trwa dalej.",
+        "Recording could not be finished.":
+            "Nie udało się zakończyć nagrywania.",
+        "Record again.": "Nagraj ponownie.",
+        "That was too short to publish — a Voice Moment needs at least one second.":
+            "Nagranie jest za krótkie — Voice Moment musi trwać co najmniej sekundę.",
+        "Hold on a little longer this time.":
+            "Tym razem nagrywaj odrobinę dłużej.",
+        "Microphone request cancelled.":
+            "Anulowano prośbę o dostęp do mikrofonu.",
+        "Record Voice Moment": "Nagraj Voice Moment",
+        "Listen before publishing": "Posłuchaj przed publikacją",
+        "Share your voice": "Podziel się swoim głosem",
+        "Record a voice reply up to 60 seconds long.":
+            "Nagraj odpowiedź głosową trwającą do 60 sekund.",
+        "Between 1 and 60 seconds.": "Od 1 do 60 sekund.",
+        "Recording": "Nagrywanie",
+        "Input level": "Poziom wejścia",
+        "Remaining": "Pozostało",
+        "Checking whether this device can record…":
+            "Sprawdzamy, czy to urządzenie może nagrywać…",
+        "Recording is not available here": "Nagrywanie nie jest tutaj dostępne",
+        "Go back": "Wróć",
+        "Somewhere quiet records best.":
+            "Najlepszą jakość uzyskasz w cichym miejscu.",
+        "Published straight to your feed.":
+            "Publikacja trafi bezpośrednio do Twojego kanału.",
+        "Before you start": "Zanim zaczniesz",
+        "Recording length": "Długość nagrania",
+        "Pause recording preview": "Wstrzymaj podgląd nagrania",
+        "Play recording preview": "Odtwórz podgląd nagrania",
+        "Recording preview position": "Pozycja podglądu nagrania",
+        "No sound detected — check your microphone.":
+            "Nie wykryto dźwięku — sprawdź mikrofon.",
+        "Stop recording": "Zatrzymaj nagrywanie",
+        "Start recording": "Rozpocznij nagrywanie",
+        "Waiting for microphone access…": "Czekamy na dostęp do mikrofonu…",
+        "Recording — tap to stop.": "Nagrywanie — dotknij, aby zatrzymać.",
+        "Preview your take, then publish — or record again.":
+            "Odsłuchaj nagranie, a potem opublikuj je lub nagraj ponownie.",
+        "Publishing your Voice Moment…": "Publikujemy Twój Voice Moment…",
+        "Tap the microphone to start.": "Dotknij mikrofonu, aby rozpocząć.",
+        "Add a caption…": "Dodaj opis…",
+        "Choose how long this Moment stays visible in the feed.":
+            "Wybierz, jak długo ten Moment ma być widoczny w kanale.",
+        "This Moment will stay visible in the feed until you delete it.":
+            "Ten Moment pozostanie widoczny w kanale, dopóki go nie usuniesz.",
+        "Timed": "Na określony czas",
+        "Caption is locked for this retry.":
+            "Opis jest zablokowany podczas tej ponownej próby.",
+        "Caption and availability are locked for this retry.":
+            "Opis i czas dostępności są zablokowane podczas tej ponownej próby.",
+        "Record again": "Nagraj ponownie",
+        "Publishing…": "Publikowanie…",
+        "Publish": "Opublikuj",
+        "Microphone level": "Poziom mikrofonu",
+        "Microphone level, not recording":
+            "Poziom mikrofonu, nagrywanie wyłączone",
+        "Voice Moment posted.": "Voice Moment opublikowany.",
+        "Caption limit reached: {limit} characters.":
+            "Osiągnięto limit opisu: {limit} znaków.",
+        "Reply to {author}": "Odpowiedz: {author}",
+        "{elapsed} of {limit} seconds": "{elapsed} z {limit} sekund",
+        "{count} of {limit} characters": "{count} z {limit} znaków",
+        "Visibility: {hours} h": "Widoczność: {hours} godz.",
+        "Availability: {label}": "Dostępność: {label}",
+        "Microphone access for YO Voice is blocked in this browser.":
+            "Dostęp YO Voice do mikrofonu jest zablokowany w tej przeglądarce.",
+        "Allow the microphone in your browser's site settings for YO Voice, then reload this page.":
+            "Zezwól na używanie mikrofonu w ustawieniach witryny YO Voice w przeglądarce, a następnie odśwież stronę.",
+        "YO Voice does not have permission to use your microphone.":
+            "YO Voice nie ma uprawnień do używania mikrofonu.",
+        "Allow the microphone for YO Voice in your device settings.":
+            "Zezwól aplikacji YO Voice na używanie mikrofonu w ustawieniach urządzenia.",
+        "The microphone request was dismissed, so recording could not start.":
+            "Prośba o dostęp do mikrofonu została zamknięta, więc nagrywanie nie mogło się rozpocząć.",
+        "Start recording again, then choose Allow.":
+            "Rozpocznij nagrywanie ponownie, a następnie wybierz Zezwól.",
+        "No microphone was found on this device.":
+            "Nie znaleziono mikrofonu na tym urządzeniu.",
+        "Connect a microphone, then start recording again.":
+            "Podłącz mikrofon, a następnie rozpocznij nagrywanie ponownie.",
+        "Your microphone could not be opened — another app is probably using it.":
+            "Nie można uruchomić mikrofonu — prawdopodobnie korzysta z niego inna aplikacja.",
+        "Close the other app, then start recording again.":
+            "Zamknij inną aplikację, a następnie rozpocznij nagrywanie ponownie.",
+        "Your browser did not answer the microphone request.":
+            "Przeglądarka nie odpowiedziała na prośbę o dostęp do mikrofonu.",
+        "YO Voice could not open your microphone.":
+            "YO Voice nie może uruchomić mikrofonu.",
+        "That recording could not be used. Record again and speak for at least a second.":
+            "Nie można użyć tego nagrania. Nagraj ponownie i mów przez co najmniej sekundę.",
+        "That recording is larger than the 12 MB limit for a Voice Moment.":
+            "To nagranie przekracza limit 12 MB dla Voice Momentu.",
+        "Record a shorter Voice Moment.": "Nagraj krótszy Voice Moment.",
+        "This recording format cannot be published.":
+            "Tego formatu nagrania nie można opublikować.",
+        "Open YO Voice in Chrome, Edge or Safari to record.":
+            "Otwórz YO Voice w Chrome, Edge lub Safari, aby nagrywać.",
+        "Microphone access needs a secure (https) connection.":
+            "Dostęp do mikrofonu wymaga bezpiecznego połączenia (https).",
+        "Open YO Voice over https and try again.":
+            "Otwórz YO Voice przez https i spróbuj ponownie.",
+        "This browser cannot record MP4/AAC audio.":
+            "Ta przeglądarka nie może nagrywać dźwięku MP4/AAC.",
+        "Voice recording is not available on this device.":
+            "Nagrywanie głosu nie jest dostępne na tym urządzeniu.",
+        "YO Voice could not reach an audio recorder on this device.":
+            "YO Voice nie może skorzystać z nagrywania dźwięku na tym urządzeniu.",
+        "You have reached the limit of active Moments. A slot frees up when one expires or you delete one.":
+            "Osiągnięto limit aktywnych Momentów. Miejsce zwolni się, gdy jeden z nich wygaśnie lub go usuniesz.",
+        "Your recording is kept — publish it once a slot frees up.":
+            "Nagranie zostało zachowane — opublikuj je, gdy zwolni się miejsce.",
+        "You must be signed in to publish a Voice Moment.":
+            "Musisz się zalogować, aby opublikować Voice Moment.",
+        "Your Voice Moment could not be published.":
+            "Nie udało się opublikować Voice Momentu.",
+        "Your recording is still here — try publishing again.":
+            "Nagranie zostało zachowane — spróbuj opublikować je ponownie.",
+        "Publishing took too long and was stopped safely.":
+            "Publikacja trwała zbyt długo i została bezpiecznie zatrzymana.",
+        "Silent": "Cisza",
+        "Quiet": "Cicho",
+        "Good level": "Dobry poziom",
+        "Input level unavailable": "Poziom wejścia niedostępny",
+      };
+      expect(copyPairs.keys.toSet(), momentsCreationTranslationKeys.toSet());
+      for (final locale in AppLocalizations.supportedLocales) {
+        final copy = AppLocalizations(locale);
+        for (final pair in copyPairs.entries) {
+          final actual = copy.text(pair.key, pair.value);
+          expect(actual, switch (locale.languageCode) {
+            'en' => pair.key,
+            'pl' => pair.value,
+            _ => momentsCreationTranslations[copy.localeKey]![pair.key],
+          });
+          final names = _placeholders(
+            pair.key,
+          ).map((token) => token.substring(1, token.length - 1)).toSet();
+          if (names.isNotEmpty) {
+            // Runtime names/counters are inserted once and never translated
+            // or interpreted as another catalog template.
+            const content = r'Żółć أسماء {untouched} $value';
+            final rendered = copy.template(
+              pair.key,
+              pair.value,
+              values: {for (final name in names) name: content},
+            );
+            expect(rendered, contains(content));
+            for (final name in names) {
+              expect(rendered, isNot(contains('{$name}')));
+            }
+          }
+        }
+      }
+    });
+
     test('Home copy covers every translated locale explicitly', () {
       final translatedLocaleKeys = selectableAppLanguages
           .where(
@@ -106,7 +414,8 @@ void main() {
             expect(
               values[index],
               isNot(english[index]),
-              reason: '${locale.toLanguageTag()}: ${homeTranslationKeys[index]}',
+              reason:
+                  '${locale.toLanguageTag()}: ${homeTranslationKeys[index]}',
             );
           }
         }
@@ -378,6 +687,7 @@ void main() {
         ...authCallReleaseTranslationKeys,
         ...directCallRefusalTranslationKeys,
         ...reelsTranslationKeys,
+        ...momentsCreationTranslationKeys,
       };
 
       expect(appTranslationKeys, containsAll(releaseKeys));
@@ -457,6 +767,12 @@ void main() {
         'Video',
       };
       const naturallyUnchangedPairs = <String>{
+        // Established Malay and Filipino media-editor loanwords, not fallback.
+        'ms|Media',
+        'ms|Audio',
+        'ms|Unit',
+        'fil|Media',
+        'fil|Audio',
         // CLDR display names that are genuinely identical to English.
         'ms|Hindi',
         'ms|Urdu',

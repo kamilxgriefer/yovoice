@@ -192,7 +192,7 @@ void main() {
       );
       expect(find.text('Hours'), findsOneWidget);
       expect(
-        find.textContaining('visible in the feed for 24 hours'),
+        find.text('Visibility: 24 h'),
         findsOneWidget,
       );
 

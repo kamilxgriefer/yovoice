@@ -79,6 +79,19 @@ class ReelPublishSession {
   String? backingAudioGeneration;
   DateTime? reservationExpiresAt;
   DateTime? contentExpiresAt;
+  String? _ownerId;
+  int? _identityEpoch;
+  bool _identityInvalidated = false;
+
+  void _bindIdentity(String uid, int epoch) {
+    if (_identityInvalidated ||
+        (_ownerId != null && (_ownerId != uid || _identityEpoch != epoch))) {
+      _identityInvalidated = true;
+      throw StateError('This Reel draft belongs to an ended sign-in session.');
+    }
+    _ownerId ??= uid;
+    _identityEpoch ??= epoch;
+  }
 
   static String newRequestId() {
     final random = Random.secure();
@@ -113,6 +126,42 @@ class ReelService {
   final Map<String, Future<Uri>> _pendingGrants = {};
   final Map<String, String> _deleteRequestIds = <String, String>{};
 
+  /// Identity only: profile/claim refreshes do not reset a populated feed.
+  String? get currentUserId {
+    final uid = _auth.currentUser?.uid;
+    return uid == null || uid.isEmpty ? null : uid;
+  }
+
+  Stream<String?> get identityChanges =>
+      _auth.userChanges().map((user) => user?.uid).distinct();
+
+  Future<T> _withIdentity<T>(
+    Future<T> Function(_ReelIdentityLease identity) action, {
+    ReelPublishSession? session,
+  }) async {
+    final uid = currentUserId;
+    if (uid == null) throw StateError('Sign in before continuing with Reels.');
+    final epoch = _grantEpoch;
+    session?._bindIdentity(uid, epoch);
+    final identity = _ReelIdentityLease(
+      uid: uid,
+      isCurrent: () => currentUserId == uid && _grantEpoch == epoch,
+      changes: identityChanges,
+      onInvalidated: () {
+        if (session != null) session._identityInvalidated = true;
+      },
+    );
+    try {
+      identity.ensureCurrent();
+      final result = await action(identity);
+      identity.close();
+      identity.ensureCurrent();
+      return result;
+    } finally {
+      identity.close();
+    }
+  }
+
   FirebaseFunctions get _functions =>
       _functionsOverride ??
       FirebaseFunctions.instanceFor(region: 'europe-west1');
@@ -132,9 +181,16 @@ class ReelService {
   Future<String> publish(
     ReelPublishSession session, {
     void Function(double progress)? onProgress,
+  }) => _withIdentity(
+    (identity) => _publishBound(session, identity, onProgress: onProgress),
+    session: session,
+  );
+
+  Future<String> _publishBound(
+    ReelPublishSession session,
+    _ReelIdentityLease identity, {
+    void Function(double progress)? onProgress,
   }) async {
-    final user = _auth.currentUser;
-    if (user == null) throw StateError('Sign in before publishing a Reel.');
     final problem = session.plan.validate();
     if (problem != null) throw FormatException(problem);
 
@@ -153,6 +209,7 @@ class ReelService {
         'audioDurationMs': audio?.durationMs,
         'availabilityHours': plan.availability.wireValue,
       });
+      identity.ensureCurrent();
       final reservation = _ReelReservationV2.fromWire(reserved);
       if (reservation.availability != plan.availability) {
         throw const FormatException(
@@ -182,35 +239,48 @@ class ReelService {
     }
 
     final reelId = session.reelId!;
-    session.mediaGeneration ??= await _upload(
-      storagePath: session.mediaStoragePath!,
-      payload: session.plan.media,
-      metadata: <String, String>{
-        'ownerId': user.uid,
-        'reelId': reelId,
-        'assetKind': 'media',
-      },
-      onProgress: onProgress == null
-          ? null
-          : (progress) => onProgress(progress * .8),
-    );
+    identity.ensureCurrent();
+    if (session.mediaGeneration == null) {
+      final generation = await _upload(
+        storagePath: session.mediaStoragePath!,
+        payload: session.plan.media,
+        metadata: <String, String>{
+          'ownerId': identity.uid,
+          'reelId': reelId,
+          'assetKind': 'media',
+        },
+        onProgress: onProgress == null
+            ? null
+            : (progress) {
+                if (identity.isCurrent) onProgress(progress * .8);
+              },
+      );
+      identity.ensureCurrent();
+      session.mediaGeneration = generation;
+    }
 
     final audio = session.plan.backingAudio;
-    if (audio != null) {
-      session.backingAudioGeneration ??= await _upload(
+    if (audio != null && session.backingAudioGeneration == null) {
+      identity.ensureCurrent();
+      final generation = await _upload(
         storagePath: session.backingAudioStoragePath!,
         payload: audio,
         metadata: <String, String>{
-          'ownerId': user.uid,
+          'ownerId': identity.uid,
           'reelId': reelId,
           'assetKind': 'backingAudio',
         },
         onProgress: onProgress == null
             ? null
-            : (progress) => onProgress(.8 + (progress * .15)),
+            : (progress) {
+                if (identity.isCurrent) onProgress(.8 + (progress * .15));
+              },
       );
+      identity.ensureCurrent();
+      session.backingAudioGeneration = generation;
     }
 
+    identity.ensureCurrent();
     final finalized = await _call('finalizeReelDraftV2', <String, Object?>{
       'requestId': session.requestId,
       'reelId': reelId,
@@ -218,6 +288,7 @@ class ReelService {
       'backingAudioGeneration': session.backingAudioGeneration,
       'composition': session.plan.composition.toWire(),
     });
+    identity.ensureCurrent();
     final result = _ReelFinalizeResultV2.fromWire(finalized);
     if (result.reelId != reelId ||
         result.availability != session.plan.availability ||
@@ -317,30 +388,29 @@ class ReelService {
     }
   }
 
-  Future<ReelFeedPage> fetchFeed({String? cursor, int limit = 10}) async {
-    if (_auth.currentUser == null) {
-      throw StateError('Sign in before loading Reels.');
-    }
-    if (limit < 1 || limit > 20) {
-      throw ArgumentError.value(
-        limit,
-        'limit',
-        'Use a page size from 1 to 20.',
-      );
-    }
-    final response = await _call('listReelsV2', <String, Object?>{
-      'cursor': cursor,
-      'limit': limit,
-    });
-    final page = ReelFeedPage.fromV2Wire(response);
-    final now = DateTime.now().toUtc();
-    return ReelFeedPage(
-      items: page.items
-          .where((reel) => reel.availability.isAvailableAt(now))
-          .toList(growable: false),
-      nextCursor: page.nextCursor,
-    );
-  }
+  Future<ReelFeedPage> fetchFeed({String? cursor, int limit = 10}) =>
+      _withIdentity((identity) async {
+        if (limit < 1 || limit > 20) {
+          throw ArgumentError.value(
+            limit,
+            'limit',
+            'Use a page size from 1 to 20.',
+          );
+        }
+        final response = await _call('listReelsV2', <String, Object?>{
+          'cursor': cursor,
+          'limit': limit,
+        });
+        identity.ensureCurrent();
+        final page = ReelFeedPage.fromV2Wire(response);
+        final now = DateTime.now().toUtc();
+        return ReelFeedPage(
+          items: page.items
+              .where((reel) => reel.availability.isAvailableAt(now))
+              .toList(growable: false),
+          nextCursor: page.nextCursor,
+        );
+      });
 
   Future<Uri> resolveMediaUri(
     String reelId, {
@@ -411,7 +481,7 @@ class ReelService {
   }
 
   bool isCurrentUserAuthor(Reel reel) =>
-      _auth.currentUser?.uid == reel.authorId;
+      currentUserId != null && currentUserId == reel.authorId;
 
   /// Creates an idempotent safety report through the privileged backend.
   /// Reporting intentionally remains available to signed-in users whose email
@@ -462,6 +532,58 @@ class ReelService {
   static void clearAllMediaAccessCaches() {
     _grantEpoch += 1;
     _grantCache.clear();
+  }
+}
+
+/// A bounded operation subscription, not a service-lifetime listener. Once an
+/// account boundary is observed it stays invalid even if A signs back in before
+/// the pending network operation resolves. Already-issued backend work remains
+/// server-authorized; the client stops the next stage and discards late results.
+class _ReelIdentityLease {
+  _ReelIdentityLease({
+    required this.uid,
+    required bool Function() isCurrent,
+    required Stream<String?> changes,
+    required this.onInvalidated,
+  }) : _isCurrent = isCurrent {
+    _subscription = changes.listen((nextUid) {
+      if (nextUid != uid) _invalidate();
+    }, onError: (Object error, StackTrace stackTrace) => _invalidate());
+  }
+
+  final String uid;
+  final bool Function() _isCurrent;
+  final VoidCallback onInvalidated;
+  late final StreamSubscription<String?> _subscription;
+  bool _invalidated = false;
+  bool _closed = false;
+
+  bool get isCurrent {
+    if (!_isCurrent()) _invalidate();
+    return !_invalidated;
+  }
+
+  void _invalidate() {
+    if (_invalidated) return;
+    _invalidated = true;
+    onInvalidated();
+  }
+
+  void ensureCurrent() {
+    if (!isCurrent) {
+      throw StateError('The Reel sign-in session changed. Try again.');
+    }
+  }
+
+  void close() {
+    if (_closed) return;
+    _closed = true;
+    // Cancellation stops delivery synchronously. Its future is provider
+    // cleanup, not an identity barrier, and can belong to another async zone
+    // (including Firebase Auth's shared broadcast stream). Do not hold a
+    // completed operation hostage to that cleanup. The caller still checks
+    // the latched identity and current UID/epoch after cancellation.
+    _subscription.cancel().ignore();
   }
 }
 

@@ -15,6 +15,40 @@ import 'package:yovoice/features/reels/presentation/widgets/reel_playback_coordi
 void main() {
   group('ReelPlaybackCoordinator', () {
     test(
+      'local draft uses published trim, mix and loop semantics without a Reel',
+      () async {
+        final audio = _FakeAudioPlayback();
+        final video = _FakeVideoPlayback();
+        final source = _videoReel();
+        final coordinator = ReelPlaybackCoordinator.draft(
+          mediaKind: ReelMediaKind.video,
+          composition: source.composition,
+          backingAudioDurationMs: source.backingAudio!.durationMs,
+          resolveBackingAudioUri: () async =>
+              Uri(scheme: 'memory', path: 'audio'),
+          audioPlaybackFactory: () => audio,
+        );
+        addTearDown(coordinator.dispose);
+        expect(coordinator.reel, isNull);
+        await coordinator.attachVideo(video);
+        await coordinator.toggle();
+        expect(video.seekPositions.last, const Duration(seconds: 5));
+        expect(audio.seekPositions.last, const Duration(seconds: 2));
+        expect(video.volume, .35);
+        expect(audio.volume, .65);
+        video
+          ..position = const Duration(seconds: 15)
+          ..playing = true;
+        await coordinator.synchronizeVideoTick();
+        expect(video.seekPositions.last, const Duration(seconds: 5));
+        expect(audio.seekPositions.last, const Duration(seconds: 2));
+        await coordinator.setActive(false);
+        expect(coordinator.isPlaying, isFalse);
+        expect(video.playing, isFalse);
+      },
+    );
+
+    test(
       'starts, pauses and loops video and backing audio on one timeline',
       () async {
         final audio = _FakeAudioPlayback();

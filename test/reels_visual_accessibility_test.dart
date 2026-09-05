@@ -86,6 +86,48 @@ double _contrast(Color first, Color second) {
 
 void main() {
   group('canonical Reel renderer', () {
+    testWidgets('scaled canonical frame keeps real link targets at least44px', (
+      tester,
+    ) async {
+      _useViewport(tester, const Size(320, 640));
+      var opened = 0;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Center(
+              child: SizedBox(
+                width: 288,
+                child: ReelCompositionFrame(
+                  composition: ReelComposition(
+                    originalAudioVolume: 0,
+                    linkOverlays: [
+                      ReelLinkOverlay(
+                        id: 'scaled',
+                        label: 'Open',
+                        uri: Uri.parse('https://yovoice.app'),
+                        x: .5,
+                        y: .5,
+                      ),
+                    ],
+                  ),
+                  media: const ColoredBox(color: Colors.blue),
+                  onOpenLink: (_) async {
+                    opened++;
+                  },
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      final link = find.byKey(const ValueKey('reel-link-overlay-scaled'));
+      expect(tester.getRect(link).height, greaterThanOrEqualTo(43.99));
+      expect(tester.getRect(link).width, greaterThanOrEqualTo(43.99));
+      await tester.tap(link);
+      expect(opened, 1);
+      expect(tester.takeException(), isNull);
+    });
+
     for (final themeEntry in <String, ThemeData>{
       'Dark': AppTheme.darkTheme,
       'Pearl': AppTheme.lightTheme,
@@ -192,7 +234,7 @@ void main() {
           await tester.pumpWidget(
             MaterialApp(
               theme: themeEntry.value,
-              home: const ReelComposerScreen(),
+              home: ReelComposerScreen(service: _composerService()),
             ),
           );
           await tester.tap(find.text('Choose media'));
@@ -220,6 +262,7 @@ void main() {
         MaterialApp(
           theme: AppTheme.darkTheme,
           home: ReelComposerScreen(
+            service: _composerService(),
             imagePicker: _ImagePickerStub(),
             backingAudioPicker: () async => ReelUploadPayload.backingAudio(
               bytes: Uint8List.fromList(<int>[
@@ -239,9 +282,12 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.text('Choose photo'));
       await tester.pumpAndSettle();
+      await tester.ensureVisible(find.byKey(const ValueKey('reel-tool-audio')));
+      await tester.tap(find.byKey(const ValueKey('reel-tool-audio')));
+      await tester.pumpAndSettle();
       await tester.ensureVisible(find.text('Add your audio'));
       await tester.tap(find.text('Add your audio'));
-      await tester.pump();
+      await tester.pumpAndSettle();
 
       final startSemantics = find.bySemanticsLabel(
         'Backing audio start position',
@@ -269,6 +315,8 @@ void main() {
       expect(player.seekPositions.last.inMilliseconds, selectedStart);
       expect(player.resumeCount, 1);
       expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
     });
 
     testWidgets('an unsafe link stays in the dialog with a live inline error', (
@@ -279,12 +327,18 @@ void main() {
       await tester.pumpWidget(
         MaterialApp(
           theme: AppTheme.darkTheme,
-          home: ReelComposerScreen(imagePicker: _ImagePickerStub()),
+          home: ReelComposerScreen(
+            service: _composerService(),
+            imagePicker: _ImagePickerStub(),
+          ),
         ),
       );
       await tester.tap(find.text('Choose media'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Choose photo'));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.byKey(const ValueKey('reel-tool-text')));
+      await tester.tap(find.byKey(const ValueKey('reel-tool-text')));
       await tester.pumpAndSettle();
       await tester.ensureVisible(find.text('Add link'));
       await tester.tap(find.text('Add link'));
@@ -433,6 +487,13 @@ ReelService _feedService() {
   );
 }
 
+ReelService _composerService() => ReelService(
+  auth: MockFirebaseAuth(
+    signedIn: true,
+    mockUser: MockUser(uid: 'composer-fixture', isEmailVerified: true),
+  ),
+);
+
 class _ImagePickerStub extends ImagePicker {
   @override
   Future<XFile?> pickImage({
@@ -469,6 +530,12 @@ class _RecordingAudioPlayer implements AudioPlayer {
 
   @override
   Stream<Duration> get onPositionChanged => const Stream<Duration>.empty();
+
+  @override
+  Stream<void> get onPlayerComplete => const Stream<void>.empty();
+
+  @override
+  Future<void> setReleaseMode(ReleaseMode mode) async {}
 
   @override
   Future<void> setSource(Source source) async => sourceCount += 1;

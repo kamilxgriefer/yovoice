@@ -9,7 +9,56 @@ import 'package:yovoice/features/reels/presentation/reel_visuals.dart';
 
 typedef ReelLinkOpener = Future<void> Function(ReelLinkOverlay overlay);
 
-@visibleForTesting
+/// The editing recipe has one design canvas regardless of preview size. Native
+/// playback controls belong outside this frame so their hit areas never shrink.
+class ReelCompositionFrame extends StatelessWidget {
+  const ReelCompositionFrame({
+    required this.composition,
+    required this.media,
+    this.mediaForeground,
+    this.onOpenLink,
+    this.overlaySafeInsets = const EdgeInsets.fromLTRB(16, 16, 16, 132),
+    super.key,
+  });
+
+  final ReelComposition composition;
+  final Widget media;
+  final Widget? mediaForeground;
+  final ReelLinkOpener? onOpenLink;
+  final EdgeInsets overlaySafeInsets;
+
+  static const designSize = Size(390, 390 * 16 / 9);
+
+  @override
+  Widget build(BuildContext context) => AspectRatio(
+    aspectRatio: 9 / 16,
+    child: LayoutBuilder(
+      builder: (context, constraints) {
+        final scale = math.min(
+          constraints.maxWidth / designSize.width,
+          constraints.maxHeight / designSize.height,
+        );
+        return FittedBox(
+          fit: BoxFit.contain,
+          child: SizedBox.fromSize(
+            size: designSize,
+            child: ReelCompositionCanvas(
+              composition: composition,
+              media: media,
+              mediaForeground: mediaForeground,
+              onOpenLink: onOpenLink,
+              overlaySafeInsets: overlaySafeInsets,
+              minimumLinkExtent: onOpenLink == null || scale <= 0
+                  ? 44
+                  : math.max(44, 44 / scale),
+            ),
+          ),
+        );
+      },
+    ),
+  );
+}
+
 Offset reelCropTranslation(Size size, ReelCropTransform crop) {
   final scale = crop.scale.clamp(1.0, 8.0).toDouble();
   final maxPanX = math.max(0.0, (size.width * (scale - 1)) / 2);
@@ -35,6 +84,7 @@ class ReelCompositionCanvas extends StatelessWidget {
     this.mediaForeground,
     this.onOpenLink,
     this.overlaySafeInsets = const EdgeInsets.fromLTRB(16, 16, 16, 132),
+    this.minimumLinkExtent = 44,
     super.key,
   });
 
@@ -43,6 +93,7 @@ class ReelCompositionCanvas extends StatelessWidget {
   final Widget? mediaForeground;
   final ReelLinkOpener? onOpenLink;
   final EdgeInsets overlaySafeInsets;
+  final double minimumLinkExtent;
 
   @override
   Widget build(BuildContext context) {
@@ -86,6 +137,7 @@ class ReelCompositionCanvas extends StatelessWidget {
                   child: _ReelLinkOverlayPill(
                     overlay: overlay,
                     onOpen: onOpenLink,
+                    minimumExtent: minimumLinkExtent,
                   ),
                 ),
             ],
@@ -217,10 +269,15 @@ class _ReelTextOverlayPill extends StatelessWidget {
 }
 
 class _ReelLinkOverlayPill extends StatelessWidget {
-  const _ReelLinkOverlayPill({required this.overlay, required this.onOpen});
+  const _ReelLinkOverlayPill({
+    required this.overlay,
+    required this.onOpen,
+    required this.minimumExtent,
+  });
 
   final ReelLinkOverlay overlay;
   final ReelLinkOpener? onOpen;
+  final double minimumExtent;
 
   @override
   Widget build(BuildContext context) {
@@ -232,7 +289,11 @@ class _ReelLinkOverlayPill extends StatelessWidget {
     );
     final content = ConstrainedBox(
       key: ValueKey<String>('reel-link-overlay-${overlay.id}'),
-      constraints: const BoxConstraints(minHeight: 44, maxWidth: 260),
+      constraints: BoxConstraints(
+        minHeight: minimumExtent,
+        minWidth: minimumExtent,
+        maxWidth: math.max(260, minimumExtent),
+      ),
       child: Material(
         color: reelLinkOverlaySurface,
         shape: RoundedRectangleBorder(

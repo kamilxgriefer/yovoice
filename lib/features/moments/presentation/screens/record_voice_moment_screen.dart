@@ -3,12 +3,12 @@ import 'dart:math' as math;
 
 import 'package:audioplayers/audioplayers.dart';
 import 'package:cloud_functions/cloud_functions.dart';
+import 'package:flutter/foundation.dart' show kIsWeb, visibleForTesting;
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 import 'package:record/record.dart' show Amplitude;
 
-import 'package:yovoice/core/helpers/error_messages.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_immersive_colors.dart';
@@ -17,6 +17,7 @@ import 'package:yovoice/features/moments/data/services/moment_service.dart';
 import 'package:yovoice/features/moments/data/services/recorded_audio.dart';
 import 'package:yovoice/features/moments/data/services/voice_moment_recorder.dart';
 import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
+import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/theme/yo_immersive_dark_surface.dart';
 
 /// The states this screen can actually be in.
@@ -36,6 +37,43 @@ enum VoiceMomentRecordingPhase {
 }
 
 enum _AvailabilityUnit { hours, days }
+
+/// Only presentation-owned, already localized messages may bypass the domain
+/// category mapping. Never wrap arbitrary exception or backend text in this.
+class _LocalizedVoiceNotice extends VoiceRecordingException {
+  const _LocalizedVoiceNotice(
+    super.problem,
+    super.message, {
+    super.action,
+    super.cause,
+  });
+}
+
+/// The recorder uses one timeout category on every platform. Keep browser
+/// instructions out of native recovery copy without changing recorder state.
+/// The platform override exercises both presentation branches in VM tests.
+@visibleForTesting
+({String message, String action}) voiceMomentMicrophoneTimeoutCopy(
+  AppLocalizations copy, {
+  bool isWeb = kIsWeb,
+}) => isWeb
+    ? (
+        message: copy.text(
+          'Your browser did not answer the microphone request.',
+          'Przeglądarka nie odpowiedziała na prośbę o dostęp do mikrofonu.',
+        ),
+        action: copy.text(
+          'Start recording again, then choose Allow.',
+          'Rozpocznij nagrywanie ponownie, a następnie wybierz Zezwól.',
+        ),
+      )
+    : (
+        message: copy.text(
+          'YO Voice could not open your microphone.',
+          'YO Voice nie może uruchomić mikrofonu.',
+        ),
+        action: copy.text('Try again.', 'Spróbuj ponownie.'),
+      );
 
 /// Records and publishes a Voice Moment.
 ///
@@ -171,6 +209,10 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
   /// the route scope, which is how the retry became unreachable after a
   /// failed publish.
   final FocusNode _publishFocus = FocusNode(debugLabel: 'Publish Voice Moment');
+  final FocusNode _captionFocus = FocusNode(debugLabel: 'Voice Moment caption');
+  // Preserve the editable subtree and its input connection when keyboard
+  // insets move the review form between wide and stacked layouts.
+  final GlobalKey _captionFieldKey = GlobalKey();
   final FocusNode _availabilityAmountFocus = FocusNode(
     debugLabel: 'Voice Moment duration',
   );
@@ -194,68 +236,189 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
 
   AppLocalizations get _copy => AppLocalizations.of(context);
 
+  // Domain error copy is English and may include platform details. Only known
+  // categories become catalog keys here; arbitrary exception text never renders.
   String _noticeMessage(VoiceRecordingException notice) {
-    final copy = _copy;
-    if (!copy.isPolish) return notice.message;
-    if (notice.problem == VoiceRecordingProblem.uploadFailed &&
-        notice.message.contains('limit of active Moments')) {
-      return 'Osiągnięto limit aktywnych Momentów. Miejsce zwolni się, gdy '
-          'jeden z nich wygaśnie lub go usuniesz.';
-    }
+    if (notice is _LocalizedVoiceNotice) return notice.message;
     return switch (notice.problem) {
-      VoiceRecordingProblem.platformCannotRecord =>
-        'Nagrywanie głosu nie jest dostępne na tym urządzeniu.',
+      VoiceRecordingProblem.platformCannotRecord => _supportMessage(
+        notice.message,
+      ),
       VoiceRecordingProblem.microphoneBlocked =>
-        'Dostęp do mikrofonu jest zablokowany.',
-      VoiceRecordingProblem.microphonePromptDismissed =>
-        'Nie przyznano dostępu do mikrofonu.',
-      VoiceRecordingProblem.microphoneNotFound => 'Nie znaleziono mikrofonu.',
-      VoiceRecordingProblem.microphoneUnavailable =>
-        'Mikrofon jest teraz niedostępny.',
-      VoiceRecordingProblem.captureFailed => 'Nie udało się nagrać dźwięku.',
+        notice.message ==
+                'Microphone access for YO Voice is blocked in this browser.'
+            ? _copy.text(
+                "Microphone access for YO Voice is blocked in this browser.",
+                "Dostęp YO Voice do mikrofonu jest zablokowany w tej przeglądarce.",
+              )
+            : _copy.text(
+                "YO Voice does not have permission to use your microphone.",
+                "YO Voice nie ma uprawnień do używania mikrofonu.",
+              ),
+      VoiceRecordingProblem.microphonePromptDismissed => _copy.text(
+        "The microphone request was dismissed, so recording could not start.",
+        "Prośba o dostęp do mikrofonu została zamknięta, więc nagrywanie nie mogło się rozpocząć.",
+      ),
+      VoiceRecordingProblem.microphoneNotFound => _copy.text(
+        "No microphone was found on this device.",
+        "Nie znaleziono mikrofonu na tym urządzeniu.",
+      ),
+      VoiceRecordingProblem.microphoneUnavailable => _copy.text(
+        "Your microphone could not be opened — another app is probably using it.",
+        "Nie można uruchomić mikrofonu — prawdopodobnie korzysta z niego inna aplikacja.",
+      ),
+      VoiceRecordingProblem.captureFailed => switch (notice.message) {
+        'Your browser did not answer the microphone request.' =>
+          voiceMomentMicrophoneTimeoutCopy(_copy).message,
+        'Recording could not be finished.' => _copy.text(
+          'Recording could not be finished.',
+          'Nie udało się zakończyć nagrywania.',
+        ),
+        'Recording could not be started.' => _copy.text(
+          'Recording could not be started.',
+          'Nie udało się rozpocząć nagrywania.',
+        ),
+        _ => _copy.text(
+          "YO Voice could not open your microphone.",
+          "YO Voice nie może uruchomić mikrofonu.",
+        ),
+      },
       VoiceRecordingProblem.recordingUnusable =>
-        'Tego nagrania nie można opublikować.',
+        notice.message ==
+                'That recording is larger than the 12 MB limit for a Voice Moment.'
+            ? _copy.text(
+                "That recording is larger than the 12 MB limit for a Voice Moment.",
+                "To nagranie przekracza limit 12 MB dla Voice Momentu.",
+              )
+            : notice.message.startsWith('This recording came back as ')
+            ? _copy.text(
+                "This recording format cannot be published.",
+                "Tego formatu nagrania nie można opublikować.",
+              )
+            : _copy.text(
+                "That recording could not be used. Record again and speak for at least a second.",
+                "Nie można użyć tego nagrania. Nagraj ponownie i mów przez co najmniej sekundę.",
+              ),
       VoiceRecordingProblem.uploadFailed =>
-        'Nie udało się opublikować Voice Momentu.',
+        notice.message == 'Publishing took too long and was stopped safely.'
+            ? _copy.text(
+                "Publishing took too long and was stopped safely.",
+                "Publikacja trwała zbyt długo i została bezpiecznie zatrzymana.",
+              )
+            : _copy.text(
+                "Your Voice Moment could not be published.",
+                "Nie udało się opublikować Voice Momentu.",
+              ),
     };
   }
 
   String? _noticeAction(VoiceRecordingException notice) {
-    final copy = _copy;
-    if (!copy.isPolish) return notice.action;
-    if (notice.problem == VoiceRecordingProblem.uploadFailed &&
-        notice.message.contains('limit of active Moments')) {
-      return 'Nagranie zostało zachowane. Opublikuj je, gdy zwolni się miejsce.';
-    }
+    if (notice is _LocalizedVoiceNotice) return notice.action;
     return switch (notice.problem) {
-      VoiceRecordingProblem.platformCannotRecord =>
-        'Spróbuj w aktualnej wersji Chrome, Edge lub Safari albo w aplikacji YO Voice.',
+      VoiceRecordingProblem.platformCannotRecord => _supportAction(
+        notice.message,
+      ),
       VoiceRecordingProblem.microphoneBlocked =>
-        'Włącz dostęp do mikrofonu w ustawieniach urządzenia lub przeglądarki.',
-      VoiceRecordingProblem.microphonePromptDismissed =>
-        'Rozpocznij nagrywanie ponownie i zezwól na dostęp.',
-      VoiceRecordingProblem.microphoneNotFound =>
-        'Podłącz mikrofon i spróbuj ponownie.',
-      VoiceRecordingProblem.microphoneUnavailable =>
-        'Zamknij aplikację korzystającą z mikrofonu i spróbuj ponownie.',
-      VoiceRecordingProblem.captureFailed => 'Spróbuj nagrać ponownie.',
+        notice.message ==
+                'Microphone access for YO Voice is blocked in this browser.'
+            ? _copy.text(
+                "Allow the microphone in your browser's site settings for YO Voice, then reload this page.",
+                "Zezwól na używanie mikrofonu w ustawieniach witryny YO Voice w przeglądarce, a następnie odśwież stronę.",
+              )
+            : _copy.text(
+                "Allow the microphone for YO Voice in your device settings.",
+                "Zezwól aplikacji YO Voice na używanie mikrofonu w ustawieniach urządzenia.",
+              ),
+      VoiceRecordingProblem.microphonePromptDismissed => _copy.text(
+        "Start recording again, then choose Allow.",
+        "Rozpocznij nagrywanie ponownie, a następnie wybierz Zezwól.",
+      ),
+      VoiceRecordingProblem.microphoneNotFound => _copy.text(
+        "Connect a microphone, then start recording again.",
+        "Podłącz mikrofon, a następnie rozpocznij nagrywanie ponownie.",
+      ),
+      VoiceRecordingProblem.microphoneUnavailable => _copy.text(
+        "Close the other app, then start recording again.",
+        "Zamknij inną aplikację, a następnie rozpocznij nagrywanie ponownie.",
+      ),
+      VoiceRecordingProblem.captureFailed =>
+        notice.message == 'Your browser did not answer the microphone request.'
+            ? voiceMomentMicrophoneTimeoutCopy(_copy).action
+            : notice.message == 'Recording could not be finished.'
+            ? _copy.text('Record again.', 'Nagraj ponownie.')
+            : _copy.text('Try again.', 'Spróbuj ponownie.'),
       VoiceRecordingProblem.recordingUnusable =>
-        'Nagraj nową wypowiedź trwającą co najmniej sekundę.',
+        notice.message ==
+                'That recording is larger than the 12 MB limit for a Voice Moment.'
+            ? _copy.text(
+                "Record a shorter Voice Moment.",
+                "Nagraj krótszy Voice Moment.",
+              )
+            : notice.message.startsWith('This recording came back as ')
+            ? _copy.text(
+                "Open YO Voice in Chrome, Edge or Safari to record.",
+                "Otwórz YO Voice w Chrome, Edge lub Safari, aby nagrywać.",
+              )
+            : null,
       VoiceRecordingProblem.uploadFailed =>
-        'Nagranie zostało zachowane. Spróbuj opublikować je ponownie.',
+        notice.message == 'Publishing took too long and was stopped safely.'
+            ? _copy.text(
+                'Check your connection and try again.',
+                'Sprawdź połączenie i spróbuj ponownie.',
+              )
+            : _copy.text(
+                "Your recording is still here — try publishing again.",
+                "Nagranie zostało zachowane — spróbuj opublikować je ponownie.",
+              ),
     };
   }
 
-  String _localizedMeterValue(String value) {
-    if (!_copy.isPolish) return value;
-    return switch (value) {
-      _meterSilent => 'Cisza',
-      _meterQuiet => 'Cicho',
-      _meterGood => 'Dobry poziom',
-      _meterUnknown => 'Poziom wejścia niedostępny',
-      _ => value,
-    };
+  String _supportMessage(String? reason) {
+    if (reason?.contains('secure (https)') ?? false) {
+      return _copy.text(
+        "Microphone access needs a secure (https) connection.",
+        "Dostęp do mikrofonu wymaga bezpiecznego połączenia (https).",
+      );
+    }
+    if ((reason?.contains('MP4/AAC') ?? false) ||
+        (reason?.startsWith('This browser would record as ') ?? false)) {
+      return _copy.text(
+        "This browser cannot record MP4/AAC audio.",
+        "Ta przeglądarka nie może nagrywać dźwięku MP4/AAC.",
+      );
+    }
+    if ((reason?.contains('no AAC encoder') ?? false) ||
+        (reason?.startsWith('Voice recording is not available') ?? false)) {
+      return _copy.text(
+        "Voice recording is not available on this device.",
+        "Nagrywanie głosu nie jest dostępne na tym urządzeniu.",
+      );
+    }
+    return _copy.text(
+      "YO Voice could not reach an audio recorder on this device.",
+      "YO Voice nie może skorzystać z nagrywania dźwięku na tym urządzeniu.",
+    );
   }
+
+  String _supportAction(String? reason) {
+    if (reason?.contains('secure (https)') ?? false) {
+      return _copy.text(
+        "Open YO Voice over https and try again.",
+        "Otwórz YO Voice przez https i spróbuj ponownie.",
+      );
+    }
+    return _copy.text(
+      "Open YO Voice in Chrome, Edge or Safari to record.",
+      "Otwórz YO Voice w Chrome, Edge lub Safari, aby nagrywać.",
+    );
+  }
+
+  String _localizedMeterValue(String value) => switch (value) {
+    _meterSilent => _copy.text("Silent", "Cisza"),
+    _meterQuiet => _copy.text("Quiet", "Cicho"),
+    _meterGood => _copy.text("Good level", "Dobry poziom"),
+    _ => _copy.text("Input level unavailable", "Poziom wejścia niedostępny"),
+  };
 
   @override
   void initState() {
@@ -273,6 +436,7 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
     _ticker?.cancel();
     unawaited(_levels?.cancel());
     _publishFocus.dispose();
+    _captionFocus.dispose();
     _availabilityAmountFocus.dispose();
     _captionController
       ..removeListener(_onCaptionChanged)
@@ -337,9 +501,10 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
         _captionLimitAnnounced = true;
         // Input is silently dropped past the limit otherwise.
         _announce(
-          _copy.text(
-            'Caption limit reached: $_captionMaxLength characters.',
-            'Osiągnięto limit opisu: $_captionMaxLength znaków.',
+          _copy.template(
+            'Caption limit reached: {limit} characters.',
+            'Osiągnięto limit opisu: {limit} znaków.',
+            values: {'limit': _captionMaxLength},
           ),
         );
       }
@@ -743,14 +908,11 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
     } catch (error) {
       if (!mounted || attempt != _accessAttempt) return;
       _showNotice(
-        VoiceRecordingException(
+        _LocalizedVoiceNotice(
           VoiceRecordingProblem.captureFailed,
-          intentionalOrFriendly(
-            error,
-            fallback: _copy.text(
-              'Recording could not be started.',
-              'Nie udało się rozpocząć nagrywania.',
-            ),
+          _copy.text(
+            'Recording could not be started.',
+            'Nie udało się rozpocząć nagrywania.',
           ),
           action: _copy.text('Try again.', 'Spróbuj ponownie.'),
           cause: error,
@@ -876,14 +1038,11 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
     } catch (error) {
       if (!mounted) return;
       _showNotice(
-        VoiceRecordingException(
+        _LocalizedVoiceNotice(
           VoiceRecordingProblem.captureFailed,
-          intentionalOrFriendly(
-            error,
-            fallback: _copy.text(
-              'Recording could not be finished.',
-              'Nie udało się zakończyć nagrywania.',
-            ),
+          _copy.text(
+            'Recording could not be finished.',
+            'Nie udało się zakończyć nagrywania.',
           ),
           action: _copy.text('Record again.', 'Nagraj ponownie.'),
           cause: error,
@@ -899,7 +1058,7 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
       await audio.discard();
       if (!mounted) return;
       _showNotice(
-        VoiceRecordingException(
+        _LocalizedVoiceNotice(
           VoiceRecordingProblem.recordingUnusable,
           _copy.text(
             'That was too short to publish — a Voice Moment needs at least '
@@ -1031,20 +1190,39 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
       // The recording is kept: the capture succeeded, only publishing
       // failed, and making the user re-record would lose good audio.
       _showNotice(
-        VoiceRecordingException(
+        _LocalizedVoiceNotice(
           VoiceRecordingProblem.uploadFailed,
           capRefusal
-              ? 'You have reached the limit of active Moments. '
-                    'A slot frees up when one of your Moments '
-                    'reaches the end of its availability — or when '
-                    'you delete one.'
-              : intentionalOrFriendly(
-                  error,
-                  fallback: 'Your Voice Moment could not be published.',
+              ? _copy.text(
+                  "You have reached the limit of active Moments. A slot frees up when one expires or you delete one.",
+                  "Osiągnięto limit aktywnych Momentów. Miejsce zwolni się, gdy jeden z nich wygaśnie lub go usuniesz.",
+                )
+              : error is VoiceRecordingException
+              ? _noticeMessage(error)
+              : (error is StateError &&
+                        error.message ==
+                            'You must be signed in to publish a Voice Moment.') ||
+                    (error is FirebaseFunctionsException &&
+                        error.code == 'unauthenticated')
+              ? _copy.text(
+                  "You must be signed in to publish a Voice Moment.",
+                  "Musisz się zalogować, aby opublikować Voice Moment.",
+                )
+              : _copy.text(
+                  "Your Voice Moment could not be published.",
+                  "Nie udało się opublikować Voice Momentu.",
                 ),
           action: capRefusal
-              ? 'Your recording is kept — publish it once a slot frees up.'
-              : 'Your recording is still here — try publishing again.',
+              ? _copy.text(
+                  "Your recording is kept — publish it once a slot frees up.",
+                  "Nagranie zostało zachowane — opublikuj je, gdy zwolni się miejsce.",
+                )
+              : error is VoiceRecordingException
+              ? _noticeAction(error)
+              : _copy.text(
+                  "Your recording is still here — try publishing again.",
+                  "Nagranie zostało zachowane — spróbuj opublikować je ponownie.",
+                ),
           cause: error,
         ),
         phase: VoiceMomentRecordingPhase.reviewing,
@@ -1096,6 +1274,10 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
 
   // ------------------------------------------------------------------- view
 
+  bool get _isReview =>
+      _phase == VoiceMomentRecordingPhase.reviewing ||
+      _phase == VoiceMomentRecordingPhase.publishing;
+
   @override
   Widget build(BuildContext context) {
     final busy = _phase == VoiceMomentRecordingPhase.publishing;
@@ -1125,8 +1307,38 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
                   child: LayoutBuilder(
                     builder: (context, constraints) {
                       final width = constraints.maxWidth;
-                      if (width >= 1024) return _wideBody(width);
-                      return _stackedBody(width);
+                      final textScale = MediaQuery.textScalerOf(
+                        context,
+                      ).scale(1);
+                      // A short keyboard viewport and enlarged text need one
+                      // uninterrupted scroll path, not a footer that consumes
+                      // the space needed to read or edit the recording.
+                      final wide =
+                          width >= 1100 &&
+                          textScale < 1.6 &&
+                          constraints.maxHeight >= 480;
+                      final pinActions =
+                          _isReview &&
+                          constraints.maxHeight >= 460 &&
+                          textScale < 1.6 &&
+                          MediaQuery.viewInsetsOf(context).bottom == 0;
+                      final body = wide
+                          ? _wideBody(width, showActions: !pinActions)
+                          : _stackedBody(width, showActions: !pinActions);
+                      return Column(
+                        children: [
+                          Expanded(
+                            // Start each visual stage at its heading, not at
+                            // the scroll offset of the previous capture/form.
+                            // Publishing and retry stay in the same stage.
+                            child: KeyedSubtree(
+                              key: ValueKey(_isReview),
+                              child: body,
+                            ),
+                          ),
+                          if (pinActions) _reviewActionBar(width, wide: wide),
+                        ],
+                      );
                     },
                   ),
                 ),
@@ -1166,6 +1378,7 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
               style: const TextStyle(
                 color: Colors.white,
                 fontSize: 19,
+                height: 1.15,
                 fontWeight: FontWeight.w900,
               ),
             ),
@@ -1176,46 +1389,150 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
     );
   }
 
-  /// Phone and tablet: one column, the card centred at a readable measure.
-  Widget _stackedBody(double width) {
+  /// Capture and review share a local state machine, but each has a focused
+  /// visual stage. No draft or upload starts when this presentation changes.
+  Widget _stackedBody(double width, {required bool showActions}) {
     final compact = width < 600;
     return SingleChildScrollView(
-      padding: EdgeInsets.fromLTRB(
-        compact ? 16 : 22,
-        26,
-        compact ? 16 : 22,
-        30,
-      ),
-      child: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 620),
-          child: _card(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                _intro(),
-                const SizedBox(height: 26),
-                ..._stage(compact: compact, stackActions: compact),
-              ],
+      key: const ValueKey('voice-moment-body-scroll'),
+      padding: const EdgeInsets.only(top: 16, bottom: 24),
+      child: ResponsiveContentFrame(
+        width: ResponsiveContentWidth.form,
+        fillHeight: false,
+        padding: ResponsiveContentFrame.adaptivePagePadding(width),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _flowProgress(),
+            const SizedBox(height: 24),
+            _intro(),
+            const SizedBox(height: 20),
+            ..._stage(
+              compact: compact,
+              stackActions:
+                  compact || MediaQuery.textScalerOf(context).scale(1) >= 1.6,
+              showActions: showActions,
             ),
-          ),
+          ],
         ),
       ),
+    );
+  }
+
+  /// Non-interactive progress, not a second navigation system: changing a
+  /// stage must never discard a take or reopen microphone access implicitly.
+  Widget _flowProgress() {
+    final steps = [
+      _copy.text('Record', 'Nagraj'),
+      _copy.text('Review', 'Sprawdź'),
+    ];
+    final active = _isReview ? 1 : 0;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final stacked =
+            constraints.maxWidth < 420 &&
+            MediaQuery.textScalerOf(context).scale(1) >= 1.6;
+        final stepWidth = stacked
+            ? constraints.maxWidth
+            : (constraints.maxWidth - 10) / 2;
+        return Wrap(
+          key: const ValueKey('voice-moment-flow-progress'),
+          spacing: 10,
+          runSpacing: 8,
+          children: [
+            for (var index = 0; index < steps.length; index++)
+              SizedBox(
+                width: stepWidth,
+                child: Semantics(
+                  selected: index == active,
+                  label: steps[index],
+                  value: '${index + 1}/${steps.length}',
+                  excludeSemantics: true,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 12,
+                    ),
+                    decoration: BoxDecoration(
+                      color: index == active
+                          ? AppImmersiveColors.surfaceRaised
+                          : _surface.withValues(alpha: .45),
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(
+                        color: index == active ? _controlBorder : _border,
+                        width: index == active ? 1.5 : 1,
+                      ),
+                    ),
+                    child: Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        Container(
+                          width: 24,
+                          height: 24,
+                          alignment: Alignment.center,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: index == active ? _primary : _inset,
+                          ),
+                          child: index < active
+                              ? const Icon(
+                                  Icons.check_rounded,
+                                  size: 16,
+                                  color: Colors.white,
+                                )
+                              : Text(
+                                  '${index + 1}',
+                                  // The number is a decorative progress symbol;
+                                  // the adjacent label and semantics carry it.
+                                  textScaler: TextScaler.noScaling,
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                ),
+                        ),
+                        Text(
+                          steps[index],
+                          style: TextStyle(
+                            color: index == active ? Colors.white : _muted,
+                            fontWeight: FontWeight.w800,
+                            fontSize: 13,
+                            height: 1.25,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        );
+      },
     );
   }
 
   /// Desktop: the capture stage and the publishing controls sit side by
   /// side, so a wide window is a two-column workspace rather than a phone
   /// column stretched across 1400 px.
-  Widget _wideBody(double width) {
+  Widget _wideBody(double width, {required bool showActions}) {
     return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(32, 30, 32, 40),
-      child: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 1040),
-          child: _card(
-            padding: const EdgeInsets.fromLTRB(34, 32, 34, 30),
-            child: switch (_phase) {
+      key: const ValueKey('voice-moment-body-scroll'),
+      padding: const EdgeInsets.only(top: 22, bottom: 32),
+      child: ResponsiveContentFrame(
+        width: ResponsiveContentWidth.feed,
+        fillHeight: false,
+        padding: ResponsiveContentFrame.adaptivePagePadding(width),
+        child: Column(
+          children: [
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 520),
+              child: _flowProgress(),
+            ),
+            const SizedBox(height: 28),
+            switch (_phase) {
               // These two have no second column to fill. Left to the
               // stretch layout they produced a ~920 px wide "Go back"
               // button — a phone stack inflated to desktop width.
@@ -1229,7 +1546,11 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
                     children: [
                       _intro(),
                       const SizedBox(height: 26),
-                      ..._stage(compact: false, stackActions: false),
+                      ..._stage(
+                        compact: false,
+                        stackActions: false,
+                        showActions: showActions,
+                      ),
                     ],
                   ),
                 ),
@@ -1249,22 +1570,13 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
                         // copy over a centred stage read as two half
                         // designs sharing one column.
                         _intro(),
-                        const SizedBox(height: 28),
-                        if (_phase == VoiceMomentRecordingPhase.reviewing ||
-                            _phase == VoiceMomentRecordingPhase.publishing)
-                          _previewPanel()
-                        else ...[
-                          _meterBlock(compact: false, showSilenceHint: false),
-                          const SizedBox(height: 20),
-                          _recordButton(),
-                        ],
-                        const SizedBox(height: 16),
-                        _statusLine(),
-                        if (_phase ==
-                            VoiceMomentRecordingPhase.requestingAccess) ...[
-                          const SizedBox(height: 6),
-                          _cancelAccessButton(),
-                        ],
+                        const SizedBox(height: 20),
+                        if (_isReview) ...[
+                          _previewPanel(),
+                          const SizedBox(height: 14),
+                          _statusLine(),
+                        ] else
+                          _capturePanel(compact: false, showSilenceHint: false),
                       ],
                     ),
                   ),
@@ -1278,22 +1590,23 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
                           _noticeCard(_notice!),
                           const SizedBox(height: 18),
                         ],
-                        _sidePanel(),
+                        _sidePanel(showActions: showActions),
                       ],
                     ),
                   ),
                 ],
               ),
             },
-          ),
+          ],
         ),
       ),
     );
   }
 
-  Widget _card({required Widget child, EdgeInsets? padding}) {
+  Widget _card({required Widget child, EdgeInsets? padding, Key? key}) {
     return Container(
-      padding: padding ?? const EdgeInsets.fromLTRB(24, 28, 24, 24),
+      key: key,
+      padding: padding ?? const EdgeInsets.all(20),
       decoration: BoxDecoration(
         color: _surface.withValues(alpha: .92),
         borderRadius: BorderRadius.circular(28),
@@ -1305,21 +1618,20 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
 
   Widget _intro({TextAlign alignment = TextAlign.center}) {
     final title = _isReply
-        ? _copy.text(
-            "Reply to ${widget.replyToAuthorName ?? 'this moment'}",
-            'Odpowiedz: ${widget.replyToAuthorName ?? 'ten Moment'}',
+        ? _copy.template(
+            'Reply to {author}',
+            'Odpowiedz: {author}',
+            values: {'author': widget.replyToAuthorName ?? 'Voice Moment'},
           )
+        : _isReview
+        ? _copy.text('Listen before publishing', 'Posłuchaj przed publikacją')
         : _copy.text('Share your voice', 'Podziel się swoim głosem');
     final subtitle = _isReply
         ? _copy.text(
             'Record a voice reply up to 60 seconds long.',
             'Nagraj odpowiedź głosową trwającą do 60 sekund.',
           )
-        : _copy.text(
-            'Record between 1 and 60 seconds and publish it directly to your '
-                'feed.',
-            'Nagraj od 1 do 60 sekund i opublikuj bezpośrednio w swoim kanale.',
-          );
+        : _copy.text('Between 1 and 60 seconds.', 'Od 1 do 60 sekund.');
 
     return Column(
       crossAxisAlignment: alignment == TextAlign.left
@@ -1332,25 +1644,32 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
           style: const TextStyle(
             color: Colors.white,
             fontSize: 26,
+            height: 1.12,
             fontWeight: FontWeight.w900,
           ),
         ),
-        const SizedBox(height: 8),
-        Text(
-          subtitle,
-          textAlign: alignment,
-          style: const TextStyle(color: _muted, fontSize: 14, height: 1.4),
-        ),
+        if (!_isReview) ...[
+          const SizedBox(height: 8),
+          Text(
+            subtitle,
+            textAlign: alignment,
+            style: const TextStyle(color: _muted, fontSize: 14, height: 1.4),
+          ),
+        ],
       ],
     );
   }
 
   /// The stacked (phone/tablet) arrangement of whatever the current phase
   /// needs to show.
-  List<Widget> _stage({required bool compact, required bool stackActions}) {
+  List<Widget> _stage({
+    required bool compact,
+    required bool stackActions,
+    required bool showActions,
+  }) {
     switch (_phase) {
       case VoiceMomentRecordingPhase.checkingSupport:
-        return [_checkingCard()];
+        return [_card(child: _checkingCard())];
       case VoiceMomentRecordingPhase.unavailable:
         return [_unavailableCard()];
       default:
@@ -1359,60 +1678,35 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
             _noticeCard(_notice!),
             const SizedBox(height: 20),
           ],
-          if (_phase == VoiceMomentRecordingPhase.reviewing ||
-              _phase == VoiceMomentRecordingPhase.publishing)
-            _previewPanel()
-          else ...[
-            _meterBlock(compact: compact),
-            const SizedBox(height: 22),
-            _recordButton(),
-          ],
-          const SizedBox(height: 14),
-          _statusLine(),
-          if (_phase == VoiceMomentRecordingPhase.requestingAccess) ...[
-            const SizedBox(height: 6),
-            _cancelAccessButton(),
-          ],
-          if (_phase == VoiceMomentRecordingPhase.reviewing ||
-              _phase == VoiceMomentRecordingPhase.publishing) ...[
-            const SizedBox(height: 24),
-            _captionField(),
-            if (!_isReply) ...[
+          if (_isReview) ...[
+            _previewPanel(),
+            const SizedBox(height: 14),
+            _statusLine(),
+            const SizedBox(height: 20),
+            _reviewFields(),
+            if (showActions) ...[
               const SizedBox(height: 16),
-              _availabilitySelector(),
+              _actions(stacked: stackActions),
             ],
-            if (_publishContractLocked &&
-                _phase != VoiceMomentRecordingPhase.publishing) ...[
-              const SizedBox(height: 8),
-              _publishContractLockNotice(),
-            ],
-            const SizedBox(height: 12),
-            _actions(stacked: stackActions),
-          ],
+          ] else
+            _capturePanel(compact: compact),
         ];
     }
   }
 
   /// The desktop right-hand column.
-  Widget _sidePanel() {
+  Widget _sidePanel({required bool showActions}) {
     switch (_phase) {
       case VoiceMomentRecordingPhase.reviewing:
       case VoiceMomentRecordingPhase.publishing:
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            _captionField(),
-            if (!_isReply) ...[
+            _reviewFields(),
+            if (showActions) ...[
               const SizedBox(height: 16),
-              _availabilitySelector(),
+              _actions(stacked: false),
             ],
-            if (_publishContractLocked &&
-                _phase != VoiceMomentRecordingPhase.publishing) ...[
-              const SizedBox(height: 8),
-              _publishContractLockNotice(),
-            ],
-            const SizedBox(height: 12),
-            _actions(stacked: false),
           ],
         );
       case VoiceMomentRecordingPhase.recording:
@@ -1422,6 +1716,64 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
       default:
         return _guidanceCard();
     }
+  }
+
+  Widget _capturePanel({required bool compact, bool showSilenceHint = true}) =>
+      _card(
+        key: const ValueKey('voice-moment-capture-stage'),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _meterBlock(compact: compact, showSilenceHint: showSilenceHint),
+            const SizedBox(height: 24),
+            _recordButton(),
+            const SizedBox(height: 20),
+            _statusLine(),
+            if (_phase == VoiceMomentRecordingPhase.requestingAccess) ...[
+              const SizedBox(height: 6),
+              _cancelAccessButton(),
+            ],
+          ],
+        ),
+      );
+
+  Widget _reviewFields() => _card(
+    key: const ValueKey('voice-moment-review-fields'),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _captionField(),
+        if (!_isReply) ...[const SizedBox(height: 20), _availabilitySelector()],
+        if (_publishContractLocked &&
+            _phase != VoiceMomentRecordingPhase.publishing) ...[
+          const SizedBox(height: 12),
+          _publishContractLockNotice(),
+        ],
+      ],
+    ),
+  );
+
+  Widget _reviewActionBar(double width, {required bool wide}) {
+    return Container(
+      key: const ValueKey('voice-moment-review-action-bar'),
+      padding: const EdgeInsets.symmetric(vertical: 12),
+      decoration: const BoxDecoration(
+        color: _surface,
+        border: Border(top: BorderSide(color: _border)),
+      ),
+      child: ResponsiveContentFrame(
+        width: wide ? ResponsiveContentWidth.feed : ResponsiveContentWidth.form,
+        fillHeight: false,
+        padding: ResponsiveContentFrame.adaptivePagePadding(width),
+        child: Align(
+          alignment: wide ? AlignmentDirectional.centerEnd : Alignment.center,
+          child: SizedBox(
+            width: wide ? 480 : double.infinity,
+            child: _actions(stacked: width < 600),
+          ),
+        ),
+      ),
+    );
   }
 
   /// The right-hand column while recording: the state of the take, drawn
@@ -1574,12 +1926,7 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
             ),
             const SizedBox(height: 10),
             Text(
-              _copy.text(
-                support?.reason ??
-                    'YO Voice could not reach an audio recorder on this device.',
-                'YO Voice nie może skorzystać z nagrywania dźwięku na tym '
-                'urządzeniu.',
-              ),
+              _supportMessage(support?.reason),
               textAlign: TextAlign.center,
               style: const TextStyle(
                 color: _muted,
@@ -1587,14 +1934,10 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
                 height: 1.5,
               ),
             ),
-            if (support?.action != null) ...[
+            ...[
               const SizedBox(height: 12),
               Text(
-                _copy.text(
-                  support!.action!,
-                  'Spróbuj w aktualnej wersji Chrome, Edge lub Safari albo '
-                  'w aplikacji YO Voice.',
-                ),
+                _supportAction(support?.reason),
                 textAlign: TextAlign.center,
                 style: const TextStyle(
                   color: AppImmersiveColors.textPrimary,
@@ -1774,7 +2117,7 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
                 levels: _meter,
                 barCount: barCount,
                 live: _phase == VoiceMomentRecordingPhase.recording,
-                value: _meterValue,
+                value: _localizedMeterValue(_meterValue),
               );
             },
           ),
@@ -1789,9 +2132,10 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
         // limit is covered by one spoken warning from the ticker.
         Semantics(
           label: _copy.text('Recording length', 'Długość nagrania'),
-          value: _copy.text(
-            '$_elapsedSeconds of $_maxSeconds seconds',
-            '$_elapsedSeconds z $_maxSeconds sekund',
+          value: _copy.template(
+            '{elapsed} of {limit} seconds',
+            '{elapsed} z {limit} sekund',
+            values: {'elapsed': _elapsedSeconds, 'limit': _maxSeconds},
           ),
           excludeSemantics: true,
           child: Text(
@@ -1819,6 +2163,7 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
         .toDouble();
 
     return Container(
+      key: const ValueKey('voice-moment-review-player'),
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 14),
       decoration: BoxDecoration(
         color: _inset,
@@ -1835,10 +2180,7 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
             runSpacing: 4,
             children: [
               Text(
-                _copy.text(
-                  'Listen before publishing',
-                  'Posłuchaj przed publikacją',
-                ),
+                _copy.text('Your recording', 'Twoje nagranie'),
                 style: const TextStyle(
                   color: Colors.white,
                   fontSize: 15,
@@ -2025,11 +2367,13 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
             ? _copy.text('Stop recording', 'Zatrzymaj nagrywanie')
             : _copy.text('Start recording', 'Rozpocznij nagrywanie'),
         circular: true,
-        minimumSize: const Size(86, 86),
+        minimumSize: const Size(96, 96),
         child: AnimatedContainer(
-          duration: const Duration(milliseconds: 220),
-          width: 86,
-          height: 86,
+          duration: MediaQuery.disableAnimationsOf(context)
+              ? Duration.zero
+              : const Duration(milliseconds: 220),
+          width: 96,
+          height: 96,
           decoration: BoxDecoration(
             shape: BoxShape.circle,
             color: enabled || requesting ? color : color.withValues(alpha: .35),
@@ -2054,7 +2398,7 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
                 )
               : Icon(
                   recording ? Icons.stop_rounded : Icons.mic_rounded,
-                  color: Colors.white,
+                  color: recording ? AppColors.onLive : Colors.white,
                   size: 38,
                 ),
         ),
@@ -2096,46 +2440,53 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
   }
 
   Widget _captionField() {
-    return TextField(
-      key: const ValueKey('voice-moment-caption'),
-      controller: _captionController,
-      enabled:
-          _phase != VoiceMomentRecordingPhase.publishing &&
-          !_publishContractLocked,
-      maxLength: _captionMaxLength,
-      maxLines: 3,
-      minLines: 3,
-      style: const TextStyle(color: Colors.white),
-      decoration: InputDecoration(
-        // A real label, not just a hint: a hint is the field's only
-        // accessible name until the user types, and then it disappears
-        // and the field becomes anonymous.
-        labelText: _copy.text('Caption', 'Opis'),
-        labelStyle: const TextStyle(color: _muted),
-        floatingLabelStyle: const TextStyle(
-          color: AppImmersiveColors.textPrimary,
+    return KeyedSubtree(
+      key: _captionFieldKey,
+      child: TextField(
+        key: const ValueKey('voice-moment-caption'),
+        focusNode: _captionFocus,
+        controller: _captionController,
+        enabled:
+            _phase != VoiceMomentRecordingPhase.publishing &&
+            !_publishContractLocked,
+        maxLength: _captionMaxLength,
+        maxLines: 3,
+        minLines: 3,
+        style: const TextStyle(color: Colors.white),
+        decoration: InputDecoration(
+          // A real label, not just a hint: a hint is the field's only
+          // accessible name until the user types, and then it disappears
+          // and the field becomes anonymous.
+          labelText: _copy.text('Caption', 'Opis'),
+          labelStyle: const TextStyle(color: _muted),
+          floatingLabelStyle: const TextStyle(
+            color: AppImmersiveColors.textPrimary,
+          ),
+          hintText: _copy.text('Add a caption…', 'Dodaj opis…'),
+          hintStyle: const TextStyle(color: _muted),
+          counterStyle: const TextStyle(color: _muted),
+          // The visible counter is a detached node that screen readers do
+          // not associate with the field; this is what is actually read.
+          semanticCounterText: _copy.template(
+            '{count} of {limit} characters',
+            '{count} z {limit} znaków',
+            values: {
+              'count': _captionController.text.length,
+              'limit': _captionMaxLength,
+            },
+          ),
+          filled: true,
+          fillColor: _inset,
+          // Stated explicitly rather than left to `border:`, which the
+          // production InputDecorationTheme's enabled/focused borders
+          // override — the harness and the app were not showing the same
+          // field. A visible boundary and a real focus ring are also what
+          // 1.4.11 and 2.4.7 ask for.
+          border: _captionBorder(_controlBorder),
+          enabledBorder: _captionBorder(_controlBorder),
+          focusedBorder: _captionBorder(_primary, width: 2),
+          disabledBorder: _captionBorder(_controlBorder.withValues(alpha: .5)),
         ),
-        hintText: _copy.text('Add a caption…', 'Dodaj opis…'),
-        hintStyle: const TextStyle(color: _muted),
-        counterStyle: const TextStyle(color: _muted),
-        // The visible counter is a detached node that screen readers do
-        // not associate with the field; this is what is actually read.
-        semanticCounterText: _copy.text(
-          '${_captionController.text.length} of $_captionMaxLength '
-              'characters',
-          '${_captionController.text.length} z $_captionMaxLength znaków',
-        ),
-        filled: true,
-        fillColor: _inset,
-        // Stated explicitly rather than left to `border:`, which the
-        // production InputDecorationTheme's enabled/focused borders
-        // override — the harness and the app were not showing the same
-        // field. A visible boundary and a real focus ring are also what
-        // 1.4.11 and 2.4.7 ask for.
-        border: _captionBorder(_controlBorder),
-        enabledBorder: _captionBorder(_controlBorder),
-        focusedBorder: _captionBorder(_primary, width: 2),
-        disabledBorder: _captionBorder(_controlBorder.withValues(alpha: .5)),
       ),
     );
   }
@@ -2145,25 +2496,6 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
       borderRadius: BorderRadius.circular(16),
       borderSide: BorderSide(color: color, width: width),
     );
-  }
-
-  String _availabilityUnitLabel(int amount) {
-    if (!_copy.isPolish) {
-      if (_availabilityUnit == _AvailabilityUnit.hours) {
-        return amount == 1 ? 'hour' : 'hours';
-      }
-      return amount == 1 ? 'day' : 'days';
-    }
-    final lastTwo = amount % 100;
-    final last = amount % 10;
-    if (_availabilityUnit == _AvailabilityUnit.hours) {
-      if (amount == 1) return 'godzinę';
-      if (lastTwo >= 12 && lastTwo <= 14) return 'godzin';
-      if (last >= 2 && last <= 4) return 'godziny';
-      return 'godzin';
-    }
-    if (amount == 1) return 'dzień';
-    return 'dni';
   }
 
   /// A custom, server-validated visibility window. Timed Moments accept a
@@ -2179,11 +2511,14 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
             'Choose how long this Moment stays visible in the feed.',
             'Wybierz, jak długo ten Moment ma być widoczny w kanale.',
           )
-        : _copy.text(
-            'This Moment will stay visible in the feed for $amount '
-                '${_availabilityUnitLabel(amount)}.',
-            'Ten Moment będzie widoczny w kanale przez $amount '
-                '${_availabilityUnitLabel(amount)}.',
+        : _copy.template(
+            'Visibility: {hours} h',
+            'Widoczność: {hours} godz.',
+            values: {
+              'hours': _availabilityUnit == _AvailabilityUnit.days
+                  ? amount * 24
+                  : amount,
+            },
           );
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -2280,6 +2615,7 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
               final unitField = DropdownButtonFormField<_AvailabilityUnit>(
                 key: const ValueKey('availability-unit'),
                 initialValue: _availabilityUnit,
+                isExpanded: true,
                 decoration: InputDecoration(
                   labelText: _copy.text('Unit', 'Jednostka'),
                   labelStyle: const TextStyle(color: _muted),
@@ -2296,7 +2632,9 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
                   ),
                 ),
                 dropdownColor: _surface,
-                style: const TextStyle(color: Colors.white),
+                style: Theme.of(
+                  context,
+                ).textTheme.bodyLarge?.copyWith(color: Colors.white),
                 iconEnabledColor: _muted,
                 iconDisabledColor: AppImmersiveColors.textTertiary,
                 items: [
@@ -2368,15 +2706,27 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
 
     final again = OutlinedButton(
       onPressed: publishing ? _ignoreWhileBusy : _recordAgain,
-      style: OutlinedButton.styleFrom(
-        foregroundColor: publishing ? Colors.white38 : Colors.white,
-        side: BorderSide(
-          color: publishing ? _border.withValues(alpha: .5) : _border,
-        ),
-        padding: const EdgeInsets.symmetric(vertical: 15),
-        minimumSize: const Size.fromHeight(48),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      ),
+      style:
+          OutlinedButton.styleFrom(
+            foregroundColor: publishing ? Colors.white38 : Colors.white,
+            padding: const EdgeInsets.symmetric(vertical: 15),
+            minimumSize: const Size.fromHeight(48),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+            ),
+          ).copyWith(
+            side: WidgetStateProperty.resolveWith((states) {
+              if (states.contains(WidgetState.focused)) {
+                return const BorderSide(
+                  color: AppImmersiveColors.textPrimary,
+                  width: 2,
+                );
+              }
+              return BorderSide(
+                color: publishing ? _border.withValues(alpha: .5) : _border,
+              );
+            }),
+          ),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
@@ -2385,8 +2735,7 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
           Flexible(
             child: Text(
               _copy.text('Record again', 'Nagraj ponownie'),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
             ),
           ),
         ],
@@ -2428,8 +2777,7 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
                   : (_notice?.problem == VoiceRecordingProblem.uploadFailed
                         ? _copy.text('Try again', 'Spróbuj ponownie')
                         : _copy.text('Publish', 'Opublikuj')),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
             ),
           ),
         ],
@@ -2477,7 +2825,11 @@ class _AvailabilityModeButton extends StatelessWidget {
     return Semantics(
       button: true,
       selected: selected,
-      label: copy.text('Availability: $label', 'Dostępność: $label'),
+      label: copy.template(
+        'Availability: {label}',
+        'Dostępność: {label}',
+        values: {'label': label},
+      ),
       child: Material(
         color: selected
             ? AppColors.primary
@@ -2488,7 +2840,7 @@ class _AvailabilityModeButton extends StatelessWidget {
           borderRadius: BorderRadius.circular(999),
           child: Container(
             constraints: const BoxConstraints(minHeight: 48),
-            padding: const EdgeInsets.symmetric(horizontal: 14),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(999),
               border: Border.all(
@@ -2513,8 +2865,6 @@ class _AvailabilityModeButton extends StatelessWidget {
                 Expanded(
                   child: Text(
                     label,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
                     style: TextStyle(
                       color: selected
                           ? AppImmersiveColors.textPrimary

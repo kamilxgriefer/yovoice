@@ -66,8 +66,6 @@ const _legacyUnstableTextSourceLimits = <String, int>{
   'lib/features/discover/presentation/discover_localized_copy.dart': 1,
   'lib/features/discover/presentation/screens/discover_screen.dart': 2,
   'lib/features/moments/presentation/screens/moment_comments_screen.dart': 2,
-  'lib/features/moments/presentation/screens/record_voice_moment_screen.dart':
-      8,
   'lib/features/moments/presentation/screens/moment_detail_screen.dart': 5,
   'lib/features/moments/presentation/widgets/moment_card.dart': 6,
   'lib/features/moments/presentation/widgets/moments_feed_view.dart': 14,
@@ -225,9 +223,14 @@ void main() {
       'lib/features/rooms/presentation/widgets/room_chat_sheet.dart',
       'lib/features/friends/presentation/screens/add_friend_screen.dart',
       'lib/shared/widgets/profile/profile_photo_viewer.dart',
+      'lib/features/reels/presentation/screens/reel_composer_screen.dart',
+      'lib/features/reels/presentation/widgets/reel_draft_preview.dart',
+      'lib/features/reels/presentation/screens/reels_feed_screen.dart',
+      'lib/features/moments/presentation/screens/record_voice_moment_screen.dart',
+      'lib/features/moments/presentation/screens/moments_screen.dart',
     };
     final localizedCall = RegExp(
-      r'''\.(?:text|template)\(\s*(?:'((?:\\.|[^'])*)'|"((?:\\.|[^"])*)")''',
+      r'''\.(?:text|template)\(\s*((?:(?:'(?:\\.|[^'])*'|"(?:\\.|[^"])*")\s*)+),''',
       multiLine: true,
     );
     final missing = <String>[];
@@ -235,11 +238,7 @@ void main() {
     for (final path in releaseFiles) {
       final source = File(path).readAsStringSync();
       for (final match in localizedCall.allMatches(source)) {
-        final encoded = match.group(1) ?? match.group(2)!;
-        final key = encoded
-            .replaceAll(r"\'", "'")
-            .replaceAll(r'\"', '"')
-            .replaceAll(r'\\', r'\');
+        final key = _joinedCatalogLiteral(match.group(1)!);
         if (!appTranslationKeys.contains(key)) {
           final line =
               '\n'.allMatches(source.substring(0, match.start)).length + 1;
@@ -265,11 +264,7 @@ void main() {
     );
     final terminalSource = chatSource.substring(terminalStart, terminalEnd);
     for (final match in localizedCall.allMatches(terminalSource)) {
-      final encoded = match.group(1) ?? match.group(2)!;
-      final key = encoded
-          .replaceAll(r"\'", "'")
-          .replaceAll(r'\"', '"')
-          .replaceAll(r'\\', r'\');
+      final key = _joinedCatalogLiteral(match.group(1)!);
       if (!appTranslationKeys.contains(key)) {
         final absoluteOffset = terminalStart + match.start;
         final line =
@@ -323,6 +318,32 @@ void main() {
       hasLength(1),
     );
   });
+
+  test('catalog scanner joins adjacent Dart string literals', () {
+    expect(
+      _joinedCatalogLiteral("'First part ' \n 'and second part.'"),
+      'First part and second part.',
+    );
+    expect(
+      _joinedCatalogLiteral(r"'Someone\'s recording'"),
+      "Someone's recording",
+    );
+    expect(
+      _joinedCatalogLiteral('"A double-quoted key"'),
+      'A double-quoted key',
+    );
+  });
+}
+
+String _joinedCatalogLiteral(String expression) {
+  final literal = RegExp(r'''(?:'((?:\\.|[^'])*)'|"((?:\\.|[^"])*)")''');
+  return literal.allMatches(expression).map((match) {
+    final encoded = match.group(1) ?? match.group(2)!;
+    return encoded
+        .replaceAll(r"\'", "'")
+        .replaceAll(r'\"', '"')
+        .replaceAll(r'\\', r'\');
+  }).join();
 }
 
 List<_UnstableLocalizationCall> _unstableLocalizationCalls(String source) {

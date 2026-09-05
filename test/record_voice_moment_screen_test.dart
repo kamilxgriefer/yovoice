@@ -2,11 +2,16 @@ import 'dart:async';
 
 import 'package:audioplayers/audioplayers.dart' show BytesSource;
 import 'package:cloud_functions/cloud_functions.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter/services.dart' show MissingPluginException;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:record/record.dart' show Amplitude;
 
+import 'package:yovoice/core/theme/app_theme.dart';
+import 'package:yovoice/core/localization/app_localizations.dart';
+import 'package:yovoice/core/localization/translations/app_translation_catalog.dart';
 import 'package:yovoice/features/moments/data/services/voice_moment_recorder.dart';
 import 'package:yovoice/features/moments/presentation/screens/record_voice_moment_screen.dart';
 
@@ -33,13 +38,28 @@ void main() {
     addTearDown(tester.view.reset);
   }
 
-  Widget host(Widget child, {double textScale = 1}) {
+  Widget host(
+    Widget child, {
+    double textScale = 1,
+    EdgeInsets viewInsets = EdgeInsets.zero,
+    ThemeData? theme,
+    Locale locale = const Locale('en'),
+  }) {
     return MaterialApp(
-      theme: ThemeData.dark(useMaterial3: true),
+      theme: theme ?? AppTheme.darkTheme,
+      locale: locale,
+      supportedLocales: AppLocalizations.supportedLocales,
+      localizationsDelegates: const [
+        AppLocalizationsDelegate(),
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
       builder: (context, inner) => MediaQuery(
-        data: MediaQuery.of(
-          context,
-        ).copyWith(textScaler: TextScaler.linear(textScale)),
+        data: MediaQuery.of(context).copyWith(
+          textScaler: TextScaler.linear(textScale),
+          viewInsets: viewInsets,
+        ),
         child: inner!,
       ),
       home: child,
@@ -329,6 +349,167 @@ void main() {
   });
 
   group('permission and capture failures stay distinguishable', () {
+    for (final isWeb in [false, true]) {
+      test(
+        '${isWeb ? 'web' : 'native'} microphone timeout recovery is localized in all 43 locales',
+        () {
+          expect(AppLocalizations.supportedLocales, hasLength(43));
+          final messageKey = isWeb
+              ? 'Your browser did not answer the microphone request.'
+              : 'YO Voice could not open your microphone.';
+          final actionKey = isWeb
+              ? 'Start recording again, then choose Allow.'
+              : 'Try again.';
+          for (final locale in AppLocalizations.supportedLocales) {
+            final copy = AppLocalizations(locale);
+            final notice = voiceMomentMicrophoneTimeoutCopy(copy, isWeb: isWeb);
+            expect(
+              notice.message,
+              copy.text(
+                messageKey,
+                isWeb
+                    ? 'Przeglądarka nie odpowiedziała na prośbę o dostęp do mikrofonu.'
+                    : 'YO Voice nie może uruchomić mikrofonu.',
+              ),
+              reason: '${copy.localeKey} message',
+            );
+            expect(
+              notice.action,
+              copy.text(
+                actionKey,
+                isWeb
+                    ? 'Rozpocznij nagrywanie ponownie, a następnie wybierz Zezwól.'
+                    : 'Spróbuj ponownie.',
+              ),
+              reason: '${copy.localeKey} action',
+            );
+            if (locale.languageCode != 'en' && locale.languageCode != 'pl') {
+              expect(
+                translatedPhrase(copy.localeKey, messageKey),
+                notice.message,
+                reason: '${copy.localeKey} has an explicit message translation',
+              );
+              expect(
+                translatedPhrase(copy.localeKey, actionKey),
+                notice.action,
+                reason: '${copy.localeKey} has an explicit action translation',
+              );
+              expect(notice.message, isNot(messageKey));
+              expect(notice.action, isNot(actionKey));
+            }
+          }
+        },
+      );
+    }
+
+    testWidgets(
+      'browser permission guidance follows the selected German locale',
+      (tester) async {
+        useSurface(tester, medium);
+        final semantics = tester.ensureSemantics();
+        try {
+          final harness = build();
+          harness.backend.permission = false;
+          await tester.pumpWidget(
+            host(harness.screen, locale: const Locale('de')),
+          );
+          await tester.pumpAndSettle();
+          const copy = AppLocalizations(Locale('de'));
+          expect(
+            tester
+                .getSemantics(
+                  find.bySemanticsLabel(
+                    copy.text(
+                      'Microphone level, not recording',
+                      'Poziom mikrofonu, nagrywanie wyłączone',
+                    ),
+                  ),
+                )
+                .getSemanticsData()
+                .value,
+            'Stille',
+          );
+          await tester.tap(find.byIcon(Icons.mic_rounded));
+          await tester.pumpAndSettle();
+          expect(
+            find.text(
+              'Der Mikrofonzugriff für YO Voice ist in diesem Browser blockiert.',
+            ),
+            findsOneWidget,
+          );
+          expect(find.textContaining('Website-Einstellungen'), findsOneWidget);
+          expect(
+            find.textContaining('is blocked in this browser'),
+            findsNothing,
+          );
+          expect(harness.service.publishCalls, 0);
+        } finally {
+          semantics.dispose();
+        }
+      },
+    );
+
+    testWidgets('secure connection guidance follows the selected Arabic locale', (
+      tester,
+    ) async {
+      useSurface(tester, medium);
+      final harness = build(
+        support: const CaptureSupport.unsupported(
+          reason:
+              'Browsers only allow microphone access over a secure (https) connection, and this page was not loaded over one.',
+          action: 'Open YO Voice over https and try again.',
+        ),
+      );
+      const locale = Locale('ar');
+      const copy = AppLocalizations(locale);
+      await tester.pumpWidget(host(harness.screen, locale: locale));
+      await tester.pumpAndSettle();
+      final message = copy.text(
+        'Microphone access needs a secure (https) connection.',
+        'Dostęp do mikrofonu wymaga bezpiecznego połączenia (https).',
+      );
+      expect(find.text(message), findsOneWidget);
+      expect(message, isNot(startsWith('Microphone access')));
+      expect(find.textContaining('Browsers only allow'), findsNothing);
+      expect(harness.capture.microphoneCalls, 0);
+    });
+
+    testWidgets(
+      'unknown publish details are localized without losing the Japanese draft',
+      (tester) async {
+        useSurface(tester, medium);
+        final recorded = FakeRecordedAudio();
+        final harness = build(recorded: recorded);
+        harness.service.failure = StateError(
+          'private reservation path internal_uid',
+        );
+        const locale = Locale('ja');
+        const copy = AppLocalizations(locale);
+        await tester.pumpWidget(host(harness.screen, locale: locale));
+        await tester.pumpAndSettle();
+        await recordFor(tester, harness.clock, seconds: 3);
+        const caption = r'私の声 Żółć {untouched} $value';
+        await tester.enterText(
+          find.byKey(const ValueKey('voice-moment-caption')),
+          caption,
+        );
+        final publish = find.text(copy.text('Publish', 'Opublikuj'));
+        await tester.ensureVisible(publish);
+        await tester.tap(publish);
+        await tester.pumpAndSettle();
+        final message = copy.text(
+          'Your Voice Moment could not be published.',
+          'Nie udało się opublikować Voice Momentu.',
+        );
+        expect(find.text(message), findsOneWidget);
+        expect(message, isNot(startsWith('Your Voice')));
+        expect(find.textContaining('internal_uid'), findsNothing);
+        expect(find.text(caption), findsOneWidget);
+        expect(harness.service.publishedCaption, caption);
+        expect(recorded.discarded, isFalse);
+      },
+    );
+
     testWidgets('a blocked microphone is reported as blocked, with an action', (
       tester,
     ) async {
@@ -704,6 +885,211 @@ void main() {
   });
 
   group('responsive layout', () {
+    testWidgets('capture and review expose one truthful stage at a time', (
+      tester,
+    ) async {
+      useSurface(tester, narrow);
+      final harness = build();
+      await tester.pumpWidget(host(harness.screen));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const ValueKey('voice-moment-flow-progress')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('voice-moment-capture-stage')),
+        findsOneWidget,
+      );
+      expect(find.byType(TextField), findsNothing);
+      expect(find.text('Publish'), findsNothing);
+      expect(harness.service.publishCalls, 0);
+      final recordStep = tester.widget<Semantics>(
+        find.byWidgetPredicate(
+          (widget) =>
+              widget is Semantics && widget.properties.label == 'Record',
+        ),
+      );
+      expect(recordStep.properties.selected, isTrue);
+
+      await recordFor(tester, harness.clock);
+      expect(
+        find.byKey(const ValueKey('voice-moment-capture-stage')),
+        findsNothing,
+      );
+      expect(
+        find.byKey(const ValueKey('voice-moment-review-player')),
+        findsOneWidget,
+      );
+      expect(find.text('Listen before publishing'), findsOneWidget);
+      expect(find.text('Your recording'), findsOneWidget);
+      final reviewStep = tester.widget<Semantics>(
+        find.byWidgetPredicate(
+          (widget) =>
+              widget is Semantics && widget.properties.label == 'Review',
+        ),
+      );
+      expect(reviewStep.properties.selected, isTrue);
+      expect(harness.service.publishCalls, 0);
+    });
+
+    testWidgets('phone review actions stay visible while the form scrolls', (
+      tester,
+    ) async {
+      useSurface(tester, const Size(375, 812));
+      final harness = build();
+      await tester.pumpWidget(host(harness.screen));
+      await tester.pumpAndSettle();
+      await recordFor(tester, harness.clock);
+      final bar = find.byKey(const ValueKey('voice-moment-review-action-bar'));
+      expect(bar, findsOneWidget);
+      final before = tester.getRect(bar);
+      final publishBefore = tester.getRect(find.text('Publish'));
+      expect(publishBefore.top, greaterThanOrEqualTo(0));
+      expect(publishBefore.bottom, lessThanOrEqualTo(812));
+      await tester.drag(
+        find.byKey(const ValueKey('voice-moment-body-scroll')),
+        const Offset(0, -400),
+      );
+      await tester.pumpAndSettle();
+      expect(tester.getRect(bar), before);
+      expect(tester.getRect(find.text('Publish')), publishBefore);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('short enlarged keyboard layout keeps a single scroll path', (
+      tester,
+    ) async {
+      useSurface(tester, const Size(320, 640));
+      final harness = build();
+      await tester.pumpWidget(
+        host(
+          harness.screen,
+          textScale: 2,
+          viewInsets: const EdgeInsets.only(bottom: 160),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await recordFor(tester, harness.clock);
+      expect(
+        find.byKey(const ValueKey('voice-moment-review-action-bar')),
+        findsNothing,
+      );
+      for (final target in [
+        find.byKey(const ValueKey('voice-moment-caption')),
+        find.byKey(const ValueKey('availability-amount')),
+        find.text('Publish'),
+        find.text('Record again'),
+      ]) {
+        await tester.ensureVisible(target);
+        await tester.pumpAndSettle();
+        final rect = tester.getRect(target);
+        expect(rect.top, greaterThanOrEqualTo(0));
+        expect(rect.bottom, lessThanOrEqualTo(480), reason: '$target: $rect');
+      }
+      for (final label in ['Publish', 'Record again']) {
+        expect(tester.widget<Text>(find.text(label)).maxLines, isNull);
+      }
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('responsive reflow retains the local take and caption', (
+      tester,
+    ) async {
+      useSurface(tester, wide);
+      final recorded = FakeRecordedAudio();
+      final harness = build(recorded: recorded);
+      await tester.pumpWidget(host(harness.screen));
+      await tester.pumpAndSettle();
+      await recordFor(tester, harness.clock, seconds: 8);
+      await tester.enterText(
+        find.byKey(const ValueKey('voice-moment-caption')),
+        'A local take across layouts',
+      );
+      tester.view.physicalSize = narrow;
+      await tester.pumpAndSettle();
+      expect(find.text('A local take across layouts'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('voice-preview-toggle')),
+        findsOneWidget,
+      );
+      expect(harness.service.publishCalls, 0);
+      expect(recorded.discarded, isFalse);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('Pearl host retains the complete immersive recorder atom', (
+      tester,
+    ) async {
+      useSurface(tester, medium);
+      final harness = build();
+      await tester.pumpWidget(host(harness.screen, theme: AppTheme.lightTheme));
+      await tester.pumpAndSettle();
+      final record = tester.element(find.byIcon(Icons.mic_rounded));
+      expect(Theme.of(record).brightness, Brightness.dark);
+      await recordFor(tester, harness.clock);
+      final caption = tester.element(
+        find.byKey(const ValueKey('voice-moment-caption')),
+      );
+      expect(Theme.of(caption).brightness, Brightness.dark);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
+      'wide keyboard reflow retains caption focus and editing state',
+      (tester) async {
+        useSurface(tester, const Size(1194, 834));
+        final harness = build();
+        await tester.pumpWidget(host(harness.screen));
+        await tester.pumpAndSettle();
+        await recordFor(tester, harness.clock);
+        final caption = find.byKey(const ValueKey('voice-moment-caption'));
+        await tester.ensureVisible(caption);
+        await tester.tap(caption);
+        await tester.enterText(caption, 'My local caption');
+        final editable = find.descendant(
+          of: caption,
+          matching: find.byType(EditableText),
+        );
+        final originalState = tester.state<EditableTextState>(editable);
+        final focus = tester.widget<EditableText>(editable).focusNode;
+        expect(focus.hasFocus, isTrue);
+        originalState.widget.controller.selection =
+            const TextSelection.collapsed(offset: 8);
+
+        await tester.pumpWidget(
+          host(harness.screen, viewInsets: const EdgeInsets.only(bottom: 340)),
+        );
+        await tester.pumpAndSettle();
+        expect(tester.state<EditableTextState>(editable), same(originalState));
+        expect(tester.widget<EditableText>(editable).focusNode, same(focus));
+        expect(focus.hasFocus, isTrue);
+        expect(originalState.widget.controller.text, 'My local caption');
+        expect(originalState.widget.controller.selection.baseOffset, 8);
+        expect(harness.service.publishCalls, 0);
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    testWidgets('Record again keeps a high-contrast two-pixel focus border', (
+      tester,
+    ) async {
+      useSurface(tester, wide);
+      final harness = build();
+      await tester.pumpWidget(host(harness.screen, theme: AppTheme.lightTheme));
+      await tester.pumpAndSettle();
+      await recordFor(tester, harness.clock);
+      final again = tester.widget<OutlinedButton>(
+        find.widgetWithText(OutlinedButton, 'Record again'),
+      );
+      final focused = again.style!.side!.resolve({WidgetState.focused})!;
+      final resting = again.style!.side!.resolve({})!;
+      expect(focused.width, 2);
+      expect(focused.color.computeLuminance(), greaterThan(.8));
+      expect(resting.width, 1);
+      expect(harness.service.publishCalls, 0);
+    });
+
     testWidgets('desktop presents a two-column workspace', (tester) async {
       useSurface(tester, wide);
       final harness = build();
@@ -802,7 +1188,7 @@ void main() {
       }
     });
 
-    testWidgets('a long caption and a long failure message stay laid out', (
+    testWidgets('a long caption keeps a safe failure notice laid out', (
       tester,
     ) async {
       useSurface(tester, narrow);
@@ -828,9 +1214,14 @@ void main() {
       await tester.tap(find.text('Publish'));
       await tester.pumpAndSettle();
 
-      // A long caption and a three-line failure notice coexist on a 360px
-      // surface without overflowing.
-      expect(find.textContaining('interrupted partway'), findsOneWidget);
+      // Service diagnostics are not UI copy, even when wrapped in StateError.
+      // The retained caption and localized recovery notice remain usable.
+      expect(find.textContaining('interrupted partway'), findsNothing);
+      expect(find.textContaining('draft reservation'), findsNothing);
+      expect(
+        find.text('Your Voice Moment could not be published.'),
+        findsOneWidget,
+      );
       expect(find.text('Try again'), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
@@ -1067,39 +1458,55 @@ void main() {
       expect(find.byIcon(Icons.stop_rounded), findsNothing);
     });
 
-    testWidgets('V6: a prompt that never answers times out with a reason', (
-      tester,
-    ) async {
-      useSurface(tester, medium);
-      final backend = FakeRecorderBackend();
-      final capture = FakeAudioCapture()
-        ..result = FakeRecordedAudio()
-        ..microphoneGate = Completer<MicrophoneAccess>();
+    testWidgets(
+      'V6: microphone timeout uses platform recovery and remains retryable',
+      (tester) async {
+        useSurface(tester, medium);
+        final backend = FakeRecorderBackend();
+        final capture = FakeAudioCapture()
+          ..result = FakeRecordedAudio()
+          ..microphoneGate = Completer<MicrophoneAccess>();
 
-      await tester.pumpWidget(
-        host(
-          RecordVoiceMomentScreen(
-            recorder: VoiceMomentRecorder(
-              backend: backend,
-              capture: capture,
-              microphoneTimeout: const Duration(milliseconds: 40),
+        await tester.pumpWidget(
+          host(
+            RecordVoiceMomentScreen(
+              recorder: VoiceMomentRecorder(
+                backend: backend,
+                capture: capture,
+                microphoneTimeout: const Duration(milliseconds: 40),
+              ),
+              momentService: StubMomentService(),
             ),
-            momentService: StubMomentService(),
           ),
-        ),
-      );
-      await tester.pumpAndSettle();
-      await tester.tap(find.byIcon(Icons.mic_rounded));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 100));
-      await tester.pumpAndSettle();
+        );
+        await tester.pumpAndSettle();
+        await tester.tap(find.byIcon(Icons.mic_rounded));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 100));
+        await tester.pumpAndSettle();
 
-      expect(
-        find.textContaining('did not answer the microphone request'),
-        findsOneWidget,
-      );
-      expect(find.byIcon(Icons.mic_rounded), findsOneWidget);
-    });
+        const copy = AppLocalizations(Locale('en'));
+        final notice = voiceMomentMicrophoneTimeoutCopy(copy);
+        expect(notice, voiceMomentMicrophoneTimeoutCopy(copy, isWeb: kIsWeb));
+        expect(find.text(notice.message), findsOneWidget);
+        expect(find.text(notice.action), findsOneWidget);
+        expect(
+          find.text('Your browser did not answer the microphone request.'),
+          kIsWeb ? findsOneWidget : findsNothing,
+        );
+        expect(find.textContaining('is blocked'), findsNothing);
+        expect(find.textContaining('device settings'), findsNothing);
+        expect(find.byIcon(Icons.mic_rounded), findsOneWidget);
+        expect(find.text('Recording is not available here'), findsNothing);
+
+        capture.microphoneGate = null;
+        await tester.tap(find.byIcon(Icons.mic_rounded));
+        await tester.pump();
+        await tester.pump();
+        expect(capture.microphoneCalls, 2);
+        expect(find.byIcon(Icons.stop_rounded), findsOneWidget);
+      },
+    );
 
     testWidgets('V7: controls meet the 44x44 minimum in docs/UI.md', (
       tester,

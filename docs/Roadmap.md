@@ -16,6 +16,23 @@ someone decide what to pick up next.
 
 ## Done
 
+- **Account-bound Reels and staged Moments creation** (2026-09-06,
+  ADR-145; **SOURCE + LOCAL VISUAL QA VERIFIED, NOT PUBLISHED**; source revision
+  in the [session record](Sessions/2026-09-06-reels-moments-creation.md)):
+  Discover/Your Reels preserves canonical author identity and always exposes
+  Create. Drafts, retry sessions and asynchronous results are account-bound.
+  Reel Media → Edit → Review shares a 9:16 composition/playback contract, with
+  gesture/slider cropping, local licensed audio, text/link overlays and filters.
+  Voice Capture → Review preserves existing recorder/publish behavior, improves
+  keyboard/focus handling and localizes recovery. Creation copy covers 43 locales.
+  Full analysis is clean and **2471/2471 Flutter tests pass**. Independent source,
+  security, QA and rendered Dark/Pearl reviews passed; local emulators verified
+  Storage and Reels lifecycle. Simulator confirmed Reel selection/crop/text/filter/
+  review/back and Voice capture/error presentation, but microphone acquisition
+  timed out there; real device recording and two-account publishing/playback
+  remain unverified. This is not full Instagram parity or conclusive closure of
+  the reported installed-client ownership failure. No store build or deploy.
+
 - **Animated top notifications and mobile edge Back** (2026-09-05,
   source commit `e99bed73`, ADR-143/144; **SOURCE + LOCAL VISUAL/SIMULATOR
   VERIFIED, NOT PUBLISHED**): activity, foreground social pushes and incoming

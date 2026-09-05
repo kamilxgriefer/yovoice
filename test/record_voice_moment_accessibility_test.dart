@@ -229,7 +229,11 @@ void main() {
         expect(assertive, isNotEmpty);
         expect(
           assertive.map(messageOf).join(' | '),
-          contains('could not be uploaded'),
+          contains('Your Voice Moment could not be published.'),
+        );
+        expect(
+          assertive.map(messageOf).join(' | '),
+          isNot(contains('could not be uploaded')),
         );
         handle.dispose();
       },

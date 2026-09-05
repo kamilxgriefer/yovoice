@@ -526,7 +526,7 @@ class _CreateMomentButton extends StatelessWidget {
         onPressed: onTap,
         tooltip: copy.text('CREATE', 'UTWÓRZ'),
         style: IconButton.styleFrom(backgroundColor: colors.primary),
-        icon: Icon(Icons.mic_rounded, color: colors.onPrimary),
+        icon: Icon(Icons.add_rounded, color: colors.onPrimary),
       );
     }
     return FilledButton.icon(
@@ -538,7 +538,7 @@ class _CreateMomentButton extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
       ),
-      icon: Icon(Icons.mic_rounded, size: 18, color: colors.onPrimary),
+      icon: Icon(Icons.add_rounded, size: 18, color: colors.onPrimary),
       label: Text(
         copy.text('CREATE', 'UTWÓRZ'),
         style: TextStyle(color: colors.onPrimary, fontWeight: FontWeight.w800),

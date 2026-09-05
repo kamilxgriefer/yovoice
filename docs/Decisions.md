@@ -9082,3 +9082,53 @@ avoids turning center-screen carousels, stories and dock drags into navigation.
   semantics. This is not an assertion that every screen can be swiped away.
 - History is transient per MainShell session, not a persisted cross-account trail.
 - No backend, permission, push, store release or production deployment changes.
+
+## ADR-145 — Account-bound Reels and staged, shared-canvas creation
+
+### Context
+
+Tester feedback reported a foreign Reel appearing self-owned, unavailable
+creation, and awkward cropping/music selection. Source tracing and a deterministic
+two-publisher/three-viewer backend regression did not reproduce ownership
+reassignment: author identity already comes from authenticated server writes.
+The global feed's personal-sounding entry, microphone-only creation icon and
+generic publish errors were misleading. Client requests and retry sessions also
+needed explicit account-boundary protection.
+
+### Decision
+
+Keep the existing server schemas and authorization. Bind a publish session to
+its original UID/privacy epoch; stop subsequent upload/finalize stages and
+discard callbacks after any observed identity transition, including A→B→A.
+Do not wait for asynchronous auth-listener cleanup before delivering an already
+completed request: cancellation stops delivery synchronously, while its cleanup
+future may not finish in a widget zone. Keep fail-closed guards on the result.
+
+Separate Discover and own-author views using canonical IDs, retain bounded
+pagination and always expose creation. Present Reel Media→Edit→Review without
+discarding the draft between stages. Use one normalized 9:16 composition frame
+and one playback-timing implementation for both local preview and publication.
+Preserve the actual local media/audio capability limits and rights attestation.
+Give Voice recording separate Capture/Review presentation while retaining its
+existing recorder/upload state machine. Localize stable presentation categories
+rather than arbitrary raw exception strings.
+
+### Reasoning
+
+These changes make ownership, creation and preview truthful without weakening
+private media rules, inventing provider music rights or migrating live clients.
+An observed client boundary can prevent further work, but cannot undo an
+already-authorized server request. A source test cannot prove the precise
+reported failure on testers' installed versions.
+
+### Consequences
+
+- Own-Reels discovery scans the existing authorized feed; at a scan budget
+  boundary it offers continuation. A future dedicated own-author endpoint can
+  improve large libraries but must preserve the authorization contract.
+- No likes/comments/recommendation backend or licensed streaming catalogue is
+  implied by the familiar editing flow; this is not full Instagram parity.
+- Unrelated accounts cannot inherit a local draft or pending result.
+- Source, emulator, rendered and Simulator checks remain distinct from physical
+  upload/playback and deployed-client acceptance. No store build is published
+  by this change's source push.

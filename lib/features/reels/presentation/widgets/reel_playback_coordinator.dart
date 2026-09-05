@@ -48,20 +48,48 @@ typedef ReelPlaybackTimerFactory =
 /// backing-audio interval as their finite timeline and never loop by surprise.
 class ReelPlaybackCoordinator extends ChangeNotifier {
   ReelPlaybackCoordinator({
-    required this.reel,
+    required Reel reel,
     required Future<Uri> Function() resolveBackingAudioUri,
     ReelAudioPlaybackFactory? audioPlaybackFactory,
     DateTime Function()? now,
     ReelPlaybackTimerFactory? timerFactory,
     this.driftTolerance = const Duration(milliseconds: 180),
     this.driftCorrectionInterval = const Duration(milliseconds: 750),
-  }) : _resolveBackingAudioUri = resolveBackingAudioUri,
+  }) : reel = reel,
+       _mediaKind = reel.media.kind,
+       _composition = reel.composition,
+       _backingAudioDurationMs = reel.backingAudio?.durationMs,
+       _resolveBackingAudioUri = resolveBackingAudioUri,
        _audioPlaybackFactory =
            audioPlaybackFactory ?? _AudioplayersReelAudioPlayback.new,
        _now = now ?? DateTime.now,
        _timerFactory = timerFactory ?? Timer.new;
 
-  final Reel reel;
+  /// Local drafts reuse the exact timeline without inventing server IDs,
+  /// author identities, grants or published content.
+  ReelPlaybackCoordinator.draft({
+    required ReelMediaKind mediaKind,
+    required ReelComposition composition,
+    required int? backingAudioDurationMs,
+    required Future<Uri> Function() resolveBackingAudioUri,
+    required ReelAudioPlaybackFactory audioPlaybackFactory,
+    DateTime Function()? now,
+    ReelPlaybackTimerFactory? timerFactory,
+    this.driftTolerance = const Duration(milliseconds: 180),
+    this.driftCorrectionInterval = const Duration(milliseconds: 750),
+  }) : reel = null,
+       _mediaKind = mediaKind,
+       _composition = composition,
+       _backingAudioDurationMs = backingAudioDurationMs,
+       _resolveBackingAudioUri = resolveBackingAudioUri,
+       _audioPlaybackFactory = audioPlaybackFactory,
+       _now = now ?? DateTime.now,
+       _timerFactory = timerFactory ?? Timer.new;
+
+  final Reel? reel;
+  final ReelMediaKind _mediaKind;
+  final ReelComposition _composition;
+  final int? _backingAudioDurationMs;
   final Future<Uri> Function() _resolveBackingAudioUri;
   final ReelAudioPlaybackFactory _audioPlaybackFactory;
   final DateTime Function() _now;
@@ -92,44 +120,38 @@ class ReelPlaybackCoordinator extends ChangeNotifier {
   bool get isLoading => _loading;
   bool get isActive => _active;
   bool get _hasPlayableBackingAudio {
-    final audio = reel.backingAudio;
-    return audio != null &&
-        reel.composition.audioTrimStartMs < audio.durationMs;
+    final duration = _backingAudioDurationMs;
+    return duration != null && _composition.audioTrimStartMs < duration;
   }
 
   bool get canToggle {
     if (!_active) return false;
-    if (reel.media.kind == ReelMediaKind.video) return _video != null;
+    if (_mediaKind == ReelMediaKind.video) return _video != null;
     return _hasPlayableBackingAudio;
   }
 
   Duration get timelineDuration {
-    if (reel.media.kind == ReelMediaKind.video) {
+    if (_mediaKind == ReelMediaKind.video) {
       return Duration(
         milliseconds: math.max(
           0,
-          reel.composition.trimEndMs - reel.composition.trimStartMs,
+          _composition.trimEndMs - _composition.trimStartMs,
         ),
       );
     }
-    final audio = reel.backingAudio;
-    if (audio == null) return Duration.zero;
+    final duration = _backingAudioDurationMs;
+    if (duration == null) return Duration.zero;
     return Duration(
-      milliseconds: math.max(
-        0,
-        audio.durationMs - reel.composition.audioTrimStartMs,
-      ),
+      milliseconds: math.max(0, duration - _composition.audioTrimStartMs),
     );
   }
 
-  Duration get _videoStart =>
-      Duration(milliseconds: reel.composition.trimStartMs);
-  Duration get _videoEnd => Duration(milliseconds: reel.composition.trimEndMs);
+  Duration get _videoStart => Duration(milliseconds: _composition.trimStartMs);
+  Duration get _videoEnd => Duration(milliseconds: _composition.trimEndMs);
   Duration get _audioStart =>
-      Duration(milliseconds: reel.composition.audioTrimStartMs);
+      Duration(milliseconds: _composition.audioTrimStartMs);
   Duration get _audioEnd => Duration(
-    milliseconds:
-        reel.backingAudio?.durationMs ?? reel.composition.audioTrimStartMs,
+    milliseconds: _backingAudioDurationMs ?? _composition.audioTrimStartMs,
   );
 
   Future<void> attachVideo(ReelVideoPlayback video) {
@@ -140,7 +162,7 @@ class ReelPlaybackCoordinator extends ChangeNotifier {
       if (previous != null && !identical(previous, video)) {
         await previous.pause();
       }
-      await video.setVolume(reel.composition.originalAudioVolume / 100);
+      await video.setVolume(_composition.originalAudioVolume / 100);
       final position = video.position;
       if (position < _videoStart || position >= _videoEnd) {
         await video.seek(_videoStart);
@@ -245,10 +267,10 @@ class ReelPlaybackCoordinator extends ChangeNotifier {
     _setLoading(true);
     try {
       final video = _video;
-      if (reel.media.kind == ReelMediaKind.video && video == null) return;
+      if (_mediaKind == ReelMediaKind.video && video == null) return;
 
       if (video != null) {
-        await video.setVolume(reel.composition.originalAudioVolume / 100);
+        await video.setVolume(_composition.originalAudioVolume / 100);
         if (video.position < _videoStart || video.position >= _videoEnd) {
           await video.seek(_videoStart);
         }
@@ -263,7 +285,7 @@ class ReelPlaybackCoordinator extends ChangeNotifier {
         return;
       }
       if (audio != null) {
-        await audio.setVolume(reel.composition.backingAudioVolume / 100);
+        await audio.setVolume(_composition.backingAudioVolume / 100);
         final expected = video == null
             ? _validPhotoAudioPosition(_audioPosition)
             : _expectedAudioPosition(video.position);
@@ -360,7 +382,7 @@ class ReelPlaybackCoordinator extends ChangeNotifier {
     final uri = await _resolveBackingAudioUri();
     if (_disposed) return audio;
     await audio.load(uri);
-    await audio.setVolume(reel.composition.backingAudioVolume / 100);
+    await audio.setVolume(_composition.backingAudioVolume / 100);
     await audio.seek(_audioStart);
     _audioPosition = _audioStart;
     _audioLoaded = true;
@@ -370,7 +392,7 @@ class ReelPlaybackCoordinator extends ChangeNotifier {
   void _onAudioPosition(Duration position) {
     if (_disposed) return;
     _audioPosition = position;
-    if (reel.media.kind == ReelMediaKind.image &&
+    if (_mediaKind == ReelMediaKind.image &&
         _playing &&
         position >= _audioEnd) {
       unawaited(_finishPhoto().catchError((Object _) {}));
@@ -379,7 +401,7 @@ class ReelPlaybackCoordinator extends ChangeNotifier {
 
   Future<void> _handleAudioCompletion() async {
     if (_disposed || !_playing) return;
-    if (reel.media.kind == ReelMediaKind.image) {
+    if (_mediaKind == ReelMediaKind.image) {
       _commandVersion += 1;
       _desiredPlaying = false;
       _setPlaying(false);
@@ -421,7 +443,7 @@ class ReelPlaybackCoordinator extends ChangeNotifier {
 
   void _schedulePhotoEnd() {
     _cancelPhotoEndTimer();
-    if (reel.media.kind != ReelMediaKind.image || !_playing) return;
+    if (_mediaKind != ReelMediaKind.image || !_playing) return;
     final remaining = _audioEnd - _validPhotoAudioPosition(_audioPosition);
     if (remaining <= Duration.zero) {
       unawaited(_finishPhoto().catchError((Object _) {}));

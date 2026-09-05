@@ -1,5 +1,7 @@
+import 'dart:async';
 import 'dart:typed_data';
 
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -55,6 +57,232 @@ Map<Object?, Object?> _finalized({
 };
 
 void main() {
+  testWidgets('feed completion does not wait for auth stream cleanup zone', (
+    tester,
+  ) async {
+    final service = ReelService(
+      auth: _auth(),
+      callableInvoker: (_, _) async => <Object?, Object?>{
+        'schemaVersion': 2,
+        'items': <Object?>[],
+        'nextCursor': null,
+      },
+    );
+    ReelFeedPage? completed;
+    unawaited(
+      service.fetchFeed().then((page) {
+        completed = page;
+      }),
+    );
+    await tester.pump();
+    await tester.pump();
+    expect(completed, isNotNull);
+    expect(completed!.items, isEmpty);
+  });
+
+  for (final stage in <String>[
+    'reserve',
+    'media',
+    'backingAudio',
+    'finalize',
+  ]) {
+    for (final returnToOwner in <bool>[false, true]) {
+      test('publish rejects $stage completion after '
+          '${returnToOwner ? 'A-B-A' : 'A-B'} and cannot retry it', () async {
+        final auth = _SwitchableReelAuth();
+        addTearDown(auth.close);
+        final reached = Completer<void>();
+        final release = Completer<void>();
+        final calls = <String>[];
+        final progress = <double>[];
+        void Function(double)? delayedProgress;
+        Future<void> visit(String value) async {
+          calls.add(value);
+          if (stage == value) {
+            reached.complete();
+            await release.future;
+          }
+        }
+
+        final hasAudio = stage == 'backingAudio';
+        final service = ReelService(
+          auth: auth,
+          callableInvoker: (name, payload) async {
+            if (name == 'reserveReelDraftV2') {
+              await visit('reserve');
+              return _reservation()
+                ..['backingAudioStoragePath'] = hasAudio
+                    ? 'reels/creator-1/reel_1/backing-audio.mp3'
+                    : null;
+            }
+            expect(name, 'finalizeReelDraftV2');
+            await visit('finalize');
+            return _finalized();
+          },
+          uploadInvoker:
+              ({
+                required storagePath,
+                required payload,
+                required metadata,
+                onProgress,
+              }) async {
+                expect(metadata['ownerId'], 'creator-1');
+                if (stage == metadata['assetKind']) {
+                  delayedProgress = onProgress;
+                }
+                await visit(metadata['assetKind']!);
+                return '123';
+              },
+        );
+        final session = _publishSession(hasAudio: hasAudio);
+        final publishing = expectLater(
+          service.publish(session, onProgress: progress.add),
+          throwsStateError,
+        );
+        await reached.future;
+        final callsAtBoundary = List<String>.of(calls);
+        auth.setIdentity('viewer-2');
+        if (returnToOwner) auth.setIdentity('creator-1');
+        delayedProgress?.call(.9);
+        release.complete();
+        await publishing;
+        expect(
+          calls,
+          callsAtBoundary,
+          reason: 'No later pipeline stage may run.',
+        );
+        expect(
+          progress,
+          isEmpty,
+          reason: 'No stale progress or success callback.',
+        );
+        if (stage == 'reserve') expect(session.reelId, isNull);
+        if (stage == 'media') expect(session.mediaGeneration, isNull);
+        if (stage == 'backingAudio') {
+          expect(session.backingAudioGeneration, isNull);
+        }
+        auth.setIdentity('creator-1');
+        await expectLater(service.publish(session), throwsStateError);
+        expect(calls, callsAtBoundary);
+        expect(auth.hasListeners, isFalse);
+      });
+    }
+  }
+
+  test(
+    'publish retry is bound to its original owner after a network failure',
+    () async {
+      final auth = _SwitchableReelAuth();
+      addTearDown(auth.close);
+      var calls = 0;
+      final service = ReelService(
+        auth: auth,
+        callableInvoker: (name, payload) async {
+          calls += 1;
+          throw StateError('offline');
+        },
+      );
+      final session = _publishSession();
+      await expectLater(service.publish(session), throwsStateError);
+      auth.setIdentity('viewer-2');
+      await expectLater(service.publish(session), throwsStateError);
+      auth.setIdentity('creator-1');
+      await expectLater(service.publish(session), throwsStateError);
+      expect(calls, 1);
+      expect(auth.hasListeners, isFalse);
+    },
+  );
+
+  test(
+    'privacy cache boundary invalidates same-account publish retry',
+    () async {
+      final auth = _SwitchableReelAuth();
+      addTearDown(auth.close);
+      var calls = 0;
+      final service = ReelService(
+        auth: auth,
+        callableInvoker: (name, payload) async {
+          calls += 1;
+          throw StateError('lost acknowledgement');
+        },
+      );
+      final session = _publishSession();
+      await expectLater(service.publish(session), throwsStateError);
+      ReelService.clearAllMediaAccessCaches();
+      await expectLater(service.publish(session), throwsStateError);
+      expect(calls, 1);
+    },
+  );
+
+  for (final boundary in <String>['account', 'A-B-A', 'sign-out', 'epoch']) {
+    test('feed discards a response crossing $boundary', () async {
+      final auth = _SwitchableReelAuth();
+      addTearDown(auth.close);
+      final response = Completer<Map<Object?, Object?>>();
+      final service = ReelService(
+        auth: auth,
+        callableInvoker: (name, payload) => response.future,
+      );
+      final loading = expectLater(service.fetchFeed(), throwsStateError);
+      if (boundary == 'epoch') {
+        ReelService.clearAllMediaAccessCaches();
+      } else {
+        auth.setIdentity(boundary == 'sign-out' ? null : 'viewer-2');
+        if (boundary == 'A-B-A') auth.setIdentity('creator-1');
+      }
+      response.complete(_feedResponse());
+      await loading;
+      expect(auth.hasListeners, isFalse);
+    });
+  }
+
+  test(
+    'same-UID profile refresh preserves reads and distinct identity seam',
+    () async {
+      final auth = _SwitchableReelAuth();
+      addTearDown(auth.close);
+      final response = Completer<Map<Object?, Object?>>();
+      final service = ReelService(
+        auth: auth,
+        callableInvoker: (name, payload) => response.future,
+      );
+      final identities = <String?>[];
+      final subscription = service.identityChanges.listen(identities.add);
+      final loading = service.fetchFeed();
+      auth.setIdentity('creator-1');
+      auth.setIdentity('creator-1');
+      response.complete(_feedResponse());
+      final reel = (await loading).items.single;
+      expect(service.isCurrentUserAuthor(reel), isTrue);
+      auth.setIdentity('viewer-2');
+      expect(service.isCurrentUserAuthor(reel), isFalse);
+      auth.setIdentity(null);
+      expect(service.isCurrentUserAuthor(reel), isFalse);
+      expect(service.currentUserId, isNull);
+      expect(identities, <String?>['creator-1', 'viewer-2', null]);
+      await subscription.cancel();
+      expect(auth.hasListeners, isFalse);
+    },
+  );
+
+  test(
+    'an identity-stream error invalidates pending feed without leaking it',
+    () async {
+      final auth = _SwitchableReelAuth();
+      addTearDown(auth.close);
+      final response = Completer<Map<Object?, Object?>>();
+      final service = ReelService(
+        auth: auth,
+        callableInvoker: (name, payload) => response.future,
+      );
+      final loading = expectLater(service.fetchFeed(), throwsStateError);
+      auth.failIdentity();
+      response.complete(_feedResponse());
+      await loading;
+      expect(auth.hasListeners, isFalse);
+    },
+  );
+
   test(
     'publish executes reserve, canonical upload and finalize in order',
     () async {
@@ -408,6 +636,62 @@ void main() {
     );
   });
 }
+
+class _SwitchableReelAuth extends MockFirebaseAuth {
+  User? _user = MockUser(uid: 'creator-1', isEmailVerified: true);
+  final _changes = StreamController<User?>.broadcast(sync: true);
+
+  @override
+  User? get currentUser => _user;
+
+  @override
+  Stream<User?> userChanges() => _changes.stream;
+
+  bool get hasListeners => _changes.hasListener;
+
+  void setIdentity(String? uid) {
+    _user = uid == null ? null : MockUser(uid: uid, isEmailVerified: true);
+    _changes.add(_user);
+  }
+
+  void failIdentity() => _changes.addError(StateError('identity unavailable'));
+
+  Future<void> close() => _changes.close();
+}
+
+ReelPublishSession _publishSession({bool hasAudio = false}) =>
+    ReelPublishSession(
+      plan: ReelDraftPlan(
+        media: _photo(),
+        backingAudio: hasAudio
+            ? ReelUploadPayload(
+                bytes: Uint8List(512),
+                contentType: 'audio/mpeg',
+                durationMs: 1000,
+              )
+            : null,
+        composition: ReelComposition(
+          originalAudioVolume: 0,
+          audioRightsAttested: hasAudio,
+          backingAudioVolume: hasAudio ? 50 : 0,
+        ),
+      ),
+    );
+
+Map<Object?, Object?> _feedResponse() => <Object?, Object?>{
+  'schemaVersion': 2,
+  'items': <Object?>[
+    _feedItem(
+      id: 'late_reel',
+      availability: <String, Object?>{
+        'schemaVersion': 1,
+        'availabilityHours': 'permanent',
+        'expiresAtMillis': null,
+      },
+    ),
+  ],
+  'nextCursor': null,
+};
 
 Map<String, Object?> _feedItem({
   required String id,

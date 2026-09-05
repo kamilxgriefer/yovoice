@@ -244,6 +244,83 @@ function listRequest() {
   };
 }
 
+test("independent publishers retain canonical ownership for every viewer", async () => {
+  const scenario = fixture();
+  const thirdViewer = "independent-viewer";
+  scenario.db.seed(`users/${thirdViewer}`, { uid: thirdViewer });
+  const sameRequestId = "multi-publisher-same-request";
+  const first = await scenario.service.reserveReelDraftV2({
+    auth: auth(AUTHOR),
+    data: { ...imagePlan(sameRequestId), availabilityHours: 24 },
+  });
+  const second = await scenario.service.reserveReelDraftV2({
+    auth: auth(VIEWER),
+    data: { ...imagePlan(sameRequestId), availabilityHours: 24 },
+  });
+  assert.notEqual(first.reelId, second.reelId,
+    "retry identity is scoped to the authenticated publisher, not global");
+  const finalizeData = (reservation) => ({
+    requestId: "multi-publisher-same-finalize",
+    reelId: reservation.reelId,
+    mediaGeneration: "123",
+    backingAudioGeneration: null,
+    composition: composition(),
+  });
+  await assert.rejects(scenario.service.finalizeReelDraftV2({
+    auth: auth(VIEWER),
+    data: finalizeData(first),
+  }), (error) => error.code === "data-loss");
+
+  async function publishReservation(uid, reservation, data = finalizeData(reservation)) {
+    scenario.metadata.set(reservation.mediaStoragePath, {
+      generation: "123",
+      size: "1024",
+      contentType: "image/jpeg",
+      metadata: { ownerId: uid, reelId: reservation.reelId, assetKind: "media" },
+    });
+    await scenario.service.finalizeReelDraftV2({ auth: auth(uid), data });
+    assert.equal(scenario.db.data(`reels/${reservation.reelId}`).authorId, uid);
+  }
+  await publishReservation(AUTHOR, first);
+  await publishReservation(VIEWER, second);
+  const another = await scenario.service.reserveReelDraftV2({
+    auth: auth(VIEWER),
+    data: { ...imagePlan("multi-publisher-second-reel"), availabilityHours: 24 },
+  });
+  await publishReservation(VIEWER, another, {
+    ...finalizeData(another),
+    requestId: "multi-publisher-second-finalize",
+  });
+  const expectedOwners = new Map([
+    [first.reelId, AUTHOR],
+    [second.reelId, VIEWER],
+    [another.reelId, VIEWER],
+  ]);
+  for (const uid of [AUTHOR, VIEWER, thirdViewer]) {
+    const page = await scenario.service.listReelsV2({
+      auth: auth(uid, false),
+      data: { limit: 10, cursor: null },
+    });
+    assert.equal(page.items.length, 3);
+    for (const item of page.items) {
+      assert.equal(item.authorId, expectedOwners.get(item.id));
+      assert.equal(item.authorName, `Creator ${item.authorId}`);
+    }
+  }
+  await assert.rejects(scenario.service.deleteReel({
+    auth: auth(thirdViewer),
+    data: { reelId: first.reelId, requestId: "multi-publisher-foreign-delete" },
+  }), (error) => error.code === "permission-denied");
+  await assert.rejects(scenario.service.reserveReelDraftV2({
+    auth: auth(VIEWER),
+    data: {
+      ...imagePlan("multi-publisher-forged-owner"),
+      availabilityHours: 24,
+      ownerId: AUTHOR,
+    },
+  }), (error) => error.code === "invalid-argument");
+});
+
 test("availability accepts only 24-720 whole hours or permanent", () => {
   assert.equal(
     validateAvailabilityHours(MIN_REEL_AVAILABILITY_HOURS),

@@ -76,6 +76,11 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
   final Set<String> _deleting = <String>{};
   final Map<String, String> _deleteRequestIds = <String, String>{};
   Timer? _expiryTimer;
+  StreamSubscription<String?>? _identitySubscription;
+  String? _viewerId;
+  int _loadGeneration = 0;
+  int _identityRevision = 0;
+  bool _ownOnly = false;
 
   DateTime get _now => (widget.now ?? DateTime.now)().toUtc();
   ReelExpiryTimerFactory get _timerFactory =>
@@ -87,6 +92,57 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     widget.isVisible?.addListener(_handleHostVisibilityChanged);
+    _viewerId = _service.currentUserId;
+    _identitySubscription = _service.identityChanges.listen(
+      _identityChanged,
+      onError: (Object error, StackTrace stack) {
+        if (!mounted) return;
+        _loadGeneration++;
+        _identityRevision++;
+        _expiryTimer?.cancel();
+        setState(() {
+          _items = const [];
+          _cursor = null;
+          _loading = false;
+          _loadingMore = false;
+          _creating = false;
+          _error = error;
+        });
+      },
+    );
+    _load(reset: true);
+  }
+
+  void _identityChanged(String? uid) {
+    if (!mounted || uid == _viewerId) return;
+    _loadGeneration++;
+    _identityRevision++;
+    _expiryTimer?.cancel();
+    setState(() {
+      _viewerId = uid;
+      _items = const [];
+      _cursor = null;
+      _selected = 0;
+      _hasMore = true;
+      _loadingMore = false;
+      _creating = false;
+      _error = null;
+      _reporting.clear();
+      _deleting.clear();
+      _deleteRequestIds.clear();
+    });
+    _load(reset: true);
+  }
+
+  bool _isCurrentRequest(int generation, String? uid) =>
+      mounted &&
+      generation == _loadGeneration &&
+      uid == _viewerId &&
+      uid == _service.currentUserId;
+
+  void _selectAudience(bool ownOnly) {
+    if (_ownOnly == ownOnly) return;
+    setState(() => _ownOnly = ownOnly);
     _load(reset: true);
   }
 
@@ -113,6 +169,8 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
 
   @override
   void dispose() {
+    _loadGeneration++;
+    _identitySubscription?.cancel();
     _expiryTimer?.cancel();
     widget.isVisible?.removeListener(_handleHostVisibilityChanged);
     WidgetsBinding.instance.removeObserver(this);
@@ -170,9 +228,20 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
 
   Future<void> _load({required bool reset}) async {
     if ((!reset && (_loadingMore || !_hasMore))) return;
+    final generation = reset ? ++_loadGeneration : _loadGeneration;
+    final viewer = _viewerId;
+    final ownOnly = _ownOnly;
     setState(() {
       if (reset) {
         _loading = true;
+        _loadingMore = false;
+        _items = const [];
+        _selected = 0;
+        _cursor = null;
+        _hasMore = true;
+        _reporting.clear();
+        _deleting.clear();
+        _expiryTimer?.cancel();
       } else {
         _loadingMore = true;
       }
@@ -184,7 +253,10 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
       final seenCursors = <String>{};
       for (var request = 0; request < _maxEmptyPagesPerLoad; request++) {
         final page = await _service.fetchFeed(cursor: requestCursor, limit: 10);
-        loaded.addAll(page.items);
+        if (!_isCurrentRequest(generation, viewer)) return;
+        loaded.addAll(
+          page.items.where((item) => !ownOnly || item.authorId == viewer),
+        );
         final nextCursor = page.nextCursor;
         requestCursor = nextCursor;
         if (loaded.isNotEmpty || nextCursor == null) break;
@@ -192,7 +264,7 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
           throw const FormatException('Reel feed cursor did not advance.');
         }
       }
-      if (!mounted) return;
+      if (!mounted || !_isCurrentRequest(generation, viewer)) return;
       setState(() {
         final combined = reset ? loaded : <Reel>[..._items, ...loaded];
         _items = <Reel>[
@@ -209,9 +281,9 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
       });
       _revalidateAvailability();
     } catch (error) {
-      if (mounted) setState(() => _error = error);
+      if (_isCurrentRequest(generation, viewer)) setState(() => _error = error);
     } finally {
-      if (mounted) {
+      if (_isCurrentRequest(generation, viewer)) {
         setState(() {
           _loading = false;
           _loadingMore = false;
@@ -222,6 +294,8 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
 
   Future<void> _report(Reel reel) async {
     if (_reporting.contains(reel.id)) return;
+    final generation = _loadGeneration;
+    final viewer = _viewerId;
     final copy = AppLocalizations.of(context);
     final reason = await showModalBottomSheet<String>(
       context: context,
@@ -232,11 +306,11 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
       backgroundColor: Colors.transparent,
       builder: (context) => _ReelReportSheet(authorName: reel.authorName),
     );
-    if (reason == null || !mounted) return;
+    if (reason == null || !_isCurrentRequest(generation, viewer)) return;
     setState(() => _reporting.add(reel.id));
     try {
       await _service.reportReel(reel.id, reason: reason);
-      if (!mounted) return;
+      if (!mounted || !_isCurrentRequest(generation, viewer)) return;
       ScaffoldMessenger.of(context)
         ..hideCurrentSnackBar()
         ..showSnackBar(
@@ -251,7 +325,7 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
           ),
         );
     } catch (_) {
-      if (!mounted) return;
+      if (!mounted || !_isCurrentRequest(generation, viewer)) return;
       ScaffoldMessenger.of(context)
         ..hideCurrentSnackBar()
         ..showSnackBar(
@@ -266,7 +340,9 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
           ),
         );
     } finally {
-      if (mounted) setState(() => _reporting.remove(reel.id));
+      if (_isCurrentRequest(generation, viewer)) {
+        setState(() => _reporting.remove(reel.id));
+      }
     }
   }
 
@@ -274,16 +350,29 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
     final action = widget.onCreate;
     if (action == null || _creating) return;
     setState(() => _creating = true);
+    final viewer = _viewerId;
+    final identityRevision = _identityRevision;
     try {
       await action();
-      if (mounted) await _load(reset: true);
+      if (mounted &&
+          identityRevision == _identityRevision &&
+          viewer == _viewerId &&
+          viewer == _service.currentUserId) {
+        await _load(reset: true);
+      }
     } finally {
-      if (mounted) setState(() => _creating = false);
+      if (mounted &&
+          identityRevision == _identityRevision &&
+          viewer == _viewerId) {
+        setState(() => _creating = false);
+      }
     }
   }
 
   Future<void> _delete(Reel reel) async {
     if (_deleting.contains(reel.id)) return;
+    final generation = _loadGeneration;
+    final viewer = _viewerId;
     final copy = AppLocalizations.of(context);
     final confirmed = await showDialog<bool>(
       context: context,
@@ -307,7 +396,11 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
         ],
       ),
     );
-    if (confirmed != true || !mounted) return;
+    if (confirmed != true ||
+        !_isCurrentRequest(generation, viewer) ||
+        !_service.isCurrentUserAuthor(reel)) {
+      return;
+    }
     final requestId = _deleteRequestIds.putIfAbsent(
       reel.id,
       ReelPublishSession.newRequestId,
@@ -315,7 +408,7 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
     setState(() => _deleting.add(reel.id));
     try {
       await _service.deleteReel(reel.id, requestId: requestId);
-      if (!mounted) return;
+      if (!mounted || !_isCurrentRequest(generation, viewer)) return;
       _deleteRequestIds.remove(reel.id);
       setState(() {
         _items = _items.where((item) => item.id != reel.id).toList();
@@ -331,7 +424,7 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
           ),
         );
     } catch (_) {
-      if (!mounted) return;
+      if (!mounted || !_isCurrentRequest(generation, viewer)) return;
       ScaffoldMessenger.of(context)
         ..hideCurrentSnackBar()
         ..showSnackBar(
@@ -346,7 +439,9 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
           ),
         );
     } finally {
-      if (mounted) setState(() => _deleting.remove(reel.id));
+      if (_isCurrentRequest(generation, viewer)) {
+        setState(() => _deleting.remove(reel.id));
+      }
     }
   }
 
@@ -354,7 +449,7 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
   Widget build(BuildContext context) {
     final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
-    final body = ColoredBox(
+    final content = ColoredBox(
       color: palette.background,
       child: SafeArea(
         top: widget.embedded,
@@ -375,8 +470,10 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
             }
 
             if (_loading || (_items.isEmpty && _loadingMore)) {
-              return YoLoadingIndicator.fullscreen(
-                message: copy.text('Loading Reels', 'Ładowanie Reels'),
+              return scrollableState(
+                YoLoadingIndicator.fullscreen(
+                  message: copy.text('Loading Reels', 'Ładowanie Reels'),
+                ),
               );
             }
             if (_error is _ReelFeedScanPaused && _items.isEmpty) {
@@ -385,10 +482,10 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
                   icon: Icons.travel_explore_rounded,
                   title: copy.text('Loading Reels', 'Ładowanie Reels'),
                   subtitle: copy.text(
-                    'Something went wrong. Please try again.',
-                    'Coś poszło nie tak. Spróbuj ponownie.',
+                    'More Reels are available to check.',
+                    'Możesz sprawdzić kolejne Reels.',
                   ),
-                  actionLabel: copy.text('Try again', 'Spróbuj ponownie'),
+                  actionLabel: copy.text('Load more', 'Wczytaj więcej'),
                   onAction: () => _load(reset: false),
                 ),
               );
@@ -405,7 +502,12 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
               return scrollableState(
                 YoEmptyState(
                   icon: Icons.movie_creation_outlined,
-                  title: copy.text('No Reels yet', 'Nie ma jeszcze Reels'),
+                  title: _ownOnly
+                      ? copy.text(
+                          'No Reels of your own yet',
+                          'Nie masz jeszcze własnych Reels',
+                        )
+                      : copy.text('No Reels yet', 'Nie ma jeszcze Reels'),
                   subtitle: copy.text(
                     'Published photos and short videos will appear here.',
                     'Opublikowane zdjęcia i krótkie filmy pojawią się tutaj.',
@@ -492,6 +594,55 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
             );
           },
         ),
+      ),
+    );
+    final body = Material(
+      color: palette.background,
+      child: Column(
+        children: [
+          ResponsiveContentFrame(
+            width: ResponsiveContentWidth.feed,
+            fillHeight: false,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              child: Wrap(
+                crossAxisAlignment: WrapCrossAlignment.center,
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  ChoiceChip(
+                    key: const ValueKey('reels-discover-filter'),
+                    label: Text(copy.text('Discover', 'Odkrywaj')),
+                    selected: !_ownOnly,
+                    onSelected: (_) => _selectAudience(false),
+                    materialTapTargetSize: MaterialTapTargetSize.padded,
+                  ),
+                  ChoiceChip(
+                    key: const ValueKey('reels-own-filter'),
+                    label: Text(copy.text('Your Reels', 'Twoje Reels')),
+                    selected: _ownOnly,
+                    onSelected: (_) => _selectAudience(true),
+                    materialTapTargetSize: MaterialTapTargetSize.padded,
+                  ),
+                  if (widget.onCreate != null)
+                    FilledButton.icon(
+                      key: const ValueKey('reels-create-persistent'),
+                      onPressed: _creating ? null : _create,
+                      icon: const Icon(Icons.add_rounded),
+                      label: Text(copy.text('Create Reel', 'Utwórz Reel')),
+                    ),
+                  IconButton(
+                    key: const ValueKey('reels-refresh'),
+                    tooltip: copy.text('Refresh', 'Odśwież'),
+                    onPressed: _loading ? null : () => _load(reset: true),
+                    icon: const Icon(Icons.refresh_rounded),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          Expanded(child: content),
+        ],
       ),
     );
     if (widget.embedded) return body;

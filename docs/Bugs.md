@@ -20,6 +20,35 @@ about things that are broken, risky, or need verification.
 
 ## Build 20 fixes and remaining acceptance gaps (2026-09-05; invited testing)
 
+### Reels authorship and creation report — local remediation, live acceptance pending
+
+The reported cross-user authorship/creation failure is not reproduced in the
+server contract: two authors can publish independently (including identical
+request IDs and repeat publication), and three viewers receive unchanged
+canonical author identities. Foreign finalize/delete and forged ownership are
+denied. A screenshot/error from the affected installed account is still needed
+to distinguish a live failure from the misleading personal-sounding entry.
+
+Local changes separate Discover/Your Reels and keep Create visible, bind client
+publication/retry to account identity, discard stale feed results, and redesign
+Reels and Voice capture/review. QA additionally found auth-listener cleanup
+blocking widget-zone completion, tablet caption focus loss, and inaccessible
+creation controls in enlarged/short layouts; all have passing regressions.
+Error copy now describes supported media and recoverable states instead of raw
+backend messages. Native Simulator inspection also caught browser-only wording
+on a native microphone timeout; the presentation now selects the correct
+platform copy in all locales. Actual microphone acquisition timed out in the
+Simulator, so successful device capture is not claimed. See ADR-145 and the
+[creation-flow session](Sessions/2026-09-06-reels-moments-creation.md).
+
+Remaining boundaries: own filtering uses bounded pagination rather than a new
+server author query; imported backing audio still accepts 1–90-second licensed
+or own files, not a commercial song catalogue. Reels publication retains its
+existing authenticated-public audience and block checks, not Voice Moments'
+private-profile audience behavior. New source is not yet a tester deployment;
+physical separate-account upload/playback and installed-version acceptance
+remain separate gates.
+
 The later top-notification/mobile-Back work is source-only. Local review resolved
 competing arrival surfaces, tooltip/root-overlay interception, insufficient
 keyboard-space acceptance, unreachable notification keyboard controls, inherited

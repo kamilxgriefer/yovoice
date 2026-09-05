@@ -153,47 +153,53 @@ class _ReelCardState extends State<ReelCard> with WidgetsBindingObserver {
           child: Stack(
             fit: StackFit.expand,
             children: <Widget>[
-              FutureBuilder<Uri>(
-                future: _media,
-                builder: (context, snapshot) {
-                  if (snapshot.hasError) {
-                    return YoErrorState(
-                      message: copy.text(
-                        'This Reel is unavailable right now.',
-                        'Ten Reel jest teraz niedostępny.',
-                      ),
-                      onRetry: () => setState(() => _media = _loadMedia()),
-                      compact: true,
-                    );
-                  }
-                  final uri = snapshot.data;
-                  if (uri == null) {
-                    return YoLoadingIndicator(
-                      message: copy.text('Loading Reel', 'Ładowanie Reela'),
-                    );
-                  }
-                  if (widget.reel.media.kind == ReelMediaKind.video &&
-                      widget.videoBuilder == null) {
-                    return _DefaultReelVideoPlayer(
-                      uri: uri,
-                      reel: widget.reel,
-                      playback: _playback,
-                      onToggle: _togglePlayback,
-                    );
-                  }
-                  final media = widget.reel.media.kind == ReelMediaKind.image
-                      ? _ReelPhoto(uri: uri)
-                      : widget.videoBuilder!(context, uri, widget.reel);
-                  return ReelCompositionCanvas(
-                    composition: widget.reel.composition,
-                    media: media,
-                    mediaForeground: const _LegibilityScrim(),
-                    onOpenLink: (overlay) => launchUrl(
-                      overlay.uri,
-                      mode: LaunchMode.externalApplication,
-                    ),
-                  );
-                },
+              Center(
+                child: AspectRatio(
+                  aspectRatio: 9 / 16,
+                  child: FutureBuilder<Uri>(
+                    future: _media,
+                    builder: (context, snapshot) {
+                      if (snapshot.hasError) {
+                        return YoErrorState(
+                          message: copy.text(
+                            'This Reel is unavailable right now.',
+                            'Ten Reel jest teraz niedostępny.',
+                          ),
+                          onRetry: () => setState(() => _media = _loadMedia()),
+                          compact: true,
+                        );
+                      }
+                      final uri = snapshot.data;
+                      if (uri == null) {
+                        return YoLoadingIndicator(
+                          message: copy.text('Loading Reel', 'Ładowanie Reela'),
+                        );
+                      }
+                      if (widget.reel.media.kind == ReelMediaKind.video &&
+                          widget.videoBuilder == null) {
+                        return _DefaultReelVideoPlayer(
+                          uri: uri,
+                          reel: widget.reel,
+                          playback: _playback,
+                          onToggle: _togglePlayback,
+                        );
+                      }
+                      final media =
+                          widget.reel.media.kind == ReelMediaKind.image
+                          ? _ReelPhoto(uri: uri)
+                          : widget.videoBuilder!(context, uri, widget.reel);
+                      return ReelCompositionFrame(
+                        composition: widget.reel.composition,
+                        media: media,
+                        mediaForeground: const _LegibilityScrim(),
+                        onOpenLink: (overlay) => launchUrl(
+                          overlay.uri,
+                          mode: LaunchMode.externalApplication,
+                        ),
+                      );
+                    },
+                  ),
+                ),
               ),
               PositionedDirectional(
                 start: 18,
@@ -395,7 +401,7 @@ class _DefaultReelVideoPlayerState extends State<_DefaultReelVideoPlayer> {
       child: Stack(
         fit: StackFit.expand,
         children: <Widget>[
-          ReelCompositionCanvas(
+          ReelCompositionFrame(
             composition: widget.reel.composition,
             media: FittedBox(
               fit: BoxFit.cover,

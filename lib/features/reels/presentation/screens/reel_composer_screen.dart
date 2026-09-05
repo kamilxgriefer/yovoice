@@ -5,7 +5,7 @@ import 'package:audioplayers/audioplayers.dart';
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:video_player/video_player.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
@@ -15,15 +15,17 @@ import 'package:yovoice/features/reels/data/services/reel_service.dart';
 import 'package:yovoice/features/reels/data/services/reel_upload.dart';
 import 'package:yovoice/features/reels/data/services/reel_video_probe.dart';
 import 'package:yovoice/features/reels/presentation/reel_visuals.dart';
-import 'package:yovoice/features/reels/presentation/widgets/reel_composition_canvas.dart';
-import 'package:yovoice/features/reels/presentation/widgets/reel_local_video_controller.dart';
+import 'package:yovoice/features/reels/presentation/widgets/reel_draft_preview.dart';
 import 'package:yovoice/shared/widgets/buttons/yo_button.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
-import 'package:yovoice/shared/widgets/states/yo_loading_indicator.dart';
 
 typedef ReelVideoDurationProbe = Future<int> Function(XFile file);
 typedef ReelBackingAudioPicker = Future<ReelUploadPayload?> Function();
+
+enum _ComposerStep { media, edit, review }
+
+enum _EditorTool { crop, audio, text, filter }
 
 class ReelComposerScreen extends StatefulWidget {
   const ReelComposerScreen({
@@ -67,19 +69,161 @@ class _ReelComposerScreenState extends State<ReelComposerScreen> {
   bool _publishing = false;
   double _progress = 0;
   String? _error;
+  _ComposerStep _step = _ComposerStep.media;
+  _EditorTool _tool = _EditorTool.crop;
+  final _previewKey = GlobalKey<ReelDraftPreviewState>();
+  bool _previewPlaying = false;
+  bool _pickingAudio = false;
+  bool _sourcePickerOpen = false;
+  final _scroll = ScrollController();
+  bool _allowExit = false;
+  final _errorKey = GlobalKey();
+  StreamSubscription<String?>? _identitySubscription;
+  String? _ownerId;
+  int _identityGeneration = 0;
+  final Set<Route<dynamic>> _draftModals = {};
+
+  @override
+  void initState() {
+    super.initState();
+    _ownerId = _service.currentUserId;
+    _identitySubscription = _service.identityChanges.listen(
+      _identityChanged,
+      onError: (Object _) => _identityChanged(null, force: true),
+    );
+  }
+
+  bool _ownsDraft(int generation) =>
+      mounted &&
+      generation == _identityGeneration &&
+      _ownerId == _service.currentUserId;
+
+  void _identityChanged(String? uid, {bool force = false}) {
+    if (!mounted || (!force && uid == _ownerId)) return;
+    _identityGeneration++;
+    unawaited(_previewKey.currentState?.pause());
+    for (final route in _draftModals.toList()) {
+      if (route.isActive) route.navigator?.removeRoute(route);
+    }
+    _draftModals.clear();
+    setState(() {
+      _ownerId = uid;
+      _media = null;
+      _backingAudio = null;
+      _session = null;
+      _composition = const ReelComposition(originalAudioVolume: 0);
+      _availability = ReelAvailabilityChoice.fallback;
+      _caption.clear();
+      _step = _ComposerStep.media;
+      _tool = _EditorTool.crop;
+      _selecting = false;
+      _pickingAudio = false;
+      _publishing = false;
+      _sourcePickerOpen = false;
+      _previewPlaying = false;
+      _allowExit = false;
+      _error = null;
+    });
+  }
+
+  Future<T?> _showDraftDialog<T>({
+    required BuildContext context,
+    required WidgetBuilder builder,
+  }) async {
+    final navigator = Navigator.of(context, rootNavigator: true);
+    final route = DialogRoute<T>(
+      context: context,
+      builder: builder,
+      themes: InheritedTheme.capture(from: context, to: navigator.context),
+      barrierColor: DialogTheme.of(context).barrierColor ?? Colors.black54,
+      traversalEdgeBehavior: TraversalEdgeBehavior.closedLoop,
+    );
+    _draftModals.add(route);
+    try {
+      final result = await navigator.push(route);
+      // Popping resolves the result before the reverse transition unmounts its
+      // text fields. Their local controllers must outlive that transition.
+      await route.completed;
+      return result;
+    } finally {
+      _draftModals.remove(route);
+    }
+  }
+
+  Widget _rememberDraftModal(BuildContext context, Widget child) {
+    final route = ModalRoute.of(context);
+    _draftModals.removeWhere((entry) => !entry.isActive);
+    if (route != null) _draftModals.add(route);
+    return child;
+  }
+
+  void _showError(Object error) {
+    if (!mounted) return;
+    final generation = _identityGeneration;
+    setState(() => _error = _friendly(context, error));
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final target = _errorKey.currentContext;
+      if (!_ownsDraft(generation) || target == null) return;
+      unawaited(
+        Scrollable.ensureVisible(
+          target,
+          alignment: .5,
+          duration: MediaQuery.disableAnimationsOf(context)
+              ? Duration.zero
+              : const Duration(milliseconds: 180),
+        ),
+      );
+    });
+  }
 
   bool get _draftContractLocked => _session != null || _publishing;
 
   @override
   void dispose() {
+    _identityGeneration++;
+    unawaited(_identitySubscription?.cancel());
+    _scroll.dispose();
     _caption.dispose();
     super.dispose();
   }
 
   Future<void> _showSourcePicker() async {
-    if (_draftContractLocked) return;
+    final generation = _identityGeneration;
+    if (_draftContractLocked || _selecting || _sourcePickerOpen) return;
+    _sourcePickerOpen = true;
+    await _previewKey.currentState?.pause();
+    if (!mounted || !_ownsDraft(generation)) return;
     final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
+    if (_media != null) {
+      final replace = await _showDraftDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: Text(copy.text('Replace media?', 'Zmienić multimedia?')),
+          content: Text(
+            copy.text(
+              'Your caption, audio and overlays stay. Crop and video trim will reset.',
+              'Opis, dźwięk i nakładki zostaną zachowane. Kadr i przycięcie filmu zostaną zresetowane.',
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: Text(copy.text('Cancel', 'Anuluj')),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: Text(copy.text('Replace media', 'Zmień multimedia')),
+            ),
+          ],
+        ),
+      );
+      if (!mounted || !_ownsDraft(generation)) return;
+      if (replace != true) {
+        _sourcePickerOpen = false;
+        return;
+      }
+    }
     final source = await showModalBottomSheet<_SourceChoice>(
       context: context,
       showDragHandle: false,
@@ -87,65 +231,87 @@ class _ReelComposerScreenState extends State<ReelComposerScreen> {
       isScrollControlled: true,
       constraints: ResponsiveContentFrame.adaptiveModalConstraints(context),
       backgroundColor: Colors.transparent,
-      builder: (context) => Material(
-        color: palette.surfaceRaised,
-        clipBehavior: Clip.antiAlias,
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
-        child: SafeArea(
-          top: false,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: <Widget>[
-              YoModalSheetChrome(
-                sheetLabel: copy.text(
-                  'Choose Reel media',
-                  'Wybierz multimedia Reela',
+      builder: (context) => _rememberDraftModal(
+        context,
+        Material(
+          color: palette.surfaceRaised,
+          clipBehavior: Clip.antiAlias,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+          child: SafeArea(
+            top: false,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                YoModalSheetChrome(
+                  sheetLabel: copy.text(
+                    'Choose Reel media',
+                    'Wybierz multimedia Reela',
+                  ),
+                  surfaceColor: palette.surfaceRaised,
                 ),
-                surfaceColor: palette.surfaceRaised,
-              ),
-              ListTile(
-                minTileHeight: 52,
-                leading: const Icon(Icons.photo_camera_outlined),
-                title: Text(copy.text('Take photo', 'Zrób zdjęcie')),
-                onTap: () => Navigator.pop(
-                  context,
-                  const _SourceChoice(ReelMediaKind.image, ImageSource.camera),
+                ListTile(
+                  minTileHeight: 52,
+                  leading: const Icon(Icons.photo_camera_outlined),
+                  title: Text(copy.text('Take photo', 'Zrób zdjęcie')),
+                  onTap: () => Navigator.pop(
+                    context,
+                    const _SourceChoice(
+                      ReelMediaKind.image,
+                      ImageSource.camera,
+                    ),
+                  ),
                 ),
-              ),
-              ListTile(
-                minTileHeight: 52,
-                leading: const Icon(Icons.photo_library_outlined),
-                title: Text(copy.text('Choose photo', 'Wybierz zdjęcie')),
-                onTap: () => Navigator.pop(
-                  context,
-                  const _SourceChoice(ReelMediaKind.image, ImageSource.gallery),
+                ListTile(
+                  minTileHeight: 52,
+                  leading: const Icon(Icons.photo_library_outlined),
+                  title: Text(copy.text('Choose photo', 'Wybierz zdjęcie')),
+                  onTap: () => Navigator.pop(
+                    context,
+                    const _SourceChoice(
+                      ReelMediaKind.image,
+                      ImageSource.gallery,
+                    ),
+                  ),
                 ),
-              ),
-              ListTile(
-                minTileHeight: 52,
-                leading: const Icon(Icons.videocam_outlined),
-                title: Text(copy.text('Record video', 'Nagraj film')),
-                onTap: () => Navigator.pop(
-                  context,
-                  const _SourceChoice(ReelMediaKind.video, ImageSource.camera),
+                ListTile(
+                  minTileHeight: 52,
+                  leading: const Icon(Icons.videocam_outlined),
+                  title: Text(copy.text('Record video', 'Nagraj film')),
+                  onTap: () => Navigator.pop(
+                    context,
+                    const _SourceChoice(
+                      ReelMediaKind.video,
+                      ImageSource.camera,
+                    ),
+                  ),
                 ),
-              ),
-              ListTile(
-                minTileHeight: 52,
-                leading: const Icon(Icons.video_library_outlined),
-                title: Text(copy.text('Choose video', 'Wybierz film')),
-                onTap: () => Navigator.pop(
-                  context,
-                  const _SourceChoice(ReelMediaKind.video, ImageSource.gallery),
+                ListTile(
+                  minTileHeight: 52,
+                  leading: const Icon(Icons.video_library_outlined),
+                  title: Text(copy.text('Choose video', 'Wybierz film')),
+                  onTap: () => Navigator.pop(
+                    context,
+                    const _SourceChoice(
+                      ReelMediaKind.video,
+                      ImageSource.gallery,
+                    ),
+                  ),
                 ),
-              ),
-              const SizedBox(height: 12),
-            ],
+                const SizedBox(height: 12),
+              ],
+            ),
           ),
         ),
       ),
     );
-    if (source == null || _selecting || _draftContractLocked) return;
+    if (!_ownsDraft(generation)) return;
+    _sourcePickerOpen = false;
+    if (!_ownsDraft(generation) ||
+        source == null ||
+        _selecting ||
+        _draftContractLocked) {
+      return;
+    }
     setState(() {
       _selecting = true;
       _error = null;
@@ -171,32 +337,45 @@ class _ReelComposerScreenState extends State<ReelComposerScreen> {
       // The native picker/probe can complete after a publish attempt has
       // already reserved this draft. Discard that late result so it cannot
       // reset the retry-stable session or replace the frozen upload plan.
-      if (!mounted || _draftContractLocked) return;
+      if (!_ownsDraft(generation) || _draftContractLocked) return;
+      final previousKind = _media?.mediaKind;
       setState(() {
         _media = payload;
-        _backingAudio = null;
         _session = null;
-        _composition = ReelComposition(
+        _composition = _composition.copyWith(
+          crop: const ReelCropTransform(),
           originalAudioVolume: payload.mediaKind == ReelMediaKind.video
-              ? 100
+              ? previousKind == ReelMediaKind.video
+                    ? _composition.originalAudioVolume
+                    : 100
               : 0,
+          trimStartMs: 0,
           trimEndMs: payload.durationMs,
         );
-        _caption.clear();
+        _step = _ComposerStep.edit;
       });
     } catch (error) {
-      if (mounted) setState(() => _error = _friendly(error));
+      if (_ownsDraft(generation)) _showError(error);
     } finally {
-      if (mounted) setState(() => _selecting = false);
+      if (_ownsDraft(generation)) setState(() => _selecting = false);
     }
   }
 
   Future<void> _pickBackingAudio() async {
-    if (_draftContractLocked) return;
+    final generation = _identityGeneration;
+    if (_draftContractLocked || _pickingAudio || _media == null) return;
+    setState(() {
+      _pickingAudio = true;
+      _error = null;
+    });
+    await _previewKey.currentState?.pause();
+    if (!_ownsDraft(generation)) return;
     final picker = widget.backingAudioPicker ?? _pickLocalBackingAudio;
     try {
       final result = await picker();
-      if (!mounted || result == null || _draftContractLocked) return;
+      if (!_ownsDraft(generation) || result == null || _draftContractLocked) {
+        return;
+      }
       if (!result.contentType.startsWith('audio/')) {
         throw const FormatException('Choose a supported audio file.');
       }
@@ -206,20 +385,24 @@ class _ReelComposerScreenState extends State<ReelComposerScreen> {
         _composition = _composition.copyWith(
           backingAudioVolume: 70,
           audioRightsAttested: false,
+          audioTrimStartMs: 0,
+          audioAttribution: '',
         );
       });
     } catch (error) {
-      if (mounted) setState(() => _error = _friendly(error));
+      if (_ownsDraft(generation)) _showError(error);
+    } finally {
+      if (_ownsDraft(generation)) setState(() => _pickingAudio = false);
     }
   }
 
   Future<ReelUploadPayload?> _pickLocalBackingAudio() async {
-    const group = XTypeGroup(
-      label: 'Audio',
+    final group = XTypeGroup(
+      label: AppLocalizations.of(context).text('Audio', 'Dźwięk'),
       extensions: <String>['mp3', 'm4a', 'wav'],
       mimeTypes: <String>['audio/mpeg', 'audio/mp4', 'audio/wav'],
     );
-    final file = await openFile(acceptedTypeGroups: const <XTypeGroup>[group]);
+    final file = await openFile(acceptedTypeGroups: <XTypeGroup>[group]);
     if (file == null) return null;
     final declaredLength = await file.length();
     if (declaredLength < 512 || declaredLength > maxReelBackingAudioBytes) {
@@ -235,7 +418,9 @@ class _ReelComposerScreenState extends State<ReelComposerScreen> {
     }
     final player = AudioPlayer();
     try {
-      await player.setSource(BytesSource(bytes, mimeType: contentType));
+      await player
+          .setSource(BytesSource(bytes, mimeType: contentType))
+          .timeout(const Duration(seconds: 12));
       final duration =
           await player.getDuration() ??
           await player.onDurationChanged.first.timeout(
@@ -251,10 +436,11 @@ class _ReelComposerScreenState extends State<ReelComposerScreen> {
   }
 
   Future<void> _addTextOverlay() async {
+    final generation = _identityGeneration;
     if (_draftContractLocked) return;
     final copy = AppLocalizations.of(context);
     final controller = TextEditingController();
-    final text = await showDialog<String>(
+    final text = await _showDraftDialog<String>(
       context: context,
       builder: (context) => AlertDialog(
         title: Text(copy.text('Add text', 'Dodaj tekst')),
@@ -278,7 +464,12 @@ class _ReelComposerScreenState extends State<ReelComposerScreen> {
       ),
     );
     controller.dispose();
-    if (text == null || text.isEmpty || _draftContractLocked) return;
+    if (!_ownsDraft(generation) ||
+        text == null ||
+        text.isEmpty ||
+        _draftContractLocked) {
+      return;
+    }
     setState(() {
       _composition = _composition.copyWith(
         textOverlays: <ReelTextOverlay>[
@@ -295,13 +486,14 @@ class _ReelComposerScreenState extends State<ReelComposerScreen> {
   }
 
   Future<void> _addLinkOverlay() async {
+    final generation = _identityGeneration;
     if (_draftContractLocked) return;
     final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
     final label = TextEditingController();
     final url = TextEditingController();
     String? validationError;
-    final result = await showDialog<(String, String)>(
+    final result = await _showDraftDialog<(String, String)>(
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
@@ -370,7 +562,9 @@ class _ReelComposerScreenState extends State<ReelComposerScreen> {
     );
     label.dispose();
     url.dispose();
-    if (result == null || _draftContractLocked) return;
+    if (!_ownsDraft(generation) || result == null || _draftContractLocked) {
+      return;
+    }
     final uri = Uri.tryParse(result.$2);
     if (uri == null || !isSafePublicHttpsUri(uri) || result.$1.isEmpty) return;
     setState(() {
@@ -390,6 +584,7 @@ class _ReelComposerScreenState extends State<ReelComposerScreen> {
   }
 
   Future<void> _editTextOverlay(ReelTextOverlay source) async {
+    final generation = _identityGeneration;
     if (_draftContractLocked) return;
     final copy = AppLocalizations.of(context);
     final controller = TextEditingController(text: source.text);
@@ -397,7 +592,7 @@ class _ReelComposerScreenState extends State<ReelComposerScreen> {
     var y = source.y;
     var scale = source.scale;
     var color = source.color;
-    final result = await showDialog<ReelTextOverlay>(
+    final result = await _showDraftDialog<ReelTextOverlay>(
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
@@ -479,7 +674,9 @@ class _ReelComposerScreenState extends State<ReelComposerScreen> {
       ),
     );
     controller.dispose();
-    if (result == null || _draftContractLocked) return;
+    if (!_ownsDraft(generation) || result == null || _draftContractLocked) {
+      return;
+    }
     setState(() {
       _composition = _composition.copyWith(
         textOverlays: _composition.textOverlays
@@ -490,6 +687,7 @@ class _ReelComposerScreenState extends State<ReelComposerScreen> {
   }
 
   Future<void> _editLinkOverlay(ReelLinkOverlay source) async {
+    final generation = _identityGeneration;
     if (_draftContractLocked) return;
     final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
@@ -498,7 +696,7 @@ class _ReelComposerScreenState extends State<ReelComposerScreen> {
     var x = source.x;
     var y = source.y;
     String? validationError;
-    final result = await showDialog<ReelLinkOverlay>(
+    final result = await _showDraftDialog<ReelLinkOverlay>(
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
@@ -577,7 +775,9 @@ class _ReelComposerScreenState extends State<ReelComposerScreen> {
     );
     label.dispose();
     url.dispose();
-    if (result == null || _draftContractLocked) return;
+    if (!_ownsDraft(generation) || result == null || _draftContractLocked) {
+      return;
+    }
     setState(() {
       _composition = _composition.copyWith(
         linkOverlays: _composition.linkOverlays
@@ -588,8 +788,11 @@ class _ReelComposerScreenState extends State<ReelComposerScreen> {
   }
 
   Future<void> _publish() async {
+    final generation = _identityGeneration;
     final media = _media;
-    if (media == null || _publishing) return;
+    if (media == null || _publishing || _selecting || _pickingAudio) return;
+    await _previewKey.currentState?.pause();
+    if (!_ownsDraft(generation) || _publishing) return;
     final existingSession = _session;
     final plan =
         existingSession?.plan ??
@@ -601,7 +804,7 @@ class _ReelComposerScreenState extends State<ReelComposerScreen> {
         );
     final problem = plan.validate();
     if (problem != null) {
-      setState(() => _error = problem);
+      _showError(FormatException(problem));
       return;
     }
     final session = existingSession ?? ReelPublishSession(plan: plan);
@@ -615,419 +818,461 @@ class _ReelComposerScreenState extends State<ReelComposerScreen> {
       final reelId = await _service.publish(
         session,
         onProgress: (progress) {
-          if (mounted) setState(() => _progress = progress);
+          if (_ownsDraft(generation)) setState(() => _progress = progress);
         },
       );
-      if (!mounted) return;
+      if (!mounted || !_ownsDraft(generation)) return;
       widget.onPublished?.call(reelId);
       if (Navigator.of(context).canPop()) Navigator.of(context).pop(reelId);
     } catch (error) {
-      if (mounted) setState(() => _error = _friendly(error));
+      if (_ownsDraft(generation)) _showError(error);
     } finally {
-      if (mounted) setState(() => _publishing = false);
+      if (_ownsDraft(generation)) setState(() => _publishing = false);
     }
+  }
+
+  Future<void> _goTo(_ComposerStep step) async {
+    final generation = _identityGeneration;
+    if (_publishing || _selecting || _pickingAudio) return;
+    await _previewKey.currentState?.pause();
+    if (!_ownsDraft(generation)) return;
+    FocusManager.instance.primaryFocus?.unfocus();
+    setState(() {
+      _step = step;
+      _previewPlaying = false;
+    });
+    if (_scroll.hasClients) _scroll.jumpTo(0);
+  }
+
+  Future<void> _back() async {
+    final generation = _identityGeneration;
+    if (_publishing || _selecting || _pickingAudio) return;
+    if (_step != _ComposerStep.media) {
+      await _goTo(_ComposerStep.values[_step.index - 1]);
+      return;
+    }
+    if (_media != null) {
+      final copy = AppLocalizations.of(context);
+      final discard = await _showDraftDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: Text(copy.text('Discard this draft?', 'Odrzucić ten szkic?')),
+          content: Text(
+            copy.text(
+              'Your unpublished changes will be lost.',
+              'Nieopublikowane zmiany zostaną utracone.',
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: Text(copy.text('Cancel', 'Anuluj')),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: Text(copy.text('Discard', 'Odrzuć')),
+            ),
+          ],
+        ),
+      );
+      if (!_ownsDraft(generation) || discard != true) return;
+    }
+    setState(() => _allowExit = true);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_ownsDraft(generation)) Navigator.of(context).maybePop();
+    });
   }
 
   @override
   Widget build(BuildContext context) {
     final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
-    return Scaffold(
-      appBar: AppBar(title: Text(copy.text('Create Reel', 'Utwórz Reel'))),
-      body: DecoratedBox(
-        decoration: BoxDecoration(gradient: palette.backgroundGradient),
-        child: SafeArea(
-          top: false,
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              final preview = _Preview(
-                media: _media,
-                composition: _composition,
-                selecting: _selecting,
-                onSelect: _draftContractLocked ? null : _showSourcePicker,
-              );
-              final editor = _Editor(
-                media: _media,
-                backingAudio: _backingAudio,
-                composition: _composition,
-                caption: _caption,
-                availability: _availability,
-                availabilityLocked: _draftContractLocked,
-                draftLocked: _draftContractLocked,
-                canPickAudio: true,
-                audioPlayerFactory: widget.audioPlayerFactory,
-                onCaptionChanged: (_) {
-                  if (_draftContractLocked) return;
-                },
-                onAvailabilityChanged: (value) {
-                  if (_draftContractLocked) return;
-                  setState(() => _availability = value);
-                },
-                onComposition: (value) {
-                  if (_draftContractLocked) return;
-                  setState(() => _composition = value);
-                },
-                onPickAudio: _pickBackingAudio,
-                onRemoveAudio: () {
-                  if (_draftContractLocked) return;
-                  setState(() {
-                    _backingAudio = null;
-                    _composition = _composition.copyWith(
-                      backingAudioVolume: 0,
-                      audioTrimStartMs: 0,
-                      audioRightsAttested: false,
-                      audioAttribution: '',
-                    );
-                  });
-                },
-                onAddText: _addTextOverlay,
-                onAddLink: _addLinkOverlay,
-                onEditText: _editTextOverlay,
-                onEditLink: _editLinkOverlay,
-              );
-              final content = constraints.maxWidth >= 900
-                  ? Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: <Widget>[
-                        Expanded(child: preview),
-                        const SizedBox(width: 28),
-                        Expanded(child: editor),
-                      ],
-                    )
-                  : Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: <Widget>[
-                        preview,
-                        const SizedBox(height: 24),
-                        editor,
-                      ],
-                    );
-              return SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(20, 20, 20, 36),
-                child: Center(
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 1120),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: <Widget>[
-                        content,
-                        if (_error != null) ...<Widget>[
+    final busy = _publishing || _selecting || _pickingAudio;
+    final labels = [
+      copy.text('Media', 'Multimedia'),
+      copy.text('Edit', 'Edytuj'),
+      copy.text('Review', 'Sprawdź'),
+    ];
+    return PopScope(
+      canPop: _allowExit || (_media == null && !busy),
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) unawaited(_back());
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          title: Text(copy.text('Create Reel', 'Utwórz Reel')),
+          leading: IconButton(
+            tooltip: MaterialLocalizations.of(context).backButtonTooltip,
+            onPressed: busy ? null : _back,
+            icon: const BackButtonIcon(),
+          ),
+        ),
+        body: DecoratedBox(
+          decoration: BoxDecoration(gradient: palette.backgroundGradient),
+          child: SafeArea(
+            top: false,
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final wide = constraints.maxWidth >= 900;
+                final compactHeight =
+                    constraints.maxHeight < 380 ||
+                    MediaQuery.textScalerOf(context).scale(14) > 24;
+                final footer = _footer(copy, busy);
+                final content = Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
+                  child: Center(
+                    child: ConstrainedBox(
+                      constraints: BoxConstraints(maxWidth: wide ? 1120 : 720),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: [
+                              for (
+                                var index = 0;
+                                index < labels.length;
+                                index++
+                              )
+                                Semantics(
+                                  selected: index == _step.index,
+                                  child: Chip(
+                                    avatar: Text('${index + 1}'),
+                                    label: Text(labels[index]),
+                                    backgroundColor: index == _step.index
+                                        ? palette.surfaceRaised
+                                        : palette.surface,
+                                    side: BorderSide(
+                                      color: index == _step.index
+                                          ? palette.focus
+                                          : palette.border,
+                                    ),
+                                  ),
+                                ),
+                            ],
+                          ),
                           const SizedBox(height: 16),
-                          Semantics(
-                            liveRegion: true,
-                            child: Text(
-                              _error!,
-                              style: TextStyle(
-                                color: palette.dangerForeground,
-                                fontWeight: FontWeight.w700,
+                          if (_step == _ComposerStep.media)
+                            _mediaSelection(copy)
+                          else
+                            _workspace(copy, constraints, wide),
+                          if (_error != null) ...[
+                            const SizedBox(height: 16),
+                            Semantics(
+                              key: _errorKey,
+                              liveRegion: true,
+                              child: Text(
+                                _error!,
+                                key: const ValueKey('reel-composer-error'),
+                                style: TextStyle(
+                                  color: palette.dangerForeground,
+                                  fontWeight: FontWeight.w700,
+                                ),
                               ),
                             ),
-                          ),
+                          ],
+                          if (compactHeight) ...[
+                            const SizedBox(height: 20),
+                            footer,
+                          ],
                         ],
-                        const SizedBox(height: 20),
-                        YoButton(
-                          label: _publishing
-                              ? copy.template(
-                                  'Publishing {percent}%',
-                                  'Publikowanie {percent}%',
-                                  values: <String, Object>{
-                                    'percent': (_progress * 100).round(),
-                                  },
-                                )
-                              : copy.text('Publish Reel', 'Opublikuj Reel'),
-                          onPressed: _media == null || _publishing
-                              ? null
-                              : _publish,
-                          isLoading: _publishing,
-                          icon: const Icon(Icons.publish_rounded),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              );
-            },
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _Preview extends StatelessWidget {
-  const _Preview({
-    required this.media,
-    required this.composition,
-    required this.selecting,
-    required this.onSelect,
-  });
-
-  final ReelUploadPayload? media;
-  final ReelComposition composition;
-  final bool selecting;
-  final VoidCallback? onSelect;
-
-  @override
-  Widget build(BuildContext context) {
-    final copy = AppLocalizations.of(context);
-    final palette = context.appPalette;
-    return AspectRatio(
-      aspectRatio: 9 / 16,
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: palette.surfaceSunken,
-          borderRadius: BorderRadius.circular(28),
-          border: Border.all(color: palette.borderStrong),
-        ),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(27),
-          child: media == null
-              ? Center(
-                  child: YoButton(
-                    label: selecting
-                        ? copy.text('Opening media', 'Otwieranie multimediów')
-                        : copy.text('Choose media', 'Wybierz multimedia'),
-                    onPressed: selecting ? null : onSelect,
-                    fullWidth: false,
-                    icon: const Icon(Icons.add_photo_alternate_outlined),
-                  ),
-                )
-              : Stack(
-                  fit: StackFit.expand,
-                  children: <Widget>[
-                    if (media!.mediaKind == ReelMediaKind.image)
-                      ReelCompositionCanvas(
-                        composition: composition,
-                        media: Image.memory(
-                          media!.bytes,
-                          fit: BoxFit.cover,
-                          filterQuality: FilterQuality.high,
-                        ),
-                      )
-                    else
-                      _LocalReelVideoPreview(
-                        media: media!,
-                        composition: composition,
-                      ),
-                    PositionedDirectional(
-                      top: 12,
-                      end: 12,
-                      child: IconButton.filledTonal(
-                        tooltip: copy.text('Replace media', 'Zmień multimedia'),
-                        onPressed: onSelect,
-                        icon: const Icon(Icons.swap_horiz_rounded),
                       ),
                     ),
+                  ),
+                );
+                return Column(
+                  children: [
+                    Expanded(
+                      child: SingleChildScrollView(
+                        key: const ValueKey('reel-composer-scroll'),
+                        controller: _scroll,
+                        child: content,
+                      ),
+                    ),
+                    if (!compactHeight)
+                      DecoratedBox(
+                        decoration: BoxDecoration(
+                          color: palette.surface,
+                          border: Border(
+                            top: BorderSide(color: palette.border),
+                          ),
+                        ),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 12,
+                          ),
+                          child: Center(
+                            child: ConstrainedBox(
+                              constraints: const BoxConstraints(maxWidth: 720),
+                              child: footer,
+                            ),
+                          ),
+                        ),
+                      ),
                   ],
-                ),
+                );
+              },
+            ),
+          ),
         ),
       ),
     );
   }
-}
 
-class _LocalReelVideoPreview extends StatefulWidget {
-  const _LocalReelVideoPreview({
-    required this.media,
-    required this.composition,
-  });
-
-  final ReelUploadPayload media;
-  final ReelComposition composition;
-
-  @override
-  State<_LocalReelVideoPreview> createState() => _LocalReelVideoPreviewState();
-}
-
-class _LocalReelVideoPreviewState extends State<_LocalReelVideoPreview> {
-  VideoPlayerController? _controller;
-  Object? _error;
-  bool _seekingToStart = false;
-  bool _wasPlaying = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _initialize();
-  }
-
-  @override
-  void didUpdateWidget(covariant _LocalReelVideoPreview oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.media.sourcePath != widget.media.sourcePath) {
-      _disposeController();
-      _initialize();
-      return;
-    }
-    if (oldWidget.composition.originalAudioVolume !=
-        widget.composition.originalAudioVolume) {
-      unawaited(
-        _controller?.setVolume(widget.composition.originalAudioVolume / 100),
-      );
-    }
-    if (oldWidget.composition.trimStartMs != widget.composition.trimStartMs ||
-        oldWidget.composition.trimEndMs != widget.composition.trimEndMs) {
-      final position = _controller?.value.position.inMilliseconds ?? 0;
-      if (position < widget.composition.trimStartMs ||
-          position >= widget.composition.trimEndMs) {
-        unawaited(
-          _controller?.seekTo(
-            Duration(milliseconds: widget.composition.trimStartMs),
-          ),
-        );
-      }
-    }
-  }
-
-  Future<void> _initialize() async {
-    final sourcePath = widget.media.sourcePath?.trim() ?? '';
-    if (sourcePath.isEmpty) {
-      setState(() => _error = StateError('Missing local video preview.'));
-      return;
-    }
-    final controller = createReelLocalVideoController(sourcePath);
-    _controller = controller;
-    try {
-      await controller.initialize();
-      await controller.setLooping(false);
-      await controller.setVolume(widget.composition.originalAudioVolume / 100);
-      await controller.seekTo(
-        Duration(milliseconds: widget.composition.trimStartMs),
-      );
-      _wasPlaying = controller.value.isPlaying;
-      controller.addListener(_handlePlayback);
-      if (mounted) setState(() => _error = null);
-    } catch (error) {
-      if (mounted) setState(() => _error = error);
-    }
-  }
-
-  void _handlePlayback() {
-    final controller = _controller;
-    if (controller == null || !controller.value.isInitialized) return;
-    final end = widget.composition.trimEndMs;
-    if (!_seekingToStart &&
-        end > 0 &&
-        controller.value.position.inMilliseconds >= end) {
-      _seekingToStart = true;
-      unawaited(_rewind(controller));
-      return;
-    }
-    final isPlaying = controller.value.isPlaying;
-    if (mounted && isPlaying != _wasPlaying) {
-      _wasPlaying = isPlaying;
-      setState(() {});
-    }
-  }
-
-  Future<void> _rewind(VideoPlayerController controller) async {
-    try {
-      await controller.pause();
-      await controller.seekTo(
-        Duration(milliseconds: widget.composition.trimStartMs),
-      );
-    } finally {
-      _seekingToStart = false;
-      if (mounted) setState(() {});
-    }
-  }
-
-  Future<void> _toggle() async {
-    final controller = _controller;
-    if (controller == null || !controller.value.isInitialized) return;
-    if (controller.value.isPlaying) {
-      await controller.pause();
-    } else {
-      final position = controller.value.position.inMilliseconds;
-      if (position < widget.composition.trimStartMs ||
-          position >= widget.composition.trimEndMs) {
-        await controller.seekTo(
-          Duration(milliseconds: widget.composition.trimStartMs),
-        );
-      }
-      await controller.play();
-    }
-    if (mounted) setState(() {});
-  }
-
-  void _disposeController() {
-    final controller = _controller;
-    _controller = null;
-    _wasPlaying = false;
-    if (controller != null) {
-      controller.removeListener(_handlePlayback);
-      unawaited(controller.dispose());
-    }
-  }
-
-  @override
-  void dispose() {
-    _disposeController();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final copy = AppLocalizations.of(context);
+  Widget _mediaSelection(AppLocalizations copy) {
     final palette = context.appPalette;
-    final controller = _controller;
-    Widget media;
-    if (_error != null) {
-      media = ColoredBox(
-        color: palette.surfaceSunken,
-        child: Center(
-          child: TextButton.icon(
-            onPressed: () {
-              _disposeController();
-              setState(() => _error = null);
-              _initialize();
-            },
-            icon: const Icon(Icons.refresh_rounded),
-            label: Text(
-              copy.text('Retry video preview', 'Ponów podgląd filmu'),
+    final colors = Theme.of(context).colorScheme;
+    return Container(
+      padding: EdgeInsets.all(MediaQuery.sizeOf(context).width < 360 ? 16 : 24),
+      decoration: BoxDecoration(
+        color: palette.surface,
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: palette.borderStrong),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Icon(
+            Icons.add_photo_alternate_outlined,
+            size: 56,
+            color: palette.textPrimary,
+          ),
+          const SizedBox(height: 20),
+          FilledButton(
+            key: const ValueKey('reel-choose-media'),
+            onPressed: _selecting || _draftContractLocked
+                ? null
+                : _showSourcePicker,
+            style:
+                FilledButton.styleFrom(
+                  minimumSize: const Size.fromHeight(58),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 14,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                ).copyWith(
+                  side: WidgetStateProperty.resolveWith(
+                    (states) => BorderSide(
+                      color: states.contains(WidgetState.focused)
+                          ? colors.onPrimary
+                          : Colors.transparent,
+                      width: 2,
+                    ),
+                  ),
+                ),
+            child: Text(
+              _selecting
+                  ? copy.text('Opening media', 'Otwieranie multimediów')
+                  : _media == null
+                  ? copy.text('Choose media', 'Wybierz multimedia')
+                  : copy.text('Replace media', 'Zmień multimedia'),
+              textAlign: TextAlign.center,
+              softWrap: true,
             ),
           ),
-        ),
-      );
-    } else if (controller == null || !controller.value.isInitialized) {
-      media = YoLoadingIndicator(
-        message: copy.text(
-          'Preparing video preview',
-          'Przygotowywanie podglądu',
-        ),
-      );
-    } else {
-      media = FittedBox(
-        fit: BoxFit.cover,
-        child: SizedBox(
-          width: controller.value.size.width,
-          height: controller.value.size.height,
-          child: VideoPlayer(controller),
-        ),
-      );
-    }
+          const SizedBox(height: 20),
+          Text(
+            copy.text(
+              'Photos up to 10 MB. Videos: 1–90 seconds, up to 100 MB.',
+              'Zdjęcia do 10 MB. Filmy: 1–90 sekund, do 100 MB.',
+            ),
+            textAlign: TextAlign.center,
+          ),
+        ],
+      ),
+    );
+  }
 
-    return Stack(
-      fit: StackFit.expand,
-      children: <Widget>[
-        ReelCompositionCanvas(composition: widget.composition, media: media),
-        if (controller != null && controller.value.isInitialized)
-          Center(
-            child: IconButton.filled(
-              key: const ValueKey('reel-local-video-playback'),
-              tooltip: controller.value.isPlaying
-                  ? copy.text('Pause video preview', 'Wstrzymaj podgląd filmu')
-                  : copy.text('Play video preview', 'Odtwórz podgląd filmu'),
-              onPressed: _toggle,
-              iconSize: 30,
-              constraints: const BoxConstraints.tightFor(width: 52, height: 52),
-              icon: Icon(
-                controller.value.isPlaying
-                    ? Icons.pause_rounded
-                    : Icons.play_arrow_rounded,
-              ),
-            ),
+  Widget _workspace(AppLocalizations copy, BoxConstraints bounds, bool wide) {
+    final generation = _identityGeneration;
+    final media = _media!;
+    final previewHeight = wide
+        ? math.min(560.0, math.max(280.0, bounds.maxHeight - 160))
+        : math.min(350.0, math.max(180.0, bounds.maxHeight * .42));
+    final preview = Center(
+      child: SizedBox(
+        width: previewHeight * 9 / 16,
+        height: previewHeight,
+        child: ReelDraftPreview(
+          key: _previewKey,
+          media: media,
+          backingAudio: _backingAudio,
+          composition: _composition,
+          audioPlayerFactory: widget.audioPlayerFactory,
+          active: !_publishing && !_selecting && !_pickingAudio,
+          cropEnabled:
+              _step == _ComposerStep.edit &&
+              _tool == _EditorTool.crop &&
+              !_draftContractLocked,
+          onCropChanged: (crop) {
+            if (_ownsDraft(generation) && !_draftContractLocked) {
+              setState(() => _composition = _composition.copyWith(crop: crop));
+            }
+          },
+          onPlayingChanged: (playing) {
+            if (_ownsDraft(generation)) {
+              setState(() => _previewPlaying = playing);
+            }
+          },
+        ),
+      ),
+    );
+    final tools = Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (_step == _ComposerStep.edit) ...[
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final tool in _EditorTool.values)
+                ChoiceChip(
+                  key: ValueKey('reel-tool-${tool.name}'),
+                  label: Text(switch (tool) {
+                    _EditorTool.crop => copy.text('Crop', 'Kadr'),
+                    _EditorTool.audio => copy.text('Audio', 'Dźwięk'),
+                    _EditorTool.text => copy.text(
+                      'Text and links',
+                      'Tekst i linki',
+                    ),
+                    _EditorTool.filter => copy.text('Filter', 'Filtr'),
+                  }),
+                  selected: _tool == tool,
+                  onSelected: _publishing
+                      ? null
+                      : (_) {
+                          if (_ownsDraft(generation)) {
+                            setState(() => _tool = tool);
+                          }
+                        },
+                ),
+            ],
           ),
+          const SizedBox(height: 12),
+        ],
+        _Editor(
+          media: media,
+          backingAudio: _backingAudio,
+          composition: _composition,
+          caption: _caption,
+          availability: _availability,
+          availabilityLocked: _draftContractLocked,
+          draftLocked: _draftContractLocked,
+          review: _step == _ComposerStep.review,
+          tool: _tool,
+          pickingAudio: _pickingAudio,
+          previewPlaying: _previewPlaying,
+          onPreview: () {
+            if (_ownsDraft(generation)) {
+              unawaited(_previewKey.currentState?.toggle());
+            }
+          },
+          onCaptionChanged: (_) {
+            if (_ownsDraft(generation) &&
+                !_draftContractLocked &&
+                _error != null) {
+              setState(() => _error = null);
+            }
+          },
+          onAvailabilityChanged: (value) {
+            if (_ownsDraft(generation) && !_draftContractLocked) {
+              setState(() => _availability = value);
+            }
+          },
+          onComposition: (value) {
+            if (_ownsDraft(generation) && !_draftContractLocked) {
+              setState(() {
+                _composition = value;
+                _error = null;
+              });
+            }
+          },
+          onPickAudio: () {
+            if (_ownsDraft(generation)) unawaited(_pickBackingAudio());
+          },
+          onRemoveAudio: () {
+            if (!_ownsDraft(generation) || _draftContractLocked) return;
+            setState(() {
+              _backingAudio = null;
+              _composition = _composition.copyWith(
+                backingAudioVolume: 0,
+                audioTrimStartMs: 0,
+                audioRightsAttested: false,
+                audioAttribution: '',
+              );
+            });
+          },
+          onAddText: () {
+            if (_ownsDraft(generation)) unawaited(_addTextOverlay());
+          },
+          onAddLink: () {
+            if (_ownsDraft(generation)) unawaited(_addLinkOverlay());
+          },
+          onEditText: (value) {
+            if (_ownsDraft(generation)) unawaited(_editTextOverlay(value));
+          },
+          onEditLink: (value) {
+            if (_ownsDraft(generation)) unawaited(_editLinkOverlay(value));
+          },
+        ),
+      ],
+    );
+    return wide
+        ? Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(child: preview),
+              const SizedBox(width: 28),
+              Expanded(child: tools),
+            ],
+          )
+        : Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [preview, const SizedBox(height: 18), tools],
+          );
+  }
+
+  Widget _footer(AppLocalizations copy, bool busy) {
+    final next = _step == _ComposerStep.review
+        ? YoButton(
+            key: const ValueKey('reel-publish'),
+            label: _publishing
+                ? copy.template(
+                    'Publishing {percent}%',
+                    'Publikowanie {percent}%',
+                    values: {'percent': (_progress * 100).round()},
+                  )
+                : copy.text('Publish Reel', 'Opublikuj Reel'),
+            onPressed: _media == null || busy ? null : _publish,
+            isLoading: _publishing,
+            icon: const Icon(Icons.publish_rounded),
+          )
+        : YoButton(
+            key: const ValueKey('reel-next-step'),
+            label: _step == _ComposerStep.edit
+                ? copy.text('Preview Reel', 'Podgląd Reela')
+                : copy.text('Next', 'Dalej'),
+            onPressed: _media == null || busy
+                ? null
+                : () => _goTo(_ComposerStep.values[_step.index + 1]),
+            icon: const Icon(Icons.arrow_forward_rounded),
+          );
+    if (_step == _ComposerStep.media) return next;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        next,
+        const SizedBox(height: 4),
+        TextButton(
+          key: const ValueKey('reel-previous-step'),
+          onPressed: busy ? null : _back,
+          child: Text(copy.text('Back', 'Wstecz')),
+        ),
       ],
     );
   }
@@ -1042,8 +1287,11 @@ class _Editor extends StatelessWidget {
     required this.availability,
     required this.availabilityLocked,
     required this.draftLocked,
-    required this.canPickAudio,
-    required this.audioPlayerFactory,
+    required this.review,
+    required this.tool,
+    required this.pickingAudio,
+    required this.previewPlaying,
+    required this.onPreview,
     required this.onCaptionChanged,
     required this.onAvailabilityChanged,
     required this.onComposition,
@@ -1062,8 +1310,11 @@ class _Editor extends StatelessWidget {
   final ReelAvailabilityChoice availability;
   final bool availabilityLocked;
   final bool draftLocked;
-  final bool canPickAudio;
-  final AudioPlayer Function()? audioPlayerFactory;
+  final bool review;
+  final _EditorTool tool;
+  final bool pickingAudio;
+  final bool previewPlaying;
+  final VoidCallback onPreview;
   final ValueChanged<String> onCaptionChanged;
   final ValueChanged<ReelAvailabilityChoice> onAvailabilityChanged;
   final ValueChanged<ReelComposition> onComposition;
@@ -1089,246 +1340,341 @@ class _Editor extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: <Widget>[
-            TextField(
-              controller: caption,
-              readOnly: draftLocked,
-              onChanged: draftLocked ? null : onCaptionChanged,
-              maxLength: 2200,
-              maxLines: 4,
-              decoration: InputDecoration(
-                labelText: copy.text('Caption', 'Opis'),
-                alignLabelWithHint: true,
+            if (review) ...[
+              TextField(
+                controller: caption,
+                readOnly: draftLocked,
+                onChanged: draftLocked ? null : onCaptionChanged,
+                maxLength: 2200,
+                maxLines: 4,
+                decoration: InputDecoration(
+                  labelText: copy.text('Caption', 'Opis'),
+                  alignLabelWithHint: true,
+                ),
               ),
-            ),
-            const SizedBox(height: 14),
-            _ReelAvailabilityPicker(
-              value: availability,
-              locked: availabilityLocked,
-              onChanged: onAvailabilityChanged,
-            ),
-            const SizedBox(height: 12),
-            Text(copy.text('Crop and position', 'Kadr i położenie')),
-            Semantics(
-              label: copy.text('Crop zoom', 'Powiększenie kadru'),
-              value: '${composition.crop.scale.toStringAsFixed(1)}×',
-              child: Slider(
-                value: composition.crop.scale,
-                min: 1,
-                max: 8,
-                divisions: 28,
-                label: '${composition.crop.scale.toStringAsFixed(1)}×',
-                semanticFormatterCallback: (value) =>
-                    '${value.toStringAsFixed(1)}×',
-                onChanged: media == null || draftLocked
+              const SizedBox(height: 14),
+              _ReelAvailabilityPicker(
+                value: availability,
+                locked: availabilityLocked,
+                onChanged: onAvailabilityChanged,
+              ),
+            ],
+            if (!review && tool == _EditorTool.crop) ...[
+              const SizedBox(height: 12),
+              Text(copy.text('Crop and position', 'Kadr i położenie')),
+              const SizedBox(height: 8),
+              Text(
+                copy.text(
+                  'Pinch to zoom, drag to position.',
+                  'Uszczypnij, aby powiększyć, i przeciągnij, aby ustawić kadr.',
+                ),
+              ),
+              TextButton(
+                key: const ValueKey('reel-reset-crop'),
+                onPressed: draftLocked
                     ? null
-                    : (value) => onComposition(
-                        composition.copyWith(
-                          crop: composition.crop.copyWith(scale: value),
-                        ),
+                    : () => onComposition(
+                        composition.copyWith(crop: const ReelCropTransform()),
                       ),
+                child: Text(copy.text('Reset crop', 'Resetuj kadr')),
               ),
-            ),
-            Row(
-              children: <Widget>[
-                Expanded(
-                  child: Semantics(
-                    label: copy.text(
-                      'Horizontal crop position',
-                      'Pozioma pozycja kadru',
-                    ),
-                    value: '${(composition.crop.offsetX * 100).round()}%',
-                    child: Slider(
-                      value: composition.crop.offsetX,
-                      min: -1,
-                      max: 1,
-                      semanticFormatterCallback: (value) =>
-                          '${(value * 100).round()}%',
-                      onChanged: media == null || draftLocked
-                          ? null
-                          : (value) => onComposition(
-                              composition.copyWith(
-                                crop: composition.crop.copyWith(offsetX: value),
-                              ),
-                            ),
-                    ),
-                  ),
-                ),
-                Expanded(
-                  child: Semantics(
-                    label: copy.text(
-                      'Vertical crop position',
-                      'Pionowa pozycja kadru',
-                    ),
-                    value: '${(composition.crop.offsetY * 100).round()}%',
-                    child: Slider(
-                      value: composition.crop.offsetY,
-                      min: -1,
-                      max: 1,
-                      semanticFormatterCallback: (value) =>
-                          '${(value * 100).round()}%',
-                      onChanged: media == null || draftLocked
-                          ? null
-                          : (value) => onComposition(
-                              composition.copyWith(
-                                crop: composition.crop.copyWith(offsetY: value),
-                              ),
-                            ),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Text(copy.text('Filter', 'Filtr')),
-            const SizedBox(height: 8),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: ReelFilter.values
-                  .map(
-                    (filter) => ChoiceChip(
-                      label: Text(localizedReelFilter(copy, filter)),
-                      selected: composition.filter == filter,
-                      onSelected: media == null || draftLocked
-                          ? null
-                          : (_) => onComposition(
-                              composition.copyWith(filter: filter),
-                            ),
-                    ),
-                  )
-                  .toList(growable: false),
-            ),
-            if (media?.mediaKind == ReelMediaKind.video) ...<Widget>[
-              const SizedBox(height: 18),
-              Text(copy.text('Trim video', 'Przytnij film')),
               Semantics(
-                label: copy.text('Video trim range', 'Zakres przycięcia filmu'),
-                value:
-                    '${composition.trimStartMs ~/ 1000}–${composition.trimEndMs ~/ 1000} s',
-                child: RangeSlider(
-                  values: RangeValues(
-                    composition.trimStartMs / 1000,
-                    composition.trimEndMs / 1000,
-                  ),
-                  min: 0,
-                  max: media!.durationMs / 1000,
-                  labels: RangeLabels(
-                    '${composition.trimStartMs ~/ 1000}s',
-                    '${composition.trimEndMs ~/ 1000}s',
-                  ),
-                  onChanged: draftLocked
-                      ? null
-                      : (values) => onComposition(
-                          composition.copyWith(
-                            trimStartMs: (values.start * 1000).round(),
-                            trimEndMs: (values.end * 1000).round(),
-                          ),
-                        ),
-                ),
-              ),
-              Text(copy.text('Original video audio', 'Dźwięk z filmu')),
-              Semantics(
-                label: copy.text(
-                  'Original video audio volume',
-                  'Głośność dźwięku z filmu',
-                ),
-                value: '${composition.originalAudioVolume}%',
+                label: copy.text('Crop zoom', 'Powiększenie kadru'),
+                value: '${composition.crop.scale.toStringAsFixed(1)}×',
                 child: Slider(
-                  value: composition.originalAudioVolume.toDouble(),
-                  min: 0,
-                  max: 100,
-                  divisions: 20,
-                  label: '${composition.originalAudioVolume}%',
-                  semanticFormatterCallback: (value) => '${value.round()}%',
-                  onChanged: draftLocked
+                  value: composition.crop.scale,
+                  min: 1,
+                  max: 8,
+                  divisions: 28,
+                  label: '${composition.crop.scale.toStringAsFixed(1)}×',
+                  semanticFormatterCallback: (value) =>
+                      '${value.toStringAsFixed(1)}×',
+                  onChanged: media == null || draftLocked
                       ? null
                       : (value) => onComposition(
                           composition.copyWith(
-                            originalAudioVolume: value.round(),
+                            crop: composition.crop.copyWith(scale: value),
                           ),
                         ),
                 ),
               ),
-            ],
-            const SizedBox(height: 16),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: <Widget>[
-                OutlinedButton.icon(
-                  onPressed: draftLocked || composition.textOverlays.length >= 8
-                      ? null
-                      : onAddText,
-                  icon: const Icon(Icons.text_fields_rounded),
-                  label: Text(copy.text('Add text', 'Dodaj tekst')),
-                ),
-                OutlinedButton.icon(
-                  onPressed: draftLocked || composition.linkOverlays.length >= 4
-                      ? null
-                      : onAddLink,
-                  icon: const Icon(Icons.link_rounded),
-                  label: Text(copy.text('Add link', 'Dodaj link')),
-                ),
-                if (canPickAudio && backingAudio == null)
-                  OutlinedButton.icon(
-                    onPressed: draftLocked ? null : onPickAudio,
-                    icon: const Icon(Icons.music_note_rounded),
-                    label: Text(
-                      copy.text('Add your audio', 'Dodaj własny dźwięk'),
-                    ),
+              if (composition.crop.scale == 1)
+                Text(
+                  copy.text(
+                    'Zoom in to reposition the frame.',
+                    'Powiększ obraz, aby przesunąć kadr.',
                   ),
-              ],
-            ),
-            if (composition.textOverlays.isNotEmpty ||
-                composition.linkOverlays.isNotEmpty) ...<Widget>[
-              const SizedBox(height: 12),
-              Wrap(
-                spacing: 8,
+                ),
+              Column(
                 children: <Widget>[
-                  ...composition.textOverlays.map(
-                    (item) => InputChip(
-                      label: Text(item.text),
-                      onPressed: draftLocked ? null : () => onEditText(item),
-                      onDeleted: draftLocked
-                          ? null
-                          : () => onComposition(
-                              composition.copyWith(
-                                textOverlays: composition.textOverlays
-                                    .where((entry) => entry.id != item.id)
-                                    .toList(growable: false),
-                              ),
-                            ),
-                    ),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Text(
+                        copy.text(
+                          'Horizontal crop position',
+                          'Pozioma pozycja kadru',
+                        ),
+                      ),
+                      Semantics(
+                        label: copy.text(
+                          'Horizontal crop position',
+                          'Pozioma pozycja kadru',
+                        ),
+                        value: '${(composition.crop.offsetX * 100).round()}%',
+                        child: Slider(
+                          value: composition.crop.offsetX,
+                          min: -1,
+                          max: 1,
+                          semanticFormatterCallback: (value) =>
+                              '${(value * 100).round()}%',
+                          onChanged:
+                              media == null ||
+                                  draftLocked ||
+                                  composition.crop.scale == 1
+                              ? null
+                              : (value) => onComposition(
+                                  composition.copyWith(
+                                    crop: composition.crop.copyWith(
+                                      offsetX: value,
+                                    ),
+                                  ),
+                                ),
+                        ),
+                      ),
+                    ],
                   ),
-                  ...composition.linkOverlays.map(
-                    (item) => InputChip(
-                      avatar: const Icon(Icons.link_rounded, size: 18),
-                      label: Text(item.label),
-                      onPressed: draftLocked ? null : () => onEditLink(item),
-                      onDeleted: draftLocked
-                          ? null
-                          : () => onComposition(
-                              composition.copyWith(
-                                linkOverlays: composition.linkOverlays
-                                    .where((entry) => entry.id != item.id)
-                                    .toList(growable: false),
-                              ),
-                            ),
-                    ),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Text(
+                        copy.text(
+                          'Vertical crop position',
+                          'Pionowa pozycja kadru',
+                        ),
+                      ),
+                      Semantics(
+                        label: copy.text(
+                          'Vertical crop position',
+                          'Pionowa pozycja kadru',
+                        ),
+                        value: '${(composition.crop.offsetY * 100).round()}%',
+                        child: Slider(
+                          value: composition.crop.offsetY,
+                          min: -1,
+                          max: 1,
+                          semanticFormatterCallback: (value) =>
+                              '${(value * 100).round()}%',
+                          onChanged:
+                              media == null ||
+                                  draftLocked ||
+                                  composition.crop.scale == 1
+                              ? null
+                              : (value) => onComposition(
+                                  composition.copyWith(
+                                    crop: composition.crop.copyWith(
+                                      offsetY: value,
+                                    ),
+                                  ),
+                                ),
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ),
             ],
-            if (backingAudio != null) ...<Widget>[
-              const SizedBox(height: 18),
-              _BackingAudioControls(
-                payload: backingAudio!,
-                composition: composition,
-                playerFactory: audioPlayerFactory,
-                editingEnabled: !draftLocked,
-                onComposition: onComposition,
-                onRemove: onRemoveAudio,
+            if (!review && tool == _EditorTool.filter) ...[
+              const SizedBox(height: 12),
+              Text(copy.text('Filter', 'Filtr')),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: ReelFilter.values
+                    .map(
+                      (filter) => ChoiceChip(
+                        label: Text(localizedReelFilter(copy, filter)),
+                        selected: composition.filter == filter,
+                        onSelected: media == null || draftLocked
+                            ? null
+                            : (_) => onComposition(
+                                composition.copyWith(filter: filter),
+                              ),
+                      ),
+                    )
+                    .toList(growable: false),
               ),
+            ],
+            if (!review &&
+                media?.mediaKind == ReelMediaKind.video &&
+                (tool == _EditorTool.crop ||
+                    tool == _EditorTool.audio)) ...<Widget>[
+              if (tool == _EditorTool.crop) ...[
+                const SizedBox(height: 18),
+                Text(copy.text('Trim video', 'Przytnij film')),
+                Semantics(
+                  label: copy.text(
+                    'Video trim range',
+                    'Zakres przycięcia filmu',
+                  ),
+                  value:
+                      '${composition.trimStartMs ~/ 1000}–${composition.trimEndMs ~/ 1000} s',
+                  child: RangeSlider(
+                    values: RangeValues(
+                      composition.trimStartMs / 1000,
+                      composition.trimEndMs / 1000,
+                    ),
+                    min: 0,
+                    max: media!.durationMs / 1000,
+                    labels: RangeLabels(
+                      '${composition.trimStartMs ~/ 1000}s',
+                      '${composition.trimEndMs ~/ 1000}s',
+                    ),
+                    onChanged: draftLocked
+                        ? null
+                        : (values) {
+                            if (values.end - values.start < 1) return;
+                            onComposition(
+                              composition.copyWith(
+                                trimStartMs: (values.start * 1000).round(),
+                                trimEndMs: (values.end * 1000).round(),
+                              ),
+                            );
+                          },
+                  ),
+                ),
+              ],
+              if (tool == _EditorTool.audio) ...[
+                Text(copy.text('Original video audio', 'Dźwięk z filmu')),
+                Semantics(
+                  label: copy.text(
+                    'Original video audio volume',
+                    'Głośność dźwięku z filmu',
+                  ),
+                  value: '${composition.originalAudioVolume}%',
+                  child: Slider(
+                    value: composition.originalAudioVolume.toDouble(),
+                    min: 0,
+                    max: 100,
+                    divisions: 20,
+                    label: '${composition.originalAudioVolume}%',
+                    semanticFormatterCallback: (value) => '${value.round()}%',
+                    onChanged: draftLocked
+                        ? null
+                        : (value) => onComposition(
+                            composition.copyWith(
+                              originalAudioVolume: value.round(),
+                            ),
+                          ),
+                  ),
+                ),
+              ],
+            ],
+            if (!review && tool == _EditorTool.text) ...[
+              const SizedBox(height: 16),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: <Widget>[
+                  OutlinedButton.icon(
+                    onPressed:
+                        draftLocked || composition.textOverlays.length >= 8
+                        ? null
+                        : onAddText,
+                    icon: const Icon(Icons.text_fields_rounded),
+                    label: Text(copy.text('Add text', 'Dodaj tekst')),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed:
+                        draftLocked || composition.linkOverlays.length >= 4
+                        ? null
+                        : onAddLink,
+                    icon: const Icon(Icons.link_rounded),
+                    label: Text(copy.text('Add link', 'Dodaj link')),
+                  ),
+                ],
+              ),
+              if (composition.textOverlays.isNotEmpty ||
+                  composition.linkOverlays.isNotEmpty) ...<Widget>[
+                const SizedBox(height: 12),
+                Wrap(
+                  spacing: 8,
+                  children: <Widget>[
+                    ...composition.textOverlays.map(
+                      (item) => InputChip(
+                        label: Text(item.text),
+                        onPressed: draftLocked ? null : () => onEditText(item),
+                        onDeleted: draftLocked
+                            ? null
+                            : () => onComposition(
+                                composition.copyWith(
+                                  textOverlays: composition.textOverlays
+                                      .where((entry) => entry.id != item.id)
+                                      .toList(growable: false),
+                                ),
+                              ),
+                      ),
+                    ),
+                    ...composition.linkOverlays.map(
+                      (item) => InputChip(
+                        avatar: const Icon(Icons.link_rounded, size: 18),
+                        label: Text(item.label),
+                        onPressed: draftLocked ? null : () => onEditLink(item),
+                        onDeleted: draftLocked
+                            ? null
+                            : () => onComposition(
+                                composition.copyWith(
+                                  linkOverlays: composition.linkOverlays
+                                      .where((entry) => entry.id != item.id)
+                                      .toList(growable: false),
+                                ),
+                              ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ],
+            if (!review && tool == _EditorTool.audio) ...[
+              Text(
+                copy.text(
+                  'Use your own MP3, M4A or WAV: 1–90 seconds, up to 15 MB.',
+                  'Dodaj własny plik MP3, M4A lub WAV: 1–90 sekund, do 15 MB.',
+                ),
+              ),
+              const SizedBox(height: 12),
+              if (backingAudio == null)
+                OutlinedButton.icon(
+                  key: const ValueKey('reel-add-audio'),
+                  onPressed: draftLocked || pickingAudio ? null : onPickAudio,
+                  icon: pickingAudio
+                      ? const SizedBox.square(
+                          dimension: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.music_note_rounded),
+                  label: Text(
+                    pickingAudio
+                        ? copy.text(
+                            'Preparing audio',
+                            'Przygotowywanie dźwięku',
+                          )
+                        : copy.text('Add your audio', 'Dodaj własny dźwięk'),
+                  ),
+                ),
+              if (backingAudio != null) ...<Widget>[
+                const SizedBox(height: 18),
+                _BackingAudioControls(
+                  payload: backingAudio!,
+                  composition: composition,
+                  playing: previewPlaying,
+                  onPreview: onPreview,
+                  editingEnabled: !draftLocked,
+                  onComposition: onComposition,
+                  onRemove: onRemoveAudio,
+                ),
+              ],
             ],
           ],
         ),
@@ -1461,13 +1807,15 @@ Future<ReelAvailabilityChoice?> _showCustomAvailabilityDialog(
   BuildContext context, {
   required ReelAvailabilityChoice current,
 }) async {
+  final owner = context.findAncestorStateOfType<_ReelComposerScreenState>();
+  if (owner == null) return null;
   final copy = AppLocalizations.of(context);
   final controller = TextEditingController(
     text: current.hours?.toString() ?? '24',
   );
   var unit = _ReelAvailabilityUnit.hours;
   String? error;
-  final result = await showDialog<ReelAvailabilityChoice>(
+  final result = await owner._showDraftDialog<ReelAvailabilityChoice>(
     context: context,
     builder: (context) => StatefulBuilder(
       builder: (context, setDialogState) {
@@ -1559,149 +1907,30 @@ Future<ReelAvailabilityChoice?> _showCustomAvailabilityDialog(
   return result;
 }
 
-class _BackingAudioControls extends StatefulWidget {
+class _BackingAudioControls extends StatelessWidget {
   const _BackingAudioControls({
     required this.payload,
     required this.composition,
+    required this.playing,
+    required this.onPreview,
     required this.editingEnabled,
     required this.onComposition,
     required this.onRemove,
-    this.playerFactory,
   });
 
   final ReelUploadPayload payload;
   final ReelComposition composition;
+  final bool playing;
   final bool editingEnabled;
+  final VoidCallback onPreview;
   final ValueChanged<ReelComposition> onComposition;
   final VoidCallback onRemove;
-  final AudioPlayer Function()? playerFactory;
-
-  @override
-  State<_BackingAudioControls> createState() => _BackingAudioControlsState();
-}
-
-class _BackingAudioControlsState extends State<_BackingAudioControls> {
-  late final AudioPlayer _player =
-      widget.playerFactory?.call() ?? AudioPlayer();
-  StreamSubscription<PlayerState>? _stateSubscription;
-  StreamSubscription<Duration>? _positionSubscription;
-  bool _sourceLoaded = false;
-  bool _loading = false;
-  bool _playing = false;
-  bool _enforcingEnd = false;
-  Duration _position = Duration.zero;
-  Object? _playbackError;
-
-  int get _previewEndMs {
-    final selectedVideoMs =
-        widget.composition.trimEndMs - widget.composition.trimStartMs;
-    final requestedEnd = selectedVideoMs > 0
-        ? widget.composition.audioTrimStartMs + selectedVideoMs
-        : widget.payload.durationMs;
-    return math.min(widget.payload.durationMs, requestedEnd);
-  }
-
-  @override
-  void initState() {
-    super.initState();
-    _stateSubscription = _player.onPlayerStateChanged.listen((state) {
-      if (!mounted) return;
-      setState(() => _playing = state == PlayerState.playing);
-    });
-    _positionSubscription = _player.onPositionChanged.listen((position) {
-      if (!mounted) return;
-      setState(() => _position = position);
-      if (!_enforcingEnd && position.inMilliseconds >= _previewEndMs) {
-        _enforcingEnd = true;
-        unawaited(_rewindPreview());
-      }
-    });
-  }
-
-  @override
-  void didUpdateWidget(covariant _BackingAudioControls oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (!identical(oldWidget.payload.bytes, widget.payload.bytes)) {
-      _sourceLoaded = false;
-      _position = Duration.zero;
-      _playbackError = null;
-      unawaited(_player.stop());
-    }
-    if (oldWidget.composition.backingAudioVolume !=
-        widget.composition.backingAudioVolume) {
-      unawaited(_player.setVolume(widget.composition.backingAudioVolume / 100));
-    }
-    if (oldWidget.composition.audioTrimStartMs !=
-        widget.composition.audioTrimStartMs) {
-      final start = Duration(milliseconds: widget.composition.audioTrimStartMs);
-      _position = start;
-      if (_sourceLoaded) unawaited(_player.seek(start));
-    }
-  }
-
-  Future<void> _rewindPreview() async {
-    try {
-      await _player.pause();
-      final start = Duration(milliseconds: widget.composition.audioTrimStartMs);
-      await _player.seek(start);
-      if (mounted) setState(() => _position = start);
-    } finally {
-      _enforcingEnd = false;
-    }
-  }
-
-  Future<void> _togglePreview() async {
-    if (_loading) return;
-    if (_playing) {
-      await _player.pause();
-      return;
-    }
-    setState(() {
-      _loading = true;
-      _playbackError = null;
-    });
-    try {
-      var sourceWasLoadedNow = false;
-      if (!_sourceLoaded) {
-        await _player.setSource(
-          BytesSource(
-            widget.payload.bytes,
-            mimeType: widget.payload.contentType,
-          ),
-        );
-        _sourceLoaded = true;
-        sourceWasLoadedNow = true;
-      }
-      await _player.setVolume(widget.composition.backingAudioVolume / 100);
-      final startMs = widget.composition.audioTrimStartMs;
-      if (sourceWasLoadedNow ||
-          _position.inMilliseconds < startMs ||
-          _position.inMilliseconds >= _previewEndMs) {
-        final start = Duration(milliseconds: startMs);
-        await _player.seek(start);
-        _position = start;
-      }
-      await _player.resume();
-    } catch (error) {
-      if (mounted) setState(() => _playbackError = error);
-    } finally {
-      if (mounted) setState(() => _loading = false);
-    }
-  }
-
-  @override
-  void dispose() {
-    unawaited(_stateSubscription?.cancel());
-    unawaited(_positionSubscription?.cancel());
-    unawaited(_player.dispose());
-    super.dispose();
-  }
 
   @override
   Widget build(BuildContext context) {
     final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
-    final maxTrimStartMs = math.max(0, widget.payload.durationMs - 1000);
+    final maxTrimStartMs = math.max(0, payload.durationMs - 1000);
     return Material(
       color: palette.surfaceRaised,
       clipBehavior: Clip.antiAlias,
@@ -1713,35 +1942,28 @@ class _BackingAudioControlsState extends State<_BackingAudioControls> {
         padding: const EdgeInsets.all(14),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: <Widget>[
+          children: [
             Row(
-              children: <Widget>[
+              children: [
                 IconButton.filledTonal(
                   key: const ValueKey('reel-backing-audio-preview'),
-                  tooltip: _playing
-                      ? copy.text('Pause backing audio', 'Wstrzymaj podkład')
-                      : copy.text('Preview backing audio', 'Odsłuchaj podkład'),
-                  onPressed: _loading ? null : _togglePreview,
+                  tooltip: playing
+                      ? copy.text('Pause preview', 'Wstrzymaj podgląd')
+                      : copy.text('Play preview', 'Odtwórz podgląd'),
+                  onPressed: onPreview,
                   constraints: const BoxConstraints.tightFor(
-                    width: 44,
-                    height: 44,
+                    width: 48,
+                    height: 48,
                   ),
-                  icon: _loading
-                      ? const SizedBox.square(
-                          dimension: 20,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : Icon(
-                          _playing
-                              ? Icons.pause_rounded
-                              : Icons.play_arrow_rounded,
-                        ),
+                  icon: Icon(
+                    playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                  ),
                 ),
                 const SizedBox(width: 10),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
-                    children: <Widget>[
+                    children: [
                       Text(
                         copy.text(
                           'Your backing audio',
@@ -1753,8 +1975,9 @@ class _BackingAudioControlsState extends State<_BackingAudioControls> {
                         ),
                       ),
                       Text(
-                        '${_formatDuration(_position)} / '
-                        '${_formatDuration(Duration(milliseconds: widget.payload.durationMs))}',
+                        _formatDuration(
+                          Duration(milliseconds: payload.durationMs),
+                        ),
                         style: TextStyle(color: palette.textSecondary),
                       ),
                     ],
@@ -1762,44 +1985,26 @@ class _BackingAudioControlsState extends State<_BackingAudioControls> {
                 ),
                 IconButton(
                   tooltip: copy.text('Remove audio', 'Usuń dźwięk'),
-                  onPressed: widget.editingEnabled ? widget.onRemove : null,
+                  onPressed: editingEnabled ? onRemove : null,
                   icon: const Icon(Icons.close_rounded),
                 ),
               ],
             ),
-            if (_playbackError != null) ...<Widget>[
-              const SizedBox(height: 8),
-              Semantics(
-                liveRegion: true,
-                child: Text(
-                  copy.text(
-                    'This audio cannot be previewed. Try again.',
-                    'Nie można odsłuchać tego dźwięku. Spróbuj ponownie.',
-                  ),
-                  style: TextStyle(
-                    color: palette.dangerForeground,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ),
-            ],
             const SizedBox(height: 8),
             Text(copy.text('Backing audio volume', 'Głośność podkładu')),
             Semantics(
               label: copy.text('Backing audio volume', 'Głośność podkładu'),
-              value: '${widget.composition.backingAudioVolume}%',
+              value: '${composition.backingAudioVolume}%',
               child: Slider(
-                value: widget.composition.backingAudioVolume.toDouble(),
+                value: composition.backingAudioVolume.toDouble(),
                 min: 0,
                 max: 100,
                 divisions: 20,
-                label: '${widget.composition.backingAudioVolume}%',
+                label: '${composition.backingAudioVolume}%',
                 semanticFormatterCallback: (value) => '${value.round()}%',
-                onChanged: widget.editingEnabled
-                    ? (value) => widget.onComposition(
-                        widget.composition.copyWith(
-                          backingAudioVolume: value.round(),
-                        ),
+                onChanged: editingEnabled
+                    ? (value) => onComposition(
+                        composition.copyWith(backingAudioVolume: value.round()),
                       )
                     : null,
               ),
@@ -1810,9 +2015,9 @@ class _BackingAudioControlsState extends State<_BackingAudioControls> {
                 'Backing audio start position',
                 'Początek podkładu dźwiękowego',
               ),
-              value: '${widget.composition.audioTrimStartMs ~/ 1000} s',
+              value: '${composition.audioTrimStartMs ~/ 1000} s',
               child: Slider(
-                value: widget.composition.audioTrimStartMs
+                value: composition.audioTrimStartMs
                     .clamp(0, maxTrimStartMs)
                     .toDouble(),
                 min: 0,
@@ -1820,26 +2025,22 @@ class _BackingAudioControlsState extends State<_BackingAudioControls> {
                 divisions: maxTrimStartMs <= 0
                     ? null
                     : math.min(90, math.max(1, maxTrimStartMs ~/ 1000)),
-                label: '${widget.composition.audioTrimStartMs ~/ 1000} s',
+                label: '${composition.audioTrimStartMs ~/ 1000} s',
                 semanticFormatterCallback: (value) =>
                     '${(value / 1000).round()} s',
-                onChanged: maxTrimStartMs <= 0 || !widget.editingEnabled
+                onChanged: maxTrimStartMs <= 0 || !editingEnabled
                     ? null
-                    : (value) => widget.onComposition(
-                        widget.composition.copyWith(
-                          audioTrimStartMs: value.round(),
-                        ),
+                    : (value) => onComposition(
+                        composition.copyWith(audioTrimStartMs: value.round()),
                       ),
               ),
             ),
             CheckboxListTile(
               contentPadding: EdgeInsets.zero,
-              value: widget.composition.audioRightsAttested,
-              onChanged: widget.editingEnabled
-                  ? (value) => widget.onComposition(
-                      widget.composition.copyWith(
-                        audioRightsAttested: value ?? false,
-                      ),
+              value: composition.audioRightsAttested,
+              onChanged: editingEnabled
+                  ? (value) => onComposition(
+                      composition.copyWith(audioRightsAttested: value ?? false),
                     )
                   : null,
               title: Text(
@@ -1848,6 +2049,23 @@ class _BackingAudioControlsState extends State<_BackingAudioControls> {
                   'Ten dźwięk jest mój lub mam zgodę na jego użycie.',
                 ),
               ),
+            ),
+            TextFormField(
+              key: ValueKey(payload),
+              initialValue: composition.audioAttribution,
+              readOnly: !editingEnabled,
+              maxLength: 160,
+              decoration: InputDecoration(
+                labelText: copy.text(
+                  'Audio credit (optional)',
+                  'Autor dźwięku (opcjonalnie)',
+                ),
+              ),
+              onChanged: editingEnabled
+                  ? (value) => onComposition(
+                      composition.copyWith(audioAttribution: value),
+                    )
+                  : null,
             ),
           ],
         ),
@@ -1903,8 +2121,85 @@ class _PositionSlider extends StatelessWidget {
   }
 }
 
-String _friendly(Object error) {
-  if (error is FormatException) return error.message.toString();
-  if (error is StateError) return error.message;
-  return 'The Reel could not be prepared. Try again.';
+String _friendly(BuildContext context, Object error) {
+  final copy = AppLocalizations.of(context);
+  if (error is StateError &&
+      error.message == 'This Reel draft belongs to an ended sign-in session.') {
+    return copy.text(
+      'This draft belongs to a previous session. Discard it and create a new Reel.',
+      'Ten szkic pochodzi z poprzedniej sesji. Odrzuć go i utwórz nowego Reela.',
+    );
+  }
+  if (error is FirebaseFunctionsException) {
+    switch (error.code) {
+      case 'unauthenticated':
+        return copy.text(
+          'Sign in again before publishing.',
+          'Zaloguj się ponownie przed publikacją.',
+        );
+      case 'permission-denied':
+        return copy.text(
+          'Check your email verification and account permissions before publishing.',
+          'Przed publikacją sprawdź weryfikację adresu e-mail i uprawnienia konta.',
+        );
+      case 'resource-exhausted':
+        return copy.text(
+          'You have reached the publishing limit. Try again later.',
+          'Osiągnięto limit publikacji. Spróbuj ponownie później.',
+        );
+      case 'failed-precondition':
+      case 'invalid-argument':
+        return copy.text(
+          'Check your media and audio rights, then try again.',
+          'Sprawdź multimedia i prawa do dźwięku, a następnie spróbuj ponownie.',
+        );
+      case 'unavailable':
+      case 'deadline-exceeded':
+        return copy.text(
+          'Check your connection and retry. Your draft is kept.',
+          'Sprawdź połączenie i ponów próbę. Twój szkic został zachowany.',
+        );
+    }
+  }
+  if (error is TimeoutException) {
+    return copy.text(
+      'Check your connection and retry. Your draft is kept.',
+      'Sprawdź połączenie i ponów próbę. Twój szkic został zachowany.',
+    );
+  }
+  final message = error is FormatException ? error.message.toString() : '';
+  if (message == 'Confirm that you may use the backing audio.') {
+    return copy.text(
+      'Confirm that you may use the backing audio.',
+      'Potwierdź, że masz prawo użyć podkładu dźwiękowego.',
+    );
+  }
+  if (message.toLowerCase().contains('audio') &&
+      !message.toLowerCase().contains('original')) {
+    return copy.text(
+      'Use your own MP3, M4A or WAV: 1–90 seconds, up to 15 MB.',
+      'Dodaj własny plik MP3, M4A lub WAV: 1–90 sekund, do 15 MB.',
+    );
+  }
+  if (message.toLowerCase().contains('video') ||
+      message.toLowerCase().contains('media') ||
+      message.toLowerCase().contains('photo') ||
+      message.toLowerCase().contains('image')) {
+    return copy.text(
+      'Photos up to 10 MB. Videos: 1–90 seconds, up to 100 MB.',
+      'Zdjęcia do 10 MB. Filmy: 1–90 sekund, do 100 MB.',
+    );
+  }
+  if (error is StateError &&
+      (error.message.toString().contains('sign-in') ||
+          error.message.toString().contains('Sign in'))) {
+    return copy.text(
+      'Sign in again before publishing.',
+      'Zaloguj się ponownie przed publikacją.',
+    );
+  }
+  return copy.text(
+    'The Reel could not be prepared. Try again.',
+    'Nie udało się przygotować Reela. Spróbuj ponownie.',
+  );
 }
