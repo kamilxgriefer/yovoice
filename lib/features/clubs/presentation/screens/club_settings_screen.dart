@@ -8,6 +8,7 @@ import 'package:yovoice/features/clubs/data/models/club.dart';
 import 'package:yovoice/features/clubs/data/services/club_service.dart';
 import 'package:yovoice/features/marketing/data/services/public_showcase_consent_service.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
+import 'package:yovoice/shared/widgets/inputs/yo_keyboard_done_bar.dart';
 
 class ClubSettingsScreen extends StatefulWidget {
   const ClubSettingsScreen({required this.club, super.key});
@@ -139,9 +140,11 @@ class _ClubSettingsScreenState extends State<ClubSettingsScreen> {
         foregroundColor: palette.textPrimary,
         title: Text(copy.text('Club settings', 'Ustawienia klubu')),
       ),
+      bottomNavigationBar: const YoKeyboardDoneBar(),
       body: ResponsiveContentFrame(
         width: ResponsiveContentWidth.form,
         child: ListView(
+          keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
           padding: const EdgeInsets.fromLTRB(18, 16, 18, 120),
           children: [
             _field(_name, copy.text('Club name', 'Nazwa klubu')),

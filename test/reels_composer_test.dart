@@ -10,6 +10,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:yovoice/features/reels/data/services/reel_service.dart';
 import 'package:yovoice/features/reels/data/models/reel_composition.dart';
 import 'package:yovoice/features/reels/presentation/screens/reel_composer_screen.dart';
+import 'package:yovoice/features/reels/presentation/widgets/reel_composition_canvas.dart';
 import 'package:yovoice/features/reels/presentation/widgets/reel_draft_preview.dart';
 import 'package:yovoice/shared/widgets/buttons/yo_button.dart';
 
@@ -49,6 +50,129 @@ void main() {
       expect(clamped.offsetY, -1);
     },
   );
+
+  test('overlay drag maps canvas pixels to the normalized safe area', () {
+    const canvas = Size(390, 390 * 16 / 9);
+    const insets = EdgeInsets.fromLTRB(16, 16, 16, 132);
+    final same = reelOverlayPositionFromGesture(
+      startX: .5,
+      startY: .42,
+      startFocalPoint: const Offset(100, 100),
+      focalPoint: const Offset(100, 100),
+      canvas: canvas,
+      safeInsets: insets,
+    );
+    expect(same.x, .5);
+    expect(same.y, .42);
+    // Safe width is 358 px, so 35.8 px is exactly one tenth of the range.
+    final moved = reelOverlayPositionFromGesture(
+      startX: .5,
+      startY: .42,
+      startFocalPoint: Offset.zero,
+      focalPoint: const Offset(35.8, 54.533),
+      canvas: canvas,
+      safeInsets: insets,
+    );
+    expect(moved.x, closeTo(.6, 1e-9));
+    expect(moved.y, closeTo(.52, 1e-4));
+    final clamped = reelOverlayPositionFromGesture(
+      startX: .5,
+      startY: .5,
+      startFocalPoint: Offset.zero,
+      focalPoint: const Offset(-9999, 9999),
+      canvas: canvas,
+      safeInsets: insets,
+    );
+    expect(clamped.x, 0);
+    expect(clamped.y, 1);
+    expect(reelTextOverlayScaleFromGesture(startScale: 1, gestureScale: 5), 2);
+    expect(
+      reelTextOverlayScaleFromGesture(startScale: 1, gestureScale: .1),
+      .75,
+    );
+  });
+
+  testWidgets('text overlays drag on the preview only in the Text tool', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ReelComposerScreen(
+          service: _composerService(),
+          imagePicker: _ImagePickerStub(),
+        ),
+      ),
+    );
+    await _choosePhoto(tester);
+    await tester.ensureVisible(find.byKey(const ValueKey('reel-tool-text')));
+    await tester.tap(find.byKey(const ValueKey('reel-tool-text')));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Add text'));
+    await tester.tap(find.text('Add text'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).first, 'Drag me');
+    await tester.tap(find.widgetWithText(FilledButton, 'Add'));
+    await tester.pumpAndSettle();
+    ReelDraftPreview preview() =>
+        tester.widget<ReelDraftPreview>(find.byType(ReelDraftPreview));
+    final overlay = preview().composition.textOverlays.single;
+    expect(overlay.x, .5);
+    final handle = find.byKey(
+      ValueKey('reel-text-overlay-handle-${overlay.id}'),
+    );
+    await tester.ensureVisible(find.byType(ReelDraftPreview));
+    expect(handle, findsOneWidget);
+    final before = tester.getCenter(handle);
+    final gesture = await tester.startGesture(before);
+    await gesture.moveBy(const Offset(40, 60));
+    await tester.pump();
+    await gesture.up();
+    await tester.pumpAndSettle();
+    final dragged = preview().composition.textOverlays.single;
+    expect(dragged.x, greaterThan(.5));
+    expect(dragged.y, greaterThan(.42));
+    expect(dragged.text, 'Drag me');
+    expect(
+      preview().composition.validate(
+        mediaKind: ReelMediaKind.image,
+        durationMs: 0,
+        hasBackingAudio: false,
+      ),
+      isNull,
+    );
+    final after = tester.getCenter(
+      find.byKey(ValueKey('reel-text-overlay-handle-${overlay.id}')),
+    );
+    expect(after.dx, greaterThan(before.dx));
+    expect(after.dy, greaterThan(before.dy));
+    // A far drag clamps at the edge and the recipe stays publishable.
+    final far = await tester.startGesture(after);
+    await far.moveBy(const Offset(5000, 5000));
+    await tester.pump();
+    await far.up();
+    await tester.pumpAndSettle();
+    expect(preview().composition.textOverlays.single.x, 1);
+    expect(
+      preview().composition.validate(
+        mediaKind: ReelMediaKind.image,
+        durationMs: 0,
+        hasBackingAudio: false,
+      ),
+      isNull,
+    );
+    // The Crop tool owns the pointer: no overlay handles there.
+    await tester.ensureVisible(find.byKey(const ValueKey('reel-tool-crop')));
+    await tester.tap(find.byKey(const ValueKey('reel-tool-crop')));
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(ValueKey('reel-text-overlay-handle-${overlay.id}')),
+      findsNothing,
+    );
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets(
     'steps preserve caption and compatible edits on confirmed replacement',

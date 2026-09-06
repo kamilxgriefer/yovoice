@@ -78,9 +78,71 @@ void main() {
 
     await Future<void>.delayed(Duration.zero);
     expect(events, ['microphone:true', 'persist:true']);
-    expect(sync.isBusy, isTrue);
+    // The microphone is already off, so the control is released while the
+    // roster mirror is still writing — that round trip is what testers felt
+    // as a multi-second "mute lag".
+    expect(sync.isBusy, isFalse);
     persisted.complete();
     expect(await operation, isTrue);
+  });
+
+  test('a quick unmute after mute keeps roster writes in order', () async {
+    final mutePersisted = Completer<void>();
+    final events = <String>[];
+    final sync = RoomMuteSync();
+
+    final mute = sync.toggle(
+      currentMuted: false,
+      persistRosterState: (muted) async {
+        events.add('persist-start:$muted');
+        if (muted) await mutePersisted.future;
+        events.add('persist-done:$muted');
+      },
+      applyMicrophoneState: (muted) async => events.add('microphone:$muted'),
+    );
+    await Future<void>.delayed(Duration.zero);
+    expect(sync.isBusy, isFalse);
+
+    // The user taps again before the mute's roster write has landed.
+    final unmute = sync.toggle(
+      currentMuted: true,
+      persistRosterState: (muted) async {
+        events.add('persist-start:$muted');
+        events.add('persist-done:$muted');
+      },
+      applyMicrophoneState: (muted) async => events.add('microphone:$muted'),
+    );
+    await Future<void>.delayed(Duration.zero);
+    expect(sync.isBusy, isTrue, reason: 'unmute is server-first');
+    expect(events, ['microphone:true', 'persist-start:true']);
+
+    mutePersisted.complete();
+    expect(await mute, isTrue);
+    expect(await unmute, isTrue);
+    expect(events, [
+      'microphone:true',
+      'persist-start:true',
+      'persist-done:true',
+      'persist-start:false',
+      'persist-done:false',
+      'microphone:false',
+    ]);
+    expect(sync.isBusy, isFalse);
+  });
+
+  test('a rejected mute roster write still surfaces after release', () async {
+    final sync = RoomMuteSync();
+    final microphoneStates = <bool>[];
+    await expectLater(
+      sync.toggle(
+        currentMuted: false,
+        persistRosterState: (_) async => throw StateError('denied'),
+        applyMicrophoneState: (muted) async => microphoneStates.add(muted),
+      ),
+      throwsStateError,
+    );
+    expect(microphoneStates, [true]);
+    expect(sync.isBusy, isFalse);
   });
 
   test('ignores a second tap while synchronization is in progress', () async {

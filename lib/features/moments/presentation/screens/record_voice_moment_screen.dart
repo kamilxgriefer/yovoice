@@ -19,6 +19,7 @@ import 'package:yovoice/features/moments/data/services/voice_moment_recorder.dar
 import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/theme/yo_immersive_dark_surface.dart';
+import 'package:yovoice/shared/widgets/inputs/yo_keyboard_done_bar.dart';
 
 /// The states this screen can actually be in.
 ///
@@ -1337,6 +1338,10 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
                             ),
                           ),
                           if (pinActions) _reviewActionBar(width, wide: wide),
+                          // While the keyboard is up the action bar is
+                          // unpinned by design; this gives the caption an
+                          // explicit way out instead of a blank slot.
+                          const YoKeyboardDoneBar(),
                         ],
                       );
                     },
@@ -1395,6 +1400,7 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
     final compact = width < 600;
     return SingleChildScrollView(
       key: const ValueKey('voice-moment-body-scroll'),
+      keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
       padding: const EdgeInsets.only(top: 16, bottom: 24),
       child: ResponsiveContentFrame(
         width: ResponsiveContentWidth.form,
@@ -1520,6 +1526,7 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
   Widget _wideBody(double width, {required bool showActions}) {
     return SingleChildScrollView(
       key: const ValueKey('voice-moment-body-scroll'),
+      keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
       padding: const EdgeInsets.only(top: 22, bottom: 32),
       child: ResponsiveContentFrame(
         width: ResponsiveContentWidth.feed,

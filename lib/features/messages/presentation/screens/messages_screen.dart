@@ -282,6 +282,29 @@ class _MessagesScreenState extends State<MessagesScreen> {
     }
   }
 
+  Future<void> _unarchiveConversation(Conversation conversation) async {
+    try {
+      await _messageService.unarchiveConversation(conversation.id);
+      if (mounted) {
+        _showMessage(
+          AppLocalizations.of(
+            context,
+          ).text('Conversation restored.', 'Rozmowa została przywrócona.'),
+        );
+      }
+    } catch (_) {
+      if (mounted) {
+        _showMessage(
+          AppLocalizations.of(context).text(
+            'Could not restore this conversation.',
+            'Nie udało się przywrócić tej rozmowy.',
+          ),
+          isError: true,
+        );
+      }
+    }
+  }
+
   Future<void> _toggleMute(Conversation conversation, bool isMuted) async {
     try {
       await _messageService.setConversationMuted(
@@ -508,6 +531,8 @@ class _MessagesScreenState extends State<MessagesScreen> {
                               liveFriend: liveFriend,
                             ),
                             onArchive: () => _archiveConversation(conversation),
+                            onUnarchive: () =>
+                                _unarchiveConversation(conversation),
                             onToggleMute: () =>
                                 _toggleMute(conversation, muted),
                           );
@@ -857,6 +882,7 @@ class _ConversationTile extends StatelessWidget {
     required this.service,
     required this.onTap,
     required this.onArchive,
+    required this.onUnarchive,
     required this.onToggleMute,
   });
 
@@ -870,7 +896,10 @@ class _ConversationTile extends StatelessWidget {
   final MessageService service;
   final VoidCallback onTap;
   final VoidCallback onArchive;
+  final VoidCallback onUnarchive;
   final VoidCallback onToggleMute;
+
+  bool get _archived => conversation.isArchivedFor(currentUserId);
 
   @override
   Widget build(BuildContext context) {
@@ -1142,13 +1171,18 @@ class _ConversationTile extends StatelessWidget {
       builder: (sheetContext) {
         return _ConversationActionsSheet(
           muted: muted,
+          archived: _archived,
           onMute: () {
             Navigator.pop(sheetContext);
             onToggleMute();
           },
           onArchive: () {
             Navigator.pop(sheetContext);
-            onArchive();
+            if (_archived) {
+              onUnarchive();
+            } else {
+              onArchive();
+            }
           },
         );
       },
@@ -1277,11 +1311,16 @@ class _ConversationAvatarState extends State<_ConversationAvatar> {
 class _ConversationActionsSheet extends StatelessWidget {
   const _ConversationActionsSheet({
     required this.muted,
+    required this.archived,
     required this.onMute,
     required this.onArchive,
   });
 
   final bool muted;
+
+  /// An archived thread offers "Unarchive" — the sheet used to say
+  /// "Archive" even inside the Archived view, so testers saw no way back.
+  final bool archived;
   final VoidCallback onMute;
   final VoidCallback onArchive;
 
@@ -1290,49 +1329,58 @@ class _ConversationActionsSheet extends StatelessWidget {
     final palette = context.appPalette;
     final copy = AppLocalizations.of(context);
 
-    return Container(
-      padding: EdgeInsets.fromLTRB(
-        16,
-        12,
-        16,
-        18 + MediaQuery.paddingOf(context).bottom,
+    return Material(
+      color: palette.surfaceRaised,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(26)),
       ),
-      decoration: BoxDecoration(
-        color: palette.surfaceRaised,
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(26)),
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          YoModalSheetChrome(
-            sheetLabel: copy.text('conversation actions', 'opcje rozmowy'),
-            surfaceColor: palette.surfaceRaised,
-          ),
-          const SizedBox(height: 2),
-          ListTile(
-            onTap: onMute,
-            leading: Icon(
-              muted
-                  ? Icons.notifications_active_outlined
-                  : Icons.notifications_off_outlined,
-              color: palette.textPrimary,
+      clipBehavior: Clip.antiAlias,
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(
+          16,
+          12,
+          16,
+          18 + MediaQuery.paddingOf(context).bottom,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            YoModalSheetChrome(
+              sheetLabel: copy.text('conversation actions', 'opcje rozmowy'),
+              surfaceColor: palette.surfaceRaised,
             ),
-            title: Text(
-              muted
-                  ? copy.text('Unmute messages', 'Włącz powiadomienia')
-                  : copy.text('Mute messages', 'Wycisz powiadomienia'),
-              style: TextStyle(color: palette.textPrimary),
+            const SizedBox(height: 2),
+            ListTile(
+              onTap: onMute,
+              leading: Icon(
+                muted
+                    ? Icons.notifications_active_outlined
+                    : Icons.notifications_off_outlined,
+                color: palette.textPrimary,
+              ),
+              title: Text(
+                muted
+                    ? copy.text('Unmute messages', 'Włącz powiadomienia')
+                    : copy.text('Mute messages', 'Wycisz powiadomienia'),
+                style: TextStyle(color: palette.textPrimary),
+              ),
             ),
-          ),
-          ListTile(
-            onTap: onArchive,
-            leading: Icon(Icons.archive_outlined, color: palette.textPrimary),
-            title: Text(
-              copy.text('Archive conversation', 'Archiwizuj rozmowę'),
-              style: TextStyle(color: palette.textPrimary),
+            ListTile(
+              key: const ValueKey('conversation-archive-action'),
+              onTap: onArchive,
+              leading: Icon(
+                archived ? Icons.unarchive_outlined : Icons.archive_outlined,
+                color: palette.textPrimary,
+              ),
+              title: Text(
+                archived
+                    ? copy.text('Unarchive conversation', 'Przywróć z archiwum')
+                    : copy.text('Archive conversation', 'Archiwizuj rozmowę'),
+                style: TextStyle(color: palette.textPrimary),
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

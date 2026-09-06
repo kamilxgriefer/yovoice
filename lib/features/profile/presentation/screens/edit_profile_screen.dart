@@ -14,6 +14,7 @@ import 'package:yovoice/features/profile/data/services/profile_service.dart';
 import 'package:yovoice/features/profile/presentation/screens/image_crop_screen.dart';
 import 'package:yovoice/shared/widgets/profile/profile_banner.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
+import 'package:yovoice/shared/widgets/inputs/yo_keyboard_done_bar.dart';
 
 class EditProfileScreen extends StatefulWidget {
   const EditProfileScreen({
@@ -516,12 +517,14 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       // ~800px tall ("the banner is enormous"). 640 keeps the preview a
       // compact cover card at every width; mobile is unaffected because
       // phones never reach the cap.
+      bottomNavigationBar: const YoKeyboardDoneBar(),
       body: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 640),
           child: Form(
             key: _formKey,
             child: ListView(
+              keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
               padding: const EdgeInsets.fromLTRB(18, 12, 18, 40),
               children: [
                 _SectionLabel(copy.text('Profile media', 'Zdjęcia profilu')),

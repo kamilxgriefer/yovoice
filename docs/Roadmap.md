@@ -16,6 +16,12 @@ someone decide what to pick up next.
 
 ## Done
 
+- **Tester round 2 client fixes: draggable Reel overlays, keyboard Done bar,
+  Remove friend on the list, Unarchive on chat rows, shorter mute busy
+  window** (2026-09-06, ADR-149; **SOURCE + WIDGET TESTS VERIFIED, NOT
+  PUBLISHED; on-device drag feel unverified**): see Bugs.md "Build 21
+  tester round" for what remains server-side.
+
 - **Build 21 tester-round fixes: tab fade-through, More capsule, chat bubble,
   in-place refreshes, thinner avatar rings, Soft Bells v4 sounds**
   (2026-09-06, ADR-147/148; **SOURCE + CAPTURE VERIFIED, NOT PUBLISHED**):

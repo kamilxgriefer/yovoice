@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
@@ -8,6 +9,35 @@ import 'package:yovoice/features/reels/data/models/reel_composition.dart';
 import 'package:yovoice/features/reels/presentation/reel_visuals.dart';
 
 typedef ReelLinkOpener = Future<void> Function(ReelLinkOverlay overlay);
+
+/// Maps a drag on the composition canvas back to a normalized overlay
+/// position — the exact inverse of `_NormalizedOverlayDelegate`: one full
+/// safe-area width is 1.0 in x, one full safe-area height is 1.0 in y.
+/// [canvas] is the design canvas the recognizer reports in (the
+/// [ReelCompositionFrame.designSize] space inside the FittedBox). Results
+/// clamp to 0..1 so a far drag can never make the composition invalid.
+({double x, double y}) reelOverlayPositionFromGesture({
+  required double startX,
+  required double startY,
+  required Offset startFocalPoint,
+  required Offset focalPoint,
+  required Size canvas,
+  required EdgeInsets safeInsets,
+}) {
+  final safeWidth = math.max(1.0, canvas.width - safeInsets.horizontal);
+  final safeHeight = math.max(1.0, canvas.height - safeInsets.vertical);
+  final delta = focalPoint - startFocalPoint;
+  return (
+    x: (startX + delta.dx / safeWidth).clamp(0.0, 1.0),
+    y: (startY + delta.dy / safeHeight).clamp(0.0, 1.0),
+  );
+}
+
+/// Pinch scale for a text overlay, bounded to the model's contract.
+double reelTextOverlayScaleFromGesture({
+  required double startScale,
+  required double gestureScale,
+}) => (startScale * gestureScale).clamp(.75, 2.0);
 
 /// The editing recipe has one design canvas regardless of preview size. Native
 /// playback controls belong outside this frame so their hit areas never shrink.
@@ -17,6 +47,8 @@ class ReelCompositionFrame extends StatelessWidget {
     required this.media,
     this.mediaForeground,
     this.onOpenLink,
+    this.onTextOverlayChanged,
+    this.onLinkOverlayChanged,
     this.overlaySafeInsets = const EdgeInsets.fromLTRB(16, 16, 16, 132),
     super.key,
   });
@@ -25,6 +57,13 @@ class ReelCompositionFrame extends StatelessWidget {
   final Widget media;
   final Widget? mediaForeground;
   final ReelLinkOpener? onOpenLink;
+
+  /// Composer-only: when set, text pills can be dragged (and pinched) on
+  /// the canvas. Null — the feed — keeps pills paint-only exactly as before.
+  final ValueChanged<ReelTextOverlay>? onTextOverlayChanged;
+
+  /// Composer-only: when set, link pills can be dragged on the canvas.
+  final ValueChanged<ReelLinkOverlay>? onLinkOverlayChanged;
   final EdgeInsets overlaySafeInsets;
 
   static const designSize = Size(390, 390 * 16 / 9);
@@ -47,6 +86,8 @@ class ReelCompositionFrame extends StatelessWidget {
               media: media,
               mediaForeground: mediaForeground,
               onOpenLink: onOpenLink,
+              onTextOverlayChanged: onTextOverlayChanged,
+              onLinkOverlayChanged: onLinkOverlayChanged,
               overlaySafeInsets: overlaySafeInsets,
               minimumLinkExtent: onOpenLink == null || scale <= 0
                   ? 44
@@ -83,6 +124,8 @@ class ReelCompositionCanvas extends StatelessWidget {
     required this.media,
     this.mediaForeground,
     this.onOpenLink,
+    this.onTextOverlayChanged,
+    this.onLinkOverlayChanged,
     this.overlaySafeInsets = const EdgeInsets.fromLTRB(16, 16, 16, 132),
     this.minimumLinkExtent = 44,
     super.key,
@@ -92,6 +135,8 @@ class ReelCompositionCanvas extends StatelessWidget {
   final Widget media;
   final Widget? mediaForeground;
   final ReelLinkOpener? onOpenLink;
+  final ValueChanged<ReelTextOverlay>? onTextOverlayChanged;
+  final ValueChanged<ReelLinkOverlay>? onLinkOverlayChanged;
   final EdgeInsets overlaySafeInsets;
   final double minimumLinkExtent;
 
@@ -127,24 +172,179 @@ class ReelCompositionCanvas extends StatelessWidget {
                   x: overlay.x,
                   y: overlay.y,
                   safeInsets: overlaySafeInsets,
-                  child: _ReelTextOverlayPill(overlay: overlay),
+                  child: onTextOverlayChanged == null
+                      ? _ReelTextOverlayPill(overlay: overlay)
+                      : _EditableOverlay(
+                          key: ValueKey<String>(
+                            'reel-text-overlay-handle-${overlay.id}',
+                          ),
+                          canvas: size,
+                          safeInsets: overlaySafeInsets,
+                          x: overlay.x,
+                          y: overlay.y,
+                          scale: overlay.scale,
+                          onChanged: (x, y, scale) => onTextOverlayChanged!(
+                            ReelTextOverlay(
+                              id: overlay.id,
+                              text: overlay.text,
+                              x: x,
+                              y: y,
+                              scale: scale,
+                              color: overlay.color,
+                            ),
+                          ),
+                          child: _ReelTextOverlayPill(overlay: overlay),
+                        ),
                 ),
               for (final overlay in composition.linkOverlays)
                 _MeasuredOverlay(
                   x: overlay.x,
                   y: overlay.y,
                   safeInsets: overlaySafeInsets,
-                  child: _ReelLinkOverlayPill(
-                    overlay: overlay,
-                    onOpen: onOpenLink,
-                    minimumExtent: minimumLinkExtent,
-                  ),
+                  child: onLinkOverlayChanged == null
+                      ? _ReelLinkOverlayPill(
+                          overlay: overlay,
+                          onOpen: onOpenLink,
+                          minimumExtent: minimumLinkExtent,
+                        )
+                      : _EditableOverlay(
+                          key: ValueKey<String>(
+                            'reel-link-overlay-handle-${overlay.id}',
+                          ),
+                          canvas: size,
+                          safeInsets: overlaySafeInsets,
+                          x: overlay.x,
+                          y: overlay.y,
+                          onChanged: (x, y, _) => onLinkOverlayChanged!(
+                            ReelLinkOverlay(
+                              id: overlay.id,
+                              label: overlay.label,
+                              uri: overlay.uri,
+                              x: x,
+                              y: y,
+                            ),
+                          ),
+                          child: _ReelLinkOverlayPill(
+                            overlay: overlay,
+                            onOpen: null,
+                            minimumExtent: minimumLinkExtent,
+                          ),
+                        ),
                 ),
             ],
           ),
         );
       },
     );
+  }
+}
+
+/// One-finger drag moves a pill, two fingers pinch a text pill. The pill
+/// itself stays paint-only (IgnorePointer inside), so this wrapper is the
+/// single hit target; a focus-coloured outline shows while a gesture is live.
+class _EditableOverlay extends StatefulWidget {
+  const _EditableOverlay({
+    required this.canvas,
+    required this.safeInsets,
+    required this.x,
+    required this.y,
+    required this.onChanged,
+    required this.child,
+    this.scale,
+    super.key,
+  });
+
+  final Size canvas;
+  final EdgeInsets safeInsets;
+  final double x;
+  final double y;
+
+  /// Null for links, which have no scale in the model.
+  final double? scale;
+  final void Function(double x, double y, double scale) onChanged;
+  final Widget child;
+
+  @override
+  State<_EditableOverlay> createState() => _EditableOverlayState();
+}
+
+class _EditableOverlayState extends State<_EditableOverlay> {
+  double? _startX, _startY, _startScale;
+  Offset? _startFocal;
+  bool _active = false;
+
+  void _start(ScaleStartDetails details) {
+    _startX = widget.x;
+    _startY = widget.y;
+    _startScale = widget.scale;
+    _startFocal = details.focalPoint;
+    setState(() => _active = true);
+  }
+
+  void _update(ScaleUpdateDetails details) {
+    final startX = _startX, startY = _startY, startFocal = _startFocal;
+    if (startX == null || startY == null || startFocal == null) return;
+    final position = reelOverlayPositionFromGesture(
+      startX: startX,
+      startY: startY,
+      startFocalPoint: startFocal,
+      focalPoint: details.focalPoint,
+      canvas: widget.canvas,
+      safeInsets: widget.safeInsets,
+    );
+    final startScale = _startScale;
+    final scale = startScale == null
+        ? 1.0
+        : reelTextOverlayScaleFromGesture(
+            startScale: startScale,
+            gestureScale: details.pointerCount > 1 ? details.scale : 1,
+          );
+    widget.onChanged(position.x, position.y, scale);
+  }
+
+  void _end() {
+    _startX = _startY = _startScale = null;
+    _startFocal = null;
+    if (mounted) setState(() => _active = false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final focus = Theme.of(context).colorScheme.primary;
+    // Eager: a pointer that lands on a pill belongs to the pill. Otherwise
+    // the composer's scroll view wins any mostly-vertical drag and the pill
+    // never moves — exactly the "cannot drag it" report.
+    return RawGestureDetector(
+      behavior: HitTestBehavior.opaque,
+      gestures: <Type, GestureRecognizerFactory>{
+        _EagerScaleGestureRecognizer:
+            GestureRecognizerFactoryWithHandlers<_EagerScaleGestureRecognizer>(
+              _EagerScaleGestureRecognizer.new,
+              (recognizer) => recognizer
+                ..onStart = _start
+                ..onUpdate = _update
+                ..onEnd = (_) => _end(),
+            ),
+      },
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: _active ? focus : focus.withValues(alpha: 0),
+            width: 2,
+          ),
+        ),
+        child: widget.child,
+      ),
+    );
+  }
+}
+
+class _EagerScaleGestureRecognizer extends ScaleGestureRecognizer {
+  @override
+  void addAllowedPointer(PointerDownEvent event) {
+    super.addAllowedPointer(event);
+    resolve(GestureDisposition.accepted);
   }
 }
 

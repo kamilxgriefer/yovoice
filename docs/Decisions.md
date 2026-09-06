@@ -9265,3 +9265,54 @@ counts and RMS values and raises the per-file bound to 160 KB (bundle
 build. The owner has not yet auditioned the pack; if the character is wrong,
 regenerate rather than hand-edit.
 
+## ADR-149: Direct manipulation on the Reel canvas, a shared keyboard Done bar, list-level Remove friend / Unarchive, and a shorter mute busy window
+
+**Context.** Tester round 2 (2026-09-06): Reel text/link overlays could not
+be moved on the preview (only via sliders in a dialog); multiline caption
+fields offered no way to finish typing on iOS; "delete chat" and "delete
+friend" were reported missing although Archive and Remove friend exist
+(Remove only at the bottom of the profile screen, Archive with no visible
+Unarchive); the mute button lagged for seconds after a tap.
+
+**Decision.**
+- `ReelCompositionCanvas`/`ReelCompositionFrame`/`ReelDraftPreview` gain
+  optional `onTextOverlayChanged`/`onLinkOverlayChanged`. When set (the
+  composer's Text tool only), each pill is wrapped in an `_EditableOverlay`
+  driven by an eager `ScaleGestureRecognizer` (accepts the pointer on
+  down, so the composer's scroll view cannot steal a vertical drag); one
+  finger moves, two fingers scale text within the model's .75–2 bounds.
+  `reelOverlayPositionFromGesture` is the exact inverse of the layout
+  delegate and clamps to 0..1. Null callbacks (the feed) keep the pills
+  paint-only, byte-for-byte the previous behaviour. Sliders and dialogs
+  stay as the accessible path.
+- `YoKeyboardDoneBar` (shared/widgets/inputs): renders only while a text
+  field has focus and the keyboard inset is > 0; one localized Done action
+  unfocuses. Placed under the body of the Voice Moment recorder and the
+  Reel composer, and as `bottomNavigationBar` (or wrapped around the
+  existing bar) on Create Room, Create Club, Club settings, Room settings,
+  Edit profile and the broadcast settings sheet. Their scroll views also
+  dismiss the keyboard on drag.
+- Friends list rows get a long-press and an options button opening a
+  sheet (View profile, Message, Remove friend) that reuses
+  `FriendService.removeFriend` with the same confirmation as the profile
+  screen. Chat rows' action sheet shows Unarchive for archived threads and
+  calls the existing `unarchiveConversation`.
+- `RoomMuteSync` releases `isBusy` as soon as the local track is disabled
+  in the mute direction; the roster write continues, awaited for outcome
+  mapping and chained through `_rosterTail` so a fast unmute is written
+  after it. Unmute stays server-first (unchanged).
+
+**Reasoning.** All four are client-only and additive. The eager
+recognizer is the one non-obvious choice: without it a mostly vertical
+drag on a pill scrolls the composer instead (the crop gesture only works
+because its test starts horizontally). Releasing the mute control before
+the roster round trip is safe because the local track — the
+privacy-critical truth — is already off; the roster row is a mirror whose
+failure still surfaces as `mutedLocally`/`failed`.
+
+**Consequences.** Widget tests cover the drag (position, clamping, tool
+gating), the Done bar, the friend options sheet and the ordered mute
+writes. "Delete chat for me" beyond Archive still needs a server
+capability (see Bugs.md). The mute callable's own cold start (server) is
+unchanged; the button no longer waits for it.
+

@@ -320,6 +320,45 @@ void main() {
     expect(identical(chat.auth, auth), isTrue);
   });
 
+  testWidgets('friend row offers Remove friend from its options', (
+    tester,
+  ) async {
+    await db.collection('users').doc(me).collection('friends').doc('ada').set({
+      'displayName': 'Ada',
+    });
+    await db.collection('publicProfiles').doc('ada').set({
+      'uid': 'ada',
+      'displayName': 'Ada',
+    });
+    await tester.pumpWidget(app(showRequestsInitially: false));
+    await tester.pumpAndSettle();
+
+    // Message stays exactly where it was; the new options button sits next
+    // to it and the row's long-press opens the same sheet.
+    expect(find.byTooltip('Message'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('friend-options-ada')));
+    await tester.pumpAndSettle();
+    expect(find.text('Remove friend'), findsOneWidget);
+    expect(find.text('View profile'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('friend-remove-action')));
+    await tester.pumpAndSettle();
+    expect(find.text('Remove friend?'), findsOneWidget);
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+    expect(calls.where((call) => call.name == 'removeFriend'), isEmpty);
+
+    await tester.longPress(find.text('Ada'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('friend-remove-action')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('friend-remove-confirm')));
+    await tester.pumpAndSettle();
+    final remove = calls.singleWhere((call) => call.name == 'removeFriend');
+    expect(remove.data['targetUserId'], 'ada');
+    expect(find.text('Ada was removed from your friends.'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets(
     'default friend route derives its message service from injected Firebase',
     (tester) async {

@@ -10,6 +10,7 @@ import 'package:yovoice/features/rooms/data/services/room_service.dart';
 import 'package:yovoice/features/rooms/presentation/room_cover_editor.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/theme/yo_immersive_dark_surface.dart';
+import 'package:yovoice/shared/widgets/inputs/yo_keyboard_done_bar.dart';
 
 const _background = Color(0xFF080711);
 const _surface = Color(0xFF151020);
@@ -461,11 +462,13 @@ class _RoomSettingsScreenState extends State<RoomSettingsScreen> {
           ),
         ],
       ),
+      bottomNavigationBar: const YoKeyboardDoneBar(),
       body: ResponsiveContentFrame(
         width: ResponsiveContentWidth.form,
         child: Form(
           key: _formKey,
           child: ListView(
+            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
             padding: const EdgeInsets.fromLTRB(18, 8, 18, 80),
             children: [
               _Section(

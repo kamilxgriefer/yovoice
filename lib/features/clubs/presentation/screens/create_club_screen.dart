@@ -12,6 +12,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:yovoice/features/clubs/data/models/club.dart';
 import 'package:yovoice/features/clubs/data/services/club_service.dart';
 import 'package:yovoice/features/clubs/presentation/screens/club_created_screen.dart';
+import 'package:yovoice/shared/widgets/inputs/yo_keyboard_done_bar.dart';
 
 class CreateClubScreen extends StatefulWidget {
   const CreateClubScreen({
@@ -243,6 +244,7 @@ class _CreateClubScreenState extends State<CreateClubScreen> {
         child: Form(
           key: _formKey,
           child: ListView(
+            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
             padding: const EdgeInsets.fromLTRB(18, 10, 18, 130),
             children: [
               _HeroCard(identity: _identity, isFamily: widget.isFamily),
@@ -453,73 +455,79 @@ class _CreateClubScreenState extends State<CreateClubScreen> {
           ),
         ),
       ),
-      bottomNavigationBar: SafeArea(
-        top: false,
-        child: Container(
-          decoration: BoxDecoration(
-            color: palette.surfaceRaised,
-            border: Border(top: BorderSide(color: palette.border)),
-          ),
-          child: ResponsiveContentFrame(
-            width: ResponsiveContentWidth.form,
-            fillHeight: false,
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(18, 14, 18, 14),
-              child: SizedBox(
-                height: 58,
-                child: FilledButton.icon(
-                  key: const ValueKey('space-identity-create-cta'),
-                  onPressed: _busy || _pickingImage ? null : _createClub,
-                  style: FilledButton.styleFrom(
-                    backgroundColor: identityVisuals.cta,
-                    foregroundColor: identityVisuals.onCta,
-                    disabledBackgroundColor: _busy
-                        ? identityVisuals.cta
-                        : palette.surfaceSunken,
-                    disabledForegroundColor: _busy
-                        ? identityVisuals.onCta
-                        : palette.textTertiary,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(19),
-                    ),
-                  ),
-                  icon: _busy
-                      ? SizedBox(
-                          width: 20,
-                          height: 20,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2.5,
-                            color: identityVisuals.spinner,
-                          ),
-                        )
-                      : const Icon(Icons.add_business_rounded),
-                  label: Text(
-                    _busy
-                        ? (widget.isFamily
-                              ? copy.text(
-                                  'Creating Family Room...',
-                                  'Tworzenie pokoju rodzinnego...',
-                                )
-                              : copy.text(
-                                  'Creating club...',
-                                  'Tworzenie klubu...',
-                                ))
-                        : (widget.isFamily
-                              ? copy.text(
-                                  'Create Family Room',
-                                  'Utwórz pokój rodzinny',
-                                )
-                              : copy.text('Create Club', 'Utwórz klub')),
-                    style: const TextStyle(
-                      fontSize: 17,
-                      fontWeight: FontWeight.w900,
+      bottomNavigationBar: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const YoKeyboardDoneBar(),
+          SafeArea(
+            top: false,
+            child: Container(
+              decoration: BoxDecoration(
+                color: palette.surfaceRaised,
+                border: Border(top: BorderSide(color: palette.border)),
+              ),
+              child: ResponsiveContentFrame(
+                width: ResponsiveContentWidth.form,
+                fillHeight: false,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(18, 14, 18, 14),
+                  child: SizedBox(
+                    height: 58,
+                    child: FilledButton.icon(
+                      key: const ValueKey('space-identity-create-cta'),
+                      onPressed: _busy || _pickingImage ? null : _createClub,
+                      style: FilledButton.styleFrom(
+                        backgroundColor: identityVisuals.cta,
+                        foregroundColor: identityVisuals.onCta,
+                        disabledBackgroundColor: _busy
+                            ? identityVisuals.cta
+                            : palette.surfaceSunken,
+                        disabledForegroundColor: _busy
+                            ? identityVisuals.onCta
+                            : palette.textTertiary,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(19),
+                        ),
+                      ),
+                      icon: _busy
+                          ? SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2.5,
+                                color: identityVisuals.spinner,
+                              ),
+                            )
+                          : const Icon(Icons.add_business_rounded),
+                      label: Text(
+                        _busy
+                            ? (widget.isFamily
+                                  ? copy.text(
+                                      'Creating Family Room...',
+                                      'Tworzenie pokoju rodzinnego...',
+                                    )
+                                  : copy.text(
+                                      'Creating club...',
+                                      'Tworzenie klubu...',
+                                    ))
+                            : (widget.isFamily
+                                  ? copy.text(
+                                      'Create Family Room',
+                                      'Utwórz pokój rodzinny',
+                                    )
+                                  : copy.text('Create Club', 'Utwórz klub')),
+                        style: const TextStyle(
+                          fontSize: 17,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
                     ),
                   ),
                 ),
               ),
             ),
           ),
-        ),
+        ],
       ),
     );
   }

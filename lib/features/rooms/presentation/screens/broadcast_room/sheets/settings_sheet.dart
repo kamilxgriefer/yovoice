@@ -7,6 +7,7 @@ import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
 import 'package:yovoice/features/rooms/presentation/screens/broadcast_room/broadcast_colors.dart';
 import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
+import 'package:yovoice/shared/widgets/inputs/yo_keyboard_done_bar.dart';
 
 class BroadcastSettingsSheet extends StatefulWidget {
   const BroadcastSettingsSheet({
@@ -167,6 +168,7 @@ class _BroadcastSettingsSheetState extends State<BroadcastSettingsSheet> {
           ),
           Flexible(
             child: SingleChildScrollView(
+              keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
               padding: const EdgeInsets.fromLTRB(18, 10, 18, 20),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -431,6 +433,7 @@ class _BroadcastSettingsSheetState extends State<BroadcastSettingsSheet> {
               ),
             ),
           ),
+          const YoKeyboardDoneBar(),
         ],
       ),
     );

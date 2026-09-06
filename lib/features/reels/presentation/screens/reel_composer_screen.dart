@@ -19,6 +19,7 @@ import 'package:yovoice/features/reels/presentation/widgets/reel_draft_preview.d
 import 'package:yovoice/shared/widgets/buttons/yo_button.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
+import 'package:yovoice/shared/widgets/inputs/yo_keyboard_done_bar.dart';
 
 typedef ReelVideoDurationProbe = Future<int> Function(XFile file);
 typedef ReelBackingAudioPicker = Future<ReelUploadPayload?> Function();
@@ -996,9 +997,14 @@ class _ReelComposerScreenState extends State<ReelComposerScreen> {
                       child: SingleChildScrollView(
                         key: const ValueKey('reel-composer-scroll'),
                         controller: _scroll,
+                        keyboardDismissBehavior:
+                            ScrollViewKeyboardDismissBehavior.onDrag,
                         child: content,
                       ),
                     ),
+                    // Pinned in both height branches: with the keyboard up
+                    // the footer may already be folded into the scroll.
+                    const YoKeyboardDoneBar(),
                     if (!compactHeight)
                       DecoratedBox(
                         decoration: BoxDecoration(
@@ -1123,6 +1129,39 @@ class _ReelComposerScreenState extends State<ReelComposerScreen> {
               setState(() => _composition = _composition.copyWith(crop: crop));
             }
           },
+          // Direct manipulation lives in the Text tool only, so it never
+          // competes with the crop gesture. The edit dialogs' sliders stay
+          // as the keyboard/screen-reader path.
+          onTextOverlayChanged:
+              _step == _ComposerStep.edit &&
+                  _tool == _EditorTool.text &&
+                  !_draftContractLocked
+              ? (overlay) {
+                  if (!_ownsDraft(generation) || _draftContractLocked) return;
+                  setState(() {
+                    _composition = _composition.copyWith(
+                      textOverlays: _composition.textOverlays
+                          .map((item) => item.id == overlay.id ? overlay : item)
+                          .toList(growable: false),
+                    );
+                  });
+                }
+              : null,
+          onLinkOverlayChanged:
+              _step == _ComposerStep.edit &&
+                  _tool == _EditorTool.text &&
+                  !_draftContractLocked
+              ? (overlay) {
+                  if (!_ownsDraft(generation) || _draftContractLocked) return;
+                  setState(() {
+                    _composition = _composition.copyWith(
+                      linkOverlays: _composition.linkOverlays
+                          .map((item) => item.id == overlay.id ? overlay : item)
+                          .toList(growable: false),
+                    );
+                  });
+                }
+              : null,
           onPlayingChanged: (playing) {
             if (_ownsDraft(generation)) {
               setState(() => _previewPlaying = playing);

@@ -46,6 +46,8 @@ class ReelDraftPreview extends StatefulWidget {
     this.backingAudio,
     this.audioPlayerFactory,
     this.cropEnabled = false,
+    this.onTextOverlayChanged,
+    this.onLinkOverlayChanged,
     this.active = true,
     this.onCropChanged,
     this.onPlayingChanged,
@@ -57,6 +59,12 @@ class ReelDraftPreview extends StatefulWidget {
   final ReelComposition composition;
   final AudioPlayer Function()? audioPlayerFactory;
   final bool cropEnabled;
+
+  /// When set, text/link pills on the preview are draggable (text also
+  /// pinchable). The composer passes these only while the Text tool is
+  /// active, so crop and overlay gestures never compete for a pointer.
+  final ValueChanged<ReelTextOverlay>? onTextOverlayChanged;
+  final ValueChanged<ReelLinkOverlay>? onLinkOverlayChanged;
   final bool active;
   final ValueChanged<ReelCropTransform>? onCropChanged;
   final ValueChanged<bool>? onPlayingChanged;
@@ -333,6 +341,8 @@ class ReelDraftPreviewState extends State<ReelDraftPreview>
                   child: ReelCompositionFrame(
                     composition: widget.composition,
                     media: media,
+                    onTextOverlayChanged: widget.onTextOverlayChanged,
+                    onLinkOverlayChanged: widget.onLinkOverlayChanged,
                   ),
                 ),
               ),

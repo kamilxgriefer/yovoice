@@ -20,6 +20,7 @@ import 'package:yovoice/features/messages/presentation/screens/chat_screen.dart'
 import 'package:yovoice/features/profile/data/services/profile_media_service.dart';
 import 'package:yovoice/shared/widgets/buttons/yo_icon_button.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
+import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
 import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
@@ -73,6 +74,7 @@ class _FriendsScreenState extends State<FriendsScreen> {
   final Set<String> _processingRequestIds = <String>{};
   late Stream<int> _requestCountStream;
   bool _navigationInFlight = false;
+
   /// Friend whose conversation is being opened right now — drives the
   /// bubble's busy state on that one row.
   String? _openingChatFriendId;
@@ -230,6 +232,70 @@ class _FriendsScreenState extends State<FriendsScreen> {
       }
     }
   });
+
+  /// Same confirmation and service call as the profile screen's Remove
+  /// button, reachable from the list row so the option is discoverable.
+  Future<void> _confirmRemoveFriend(FriendUser friend) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        final palette = dialogContext.appPalette;
+        final colors = Theme.of(dialogContext).colorScheme;
+        final copy = AppLocalizations.of(dialogContext);
+        return AlertDialog(
+          backgroundColor: palette.surfaceRaised,
+          title: Text(
+            copy.text('Remove friend?', 'Usunąć znajomego?'),
+            style: TextStyle(color: palette.textPrimary),
+          ),
+          content: Text(
+            copy.template(
+              '{name} will be removed from your friends. You can send a new request later.',
+              '{name} zniknie z Twoich znajomych. Później możesz wysłać nowe zaproszenie.',
+              values: <String, Object>{'name': friend.displayName},
+            ),
+            style: TextStyle(color: palette.textSecondary),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: Text(copy.text('Cancel', 'Anuluj')),
+            ),
+            FilledButton(
+              key: const ValueKey('friend-remove-confirm'),
+              onPressed: () => Navigator.pop(dialogContext, true),
+              style: FilledButton.styleFrom(
+                backgroundColor: colors.error,
+                foregroundColor: colors.onError,
+              ),
+              child: Text(copy.text('Remove', 'Usuń')),
+            ),
+          ],
+        );
+      },
+    );
+    if (confirmed != true || !mounted) return;
+    try {
+      await _friendService.removeFriend(friend.id);
+      if (!mounted) return;
+      _showMessage(
+        AppLocalizations.of(context).template(
+          '{name} was removed from your friends.',
+          '{name} to już nie Twój znajomy.',
+          values: <String, Object>{'name': friend.displayName},
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      _showMessage(
+        AppLocalizations.of(context).text(
+          'Could not remove this friend.',
+          'Nie udało się usunąć znajomego.',
+        ),
+        isError: true,
+      );
+    }
+  }
 
   Future<void> _acceptRequest(FriendRequest request) async {
     await _runRequestAction(
@@ -649,6 +715,7 @@ class _FriendsScreenState extends State<FriendsScreen> {
                   openingChat: _openingChatFriendId == friend.id,
                   onProfile: () => _openProfile(friend),
                   onMessage: () => _startChat(friend),
+                  onRemove: () => _confirmRemoveFriend(friend),
                 ),
               ),
             ),
@@ -825,6 +892,7 @@ class _FriendCard extends StatelessWidget {
     this.openingChat = false,
     required this.onProfile,
     required this.onMessage,
+    required this.onRemove,
   });
 
   final FriendUser friend;
@@ -836,6 +904,96 @@ class _FriendCard extends StatelessWidget {
   final bool openingChat;
   final VoidCallback onProfile;
   final VoidCallback onMessage;
+  final VoidCallback onRemove;
+
+  Future<void> _showOptions(BuildContext context) async {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
+    final copy = AppLocalizations.of(context);
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      showDragHandle: false,
+      constraints: ResponsiveContentFrame.adaptiveModalConstraints(
+        context,
+        maxWidth: 520,
+      ),
+      // Material, not a decorated Container: ListTile paints its ink on the
+      // nearest Material, and a coloured box above it would hide the ripple.
+      builder: (sheetContext) => Material(
+        color: palette.surfaceRaised,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(26)),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: Padding(
+          padding: EdgeInsets.fromLTRB(
+            16,
+            12,
+            16,
+            18 + MediaQuery.paddingOf(sheetContext).bottom,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              YoModalSheetChrome(
+                sheetLabel: copy.template(
+                  'options for {name}',
+                  'opcje dla {name}',
+                  values: <String, Object>{'name': friend.displayName},
+                ),
+                surfaceColor: palette.surfaceRaised,
+              ),
+              const SizedBox(height: 2),
+              ListTile(
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  onProfile();
+                },
+                leading: Icon(
+                  Icons.person_outline_rounded,
+                  color: palette.textPrimary,
+                ),
+                title: Text(
+                  copy.text('View profile', 'Zobacz profil'),
+                  style: TextStyle(color: palette.textPrimary),
+                ),
+              ),
+              ListTile(
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  onMessage();
+                },
+                leading: Icon(
+                  Icons.chat_bubble_outline_rounded,
+                  color: palette.textPrimary,
+                ),
+                title: Text(
+                  copy.text('Message', 'Wiadomość'),
+                  style: TextStyle(color: palette.textPrimary),
+                ),
+              ),
+              ListTile(
+                key: const ValueKey('friend-remove-action'),
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  onRemove();
+                },
+                leading: Icon(
+                  Icons.person_remove_outlined,
+                  color: colors.error,
+                ),
+                title: Text(
+                  copy.text('Remove friend', 'Usuń znajomego'),
+                  style: TextStyle(color: colors.error),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -848,6 +1006,7 @@ class _FriendCard extends StatelessWidget {
       borderRadius: BorderRadius.circular(19),
       child: InkWell(
         onTap: onProfile,
+        onLongPress: () => _showOptions(context),
         borderRadius: BorderRadius.circular(19),
         child: Container(
           padding: const EdgeInsets.all(13),
@@ -957,8 +1116,20 @@ class _FriendCard extends StatelessWidget {
                       )
                     : const Icon(Icons.chat_bubble_rounded, size: 20),
               ),
-              const SizedBox(width: 4),
-              Icon(Icons.chevron_right_rounded, color: palette.textSecondary),
+              const SizedBox(width: 2),
+              IconButton(
+                key: ValueKey('friend-options-${friend.id}'),
+                tooltip: copy.template(
+                  'Options for {name}',
+                  'Opcje dla {name}',
+                  values: <String, Object>{'name': friend.displayName},
+                ),
+                onPressed: () => _showOptions(context),
+                icon: Icon(
+                  Icons.more_vert_rounded,
+                  color: palette.textSecondary,
+                ),
+              ),
             ],
           ),
         ),

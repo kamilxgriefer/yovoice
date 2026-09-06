@@ -44,15 +44,30 @@ Reported by the owner after the 1.0.0 (21) tester wave. Status per item:
   tokens because the ring test enforces 3:1 contrast on the surface.
 - **UI sounds** — replaced by the v4 pack (ADR-148); not yet auditioned by
   the owner.
+- **Draggable text/link overlays on the Reel canvas** — fixed in source
+  (ADR-149): drag and pinch in the Text tool; sliders remain.
+- **No "Done" over multiline keyboards** — fixed in source: shared
+  `YoKeyboardDoneBar` on every creation/settings form (ADR-149).
+- **"Delete friend" / "delete chat" missing** — Remove friend is now on the
+  Friends list row (options button and long-press); chat rows offer
+  Unarchive for archived threads. A true per-user "delete chat" still needs
+  a server capability (`users/{uid}/conversationState` written by a new
+  callable) — owner decision + deploy.
+- **Mute lag of several seconds** — client share fixed in source: the
+  control is released as soon as the local track is off (ADR-149). The
+  server callable `setOwnRoomParticipantMute` still cold-starts at
+  `minInstances: 0`; unmute remains server-first by design, so its wait is
+  unchanged until that callable is warmed (DEPLOYMENT.md proposal).
 - **Open, not yet fixed:** Reel trim/crop handles on the video instead of
-  sliders; draggable text/link overlays; a music library (needs a licensed
-  catalogue — product decision); Reel length above 90 s (server
-  `MAX_DURATION_MS` and the 100 MB video cap, deploy); "Delete chat" beyond
-  Archive and "Remove friend" from the list; mute latency of several seconds;
-  a call dropping when both parties background the app (Android has no
-  foreground service for rooms); no "Done" affordance over multiline
-  keyboards; one tester asked for an invite code — TestFlight shows that
-  prompt when the device's Apple ID is not the invited address.
+  sliders (design in hand: filmstrip strip + scrub, no new dependency for
+  phase 1); a music library (needs a licensed catalogue — product
+  decision); Reel length above 90 s (server `MAX_DURATION_MS` and the
+  100 MB video cap, deploy); a call dropping when both parties background
+  the app (Android has no foreground service for rooms — not yet traced);
+  one tester asked for an invite code — TestFlight shows that prompt when
+  the device's Apple ID is not the invited address; user-set availability
+  status with a picker (needs rules + projection changes, deploy); awards
+  section redesign with selectable badges; inviting friends into a room.
 
 ## Direct-call latency and Android connection acceptance (2026-09-06; fixed in source, physical acceptance pending)
 

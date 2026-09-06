@@ -18,6 +18,7 @@ import 'package:yovoice/features/rooms/presentation/room_cover_editor.dart';
 import 'package:yovoice/features/rooms/presentation/screens/room_entry_screen.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/theme/yo_immersive_dark_surface.dart';
+import 'package:yovoice/shared/widgets/inputs/yo_keyboard_done_bar.dart';
 
 /// Creating a Community or Podcast room, in three steps.
 ///
@@ -365,6 +366,8 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
                 _StepBar(step: _step, identity: identity),
                 Expanded(
                   child: ListView(
+                    keyboardDismissBehavior:
+                        ScrollViewKeyboardDismissBehavior.onDrag,
                     padding: const EdgeInsets.fromLTRB(18, 6, 18, 24),
                     children: [
                       switch (_step) {
@@ -380,16 +383,22 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
           ),
         ),
       ),
-      bottomNavigationBar: _BottomBar(
-        identity: identity,
-        step: _step,
-        busy: _busy,
-        onBack: _step == _Step.identity ? null : _back,
-        onNext: _step == _Step.experience ? null : _next,
-        onCreate: _step == _Step.experience ? _create : null,
-        createLabel: _isBroadcast
-            ? copy.text('Create Podcast Room', 'Utwórz pokój podcastowy')
-            : copy.text('Create Room', 'Utwórz pokój'),
+      bottomNavigationBar: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const YoKeyboardDoneBar(),
+          _BottomBar(
+            identity: identity,
+            step: _step,
+            busy: _busy,
+            onBack: _step == _Step.identity ? null : _back,
+            onNext: _step == _Step.experience ? null : _next,
+            onCreate: _step == _Step.experience ? _create : null,
+            createLabel: _isBroadcast
+                ? copy.text('Create Podcast Room', 'Utwórz pokój podcastowy')
+                : copy.text('Create Room', 'Utwórz pokój'),
+          ),
+        ],
       ),
     );
     return YoImmersiveDarkSurface(child: content);
