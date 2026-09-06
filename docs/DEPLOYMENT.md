@@ -15,6 +15,68 @@ deployables described in
 | Storage rules | `firebase deploy --only storage` | Manual |
 | `yovoice-website` | Vercel | Automatic, on push to `main` (separate repo) |
 
+### Build 21 tester release — 2026-09-06
+
+**iOS RELEASED TO BOTH TESTFLIGHT COHORTS; ANDROID DRAFT PREPARED, AWAITING THE
+OWNER'S AAB DROP.** Runtime frozen at
+`1bb823c67694b95174418f0799f5bad9cf514088` (`main`, tracked tree clean at build
+time, `pubspec.yaml` `1.0.0+21`). Consoles were read before choosing the
+number: TestFlight held 20/19/18/15 with no 21; Play's internal track held
+"YO Voice Build 20" (published 2026-09-05 10:36 CEST) with version code 21
+unused.
+
+| Gate | Result |
+|---|---|
+| `flutter analyze` | clean |
+| `flutter test` | 2534/2534 |
+| Podcast Room listener/mic contract | code review of `voice_call_service.dart` (join gate `canPublish && permissions.canPublish && !startMuted`; listeners never invoke native capture; reconnect handler only repaints status; a failed unmute reverts state and keeps the session) plus the existing `room_voice_entry_screen_test` / `voice_room_podcast_metadata_test`. **No physical-device run** — that boundary is stated, not inferred away. |
+
+**Artifacts, both from the same commit, identity read from the artifacts not the
+config:**
+
+- **AAB** `app.yovoice`, `1.0.0` / version code **21**, signed by
+  `CN=YO Voice Upload Key`, `jar verified`; 117,721,663 B; SHA-256
+  `a1b3a739674e01948ee09a15b8262b9ea1e004d99e683a58696637a38262e8aa`. Staged
+  for the owner at `~/Desktop/yovoice-1.0.0-21.aab` (same hash).
+- **IPA** `app.yovoice`, `1.0.0 (21)`, profile `YO Voice App Store`
+  (`6a817efe-…`, expires 2027-08-15), `Apple Distribution: Kamil Jaguszewski
+  (C3R59P53KB)`; 57,274,087 B; SHA-256
+  `a696b070d4426c21d817eda9642c55829d182c85579ce348efd2d31220736229`.
+
+**iOS — done and verified in App Store Connect.** Uploaded with the documented
+`xcodebuild -exportArchive … ios/ExportOptionsUpload.plist` at 08:04:20 CEST
+("Upload succeeded"; the same seven vendored-framework dSYM warnings as Build
+20, non-blocking). Processing completed by ~08:20 CEST. Build 21 is in
+**Testing** (expires in 90 days), assigned to `YO Voice Internal Testers`
+(Internal, 1) and `YO Voice Beta Testers` (External, 7), invites 7, "What to
+Test" saved, automatic tester notification left enabled. No export-compliance
+prompt appeared because `ITSAppUsesNonExemptEncryption` is `false` in
+`ios/Runner/Info.plist`. First non-owner install observed at ~08:25 CEST
+(`Installed 1.0.0 (21)`).
+
+**Cohort consolidation, maintainer-authorized on 2026-09-06.** The seventh
+external tester had been in a separate one-person group (`YO Voice - Tamara`)
+because her first invitation failed to send; she was already also a member of
+`YO Voice Beta Testers`. The duplicate group was removed from the app with
+"Remove the group from this app" — explicitly **not** "delete the group and its
+testers" — so no tester lost access; Beta Testers still lists 7. External
+groups are now one.
+
+**Android — everything except the file.** A draft internal-testing release
+(release 16) was created and saved with name `YO Voice Build 21` and en-US
+notes. The AAB was **not** uploaded by the session: the browser automation
+bridge refused the 117 MB file (10 MB cap, tested — not assumed), and this Mac
+holds no Play Developer API credential (no service account; ADC is the owner's
+account without the `androidpublisher` scope). Builds 18–20 reached Play the
+same way — through the console. **Owner action: drop
+`~/Desktop/yovoice-1.0.0-21.aab` into the open "Utwórz wewnętrzną wersję
+testową" form; review and rollout to the existing `YO Voice Internal Testers`
+list (15) follow in the console.** Until then Android testers remain on Build
+20; nothing was promoted, no track was created, no tester list changed.
+
+Scope: invited tester channels only. No production store release, no public
+link, no Hosting/Functions/Rules/index/Storage deploy.
+
 ### Build 20 coordinated tester release candidate — 2026-09-05
 
 **WEB AND BOTH INVITED TESTER CHANNELS RELEASED; ACCEPTANCE GAPS REMAIN.**
