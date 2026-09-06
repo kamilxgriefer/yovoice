@@ -24,6 +24,9 @@ import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 import 'package:yovoice/shared/widgets/backgrounds/yo_page_background.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
+import 'package:yovoice/shared/widgets/profile/availability_picker.dart';
+import 'package:yovoice/features/profile/data/models/user_profile.dart';
+import 'package:yovoice/features/profile/data/services/profile_service.dart';
 
 enum MoreDestination {
   friends,
@@ -395,7 +398,11 @@ class MoreSheet extends StatefulWidget {
     this.currentUid,
     this.entitlements = SubscriptionEntitlements.free,
     super.key,
+    this.profileService,
   });
+
+  /// Injected by tests and previews; production uses the default service.
+  final ProfileService? profileService;
 
   /// Injected in tests; production asks the shared service, whose cache
   /// is keyed by uid and cleared on account switch.
@@ -543,6 +550,9 @@ class _MoreSheetState extends State<MoreSheet> {
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
+                                _AvailabilityRow(
+                                  profileService: widget.profileService,
+                                ),
                                 Text(
                                   copy.more,
                                   style: TextStyle(
@@ -967,6 +977,40 @@ class _WideMoreTile extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// "● Available ▾" above the More title: the one place every user passes
+/// through, so the availability picker is never more than two taps away.
+class _AvailabilityRow extends StatelessWidget {
+  const _AvailabilityRow({this.profileService});
+
+  final ProfileService? profileService;
+
+  Stream<UserProfile>? _stream() {
+    try {
+      return (profileService ?? ProfileService()).watchCurrentProfile();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<UserProfile>(
+      stream: _stream(),
+      builder: (context, snapshot) {
+        final profile = snapshot.data;
+        if (profile == null) return const SizedBox.shrink();
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: AvailabilityChip(availability: profile.availability),
+          ),
+        );
+      },
     );
   }
 }

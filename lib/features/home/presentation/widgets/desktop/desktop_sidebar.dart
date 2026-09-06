@@ -10,6 +10,7 @@ import 'package:yovoice/features/staff/data/staff_capabilities.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 import 'package:yovoice/shared/widgets/navigation/yo_moments_icon.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
+import 'package:yovoice/shared/widgets/profile/availability_picker.dart';
 
 typedef _DesktopNavIconBuilder =
     Widget Function(
@@ -963,15 +964,28 @@ class _ProfileCard extends StatelessWidget {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(
-                              profile?.displayName ?? 'Your profile',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                color: colors.onSurface,
-                                fontSize: 13,
-                                fontWeight: FontWeight.w800,
-                              ),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    profile?.displayName ?? 'Your profile',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      color: colors.onSurface,
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w800,
+                                    ),
+                                  ),
+                                ),
+                                if (profile != null) ...[
+                                  const SizedBox(width: 4),
+                                  AvailabilityChip(
+                                    availability: profile.availability,
+                                    compact: true,
+                                  ),
+                                ],
+                              ],
                             ),
                             // The one shared identity rendering — same
                             // badges everyone else sees for this account,

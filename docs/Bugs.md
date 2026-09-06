@@ -65,9 +65,12 @@ Reported by the owner after the 1.0.0 (21) tester wave. Status per item:
   100 MB video cap, deploy); a call dropping when both parties background
   the app (Android has no foreground service for rooms — not yet traced);
   one tester asked for an invite code — TestFlight shows that prompt when
-  the device's Apple ID is not the invited address; user-set availability
-  status with a picker (needs rules + projection changes, deploy); awards
-  section redesign with selectable badges; inviting friends into a room.
+  the device's Apple ID is not the invited address; awards section redesign
+  with selectable badges; inviting friends into a room.
+- **User-set availability (green/yellow/red/grey rings + picker)** — built
+  in source (ADR-150). **Blocked on a deploy** of `firestore.rules` and the
+  `onUserPrivacySourceChanged` projection; until then the picker's write
+  is refused and shows its error copy.
 
 ## Direct-call latency and Android connection acceptance (2026-09-06; fixed in source, physical acceptance pending)
 

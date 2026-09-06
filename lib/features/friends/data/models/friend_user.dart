@@ -25,6 +25,7 @@ class FriendUser {
     required this.photoUrl,
     required this.isOnline,
     required this.lastSeen,
+    this.availability,
     this.username = '',
     this.premiumIdentity = false,
     this.profileUpdatedAt,
@@ -38,6 +39,11 @@ class FriendUser {
   final String? photoUrl;
   final bool isOnline;
   final DateTime? lastSeen;
+
+  /// Projected availability from `socialPresence` ('available' | 'away' |
+  /// 'busy' | 'offline'); null when the projection predates the field.
+  /// Never 'invisible' — the server masks that to offline.
+  final String? availability;
   final DateTime? profileUpdatedAt;
 
   /// Server-resolved state returned with public-search results. Null means
@@ -163,6 +169,8 @@ class FriendUser {
     bool? isOnline,
     DateTime? lastSeen,
     bool clearLastSeen = false,
+    String? availability,
+    bool clearAvailability = false,
     bool? premiumIdentity,
     DateTime? profileUpdatedAt,
     bool clearProfileUpdatedAt = false,
@@ -177,6 +185,9 @@ class FriendUser {
       photoUrl: clearPhotoUrl ? null : photoUrl ?? this.photoUrl,
       isOnline: isOnline ?? this.isOnline,
       lastSeen: clearLastSeen ? null : lastSeen ?? this.lastSeen,
+      availability: clearAvailability
+          ? null
+          : availability ?? this.availability,
       premiumIdentity: premiumIdentity ?? this.premiumIdentity,
       profileUpdatedAt: clearProfileUpdatedAt
           ? null

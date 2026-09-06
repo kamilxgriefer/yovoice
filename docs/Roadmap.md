@@ -16,6 +16,13 @@ someone decide what to pick up next.
 
 ## Done
 
+- **User-set availability status and picker** (2026-09-06, ADR-150;
+  **SOURCE + TESTS VERIFIED, NOT DEPLOYED — rules + projection function must
+  ship first**): `users/{uid}.availability`, masked projection into
+  `socialPresence`, one presence→ring mapping across Home/Friends/chat/
+  preview, `AvailabilityChip` in the profile header, More sheet and desktop
+  sidebar.
+
 - **Tester round 2 client fixes: draggable Reel overlays, keyboard Done bar,
   Remove friend on the list, Unarchive on chat rows, shorter mute busy
   window** (2026-09-06, ADR-149; **SOURCE + WIDGET TESTS VERIFIED, NOT

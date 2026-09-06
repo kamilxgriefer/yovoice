@@ -27,6 +27,7 @@ import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/profile/profile_photo_viewer.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
+import 'package:yovoice/shared/widgets/profile/people_status_ring.dart';
 
 class FriendProfileScreen extends StatefulWidget {
   const FriendProfileScreen({
@@ -604,27 +605,37 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
     );
   }
 
-  Widget _status() => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-    decoration: BoxDecoration(
-      color: widget.friend.isOnline
-          ? context.appPalette.successSurface
-          : context.appPalette.surfaceMuted,
-      borderRadius: BorderRadius.circular(12),
-    ),
-    child: Text(
-      widget.friend.isOnline
-          ? AppLocalizations.of(context).text('Online now', 'Teraz online')
-          : AppLocalizations.of(context).text('Offline', 'Offline'),
-      style: TextStyle(
-        color: widget.friend.isOnline
-            ? context.appPalette.successForeground
-            : context.appPalette.textSecondary,
-        fontWeight: FontWeight.w700,
-        fontSize: 12,
+  Widget _status() {
+    final status = PeopleStatus.fromPresence(
+      isOnline: widget.friend.isOnline,
+      availability: widget.friend.availability,
+    );
+    final copy = AppLocalizations.of(context);
+    final palette = context.appPalette;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+      decoration: BoxDecoration(
+        color: status == PeopleStatus.online
+            ? palette.successSurface
+            : palette.surfaceMuted,
+        borderRadius: BorderRadius.circular(12),
       ),
-    ),
-  );
+      child: Text(
+        switch (status) {
+          PeopleStatus.online => copy.text('Online now', 'Teraz online'),
+          PeopleStatus.away => copy.text('Offline', 'Offline'),
+          _ => status.localizedLabel(copy),
+        },
+        style: TextStyle(
+          color: status == PeopleStatus.away
+              ? palette.textSecondary
+              : status.foreground(palette),
+          fontWeight: FontWeight.w700,
+          fontSize: 12,
+        ),
+      ),
+    );
+  }
 
   Widget _socialStats(UserProfile? profile) => LayoutBuilder(
     builder: (context, constraints) {

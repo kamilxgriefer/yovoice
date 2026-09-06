@@ -4,6 +4,8 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/presence/user_availability.dart';
+
 class PresenceService {
   PresenceService({FirebaseAuth? auth, FirebaseFirestore? firestore})
     : _auth = auth ?? FirebaseAuth.instance,
@@ -29,6 +31,22 @@ class PresenceService {
     await _firestore.collection('users').doc(user.uid).set({
       'isOnline': true,
       'lastSeen': FieldValue.serverTimestamp(),
+      'presenceUpdatedAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
+  }
+
+  /// Stores the user's chosen availability next to the heartbeat fields.
+  ///
+  /// A merge write of presence keys only: the heartbeat's own merges never
+  /// touch `availability`, so the choice survives every setOnline/setOffline
+  /// until the user changes it. Rules refuse anything but the four values.
+  Future<void> setAvailability(UserAvailability availability) async {
+    final user = _auth.currentUser;
+    if (user == null) {
+      throw StateError('You must be signed in to change your availability.');
+    }
+    await _firestore.collection('users').doc(user.uid).set({
+      'availability': availability.wire,
       'presenceUpdatedAt': FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));
   }

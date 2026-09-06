@@ -63,9 +63,38 @@ const SOCIAL_PRESENCE_FIELDS = new Set([
   "uid",
   "isOnline",
   "lastSeen",
+  "availability",
   "schemaVersion",
   "updatedAt",
 ]);
+
+const USER_AVAILABILITY_VALUES = new Set([
+  "available",
+  "away",
+  "busy",
+  "invisible",
+]);
+
+/**
+ * What OTHER people may learn about a user's chosen availability.
+ *
+ * - offline, or 'invisible': projected as isOnline=false / 'offline' — an
+ *   invisible account is indistinguishable from a signed-out one.
+ * - 'available' | 'away' | 'busy' while online: projected verbatim.
+ * - anything else while online (older client, malformed value): 'available'.
+ */
+function deriveVisibleAvailability(source) {
+  const online = source.isOnline === true;
+  const chosen =
+    typeof source.availability === "string" &&
+    USER_AVAILABILITY_VALUES.has(source.availability)
+      ? source.availability
+      : "available";
+  if (!online || chosen === "invisible") {
+    return { isOnline: false, availability: "offline" };
+  }
+  return { isOnline: true, availability: chosen };
+}
 
 function safeString(value, maximum, fallback = "") {
   if (typeof value !== "string") return fallback;
@@ -178,11 +207,13 @@ function derivePublicProfile(uid, source) {
 function deriveSocialPresence(uid, source) {
   if (!isActiveAccountProfile(source)) return null;
   const lastSeen = source.lastSeen;
+  const visible = deriveVisibleAvailability(source);
   return {
     uid,
-    isOnline: source.isOnline === true,
+    isOnline: visible.isOnline,
     lastSeen:
       lastSeen && typeof lastSeen.toDate === "function" ? lastSeen : null,
+    availability: visible.availability,
     schemaVersion: SOCIAL_PRESENCE_SCHEMA_VERSION,
   };
 }
@@ -773,9 +804,11 @@ module.exports = {
   PUBLIC_PROFILE_SCHEMA_VERSION,
   SOCIAL_PRESENCE_FIELDS,
   SOCIAL_PRESENCE_SCHEMA_VERSION,
+  USER_AVAILABILITY_VALUES,
   canonicalUid,
   derivePublicProfile,
   deriveSocialPresence,
+  deriveVisibleAvailability,
   normalizeSearchText,
   projectionMatches,
   fetchAuthUserOrNull,

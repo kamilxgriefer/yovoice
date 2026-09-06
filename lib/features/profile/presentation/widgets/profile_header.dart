@@ -10,6 +10,7 @@ import 'package:yovoice/shared/widgets/identity/official_role_badge.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 import 'package:yovoice/shared/widgets/profile/profile_banner.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
+import 'package:yovoice/shared/widgets/profile/availability_picker.dart';
 
 /// The profile hero — compact edition: a toolbar row (Back when the
 /// route can pop, the screen title, Edit), a SLIM banner accent card,
@@ -295,20 +296,33 @@ class ProfileHeader extends StatelessWidget {
                           ),
                         ),
                       ),
-                      if (profile.username.isNotEmpty) ...[
-                        const SizedBox(height: 2),
-                        Text(
-                          '@${profile.username.replaceAll(' ', '').toLowerCase()}',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: palette.textSecondary,
-                            fontSize: isWide ? 14 : 13,
-                            fontWeight: FontWeight.w600,
-                            letterSpacing: .1,
+                      const SizedBox(height: 2),
+                      // Availability sits on the username line so the
+                      // plate keeps its height budget (profile_header_compact_test).
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 4,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        children: [
+                          if (profile.username.isNotEmpty) ...[
+                            Text(
+                              '@${profile.username.replaceAll(' ', '').toLowerCase()}',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: palette.textSecondary,
+                                fontSize: isWide ? 14 : 13,
+                                fontWeight: FontWeight.w600,
+                                letterSpacing: .1,
+                              ),
+                            ),
+                          ],
+                          AvailabilityChip(
+                            availability: profile.availability,
+                            dense: true,
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ],
                   ),
                 ),

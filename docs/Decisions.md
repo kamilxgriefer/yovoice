@@ -9316,3 +9316,49 @@ writes. "Delete chat for me" beyond Archive still needs a server
 capability (see Bugs.md). The mute callable's own cold start (server) is
 unchanged; the button no longer waits for it.
 
+## ADR-150: User-set availability (available / be right back / do not disturb / invisible) behind the existing presence projection
+
+**Context.** The owner asked for avatar rings that reflect a status the
+user chooses — green available, yellow "zaraz wracam", red "nie
+przeszkadzać", grey unavailable/invisible — and an obvious place to set it.
+Presence today is a client heartbeat on `users/{uid}` (`isOnline`,
+`lastSeen`, `presenceUpdatedAt`) projected by Cloud Functions into
+`socialPresence/{uid}`, which only the account and mirrored friends may
+read; Friends, Home, chat headers and profile previews all join that
+projection.
+
+**Decision.** One optional owner-written field `users/{uid}.availability`
+with exactly four values (`available` | `away` | `busy` | `invisible`),
+validated in rules by `availabilityValueAllowed()` on create and on the
+owner's update; absent means available. `deriveSocialPresence` projects a
+visible form: while online and not invisible the chosen value verbatim;
+otherwise `isOnline:false` and `availability:'offline'`, so an invisible
+account is indistinguishable from a signed-out one. `socialPresence`'s
+exact-schema read guard accepts the optional key with the four projected
+values. On the client `PeopleStatus.fromPresence` is the single mapping
+(offline wins; `away`→yellow `brb`; `busy`→red; else green) used by the
+Home strip, Friends rows, the friend profile pill, the chat header and the
+profile preview; `PeopleStatus.fromOwnAvailability` renders the account's
+own choice including invisible as grey. `PresenceService.setAvailability`
+writes only `availability` + `presenceUpdatedAt`, and the heartbeat merges
+never touch it. `AvailabilityChip` (dot + label + caret) opens
+`showAvailabilityPicker` — a bottom sheet under 900 px, a dialog above —
+and is placed in the own ProfileHeader name plate, above the More sheet
+title, and compact in the desktop sidebar profile card.
+
+**Reasoning.** Additive schema (one optional key on the source and the
+projection), no new collection, no new callable: the existing projection
+pipeline already carries presence to exactly the people allowed to see
+it, so the privacy boundary of "invisible" is enforced server-side once.
+Colours stay palette tokens (`successForeground`, `warningForeground`,
+`dangerForeground`, `textTertiary`) that the ring theme test contrast-checks.
+
+**Consequences.** **Needs a deploy of `firestore.rules` and the
+`onUserPrivacySourceChanged` function before the client ships** — until
+then the picker's write is refused by the current rules (the chip shows a
+friendly error) and friends see no colour beyond online/offline. Existing
+`socialPresence` documents gain the key on their next projection; readers
+treat a missing key as "available". Widget/unit tests cover parsing, the
+mapping, the merge write and the picker; emulator rules tests cover the
+value gate. On-device verification is still open.
+

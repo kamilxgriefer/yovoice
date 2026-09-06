@@ -392,14 +392,25 @@ service cloud.firestore {
     // update rule ever applied. First-write races from presence/friends are
     // legitimate, so partial documents remain allowed — but only from the
     // same non-privileged field set used by profile bootstrap.
+    // The user-chosen availability ('available' | 'away' | 'busy' |
+    // 'invisible') is optional and owner-written; any other value is refused
+    // here rather than being projected. Cloud Functions mask 'invisible' to
+    // plain offline in socialPresence, so nobody else can tell it apart.
+    function availabilityValueAllowed() {
+      return !('availability' in request.resource.data) ||
+          request.resource.data.availability in
+              ['available', 'away', 'busy', 'invisible'];
+    }
+
     function userCreateAllowed(userId) {
-      return isOwner(userId) &&
+      return isOwner(userId) && availabilityValueAllowed() &&
           request.resource.data.keys().hasOnly([
             'uid', 'email', 'displayName', 'username',
             'bio', 'country', 'nativeLanguage',
             'spokenLanguages', 'learningLanguages', 'website',
             'statusMessage', 'accountType', 'profileUpdatedAt',
             'createdAt', 'isOnline', 'lastSeen', 'presenceUpdatedAt',
+            'availability',
             'messageCount', 'followerCount', 'followingCount',
             'roomCount', 'communityCount', 'voiceMinutes',
             'reactionCount', 'hostMinutes', 'activeDays', 'momentCount',
@@ -1756,8 +1767,13 @@ service cloud.firestore {
             'uid', 'isOnline', 'lastSeen', 'schemaVersion', 'updatedAt'
           ]) &&
           data.keys().hasOnly([
-            'uid', 'isOnline', 'lastSeen', 'schemaVersion', 'updatedAt'
+            'uid', 'isOnline', 'lastSeen', 'schemaVersion', 'updatedAt',
+            'availability'
           ]) &&
+          (
+            !('availability' in data) ||
+            data.availability in ['available', 'away', 'busy', 'offline']
+          ) &&
           data.uid == userId &&
           data.isOnline is bool &&
           (data.lastSeen == null || data.lastSeen is timestamp) &&
@@ -2123,6 +2139,7 @@ service cloud.firestore {
                     'statusMessage',
                     'accountType', 'profileUpdatedAt',
                     'isOnline', 'lastSeen', 'presenceUpdatedAt',
+                    'availability',
                     'messageCount',
                     'roomCount', 'communityCount', 'voiceMinutes',
                     'reactionCount', 'hostMinutes', 'activeDays',
@@ -2133,6 +2150,7 @@ service cloud.firestore {
                   ]) && accountTypeChangeAllowed())
                   && displayNameChangeAllowed()
                   && messagePrivacyChangeAllowed()
+              && availabilityValueAllowed()
               : false
           );
 

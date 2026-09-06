@@ -1048,3 +1048,15 @@ access to something another user controls:
 - [ ] Does the new query need a composite index, and has that index been
       **deployed** — not merely committed to `firestore.indexes.json`? The
       emulator does not require them, so no suite will tell you.
+
+### Availability status (2026-09-06, ADR-150)
+
+`users/{uid}.availability` is an optional owner-written string gated to
+`available | away | busy | invisible` by `availabilityValueAllowed()` on
+create and owner update. Nobody reads it from the source document except
+the owner; other people only see `socialPresence/{uid}.availability`, which
+Cloud Functions derive as `offline` whenever the account is offline **or
+invisible** (with `isOnline:false`), so invisibility is decided server-side
+and cannot be probed through the projection. The projection's exact-schema
+read guard accepts only `available | away | busy | offline`.
+

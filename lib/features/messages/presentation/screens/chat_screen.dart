@@ -37,6 +37,7 @@ import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
+import 'package:yovoice/shared/widgets/profile/people_status_ring.dart';
 
 typedef DirectMessagePhotoPicker = Future<XFile?> Function(ImageSource source);
 typedef DirectMessageVideoPicker = Future<XFile?> Function(ImageSource source);
@@ -1661,9 +1662,7 @@ class _ChatHeader extends StatelessWidget {
                                     AppLocalizations.of(context),
                                   ),
                                   style: TextStyle(
-                                    color: presence?.isOnline == true
-                                        ? const Color(0xFF50DF86)
-                                        : palette.textSecondary,
+                                    color: _presenceColor(presence, palette),
                                     fontSize: 11,
                                   ),
                                 ),
@@ -1776,9 +1775,26 @@ class _ChatHeader extends StatelessWidget {
     );
   }
 
+  static Color _presenceColor(ChatPresence? presence, AppPalette palette) {
+    final status = PeopleStatus.fromPresence(
+      isOnline: presence?.isOnline == true,
+      availability: presence?.availability,
+    );
+    return status == PeopleStatus.away
+        ? palette.textSecondary
+        : status.foreground(palette);
+  }
+
   static String _presenceText(ChatPresence? presence, AppLocalizations copy) {
-    if (presence?.isOnline == true) {
+    final status = PeopleStatus.fromPresence(
+      isOnline: presence?.isOnline == true,
+      availability: presence?.availability,
+    );
+    if (status == PeopleStatus.online) {
       return copy.text('Active now', 'Aktywny teraz');
+    }
+    if (status == PeopleStatus.brb || status == PeopleStatus.busy) {
+      return status.localizedLabel(copy);
     }
 
     final lastSeen = presence?.lastSeen;

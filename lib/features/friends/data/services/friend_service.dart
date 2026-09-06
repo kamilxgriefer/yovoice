@@ -256,7 +256,8 @@ class FriendService {
     final childEpochs = <String, int>{};
     final activeFriendIds = <String>{};
     final profiles = <String, FriendUser>{};
-    final presences = <String, ({bool isOnline, DateTime? lastSeen})>{};
+    final presences =
+        <String, ({bool isOnline, DateTime? lastSeen, String? availability})>{};
     // Legacy mirror rows (`users/{me}/friends/{id}`) may carry a stored
     // displayName; canonical rows do not. Captured so a row whose public
     // profile is missing or unreadable can degrade to its last known name
@@ -291,6 +292,8 @@ class FriendService {
                   isOnline: presence?.isOnline ?? false,
                   lastSeen: presence?.lastSeen,
                   clearLastSeen: presence?.lastSeen == null,
+                  availability: presence?.availability,
+                  clearAvailability: presence?.availability == null,
                 );
               })
               .toList(growable: false)
@@ -534,9 +537,13 @@ class FriendService {
                 throw const FormatException('Invalid presence availability.');
               }
               final lastSeen = data?['lastSeen'];
+              final rawAvailability = data?['availability'];
               presences[id] = (
                 isOnline: rawOnline as bool? ?? false,
                 lastSeen: lastSeen is Timestamp ? lastSeen.toDate() : null,
+                availability: rawAvailability is String
+                    ? rawAvailability
+                    : null,
               );
               final subscription = candidate;
               if (subscription != null) {

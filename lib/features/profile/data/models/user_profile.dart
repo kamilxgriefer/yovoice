@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:yovoice/core/presence/user_availability.dart';
 
 import 'package:yovoice/features/profile/data/models/profile_visibility.dart';
 
@@ -38,6 +39,7 @@ class UserProfile {
     this.premiumIdentity = false,
     this.statusMessage = '',
     this.isOnline = false,
+    this.availability = UserAvailability.available,
     required this.website,
     required this.accountType,
     required this.friendCount,
@@ -85,6 +87,10 @@ class UserProfile {
 
   /// Live presence flag maintained by PresenceService's heartbeat.
   final bool isOnline;
+
+  /// The availability this account chose for itself (own document only;
+  /// other people read the projected `socialPresence` form).
+  final UserAvailability availability;
   final String website;
   final AccountType accountType;
   final int friendCount;
@@ -156,6 +162,7 @@ class UserProfile {
       premiumIdentity: data['premiumIdentity'] as bool? ?? false,
       statusMessage: data['statusMessage'] as String? ?? '',
       isOnline: data['isOnline'] as bool? ?? false,
+      availability: UserAvailability.fromWire(data['availability']),
       website: data['website'] as String? ?? '',
       accountType: AccountType.fromValue(data['accountType']),
       friendCount: readInt('friendCount'),

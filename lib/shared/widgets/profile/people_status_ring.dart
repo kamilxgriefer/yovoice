@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
+import 'package:yovoice/core/presence/user_availability.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
@@ -17,7 +18,35 @@ enum PeopleStatus {
   inRoom,
   inClub,
   online,
+  brb,
+  busy,
   away;
+
+  /// The one mapping from projected presence to a ring colour, used by every
+  /// surface that shows another person's state (Home strip, Friends, chat
+  /// header, profile preview). Offline always wins; the server has already
+  /// masked "invisible" to offline, so it never reaches here.
+  static PeopleStatus fromPresence({
+    required bool isOnline,
+    String? availability,
+  }) {
+    if (!isOnline) return PeopleStatus.away;
+    return switch (availability) {
+      'away' => PeopleStatus.brb,
+      'busy' => PeopleStatus.busy,
+      'offline' => PeopleStatus.away,
+      _ => PeopleStatus.online,
+    };
+  }
+
+  /// The ring an account sees for ITSELF, including invisible (grey).
+  static PeopleStatus fromOwnAvailability(UserAvailability availability) =>
+      switch (availability) {
+        UserAvailability.available => PeopleStatus.online,
+        UserAvailability.away => PeopleStatus.brb,
+        UserAvailability.busy => PeopleStatus.busy,
+        UserAvailability.invisible => PeopleStatus.away,
+      };
 
   /// Theme-aware status ink used for both the ring and its visible label.
   ///
@@ -26,7 +55,8 @@ enum PeopleStatus {
   Color foreground(AppPalette palette) => switch (this) {
     PeopleStatus.speaking => palette.interactiveForeground,
     PeopleStatus.inRoom || PeopleStatus.online => palette.successForeground,
-    PeopleStatus.inClub => palette.warningForeground,
+    PeopleStatus.inClub || PeopleStatus.brb => palette.warningForeground,
+    PeopleStatus.busy => palette.dangerForeground,
     PeopleStatus.away => palette.textTertiary,
   };
 
@@ -35,6 +65,8 @@ enum PeopleStatus {
     PeopleStatus.inRoom => 'In a room',
     PeopleStatus.inClub => 'In a club',
     PeopleStatus.online => 'Online',
+    PeopleStatus.brb => 'Be right back',
+    PeopleStatus.busy => 'Do not disturb',
     PeopleStatus.away => 'Away',
   };
 
@@ -45,6 +77,8 @@ enum PeopleStatus {
     PeopleStatus.inRoom => copy.text('In a room', 'W pokoju'),
     PeopleStatus.inClub => copy.text('In a club', 'W klubie'),
     PeopleStatus.online => copy.text('Online', 'Dostępny'),
+    PeopleStatus.brb => copy.text('Be right back', 'Zaraz wracam'),
+    PeopleStatus.busy => copy.text('Do not disturb', 'Nie przeszkadzać'),
     PeopleStatus.away => copy.text('Away', 'Nieobecny'),
   };
 }

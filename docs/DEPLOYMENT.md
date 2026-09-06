@@ -165,8 +165,20 @@ records roughly 60–130 MB per minute at 1080p, so 5 minutes is 300–650 MB
 uncompressed. Recommended first step: 3 minutes, 250 MB, streamed upload,
 then measure.
 
+**Availability status (ADR-150) — deploy order.** The client build that
+carries the availability picker must NOT reach testers before these two
+deploys, or every attempt to set a status is refused by the old rules:
+1. `firebase deploy --only firestore:rules` (adds the optional
+   `availability` key on `users/{uid}` with a four-value gate, and the
+   optional projected key on `socialPresence`). Run the emulator suite
+   first: `firebase emulators:exec --only firestore --project demo-yovoice
+   "npm --prefix firestore-tests test"`.
+2. `firebase deploy --only functions:onUserPrivacySourceChanged` (projects
+   the masked availability). Existing projections pick up the key on their
+   next source write; readers treat a missing key as available.
+
 Nothing above has been deployed; the client fixes from the same round
-(ADR-147/148) ship with the next build regardless.
+(ADR-147/148/149) ship with the next build regardless.
 
 ### Build 20 coordinated tester release candidate — 2026-09-05
 

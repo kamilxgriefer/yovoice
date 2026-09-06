@@ -24,6 +24,7 @@ import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
 import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
+import 'package:yovoice/shared/widgets/profile/people_status_ring.dart';
 
 enum _FriendsFilter { all, online, requests }
 
@@ -1043,9 +1044,10 @@ class _FriendCard extends StatelessWidget {
                       width: 15,
                       height: 15,
                       decoration: BoxDecoration(
-                        color: friend.isOnline
-                            ? palette.successForeground
-                            : palette.textTertiary,
+                        color: PeopleStatus.fromPresence(
+                          isOnline: friend.isOnline,
+                          availability: friend.availability,
+                        ).foreground(palette),
                         shape: BoxShape.circle,
                         border: Border.all(color: palette.surface, width: 3),
                       ),
@@ -1077,17 +1079,14 @@ class _FriendCard extends StatelessWidget {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      friend.isOnline
-                          ? copy.text('Online now', 'Teraz online')
-                          : friend.username.isNotEmpty
-                          ? '@${friend.username}'
-                          : copy.text('Offline', 'Offline'),
+                      _presenceLabel(friend, copy) ??
+                          (friend.username.isNotEmpty
+                              ? '@${friend.username}'
+                              : copy.text('Offline', 'Offline')),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
-                        color: friend.isOnline
-                            ? palette.successForeground
-                            : palette.textSecondary,
+                        color: _presenceColor(friend, palette),
                         fontSize: 12,
                       ),
                     ),
@@ -1478,4 +1477,30 @@ class _EmptyState extends StatelessWidget {
       ),
     );
   }
+}
+
+/// "Online now" keeps its meaning; a chosen availability replaces it with
+/// the same words the picker uses, so both sides read the same state.
+/// Null when the friend is offline, so the row can fall back to the
+/// username line exactly as before.
+String? _presenceLabel(FriendUser friend, AppLocalizations copy) {
+  final status = PeopleStatus.fromPresence(
+    isOnline: friend.isOnline,
+    availability: friend.availability,
+  );
+  return switch (status) {
+    PeopleStatus.online => copy.text('Online now', 'Teraz online'),
+    PeopleStatus.away => null,
+    _ => status.localizedLabel(copy),
+  };
+}
+
+Color _presenceColor(FriendUser friend, AppPalette palette) {
+  final status = PeopleStatus.fromPresence(
+    isOnline: friend.isOnline,
+    availability: friend.availability,
+  );
+  return status == PeopleStatus.away
+      ? palette.textSecondary
+      : status.foreground(palette);
 }

@@ -21,10 +21,18 @@ import 'package:yovoice/features/moments/data/services/recorded_audio.dart';
 import 'package:yovoice/features/notifications/data/services/notification_service.dart';
 
 class ChatPresence {
-  const ChatPresence({required this.isOnline, required this.lastSeen});
+  const ChatPresence({
+    required this.isOnline,
+    required this.lastSeen,
+    this.availability,
+  });
 
   final bool isOnline;
   final DateTime? lastSeen;
+
+  /// Projected availability ('available' | 'away' | 'busy' | 'offline'),
+  /// null when the projection predates the field.
+  final String? availability;
 }
 
 /// One stable, newest-first page of media messages from a private chat.
@@ -451,9 +459,11 @@ class MessageService {
       final data = snapshot.data() ?? const <String, dynamic>{};
       final lastSeenValue = data['lastSeen'];
 
+      final availability = data['availability'];
       return ChatPresence(
         isOnline: data['isOnline'] as bool? ?? false,
         lastSeen: lastSeenValue is Timestamp ? lastSeenValue.toDate() : null,
+        availability: availability is String ? availability : null,
       );
     });
   }

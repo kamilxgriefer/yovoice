@@ -786,9 +786,10 @@ class _HomeScreenState extends State<HomeScreen> {
                       displayName: friend.displayName,
                       userId: friend.id,
                       photoUrl: friend.photoUrl,
-                      status: friend.isOnline
-                          ? PeopleStatus.online
-                          : PeopleStatus.away,
+                      status: PeopleStatus.fromPresence(
+                        isOnline: friend.isOnline,
+                        availability: friend.availability,
+                      ),
                       onTap: () => showProfilePreview(
                         context,
                         userId: friend.id,

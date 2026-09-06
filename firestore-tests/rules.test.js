@@ -13457,6 +13457,76 @@ async function main() {
     },
   );
 
+  await check(
+    "SECURITY: availability is owner-written, four values only, and projected form is readable",
+    async () => {
+      const owner = testEnv.authenticatedContext("availability-owner", {
+        email_verified: true,
+      });
+      const other = testEnv.authenticatedContext("availability-other", {
+        email_verified: true,
+      });
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        const db = ctx.firestore();
+        await setDoc(doc(db, "users/availability-owner"), {
+          uid: "availability-owner",
+          email: "owner@yovoice.app",
+          displayName: "Owner",
+          accountType: "personal",
+          isOnline: true,
+        });
+        await setDoc(doc(db, "users/availability-other"), {
+          uid: "availability-other",
+          email: "other@yovoice.app",
+          displayName: "Other",
+          accountType: "personal",
+          isOnline: true,
+        });
+        await setDoc(doc(db, "socialPresence/availability-owner"), {
+          uid: "availability-owner",
+          isOnline: true,
+          lastSeen: new Date(),
+          availability: "busy",
+          schemaVersion: 1,
+          updatedAt: new Date(),
+        });
+      });
+      const ownerDoc = doc(owner.firestore(), "users/availability-owner");
+      for (const value of ["available", "away", "busy", "invisible"]) {
+        await assertSucceeds(
+          setDoc(
+            ownerDoc,
+            { availability: value, presenceUpdatedAt: serverTimestamp() },
+            { merge: true },
+          ),
+        );
+      }
+      await assertFails(
+        setDoc(ownerDoc, { availability: "party" }, { merge: true }),
+      );
+      await assertFails(setDoc(ownerDoc, { availability: 7 }, { merge: true }));
+      await assertFails(
+        setDoc(
+          doc(other.firestore(), "users/availability-owner"),
+          { availability: "busy" },
+          { merge: true },
+        ),
+      );
+      // The projection stays server-only, and its optional key is readable
+      // by the account itself.
+      await assertFails(
+        setDoc(
+          doc(owner.firestore(), "socialPresence/availability-owner"),
+          { availability: "away" },
+          { merge: true },
+        ),
+      );
+      await assertSucceeds(
+        getDoc(doc(owner.firestore(), "socialPresence/availability-owner")),
+      );
+    },
+  );
+
   console.log(`\n${passed} passed, ${failed} failed`);
   await testEnv.cleanup();
   process.exit(failed > 0 ? 1 : 0);
