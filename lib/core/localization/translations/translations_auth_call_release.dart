@@ -81,6 +81,7 @@ const authCallReleaseTranslationKeys = <String>[
   "Speaker",
   "This call is no longer available.",
   "Close",
+  "The previous call is still closing. Wait a moment before trying again.",
 ];
 
 final authCallReleaseTranslations = <String, Map<String, String>>{
@@ -166,6 +167,7 @@ const _authCallReleaseTranslationValues = <String, List<String>>{
     "Lautsprecher",
     "Dieser Anruf ist nicht mehr verfügbar.",
     "Schließen",
+    "Der vorherige Anruf wird noch beendet. Warte kurz und versuche es erneut.",
   ],
   "es": <String>[
     "Correo de verificación enviado.",
@@ -239,6 +241,7 @@ const _authCallReleaseTranslationValues = <String, List<String>>{
     "Altavoz",
     "Esta llamada ya no está disponible.",
     "Cerrar",
+    "La llamada anterior aún se está cerrando. Espera un momento y vuelve a intentarlo.",
   ],
   "pt": <String>[
     "Email de verificação enviado.",
@@ -312,6 +315,7 @@ const _authCallReleaseTranslationValues = <String, List<String>>{
     "Altifalante",
     "Esta chamada já não está disponível.",
     "Fechar",
+    "A chamada anterior ainda está a terminar. Aguarda um momento e tenta novamente.",
   ],
   "pt_BR": <String>[
     "E-mail de verificação enviado.",
@@ -385,6 +389,7 @@ const _authCallReleaseTranslationValues = <String, List<String>>{
     "Alto-falante",
     "Esta chamada não está mais disponível.",
     "Fechar",
+    "A chamada anterior ainda está sendo encerrada. Aguarde um momento e tente novamente.",
   ],
   "fr": <String>[
     "E-mail de vérification envoyé.",
@@ -458,6 +463,7 @@ const _authCallReleaseTranslationValues = <String, List<String>>{
     "Haut-parleur",
     "Cet appel n'est plus disponible.",
     "Fermer",
+    "Le précédent appel n’est pas encore complètement terminé. Patiente un instant, puis réessaie.",
   ],
   "it": <String>[
     "Email di verifica inviata.",
@@ -531,6 +537,7 @@ const _authCallReleaseTranslationValues = <String, List<String>>{
     "Altoparlante",
     "Questa chiamata non è più disponibile.",
     "Chiudi",
+    "La chiamata precedente si sta ancora chiudendo. Attendi un momento e riprova.",
   ],
   "uk": <String>[
     "Лист для підтвердження надіслано.",
@@ -604,6 +611,7 @@ const _authCallReleaseTranslationValues = <String, List<String>>{
     "Динамік",
     "Цей дзвінок більше недоступний.",
     "Закрити",
+    "Попередній дзвінок ще завершується. Зачекайте трохи й спробуйте знову.",
   ],
   "ru": <String>[
     "Письмо с подтверждением отправлено.",
@@ -677,6 +685,7 @@ const _authCallReleaseTranslationValues = <String, List<String>>{
     "Динамик",
     "Этот звонок больше недоступен.",
     "Закрыть",
+    "Предыдущий звонок ещё завершается. Подождите немного и попробуйте снова.",
   ],
   "cs": <String>[
     "Ověřovací e-mail odeslán.",
@@ -750,6 +759,7 @@ const _authCallReleaseTranslationValues = <String, List<String>>{
     "Reproduktor",
     "Tento hovor již není dostupný.",
     "Zavřít",
+    "Předchozí hovor se ještě ukončuje. Chvíli počkejte a zkuste to znovu.",
   ],
   "sk": <String>[
     "Overovací e-mail odoslaný.",
@@ -823,6 +833,7 @@ const _authCallReleaseTranslationValues = <String, List<String>>{
     "Reproduktor",
     "Tento hovor už nie je k dispozícii.",
     "Zavrieť",
+    "Predchádzajúci hovor sa ešte ukončuje. Chvíľu počkajte a skúste to znova.",
   ],
   "bg": <String>[
     "Изпратен имейл за потвърждение.",
@@ -896,6 +907,7 @@ const _authCallReleaseTranslationValues = <String, List<String>>{
     "Високоговорител",
     "Този разговор вече не е наличен.",
     "Затвори",
+    "Предишният разговор още не е напълно приключил. Изчакайте малко и опитайте отново.",
   ],
   "nl": <String>[
     "Verificatie-e-mail verzonden.",
@@ -969,6 +981,7 @@ const _authCallReleaseTranslationValues = <String, List<String>>{
     "Luidspreker",
     "Deze oproep is niet langer beschikbaar.",
     "Sluiten",
+    "Het vorige gesprek wordt nog afgesloten. Wacht even en probeer het opnieuw.",
   ],
   "ro": <String>[
     "Email de verificare trimis.",
@@ -1042,6 +1055,7 @@ const _authCallReleaseTranslationValues = <String, List<String>>{
     "Difuzor",
     "Acest apel nu mai este disponibil.",
     "Închide",
+    "Apelul anterior este încă în curs de închidere. Așteaptă puțin și încearcă din nou.",
   ],
   "tr": <String>[
     "Doğrulama e-postası gönderildi.",
@@ -1115,6 +1129,7 @@ const _authCallReleaseTranslationValues = <String, List<String>>{
     "Hoparlör",
     "Bu arama artık mevcut değil.",
     "Kapat",
+    "Önceki arama hâlâ sonlandırılıyor. Biraz bekleyip tekrar dene.",
   ],
   "el": <String>[
     "Αποστάλθηκε email επαλήθευσης.",
@@ -1188,6 +1203,7 @@ const _authCallReleaseTranslationValues = <String, List<String>>{
     "Ηχείο",
     "Αυτή η κλήση δεν είναι πλέον διαθέσιμη.",
     "Κλείσιμο",
+    "Η προηγούμενη κλήση δεν έχει τερματιστεί ακόμη. Περίμενε λίγο και δοκίμασε ξανά.",
   ],
   "hu": <String>[
     "Ellenőrző e-mail elküldve.",
@@ -1261,6 +1277,7 @@ const _authCallReleaseTranslationValues = <String, List<String>>{
     "Hangszóró",
     "Ez a hívás már nem elérhető.",
     "Bezárás",
+    "Az előző hívás lezárása még folyamatban van. Várj egy kicsit, majd próbáld újra.",
   ],
   "hr": <String>[
     "Potvrdni e-mail poslan.",
@@ -1334,6 +1351,7 @@ const _authCallReleaseTranslationValues = <String, List<String>>{
     "Zvučnik",
     "Ovaj poziv više nije dostupan.",
     "Zatvori",
+    "Prethodni poziv još se završava. Pričekaj trenutak pa pokušaj ponovno.",
   ],
   "sr": <String>[
     "Потврда е-поште послата.",
@@ -1407,6 +1425,7 @@ const _authCallReleaseTranslationValues = <String, List<String>>{
     "Звучник",
     "Овај позив више није доступан.",
     "Затвори",
+    "Претходни позив се још завршава. Сачекај тренутак па покушај поново.",
   ],
   "sv": <String>[
     "Verifieringsmail skickat.",
@@ -1480,6 +1499,7 @@ const _authCallReleaseTranslationValues = <String, List<String>>{
     "Högtalare",
     "Detta samtal är inte längre tillgängligt.",
     "Stäng",
+    "Det föregående samtalet håller fortfarande på att avslutas. Vänta en stund och försök igen.",
   ],
   "da": <String>[
     "Bekræftelsesmail sendt.",
@@ -1553,6 +1573,7 @@ const _authCallReleaseTranslationValues = <String, List<String>>{
     "Højttaler",
     "Dette opkald er ikke længere tilgængeligt.",
     "Luk",
+    "Det forrige opkald er stadig ved at blive afsluttet. Vent et øjeblik, og prøv igen.",
   ],
   "nb": <String>[
     "Verifiserings-e-post sendt.",
@@ -1626,6 +1647,7 @@ const _authCallReleaseTranslationValues = <String, List<String>>{
     "Høyttaler",
     "Denne samtalen er ikke lenger tilgjengelig.",
     "Lukk",
+    "Den forrige samtalen avsluttes fortsatt. Vent litt og prøv igjen.",
   ],
   "fi": <String>[
     "Varmistusviesti lähetetty.",
@@ -1699,6 +1721,7 @@ const _authCallReleaseTranslationValues = <String, List<String>>{
     "Kaiutin",
     "Tämä puhelu ei ole enää saatavilla.",
     "Sulje",
+    "Edellistä puhelua suljetaan vielä. Odota hetki ja yritä uudelleen.",
   ],
   "lt": <String>[
     "Patvirtinimo el. laiškas išsiųstas.",
@@ -1772,6 +1795,7 @@ const _authCallReleaseTranslationValues = <String, List<String>>{
     "Garsiakalbis",
     "Šis skambutis nebepasiekiamas.",
     "Uždaryti",
+    "Ankstesnis skambutis vis dar baigiamas. Šiek tiek palaukite ir bandykite dar kartą.",
   ],
   "lv": <String>[
     "Verifikācijas e-pasts nosūtīts.",
@@ -1845,6 +1869,7 @@ const _authCallReleaseTranslationValues = <String, List<String>>{
     "Skaļrunis",
     "Šis zvans vairs nav pieejams.",
     "Aizvērt",
+    "Iepriekšējais zvans vēl tiek pabeigts. Uzgaidi brīdi un mēģini vēlreiz.",
   ],
   "et": <String>[
     "Kontrollmeil saadetud.",
@@ -1918,6 +1943,7 @@ const _authCallReleaseTranslationValues = <String, List<String>>{
     "Kõlar",
     "See kõne pole enam saadaval.",
     "Sule",
+    "Eelmise kõne lõpetamine on veel pooleli. Oota hetk ja proovi uuesti.",
   ],
   "id": <String>[
     "Email verifikasi dikirim.",
@@ -1991,6 +2017,7 @@ const _authCallReleaseTranslationValues = <String, List<String>>{
     "Pengeras suara",
     "Panggilan ini tidak lagi tersedia.",
     "Tutup",
+    "Panggilan sebelumnya sedang diakhiri. Tunggu sebentar, lalu coba lagi.",
   ],
   "vi": <String>[
     "Email xác thực đã được gửi.",
@@ -2064,6 +2091,7 @@ const _authCallReleaseTranslationValues = <String, List<String>>{
     "Loa",
     "Cuộc gọi này không còn khả dụng.",
     "Đóng",
+    "Cuộc gọi trước chưa kết thúc hoàn toàn. Đợi một lát rồi thử lại.",
   ],
   "zh_CN": <String>[
     "验证邮件已发送。",
@@ -2137,6 +2165,7 @@ const _authCallReleaseTranslationValues = <String, List<String>>{
     "扬声器",
     "通话已不可用。",
     "关闭",
+    "上一次通话尚未完全结束。请稍等片刻后重试。",
   ],
   "zh_TW": <String>[
     "驗證郵件已發送。",
@@ -2210,6 +2239,7 @@ const _authCallReleaseTranslationValues = <String, List<String>>{
     "喇叭",
     "此通話已無法使用。",
     "關閉",
+    "上一次通話尚未完全結束。請稍候片刻再試。",
   ],
   "ja": <String>[
     "確認メールを送信しました。",
@@ -2283,6 +2313,7 @@ const _authCallReleaseTranslationValues = <String, List<String>>{
     "スピーカー",
     "この通話は利用できなくなりました。",
     "閉じる",
+    "前の通話の終了処理が続いています。少し待ってからもう一度お試しください。",
   ],
   "ko": <String>[
     "인증 이메일이 전송되었습니다.",
@@ -2356,6 +2387,7 @@ const _authCallReleaseTranslationValues = <String, List<String>>{
     "스피커",
     "이 통화는 더 이상 이용할 수 없습니다.",
     "닫기",
+    "이전 통화를 아직 종료하는 중입니다. 잠시 기다린 후 다시 시도해 주세요.",
   ],
   "ar": <String>[
     "تم إرسال بريد التحقق.",
@@ -2429,6 +2461,7 @@ const _authCallReleaseTranslationValues = <String, List<String>>{
     "مكبر الصوت",
     "هذه المكالمة لم تعد متاحة.",
     "إغلاق",
+    "لا تزال المكالمة السابقة قيد الإنهاء. انتظر قليلًا ثم حاول مجددًا.",
   ],
   "hi": <String>[
     "सत्यापन ईमेल भेजा गया।",
@@ -2502,6 +2535,7 @@ const _authCallReleaseTranslationValues = <String, List<String>>{
     "स्पीकर",
     "यह कॉल अब उपलब्ध नहीं है।",
     "बंद करें",
+    "पिछली कॉल अभी बंद हो रही है। थोड़ी देर बाद फिर कोशिश करें।",
   ],
   "bn": <String>[
     "যাচাই ইমেইল পাঠানো হয়েছে।",
@@ -2575,6 +2609,7 @@ const _authCallReleaseTranslationValues = <String, List<String>>{
     "স্পিকার",
     "এই কলটি আর উপলব্ধ নেই।",
     "বন্ধ করুন",
+    "আগের কলটি এখনও বন্ধ হচ্ছে। একটু অপেক্ষা করে আবার চেষ্টা করুন।",
   ],
   "ur": <String>[
     "تصدیقی ای میل ارسال کر دی گئی۔",
@@ -2648,6 +2683,7 @@ const _authCallReleaseTranslationValues = <String, List<String>>{
     "اسپیکر",
     "یہ کال اب دستیاب نہیں ہے۔",
     "بند کریں",
+    "پچھلی کال ابھی بند ہو رہی ہے۔ تھوڑا انتظار کریں، پھر دوبارہ کوشش کریں۔",
   ],
   "th": <String>[
     "อีเมลสำหรับยืนยันถูกส่งแล้ว",
@@ -2721,6 +2757,7 @@ const _authCallReleaseTranslationValues = <String, List<String>>{
     "ลำโพง",
     "การโทรนี้ไม่สามารถใช้งานได้อีกต่อไป",
     "ปิด",
+    "ระบบกำลังปิดการโทรก่อนหน้า โปรดรอสักครู่แล้วลองอีกครั้ง",
   ],
   "ms": <String>[
     "Emel pengesahan telah dihantar.",
@@ -2794,6 +2831,7 @@ const _authCallReleaseTranslationValues = <String, List<String>>{
     "Pembesar suara",
     "Panggilan ini tidak lagi tersedia.",
     "Tutup",
+    "Panggilan sebelumnya masih sedang ditamatkan. Tunggu sebentar, kemudian cuba lagi.",
   ],
   "fil": <String>[
     "Naipadala na ang email sa pag-verify.",
@@ -2867,6 +2905,7 @@ const _authCallReleaseTranslationValues = <String, List<String>>{
     "Loudspeaker",
     "Ang tawag na ito ay hindi na available.",
     "Isara",
+    "Isinasara pa ang nakaraang tawag. Maghintay sandali, saka subukang muli.",
   ],
   "he": <String>[
     "אימייל אישור נשלח.",
@@ -2940,6 +2979,7 @@ const _authCallReleaseTranslationValues = <String, List<String>>{
     "רמקול",
     "שיחה זו אינה זמינה יותר.",
     "סגור",
+    "השיחה הקודמת עדיין נסגרת. יש להמתין רגע ולנסות שוב.",
   ],
   "fa": <String>[
     "ایمیل تأیید ارسال شد.",
@@ -3013,6 +3053,7 @@ const _authCallReleaseTranslationValues = <String, List<String>>{
     "بلندگو",
     "این تماس دیگر در دسترس نیست.",
     "بستن",
+    "تماس قبلی هنوز در حال بسته شدن است. کمی صبر کنید و دوباره تلاش کنید.",
   ],
   "sw": <String>[
     "Barua pepe ya uthibitisho imetumwa.",
@@ -3086,5 +3127,6 @@ const _authCallReleaseTranslationValues = <String, List<String>>{
     "Spika",
     "Simu hii haipatikani tena.",
     "Funga",
+    "Simu iliyotangulia bado inakatishwa. Subiri kidogo, kisha ujaribu tena.",
   ],
 };

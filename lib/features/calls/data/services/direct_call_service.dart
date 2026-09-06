@@ -1,8 +1,10 @@
+import 'dart:async';
 import 'dart:math';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart' show visibleForTesting;
 
 import '../models/direct_call.dart';
 import '../models/voice_connection_info.dart';
@@ -20,6 +22,7 @@ abstract interface class DirectCallGateway {
   Future<DirectCallStatus> accept(
     String callId, {
     DirectCallMediaType mediaType = DirectCallMediaType.audio,
+    void Function(DirectCallStatus status)? onLateValidatedResult,
   });
   Future<void> decline(String callId);
   Future<void> cancel(String callId);
@@ -101,6 +104,148 @@ class DirectCallInstallationBindingException implements Exception {
   String toString() => message;
 }
 
+/// A missing canonical document is a terminal read result, not loading.
+class DirectCallUnavailableException implements Exception {
+  const DirectCallUnavailableException();
+
+  @override
+  String toString() => 'This call is no longer available.';
+}
+
+/// Safe diagnostic categories; never includes identities, tokens or payloads.
+/// A timeout is ambiguous: an already-dispatched server operation may commit.
+class DirectCallTimeoutException implements Exception {
+  const DirectCallTimeoutException({
+    required this.operation,
+    required this.stage,
+  });
+
+  final String operation;
+  final String stage;
+
+  @override
+  String toString() => 'The call request took too long. Try again.';
+}
+
+/// One timer spans local storage, native Firebase auth/App Check preflight,
+/// callable attempts and reconciliation. Timing out never cancels the source
+/// Future; only the guarded result can advance the client to another stage.
+class _DirectCallDeadline {
+  _DirectCallDeadline(this.operation, Duration duration) {
+    _timer = Timer(duration, () {
+      _closed = true;
+      _expired.complete();
+    });
+  }
+
+  final String operation;
+  final _expired = Completer<void>();
+  late final Timer _timer;
+  bool _closed = false;
+
+  Future<T> run<T>(
+    String stage,
+    Future<T> Function() action, {
+    Duration? timeout,
+    void Function(T value)? onLateResult,
+    void Function()? onSourceStarted,
+    void Function()? onSourceSettled,
+  }) {
+    DirectCallTimeoutException failure() =>
+        DirectCallTimeoutException(operation: operation, stage: stage);
+    if (_closed) return Future<T>.error(failure());
+    final result = Completer<T>();
+    void expire() {
+      if (!result.isCompleted) result.completeError(failure());
+    }
+
+    final attemptTimer = timeout == null ? null : Timer(timeout, expire);
+    _expired.future.then((_) => expire());
+    onSourceStarted?.call();
+    Future<T>.sync(action).then(
+      (value) {
+        try {
+          if (!result.isCompleted) {
+            result.complete(value);
+          } else {
+            onLateResult?.call(value);
+          }
+        } catch (_) {
+          // An abandoned UI callback must not become an unhandled error.
+        } finally {
+          onSourceSettled?.call();
+        }
+      },
+      onError: (Object error, StackTrace stack) {
+        if (!result.isCompleted) result.completeError(error, stack);
+        onSourceSettled?.call();
+      },
+    );
+    return result.future.whenComplete(() => attemptTimer?.cancel());
+  }
+
+  void close() {
+    _closed = true;
+    _timer.cancel();
+  }
+}
+
+/// Raw native Futures may never settle. They retain this detached holder, not
+/// the widget consumer: success, delivery or the retention timer clears it.
+class _LateAcceptResultHolder {
+  _LateAcceptResultHolder(this._consumer, Duration retention, this._onRelease) {
+    _timer = Timer(retention, release);
+  }
+
+  void Function(DirectCallStatus)? _consumer;
+  void Function(_LateAcceptResultHolder)? _onRelease;
+  Timer? _timer;
+  DirectCallStatus? _status;
+  bool _publicFailed = false;
+  int _pendingSources = 0;
+
+  void sourceStarted() => _pendingSources++;
+
+  void sourceSettled() {
+    _pendingSources--;
+    if (_publicFailed && _pendingSources == 0) release();
+  }
+
+  void receive(DirectCallStatus status) {
+    if (_consumer == null) return;
+    _status ??= status;
+    _deliver();
+  }
+
+  void armAfterFailure() {
+    _publicFailed = true;
+    _deliver();
+    if (_pendingSources == 0) release();
+  }
+
+  void _deliver() {
+    final consumer = _consumer;
+    final status = _status;
+    if (!_publicFailed || consumer == null || status == null) return;
+    release();
+    try {
+      consumer(status);
+    } catch (_) {
+      // A disposed consumer must not leak an asynchronous handler exception.
+    }
+  }
+
+  void release() {
+    _consumer = null;
+    _status = null;
+    _timer?.cancel();
+    _timer = null;
+    final onRelease = _onRelease;
+    _onRelease = null;
+    onRelease?.call(this);
+  }
+}
+
 class DirectCallService implements DirectCallGateway {
   static const int directVideoProtocol = 1;
 
@@ -113,11 +258,19 @@ class DirectCallService implements DirectCallGateway {
     DirectCallInstallationIdStore? installationIdStore,
     String Function()? installationIdFactory,
     DateTime Function()? clock,
+    this.operationTimeout = const Duration(seconds: 20),
+    this.callableAttemptTimeout = const Duration(seconds: 8),
+    this.reconciliationTimeout = const Duration(seconds: 3),
+    this.lateResultRetention = const Duration(minutes: 2),
     // A ringing call can become active after its start response was lost and
     // remain valid for eight hours. Keep the idempotency key slightly longer
     // than that server lifetime, while still bounding stale replays.
     this.startRequestTtl = const Duration(hours: 8, minutes: 5),
-  }) : _firestore = firestore ?? FirebaseFirestore.instance,
+  }) : assert(operationTimeout > Duration.zero),
+       assert(callableAttemptTimeout > Duration.zero),
+       assert(reconciliationTimeout > Duration.zero),
+       assert(lateResultRetention > Duration.zero),
+       _firestore = firestore ?? FirebaseFirestore.instance,
        _functions =
            functions ?? FirebaseFunctions.instanceFor(region: 'europe-west1'),
        _auth = auth ?? FirebaseAuth.instance,
@@ -139,7 +292,69 @@ class DirectCallService implements DirectCallGateway {
   final String Function() _installationIdFactory;
   final DateTime Function() _clock;
   final Duration startRequestTtl;
+  final Duration operationTimeout;
+  final Duration callableAttemptTimeout;
+  final Duration reconciliationTimeout;
+  final Duration lateResultRetention;
+  final _lateAcceptResults = <_LateAcceptResultHolder>{};
   Future<String>? _installationIdFuture;
+
+  @visibleForTesting
+  int get retainedLateAcceptConsumersForTesting => _lateAcceptResults.length;
+
+  void _releaseLateAcceptResult(_LateAcceptResultHolder holder) {
+    _lateAcceptResults.remove(holder);
+  }
+
+  Future<T> _bounded<T>(
+    String operation,
+    Future<T> Function(_DirectCallDeadline deadline) action,
+  ) async {
+    final deadline = _DirectCallDeadline(operation, operationTimeout);
+    try {
+      return await action(deadline);
+    } finally {
+      deadline.close();
+    }
+  }
+
+  Future<HttpsCallableResult<T>> _invoke<T>(
+    _DirectCallDeadline deadline,
+    String name,
+    Map<String, Object?> payload, {
+    void Function(HttpsCallableResult<T> value)? onLateResult,
+    void Function()? onSourceStarted,
+    void Function()? onSourceSettled,
+  }) async {
+    try {
+      return await deadline.run(
+        'callable',
+        () => _functions
+            .httpsCallable(
+              name,
+              options: HttpsCallableOptions(timeout: callableAttemptTimeout),
+            )
+            .call<T>(payload),
+        timeout: callableAttemptTimeout,
+        onLateResult: onLateResult,
+        onSourceStarted: onSourceStarted,
+        onSourceSettled: onSourceSettled,
+      );
+    } catch (error, stack) {
+      if (error is TimeoutException ||
+          (error is FirebaseFunctionsException &&
+              error.code == 'deadline-exceeded')) {
+        Error.throwWithStackTrace(
+          DirectCallTimeoutException(
+            operation: deadline.operation,
+            stage: 'callable',
+          ),
+          stack,
+        );
+      }
+      rethrow;
+    }
+  }
 
   // A second screen/service instance can be created while the first call
   // start is awaiting the network. The durable request store guarantees that
@@ -192,20 +407,82 @@ class DirectCallService implements DirectCallGateway {
 
   @override
   Stream<DirectCall> watchCall(String callId) {
-    return _firestore
-        .collection('directCalls')
-        .doc(callId)
-        .snapshots()
-        .where((snapshot) => snapshot.exists)
-        .map(DirectCall.fromFirestore);
+    late final StreamController<DirectCall> controller;
+    StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? subscription;
+    var finished = false;
+
+    void cancelSource() {
+      final current = subscription;
+      subscription = null;
+      // Cancellation stops event delivery immediately. Native cleanup can
+      // finish later and must not delay the public terminal error/done events.
+      current?.cancel().ignore();
+    }
+
+    void finish({Object? error, StackTrace? stackTrace}) {
+      if (finished) return;
+      finished = true;
+      if (error != null) controller.addError(error, stackTrace);
+      controller.close().ignore();
+      cancelSource();
+    }
+
+    controller = StreamController<DirectCall>(
+      onListen: () {
+        try {
+          subscription = _firestore
+              .collection('directCalls')
+              .doc(callId)
+              .snapshots(includeMetadataChanges: true)
+              .listen(
+                (snapshot) {
+                  if (finished) return;
+                  // An empty offline cache is not proof of server deletion.
+                  if (!snapshot.exists && snapshot.metadata.isFromCache) return;
+                  if (!snapshot.exists) {
+                    finish(error: const DirectCallUnavailableException());
+                    return;
+                  }
+                  try {
+                    controller.add(DirectCall.fromFirestore(snapshot));
+                  } catch (error, stackTrace) {
+                    finish(error: error, stackTrace: stackTrace);
+                  }
+                },
+                onError: (Object error, StackTrace stackTrace) =>
+                    finish(error: error, stackTrace: stackTrace),
+                onDone: finish,
+              );
+          // Also cover a synchronous source completing during listen, before
+          // its subscription was assigned above.
+          if (finished) cancelSource();
+        } catch (error, stackTrace) {
+          finish(error: error, stackTrace: stackTrace);
+        }
+      },
+      onPause: () => subscription?.pause(),
+      onResume: () => subscription?.resume(),
+      onCancel: () {
+        finished = true;
+        cancelSource();
+      },
+    );
+    return controller.stream;
   }
 
   @override
-  Future<DirectCall?> getCall(String callId) async {
-    final snapshot = await _firestore
-        .collection('directCalls')
-        .doc(callId)
-        .get();
+  Future<DirectCall?> getCall(String callId) =>
+      _bounded('getCall', (deadline) => _getCall(callId, deadline));
+
+  Future<DirectCall?> _getCall(
+    String callId,
+    _DirectCallDeadline deadline,
+  ) async {
+    final snapshot = await deadline.run(
+      'reconciliation',
+      () => _firestore.collection('directCalls').doc(callId).get(),
+      timeout: reconciliationTimeout,
+    );
     return snapshot.exists ? DirectCall.fromFirestore(snapshot) : null;
   }
 
@@ -251,11 +528,15 @@ class DirectCallService implements DirectCallGateway {
 
     late final Future<String> operation;
     operation =
-        _startCall(
-          callerId: callerId,
-          calleeId: calleeId,
-          conversationId: conversationId,
-          mediaType: mediaType,
+        _bounded(
+          'startDirectCall',
+          (deadline) => _startCall(
+            callerId: callerId,
+            calleeId: calleeId,
+            conversationId: conversationId,
+            mediaType: mediaType,
+            deadline: deadline,
+          ),
         ).whenComplete(() {
           if (identical(_inFlightStarts[scope], operation)) {
             _inFlightStarts.remove(scope);
@@ -270,13 +551,17 @@ class DirectCallService implements DirectCallGateway {
     required String calleeId,
     required String conversationId,
     required DirectCallMediaType mediaType,
+    required _DirectCallDeadline deadline,
   }) async {
-    final installationId = await _installationId();
-    var request = await _acquireStartRequest(
-      callerId: callerId,
-      calleeId: calleeId,
-      conversationId: conversationId,
-      mediaType: mediaType,
+    final installationId = await deadline.run('installation', _installationId);
+    var request = await deadline.run(
+      'start-request',
+      () => _acquireStartRequest(
+        callerId: callerId,
+        calleeId: calleeId,
+        conversationId: conversationId,
+        mediaType: mediaType,
+      ),
     );
     // At most one canonical-but-terminal replay is retired per user action.
     // This lets a tap recover an active lost-ACK call after a restart, or start
@@ -290,6 +575,7 @@ class DirectCallService implements DirectCallGateway {
         mediaType: mediaType,
         requestId: request.requestId,
         installationId: installationId,
+        deadline: deadline,
       );
       final callId = response['callId'] as String?;
       if (callId == null || callId.isEmpty) {
@@ -297,10 +583,16 @@ class DirectCallService implements DirectCallGateway {
       }
       final status = response['status'];
       if (status == null || status == 'ringing' || status == 'active') {
-        await _startRequestStore.clear(
-          callerId: callerId,
-          calleeId: calleeId,
-          expectedRequestId: request.requestId,
+        // The canonical ACK is already valid. A slow local cleanup must not
+        // turn success into an ambiguous timeout after deleting its retry key.
+        unawaited(
+          Future<void>.sync(
+            () => _startRequestStore.clear(
+              callerId: callerId,
+              calleeId: calleeId,
+              expectedRequestId: request.requestId,
+            ),
+          ).catchError((Object _) {}),
         );
         return callId;
       }
@@ -315,20 +607,26 @@ class DirectCallService implements DirectCallGateway {
         // is usable, so preserve its request ID for a later reconciliation.
         throw StateError('The call service returned an invalid call status.');
       }
-      await _startRequestStore.clear(
-        callerId: callerId,
-        calleeId: calleeId,
-        expectedRequestId: request.requestId,
+      await deadline.run(
+        'retire-start-request',
+        () => _startRequestStore.clear(
+          callerId: callerId,
+          calleeId: calleeId,
+          expectedRequestId: request.requestId,
+        ),
       );
       if (operation == 1) {
         throw StateError('The call is no longer available. Try again.');
       }
-      request = await _acquireStartRequest(
-        callerId: callerId,
-        calleeId: calleeId,
-        conversationId: conversationId,
-        mediaType: mediaType,
-        previousRequestId: request.requestId,
+      request = await deadline.run(
+        'start-request',
+        () => _acquireStartRequest(
+          callerId: callerId,
+          calleeId: calleeId,
+          conversationId: conversationId,
+          mediaType: mediaType,
+          previousRequestId: request.requestId,
+        ),
       );
     }
     throw StateError('The call service did not complete.');
@@ -374,12 +672,12 @@ class DirectCallService implements DirectCallGateway {
     required DirectCallMediaType mediaType,
     required String requestId,
     required String installationId,
+    required _DirectCallDeadline deadline,
   }) async {
     for (var attempt = 0; attempt < 2; attempt++) {
       try {
-        final response = await _functions
-            .httpsCallable('startDirectCall')
-            .call<Map<String, dynamic>>({
+        final response =
+            await _invoke<Map<String, dynamic>>(deadline, 'startDirectCall', {
               'calleeId': calleeId,
               'conversationId': conversationId,
               'mediaType': mediaType.name,
@@ -395,10 +693,13 @@ class DirectCallService implements DirectCallGateway {
         // start to reconcile. Transport and malformed-response failures stay
         // durable because the server may already have committed the call.
         if (_isTerminalStartFailure(error)) {
-          await _startRequestStore.clear(
-            callerId: callerId,
-            calleeId: calleeId,
-            expectedRequestId: requestId,
+          await deadline.run(
+            'retire-start-request',
+            () => _startRequestStore.clear(
+              callerId: callerId,
+              calleeId: calleeId,
+              expectedRequestId: requestId,
+            ),
           );
         }
         final actionableError =
@@ -410,15 +711,16 @@ class DirectCallService implements DirectCallGateway {
   }
 
   bool _isAmbiguousStartFailure(Object error) =>
-      error is FirebaseFunctionsException &&
-      const <String>{
-        'aborted',
-        'cancelled',
-        'deadline-exceeded',
-        'internal',
-        'unknown',
-        'unavailable',
-      }.contains(error.code);
+      error is DirectCallTimeoutException ||
+      (error is FirebaseFunctionsException &&
+          const <String>{
+            'aborted',
+            'cancelled',
+            'deadline-exceeded',
+            'internal',
+            'unknown',
+            'unavailable',
+          }.contains(error.code));
 
   bool _isTerminalStartFailure(Object error) =>
       error is FirebaseFunctionsException && !_isAmbiguousStartFailure(error);
@@ -465,16 +767,53 @@ class DirectCallService implements DirectCallGateway {
   Future<DirectCallStatus> accept(
     String callId, {
     DirectCallMediaType mediaType = DirectCallMediaType.audio,
+    void Function(DirectCallStatus status)? onLateValidatedResult,
+  }) {
+    _LateAcceptResultHolder? holder;
+    if (onLateValidatedResult != null) {
+      holder = _LateAcceptResultHolder(
+        onLateValidatedResult,
+        lateResultRetention,
+        _releaseLateAcceptResult,
+      );
+      _lateAcceptResults.add(holder);
+    }
+    // Keep the asynchronous activation separate from the consumer argument.
+    // Pending native continuations below can capture only the detached holder.
+    return _acceptWithLateResult(callId, mediaType: mediaType, holder: holder);
+  }
+
+  Future<DirectCallStatus> _acceptWithLateResult(
+    String callId, {
+    required DirectCallMediaType mediaType,
+    required _LateAcceptResultHolder? holder,
   }) async {
-    final installationId = await _installationId();
-    return _acceptAction(
-      callId,
-      payload: <String, Object?>{
-        'installationId': installationId,
-        if (mediaType == DirectCallMediaType.video)
-          'directVideoProtocol': directVideoProtocol,
-      },
-    );
+    try {
+      final result = await _bounded('acceptDirectCall', (deadline) async {
+        final installationId = await deadline.run(
+          'installation',
+          _installationId,
+        );
+        return _acceptAction(
+          callId,
+          deadline: deadline,
+          onLateResult: holder?.receive,
+          lateResultHolder: holder,
+          payload: <String, Object?>{
+            'installationId': installationId,
+            if (mediaType == DirectCallMediaType.video)
+              'directVideoProtocol': directVideoProtocol,
+          },
+        );
+      });
+      holder?.release();
+      return result;
+    } catch (_) {
+      // An earlier timed-out attempt can still ACK after a later unavailable,
+      // malformed or refused retry. Only the ACK itself grants this authority.
+      holder?.armAfterFailure();
+      rethrow;
+    }
   }
 
   /// Accept is installation-bound, so an `active` Firestore snapshot cannot
@@ -485,22 +824,30 @@ class DirectCallService implements DirectCallGateway {
   Future<DirectCallStatus> _acceptAction(
     String callId, {
     required Map<String, Object?> payload,
+    required _DirectCallDeadline deadline,
+    required void Function(DirectCallStatus status)? onLateResult,
+    required _LateAcceptResultHolder? lateResultHolder,
   }) async {
-    final callable = _functions.httpsCallable('acceptDirectCall');
     final request = <String, Object?>{'callId': callId, ...payload};
     for (var attempt = 0; attempt < 2; attempt++) {
       try {
-        final response = await callable.call<Map<String, dynamic>>(request);
-        final responseCallId = response.data['callId'];
-        final status = response.data['status'];
-        if (responseCallId != callId || status is! String) {
-          throw StateError('The call service returned an invalid answer.');
-        }
-        return switch (status) {
-          'active' => DirectCallStatus.active,
-          'ended' => DirectCallStatus.ended,
-          _ => throw StateError('The call service returned an invalid answer.'),
-        };
+        final response = await _invoke<Map<String, dynamic>>(
+          deadline,
+          'acceptDirectCall',
+          request,
+          onSourceStarted: lateResultHolder?.sourceStarted,
+          onSourceSettled: lateResultHolder?.sourceSettled,
+          onLateResult: (response) {
+            // Only this exact installation-bound callable can prove that this
+            // device won Answer. Never derive the callback from a snapshot.
+            try {
+              onLateResult?.call(_validatedAcceptStatus(callId, response.data));
+            } catch (_) {
+              // Malformed late responses cannot authorize cleanup or media.
+            }
+          },
+        );
+        return _validatedAcceptStatus(callId, response.data);
       } catch (error, stackTrace) {
         if (attempt == 0 && _isAmbiguousStartFailure(error)) continue;
         Error.throwWithStackTrace(
@@ -510,6 +857,20 @@ class DirectCallService implements DirectCallGateway {
       }
     }
     throw StateError('The call service did not complete the answer.');
+  }
+
+  DirectCallStatus _validatedAcceptStatus(
+    String callId,
+    Map<String, dynamic> data,
+  ) {
+    if (data['callId'] != callId) {
+      throw StateError('The call service returned an invalid answer.');
+    }
+    return switch (data['status']) {
+      'active' => DirectCallStatus.active,
+      'ended' => DirectCallStatus.ended,
+      _ => throw StateError('The call service returned an invalid answer.'),
+    };
   }
 
   @override
@@ -546,11 +907,10 @@ class DirectCallService implements DirectCallGateway {
     String callId, {
     Map<String, Object?> payload = const <String, Object?>{},
     required Set<DirectCallStatus> acceptedStatuses,
-  }) async {
-    final callable = _functions.httpsCallable(name);
+  }) => _bounded(name, (deadline) async {
     final request = <String, Object?>{'callId': callId, ...payload};
     try {
-      await callable.call<void>(request);
+      await _invoke<void>(deadline, name, request);
       return;
     } catch (error, stackTrace) {
       if (!_isAmbiguousStartFailure(error)) {
@@ -559,15 +919,15 @@ class DirectCallService implements DirectCallGateway {
           stackTrace,
         );
       }
-      if (await _callReached(callId, acceptedStatuses)) return;
+      if (await _callReached(callId, acceptedStatuses, deadline)) return;
       try {
-        await callable.call<void>(request);
+        await _invoke<void>(deadline, name, request);
         return;
       } catch (retryError, retryStackTrace) {
         // The retry can race the first committed transition and receive a
         // deterministic failed-precondition rather than another transport
         // error. Reconcile authoritative state after every second failure.
-        if (await _callReached(callId, acceptedStatuses)) {
+        if (await _callReached(callId, acceptedStatuses, deadline)) {
           return;
         }
         Error.throwWithStackTrace(
@@ -576,14 +936,15 @@ class DirectCallService implements DirectCallGateway {
         );
       }
     }
-  }
+  });
 
   Future<bool> _callReached(
     String callId,
     Set<DirectCallStatus> acceptedStatuses,
+    _DirectCallDeadline deadline,
   ) async {
     try {
-      final current = await getCall(callId);
+      final current = await _getCall(callId, deadline);
       return current != null && acceptedStatuses.contains(current.status);
     } catch (_) {
       return false;
@@ -598,8 +959,15 @@ class DirectCallService implements DirectCallGateway {
     if (existing != null) return existing;
 
     late final Future<VoiceConnectionInfo> operation;
-    operation = _createJoinToken(callId: callId, requestId: _requestIdFactory())
-        .whenComplete(() {
+    operation =
+        _bounded(
+          'createDirectCallToken',
+          (deadline) => _createJoinToken(
+            callId: callId,
+            requestId: _requestIdFactory(),
+            deadline: deadline,
+          ),
+        ).whenComplete(() {
           if (identical(_inFlightTokens[scope], operation)) {
             _inFlightTokens.remove(scope);
           }
@@ -611,18 +979,21 @@ class DirectCallService implements DirectCallGateway {
   Future<VoiceConnectionInfo> _createJoinToken({
     required String callId,
     required String requestId,
+    required _DirectCallDeadline deadline,
   }) async {
-    final installationId = await _installationId();
+    final installationId = await deadline.run('installation', _installationId);
     for (var attempt = 0; attempt < 2; attempt++) {
       try {
-        final response = await _functions
-            .httpsCallable('createDirectCallToken')
-            .call<Map<String, dynamic>>({
-              'callId': callId,
-              'requestId': requestId,
-              'installationId': installationId,
-              'directVideoProtocol': directVideoProtocol,
-            });
+        final response = await _invoke<Map<String, dynamic>>(
+          deadline,
+          'createDirectCallToken',
+          {
+            'callId': callId,
+            'requestId': requestId,
+            'installationId': installationId,
+            'directVideoProtocol': directVideoProtocol,
+          },
+        );
         return VoiceConnectionInfo.fromMap(response.data);
       } catch (error, stackTrace) {
         if (attempt == 0 && _isAmbiguousStartFailure(error)) continue;

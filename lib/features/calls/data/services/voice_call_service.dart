@@ -67,10 +67,25 @@ final class VoicePermissionRequiredException implements Exception {
       'VoicePermissionRequiredException(${permission.name}, ${status.name})';
 }
 
+/// Native SDK work is still being drained. Retrying may wait, but must never
+/// start overlapping process-wide audio while that work remains unresolved.
+final class VoiceCleanupInProgressException implements Exception {
+  const VoiceCleanupInProgressException();
+
+  @override
+  String toString() => 'VoiceCleanupInProgressException';
+}
+
 class VoiceCallService extends ChangeNotifier {
   VoiceCallService._({PermissionReadinessService? permissionReadiness})
     : _microphoneTeardownTimeout = const Duration(seconds: 3),
+      _connectionTimeout = const Duration(seconds: 20),
+      _cleanupWaitTimeout = const Duration(seconds: 3),
       _captureDisableWaiter = _waitForCaptureDisable,
+      _roomFactoryOverride = null,
+      _cameraTrackFactoryOverride = null,
+      _tokenServiceOverride = null,
+      _directCallServiceOverride = null,
       _permissionReadiness =
           permissionReadiness ?? PermissionReadinessService.instance;
 
@@ -83,33 +98,65 @@ class VoiceCallService extends ChangeNotifier {
   @visibleForTesting
   VoiceCallService.forTesting({
     Duration microphoneTeardownTimeout = const Duration(seconds: 3),
+    Duration connectionTimeout = const Duration(seconds: 20),
+    Duration cleanupWaitTimeout = const Duration(seconds: 3),
     Future<bool> Function(Future<void> pendingDisable, Duration timeout)
         microphoneTeardownWaiter =
         _waitForCaptureDisable,
     PermissionReadinessService? permissionReadiness,
+    Room Function()? roomFactory,
+    Future<LocalVideoTrack> Function(CameraCaptureOptions options)?
+    cameraTrackFactory,
+    VoiceTokenService? tokenService,
+    DirectCallGateway? directCallService,
   }) : _microphoneTeardownTimeout = microphoneTeardownTimeout,
+       _connectionTimeout = connectionTimeout,
+       _cleanupWaitTimeout = cleanupWaitTimeout,
        _captureDisableWaiter = microphoneTeardownWaiter,
+       _roomFactoryOverride = roomFactory,
+       _cameraTrackFactoryOverride = cameraTrackFactory,
+       _tokenServiceOverride = tokenService,
+       _directCallServiceOverride = directCallService,
        _permissionReadiness =
            permissionReadiness ?? PermissionReadinessService.instance;
 
   static final VoiceCallService instance = VoiceCallService._();
 
   final Duration _microphoneTeardownTimeout;
+  final Duration _connectionTimeout;
+  final Duration _cleanupWaitTimeout;
   final Future<bool> Function(Future<void> pendingDisable, Duration timeout)
   _captureDisableWaiter;
   final PermissionReadinessService _permissionReadiness;
+  // Inject SDK/network boundaries only through the test constructor so tests
+  // exercise the real join, epoch checks and cleanup instead of overriding it.
+  final Room Function()? _roomFactoryOverride;
+  final Future<LocalVideoTrack> Function(CameraCaptureOptions options)?
+  _cameraTrackFactoryOverride;
+  final VoiceTokenService? _tokenServiceOverride;
+  final DirectCallGateway? _directCallServiceOverride;
 
   // Lazy: VoiceTokenService touches FirebaseFunctions at construction,
   // and this singleton is now reachable from always-mounted UI (the
   // shell's RoomMiniBar) — including in widget tests with no Firebase
   // app. Nothing needs the token service until an actual join().
-  late final VoiceTokenService _tokenService = VoiceTokenService();
-  late final DirectCallService _directCallService = DirectCallService();
+  late final VoiceTokenService _tokenService =
+      _tokenServiceOverride ?? VoiceTokenService();
+  late final DirectCallGateway _directCallService =
+      _directCallServiceOverride ?? DirectCallService();
   final UiSoundService _sounds = UiSoundService.instance;
 
   Room? _room;
   EventsListener<RoomEvent>? _events;
   Timer? _audioMeterTimer;
+  // SDK teardown can stop the process-wide Android audio session. Clearing
+  // _room alone must not let a replacement connect before teardown finishes.
+  Future<void> _roomTeardownTail = Future<void>.value();
+  final Expando<Future<void>> _roomDisposals = Expando<Future<void>>();
+  final Expando<Future<void>> _roomConnections = Expando<Future<void>>();
+  final Expando<Set<LocalVideoTrack>> _cameraCandidates =
+      Expando<Set<LocalVideoTrack>>();
+  int _pendingRoomTeardowns = 0;
 
   VoiceCallStatus _status = VoiceCallStatus.disconnected;
   String? _roomId;
@@ -194,6 +241,7 @@ class VoiceCallService extends ChangeNotifier {
   bool get isBusy =>
       _status == VoiceCallStatus.connecting ||
       _status == VoiceCallStatus.reconnecting;
+  bool get isCleanupInProgress => _pendingRoomTeardowns > 0;
   bool get isVideoCall => isDirectCall && _videoRequested;
   bool get cameraChangeInProgress => _cameraChangeInProgress;
   bool get cameraPermissionDenied => _cameraPermissionDenied;
@@ -378,19 +426,39 @@ class VoiceCallService extends ChangeNotifier {
     final initialMicrophoneEpoch = ++_microphoneOperationEpoch;
     final initialCameraEpoch = ++_cameraOperationEpoch;
     final initialSpeakerEpoch = ++_speakerOperationEpoch;
-    if (_roomId != null ||
-        _room != null ||
-        _status != VoiceCallStatus.disconnected) {
-      await _disconnectCurrentSession(
-        playSound: false,
-        invalidateOperations: false,
-      );
-      if (_sessionEpoch != joinEpoch ||
-          _microphoneOperationEpoch != initialMicrophoneEpoch ||
-          _cameraOperationEpoch != initialCameraEpoch ||
-          _speakerOperationEpoch != initialSpeakerEpoch) {
-        return;
+    try {
+      if (_roomId != null ||
+          _room != null ||
+          _status != VoiceCallStatus.disconnected) {
+        await _disconnectCurrentSession(
+          playSound: false,
+          invalidateOperations: false,
+          requireCleanupComplete: true,
+        );
       }
+      // Never start new process-wide audio until the old raw SDK work ends.
+      // The public wait is bounded; the underlying safety barrier is not.
+      await _waitForRoomTeardown();
+    } on VoiceCleanupInProgressException catch (error) {
+      if (_sessionEpoch != joinEpoch) return;
+      _roomId = sessionRoomId;
+      _roomName = roomName;
+      _sessionKind = kind;
+      _directCallId = directCallId;
+      _videoRequested = enableCamera;
+      _isMuted = true;
+      _desiredMicrophoneEnabled = false;
+      _desiredCameraEnabled = false;
+      _cameraChangeInProgress = false;
+      _errorMessage = _friendlyError(error);
+      _setStatus(VoiceCallStatus.failed);
+      rethrow;
+    }
+    if (_sessionEpoch != joinEpoch ||
+        _microphoneOperationEpoch != initialMicrophoneEpoch ||
+        _cameraOperationEpoch != initialCameraEpoch ||
+        _speakerOperationEpoch != initialSpeakerEpoch) {
+      return;
     }
 
     Room? joiningRoom;
@@ -444,10 +512,16 @@ class VoiceCallService extends ChangeNotifier {
         return;
       }
 
-      final room = Room(
-        roomOptions: const RoomOptions(adaptiveStream: true, dynacast: true),
-      );
+      final room =
+          _roomFactoryOverride?.call() ??
+          Room(
+            roomOptions: const RoomOptions(
+              adaptiveStream: true,
+              dynacast: true,
+            ),
+          );
       joiningRoom = room;
+      var initialMediaReady = false;
 
       _room = room;
       room.addListener(_handleRoomChanged);
@@ -460,7 +534,11 @@ class VoiceCallService extends ChangeNotifier {
         })
         ..on<RoomReconnectedEvent>((_) {
           if (_isJoinCurrent(joinEpoch, sessionRoomId)) {
-            _setStatus(VoiceCallStatus.connected);
+            _setStatus(
+              initialMediaReady
+                  ? VoiceCallStatus.connected
+                  : VoiceCallStatus.connecting,
+            );
           }
         })
         ..on<RoomDisconnectedEvent>((_) {
@@ -483,13 +561,18 @@ class VoiceCallService extends ChangeNotifier {
         });
       _events = joiningEvents;
 
-      await room.connect(
+      final connecting = room.connect(
         connectionInfo.serverUrl,
         connectionInfo.participantToken,
       );
+      // Room.connect has its own native-audio cleanup on failure. Track its
+      // settlement separately from this join Future (which itself can await
+      // teardown) so an old connect's finally cannot stop replacement audio.
+      _roomConnections[room] = connecting.catchError((Object _) {});
+      await connecting.timeout(_connectionTimeout);
       if (!_isJoinCurrent(joinEpoch, sessionRoomId) ||
           !identical(_room, room)) {
-        await _disposeRoomInstance(room, joiningEvents);
+        await _disposeStaleRoomInstance(room, joiningEvents);
         return;
       }
 
@@ -498,35 +581,38 @@ class VoiceCallService extends ChangeNotifier {
         throw StateError('Local voice participant was not created.');
       }
 
-      try {
-        if (connectionInfo.canPublish) {
-          await localParticipant.setMicrophoneEnabled(!startMuted);
-        } else {
-          _desiredMicrophoneEnabled = false;
-          _isMuted = true;
-        }
-        if (!_isMicrophoneOperationCurrent(
-          initialMicrophoneEpoch,
-          room,
-          desiredEnabled: connectionInfo.canPublish && !startMuted,
-        )) {
-          if (connectionInfo.canPublish && !startMuted) {
-            await _disableStaleMicrophone(localParticipant, room);
-          }
-          await _disposeRoomInstance(room, joiningEvents);
-          return;
-        }
-        _isMuted = !connectionInfo.canPublish || startMuted;
-      } catch (_) {
-        // Listen-only token: broadcast audience members can't publish
-        // (canPublish is computed server-side from their role). That's
-        // a working join, not a failure — they're here to listen, and
-        // a later promotion re-grants the mic via a fresh token.
+      // The post-connect grant can be narrower than the token snapshot (for
+      // example, a speaker demoted while joining). Both must permit capture.
+      final shouldStartMicrophone =
+          connectionInfo.canPublish &&
+          localParticipant.permissions.canPublish &&
+          !startMuted;
+      _desiredMicrophoneEnabled = shouldStartMicrophone;
+      if (shouldStartMicrophone) {
+        // A permitted microphone that fails to start/publish is a failed join,
+        // not a successful muted call. Let the outer failure boundary retain
+        // the error, invalidate media operations and dispose this session.
+        await localParticipant.setMicrophoneEnabled(true);
+      } else {
+        // New rooms have no microphone publication to disable. Listeners and
+        // speakers starting muted should not invoke native capture at all.
         _isMuted = true;
       }
+      if (!_isMicrophoneOperationCurrent(
+        initialMicrophoneEpoch,
+        room,
+        desiredEnabled: shouldStartMicrophone,
+      )) {
+        if (shouldStartMicrophone) {
+          await _disableStaleMicrophone(localParticipant, room);
+        }
+        await _disposeStaleRoomInstance(room, joiningEvents);
+        return;
+      }
+      _isMuted = !shouldStartMicrophone;
       if (!_isJoinCurrent(joinEpoch, sessionRoomId) ||
           !identical(_room, room)) {
-        await _disposeRoomInstance(room, joiningEvents);
+        await _disposeStaleRoomInstance(room, joiningEvents);
         return;
       }
       if (cameraRequestedNow &&
@@ -545,7 +631,7 @@ class VoiceCallService extends ChangeNotifier {
           );
           if (!_isJoinCurrent(joinEpoch, sessionRoomId) ||
               !identical(_room, room)) {
-            await _disposeRoomInstance(room, joiningEvents);
+            await _disposeStaleRoomInstance(room, joiningEvents);
             return;
           }
           if (!_isCameraOperationCurrent(
@@ -580,18 +666,19 @@ class VoiceCallService extends ChangeNotifier {
       // CPU and battery and can cause visible jank.
       if (kind == VoiceSessionKind.room) _startAudioMeter();
       if (!_isJoinCurrent(joinEpoch, sessionRoomId)) {
-        await _disposeRoomInstance(room, joiningEvents);
+        await _disposeStaleRoomInstance(room, joiningEvents);
         return;
       }
+      initialMediaReady = true;
       _setStatus(VoiceCallStatus.connected);
       if (playSound) {
         unawaited(_sounds.play(UiSound.roomJoined));
       }
-    } catch (error) {
+    } catch (error, stackTrace) {
       if (!_isJoinCurrent(joinEpoch, sessionRoomId)) {
         final room = joiningRoom;
         if (room != null) {
-          await _disposeRoomInstance(room, joiningEvents);
+          await _disposeStaleRoomInstance(room, joiningEvents);
         }
         return;
       }
@@ -601,10 +688,21 @@ class VoiceCallService extends ChangeNotifier {
       _desiredMicrophoneEnabled = false;
       _speakerOperationEpoch++;
       _cameraChangeInProgress = false;
-      _errorMessage = _friendlyError(error);
+      Object failure = error;
+      try {
+        await _disposeRoom();
+      } on VoiceCleanupInProgressException catch (cleanupError) {
+        failure = cleanupError;
+      } catch (_) {
+        // Capture has already been stopped locally; if SDK disposal reports
+        // an error, keep the original join error and leave connecting state.
+      }
+      // Report failure/cleanup-busy without allowing another native session
+      // through the barrier. End/newer attempts can supersede this UI update.
+      if (!_isJoinCurrent(joinEpoch, sessionRoomId)) return;
+      _errorMessage = _friendlyError(failure);
       _setStatus(VoiceCallStatus.failed);
-      await _disposeRoom();
-      rethrow;
+      Error.throwWithStackTrace(failure, stackTrace);
     }
   }
 
@@ -951,6 +1049,7 @@ class VoiceCallService extends ChangeNotifier {
   Future<void> _disconnectCurrentSession({
     required bool playSound,
     required bool invalidateOperations,
+    bool requireCleanupComplete = false,
   }) async {
     // Invalidate permission, token and media awaits before clearing any local
     // state. A late Future must never reconnect or republish after logout,
@@ -991,7 +1090,13 @@ class VoiceCallService extends ChangeNotifier {
     _cameraPosition = CameraPosition.front;
     notifyListeners();
 
-    await _disposeRoom();
+    try {
+      await _disposeRoom();
+    } on VoiceCleanupInProgressException {
+      // End remains local-first and finishes in bounded time. Cleanup keeps
+      // running behind the safety barrier; new joins explicitly wait/reject.
+      if (requireCleanupComplete) rethrow;
+    }
     if (playSound && wasConnected) {
       unawaited(_sounds.play(UiSound.roomLeft));
     }
@@ -1017,6 +1122,35 @@ class VoiceCallService extends ChangeNotifier {
 
     if (room != null) {
       await _disposeRoomInstance(room, events, listenerDisposed: true);
+    }
+    await _waitForRoomTeardown();
+  }
+
+  Future<void> _waitForRoomTeardown() =>
+      _awaitCleanup(_waitForRoomTeardownUnbounded());
+
+  Future<void> _waitForRoomTeardownUnbounded() async {
+    while (true) {
+      final pending = _roomTeardownTail;
+      await pending;
+      if (identical(pending, _roomTeardownTail)) return;
+    }
+  }
+
+  Future<void> _awaitCleanup(Future<void> cleanup) => cleanup.timeout(
+    _cleanupWaitTimeout,
+    onTimeout: () => throw const VoiceCleanupInProgressException(),
+  );
+
+  Future<void> _disposeStaleRoomInstance(
+    Room room,
+    EventsListener<RoomEvent>? events,
+  ) async {
+    try {
+      await _disposeRoomInstance(room, events);
+    } on VoiceCleanupInProgressException {
+      // This superseded attempt must finish without mutating the newer UI.
+      // The raw cleanup remains observed and blocks replacement native audio.
     }
   }
 
@@ -1107,15 +1241,18 @@ class VoiceCallService extends ChangeNotifier {
         return;
       }
 
-      candidate = await LocalVideoTrack.createCameraTrack(
-        CameraCaptureOptions(cameraPosition: position),
-      );
+      final captureOptions = CameraCaptureOptions(cameraPosition: position);
+      candidate =
+          await (_cameraTrackFactoryOverride?.call(captureOptions) ??
+              LocalVideoTrack.createCameraTrack(captureOptions));
+      // Capture starts before LiveKit exposes a publication. Keep ownership
+      // discoverable by End while publishVideoTrack is still awaiting the SDK.
+      (_cameraCandidates[room] ??= <LocalVideoTrack>{}).add(candidate);
       if (!_isCameraOperationCurrent(
         operationEpoch,
         room,
         desiredEnabled: true,
       )) {
-        await _stopLocalTrack(candidate);
         return;
       }
 
@@ -1126,11 +1263,17 @@ class VoiceCallService extends ChangeNotifier {
         desiredEnabled: true,
       )) {
         // Ownership transferred to the participant publication.
+        _cameraCandidates[room]?.remove(candidate);
         candidate = null;
       }
-    } catch (_) {
-      if (candidate != null) await _stopLocalTrack(candidate);
-      rethrow;
+    } finally {
+      // Publication can succeed after End already disposed the Room. Only a
+      // current operation transfers ownership; every other path must stop its
+      // candidate directly, independent of idempotent Room cleanup.
+      if (candidate != null) {
+        _cameraCandidates[room]?.remove(candidate);
+        await _stopLocalTrack(candidate);
+      }
     }
   }
 
@@ -1173,6 +1316,47 @@ class VoiceCallService extends ChangeNotifier {
     Room room,
     EventsListener<RoomEvent>? events, {
     bool listenerDisposed = false,
+  }) {
+    // A late mic/camera/connect continuation can reach cleanup again after a
+    // replacement is already connected. Never repeat old Room.disconnect(),
+    // which would stop the replacement's process-wide Android audio session.
+    final existing = _roomDisposals[room];
+    if (existing != null) return _awaitCleanup(existing);
+    final completion = Completer<void>();
+    _roomDisposals[room] = completion.future;
+    _pendingRoomTeardowns++;
+    final previousTeardown = _roomTeardownTail;
+    // Observe errors on the barrier without losing the error returned to the
+    // cleanup owner, or poisoning later joins after best-effort SDK disposal.
+    _roomTeardownTail = Future.wait<void>([
+      previousTeardown,
+      completion.future.catchError((Object _) {}),
+    ]).then((_) {});
+    unawaited(
+      _tearDownRoomInstance(
+        room,
+        events,
+        previousTeardown: previousTeardown,
+        listenerDisposed: listenerDisposed,
+      ).then(
+        (_) {
+          _pendingRoomTeardowns--;
+          completion.complete();
+        },
+        onError: (Object error, StackTrace stackTrace) {
+          _pendingRoomTeardowns--;
+          completion.completeError(error, stackTrace);
+        },
+      ),
+    );
+    return _awaitCleanup(completion.future);
+  }
+
+  Future<void> _tearDownRoomInstance(
+    Room room,
+    EventsListener<RoomEvent>? events, {
+    required Future<void> previousTeardown,
+    required bool listenerDisposed,
   }) async {
     // `Room.disconnect()` can wait up to ten seconds for a signaling event.
     // Stop physical capture first so End/logout/background is local-first in
@@ -1183,7 +1367,7 @@ class VoiceCallService extends ChangeNotifier {
     // Future is pending, so a later scan of the participant alone would miss
     // the restarted native microphone.
     final localParticipant = room.localParticipant;
-    final capturedTracks = _snapshotLocalTracks(localParticipant);
+    final capturedTracks = _snapshotLocalTracks(room);
     await _stopLocalCaptureImmediately(room);
     if (localParticipant != null) {
       // Queue a final mic-off behind any in-flight LiveKit unmute. Attach a
@@ -1205,16 +1389,24 @@ class VoiceCallService extends ChangeNotifier {
     }
     if (!listenerDisposed) events?.dispose();
     room.removeListener(_handleRoomChanged);
+    await previousTeardown;
     try {
       await room.disconnect();
     } catch (_) {
       // Cleanup is best-effort; dispose still needs to run.
     }
-    await room.dispose();
+    try {
+      await room.dispose();
+    } finally {
+      // Disposal cancels the transport, but its connect Future may settle
+      // later. Wait for the SDK's process-global audio finally before any
+      // replacement Room can start, including when disposal itself fails.
+      await _roomConnections[room];
+    }
   }
 
   Future<void> _stopLocalCaptureImmediately(Room room) async {
-    final tracks = _snapshotLocalTracks(room.localParticipant);
+    final tracks = _snapshotLocalTracks(room);
 
     // Disable synchronously before awaiting any SDK/network operation.
     for (final track in tracks) {
@@ -1227,16 +1419,17 @@ class VoiceCallService extends ChangeNotifier {
     await Future.wait(tracks.map(_stopLocalTrack));
   }
 
-  List<LocalTrack> _snapshotLocalTracks(LocalParticipant? localParticipant) {
-    if (localParticipant == null) return const <LocalTrack>[];
-    return <LocalTrack>[
-      ...localParticipant.audioTrackPublications
+  List<LocalTrack> _snapshotLocalTracks(Room room) {
+    final localParticipant = room.localParticipant;
+    return <LocalTrack>{
+      ...?_cameraCandidates[room],
+      ...?localParticipant?.audioTrackPublications
           .map((publication) => publication.track)
           .whereType<LocalTrack>(),
-      ...localParticipant.videoTrackPublications
+      ...?localParticipant?.videoTrackPublications
           .map((publication) => publication.track)
           .whereType<LocalTrack>(),
-    ];
+    }.toList(growable: false);
   }
 
   Future<void> _guardDeferredCaptureTeardown<T>({
@@ -1335,6 +1528,9 @@ class VoiceCallService extends ChangeNotifier {
   String friendlyErrorForTesting(Object error) => _friendlyError(error);
 
   String _friendlyError(Object error) {
+    if (error is VoiceCleanupInProgressException) {
+      return 'The previous call is still closing. Wait a moment before trying again.';
+    }
     if (error is VoicePermissionRequiredException) {
       return switch (error.permission) {
         AppPermissionKind.microphone =>
@@ -1353,7 +1549,7 @@ class VoiceCallService extends ChangeNotifier {
 
   @override
   void dispose() {
-    unawaited(_disposeRoom());
+    unawaited(_disposeRoom().catchError((_) {}));
     super.dispose();
   }
 }

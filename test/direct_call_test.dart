@@ -196,6 +196,373 @@ void main() {
     await tester.pump();
   });
 
+  for (final mediaType in DirectCallMediaType.values) {
+    for (final systemBack in <bool>[false, true]) {
+      final exit = systemBack ? 'system Back' : 'End';
+      testWidgets(
+        '$exit interrupts pending ${mediaType.name} Answer and reconciles only its ACK',
+        (tester) async {
+          final gateway = _FakeDirectCallGateway(
+            _call(status: DirectCallStatus.ringing, mediaType: mediaType),
+          )..acceptGate = Completer<void>();
+          final voice = _FakeVoiceCallService();
+          await _pumpActiveIncomingRoute(
+            tester,
+            gateway: gateway,
+            voice: voice,
+            expectPassive: false,
+          );
+          await tester.tap(
+            find.byTooltip(
+              mediaType == DirectCallMediaType.video
+                  ? 'Answer video'
+                  : 'Answer',
+            ),
+          );
+          await tester.pump();
+          await tester.pump();
+          expect(gateway.acceptCalls, 1);
+          expect(voice.joinCalls, 0);
+
+          if (systemBack) {
+            await tester.binding.handlePopRoute();
+          } else {
+            await tester.tap(find.byTooltip('End'));
+          }
+          await tester.pumpAndSettle();
+          expect(find.text('Open call'), findsOneWidget);
+          expect(
+            gateway.endCalls,
+            0,
+            reason: 'An active snapshot does not prove our installation won.',
+          );
+          expect(voice.localCaptureStarts, 0);
+
+          gateway.acceptGate!.complete();
+          await tester.pump();
+          await tester.pump();
+          expect(gateway.endCalls, 1);
+          expect(gateway.current.status, DirectCallStatus.ended);
+          expect(voice.joinCalls, 0);
+          expect(voice.localCaptureStarts, 0);
+          expect(voice.isCameraEnabled, isFalse);
+          expect(tester.takeException(), isNull);
+        },
+      );
+
+      testWidgets(
+        '$exit interrupts pending ${mediaType.name} join without waiting for remote End',
+        (tester) async {
+          final gateway = _FakeDirectCallGateway(
+            _call(status: DirectCallStatus.ringing, mediaType: mediaType),
+          )..endGate = Completer<void>();
+          final voice = _FakeVoiceCallService()..joinGate = Completer<void>();
+          await _pumpActiveIncomingRoute(
+            tester,
+            gateway: gateway,
+            voice: voice,
+            expectPassive: false,
+          );
+          await tester.tap(
+            find.byTooltip(
+              mediaType == DirectCallMediaType.video
+                  ? 'Answer video'
+                  : 'Answer',
+            ),
+          );
+          await tester.pump();
+          await tester.pump();
+          expect(voice.joinCalls, 1);
+          expect(voice.status, VoiceCallStatus.connecting);
+
+          if (systemBack) {
+            await tester.binding.handlePopRoute();
+          } else {
+            await tester.tap(find.byTooltip('End'));
+          }
+          await tester.pumpAndSettle();
+          expect(find.text('Open call'), findsOneWidget);
+          expect(voice.disconnectCalls, 1);
+          expect(voice.isConnected, isFalse);
+          expect(gateway.endCalls, 1);
+          expect(gateway.endGate!.isCompleted, isFalse);
+
+          voice.joinGate!.complete();
+          gateway.endGate!.complete();
+          await tester.pump();
+          await tester.pump();
+          expect(voice.localCaptureStarts, 0);
+          expect(voice.isCameraEnabled, isFalse);
+          expect(voice.isConnected, isFalse);
+          expect(voice.joinCalls, 1);
+          expect(gateway.endCalls, 1);
+          expect(tester.takeException(), isNull);
+        },
+      );
+    }
+  }
+
+  for (final systemBack in <bool>[false, true]) {
+    testWidgets(
+      '${systemBack ? 'Back' : 'Decline'} interrupts pending permission before Answer',
+      (tester) async {
+        final gateway = _FakeDirectCallGateway(
+          _call(
+            status: DirectCallStatus.ringing,
+            mediaType: DirectCallMediaType.video,
+          ),
+        );
+        final voice = _FakeVoiceCallService()
+          ..permissionGate = Completer<void>();
+        await _pumpActiveIncomingRoute(
+          tester,
+          gateway: gateway,
+          voice: voice,
+          expectPassive: false,
+        );
+        await tester.tap(find.byTooltip('Answer video'));
+        await tester.pump();
+        expect(voice.permissionPreparationCalls, 1);
+        if (systemBack) {
+          await tester.binding.handlePopRoute();
+        } else {
+          await tester.tap(find.byTooltip('Decline'));
+        }
+        await tester.pumpAndSettle();
+        expect(find.text('Open call'), findsOneWidget);
+        expect(gateway.declineCalls, 1);
+        voice.permissionGate!.complete();
+        await tester.pump();
+        expect(gateway.acceptCalls, 0);
+        expect(voice.joinCalls, 0);
+        expect(voice.localCaptureStarts, 0);
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
+
+  testWidgets(
+    'late wrong-installation Answer after End never ends remote call',
+    (tester) async {
+      final gateway =
+          _FakeDirectCallGateway(_call(status: DirectCallStatus.ringing))
+            ..acceptGate = Completer<void>()
+            ..acceptError = const DirectCallInstallationBindingException();
+      final voice = _FakeVoiceCallService();
+      await _pumpActiveIncomingRoute(
+        tester,
+        gateway: gateway,
+        voice: voice,
+        expectPassive: false,
+      );
+      await tester.tap(find.byTooltip('Answer'));
+      await tester.pump();
+      await tester.pump();
+      await tester.tap(find.byTooltip('End'));
+      await tester.pumpAndSettle();
+      gateway.acceptGate!.complete();
+      await tester.pump();
+      expect(gateway.endCalls, 0);
+      expect(gateway.current.status, DirectCallStatus.active);
+      expect(voice.joinCalls, 0);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'late validated ACK after public timeout cleans an abandoned call',
+    (tester) async {
+      final gateway =
+          _FakeDirectCallGateway(_call(status: DirectCallStatus.ringing))
+            ..acceptGate = Completer<void>()
+            ..acceptError = const DirectCallTimeoutException(
+              operation: 'acceptDirectCall',
+              stage: 'callable',
+            );
+      final voice = _FakeVoiceCallService();
+      await _pumpActiveIncomingRoute(
+        tester,
+        gateway: gateway,
+        voice: voice,
+        expectPassive: false,
+      );
+      await tester.tap(find.byTooltip('Answer'));
+      await tester.pump();
+      await tester.pump();
+      await tester.tap(find.byTooltip('End'));
+      await tester.pumpAndSettle();
+      gateway.acceptGate!.complete();
+      await tester.pump();
+      expect(gateway.endCalls, 0);
+
+      gateway.lateAcceptResult!(DirectCallStatus.active);
+      gateway.lateAcceptResult!(DirectCallStatus.active);
+      await tester.pump();
+      expect(gateway.endCalls, 1);
+      expect(gateway.current.status, DirectCallStatus.ended);
+      expect(voice.joinCalls, 0);
+      expect(voice.localCaptureStarts, 0);
+      expect(find.text('Open call'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('late ACK does not end a route the user has not abandoned', (
+    tester,
+  ) async {
+    final gateway =
+        _FakeDirectCallGateway(_call(status: DirectCallStatus.ringing))
+          ..acceptGate = Completer<void>()
+          ..acceptError = const DirectCallTimeoutException(
+            operation: 'acceptDirectCall',
+            stage: 'callable',
+          );
+    final voice = _FakeVoiceCallService();
+    await _pumpActiveIncomingRoute(
+      tester,
+      gateway: gateway,
+      voice: voice,
+      expectPassive: false,
+    );
+    await tester.tap(find.byTooltip('Answer'));
+    await tester.pump();
+    gateway.acceptGate!.complete();
+    await tester.pump();
+    gateway.lateAcceptResult!(DirectCallStatus.active);
+    await tester.pump();
+    expect(gateway.endCalls, 0);
+    expect(voice.joinCalls, 0);
+    expect(voice.localCaptureStarts, 0);
+    expect(tester.takeException(), isNull);
+  });
+
+  for (final mediaType in DirectCallMediaType.values) {
+    for (final publishActiveSnapshot in <bool>[false, true]) {
+      for (final systemBack in <bool>[false, true]) {
+        final exit = systemBack ? 'system Back' : 'Close';
+        final snapshot = publishActiveSnapshot ? 'active' : 'stale ringing';
+        testWidgets(
+          'late ${mediaType.name} ACK before $exit ends once with $snapshot snapshot',
+          (tester) async {
+            final gateway =
+                _FakeDirectCallGateway(
+                    _call(
+                      status: DirectCallStatus.ringing,
+                      mediaType: mediaType,
+                    ),
+                  )
+                  ..publishActiveSnapshotOnAccept = publishActiveSnapshot
+                  ..acceptGate = Completer<void>()
+                  ..acceptError = const DirectCallTimeoutException(
+                    operation: 'acceptDirectCall',
+                    stage: 'callable',
+                  );
+            final voice = _FakeVoiceCallService();
+            await _pumpActiveIncomingRoute(
+              tester,
+              gateway: gateway,
+              voice: voice,
+              expectPassive: false,
+            );
+            await tester.tap(
+              find.byTooltip(
+                mediaType == DirectCallMediaType.video
+                    ? 'Answer video'
+                    : 'Answer',
+              ),
+            );
+            await tester.pump();
+            gateway.acceptGate!.complete();
+            await tester.pump();
+            await tester.pump();
+            expect(gateway.current.status, DirectCallStatus.active);
+            expect(
+              find.text('Continue on this device'),
+              publishActiveSnapshot ? findsOneWidget : findsNothing,
+            );
+
+            gateway.lateAcceptResult!(DirectCallStatus.active);
+            gateway.lateAcceptResult!(DirectCallStatus.active);
+            expect(gateway.endCalls, 0);
+            expect(voice.joinCalls, 0);
+            expect(voice.localCaptureStarts, 0);
+            // Intentionally no pump: Back must also consume the ACK when
+            // the passive PopScope was built before the callback arrived.
+            if (systemBack) {
+              await tester.binding.handlePopRoute();
+            } else {
+              await tester.tap(
+                find.byTooltip(publishActiveSnapshot ? 'Close' : 'Close call'),
+              );
+            }
+            await tester.pumpAndSettle();
+            expect(find.text('Open call'), findsOneWidget);
+            expect(gateway.endCalls, 1);
+            expect(gateway.declineCalls, 0);
+            expect(gateway.cancelCalls, 0);
+            expect(gateway.current.status, DirectCallStatus.ended);
+            expect(voice.joinCalls, 0);
+            expect(voice.localCaptureStarts, 0);
+            expect(voice.isCameraEnabled, isFalse);
+
+            gateway.lateAcceptResult!(DirectCallStatus.active);
+            await tester.pump();
+            expect(gateway.endCalls, 1);
+            expect(tester.takeException(), isNull);
+          },
+        );
+      }
+    }
+  }
+
+  testWidgets(
+    'Close during passive Continue permission preserves remote call',
+    (tester) async {
+      final gateway = _FakeDirectCallGateway(
+        _call(status: DirectCallStatus.active),
+      );
+      final voice = _FakeVoiceCallService()..permissionGate = Completer<void>();
+      await _pumpActiveIncomingRoute(tester, gateway: gateway, voice: voice);
+      await tester.tap(find.text('Continue on this device'));
+      await tester.pump();
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      voice.permissionGate!.complete();
+      await tester.pump();
+      expect(find.text('Open call'), findsOneWidget);
+      expect(gateway.endCalls, 0);
+      expect(voice.joinCalls, 0);
+    },
+  );
+
+  for (final systemBack in <bool>[false, true]) {
+    testWidgets('missing-call stream error can close using '
+        '${systemBack ? 'system Back' : 'Close'}', (tester) async {
+      final gateway = _FakeDirectCallGateway(
+        _call(status: DirectCallStatus.ringing),
+      )..watchError = StateError('missing canonical call');
+      final voice = _FakeVoiceCallService();
+      await _pumpActiveIncomingRoute(
+        tester,
+        gateway: gateway,
+        voice: voice,
+        expectPassive: false,
+      );
+      expect(find.text('This call is no longer available.'), findsOneWidget);
+      if (systemBack) {
+        await tester.binding.handlePopRoute();
+      } else {
+        await tester.tap(find.widgetWithText(FilledButton, 'Close'));
+      }
+      await tester.pumpAndSettle();
+      expect(find.text('Open call'), findsOneWidget);
+      expect(gateway.declineCalls, 0);
+      expect(gateway.endCalls, 0);
+      expect(voice.joinCalls, 0);
+      expect(tester.takeException(), isNull);
+    });
+  }
+
   testWidgets(
     'incoming video call is explicit and enables camera after answer',
     (tester) async {
@@ -323,6 +690,55 @@ void main() {
       findsOneWidget,
     );
   });
+
+  for (final localeCase in const <MapEntry<String, String>>[
+    MapEntry(
+      'en',
+      'The previous call is still closing. Wait a moment before trying again.',
+    ),
+    MapEntry(
+      'pl',
+      'Poprzednie połączenie jest nadal zamykane. Poczekaj chwilę i spróbuj ponownie.',
+    ),
+  ]) {
+    testWidgets('pending call cleanup explains retry in ${localeCase.key}', (
+      tester,
+    ) async {
+      final gateway = _FakeDirectCallGateway(
+        _call(status: DirectCallStatus.active),
+      );
+      final voice = _FakeVoiceCallService(
+        joinError: const VoiceCleanupInProgressException(),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          locale: Locale(localeCase.key),
+          supportedLocales: AppLocalizations.supportedLocales,
+          localizationsDelegates: const [
+            AppLocalizationsDelegate(),
+            GlobalMaterialLocalizations.delegate,
+            GlobalWidgetsLocalizations.delegate,
+            GlobalCupertinoLocalizations.delegate,
+          ],
+          theme: ThemeData.dark(useMaterial3: true),
+          home: DirectCallScreen(
+            callId: 'call-1',
+            callService: gateway,
+            voiceService: voice,
+            currentUserId: 'caller',
+            participantName: 'Caller',
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+      expect(voice.joinCalls, 1);
+      expect(voice.localCaptureStarts, 0);
+      expect(find.text(localeCase.value), findsOneWidget);
+      expect(find.text('VoiceCleanupInProgressException'), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+  }
 
   testWidgets('terminal media disconnect exposes explicit Retry', (
     tester,
@@ -1178,6 +1594,7 @@ Future<void> _pumpActiveIncomingRoute(
   WidgetTester tester, {
   required _FakeDirectCallGateway gateway,
   required _FakeVoiceCallService voice,
+  bool expectPassive = true,
 }) async {
   await tester.pumpWidget(
     MaterialApp(
@@ -1210,7 +1627,9 @@ Future<void> _pumpActiveIncomingRoute(
   // pumpAndSettle can never become idle. Advance only past the route
   // transition before asserting the active-call surface.
   await tester.pump(const Duration(milliseconds: 400));
-  expect(find.text('Continue on this device'), findsOneWidget);
+  if (expectPassive) {
+    expect(find.text('Continue on this device'), findsOneWidget);
+  }
 }
 
 class _FakeDirectCallGateway implements DirectCallGateway {
@@ -1238,6 +1657,9 @@ class _FakeDirectCallGateway implements DirectCallGateway {
   DirectCallMediaType? lastAcceptedMediaType;
   Completer<void>? acceptGate;
   Object? acceptError;
+  bool publishActiveSnapshotOnAccept = true;
+  void Function(DirectCallStatus status)? lateAcceptResult;
+  Object? watchError;
   Completer<void>? cancelGate;
   Completer<void>? endGate;
   bool answerWinsCancelRace = false;
@@ -1249,6 +1671,7 @@ class _FakeDirectCallGateway implements DirectCallGateway {
 
   @override
   Stream<DirectCall> watchCall(String callId) async* {
+    if (watchError case final error?) throw error;
     yield current;
     yield* _changes.stream;
   }
@@ -1286,11 +1709,13 @@ class _FakeDirectCallGateway implements DirectCallGateway {
   Future<DirectCallStatus> accept(
     String callId, {
     DirectCallMediaType mediaType = DirectCallMediaType.audio,
+    void Function(DirectCallStatus status)? onLateValidatedResult,
   }) async {
     acceptCalls++;
+    lateAcceptResult = onLateValidatedResult;
     lastAcceptedMediaType = mediaType;
-    current = _call(status: DirectCallStatus.ringing, mediaType: mediaType);
-    _emit(DirectCallStatus.active);
+    current = _call(status: DirectCallStatus.active, mediaType: mediaType);
+    if (publishActiveSnapshotOnAccept) _changes.add(current);
     await acceptGate?.future;
     if (acceptError case final error?) throw error;
     return DirectCallStatus.active;
@@ -1364,6 +1789,7 @@ class _RetryingIncomingGateway implements DirectCallGateway {
   Future<DirectCallStatus> accept(
     String callId, {
     DirectCallMediaType mediaType = DirectCallMediaType.audio,
+    void Function(DirectCallStatus status)? onLateValidatedResult,
   }) async => DirectCallStatus.active;
 
   @override
@@ -1406,6 +1832,9 @@ class _FakeVoiceCallService extends VoiceCallService {
   int pauseCameraCalls = 0;
   String? lastContactName;
   bool? lastEnableCamera;
+  Completer<void>? joinGate;
+  Completer<void>? permissionGate;
+  int _joinEpoch = 0;
 
   @override
   VoiceCallStatus get status => _testStatus;
@@ -1458,8 +1887,18 @@ class _FakeVoiceCallService extends VoiceCallService {
     bool playSound = true,
   }) async {
     joinCalls++;
+    final epoch = ++_joinEpoch;
     lastContactName = contactName;
     lastEnableCamera = enableCamera;
+    if (joinGate != null) {
+      _testDirectCallId = callId;
+      _testStatus = VoiceCallStatus.connecting;
+      notifyListeners();
+      await joinGate!.future;
+      // Models the production service's disconnect/session-epoch contract.
+      // The widget must actually invoke disconnect to invalidate this gate.
+      if (epoch != _joinEpoch) return;
+    }
     if (joinError case final error?) {
       _testStatus = VoiceCallStatus.failed;
       notifyListeners();
@@ -1479,6 +1918,7 @@ class _FakeVoiceCallService extends VoiceCallService {
     bool includeCamera = false,
   }) async {
     permissionPreparationCalls++;
+    await permissionGate?.future;
     return PermissionReadinessSnapshot(<AppPermissionKind, AppPermissionAccess>{
       AppPermissionKind.microphone: AppPermissionAccess.granted,
       if (includeCamera)
@@ -1521,6 +1961,7 @@ class _FakeVoiceCallService extends VoiceCallService {
 
   @override
   Future<void> disconnect({bool playSound = true}) async {
+    _joinEpoch++;
     disconnectCalls++;
     events?.add('disconnect');
     _testStatus = VoiceCallStatus.disconnected;

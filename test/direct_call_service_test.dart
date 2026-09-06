@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
@@ -13,6 +14,529 @@ import 'package:yovoice/features/calls/data/services/direct_call_start_request_s
 void main() {
   setUp(() {
     SharedPreferences.setMockInitialValues(<String, Object>{});
+  });
+
+  DirectCallService deadlineService(
+    _DeadlineFunctions functions, {
+    FakeFirebaseFirestore? firestore,
+    _MemoryStartStore? store,
+    _InstallationGate? installation,
+    String requestId = 'bounded-request',
+    Duration lateResultRetention = const Duration(minutes: 2),
+  }) => DirectCallService(
+    firestore: firestore ?? FakeFirebaseFirestore(),
+    functions: functions,
+    auth: MockFirebaseAuth(signedIn: true, mockUser: MockUser(uid: 'caller')),
+    startRequestStore: store ?? _MemoryStartStore(),
+    installationIdStore: installation ?? _InstallationGate.ready(),
+    requestIdFactory: () => requestId,
+    operationTimeout: const Duration(milliseconds: 30),
+    callableAttemptTimeout: const Duration(milliseconds: 20),
+    reconciliationTimeout: const Duration(milliseconds: 5),
+    lateResultRetention: lateResultRetention,
+  );
+
+  test(
+    'missing canonical call emits typed unavailable instead of no result',
+    () async {
+      final service = deadlineService(_DeadlineFunctions());
+      await expectLater(
+        service.watchCall('missing').first,
+        throwsA(isA<DirectCallUnavailableException>()),
+      );
+    },
+  );
+
+  test(
+    'cached absence followed only by server metadata emits unavailable',
+    () async {
+      final firestore = _MetadataOnlyFirestore();
+      final service = DirectCallService(
+        firestore: firestore,
+        functions: _DeadlineFunctions(),
+        auth: MockFirebaseAuth(
+          signedIn: true,
+          mockUser: MockUser(uid: 'caller'),
+        ),
+      );
+      await expectLater(
+        service.watchCall('missing').first,
+        throwsA(isA<DirectCallUnavailableException>()),
+      );
+      expect(firestore.document.includeMetadataRequests, <bool>[true]);
+    },
+  );
+
+  testWidgets('server-confirmed absence closes and cancels the call stream', (
+    tester,
+  ) async {
+    var cancellations = 0;
+    final nativeCleanup = Completer<void>();
+    final events = StreamController<DocumentSnapshot<Map<String, dynamic>>>(
+      onCancel: () {
+        cancellations++;
+        return nativeCleanup.future;
+      },
+    );
+    final firestore = _MetadataOnlyFirestore(
+      document: _MetadataOnlyDocument(events: events.stream),
+    );
+    final service = DirectCallService(
+      firestore: firestore,
+      functions: _DeadlineFunctions(),
+      auth: MockFirebaseAuth(signedIn: true, mockUser: MockUser(uid: 'caller')),
+    );
+    final received = <DirectCall>[];
+    final errors = <Object>[];
+    final terminalEvents = <String>[];
+    final done = Completer<void>();
+    service
+        .watchCall('call')
+        .listen(
+          received.add,
+          onError: (Object error) {
+            errors.add(error);
+            terminalEvents.add('error');
+          },
+          onDone: () {
+            terminalEvents.add('done');
+            done.complete();
+          },
+        );
+    await tester.pump();
+    events.add(_MissingSnapshot(true));
+    await tester.pump();
+    expect(errors, isEmpty);
+    expect(done.isCompleted, isFalse);
+    events.add(_MissingSnapshot(false));
+    await tester.pump();
+    expect(done.isCompleted, isTrue);
+    expect(errors, [isA<DirectCallUnavailableException>()]);
+    expect(terminalEvents, ['error', 'done']);
+    expect(cancellations, 1);
+    expect(nativeCleanup.isCompleted, isFalse);
+    expect(firestore.document.includeMetadataRequests, <bool>[true]);
+    events.add(_RecreatedSnapshot());
+    await tester.pump();
+    expect(received, isEmpty);
+    expect(errors, hasLength(1));
+    expect(terminalEvents, ['error', 'done']);
+    nativeCleanup.complete();
+    await tester.pump();
+    expect(cancellations, 1);
+    events.close().ignore();
+  });
+
+  testWidgets(
+    'timeout then unavailable retry still delivers the later own ACK',
+    (tester) async {
+      final functions = _DeadlineFunctions();
+      final service = deadlineService(functions);
+      final statuses = <DirectCallStatus>[];
+      final outcome = expectLater(
+        service.accept('call', onLateValidatedResult: statuses.add),
+        throwsA(
+          isA<FirebaseFunctionsException>().having(
+            (error) => error.code,
+            'code',
+            'unavailable',
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 20));
+      functions.gates[1].completeError(
+        FirebaseFunctionsException(
+          code: 'unavailable',
+          message: 'Transport unavailable',
+        ),
+      );
+      await tester.pump();
+      await outcome;
+      expect(statuses, isEmpty);
+      expect(service.retainedLateAcceptConsumersForTesting, 1);
+      functions.complete(0, {'callId': 'call', 'status': 'active'});
+      await tester.pump();
+      expect(statuses, [DirectCallStatus.active]);
+      expect(service.retainedLateAcceptConsumersForTesting, 0);
+    },
+  );
+
+  testWidgets(
+    'retention expiry releases consumer while native sources remain unresolved',
+    (tester) async {
+      final functions = _DeadlineFunctions();
+      final service = deadlineService(
+        functions,
+        lateResultRetention: const Duration(milliseconds: 60),
+      );
+      final statuses = <DirectCallStatus>[];
+      final outcome = expectLater(
+        service.accept('call', onLateValidatedResult: statuses.add),
+        throwsA(isA<DirectCallTimeoutException>()),
+      );
+      await tester.pump();
+      expect(service.retainedLateAcceptConsumersForTesting, 1);
+      await tester.pump(const Duration(milliseconds: 20));
+      await tester.pump(const Duration(milliseconds: 10));
+      await outcome;
+      expect(service.retainedLateAcceptConsumersForTesting, 1);
+      expect(functions.gates.every((gate) => !gate.isCompleted), isTrue);
+      await tester.pump(const Duration(milliseconds: 30));
+      expect(service.retainedLateAcceptConsumersForTesting, 0);
+      expect(functions.gates.every((gate) => !gate.isCompleted), isTrue);
+      functions.complete(0, {'callId': 'call', 'status': 'active'});
+      functions.complete(1, {'callId': 'call', 'status': 'active'});
+      await tester.pump();
+      expect(statuses, isEmpty);
+    },
+  );
+
+  testWidgets(
+    'late valid Answer after deadline is delivered once and callback errors are contained',
+    (tester) async {
+      final functions = _DeadlineFunctions();
+      final service = deadlineService(functions);
+      final statuses = <DirectCallStatus>[];
+      final outcome = expectLater(
+        service.accept(
+          'call',
+          onLateValidatedResult: (status) {
+            statuses.add(status);
+            throw StateError('disposed caller callback');
+          },
+        ),
+        throwsA(isA<DirectCallTimeoutException>()),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 20));
+      await tester.pump(const Duration(milliseconds: 10));
+      await outcome;
+      expect(statuses, isEmpty);
+      functions.complete(0, {'callId': 'call', 'status': 'active'});
+      functions.complete(1, {'callId': 'call', 'status': 'active'});
+      await tester.pump();
+      expect(statuses, [DirectCallStatus.active]);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'malformed or wrong-call late Answer never grants cleanup authority',
+    (tester) async {
+      final functions = _DeadlineFunctions();
+      final service = deadlineService(functions);
+      final statuses = <DirectCallStatus>[];
+      final outcome = expectLater(
+        service.accept('call', onLateValidatedResult: statuses.add),
+        throwsA(isA<DirectCallTimeoutException>()),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 20));
+      await tester.pump(const Duration(milliseconds: 10));
+      await outcome;
+      functions.complete(0, {'callId': 'other-call', 'status': 'active'});
+      functions.complete(1, {'callId': 'call', 'status': 'ringing'});
+      await tester.pump();
+      expect(statuses, isEmpty);
+    },
+  );
+
+  testWidgets(
+    'successful retry suppresses cleanup callback from older late Answer',
+    (tester) async {
+      final functions = _DeadlineFunctions();
+      final service = deadlineService(functions);
+      final statuses = <DirectCallStatus>[];
+      final outcome = service.accept(
+        'call',
+        onLateValidatedResult: statuses.add,
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 20));
+      functions.complete(1, {'callId': 'call', 'status': 'active'});
+      expect(await outcome, DirectCallStatus.active);
+      functions.complete(0, {'callId': 'call', 'status': 'active'});
+      await tester.pump();
+      expect(statuses, isEmpty);
+    },
+  );
+
+  testWidgets('late own ACK during retry waits until the public deadline', (
+    tester,
+  ) async {
+    final functions = _DeadlineFunctions();
+    final service = deadlineService(functions);
+    final statuses = <DirectCallStatus>[];
+    final outcome = expectLater(
+      service.accept('call', onLateValidatedResult: statuses.add),
+      throwsA(isA<DirectCallTimeoutException>()),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 20));
+    functions.complete(0, {'callId': 'call', 'status': 'active'});
+    await tester.pump();
+    expect(statuses, isEmpty);
+    await tester.pump(const Duration(milliseconds: 10));
+    await outcome;
+    expect(statuses, [DirectCallStatus.active]);
+    functions.complete(1, {'callId': 'call', 'status': 'ended'});
+    await tester.pump();
+    expect(statuses, [DirectCallStatus.active]);
+  });
+
+  testWidgets('native SDK deadline errors use the same safe typed timeout', (
+    tester,
+  ) async {
+    final functions = _DeadlineFunctions();
+    final service = deadlineService(functions);
+    final outcome = expectLater(
+      service.accept('call'),
+      throwsA(
+        isA<DirectCallTimeoutException>().having(
+          (error) => error.stage,
+          'stage',
+          'callable',
+        ),
+      ),
+    );
+    await tester.pump();
+    functions.gates[0].completeError(
+      FirebaseFunctionsException(
+        code: 'deadline-exceeded',
+        message: 'private native preflight detail',
+      ),
+    );
+    await tester.pump();
+    functions.gates[1].completeError(
+      FirebaseFunctionsException(
+        code: 'deadline-exceeded',
+        message: 'private native preflight detail',
+      ),
+    );
+    await tester.pump();
+    await outcome;
+    expect(functions.payloads[0], functions.payloads[1]);
+  });
+
+  testWidgets(
+    'native preflight timeout retries the same durable start and binding',
+    (tester) async {
+      final functions = _DeadlineFunctions();
+      final service = deadlineService(functions);
+      final pending = service.startCall(
+        calleeId: 'callee',
+        conversationId: 'pair',
+      );
+      await tester.pump();
+      expect(functions.payloads, hasLength(1));
+      await tester.pump(const Duration(milliseconds: 20));
+      expect(functions.payloads, hasLength(2));
+      functions.complete(1, {'callId': 'canonical', 'status': 'ringing'});
+      expect(await pending, 'canonical');
+      expect(functions.payloads[0], functions.payloads[1]);
+      expect(
+        functions.timeouts,
+        everyElement(const Duration(milliseconds: 20)),
+      );
+      functions.complete(0, {'callId': 'canonical', 'status': 'ringing'});
+      await tester.pump();
+      expect(functions.payloads, hasLength(2));
+    },
+  );
+
+  testWidgets(
+    'overall deadline retains uncertain start for exact later replay',
+    (tester) async {
+      final functions = _DeadlineFunctions();
+      final store = _MemoryStartStore();
+      final service = deadlineService(functions, store: store);
+      final outcome = expectLater(
+        service.startCall(calleeId: 'callee', conversationId: 'pair'),
+        throwsA(
+          isA<DirectCallTimeoutException>()
+              .having(
+                (error) => error.operation,
+                'operation',
+                'startDirectCall',
+              )
+              .having((error) => error.stage, 'stage', 'callable'),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 20));
+      await tester.pump(const Duration(milliseconds: 10));
+      await outcome;
+      expect(functions.payloads, hasLength(2));
+      expect(store.request?.requestId, 'bounded-request');
+      functions.complete(0, {'callId': 'canonical', 'status': 'ringing'});
+      functions.complete(1, {'callId': 'canonical', 'status': 'ringing'});
+      await tester.pump();
+      expect(store.request?.requestId, 'bounded-request');
+      final next = deadlineService(
+        functions,
+        store: store,
+        requestId: 'must-not-rotate',
+      );
+      final replay = next.startCall(calleeId: 'callee', conversationId: 'pair');
+      await tester.pump();
+      expect(functions.payloads.last['requestId'], 'bounded-request');
+      functions.complete(2, {'callId': 'canonical', 'status': 'ringing'});
+      expect(await replay, 'canonical');
+      expect(
+        functions.payloads.map((p) => p['installationId']).toSet(),
+        hasLength(1),
+      );
+    },
+  );
+
+  testWidgets('late installation completion cannot dispatch a ghost start', (
+    tester,
+  ) async {
+    final installation = _InstallationGate();
+    final functions = _DeadlineFunctions();
+    final service = deadlineService(functions, installation: installation);
+    final outcome = expectLater(
+      service.startCall(calleeId: 'callee', conversationId: 'pair'),
+      throwsA(
+        isA<DirectCallTimeoutException>().having(
+          (error) => error.stage,
+          'stage',
+          'installation',
+        ),
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 30));
+    await outcome;
+    installation.gate.complete('stable-installation');
+    await tester.pump();
+    expect(functions.payloads, isEmpty);
+  });
+
+  testWidgets(
+    'late durable acquire cannot dispatch after the overall deadline',
+    (tester) async {
+      final store = _MemoryStartStore()..acquireGate = Completer<void>();
+      final functions = _DeadlineFunctions();
+      final service = deadlineService(functions, store: store);
+      final outcome = expectLater(
+        service.startCall(calleeId: 'callee', conversationId: 'pair'),
+        throwsA(
+          isA<DirectCallTimeoutException>().having(
+            (error) => error.stage,
+            'stage',
+            'start-request',
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 30));
+      await outcome;
+      store.acquireGate!.complete();
+      await tester.pump();
+      expect(functions.payloads, isEmpty);
+      expect(store.request?.requestId, 'bounded-request');
+    },
+  );
+
+  testWidgets(
+    'accepted snapshot cannot bypass a timed-out installation-bound Answer',
+    (tester) async {
+      final firestore = FakeFirebaseFirestore();
+      await firestore.collection('directCalls').doc('call').set({
+        'status': 'active',
+        'callerId': 'caller',
+        'calleeId': 'callee',
+      });
+      final functions = _DeadlineFunctions();
+      final service = deadlineService(functions, firestore: firestore);
+      final outcome = expectLater(
+        service.accept('call'),
+        throwsA(isA<DirectCallTimeoutException>()),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 20));
+      await tester.pump(const Duration(milliseconds: 10));
+      await outcome;
+      expect(functions.payloads[0], functions.payloads[1]);
+      for (var index = 0; index < 2; index++) {
+        functions.complete(index, {'callId': 'call', 'status': 'active'});
+      }
+      await tester.pump();
+      expect(functions.payloads, hasLength(2));
+    },
+  );
+
+  testWidgets(
+    'token timeout is bounded and retries one request and installation',
+    (tester) async {
+      final functions = _DeadlineFunctions();
+      final service = deadlineService(functions);
+      final outcome = expectLater(
+        service.createJoinToken('call'),
+        throwsA(
+          isA<DirectCallTimeoutException>().having(
+            (error) => error.operation,
+            'operation',
+            'createDirectCallToken',
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 20));
+      await tester.pump(const Duration(milliseconds: 10));
+      await outcome;
+      expect(functions.payloads[0], functions.payloads[1]);
+      for (var index = 0; index < 2; index++) {
+        functions.complete(index, {
+          'serverUrl': 'wss://example.test',
+          'participantToken': 'late',
+          'permissions': {'canPublish': true},
+        });
+      }
+      await tester.pump();
+    },
+  );
+
+  testWidgets(
+    'timed-out End reconciles canonical terminal state before retry',
+    (tester) async {
+      final firestore = FakeFirebaseFirestore();
+      await firestore.collection('directCalls').doc('call').set({
+        'status': 'ended',
+        'callerId': 'caller',
+        'calleeId': 'callee',
+      });
+      final functions = _DeadlineFunctions();
+      final service = deadlineService(functions, firestore: firestore);
+      final outcome = service.end('call');
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 20));
+      await outcome;
+      expect(functions.payloads, hasLength(1));
+      functions.complete(0, null);
+      await tester.pump();
+    },
+  );
+
+  testWidgets('valid start ACK is not lost behind slow local cleanup', (
+    tester,
+  ) async {
+    final store = _MemoryStartStore()..clearGate = Completer<void>();
+    final functions = _DeadlineFunctions();
+    final service = deadlineService(functions, store: store);
+    final pending = service.startCall(
+      calleeId: 'callee',
+      conversationId: 'pair',
+    );
+    await tester.pump();
+    functions.complete(0, {'callId': 'canonical', 'status': 'ringing'});
+    expect(await pending, 'canonical');
+    await tester.pump(const Duration(milliseconds: 40));
+    expect(store.request?.requestId, 'bounded-request');
+    store.clearGate!.complete();
+    await tester.pump();
+    expect(store.request, isNull);
   });
 
   test(
@@ -639,6 +1163,150 @@ void main() {
       );
     },
   );
+}
+
+class _MetadataOnlyFirestore implements FirebaseFirestore {
+  _MetadataOnlyFirestore({_MetadataOnlyDocument? document})
+    : document = document ?? _MetadataOnlyDocument();
+  final _MetadataOnlyDocument document;
+  @override
+  CollectionReference<Map<String, dynamic>> collection(String path) =>
+      _MetadataOnlyCollection(document);
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+// Firebase's public interface is sealed; this narrow fake is intentionally
+// used to model the cache-to-server metadata transition the in-memory
+// Firestore package does not expose.
+// ignore: subtype_of_sealed_class
+class _MetadataOnlyCollection
+    implements CollectionReference<Map<String, dynamic>> {
+  _MetadataOnlyCollection(this.document);
+  final _MetadataOnlyDocument document;
+  @override
+  DocumentReference<Map<String, dynamic>> doc([String? path]) => document;
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+// ignore: subtype_of_sealed_class
+class _MetadataOnlyDocument implements DocumentReference<Map<String, dynamic>> {
+  _MetadataOnlyDocument({this.events});
+  final Stream<DocumentSnapshot<Map<String, dynamic>>>? events;
+  final includeMetadataRequests = <bool>[];
+  @override
+  Stream<DocumentSnapshot<Map<String, dynamic>>> snapshots({
+    bool includeMetadataChanges = false,
+    ListenSource source = ListenSource.defaultSource,
+  }) async* {
+    includeMetadataRequests.add(includeMetadataChanges);
+    if (events != null) {
+      yield* events!;
+      return;
+    }
+    yield _MissingSnapshot(true);
+    // Firestore suppresses an otherwise identical server result unless
+    // metadata-only changes are requested by the actual production caller.
+    if (includeMetadataChanges) yield _MissingSnapshot(false);
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+// ignore: subtype_of_sealed_class
+class _MissingSnapshot implements DocumentSnapshot<Map<String, dynamic>> {
+  _MissingSnapshot(this.cached);
+  final bool cached;
+  @override
+  bool get exists => false;
+  @override
+  SnapshotMetadata get metadata => _Metadata(cached);
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+// ignore: subtype_of_sealed_class
+class _RecreatedSnapshot extends _MissingSnapshot {
+  _RecreatedSnapshot() : super(false);
+  @override
+  bool get exists => true;
+  @override
+  String get id => 'call';
+  @override
+  Map<String, dynamic> data() => {
+    'callerId': 'caller',
+    'calleeId': 'callee',
+    'status': 'active',
+  };
+}
+
+class _Metadata implements SnapshotMetadata {
+  _Metadata(this.isFromCache);
+  @override
+  final bool isFromCache;
+  @override
+  bool get hasPendingWrites => false;
+}
+
+class _DeadlineFunctions implements FirebaseFunctions {
+  final payloads = <Map<String, dynamic>>[];
+  final timeouts = <Duration?>[];
+  final gates = <Completer<Object?>>[];
+
+  void complete(int index, Object? value) => gates[index].complete(value);
+
+  @override
+  HttpsCallable httpsCallable(String name, {HttpsCallableOptions? options}) =>
+      _CallableStub((parameters) {
+        payloads.add(Map<String, dynamic>.from(parameters as Map));
+        timeouts.add(options?.timeout);
+        final gate = Completer<Object?>();
+        gates.add(gate);
+        return gate.future;
+      });
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _InstallationGate implements DirectCallInstallationIdStore {
+  _InstallationGate();
+  _InstallationGate.ready() {
+    gate.complete('stable-installation');
+  }
+  final gate = Completer<String>();
+  @override
+  Future<String> loadOrCreate({required String candidate}) => gate.future;
+}
+
+class _MemoryStartStore implements DirectCallStartRequestStore {
+  PendingDirectCallStartRequest? request;
+  Completer<void>? acquireGate;
+  Completer<void>? clearGate;
+  @override
+  Future<PendingDirectCallStartRequest> acquire({
+    required PendingDirectCallStartRequest candidate,
+    required DateTime now,
+    required Duration ttl,
+  }) async {
+    if (acquireGate != null) await acquireGate!.future;
+    return request ??= candidate;
+  }
+
+  @override
+  Future<void> clear({
+    required String callerId,
+    required String calleeId,
+    required String expectedRequestId,
+  }) async {
+    if (clearGate != null) await clearGate!.future;
+    if (request?.requestId == expectedRequestId) request = null;
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
 class _LostStartResponseFunctions implements FirebaseFunctions {

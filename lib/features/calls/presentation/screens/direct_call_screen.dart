@@ -51,13 +51,16 @@ class _DirectCallScreenState extends State<DirectCallScreen>
   DirectCallStatus? _lastHandledStatus;
   bool _actionBusy = false;
   bool _finishRequested = false;
+  bool _endRequested = false;
   bool _joinRequested = false;
   bool _locallyAccepted = false;
+  bool _lateCleanupAuthorized = false;
   bool _connectionInterrupted = false;
   bool _terminalDisconnectPending = false;
   bool _cameraPausedInBackground = false;
   int _elapsedSeconds = 0;
   late VoiceCallStatus _lastVoiceStatus;
+  late final String _boundUserId;
 
   bool get _connectionNeedsRetry =>
       _voice.status == VoiceCallStatus.failed || _connectionInterrupted;
@@ -83,6 +86,7 @@ class _DirectCallScreenState extends State<DirectCallScreen>
   @override
   void initState() {
     super.initState();
+    _boundUserId = _currentUserId;
     _pulse = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1800),
@@ -103,10 +107,16 @@ class _DirectCallScreenState extends State<DirectCallScreen>
 
   @override
   void dispose() {
+    _voice.removeListener(_refresh);
+    // A route can also be removed by auth/navigation while a permission or
+    // Answer Future is pending. Its continuation must not start local media.
+    _finishRequested = true;
+    if (_voice.directCallId == widget.callId) {
+      unawaited(_stopLocalMedia());
+    }
     _clock?.cancel();
     _closeTimer?.cancel();
     _pulse.dispose();
-    _voice.removeListener(_refresh);
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -187,7 +197,7 @@ class _DirectCallScreenState extends State<DirectCallScreen>
   }
 
   void _completeBusyAction() {
-    if (!mounted) return;
+    if (!mounted || _finishRequested) return;
     setState(() {
       _actionBusy = false;
       if (_terminalDisconnectPending) {
@@ -207,6 +217,7 @@ class _DirectCallScreenState extends State<DirectCallScreen>
     final connected = _voice.isConnected && _voice.directCallId == call.id;
     return call.status == DirectCallStatus.active &&
         call.isIncomingFor(_currentUserId) &&
+        !_actionBusy &&
         !_locallyAccepted &&
         !_joinRequested &&
         !connected;
@@ -275,7 +286,7 @@ class _DirectCallScreenState extends State<DirectCallScreen>
   }
 
   Future<void> _connect(DirectCall call, {bool? enableCamera}) async {
-    if (_finishRequested) return;
+    if (_finishRequested || !mounted) return;
     _joinRequested = true;
     _connectionInterrupted = false;
     final contact = call.otherIdentity(_currentUserId);
@@ -286,8 +297,13 @@ class _DirectCallScreenState extends State<DirectCallScreen>
         participantName: _participantName,
         enableCamera: enableCamera ?? call.isVideo,
       );
+      // A successful Continue also proves this installation's token binding.
+      if (_voice.isConnected && _voice.directCallId == call.id) {
+        _locallyAccepted = true;
+      }
       if (_finishRequested && _voice.directCallId == call.id) {
         await _voice.disconnect(playSound: false);
+        await _endFinishedCall();
       }
     } catch (error) {
       _joinRequested = false;
@@ -316,14 +332,34 @@ class _DirectCallScreenState extends State<DirectCallScreen>
       final acceptedStatus = await _calls.accept(
         widget.callId,
         mediaType: acceptedMedia,
+        onLateValidatedResult: (status) {
+          // A native request may outlive the public deadline. Its validated
+          // installation-bound ACK is retained only for a subsequent End.
+          // Do not mark locally accepted: a later snapshot must not auto-join
+          // or open media after an Answer that already failed publicly.
+          if (status != DirectCallStatus.active ||
+              _currentUserId != _boundUserId) {
+            return;
+          }
+          _lateCleanupAuthorized = true;
+          if (_finishRequested) {
+            unawaited(_endFinishedCall());
+          }
+        },
       );
-      if (_finishRequested || acceptedStatus != DirectCallStatus.active) {
+      if (acceptedStatus != DirectCallStatus.active) {
         return;
       }
       // An active snapshot can belong to another installation of this same
       // account. Only the validated, installation-bound callable response
       // above authorises this device to open its local media session.
       _locallyAccepted = true;
+      if (_finishRequested || !mounted) {
+        // Do not infer ownership from an active snapshot: another device can
+        // win Answer. Only this successful bound ACK permits delayed End.
+        await _endFinishedCall();
+        return;
+      }
       final latest = _latest;
       if (latest?.status == DirectCallStatus.active && !_joinRequested) {
         await _connect(
@@ -333,7 +369,7 @@ class _DirectCallScreenState extends State<DirectCallScreen>
       }
     } catch (error) {
       _locallyAccepted = false;
-      if (mounted) {
+      if (mounted && !_finishRequested) {
         _showError(
           _friendlyError(
             error,
@@ -348,16 +384,69 @@ class _DirectCallScreenState extends State<DirectCallScreen>
   }
 
   Future<void> _finish() async {
+    if (_finishRequested) {
+      _closeRoute();
+      return;
+    }
     final call = _latest;
-    if (call == null || _actionBusy) return;
+    // Finish is an interrupt, not another mutually exclusive call action.
+    // Revoke the local session synchronously before any network/SDK await.
     _finishRequested = true;
+    _clock?.cancel();
+    _closeTimer?.cancel();
+    final canEndActive =
+        call != null &&
+        (!call.isIncomingFor(_currentUserId) ||
+            _locallyAccepted ||
+            (_voice.isConnected && _voice.directCallId == call.id));
+    if (_voice.directCallId == widget.callId || _joinRequested) {
+      unawaited(_stopLocalMedia(playSound: true));
+    }
     setState(() => _actionBusy = true);
+    if (_lateCleanupAuthorized) {
+      // The validated ACK is newer than a possibly still-ringing snapshot.
+      // Decline would fail after Answer committed; finish the known own call.
+      unawaited(_endFinishedCall());
+    } else if (call != null) {
+      unawaited(_finishCanonicalCall(call, canEndActive: canEndActive));
+    }
+    _closeRoute();
+  }
+
+  void _closeRoute() {
+    if (!mounted) return;
+    final route = ModalRoute.of(context);
+    if (route?.isCurrent == true && Navigator.of(context).canPop()) {
+      Navigator.of(context).pop();
+    }
+  }
+
+  Future<void> _stopLocalMedia({bool playSound = false}) async {
     try {
-      // Privacy is local-first: an offline or slow callable must never leave
-      // microphone/camera capture running after the user taps End.
-      if (_voice.directCallId == call.id) {
-        await _voice.disconnect(playSound: true);
-      }
+      await _voice.disconnect(playSound: playSound);
+    } catch (_) {
+      // The service invalidates pending capture before its SDK cleanup awaits.
+      // A cleanup failure must not trap the user on this route.
+    }
+  }
+
+  Future<void> _endFinishedCall() async {
+    // A late ACK must never dispatch an old account's cleanup as a new user.
+    if (_endRequested || _currentUserId != _boundUserId) return;
+    _endRequested = true;
+    try {
+      await _calls.end(widget.callId);
+    } catch (error) {
+      _endRequested = false;
+      _reportFinishFailure(error);
+    }
+  }
+
+  Future<void> _finishCanonicalCall(
+    DirectCall call, {
+    required bool canEndActive,
+  }) async {
+    try {
       switch (call.status) {
         case DirectCallStatus.ringing:
           if (call.isIncomingFor(_currentUserId)) {
@@ -366,28 +455,34 @@ class _DirectCallScreenState extends State<DirectCallScreen>
             await _calls.cancel(call.id);
           }
         case DirectCallStatus.active:
-          await _calls.end(call.id);
+          // While this installation's Answer is unresolved, an active row
+          // may belong to another device. Its late ACK reconciles End above.
+          if (canEndActive) await _endFinishedCall();
         case DirectCallStatus.declined:
         case DirectCallStatus.cancelled:
         case DirectCallStatus.ended:
         case DirectCallStatus.missed:
           break;
       }
-      if (mounted && Navigator.of(context).canPop()) {
-        Navigator.of(context).pop();
-      }
     } catch (error) {
-      if (mounted) {
-        _showError(
-          _friendlyError(
-            error,
-            english: 'Could not end this call.',
-            polish: 'Nie udało się zakończyć połączenia.',
-          ),
-        );
-      }
-    } finally {
-      _completeBusyAction();
+      _reportFinishFailure(error);
+    }
+  }
+
+  void _reportFinishFailure(Object error) {
+    if (mounted && ModalRoute.of(context)?.isCurrent == true) {
+      _showError(
+        _friendlyError(
+          error,
+          english: 'Could not end this call.',
+          polish: 'Nie udało się zakończyć połączenia.',
+        ),
+      );
+    } else {
+      debugPrint(
+        'DirectCallScreen: deferred finish failed '
+        '(${error.runtimeType}).',
+      );
     }
   }
 
@@ -408,11 +503,13 @@ class _DirectCallScreenState extends State<DirectCallScreen>
   }
 
   Future<void> _toggleCamera() async {
+    if (_finishRequested) return;
     try {
       if (!_voice.isCameraEnabled &&
           await _prepareMediaPermissions(includeCamera: true) == null) {
         return;
       }
+      if (_finishRequested || !mounted) return;
       await _voice.toggleCamera();
     } catch (error) {
       if (mounted) {
@@ -501,6 +598,7 @@ class _DirectCallScreenState extends State<DirectCallScreen>
     final snapshot = await _voice.prepareMediaPermissionsFromUserGesture(
       includeCamera: includeCamera,
     );
+    if (_finishRequested || !mounted) return null;
     final microphone = snapshot[AppPermissionKind.microphone];
     if (!microphone.isUsable) {
       if (mounted) {
@@ -540,6 +638,12 @@ class _DirectCallScreenState extends State<DirectCallScreen>
     required String polish,
   }) {
     final copy = AppLocalizations.of(context);
+    if (error is VoiceCleanupInProgressException) {
+      return copy.text(
+        'The previous call is still closing. Wait a moment before trying again.',
+        'Poprzednie połączenie jest nadal zamykane. Poczekaj chwilę i spróbuj ponownie.',
+      );
+    }
     if (error is DirectCallInstallationBindingException) {
       return copy.text(
         'This call is active on another device. Continue there.',
@@ -568,12 +672,19 @@ class _DirectCallScreenState extends State<DirectCallScreen>
         final passiveIncoming =
             call != null && _needsExplicitIncomingJoin(call);
         final canPop =
+            _finishRequested ||
+            snapshot.hasError ||
             (call?.status.isTerminal ?? false) ||
             (passiveIncoming && !_actionBusy);
         return PopScope(
           canPop: canPop,
           onPopInvokedWithResult: (didPop, _) {
-            if (!didPop && !passiveIncoming) unawaited(_finish());
+            // A passive route can already have popped when a late own ACK is
+            // retained. Consume its cleanup authority even without a rebuild
+            // between receiving that ACK and the user's system Back gesture.
+            if (!didPop || (_lateCleanupAuthorized && !_finishRequested)) {
+              unawaited(_finish());
+            }
           },
           child: Scaffold(
             backgroundColor: AppImmersiveColors.background,
@@ -588,11 +699,25 @@ class _DirectCallScreenState extends State<DirectCallScreen>
               ),
               child: SafeArea(
                 child: snapshot.hasError
-                    ? _CallFailure(onClose: () => Navigator.of(context).pop())
+                    ? _CallFailure(onClose: _finish)
                     : call == null
-                    ? const Center(
-                        child: CircularProgressIndicator(
-                          color: AppColors.secondary,
+                    ? Center(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const CircularProgressIndicator(
+                              color: AppColors.secondary,
+                            ),
+                            const SizedBox(height: 18),
+                            FilledButton(
+                              onPressed: _finish,
+                              child: Text(
+                                AppLocalizations.of(
+                                  context,
+                                ).text('Close', 'Zamknij'),
+                              ),
+                            ),
+                          ],
                         ),
                       )
                     : _buildCall(context, call),
@@ -635,7 +760,7 @@ class _DirectCallScreenState extends State<DirectCallScreen>
           Align(
             alignment: Alignment.centerLeft,
             child: IconButton(
-              onPressed: _actionBusy ? null : _finish,
+              onPressed: _finish,
               tooltip: active
                   ? copy.text('End call and close', 'Zakończ i zamknij')
                   : copy.text('Close call', 'Zamknij połączenie'),
@@ -757,9 +882,7 @@ class _DirectCallScreenState extends State<DirectCallScreen>
           Align(
             alignment: Alignment.centerLeft,
             child: IconButton(
-              onPressed: _actionBusy
-                  ? null
-                  : () => Navigator.of(context).maybePop(),
+              onPressed: _finish,
               tooltip: copy.text('Close', 'Zamknij'),
               icon: const Icon(Icons.keyboard_arrow_down_rounded, size: 34),
               color: AppImmersiveColors.textPrimary,
@@ -910,7 +1033,7 @@ class _DirectCallScreenState extends State<DirectCallScreen>
                       child: Row(
                         children: [
                           IconButton.filledTonal(
-                            onPressed: _actionBusy ? null : _finish,
+                            onPressed: _finish,
                             tooltip: copy.text(
                               'End call and close',
                               'Zakończ i zamknij',
@@ -1382,7 +1505,7 @@ class _VideoCallControls extends StatelessWidget {
                   ),
                   icon: Icons.call_end_rounded,
                   destructive: true,
-                  onPressed: actionBusy ? null : onFinish,
+                  onPressed: onFinish,
                 ),
               ]
             : [
@@ -1469,7 +1592,7 @@ class _VideoCallControls extends StatelessWidget {
                   ),
                   icon: Icons.call_end_rounded,
                   destructive: true,
-                  onPressed: actionBusy ? null : onFinish,
+                  onPressed: onFinish,
                 ),
               ],
       ),
@@ -1612,7 +1735,7 @@ class _CallControls extends StatelessWidget {
             label: copy.text('Decline', 'Odrzuć'),
             icon: Icons.call_end_rounded,
             color: AppColors.error,
-            onPressed: actionBusy ? null : onFinish,
+            onPressed: onFinish,
           ),
           _RoundCallAction(
             label: call.isVideo
@@ -1631,7 +1754,7 @@ class _CallControls extends StatelessWidget {
           label: copy.text('Cancel', 'Anuluj'),
           icon: Icons.call_end_rounded,
           color: AppColors.error,
-          onPressed: actionBusy ? null : onFinish,
+          onPressed: onFinish,
         ),
       );
     }
@@ -1674,7 +1797,7 @@ class _CallControls extends StatelessWidget {
           label: copy.text('End', 'Zakończ'),
           icon: Icons.call_end_rounded,
           color: AppColors.error,
-          onPressed: actionBusy ? null : onFinish,
+          onPressed: onFinish,
         ),
       ],
     );
