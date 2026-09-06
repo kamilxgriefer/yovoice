@@ -13,6 +13,25 @@ import 'package:yovoice/features/calls/data/services/direct_call_service.dart';
 import 'package:yovoice/features/calls/data/services/voice_call_service.dart';
 import 'package:yovoice/features/calls/data/services/voice_token_service.dart';
 import 'package:yovoice/features/permissions/data/permission_readiness_service.dart';
+import 'package:yovoice/features/calls/data/services/voice_session_keep_alive.dart';
+
+class _RecordingKeepAlive implements VoiceSessionKeepAlive {
+  final List<String> events = <String>[];
+  bool? lastCanPublish;
+
+  @override
+  Future<void> start({
+    required String title,
+    required String body,
+    required bool canPublish,
+  }) async {
+    lastCanPublish = canPublish;
+    events.add('start:$title');
+  }
+
+  @override
+  Future<void> stop() async => events.add('stop');
+}
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -57,6 +76,56 @@ void main() {
       expect(room.disposeCount, 1);
     });
   }
+
+  test(
+    'a connected room keeps the process alive until it disconnects',
+    () async {
+      // The foreground service is what stops Android from silencing and then
+      // freezing a backgrounded call — the reported drop when both parties
+      // minimise the app.
+      final keepAlive = _RecordingKeepAlive();
+      final room = _JoinRoom(_JoinParticipant());
+      final service = _joinService(room, keepAlive: keepAlive);
+      addTearDown(service.dispose);
+
+      await service.join(
+        roomId: 'kept-alive-room',
+        roomName: 'Evening talks',
+        participantName: 'Test speaker',
+        playSound: false,
+      );
+      expect(service.status, VoiceCallStatus.connected);
+      expect(keepAlive.events, ['start:Evening talks']);
+      expect(keepAlive.lastCanPublish, isTrue);
+
+      await service.disconnect(playSound: false);
+      expect(keepAlive.events, ['start:Evening talks', 'stop']);
+    },
+  );
+
+  test(
+    'a listener keeps the process alive without claiming the microphone',
+    () async {
+      final keepAlive = _RecordingKeepAlive();
+      final room = _JoinRoom(_JoinParticipant(canPublish: false));
+      final service = _joinService(
+        room,
+        canPublish: false,
+        keepAlive: keepAlive,
+      );
+      addTearDown(service.dispose);
+
+      await service.join(
+        roomId: 'listen-only-room',
+        roomName: 'Podcast',
+        participantName: 'Test listener',
+        playSound: false,
+      );
+      expect(keepAlive.lastCanPublish, isFalse);
+      await service.disconnect(playSound: false);
+      expect(keepAlive.events.last, 'stop');
+    },
+  );
 
   test(
     'listen-only room joins muted without asking for or publishing mic',
@@ -723,6 +792,7 @@ VoiceCallService _joinService(
   Duration cleanupWaitTimeout = const Duration(seconds: 3),
   Future<LocalVideoTrack> Function(CameraCaptureOptions options)?
   cameraTrackFactory,
+  VoiceSessionKeepAlive? keepAlive,
 }) {
   final token = canPublish
       ? _publisherToken
@@ -732,6 +802,7 @@ VoiceCallService _joinService(
           canPublish: false,
         );
   return VoiceCallService.forTesting(
+    keepAlive: keepAlive,
     roomFactory: roomFactory ?? () => room,
     connectionTimeout: connectionTimeout,
     cleanupWaitTimeout: cleanupWaitTimeout,

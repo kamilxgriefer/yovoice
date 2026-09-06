@@ -9460,3 +9460,49 @@ associated-domains, no App Links), so the in-app card is the tappable path;
 the link is a share affordance. The broadcast share link now uses the form
 the app can actually open.
 
+## ADR-154: An Android foreground service keeps a voice session alive in the background
+
+**Context.** Testers reported that when one person minimises the app the
+call continues, but when both do it collapses. The app declares no
+foreground service of any type: `AndroidManifest.xml` carried no
+`FOREGROUND_SERVICE*` permission and no `<service>`, and `MainActivity` was a
+bare `FlutterActivity`. Android silences a backgrounded process's microphone
+and freezes it once it is cached. With one party foregrounded the other keeps
+publishing, so the minimised app is still rendering audio and stays awake;
+with both minimised nothing flows, both processes freeze, both LiveKit
+participants hit the transport timeout and the room empties. `LiveKitClient.initialize()`
+was never called either, so the iOS audio-session policy was only seeded
+lazily by the SDK.
+
+**Decision.** `VoiceSessionService` (Kotlin) runs while a session is
+connected, with an ongoing low-importance notification and a service type
+chosen from the session's own rights: `microphone` when the participant may
+publish and RECORD_AUDIO is granted, `mediaPlayback` for a listener (asking
+for `microphone` without the permission is a SecurityException). It is
+driven from Dart through `VoiceSessionKeepAlive`, an injectable seam whose
+Android implementation talks to the `app.yo_voice/voice_session` method
+channel and whose default elsewhere — iOS, web, tests — is a no-op.
+`VoiceCallService` starts it the moment a session reaches connected, while
+the app is still foregrounded (Android 12+ refuses a background start), and
+stops it in `_disconnectCurrentSession`. `main()` now calls
+`LiveKitClient.initialize()` before `runApp`.
+
+**Reasoning.** The service is the only mechanism Android offers for this;
+everything else (heartbeats, longer server timeouts) treats the symptom. The
+seam keeps the platform call out of the join path's failure modes: a refused
+foreground start is logged, never thrown, because a call that works in the
+foreground must not be broken by a notification policy. iOS keeps
+`UIBackgroundModes: audio` and deliberately does NOT gain `voip`, which would
+oblige every PushKit push to be reported to CallKit — code this app does not
+have, and an App Store rejection.
+
+**Consequences.** **Before the next Android release the owner must declare
+both foreground-service types in Play Console** (microphone is an approved
+type for calling apps and needs a justification, usually with a demo video);
+shipping without that risks a review block. Users now see an ongoing
+notification while connected. Aggressive OEM battery managers can still kill
+the service, so residual reports are possible. Two follow-ups remain: the
+room screens do not yet re-enter voice on resume after a terminal
+disconnect (they still say "leave and rejoin"), and a frozen client still
+leaves a ghost participant row that only the 5-minute sweeper cleans up.
+

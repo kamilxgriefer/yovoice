@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Ongoing notification shown while a voice room or call is connected.
+         It is what keeps the process alive in the background; without it
+         Android silences the microphone and freezes the app. -->
+    <string name="voice_session_channel_name">Voice sessions</string>
+    <string name="voice_session_channel_description">Keeps a room or call connected while YO Voice is in the background.</string>
+    <string name="voice_session_title">YO Voice</string>
+    <string name="voice_session_body">Connected to a voice session</string>
+</resources>

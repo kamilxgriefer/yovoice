@@ -191,10 +191,7 @@ void main() {
         '24',
       );
       expect(find.text('Hours'), findsOneWidget);
-      expect(
-        find.text('Visibility: 24 h'),
-        findsOneWidget,
-      );
+      expect(find.text('Visibility: 24 h'), findsOneWidget);
 
       await tester.tap(find.text('Publish'));
       await tester.pumpAndSettle();

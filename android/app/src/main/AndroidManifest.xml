@@ -13,6 +13,12 @@
         android:maxSdkVersion="30" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- A connected voice room or call runs as a foreground service. Without
+         it Android silences a backgrounded microphone and freezes the cached
+         process, which dropped calls once both parties minimised the app. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
 
     <uses-feature
         android:name="android.hardware.microphone"
@@ -57,6 +63,11 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
+
+        <service
+            android:name=".VoiceSessionService"
+            android:exported="false"
+            android:foregroundServiceType="microphone|mediaPlayback" />
 
         <meta-data
             android:name="flutterEmbedding"

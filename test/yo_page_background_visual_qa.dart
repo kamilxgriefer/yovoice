@@ -98,7 +98,10 @@ void main() {
         );
         await tester.pumpAndSettle();
         expect(tester.takeException(), isNull);
-        expect(find.byKey(const ValueKey('yo-atmosphere-moments')), findsOneWidget);
+        expect(
+          find.byKey(const ValueKey('yo-atmosphere-moments')),
+          findsOneWidget,
+        );
         await tester.runAsync(() async {
           final boundary =
               capture.currentContext!.findRenderObject()!

@@ -1,6 +1,7 @@
 import 'dart:ui' show PlatformDispatcher;
 
 import 'package:firebase_app_check/firebase_app_check.dart';
+import 'package:livekit_client/livekit_client.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
@@ -17,6 +18,13 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+  // Seeds LiveKit's audio-session policy before WebRTC builds its audio
+  // device module, so a backgrounded iOS call keeps its session active.
+  try {
+    await LiveKitClient.initialize();
+  } catch (error) {
+    debugPrint('LiveKit initialization skipped: $error');
+  }
   _installCrashReporting();
   await _activateAppCheck();
   _registerBackgroundMessageHandler();

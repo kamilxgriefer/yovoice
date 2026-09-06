@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="voice_session_channel_name">Sesje głosowe</string>
+    <string name="voice_session_channel_description">Utrzymuje połączenie z pokojem lub rozmową, gdy YO Voice działa w tle.</string>
+    <string name="voice_session_title">YO Voice</string>
+    <string name="voice_session_body">Połączono z sesją głosową</string>
+</resources>

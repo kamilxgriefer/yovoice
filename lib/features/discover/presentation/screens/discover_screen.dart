@@ -653,7 +653,7 @@ class _DiscoverHeader extends StatelessWidget {
       children: [
         Text(
           asRoomsDestination
-                            ? copy.navigationRooms
+              ? copy.navigationRooms
               : copy.text('Discover', 'Odkrywaj'),
           style: TextStyle(
             color: palette.textPrimary,

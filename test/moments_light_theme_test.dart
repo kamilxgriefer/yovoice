@@ -171,7 +171,10 @@ void main() {
         (canvas.decoration as BoxDecoration).color,
         _palette(brightness).background,
       );
-      expect(find.byKey(const ValueKey('yo-atmosphere-moments')), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('yo-atmosphere-moments')),
+        findsOneWidget,
+      );
       expect(
         find.byKey(ValueKey('moment-featured-${moment.id}')),
         findsOneWidget,

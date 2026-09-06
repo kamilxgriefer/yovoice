@@ -72,11 +72,12 @@ Reported by the owner after the 1.0.0 (21) tester wave. Status per item:
 - **Open, not yet fixed:** a music library (needs a licensed catalogue —
   product decision); Reel length above 90 s (server `MAX_DURATION_MS` and
   the 100 MB video cap, deploy); a call dropping when both parties
-  background the app — **traced**: Android declares no foreground service,
-  so a minimised process is silenced and frozen; with both sides minimised
-  no audio flows, both freeze and the LiveKit room empties. The fix is a
-  microphone/mediaPlayback foreground service plus reconnect-on-resume, and
-  a Play Console foreground-service-type declaration;
+  background the app — **fixed in source** (ADR-154): a foreground service
+  with microphone/mediaPlayback types now runs while a session is connected,
+  and LiveKit is initialised before WebRTC builds its audio device module.
+  Needs a Play Console foreground-service-type declaration before release,
+  and real two-device acceptance. Reconnect-on-resume in the room screens is
+  still open;
   one tester asked for an invite code — TestFlight shows that prompt when
   the device's Apple ID is not the invited address; awards section redesign
   with selectable badges; inviting friends into a room.

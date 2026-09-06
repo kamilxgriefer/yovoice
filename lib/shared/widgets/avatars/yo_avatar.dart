@@ -36,7 +36,10 @@ class YoAvatar extends StatelessWidget {
           decoration: BoxDecoration(
             shape: BoxShape.circle,
             color: palette.surfaceMuted,
-            border: Border.all(color: palette.border.withValues(alpha: .7), width: .8),
+            border: Border.all(
+              color: palette.border.withValues(alpha: .7),
+              width: .8,
+            ),
             image: imageUrl != null && imageUrl!.trim().isNotEmpty
                 ? DecorationImage(
                     image: NetworkImage(imageUrl!),

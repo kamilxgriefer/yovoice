@@ -7,6 +7,7 @@ import 'package:yovoice/core/audio/ui_sound.dart';
 import 'package:yovoice/core/audio/ui_sound_service.dart';
 import 'package:yovoice/core/helpers/error_messages.dart';
 import 'package:yovoice/features/permissions/data/permission_readiness_service.dart';
+import 'package:yovoice/features/calls/data/services/voice_session_keep_alive.dart';
 
 import '../models/voice_connection_info.dart';
 import 'direct_call_service.dart';
@@ -76,6 +77,15 @@ final class VoiceCleanupInProgressException implements Exception {
   String toString() => 'VoiceCleanupInProgressException';
 }
 
+/// Overridden only by tests that exercise the production singleton's
+/// keep-alive wiring; production leaves it null and gets the platform
+/// implementation.
+@visibleForTesting
+VoiceSessionKeepAlive? debugVoiceSessionKeepAliveOverride;
+
+VoiceSessionKeepAlive? get _platformKeepAlive =>
+    debugVoiceSessionKeepAliveOverride;
+
 class VoiceCallService extends ChangeNotifier {
   VoiceCallService._({PermissionReadinessService? permissionReadiness})
     : _microphoneTeardownTimeout = const Duration(seconds: 3),
@@ -86,6 +96,7 @@ class VoiceCallService extends ChangeNotifier {
       _cameraTrackFactoryOverride = null,
       _tokenServiceOverride = null,
       _directCallServiceOverride = null,
+      _keepAlive = _platformKeepAlive ?? defaultVoiceSessionKeepAlive(),
       _permissionReadiness =
           permissionReadiness ?? PermissionReadinessService.instance;
 
@@ -109,6 +120,7 @@ class VoiceCallService extends ChangeNotifier {
     cameraTrackFactory,
     VoiceTokenService? tokenService,
     DirectCallGateway? directCallService,
+    VoiceSessionKeepAlive? keepAlive,
   }) : _microphoneTeardownTimeout = microphoneTeardownTimeout,
        _connectionTimeout = connectionTimeout,
        _cleanupWaitTimeout = cleanupWaitTimeout,
@@ -117,6 +129,7 @@ class VoiceCallService extends ChangeNotifier {
        _cameraTrackFactoryOverride = cameraTrackFactory,
        _tokenServiceOverride = tokenService,
        _directCallServiceOverride = directCallService,
+       _keepAlive = keepAlive ?? const NoopVoiceSessionKeepAlive(),
        _permissionReadiness =
            permissionReadiness ?? PermissionReadinessService.instance;
 
@@ -128,6 +141,11 @@ class VoiceCallService extends ChangeNotifier {
   final Future<bool> Function(Future<void> pendingDisable, Duration timeout)
   _captureDisableWaiter;
   final PermissionReadinessService _permissionReadiness;
+
+  /// Foreground-service seam (Android). Tests inject a recorder; iOS, web and
+  /// the default test constructor get a no-op.
+  final VoiceSessionKeepAlive _keepAlive;
+  bool _keepAliveActive = false;
   // Inject SDK/network boundaries only through the test constructor so tests
   // exercise the real join, epoch checks and cleanup instead of overriding it.
   final Room Function()? _roomFactoryOverride;
@@ -671,6 +689,15 @@ class VoiceCallService extends ChangeNotifier {
       }
       initialMediaReady = true;
       _setStatus(VoiceCallStatus.connected);
+      // Started here, while the app is still foregrounded: Android 12+
+      // refuses a foreground service started from the background, and a
+      // backgrounded process without one is silenced and then frozen.
+      unawaited(
+        _startKeepAlive(
+          canPublish: connectionInfo.canPublish,
+          label: _roomName ?? roomName,
+        ),
+      );
       if (playSound) {
         unawaited(_sounds.play(UiSound.roomJoined));
       }
@@ -1060,6 +1087,7 @@ class VoiceCallService extends ChangeNotifier {
       _cameraOperationEpoch++;
       _speakerOperationEpoch++;
     }
+    unawaited(_stopKeepAlive());
     _desiredMicrophoneEnabled = false;
     _desiredSpeakerPreferred = false;
     if (canSwitchSpeakerphone) {
@@ -1511,6 +1539,27 @@ class VoiceCallService extends ChangeNotifier {
 
   void _handleRoomChanged() {
     notifyListeners();
+  }
+
+  Future<void> _startKeepAlive({
+    required bool canPublish,
+    required String label,
+  }) async {
+    if (_keepAliveActive) return;
+    _keepAliveActive = true;
+    await _keepAlive.start(
+      title: label.trim().isEmpty ? 'YO Voice' : label.trim(),
+      body: canPublish
+          ? 'Connected — your microphone stays available'
+          : 'Connected — listening',
+      canPublish: canPublish,
+    );
+  }
+
+  Future<void> _stopKeepAlive() async {
+    if (!_keepAliveActive) return;
+    _keepAliveActive = false;
+    await _keepAlive.stop();
   }
 
   void _setStatus(VoiceCallStatus value) {

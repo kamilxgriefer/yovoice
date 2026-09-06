@@ -16,6 +16,13 @@ someone decide what to pick up next.
 
 ## Done
 
+- **Voice sessions survive the app being backgrounded on Android**
+  (2026-09-06, ADR-154; **SOURCE + TESTS VERIFIED, NOT PUBLISHED; needs a
+  Play Console foreground-service-type declaration and two-device
+  acceptance**): a microphone/mediaPlayback foreground service with an
+  ongoing notification, started on connect and stopped on disconnect through
+  an injectable seam, plus `LiveKitClient.initialize()` in `main()`.
+
 - **Awards you can choose, on-video Reel trimming, and room invites**
   (2026-09-06, ADR-151/152/153; **SOURCE + SIMULATOR VERIFIED, NOT
   PUBLISHED**): the Awards hub gains a selected-title hero, track progress
