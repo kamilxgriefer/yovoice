@@ -16,6 +16,7 @@ import 'package:yovoice/shared/widgets/backgrounds/yo_page_background.dart';
 import 'package:yovoice/shared/widgets/buttons/yo_icon_button.dart';
 import 'package:yovoice/shared/widgets/identity/official_role_badge.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
+import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
 class DiscoverScreen extends StatefulWidget {
   const DiscoverScreen({
@@ -1192,6 +1193,7 @@ class _FeaturedRoomFooter extends StatelessWidget {
     return Row(
       children: [
         _HostAvatar(
+          hostId: room.hostId,
           photoUrl: room.hostPhotoUrl,
           hostName: room.hostName,
           accent: accent,
@@ -1493,6 +1495,7 @@ class _PremiumRoomDetails extends StatelessWidget {
         Row(
           children: [
             _HostAvatar(
+              hostId: room.hostId,
               photoUrl: room.hostPhotoUrl,
               hostName: room.hostName,
               accent: accent,
@@ -1663,12 +1666,20 @@ class _RoomAvatarFallback extends StatelessWidget {
 
 class _HostAvatar extends StatelessWidget {
   const _HostAvatar({
+    required this.hostId,
     required this.photoUrl,
     required this.hostName,
     required this.accent,
     required this.size,
   });
 
+  /// Canonical identity. Profile media is viewer-authorized and resolved
+  /// from the uid; `hostPhotoUrl` on a room document is a legacy snapshot
+  /// that is never dereferenced any more, which is why a host with an avatar
+  /// still rendered as an initial here.
+  final String hostId;
+
+  /// Kept for source compatibility with the room document; not dereferenced.
   final String? photoUrl;
   final String hostName;
   final Color accent;
@@ -1676,10 +1687,6 @@ class _HostAvatar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final normalizedUrl = photoUrl?.trim();
-    final initial = hostName.trim().isEmpty
-        ? 'Y'
-        : hostName.trim()[0].toUpperCase();
     final visuals = DiscoverCategoryVisuals.fromSeed(
       accent,
       Theme.of(context).brightness,
@@ -1695,31 +1702,12 @@ class _HostAvatar extends StatelessWidget {
         color: visuals.surface,
         border: Border.all(color: visuals.border),
       ),
-      child: normalizedUrl != null && normalizedUrl.isNotEmpty
-          ? Image.network(
-              normalizedUrl,
-              fit: BoxFit.cover,
-              width: size,
-              height: size,
-              errorBuilder: (_, __, ___) {
-                return Text(
-                  initial,
-                  style: TextStyle(
-                    color: visuals.onSurface,
-                    fontSize: size * 0.38,
-                    fontWeight: FontWeight.w900,
-                  ),
-                );
-              },
-            )
-          : Text(
-              initial,
-              style: TextStyle(
-                color: visuals.onSurface,
-                fontSize: size * 0.38,
-                fontWeight: FontWeight.w900,
-              ),
-            ),
+      child: UserAvatar(
+        radius: size / 2,
+        userId: hostId,
+        displayName: hostName,
+        backgroundColor: visuals.surface,
+      ),
     );
   }
 }

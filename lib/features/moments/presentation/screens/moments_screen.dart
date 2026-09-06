@@ -460,50 +460,132 @@ class _MomentsHeader extends StatelessWidget {
                   ],
                 ),
               const SizedBox(height: 10),
-              SizedBox(
-                width: compact ? double.infinity : 340,
-                child: SegmentedButton<YoMomentsFormat>(
-                  key: const ValueKey<String>('yo-moments-format-tabs'),
-                  showSelectedIcon: false,
-                  segments: <ButtonSegment<YoMomentsFormat>>[
-                    ButtonSegment<YoMomentsFormat>(
-                      value: YoMomentsFormat.voice,
-                      icon: const Icon(Icons.mic_rounded, size: 18),
-                      label: Text(
-                        copy.contextualText(
-                          'yoMoments.voiceFormat',
-                          'Voice',
-                          'Głos',
-                        ),
-                      ),
-                    ),
-                    ButtonSegment<YoMomentsFormat>(
-                      value: YoMomentsFormat.reels,
-                      icon: const Icon(Icons.smart_display_rounded, size: 18),
-                      label: Text(copy.text('Reels', 'Reels')),
-                    ),
-                  ],
-                  selected: <YoMomentsFormat>{selectedFormat},
-                  onSelectionChanged: (selection) {
-                    if (selection.isNotEmpty) {
-                      onFormatSelected(selection.first);
-                    }
-                  },
-                  style: ButtonStyle(
-                    minimumSize: const WidgetStatePropertyAll<Size>(
-                      Size(48, 44),
-                    ),
-                    visualDensity: VisualDensity.compact,
-                    side: WidgetStatePropertyAll<BorderSide>(
-                      BorderSide(color: palette.borderStrong),
-                    ),
-                  ),
-                ),
+              // The rest of the app switches lists with pill chips (Reels
+              // Discover/Your Reels, Friends filters, Awards categories); a
+              // bordered Material SegmentedButton was the one control that
+              // read as a different design system.
+              _FormatSwitch(
+                selected: selectedFormat,
+                onSelected: onFormatSelected,
+                compact: compact,
               ),
             ],
           ),
         );
       },
+    );
+  }
+}
+
+/// Voice / Reels, in the app's own pill language.
+class _FormatSwitch extends StatelessWidget {
+  const _FormatSwitch({
+    required this.selected,
+    required this.onSelected,
+    required this.compact,
+  });
+
+  final YoMomentsFormat selected;
+  final ValueChanged<YoMomentsFormat> onSelected;
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
+    final palette = context.appPalette;
+    final options = <(YoMomentsFormat, IconData, String)>[
+      (
+        YoMomentsFormat.voice,
+        Icons.mic_rounded,
+        copy.contextualText('yoMoments.voiceFormat', 'Voice', 'Głos'),
+      ),
+      (
+        YoMomentsFormat.reels,
+        Icons.smart_display_rounded,
+        copy.text('Reels', 'Reels'),
+      ),
+    ];
+    return Container(
+      key: const ValueKey<String>('yo-moments-format-tabs'),
+      width: compact ? double.infinity : 340,
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: palette.surfaceSunken,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: palette.border),
+      ),
+      child: Row(
+        children: [
+          for (final (format, icon, label) in options)
+            Expanded(
+              child: _FormatSegment(
+                icon: icon,
+                label: label,
+                selected: format == selected,
+                onTap: () => onSelected(format),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _FormatSegment extends StatelessWidget {
+  const _FormatSegment({
+    required this.icon,
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
+    final foreground = selected ? colors.onPrimary : palette.textSecondary;
+    return Semantics(
+      button: true,
+      selected: selected,
+      label: label,
+      excludeSemantics: true,
+      child: Material(
+        color: selected ? colors.primary : Colors.transparent,
+        borderRadius: BorderRadius.circular(999),
+        child: InkWell(
+          onTap: selected ? null : onTap,
+          borderRadius: BorderRadius.circular(999),
+          child: Container(
+            constraints: const BoxConstraints(minHeight: 40),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            alignment: Alignment.center,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(icon, size: 17, color: foreground),
+                const SizedBox(width: 7),
+                Flexible(
+                  child: Text(
+                    label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: foreground,
+                      fontSize: 13.5,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

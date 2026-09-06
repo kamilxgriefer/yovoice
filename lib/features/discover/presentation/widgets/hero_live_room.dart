@@ -6,6 +6,7 @@ import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/discover/presentation/discover_category_identity.dart';
 import 'package:yovoice/features/discover/presentation/discover_localized_copy.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
+import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
 class HeroLiveRoom extends StatefulWidget {
   const HeroLiveRoom({required this.room, required this.onJoin, super.key});
@@ -569,6 +570,7 @@ class _HostAndSpeakersPreview extends StatelessWidget {
                 left: index * 21,
                 child: index == 0
                     ? _HostAvatar(
+                        hostId: room.hostId,
                         photoUrl: room.hostPhotoUrl,
                         hostName: room.hostName,
                         accent: accent,
@@ -631,21 +633,23 @@ class _HostAndSpeakersPreview extends StatelessWidget {
 
 class _HostAvatar extends StatelessWidget {
   const _HostAvatar({
+    required this.hostId,
     required this.photoUrl,
     required this.hostName,
     required this.accent,
   });
 
+  /// Canonical identity: profile media is viewer-authorized and resolved
+  /// from the uid. `photoUrl` on a room document is a legacy snapshot that
+  /// is never dereferenced any more, which is why hosts were rendering as
+  /// an initial even with an avatar set.
+  final String hostId;
   final String? photoUrl;
   final String hostName;
   final Color accent;
 
   @override
   Widget build(BuildContext context) {
-    final normalizedUrl = photoUrl?.trim();
-    final initial = hostName.trim().isEmpty
-        ? 'Y'
-        : hostName.trim()[0].toUpperCase();
     final visuals = DiscoverCategoryVisuals.fromSeed(
       accent,
       Theme.of(context).brightness,
@@ -661,31 +665,12 @@ class _HostAvatar extends StatelessWidget {
         color: visuals.surface,
         border: Border.all(color: visuals.border, width: 2),
       ),
-      child: normalizedUrl != null && normalizedUrl.isNotEmpty
-          ? Image.network(
-              normalizedUrl,
-              width: 36,
-              height: 36,
-              fit: BoxFit.cover,
-              errorBuilder: (_, __, ___) {
-                return Text(
-                  initial,
-                  style: TextStyle(
-                    color: visuals.onSurface,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w900,
-                  ),
-                );
-              },
-            )
-          : Text(
-              initial,
-              style: TextStyle(
-                color: visuals.onSurface,
-                fontSize: 11,
-                fontWeight: FontWeight.w900,
-              ),
-            ),
+      child: UserAvatar(
+        radius: 16,
+        userId: hostId,
+        displayName: hostName,
+        backgroundColor: visuals.surface,
+      ),
     );
   }
 }
