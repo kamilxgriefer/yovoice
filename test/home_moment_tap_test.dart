@@ -261,7 +261,7 @@ void main() {
 
       expect(find.text('5 Momentów'), findsOneWidget);
       final semanticLabels = find
-          .ancestor(
+          .descendant(
             of: find.byKey(const ValueKey('home-your-moment')),
             matching: find.byType(Semantics),
           )
@@ -270,7 +270,11 @@ void main() {
           .whereType<Semantics>()
           .map((widget) => widget.properties.label)
           .whereType<String>();
-      expect(semanticLabels, contains('Odtwórz swoich 5 Voice Momentów'));
+      // The heard/unheard state rides on the same label, in Polish too.
+      expect(
+        semanticLabels,
+        contains('Odtwórz swoich 5 Voice Momentów, nieodsłuchane'),
+      );
     });
 
     testWidgets(
@@ -335,7 +339,7 @@ void main() {
 
       expect(find.text('Ola'), findsOneWidget);
       expect(
-        find.bySemanticsLabel('Play 2 Voice Moments from Ola'),
+        find.bySemanticsLabel('Play 2 Voice Moments from Ola, not heard yet'),
         findsOneWidget,
       );
       await tester.tap(find.text('Ola'));

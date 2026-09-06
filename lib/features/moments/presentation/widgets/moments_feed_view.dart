@@ -9,7 +9,6 @@ import 'package:share_plus/share_plus.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
-import 'package:yovoice/core/theme/app_gradients.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/home/data/services/home_feed_service.dart';
 import 'package:yovoice/features/moderation/data/services/content_report_service.dart';
@@ -24,6 +23,7 @@ import 'package:yovoice/features/moments/presentation/screens/moment_comments_sc
 import 'package:yovoice/features/moments/presentation/screens/moment_detail_screen.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_expiry_accessibility.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_sheet.dart';
+import 'package:yovoice/features/moments/presentation/widgets/moment_story_tile.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_story_viewer.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_time_labels.dart';
 import 'package:yovoice/shared/widgets/identity/official_role_badge.dart';
@@ -1527,141 +1527,38 @@ class MomentStoryStrip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     return SizedBox(
-      height: 108,
+      height: MomentStoryTile.heightFor(context),
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
         itemCount: chains.length,
-        separatorBuilder: (_, __) => const SizedBox(width: 12),
+        separatorBuilder: (_, __) => const SizedBox(width: 10),
         itemBuilder: (context, index) {
           final chain = chains[index];
-          final unviewed = chain.hasUnviewed(viewedIds);
-          return _ChainCircle(
+          final seen = !chain.hasUnviewed(viewedIds);
+          return MomentStoryTile(
             key: ValueKey('moments-chain-${chain.authorId}'),
-            chain: chain,
-            unviewed: unviewed,
+            name: chain.authorName,
+            seen: seen,
+            count: chain.length,
+            userId: chain.authorId,
+            photoUrl: chain.authorPhotoUrl,
+            displayName: chain.authorName,
+            semanticLabel: chain.length > 1
+                ? copy.template(
+                    'Open the story chain by {name}, {count} Moments',
+                    'Otwórz relację użytkownika {name}, Momenty: {count}',
+                    values: {'name': chain.authorName, 'count': chain.length},
+                  )
+                : copy.template(
+                    'Open the story chain by {name}',
+                    'Otwórz relację użytkownika {name}',
+                    values: {'name': chain.authorName},
+                  ),
             onTap: () => onOpenChain(chain),
           );
         },
-      ),
-    );
-  }
-}
-
-class _ChainCircle extends StatelessWidget {
-  const _ChainCircle({
-    required this.chain,
-    required this.unviewed,
-    required this.onTap,
-    super.key,
-  });
-
-  final MomentChain chain;
-  final bool unviewed;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = context.appPalette;
-    final colors = Theme.of(context).colorScheme;
-    final copy = AppLocalizations.of(context);
-    final label = chain.length > 1
-        ? copy.text(
-            '${chain.authorName}, ${chain.length} Moments',
-            '${chain.authorName}, Momenty: ${chain.length}',
-          )
-        : chain.authorName;
-    return Semantics(
-      button: true,
-      label: copy.text(
-        'Open the story chain by $label'
-            '${unviewed ? ', has unheard Moments' : ', all heard'}',
-        'Otwórz relację użytkownika $label'
-            '${unviewed ? ', zawiera nieodsłuchane Momenty' : ', wszystko odsłuchane'}',
-      ),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(16),
-        child: SizedBox(
-          width: 76,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Stack(
-                clipBehavior: Clip.none,
-                children: [
-                  Container(
-                    width: 66,
-                    height: 66,
-                    padding: const EdgeInsets.all(2.5),
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      gradient: unviewed ? AppGradients.primary : null,
-                      border: unviewed
-                          ? null
-                          : Border.all(color: palette.border, width: 1.4),
-                    ),
-                    child: Container(
-                      padding: const EdgeInsets.all(2),
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: palette.background,
-                      ),
-                      child: Opacity(
-                        opacity: unviewed ? 1 : .6,
-                        child: UserAvatar(
-                          radius: 27,
-                          userId: chain.authorId,
-                          photoUrl: chain.authorPhotoUrl,
-                          displayName: chain.authorName,
-                        ),
-                      ),
-                    ),
-                  ),
-                  if (chain.length > 1)
-                    Positioned(
-                      right: -2,
-                      bottom: -2,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 6,
-                          vertical: 2,
-                        ),
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(999),
-                          color: colors.primary,
-                          border: Border.all(
-                            color: palette.background,
-                            width: 2,
-                          ),
-                        ),
-                        child: Text(
-                          '${chain.length}',
-                          style: TextStyle(
-                            color: colors.onPrimary,
-                            fontSize: 10.5,
-                            fontWeight: FontWeight.w800,
-                          ),
-                        ),
-                      ),
-                    ),
-                ],
-              ),
-              const SizedBox(height: 6),
-              Text(
-                chain.authorName,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  color: unviewed ? palette.textPrimary : palette.textSecondary,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ],
-          ),
-        ),
       ),
     );
   }

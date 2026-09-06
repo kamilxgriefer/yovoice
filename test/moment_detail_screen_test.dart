@@ -255,8 +255,10 @@ void main() {
         findsNothing,
       );
       expect(find.text('Comments (1)'), findsOneWidget);
+      // The preview puts the author's name and the body on one line, so
+      // the body is a run inside that paragraph.
       expect(
-        find.text('The night bus is where the truth lives.'),
+        find.textContaining('The night bus is where the truth lives.'),
         findsOneWidget,
       );
       expect(
@@ -311,7 +313,7 @@ void main() {
         await tester.pump(const Duration(milliseconds: 60));
       }
 
-      expect(find.text('Real comment'), findsOneWidget);
+      expect(find.textContaining('Real comment'), findsOneWidget);
       final stored = await s.db
           .collection('voiceMoments')
           .doc('m1')
@@ -326,9 +328,8 @@ void main() {
       );
     });
 
-    testWidgets('comment pagination appends the next safe v2 page', (
-      tester,
-    ) async {
+    testWidgets('the preview defers to the thread, which appends the next '
+        'safe v2 page', (tester) async {
       final s = services();
       final moment = _moment('m1', comments: 9);
       final momentRef = s.db.collection('voiceMoments').doc('m1');
@@ -355,11 +356,16 @@ void main() {
         feed: s.feed,
       );
 
-      expect(find.text('Comment 0'), findsOneWidget);
-      expect(find.text('Comment 8'), findsNothing);
-      final loadMore = find.byKey(const ValueKey('moment-comments-load-more'));
+      // The page previews the newest of the loaded page, never all of
+      // it, and hands the rest to the thread.
+      expect(find.textContaining('Comment 6'), findsOneWidget);
+      expect(find.textContaining('Comment 0'), findsNothing);
+
+      final seeAll = find.byKey(
+        const ValueKey('moment-comment-preview-see-all'),
+      );
       await tester.scrollUntilVisible(
-        loadMore,
+        seeAll,
         180,
         scrollable: find.descendant(
           of: find.byKey(const ValueKey('moment-detail-scroll')),
@@ -367,10 +373,48 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
+      expect(find.text('See all 9 comments'), findsOneWidget);
+      await tester.tap(seeAll.hitTestable());
+      for (var i = 0; i < 8; i++) {
+        await tester.pump(const Duration(milliseconds: 60));
+      }
+
+      expect(
+        find.byKey(const ValueKey('moment-comments-screen')),
+        findsOneWidget,
+      );
+      expect(find.text('Comment 0'), findsOneWidget);
+      expect(find.text('Comment 8'), findsNothing);
+      final loadMore = find.byKey(
+        const ValueKey('moment-comments-page-load-more'),
+      );
+      await tester.scrollUntilVisible(
+        loadMore,
+        180,
+        scrollable: find
+            .descendant(
+              of: find.byType(ListView),
+              matching: find.byType(Scrollable),
+            )
+            .first,
+      );
+      await tester.pumpAndSettle();
       await tester.tap(loadMore.hitTestable());
       for (var i = 0; i < 6; i++) {
         await tester.pump(const Duration(milliseconds: 60));
       }
+      // The appended page is real, and lazily built: scroll to it.
+      await tester.scrollUntilVisible(
+        find.text('Comment 8'),
+        180,
+        scrollable: find
+            .descendant(
+              of: find.byType(ListView),
+              matching: find.byType(Scrollable),
+            )
+            .first,
+      );
+      await tester.pumpAndSettle();
       expect(find.text('Comment 8'), findsOneWidget);
       expect(loadMore, findsNothing);
     });

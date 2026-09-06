@@ -708,7 +708,8 @@ void main() {
     expect(find.text('Aleksandra Bardzo Długie Nazwisko'), findsOneWidget);
     expect(
       find.bySemanticsLabel(
-        'Play Voice Moment from Aleksandra Bardzo Długie Nazwisko',
+        'Play Voice Moment from Aleksandra Bardzo Długie Nazwisko, '
+        'not heard yet',
       ),
       findsOneWidget,
     );

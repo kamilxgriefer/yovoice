@@ -510,12 +510,26 @@ class _MoreSheetState extends State<MoreSheet> {
       ),
     ];
 
+    // The sheet used to fill the screen and sit ON TOP of the dock, so the
+    // control that opened it disappeared underneath. It now floats: a bounded
+    // card that ends above the dock, rounded on all four corners, sized to
+    // its own content up to a share of the viewport.
+    final media = MediaQuery.of(context);
+    final dockClearance = 84 + media.viewPadding.bottom;
     final content = Container(
+      margin: EdgeInsets.fromLTRB(10, 0, 10, dockClearance),
       clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
         color: palette.surfaceRaised,
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(30)),
-        border: Border(top: BorderSide(color: palette.border)),
+        borderRadius: BorderRadius.circular(26),
+        border: Border.all(color: palette.border),
+        boxShadow: [
+          BoxShadow(
+            color: palette.shadow.withValues(alpha: .34),
+            blurRadius: 28,
+            offset: const Offset(0, 12),
+          ),
+        ],
       ),
       child: Stack(
         children: [
@@ -534,10 +548,10 @@ class _MoreSheetState extends State<MoreSheet> {
                 child: SingleChildScrollView(
                   key: const ValueKey('more-sheet-scroll-view'),
                   padding: EdgeInsets.fromLTRB(
-                    16,
-                    isVeryNarrow ? 8 : 10,
-                    16,
-                    isVeryNarrow ? 8 : 16,
+                    14,
+                    isVeryNarrow ? 6 : 8,
+                    14,
+                    isVeryNarrow ? 8 : 12,
                   ),
                   keyboardDismissBehavior:
                       ScrollViewKeyboardDismissBehavior.onDrag,
@@ -557,23 +571,10 @@ class _MoreSheetState extends State<MoreSheet> {
                                   copy.more,
                                   style: TextStyle(
                                     color: palette.textPrimary,
-                                    fontSize: 27,
+                                    fontSize: 21,
                                     fontWeight: FontWeight.w900,
                                   ),
                                 ),
-                                if (!isVeryNarrow) ...[
-                                  const SizedBox(height: 3),
-                                  Text(
-                                    copy.text(
-                                      'Everything else, kept one tap away.',
-                                      'Wszystkie pozostałe funkcje pod ręką.',
-                                    ),
-                                    style: TextStyle(
-                                      color: palette.textSecondary,
-                                      fontSize: 13,
-                                    ),
-                                  ),
-                                ],
                               ],
                             ),
                           ),
@@ -618,12 +619,12 @@ class _MoreSheetState extends State<MoreSheet> {
                             crossAxisCount: usesTwoColumns ? 2 : 3,
                             shrinkWrap: true,
                             physics: const NeverScrollableScrollPhysics(),
-                            mainAxisSpacing: 8,
+                            mainAxisSpacing: isVeryNarrow ? 6 : 8,
                             crossAxisSpacing: 8,
                             // Compact rows keep the visible product destinations
                             // in the first owner view on a 390x844 phone while
                             // preserving a comfortable 44px+ touch target.
-                            mainAxisExtent: 65,
+                            mainAxisExtent: 62,
                             children: [
                               // Moments took the dock slot Friends held, so
                               // Friends takes the grid slot Moments held — a
@@ -825,7 +826,7 @@ class _MoreTile extends StatelessWidget {
                         children: [
                           Text(
                             label,
-                            maxLines: 2,
+                            maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
                               color: palette.textPrimary,

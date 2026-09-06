@@ -16,6 +16,14 @@ someone decide what to pick up next.
 
 ## Done
 
+- **Tester round 3: story tiles, comment previews with mentions, friend
+  suggestions, a compact More sheet, and two real bug fixes** (2026-09-07,
+  ADR-155/156/157/158; **SOURCE + CAPTURE VERIFIED, NOT PUBLISHED**): Moments
+  rails share one seen-aware story tile; Moment comments preview inline with
+  `@` mentions resolved per viewer; Friends gains "People you may know"; the
+  More sheet floats above the dock; Home lists real friends again and room
+  tiles resolve the host's avatar from the uid.
+
 - **Voice sessions survive the app being backgrounded on Android**
   (2026-09-06, ADR-154; **SOURCE + TESTS VERIFIED, NOT PUBLISHED; needs a
   Play Console foreground-service-type declaration and two-device

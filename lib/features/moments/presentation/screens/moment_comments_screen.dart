@@ -10,6 +10,8 @@ import 'package:yovoice/core/helpers/error_messages.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/navigation/app_route_observer.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
+import 'package:yovoice/features/friends/data/models/friend_user.dart';
+import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/moderation/data/services/content_report_service.dart';
 import 'package:yovoice/features/moderation/presentation/report_content_flow.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
@@ -17,6 +19,8 @@ import 'package:yovoice/features/moments/data/services/moment_expiry_scheduler.d
 import 'package:yovoice/features/moments/data/services/moment_service.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_expiry_accessibility.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_expiry_boundary.dart';
+import 'package:yovoice/features/moments/presentation/widgets/moment_mention_composer.dart';
+import 'package:yovoice/features/moments/presentation/widgets/moment_mentions.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
@@ -44,6 +48,8 @@ class MomentCommentsScreen extends StatefulWidget {
     this.auth,
     this.momentService,
     this.contentReportService,
+    this.friendService,
+    this.mentionFriendsStream,
     this.expiryClock,
     this.expiryTimerFactory,
     super.key,
@@ -60,6 +66,12 @@ class MomentCommentsScreen extends StatefulWidget {
   final FirebaseAuth? auth;
   final MomentService? momentService;
   final ContentReportService? contentReportService;
+
+  /// Backs the composer's `@` suggestions with the caller's own friends.
+  /// Production passes nothing; the screen resolves the live
+  /// [FriendService] and fails quiet when it cannot.
+  final FriendService? friendService;
+  final Stream<List<FriendUser>>? mentionFriendsStream;
   final MomentExpiryClock? expiryClock;
   final MomentExpiryTimerFactory? expiryTimerFactory;
 
@@ -77,6 +89,8 @@ class _MomentCommentsScreenState extends State<MomentCommentsScreen>
     debugLabel: 'Expired Moment comments back',
   );
   final MomentExpiryAnnouncer _expiryAnnouncer = MomentExpiryAnnouncer();
+  final FocusNode _composerFocus = FocusNode(debugLabel: 'Moment comment');
+  late final MentionFriendsSource _mentionFriends;
   bool _sending = false;
   List<MomentComment>? _comments;
   bool _commentsTruncated = false;
@@ -116,8 +130,33 @@ class _MomentCommentsScreenState extends State<MomentCommentsScreen>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _mentionFriends = MentionFriendsSource(
+      friendsStream: widget.mentionFriendsStream,
+      friendService: widget.friendService,
+    )..addListener(_handleMentionFriends);
     unawaited(_loadComments(trigger: _MomentCommentsRefreshTrigger.initial));
   }
+
+  void _handleMentionFriends() {
+    if (mounted) setState(() {});
+  }
+
+  /// Everyone this viewer's mentions may resolve to when READ: the
+  /// thread's own participants plus the viewer's friends.
+  MentionDirectory _readDirectory() => MentionDirectory(<MentionCandidate>[
+    MentionCandidate(userId: _moment.authorId, displayName: _moment.authorName),
+    for (final comment in _comments ?? const <MomentComment>[])
+      if (comment.authorId.isNotEmpty && comment.authorName.trim().isNotEmpty)
+        MentionCandidate(
+          userId: comment.authorId,
+          displayName: comment.authorName,
+        ),
+    ..._mentionFriends.candidates,
+  ]);
+
+  /// Who the composer may SUGGEST: only the caller's own friends.
+  MentionDirectory _composerDirectory() =>
+      MentionDirectory(_mentionFriends.candidates);
 
   @override
   void didChangeDependencies() {
@@ -195,7 +234,11 @@ class _MomentCommentsScreenState extends State<MomentCommentsScreen>
     _viewLoadGeneration += 1;
     WidgetsBinding.instance.removeObserver(this);
     appRouteObserver.unsubscribe(this);
+    _mentionFriends
+      ..removeListener(_handleMentionFriends)
+      ..dispose();
     _controller.dispose();
+    _composerFocus.dispose();
     _goneBackFocus.dispose();
     super.dispose();
   }
@@ -396,6 +439,7 @@ class _MomentCommentsScreenState extends State<MomentCommentsScreen>
                                     momentService: _momentService,
                                     contentReportService:
                                         widget.contentReportService,
+                                    mentions: _readDirectory(),
                                   );
                                 },
                               ),
@@ -409,53 +453,48 @@ class _MomentCommentsScreenState extends State<MomentCommentsScreen>
                           ),
                         ),
                         child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.end,
                           children: [
                             Expanded(
-                              child: TextField(
-                                controller: _controller,
-                                minLines: 1,
-                                maxLines: 4,
-                                textInputAction: TextInputAction.send,
-                                onSubmitted: (_) => _sendComment(),
-                                style: TextStyle(color: palette.textPrimary),
-                                decoration: InputDecoration(
-                                  hintText: copy.text(
-                                    'Write a comment...',
-                                    'Napisz komentarz…',
-                                  ),
-                                  hintStyle: TextStyle(
-                                    color: palette.textTertiary,
-                                  ),
-                                  filled: true,
-                                  fillColor: palette.surfaceSunken,
-                                  border: OutlineInputBorder(
-                                    borderRadius: BorderRadius.circular(18),
-                                    borderSide: BorderSide.none,
-                                  ),
+                              child: MentionComposerField(
+                                fieldKey: const ValueKey(
+                                  'moment-comments-field',
                                 ),
+                                controller: _controller,
+                                focusNode: _composerFocus,
+                                directory: _composerDirectory(),
+                                maxLines: 4,
+                                hintText: copy.text(
+                                  'Write a comment...',
+                                  'Napisz komentarz…',
+                                ),
+                                onSubmitted: (_) => _sendComment(),
                               ),
                             ),
                             const SizedBox(width: 10),
-                            IconButton.filled(
-                              onPressed: _sending ? null : _sendComment,
-                              tooltip: copy.text(
-                                'Post comment',
-                                'Opublikuj komentarz',
+                            Padding(
+                              padding: const EdgeInsets.only(bottom: 2),
+                              child: IconButton.filled(
+                                onPressed: _sending ? null : _sendComment,
+                                tooltip: copy.text(
+                                  'Post comment',
+                                  'Opublikuj komentarz',
+                                ),
+                                style: IconButton.styleFrom(
+                                  backgroundColor: colors.primary,
+                                  foregroundColor: colors.onPrimary,
+                                ),
+                                icon: _sending
+                                    ? SizedBox(
+                                        width: 18,
+                                        height: 18,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                          color: colors.onPrimary,
+                                        ),
+                                      )
+                                    : const Icon(Icons.send_rounded),
                               ),
-                              style: IconButton.styleFrom(
-                                backgroundColor: colors.primary,
-                                foregroundColor: colors.onPrimary,
-                              ),
-                              icon: _sending
-                                  ? SizedBox(
-                                      width: 18,
-                                      height: 18,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                        color: colors.onPrimary,
-                                      ),
-                                    )
-                                  : const Icon(Icons.send_rounded),
                             ),
                           ],
                         ),
@@ -504,6 +543,7 @@ class _CommentCard extends StatefulWidget {
     required this.momentId,
     required this.isOwn,
     required this.momentService,
+    required this.mentions,
     this.contentReportService,
   });
   final MomentComment comment;
@@ -511,6 +551,9 @@ class _CommentCard extends StatefulWidget {
   final bool isOwn;
   final MomentService? momentService;
   final ContentReportService? contentReportService;
+
+  /// Who an `@name` in this comment may resolve to for this viewer.
+  final MentionDirectory mentions;
 
   @override
   State<_CommentCard> createState() => _CommentCardState();
@@ -691,12 +734,17 @@ class _CommentCardState extends State<_CommentCard> {
                   ),
                   if (text.isNotEmpty) ...[
                     const SizedBox(height: 7),
-                    Text(text, style: TextStyle(color: palette.textSecondary)),
+                    MentionText(
+                      text: text,
+                      directory: widget.mentions,
+                      style: TextStyle(color: palette.textSecondary),
+                    ),
                   ],
                 ] else ...[
                   const SizedBox(height: 4),
-                  Text(
-                    text,
+                  MentionText(
+                    text: text,
+                    directory: widget.mentions,
                     style: TextStyle(color: palette.textPrimary, height: 1.35),
                   ),
                 ],

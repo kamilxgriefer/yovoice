@@ -10,17 +10,22 @@ import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/navigation/app_route_observer.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/home/data/services/home_feed_service.dart';
+import 'package:yovoice/features/friends/data/models/friend_user.dart';
+import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/moderation/data/services/content_report_service.dart';
 import 'package:yovoice/features/moderation/presentation/report_content_flow.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
 import 'package:yovoice/features/moments/data/services/moment_expiry_scheduler.dart';
 import 'package:yovoice/features/moments/data/services/moment_service.dart';
 import 'package:yovoice/features/moments/data/services/moment_views_service.dart';
+import 'package:yovoice/features/moments/presentation/screens/moment_comments_screen.dart';
+import 'package:yovoice/features/moments/presentation/widgets/moment_comment_preview.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_expiry_accessibility.dart';
+import 'package:yovoice/features/moments/presentation/widgets/moment_mention_composer.dart';
+import 'package:yovoice/features/moments/presentation/widgets/moment_mentions.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_story_viewer.dart'
     show StoryWaveform;
 import 'package:yovoice/features/moments/presentation/widgets/moment_time_labels.dart';
-import 'package:yovoice/shared/widgets/identity/official_role_badge.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
 import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
@@ -65,6 +70,8 @@ class MomentDetailScreen extends StatefulWidget {
     this.viewsService,
     this.contentReportService,
     this.auth,
+    this.friendService,
+    this.mentionFriendsStream,
     this.playerFactory,
     this.expiryClock,
     this.expiryTimerFactory,
@@ -77,6 +84,12 @@ class MomentDetailScreen extends StatefulWidget {
   final MomentViewsService? viewsService;
   final ContentReportService? contentReportService;
   final FirebaseAuth? auth;
+
+  /// Backs the composer's `@` suggestions with the caller's own friends.
+  /// Injection seams only — production passes nothing and the screen
+  /// resolves the live [FriendService], failing quiet when it cannot.
+  final FriendService? friendService;
+  final Stream<List<FriendUser>>? mentionFriendsStream;
 
   @visibleForTesting
   final AudioPlayer Function()? playerFactory;
@@ -111,11 +124,11 @@ class _MomentDetailScreenState extends State<MomentDetailScreen>
   bool _expiredByDeadline = false;
 
   Future<List<MomentReactor>>? _reactions;
+
+  /// The first page of the thread from the SAME view read that produced
+  /// the Moment — never a second fetch just to show a preview.
   List<MomentComment>? _comments;
-  bool _commentsTruncated = false;
-  String? _nextCommentCursor;
   Object? _commentsError;
-  bool _loadingMoreComments = false;
   ModalRoute<void>? _observedRoute;
   final Set<_MomentDetailRefreshTrigger> _canonicalRefreshesInFlight =
       <_MomentDetailRefreshTrigger>{};
@@ -134,6 +147,7 @@ class _MomentDetailScreenState extends State<MomentDetailScreen>
   final FocusNode _composerFocus = FocusNode(debugLabel: 'Moment comment');
   final FocusNode _goneBackFocus = FocusNode(debugLabel: 'Expired Moment back');
   final MomentExpiryAnnouncer _expiryAnnouncer = MomentExpiryAnnouncer();
+  late final MentionFriendsSource _mentionFriends;
   bool _sending = false;
 
   AppLocalizations get _copy => AppLocalizations.of(context);
@@ -177,6 +191,10 @@ class _MomentDetailScreenState extends State<MomentDetailScreen>
     } catch (_) {
       _views = null;
     }
+    _mentionFriends = MentionFriendsSource(
+      friendsStream: widget.mentionFriendsStream,
+      friendService: widget.friendService,
+    )..addListener(_handleMentionFriends);
 
     final moments = _moments;
     if (moments != null) {
@@ -206,44 +224,22 @@ class _MomentDetailScreenState extends State<MomentDetailScreen>
   }
 
   Future<void> _loadView({
-    String? commentCursor,
-    bool append = false,
     _MomentDetailRefreshTrigger trigger = _MomentDetailRefreshTrigger.retry,
   }) async {
     final service = _moments;
-    if (service == null || (append && _loadingMoreComments)) return;
-    if (!append && !_canonicalRefreshesInFlight.add(trigger)) return;
-    final requestGeneration = append
-        ? _viewLoadGeneration
-        : ++_viewLoadGeneration;
-    if (append && mounted) {
-      setState(() {
-        _loadingMoreComments = true;
-        _commentsError = null;
-      });
-    }
+    if (service == null) return;
+    if (!_canonicalRefreshesInFlight.add(trigger)) return;
+    final requestGeneration = ++_viewLoadGeneration;
     try {
-      final view = await service.loadMomentView(
-        widget.moment.id,
-        commentCursor: commentCursor,
-      );
+      final view = await service.loadMomentView(widget.moment.id);
       if (!mounted || requestGeneration != _viewLoadGeneration) return;
       final expired = !view.moment.isActiveAt(_effectiveNow());
-      final previous = _comments ?? const <MomentComment>[];
-      final merged = <String, MomentComment>{
-        if (append)
-          for (final comment in previous) comment.id: comment,
-        for (final comment in view.comments) comment.id: comment,
-      }.values.toList(growable: false);
       setState(() {
         _missing = false;
         _moment = view.moment;
         _expiredByDeadline = expired;
-        _comments = merged;
-        _commentsTruncated = view.commentsTruncated;
-        _nextCommentCursor = view.nextCommentCursor;
+        _comments = view.comments;
         _commentsError = null;
-        _loadingMoreComments = false;
         _reactions = Future<List<MomentReactor>>.value(view.topReactions);
       });
       _expiry.schedule(expired ? const <VoiceMoment>[] : [view.moment]);
@@ -259,10 +255,7 @@ class _MomentDetailScreenState extends State<MomentDetailScreen>
         setState(() => _commentsError = error);
       }
     } finally {
-      if (!append) _canonicalRefreshesInFlight.remove(trigger);
-      if (mounted && append && _loadingMoreComments) {
-        setState(() => _loadingMoreComments = false);
-      }
+      _canonicalRefreshesInFlight.remove(trigger);
     }
   }
 
@@ -274,20 +267,37 @@ class _MomentDetailScreenState extends State<MomentDetailScreen>
     setState(() {
       _missing = true;
       _comments = null;
-      _commentsTruncated = false;
-      _nextCommentCursor = null;
       _commentsError = null;
-      _loadingMoreComments = false;
       _reactions = null;
       _playbackError = null;
     });
     _announceGone(previousFocus: recoverFocus ? previousFocus : null);
   }
 
-  Future<void> _loadMoreComments() async {
-    final cursor = _nextCommentCursor;
-    if (!_commentsTruncated || cursor == null) return;
-    await _loadView(commentCursor: cursor, append: true);
+  void _handleMentionFriends() {
+    if (mounted) setState(() {});
+  }
+
+  /// The full thread, with its voice playback, reporting and pagination.
+  ///
+  /// The inline preview deliberately stops at a few comments; this is
+  /// where every comment lives. Returning here re-reads the view through
+  /// [didPopNext], so a comment posted there shows up on this page.
+  Future<void> _openAllComments() async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => MomentCommentsScreen(
+          moment: _moment,
+          momentService: _moments,
+          auth: widget.auth,
+          contentReportService: widget.contentReportService,
+          friendService: widget.friendService,
+          mentionFriendsStream: widget.mentionFriendsStream,
+          expiryClock: widget.expiryClock,
+          expiryTimerFactory: widget.expiryTimerFactory,
+        ),
+      ),
+    );
   }
 
   @override
@@ -295,6 +305,9 @@ class _MomentDetailScreenState extends State<MomentDetailScreen>
     _viewLoadGeneration += 1;
     WidgetsBinding.instance.removeObserver(this);
     appRouteObserver.unsubscribe(this);
+    _mentionFriends
+      ..removeListener(_handleMentionFriends)
+      ..dispose();
     _expiry.dispose();
     for (final subscription in _playerSubscriptions) {
       unawaited(subscription.cancel());
@@ -1165,33 +1178,17 @@ class _MomentDetailScreenState extends State<MomentDetailScreen>
               ),
             ),
           )
-        else if (_comments!.isEmpty)
-          Text(
-            copy.text('Be the first to comment.', 'Napisz pierwszy komentarz.'),
-            style: TextStyle(color: palette.textTertiary, fontSize: 12.5),
-          )
         else
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              for (final comment in _comments!) _CommentRow(comment: comment),
-              if (_commentsTruncated || _loadingMoreComments) ...[
-                const SizedBox(height: 8),
-                TextButton.icon(
-                  key: const ValueKey('moment-comments-load-more'),
-                  onPressed: _loadingMoreComments
-                      ? null
-                      : () => unawaited(_loadMoreComments()),
-                  icon: _loadingMoreComments
-                      ? const SizedBox.square(
-                          dimension: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.expand_more_rounded),
-                  label: Text(copy.text('Load more', 'Wczytaj więcej')),
-                ),
-              ],
-            ],
+          MomentCommentPreview(
+            comments: _comments!,
+            totalCommentCount: _moment.commentCount,
+            momentAuthor: MentionCandidate(
+              userId: _moment.authorId,
+              displayName: _moment.authorName,
+            ),
+            friends: _mentionFriends.candidates,
+            onSeeAll: () => unawaited(_openAllComments()),
+            onCompose: _composerFocus.requestFocus,
           ),
       ],
     );
@@ -1207,61 +1204,69 @@ class _MomentDetailScreenState extends State<MomentDetailScreen>
         color: palette.surfaceRaised,
         border: Border(top: BorderSide(color: palette.border)),
       ),
-      child: Row(
-        children: [
-          Expanded(
-            child: TextField(
-              key: const ValueKey('moment-detail-comment-field'),
-              controller: _composer,
-              focusNode: _composerFocus,
-              minLines: 1,
-              maxLines: 3,
-              textInputAction: TextInputAction.send,
-              onSubmitted: (_) => unawaited(_send()),
-              enabled: _moments != null,
-              style: TextStyle(color: palette.textPrimary),
-              decoration: InputDecoration(
-                hintText: copy.text('Write a comment...', 'Napisz komentarz…'),
-                hintStyle: TextStyle(color: palette.textTertiary),
-                filled: true,
-                fillColor: palette.surfaceSunken,
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(16),
-                  borderSide: BorderSide.none,
-                ),
-                contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 14,
-                  vertical: 10,
+      // The bar's surface stays full-bleed chrome, but its controls hold
+      // the SAME 640 measure as the page body: a desktop composer that
+      // stretched to 1440 put the send button a screen away from the
+      // text, and the `@` picker inherited that stretch.
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 640),
+          // The `@` picker sits inside the composer column so it pushes
+          // the field down rather than covering the thread.
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Expanded(
+                child: MentionComposerField(
+                  fieldKey: const ValueKey('moment-detail-comment-field'),
+                  controller: _composer,
+                  focusNode: _composerFocus,
+                  directory: _composerMentionDirectory(),
+                  hintText: copy.text(
+                    'Write a comment...',
+                    'Napisz komentarz…',
+                  ),
+                  enabled: _moments != null,
+                  onSubmitted: (_) => unawaited(_send()),
                 ),
               ),
-            ),
+              const SizedBox(width: 8),
+              Padding(
+                padding: const EdgeInsets.only(bottom: 2),
+                child: IconButton.filled(
+                  key: const ValueKey('moment-detail-comment-send'),
+                  tooltip: copy.text('Post comment', 'Dodaj komentarz'),
+                  onPressed: _sending || _moments == null
+                      ? null
+                      : () => unawaited(_send()),
+                  style: IconButton.styleFrom(
+                    backgroundColor: colors.primary,
+                    foregroundColor: colors.onPrimary,
+                  ),
+                  icon: _sending
+                      ? SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: colors.onPrimary,
+                          ),
+                        )
+                      : const Icon(Icons.send_rounded, size: 19),
+                ),
+              ),
+            ],
           ),
-          const SizedBox(width: 8),
-          IconButton.filled(
-            key: const ValueKey('moment-detail-comment-send'),
-            tooltip: copy.text('Post comment', 'Dodaj komentarz'),
-            onPressed: _sending || _moments == null
-                ? null
-                : () => unawaited(_send()),
-            style: IconButton.styleFrom(
-              backgroundColor: colors.primary,
-              foregroundColor: colors.onPrimary,
-            ),
-            icon: _sending
-                ? SizedBox(
-                    width: 16,
-                    height: 16,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: colors.onPrimary,
-                    ),
-                  )
-                : const Icon(Icons.send_rounded, size: 19),
-          ),
-        ],
+        ),
       ),
     );
   }
+
+  /// Who the composer may suggest: the caller's own friends only. The
+  /// thread's participants resolve when a mention is *read* — suggesting
+  /// a stranger who happened to comment is not the caller's list.
+  MentionDirectory _composerMentionDirectory() =>
+      MentionDirectory(_mentionFriends.candidates);
 }
 
 /// Back and Share — the page's own chrome, present in both hosting modes
@@ -1380,91 +1385,6 @@ class _GoneState extends StatelessWidget {
             ),
           ],
         ),
-      ),
-    );
-  }
-}
-
-class _CommentRow extends StatelessWidget {
-  const _CommentRow({required this.comment});
-
-  final MomentComment comment;
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = context.appPalette;
-    final copy = AppLocalizations.of(context);
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          UserAvatar(
-            radius: 15,
-            userId: comment.authorId,
-            photoUrl: comment.authorPhotoUrl,
-            displayName: comment.authorName,
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Wrap(
-                  spacing: 6,
-                  crossAxisAlignment: WrapCrossAlignment.center,
-                  children: [
-                    Text(
-                      comment.authorName,
-                      style: TextStyle(
-                        color: palette.textPrimary,
-                        fontSize: 12.5,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                    UserIdentityBadges(
-                      uid: comment.authorId,
-                      variant: IdentityBadgeVariant.icon,
-                    ),
-                    Text(
-                      momentRelativeAge(comment.createdAt, copy: copy),
-                      style: TextStyle(
-                        color: palette.textTertiary,
-                        fontSize: 11,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 2),
-                // No like counts on comments: comment documents carry
-                // none in the schema, so none are printed.
-                if (comment.isVoice)
-                  Text(
-                    copy.text(
-                      'Voice reply · ${comment.durationSeconds}s'
-                          '${comment.text.isNotEmpty ? ' — ${comment.text}' : ''}',
-                      'Odpowiedź głosowa · ${comment.durationSeconds} s'
-                          '${comment.text.isNotEmpty ? ' — ${comment.text}' : ''}',
-                    ),
-                    style: TextStyle(
-                      color: palette.textSecondary,
-                      fontSize: 13,
-                      height: 1.4,
-                    ),
-                  )
-                else
-                  Text(
-                    comment.text,
-                    style: TextStyle(
-                      color: palette.textSecondary,
-                      fontSize: 13,
-                      height: 1.4,
-                    ),
-                  ),
-              ],
-            ),
-          ),
-        ],
       ),
     );
   }

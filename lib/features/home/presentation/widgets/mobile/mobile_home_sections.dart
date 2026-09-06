@@ -7,7 +7,9 @@ import 'package:yovoice/features/home/presentation/widgets/desktop/desktop_home.
     show RoomVisual;
 import 'package:yovoice/features/moments/data/models/moment_chain.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
+import 'package:yovoice/features/moments/data/services/moment_views_service.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_expiry_accessibility.dart';
+import 'package:yovoice/features/moments/presentation/widgets/moment_story_tile.dart';
 import 'package:yovoice/features/premium/data/premium_plans.dart';
 import 'package:yovoice/features/profile/data/models/follow_user.dart';
 import 'package:yovoice/features/profile/data/models/user_profile.dart';
@@ -133,6 +135,8 @@ class MobileMomentsStrip extends StatelessWidget {
     this.onOpenChain,
     this.expiryClock,
     this.expandedLabels = false,
+    this.viewsService,
+    this.viewedIds,
     super.key,
   });
 
@@ -151,10 +155,22 @@ class MobileMomentsStrip extends StatelessWidget {
   /// Uses the same instant as an injected [HomeFeedService] in widget tests.
   final DateTime Function()? expiryClock;
 
-  static const double _tile = 66;
+  /// Test seam for the caller's own viewed-Moment ids.
+  final MomentViewsService? viewsService;
+
+  /// Already-resolved viewed ids from a surrounding surface. Non-null
+  /// stops this rail from opening a second `momentViews` listener — the
+  /// desktop strip resolves the set once and hands it down.
+  final Set<String>? viewedIds;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => MomentViewedIds(
+    service: viewsService,
+    viewedIds: viewedIds,
+    builder: (context, viewed) => _build(context, viewed),
+  );
+
+  Widget _build(BuildContext context, Set<String> viewedIds) {
     final copy = AppLocalizations.of(context);
     final playable = moments
         .where((moment) => moment.hasMediaReference)
@@ -198,31 +214,37 @@ class MobileMomentsStrip extends StatelessWidget {
               '$count Voice Moments wygasło i zostało usuniętych ze strony głównej.',
             ),
       builder: (context, recoveryFocus, tileFocusNode) {
-        final yours = _MomentBubble(
-          expandedLabel: expandedLabels,
+        final yours = MomentStoryTile(
           key: const ValueKey('home-your-moment'),
+          // Your own chain is heard once every link carries your own
+          // `momentViews` doc; an empty own chain is a quiet ring with
+          // the `+`, never an "unheard" claim about nothing.
+          seen: mineChain == null || !mineChain.hasUnviewed(viewedIds),
           // This avatar always exists, even when the last own Moment expires.
           // It is the visible, actionable recovery target for the whole rail.
           focusNode: recoveryFocus,
-          label: copy.homeYou,
+          name: copy.homeYou,
           userId: profile?.uid ?? currentUserId,
           // The profile is authoritative. A Moment's denormalized photo can
           // be older than a newly saved avatar.
           photoUrl: profile?.photoUrl,
           mediaRevision: profile?.profileUpdatedAt,
           displayName: profile?.displayName,
+          fallbackIcon: Icons.person_rounded,
           showAdd: true,
           // A real count of YOUR live Moments — the chain badge.
-          count: mineAll.length > 1 ? mineAll.length : null,
+          count: mineAll.length,
+          countKey: const ValueKey('home-your-moment-count'),
           semanticLabel: mine == null
               ? copy.text(
                   'Record your first Voice Moment',
                   'Nagraj swój pierwszy Voice Moment',
                 )
               : (mineAll.length > 1
-                    ? copy.text(
-                        'Play your ${mineAll.length} Voice Moments',
-                        'Odtwórz swoje Voice Moments (${mineAll.length})',
+                    ? copy.template(
+                        'Play your {count} Voice Moments',
+                        'Odtwórz swoje Voice Moments ({count})',
+                        values: {'count': mineAll.length},
                       )
                     : copy.text(
                         'Play your Voice Moment',
@@ -287,23 +309,30 @@ class MobileMomentsStrip extends StatelessWidget {
                     ),
                   ),
                   for (final chain in shown) ...[
-                    const SizedBox(width: 12),
-                    _MomentBubble(
+                    const SizedBox(width: 10),
+                    MomentStoryTile(
                       expandedLabel: expandedLabels,
                       key: ValueKey('home-moment-${chain.moments.last.id}'),
                       focusNode: tileFocusNode(chain.moments.last.id),
-                      label: chain.authorName,
+                      name: chain.authorName,
+                      seen: !chain.hasUnviewed(viewedIds),
+                      count: chain.length,
                       userId: chain.authorId,
                       photoUrl: chain.authorPhotoUrl,
                       displayName: chain.authorName,
                       semanticLabel: chain.length == 1
-                          ? copy.text(
-                              'Play Voice Moment from ${chain.authorName}',
-                              'Odtwórz Voice Moment użytkownika ${chain.authorName}',
+                          ? copy.template(
+                              'Play Voice Moment from {name}',
+                              'Odtwórz Voice Moment użytkownika {name}',
+                              values: {'name': chain.authorName},
                             )
-                          : copy.text(
-                              'Play ${chain.length} Voice Moments from ${chain.authorName}',
-                              'Odtwórz ${chain.length} Voice Moments użytkownika ${chain.authorName}',
+                          : copy.template(
+                              'Play {count} Voice Moments from {name}',
+                              'Odtwórz {count} Voice Moments użytkownika {name}',
+                              values: {
+                                'count': chain.length,
+                                'name': chain.authorName,
+                              },
                             ),
                       onTap: onOpenChain == null
                           ? () => onOpenMoment(chain.moments.last)
@@ -316,217 +345,6 @@ class MobileMomentsStrip extends StatelessWidget {
           ],
         );
       },
-    );
-  }
-}
-
-class _MomentBubble extends StatelessWidget {
-  const _MomentBubble({
-    required this.label,
-    required this.onTap,
-    this.userId,
-    this.photoUrl,
-    this.mediaRevision,
-    this.displayName,
-    this.showAdd = false,
-    this.count,
-    this.semanticLabel,
-    this.onAddTap,
-    this.focusNode,
-    this.expandedLabel = false,
-    super.key,
-  });
-
-  final String label;
-  final VoidCallback onTap;
-  final String? userId;
-  final String? photoUrl;
-  final Object? mediaRevision;
-  final String? displayName;
-  final bool showAdd;
-  final bool expandedLabel;
-
-  /// A real chain count (own live Moments); null hides the badge.
-  final int? count;
-
-  /// What the bubble DOES, for a screen reader — "Your Moment" names the
-  /// tile, it does not say whether tapping plays or records.
-  final String? semanticLabel;
-
-  /// The plus badge's own action. Without it the badge inherits [onTap],
-  /// which is right for a person who has never posted and wrong for one
-  /// who has.
-  final VoidCallback? onAddTap;
-  final FocusNode? focusNode;
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = context.appPalette;
-    final colors = Theme.of(context).colorScheme;
-    final enlargedText = MediaQuery.textScalerOf(context).scale(1) >= 1.6;
-    // The own tile reserves a separate 44px + target beside the main
-    // playback target; shrinking that hit area over the avatar's centre
-    // makes an ordinary "play mine" tap record instead.
-    final tileWidth = showAdd
-        ? (enlargedText ? 118.0 : 94.0)
-        : expandedLabel
-        ? (enlargedText ? 180.0 : 128.0)
-        : (enlargedText ? 104.0 : 64.0);
-    return Semantics(
-      button: true,
-      // Followed-author tiles are one atomic action. The own tile keeps
-      // descendants because its nested plus exposes a separate record action.
-      excludeSemantics: !showAdd,
-      label: semanticLabel ?? label,
-      child: InkWell(
-        focusNode: focusNode,
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(999),
-        child: SizedBox(
-          width: tileWidth,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              SizedBox(
-                width: tileWidth,
-                height: MobileMomentsStrip._tile,
-                child: Stack(
-                  clipBehavior: Clip.none,
-                  children: [
-                    Align(
-                      alignment: Alignment.center,
-                      child: Container(
-                        padding: const EdgeInsets.all(2.5),
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          gradient: const LinearGradient(
-                            colors: [AppColors.primary, AppColors.secondary],
-                          ),
-                        ),
-                        child: Container(
-                          padding: const EdgeInsets.all(2),
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: palette.surfaceSunken,
-                          ),
-                          child: UserAvatar(
-                            radius: MobileMomentsStrip._tile / 2 - 9,
-                            userId: userId,
-                            photoUrl: photoUrl,
-                            mediaRevision: mediaRevision,
-                            displayName: displayName,
-                            fallbackIcon: Icons.person_rounded,
-                          ),
-                        ),
-                      ),
-                    ),
-                    if (count != null)
-                      Positioned(
-                        left: (tileWidth - 64) / 2,
-                        top: -3,
-                        child: Container(
-                          key: const ValueKey('home-your-moment-count'),
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 6,
-                            vertical: 2,
-                          ),
-                          decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(999),
-                            gradient: LinearGradient(
-                              colors: [colors.primary, colors.secondary],
-                            ),
-                            border: Border.all(
-                              color: palette.surfaceSunken,
-                              width: 2,
-                            ),
-                          ),
-                          child: Text(
-                            '$count',
-                            style: TextStyle(
-                              color: colors.onPrimary,
-                              fontSize: 10,
-                              fontWeight: FontWeight.w800,
-                            ),
-                          ),
-                        ),
-                      ),
-                    if (showAdd)
-                      Positioned(
-                        right: enlargedText ? 6 : 0,
-                        bottom: 0,
-                        child: _AddMomentBadge(
-                          onTap: onAddTap,
-                          child: Container(
-                            width: 22,
-                            height: 22,
-                            alignment: Alignment.center,
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              color: AppColors.primary,
-                              border: Border.all(
-                                color: palette.surfaceSunken,
-                                width: 2,
-                              ),
-                            ),
-                            child: const Icon(
-                              Icons.add_rounded,
-                              size: 13,
-                              color: Colors.white,
-                            ),
-                          ),
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 6),
-              Text(
-                label,
-                maxLines: enlargedText || expandedLabel ? 2 : 1,
-                overflow: enlargedText
-                    ? TextOverflow.visible
-                    : TextOverflow.ellipsis,
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  color: palette.textSecondary,
-                  fontSize: 10.5,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// The plus on your own bubble. A nested tap target inside the bubble's
-/// InkWell: the innermost recognizer wins, so the badge means "record"
-/// while the rest of the bubble means "play mine".
-class _AddMomentBadge extends StatelessWidget {
-  const _AddMomentBadge({required this.child, this.onTap});
-
-  final Widget child;
-  final VoidCallback? onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    if (onTap == null) return child;
-    final copy = AppLocalizations.of(context);
-    return Semantics(
-      button: true,
-      label: copy.text('Record a Voice Moment', 'Nagraj Voice Moment'),
-      child: InkWell(
-        key: const ValueKey('home-record-moment'),
-        onTap: onTap,
-        customBorder: const CircleBorder(),
-        child: SizedBox(
-          width: 44,
-          height: 44,
-          child: Align(alignment: Alignment.bottomRight, child: child),
-        ),
-      ),
     );
   }
 }

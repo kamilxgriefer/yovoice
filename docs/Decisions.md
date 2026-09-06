@@ -9506,3 +9506,114 @@ room screens do not yet re-enter voice on resume after a terminal
 disconnect (they still say "leave and rejoin"), and a frozen client still
 leaves a ghost participant row that only the 5-minute sweeper cleans up.
 
+## ADR-155: One Voice Moments story tile, and its ring means "you have not heard this"
+
+**Context.** Three surfaces drew Moment avatars with three geometries and
+three meanings: the feed's 66 pt disc in a 108 pt strip meant *unviewed*,
+mobile Home drew the same gradient ring unconditionally so it meant nothing,
+and the desktop rail's 136×128 card meant *posted in the last 24 hours*
+(ADR-036, from before per-viewer state existed). Per-viewer state has existed
+since the story viewer landed (`users/{uid}/momentViews/{momentId}`, read
+through `MomentViewsService`), but only the feed used it. The owner asked for
+smaller, Instagram-like tiles that go grey once watched.
+
+**Decision.** `MomentStoryTile` is drawn by all three rails. The ring is the
+seen state everywhere: brand gradient while any Moment in the chain is
+unheard by this account, a flat border line plus a dimmed avatar once every
+link is heard. The disc is 60 pt (56 pt under a 360 pt viewport) against 66
+before, with a one-line name. `MomentViewedIds` opens exactly one views
+listener per rail and accepts an already-resolved set so a nested rail opens
+none. Unknown state renders as unheard, and heard/unheard is spoken in the
+semantic label.
+
+**Reasoning.** Presentation only: no new field, no new collection, the same
+single subcollection listener the feed already used. One widget makes
+divergence impossible rather than merely discouraged. Failing open is the
+asymmetric-safe choice: showing unheard content as heard hides it, the
+reverse costs one tap.
+
+**Consequences.** The strip is about a quarter shorter and the desktop tile
+roughly 40 % smaller. `_ChainCircle`, `_MomentBubble`, `_AddMomentBadge`,
+`_MomentRing`, `_MomentNameLabel` and `_PresenceDot` are gone. Your own tile
+derives seen from your own views documents, so a Moment you posted but never
+played back stays ringed. The count pill and the avatar initial are
+scale-capped because both are marks, not copy.
+
+## ADR-156: Moment comments preview inline; mentions are plain text resolved per viewer
+
+**Context.** The owner asked to see a couple of comments without opening the
+comments screen, and to tag people with `@`. `getVoiceMomentViewV2` already
+returns up to seven comments with the Moment, so a preview needs no backend.
+Nothing in the app had mentions, and clients cannot write notifications.
+
+**Decision.** Up to three comments render inline from the comments the view
+already returned, with a "See all {n} comments" row into the existing
+comments screen; the card takes them from its host and never fetches. A
+mention is plain text: the composer suggests the caller's own friends and
+inserts `@displayName`; on read, `@name` resolves per viewer against the
+thread's participants plus that viewer's friends, and anything else stays
+ordinary text. Mentions deliberately do not notify.
+
+**Reasoning.** `createMomentComment` is guarded by an exact-input check, so a
+structured mention field would be refused server-side; plain text needs no
+deploy and no schema change. Per-viewer resolution means a mention can only
+link to someone that viewer can already see — no directory search, no
+fabricated identity. Shipping a client-side notification promise with no
+server sender would be a lie.
+
+**Consequences.** A `mention` notification type remains a separate backend
+change. The server pages comments oldest-first, so on a long thread the
+preview shows the newest of the loaded page, not of the thread — the copy
+therefore never claims "newest" and the count comes from the Moment document.
+The detail screen's inline Load more is gone; the full thread is one tap away
+on the comments screen, which is a superset.
+
+## ADR-157: Friend suggestions render through one shared card, and the Friends screen owns their state
+
+**Context.** Add Friend already showed server-computed suggestions, but the
+Friends screen — where people go to grow their circle, and the only screen an
+account with zero friends sees — had none. `getFriendSuggestions` is quota
+limited server-side (2 calls per minute, 30 s discovery cache), so where the
+load lives matters as much as how it looks.
+
+**Decision.** The suggestion card was extracted into a shared widget with
+list and rail layouts; both screens render it. A stateless, snapshot-driven
+section renders the states while the Friends screen owns the future, the
+per-row busy/sent state and the send action, with `SocialGraphService`
+injected like the other services. The callable fires once per screen and
+reloads only after a successful send, non-destructively.
+
+**Reasoning.** Owning the future at screen level survives the rail moving
+between the populated list and the empty state without a GlobalKey and
+without spending quota on every rebuild. A stateless section makes every
+state directly constructible in tests and captures.
+
+**Consequences.** Suggestion chrome and wording can no longer diverge between
+the two surfaces. "People you may know" ships in English and Polish and falls
+back to English elsewhere until it is added to the release catalog — a
+follow-up for the localization pass. A post-send reload spends one call from
+the 2-per-minute budget; a refused reload is silent and leaves the rail as it
+was.
+
+## ADR-158: The More sheet is a floating card that never covers the dock
+
+**Context.** More opened a full-width sheet anchored to the bottom edge that
+covered the navigation dock, including the More control that opened it, and
+carried a large title, a subtitle and 65 pt tiles. The owner asked for
+something compact that rises from the More button instead.
+
+**Decision.** The sheet is a bounded floating card: 10 pt side margins, a
+bottom margin of 84 pt plus the safe-area inset so the dock stays visible and
+lit, corners rounded on all four sides, a shadow, and a maximum height of
+62 % of the viewport (at least 280). The header loses its subtitle and drops
+to 21 pt, tiles are 62 pt with single-line labels, and the paddings tighten.
+
+**Reasoning.** Covering the control that opened a menu is what made it feel
+heavy; keeping the dock visible also keeps the destination the user came from
+in view. Bounding the height keeps the card from growing into a full screen
+as staff rows appear.
+
+**Consequences.** Long labels ellipsize instead of wrapping to two lines. The
+desktop popover is untouched. Captured at 320 and 390 in both themes with the
+dock behind it.
+

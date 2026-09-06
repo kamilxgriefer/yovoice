@@ -12,9 +12,12 @@ import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/friends/data/models/friend_request.dart';
 import 'package:yovoice/features/friends/data/models/friend_user.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
+import 'package:yovoice/features/friends/data/services/social_graph_service.dart';
+import 'package:yovoice/features/friends/presentation/friend_request_error_copy.dart';
 import 'package:yovoice/features/friends/presentation/screens/add_friend_screen.dart';
 import 'package:yovoice/features/friends/presentation/screens/blocked_users_screen.dart';
 import 'package:yovoice/features/friends/presentation/screens/friend_profile_screen.dart';
+import 'package:yovoice/features/friends/presentation/widgets/friend_suggestions_section.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/messages/presentation/screens/chat_screen.dart';
 import 'package:yovoice/features/profile/data/services/profile_media_service.dart';
@@ -34,6 +37,7 @@ class FriendsScreen extends StatefulWidget {
     this.showRequestsInitially = false,
     this.friendService,
     this.messageService,
+    this.socialGraphService,
     this.profileMediaService,
     this.firestore,
     this.auth,
@@ -46,6 +50,12 @@ class FriendsScreen extends StatefulWidget {
   final bool showRequestsInitially;
   final FriendService? friendService;
   final MessageService? messageService;
+
+  /// Server-computed friend suggestions ("People you may know"). Friend
+  /// lists are private in firestore.rules, so this must stay a callable —
+  /// see SocialGraphService. Injected the same way as the services above so
+  /// tests can drive the rail without a Firebase app.
+  final SocialGraphService? socialGraphService;
   final ProfileMediaService? profileMediaService;
   final FirebaseFirestore? firestore;
   final FirebaseAuth? auth;
@@ -67,10 +77,29 @@ class _FriendsScreenState extends State<FriendsScreen> {
       : null;
   late final MessageService _messageService =
       widget.messageService ?? _ownedMessageService ?? MessageService.live;
+  late final SocialGraphService _socialGraphService =
+      widget.socialGraphService ?? SocialGraphService();
   late final ProfileMediaService? _profileMediaService =
       widget.profileMediaService ??
       (widget.auth != null ? ProfileMediaService(auth: _auth) : null);
   final TextEditingController _searchController = TextEditingController();
+
+  /// Bounded on purpose: the callable is rate limited and the rail only ever
+  /// shows a handful of people.
+  static const int _suggestionLimit = 8;
+
+  /// Null while a foreground load is running; a list (possibly empty) once
+  /// the callable answered. An empty list renders nothing at all.
+  List<SuggestedFriend>? _suggestions;
+  Object? _suggestionsError;
+  int _suggestionsRequest = 0;
+  final Map<String, FriendRelationshipStatus> _suggestionStatuses = {};
+  final Set<String> _processingSuggestionIds = <String>{};
+
+  /// People this session already sent a request to. The server drops them
+  /// from later responses, but its 30 s discovery cache can still replay a
+  /// ranked entry, so they are filtered out of every reload too.
+  final Set<String> _sentSuggestionIds = <String>{};
 
   final Set<String> _processingRequestIds = <String>{};
   late Stream<int> _requestCountStream;
@@ -91,6 +120,10 @@ class _FriendsScreenState extends State<FriendsScreen> {
     }
     _requestCountStream = _friendService.watchPendingFriendRequestCount();
     _searchController.addListener(_handleSearchChanged);
+    // The callable is quota limited (a couple of calls a minute), so a
+    // deep link straight into Requests must not spend one on a rail it
+    // will not render. _selectFilter picks it up when All is opened.
+    if (_filter == _FriendsFilter.all) unawaited(_loadSuggestions());
   }
 
   @override
@@ -109,6 +142,9 @@ class _FriendsScreenState extends State<FriendsScreen> {
   }
 
   void _selectFilter(_FriendsFilter filter) {
+    if (filter == _FriendsFilter.all && _suggestionsRequest == 0) {
+      unawaited(_loadSuggestions());
+    }
     // A terminal request-source failure evicts its shared generation. Keep the
     // count stream stable during ordinary rebuilds, but explicitly reacquire a
     // replacement when the user next interacts with the filters.
@@ -138,6 +174,7 @@ class _FriendsScreenState extends State<FriendsScreen> {
       MaterialPageRoute<void>(
         builder: (_) => AddFriendScreen(
           friendService: _friendService,
+          socialGraphService: _socialGraphService,
           profileMediaService: _profileMediaService,
         ),
       ),
@@ -233,6 +270,136 @@ class _FriendsScreenState extends State<FriendsScreen> {
       }
     }
   });
+
+  /// Loads "People you may know".
+  ///
+  /// [background] is used after a successful send: the rail keeps rendering
+  /// what is already on screen, and a failed or rate-limited refresh leaves
+  /// the list and the "Sent" confirmation alone instead of replacing a
+  /// working section with an error.
+  Future<void> _loadSuggestions({bool background = false}) async {
+    final request = ++_suggestionsRequest;
+    // Guarded so the first load — kicked off from initState, when the state
+    // already reads as "loading" — never has to call setState.
+    if (!background && (_suggestions != null || _suggestionsError != null)) {
+      setState(() {
+        _suggestions = null;
+        _suggestionsError = null;
+      });
+    }
+    try {
+      final loaded = await _socialGraphService.getFriendSuggestions(
+        limit: _suggestionLimit,
+      );
+      if (!mounted || request != _suggestionsRequest) return;
+      setState(() {
+        _suggestions = loaded
+            .where((suggestion) => !_sentSuggestionIds.contains(suggestion.uid))
+            .toList(growable: false);
+        _suggestionsError = null;
+      });
+    } catch (error) {
+      if (!mounted || request != _suggestionsRequest || background) return;
+      setState(() {
+        _suggestions = null;
+        _suggestionsError = error;
+      });
+    }
+  }
+
+  AsyncSnapshot<List<SuggestedFriend>> get _suggestionsSnapshot {
+    final error = _suggestionsError;
+    if (error != null) {
+      return AsyncSnapshot<List<SuggestedFriend>>.withError(
+        ConnectionState.done,
+        error,
+      );
+    }
+    final loaded = _suggestions;
+    if (loaded == null) {
+      return const AsyncSnapshot<List<SuggestedFriend>>.waiting();
+    }
+    return AsyncSnapshot<List<SuggestedFriend>>.withData(
+      ConnectionState.done,
+      loaded,
+    );
+  }
+
+  /// Same FriendService path, optimistic state and error copy as the Add
+  /// friends screen's suggestion list, so the two rails behave identically.
+  Future<void> _addSuggestion(SuggestedFriend suggestion) async {
+    if (_processingSuggestionIds.contains(suggestion.uid)) return;
+    final previous = _suggestionStatuses[suggestion.uid];
+    setState(() {
+      _processingSuggestionIds.add(suggestion.uid);
+      _suggestionStatuses[suggestion.uid] =
+          FriendRelationshipStatus.requestSent;
+    });
+    try {
+      final relationship = await _friendService.sendFriendRequest(
+        FriendUser(
+          id: suggestion.uid,
+          displayName: suggestion.displayName,
+          email: '',
+          photoUrl: suggestion.photoUrl,
+          isOnline: false,
+          lastSeen: null,
+          profileUpdatedAt: suggestion.profileUpdatedAt,
+        ),
+      );
+      if (!mounted) return;
+      final copy = AppLocalizations.of(context);
+      setState(() {
+        _suggestionStatuses[suggestion.uid] = relationship;
+        _sentSuggestionIds.add(suggestion.uid);
+      });
+      _showMessage(
+        relationship == FriendRelationshipStatus.friends
+            ? copy.template(
+                'You and {name} are now friends.',
+                'Ty i {name} jesteście teraz znajomymi.',
+                values: <String, Object>{'name': suggestion.displayName},
+              )
+            : copy.template(
+                'Friend request sent to {name}.',
+                'Wysłano zaproszenie do {name}.',
+                values: <String, Object>{'name': suggestion.displayName},
+              ),
+      );
+      unawaited(_loadSuggestions(background: true));
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        if (previous == null) {
+          _suggestionStatuses.remove(suggestion.uid);
+        } else {
+          _suggestionStatuses[suggestion.uid] = previous;
+        }
+      });
+      // Same mapping as the Add friends screen: a refusal is named, and an
+      // unexpected failure never reaches the user as raw exception text.
+      _showMessage(
+        friendRequestErrorMessage(AppLocalizations.of(context), error),
+        isError: true,
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _processingSuggestionIds.remove(suggestion.uid));
+      }
+    }
+  }
+
+  Widget _buildSuggestions(Set<String> friendIds) {
+    return FriendSuggestionsSection(
+      snapshot: _suggestionsSnapshot,
+      statuses: _suggestionStatuses,
+      processingIds: _processingSuggestionIds,
+      excludedUserIds: friendIds,
+      profileMediaService: _profileMediaService,
+      onAdd: _addSuggestion,
+      onRetry: () => unawaited(_loadSuggestions()),
+    );
+  }
 
   /// Same confirmation and service call as the profile screen's Remove
   /// button, reachable from the list row so the option is discoverable.
@@ -648,6 +815,11 @@ class _FriendsScreenState extends State<FriendsScreen> {
         }
 
         final allFriends = snapshot.data ?? const <FriendUser>[];
+        // Suggestions answer "who else do I know?", so they belong to the
+        // unfiltered list only: they are noise inside a name search and
+        // meaningless under the Online presence filter.
+        final showSuggestions = _filter == _FriendsFilter.all && _query.isEmpty;
+        final friendIds = allFriends.map((friend) => friend.id).toSet();
         final filtered = allFriends
             .where((friend) {
               if (_filter == _FriendsFilter.online && !friend.isOnline) {
@@ -692,6 +864,10 @@ class _FriendsScreenState extends State<FriendsScreen> {
             onAction: _filter == _FriendsFilter.all && !isSearching
                 ? _openAddFriend
                 : null,
+            // An account with no friends yet is exactly who the rail helps,
+            // so it sits under the empty message instead of being reserved
+            // for people who already have a list.
+            footer: showSuggestions ? _buildSuggestions(friendIds) : null,
           );
         }
 
@@ -707,6 +883,7 @@ class _FriendsScreenState extends State<FriendsScreen> {
               onlineCount: onlineCount,
             ),
             const SizedBox(height: 10),
+            if (showSuggestions) _buildSuggestions(friendIds),
             ...filtered.map(
               (friend) => Padding(
                 padding: const EdgeInsets.only(bottom: 8),
@@ -1409,6 +1586,7 @@ class _EmptyState extends StatelessWidget {
     required this.subtitle,
     this.actionLabel,
     this.onAction,
+    this.footer,
   });
 
   final IconData icon;
@@ -1417,59 +1595,84 @@ class _EmptyState extends StatelessWidget {
   final String? actionLabel;
   final VoidCallback? onAction;
 
+  /// Optional full-width content under the message. It owns its own gutter
+  /// so a horizontally scrolling rail is not inset by the 28 px the centred
+  /// message uses.
+  final Widget? footer;
+
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
     return Center(
       child: SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(28, 24, 28, 130),
+        padding: const EdgeInsets.fromLTRB(0, 24, 0, 130),
         child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Container(
-              width: 72,
-              height: 72,
-              decoration: BoxDecoration(
-                color: colors.primaryContainer,
-                borderRadius: BorderRadius.circular(23),
-              ),
-              child: Icon(icon, color: colors.onPrimaryContainer, size: 35),
-            ),
-            const SizedBox(height: 18),
-            Text(
-              title,
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: palette.textPrimary,
-                fontSize: 18,
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              subtitle,
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: palette.textSecondary,
-                fontSize: 13,
-                height: 1.45,
-              ),
-            ),
-            if (actionLabel != null && onAction != null) ...[
-              const SizedBox(height: 18),
-              FilledButton.icon(
-                onPressed: onAction,
-                style: FilledButton.styleFrom(
-                  backgroundColor: colors.primary,
-                  foregroundColor: colors.onPrimary,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 18,
-                    vertical: 13,
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 28),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Container(
+                    width: 72,
+                    height: 72,
+                    decoration: BoxDecoration(
+                      color: colors.primaryContainer,
+                      borderRadius: BorderRadius.circular(23),
+                    ),
+                    child: Icon(
+                      icon,
+                      color: colors.onPrimaryContainer,
+                      size: 35,
+                    ),
                   ),
-                ),
-                icon: const Icon(Icons.person_add_alt_1_rounded),
-                label: Text(actionLabel!),
+                  const SizedBox(height: 18),
+                  Text(
+                    title,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: palette.textPrimary,
+                      fontSize: 18,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    subtitle,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: palette.textSecondary,
+                      fontSize: 13,
+                      height: 1.45,
+                    ),
+                  ),
+                  if (actionLabel != null && onAction != null) ...[
+                    const SizedBox(height: 18),
+                    FilledButton.icon(
+                      onPressed: onAction,
+                      style: FilledButton.styleFrom(
+                        backgroundColor: colors.primary,
+                        foregroundColor: colors.onPrimary,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 18,
+                          vertical: 13,
+                        ),
+                      ),
+                      icon: const Icon(Icons.person_add_alt_1_rounded),
+                      label: Text(actionLabel!),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            if (footer != null) ...[
+              const SizedBox(height: 30),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 14),
+                child: footer!,
               ),
             ],
           ],

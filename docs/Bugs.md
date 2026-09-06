@@ -18,6 +18,22 @@ about things that are broken, risky, or need verification.
 > before believing the code.
 > [ADR-082](Decisions.md#adr-082-a-feature-is-not-shipped-until-a-user-can-reach-it--reachability-is-part-of-done-and-a-green-suite-cannot-prove-it).
 
+## Room tiles showed the host's initial instead of their avatar (2026-09-07; fixed in source)
+
+Discover's room cards and the live hero drew `room.hostPhotoUrl` with
+`Image.network`. That field is a denormalized snapshot the app deliberately
+stopped dereferencing when profile media became viewer-authorized: avatars
+resolve from the uid through `ProfileMediaService`. With the field empty the
+widgets fell back to the first letter of the host's name, so a host with an
+avatar set still rendered as a circle with a letter. Both now pass `hostId`
+to `UserAvatar`; the room-cover widget is unchanged.
+
+## The More sheet covered the navigation dock (2026-09-07; fixed in source)
+
+Opening More produced a full-width sheet that hid the dock, including the
+More control itself. It is now a bounded floating card above the dock
+(ADR-158).
+
 ## Home showed one person instead of the friends list (2026-09-06; fixed in source)
 
 The live-first Home replaced the old "Your people" row and never brought it

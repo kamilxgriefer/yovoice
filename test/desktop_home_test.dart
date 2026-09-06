@@ -31,6 +31,7 @@ import 'package:yovoice/features/profile/data/services/profile_service.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
 import 'package:yovoice/features/staff/data/staff_capabilities.dart';
+import 'package:yovoice/features/moments/presentation/widgets/moment_story_tile.dart';
 
 import 'voice_moment_test_doubles.dart';
 import 'home_watermark_visual_capture.dart';
@@ -1032,17 +1033,25 @@ void main() {
         await tester.pump(const Duration(milliseconds: 60));
       }
 
-      expect(find.text('You'), findsOneWidget);
-      expect(find.text('Ola'), findsWidgets);
-      expect(find.text('Marek'), findsWidgets);
+      // Scoped to the rail: "Your people" also names friends on Home now.
+      // The strip wraps the whole Home column through its contentBuilder, so
+      // scope to the story tiles themselves: only a person with a playable
+      // Moment gets one. Friends elsewhere on Home are a different surface.
+      Finder inRail(String text) => find.descendant(
+        of: find.byType(MomentStoryTile),
+        matching: find.text(text),
+      );
+      expect(inRail('You'), findsOneWidget);
+      expect(inRail('Ola'), findsWidgets);
+      expect(inRail('Marek'), findsWidgets);
       // Nobody outside friends/following/self may appear.
-      expect(find.text('Nobody'), findsNothing);
-      expect(find.text('Friend only'), findsNothing);
+      expect(inRail('Nobody'), findsNothing);
+      expect(inRail('Friend only'), findsNothing);
       // A Moment past its expiresAt stays dead and off Home. A Moment
       // with NO expiresAt is permanent and shows — the amended
       // availability contract, not a regression.
-      expect(find.text('Bartek'), findsNothing);
-      expect(find.text('Celina'), findsWidgets);
+      expect(inRail('Bartek'), findsNothing);
+      expect(inRail('Celina'), findsWidgets);
       // Compact Home avatars carry no invented presence or redundant status.
       expect(find.text('New'), findsNothing);
       expect(find.text('Your circle'), findsOneWidget);
@@ -1104,9 +1113,19 @@ void main() {
         await tester.pump(const Duration(milliseconds: 60));
       }
 
-      expect(find.text('You'), findsOneWidget);
-      expect(find.text('Ola'), findsNothing);
-      expect(find.text('Marek'), findsNothing);
+      // Scoped to the Moments rail: friends now also appear on Home in the
+      // "Your people" strip, which is a different surface with a different
+      // rule. Neither belongs in the rail without a playable Moment.
+      // The strip wraps the whole Home column through its contentBuilder, so
+      // scope to the story tiles themselves: only a person with a playable
+      // Moment gets one. Friends elsewhere on Home are a different surface.
+      Finder inRail(String text) => find.descendant(
+        of: find.byType(MomentStoryTile),
+        matching: find.text(text),
+      );
+      expect(inRail('You'), findsOneWidget);
+      expect(inRail('Ola'), findsNothing);
+      expect(inRail('Marek'), findsNothing);
       expect(find.text('Follow'), findsNothing);
     });
 

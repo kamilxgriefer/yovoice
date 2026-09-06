@@ -8,6 +8,8 @@ import 'package:yovoice/features/friends/data/models/friend_request.dart';
 import 'package:yovoice/features/friends/data/models/friend_user.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/friends/data/services/social_graph_service.dart';
+import 'package:yovoice/features/friends/presentation/friend_request_error_copy.dart';
+import 'package:yovoice/features/friends/presentation/widgets/friend_suggestion_card.dart';
 import 'package:yovoice/features/profile/data/services/profile_media_service.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
@@ -351,52 +353,10 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
     }
   }
 
-  String _readableError(Object error) {
-    final message = error.toString();
-    final copy = AppLocalizations.of(context);
-
-    if (message.contains('cannot add yourself')) {
-      return copy.text(
-        'You cannot add yourself.',
-        'Nie możesz dodać siebie do znajomych.',
-      );
-    }
-    if (message.contains('already friends')) {
-      return copy.text('You are already friends.', 'Jesteście już znajomymi.');
-    }
-    if (message.contains('already sent')) {
-      return copy.text(
-        'Friend request already sent.',
-        'To zaproszenie zostało już wysłane.',
-      );
-    }
-    if (message.contains('no longer exists')) {
-      return copy.text(
-        'This user no longer exists.',
-        'To konto już nie istnieje.',
-      );
-    }
-    if (message.contains('not signed in')) {
-      return copy.text('You must be signed in.', 'Musisz się zalogować.');
-    }
-    if (message.contains('permission-denied')) {
-      return copy.text(
-        'You do not have permission to do that.',
-        'Nie masz uprawnień do wykonania tej czynności.',
-      );
-    }
-    if (message.contains('unavailable')) {
-      return copy.text(
-        'Service is temporarily unavailable. Check your connection.',
-        'Usługa jest chwilowo niedostępna. Sprawdź połączenie.',
-      );
-    }
-
-    return copy.text(
-      'Something went wrong. Please try again.',
-      'Coś poszło nie tak. Spróbuj ponownie.',
-    );
-  }
+  /// Shared with the Friends screen's suggestion rail so both surfaces
+  /// describe the same failure identically.
+  String _readableError(Object error) =>
+      friendRequestErrorMessage(AppLocalizations.of(context), error);
 
   void _showMessage(String message) {
     final palette = context.appPalette;
@@ -695,7 +655,7 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
             ...suggestions.map(
               (suggestion) => Padding(
                 padding: const EdgeInsets.only(bottom: 10),
-                child: _SuggestionCard(
+                child: FriendSuggestionCard(
                   suggestion: suggestion,
                   profileMediaService: _profileMediaService,
                   isProcessing: _processingIds.contains(suggestion.uid),
@@ -707,189 +667,6 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
           ],
         );
       },
-    );
-  }
-}
-
-class _SuggestionCard extends StatelessWidget {
-  const _SuggestionCard({
-    required this.suggestion,
-    this.profileMediaService,
-    required this.isProcessing,
-    required this.relationshipStatus,
-    required this.onPressed,
-  });
-
-  final SuggestedFriend suggestion;
-  final ProfileMediaService? profileMediaService;
-  final bool isProcessing;
-  final FriendRelationshipStatus? relationshipStatus;
-  final VoidCallback onPressed;
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = context.appPalette;
-    final colors = Theme.of(context).colorScheme;
-    final copy = AppLocalizations.of(context);
-    final isFriend = relationshipStatus == FriendRelationshipStatus.friends;
-    final isSent = relationshipStatus == FriendRelationshipStatus.requestSent;
-    final isComplete = isFriend || isSent;
-    final identity = Row(
-      children: [
-        Container(
-          width: 52,
-          height: 52,
-          padding: const EdgeInsets.all(2),
-          decoration: const BoxDecoration(
-            shape: BoxShape.circle,
-            gradient: LinearGradient(
-              colors: [Color(0xFFC32BFF), Color(0xFF6D25FF)],
-            ),
-          ),
-          child: ProfilePhotoButton(
-            userId: suggestion.uid,
-            displayName: suggestion.displayName,
-            mediaRevision: suggestion.profileUpdatedAt,
-            mediaService: profileMediaService,
-            minimumSize: const Size(48, 48),
-            child: ClipOval(
-              child: UserAvatar(
-                radius: 24,
-                userId: suggestion.uid,
-                mediaRevision: suggestion.profileUpdatedAt,
-                mediaService: profileMediaService,
-                displayName: suggestion.displayName,
-                backgroundColor: palette.surfaceSunken,
-              ),
-            ),
-          ),
-        ),
-        const SizedBox(width: 13),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Wrap(
-                spacing: 6,
-                crossAxisAlignment: WrapCrossAlignment.center,
-                children: [
-                  Text(
-                    suggestion.displayName,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: palette.textPrimary,
-                      fontSize: 15,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                  UserIdentityBadges(uid: suggestion.uid),
-                ],
-              ),
-              if (suggestion.mutualCount > 0) ...[
-                const SizedBox(height: 4),
-                Text(
-                  suggestion.mutualCount == 1
-                      ? copy.text('1 mutual friend', '1 wspólny znajomy')
-                      : copy.template(
-                          '{count} mutual friends',
-                          '{count} wspólnych znajomych',
-                          values: {'count': suggestion.mutualCount},
-                        ),
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(color: palette.textSecondary, fontSize: 12),
-                ),
-              ],
-            ],
-          ),
-        ),
-      ],
-    );
-    final action = SizedBox(
-      height: 44,
-      child: FilledButton.icon(
-        onPressed: isProcessing || isComplete ? null : onPressed,
-        style: FilledButton.styleFrom(
-          backgroundColor: isFriend
-              ? palette.successSurface
-              : isSent
-              ? palette.warningSurface
-              : colors.primary,
-          disabledBackgroundColor: isFriend
-              ? palette.successSurface
-              : isSent
-              ? palette.warningSurface
-              : palette.surfaceMuted,
-          foregroundColor: isFriend
-              ? palette.successForeground
-              : isSent
-              ? palette.warningForeground
-              : colors.onPrimary,
-          disabledForegroundColor: isFriend
-              ? palette.successForeground
-              : isSent
-              ? palette.warningForeground
-              : palette.textTertiary,
-          padding: const EdgeInsets.symmetric(horizontal: 14),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(13),
-          ),
-        ),
-        icon: isProcessing
-            ? SizedBox(
-                width: 15,
-                height: 15,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  color: colors.onPrimary,
-                ),
-              )
-            : Icon(
-                isComplete
-                    ? Icons.check_rounded
-                    : Icons.person_add_alt_1_rounded,
-                size: 18,
-              ),
-        label: Text(
-          isFriend
-              ? copy.text('Friends', 'Znajomi')
-              : (isSent
-                    ? copy.text('Sent', 'Wysłano')
-                    : copy.text('Add', 'Dodaj')),
-          style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w800),
-        ),
-      ),
-    );
-
-    return Container(
-      key: ValueKey('friend-suggestion-${suggestion.uid}'),
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: palette.surface,
-        borderRadius: BorderRadius.circular(19),
-        border: Border.all(color: palette.border),
-      ),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final stack =
-              constraints.maxWidth < 360 ||
-              MediaQuery.textScalerOf(context).scale(1) >= 1.5;
-          if (stack) {
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [identity, const SizedBox(height: 12), action],
-            );
-          }
-          return Row(
-            children: [
-              Expanded(child: identity),
-              const SizedBox(width: 10),
-              action,
-            ],
-          );
-        },
-      ),
     );
   }
 }

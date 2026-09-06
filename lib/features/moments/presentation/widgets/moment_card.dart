@@ -12,6 +12,8 @@ import 'package:yovoice/features/moderation/presentation/report_content_flow.dar
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
 import 'package:yovoice/features/moments/data/services/moment_service.dart';
 import 'package:yovoice/features/moments/data/services/offline_voice_moment_service.dart';
+import 'package:yovoice/features/moments/presentation/widgets/moment_comment_preview.dart';
+import 'package:yovoice/features/moments/presentation/widgets/moment_mentions.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
 import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
@@ -28,6 +30,8 @@ class MomentCard extends StatefulWidget {
     required this.onComments,
     this.isOwn = false,
     this.canReport = false,
+    this.commentPreview,
+    this.mentionFriends = const <MentionCandidate>[],
     this.offlineService,
     this.momentService,
     this.mediaUriResolver,
@@ -40,6 +44,19 @@ class MomentCard extends StatefulWidget {
   final VoiceMoment moment;
   final VoidCallback onComments;
   final bool isOwn;
+
+  /// Comments a HOST already loaded for this Moment, oldest first.
+  ///
+  /// Null — the default, and what every current caller passes — renders
+  /// exactly the card that shipped before: the card never fetches
+  /// comments itself, because a feed of cards each opening its own read
+  /// is precisely the cost the server-owned view exists to avoid. A host
+  /// that already holds a `VoiceMomentViewV2` can hand its comments here
+  /// and get the inline preview for free.
+  final List<MomentComment>? commentPreview;
+
+  /// Extra people an `@mention` inside [commentPreview] may resolve to.
+  final List<MentionCandidate> mentionFriends;
 
   /// True only when the viewer is known AND is not the author. Kept
   /// separate from [isOwn], which is false for a signed-out viewer too —
@@ -547,6 +564,22 @@ class _MomentCardState extends State<MomentCard> {
                 ),
             ],
           ),
+          if (widget.commentPreview case final preview?) ...[
+            const SizedBox(height: 4),
+            Divider(color: palette.border, height: 1),
+            const SizedBox(height: 10),
+            MomentCommentPreview(
+              comments: preview,
+              totalCommentCount: moment.commentCount,
+              momentAuthor: MentionCandidate(
+                userId: moment.authorId,
+                displayName: moment.authorName,
+              ),
+              friends: widget.mentionFriends,
+              onSeeAll: widget.onComments,
+              onCompose: moment.isDeleted ? null : widget.onComments,
+            ),
+          ],
         ],
       ),
     );

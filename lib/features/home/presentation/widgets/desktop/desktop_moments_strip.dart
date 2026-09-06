@@ -2,21 +2,19 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
-import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/friends/data/models/friend_user.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/home/data/services/home_feed_service.dart';
 import 'package:yovoice/features/home/presentation/widgets/mobile/mobile_home_sections.dart';
 import 'package:yovoice/features/moments/data/models/moment_chain.dart';
+import 'package:yovoice/features/moments/data/services/moment_views_service.dart';
 import 'package:yovoice/features/profile/data/models/follow_user.dart';
 import 'package:yovoice/features/profile/data/services/follow_service.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_expiry_accessibility.dart';
+import 'package:yovoice/features/moments/presentation/widgets/moment_story_tile.dart';
 import 'package:yovoice/features/profile/data/models/user_profile.dart';
-import 'package:yovoice/shared/widgets/identity/official_role_badge.dart';
-import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
-import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
 /// "Moments from your circle" — the desktop Home strip that sits between
 /// the greeting and Live around you.
@@ -30,11 +28,14 @@ import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 /// One tile per PERSON (their newest Moment), so a prolific poster cannot
 /// push everyone else out of the strip.
 ///
-/// STATE HONESTY: `voiceMoments` documents carry no per-viewer "seen"
-/// flag, and a Moment is recorded audio — it is never "live". So the ring
-/// and the "New" label both mean exactly one thing the data can prove:
-/// posted in the last 24 hours. Everything older shows its real duration
-/// instead. See docs/Decisions.md ADR-036.
+/// STATE HONESTY: the ring is the caller's OWN viewed state, read from
+/// `users/{uid}/momentViews` through [MomentViewsService] — a brand
+/// gradient while something in the chain is unheard, a flat quiet line
+/// once every link was heard. Unknown viewed state renders as unheard.
+/// The caption keeps the separate fact it has always carried: `New` for
+/// the first 24 hours, otherwise the recording's real duration
+/// (docs/Decisions.md ADR-036). A Moment is recorded audio — it is never
+/// "live" — and there is still no global view counter anywhere.
 class DesktopMomentsStrip extends StatefulWidget {
   const DesktopMomentsStrip({
     required this.onOpenMoment,
@@ -50,6 +51,7 @@ class DesktopMomentsStrip extends StatefulWidget {
     this.isVisible,
     this.avatarOnly = false,
     this.contentBuilder,
+    this.viewsService,
     super.key,
   });
 
@@ -89,6 +91,10 @@ class DesktopMomentsStrip extends StatefulWidget {
 
   /// Uses the same instant as an injected [HomeFeedService] in widget tests.
   final DateTime Function()? expiryClock;
+
+  /// Test seam for the caller's own viewed-Moment ids. Production
+  /// constructs one inside [MomentViewedIds].
+  final MomentViewsService? viewsService;
 
   /// A rising edge replaces the completed v2 feed stream with a fresh one.
   final ValueListenable<bool>? isVisible;
@@ -172,7 +178,15 @@ class _DesktopMomentsStripState extends State<DesktopMomentsStrip> {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => MomentViewedIds(
+    // ONE `momentViews` listener for the whole strip, fail-open: unknown
+    // viewed state renders every ring as unheard rather than greying out
+    // something this account never played.
+    service: widget.viewsService,
+    builder: _buildStrip,
+  );
+
+  Widget _buildStrip(BuildContext context, Set<String> viewedIds) {
     final copy = AppLocalizations.of(context);
     return StreamBuilder<UserProfile>(
       stream: widget.profile,
@@ -240,6 +254,9 @@ class _DesktopMomentsStripState extends State<DesktopMomentsStrip> {
                         onOpenChain: widget.onOpenChain,
                         onCreateMoment: widget.onCreateMoment,
                         expiryClock: widget.expiryClock,
+                        // Already resolved above; the rail must not open a
+                        // second listener over the same subcollection.
+                        viewedIds: viewedIds,
                       );
                       return widget.contentBuilder?.call(
                             context,
@@ -276,15 +293,21 @@ class _DesktopMomentsStripState extends State<DesktopMomentsStrip> {
                             ),
                             LayoutBuilder(
                               builder: (context, _) {
-                                final tileHeight = _MomentTile.heightFor(
-                                  context,
-                                );
+                                final tileHeight =
+                                    MomentStoryTile.heightFor(
+                                      context,
+                                      caption: true,
+                                      expanded: true,
+                                    );
 
                                 final tiles = <Widget>[
                                   _YourMomentTile(
                                     profile: profile,
                                     mine:
                                         mine?.moments ?? const <VoiceMoment>[],
+                                    seen:
+                                        mine == null ||
+                                        !mine.hasUnviewed(viewedIds),
                                     focusNode: mine == null
                                         ? null
                                         : tileFocusNode(mine.moments.last.id),
@@ -299,6 +322,7 @@ class _DesktopMomentsStripState extends State<DesktopMomentsStrip> {
                                       ),
                                       moment: chain.moments.last,
                                       chainLength: chain.length,
+                                      seen: !chain.hasUnviewed(viewedIds),
                                       focusNode: tileFocusNode(
                                         chain.moments.last.id,
                                       ),
@@ -419,55 +443,17 @@ class _StripHeading extends StatelessWidget {
   }
 }
 
-/// The violet→magenta ring that marks a Moment posted in the last day.
-/// Unringed avatars are not "seen" — they are simply older; the schema
-/// has no viewed state to draw.
-class _MomentRing extends StatelessWidget {
-  const _MomentRing({required this.child, required this.highlighted});
-
-  final Widget child;
-  final bool highlighted;
-
-  /// Sized to the 25pt avatars the strip uses, plus the ring and its
-  /// inset — one constant so every tile lines up.
-  static const double size = 58;
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = context.appPalette;
-    return Container(
-      width: size + 8,
-      height: size + 8,
-      padding: const EdgeInsets.all(2.5),
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        gradient: highlighted
-            ? const LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [AppColors.primary, AppColors.secondary],
-              )
-            : null,
-        border: highlighted
-            ? null
-            : Border.all(color: palette.border, width: 1.4),
-      ),
-      child: Container(
-        padding: const EdgeInsets.all(2),
-        clipBehavior: Clip.antiAlias,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          color: palette.surfaceSunken,
-        ),
-        child: child,
-      ),
-    );
-  }
-}
-
+/// One person's tile in the desktop rail: the shared story disc, their
+/// name, and the quiet caption line this rail has always carried.
+///
+/// The RING means what the data can prove about THIS account — whether it
+/// has heard everything in the chain. The caption keeps the separate,
+/// older fact: `New` while the newest Moment is under a day old,
+/// otherwise its real duration (ADR-036). Two facts, two marks.
 class _MomentTile extends StatelessWidget {
   const _MomentTile({
     required this.moment,
+    required this.seen,
     required this.focusNode,
     required this.onTap,
     this.chainLength = 1,
@@ -476,6 +462,7 @@ class _MomentTile extends StatelessWidget {
   });
 
   final VoiceMoment moment;
+  final bool seen;
   final FocusNode focusNode;
   final VoidCallback onTap;
   final int chainLength;
@@ -483,24 +470,6 @@ class _MomentTile extends StatelessWidget {
   /// The author's own `isOnline`, for friends only — the rail never
   /// guesses presence for someone it cannot read it for.
   final bool online;
-
-  /// Names get the full width of the tile and can wrap to two lines. The
-  /// tile also grows with accessibility text scaling instead of forcing a
-  /// larger label back into the old compact geometry.
-  static double _textScale(BuildContext context) =>
-      (MediaQuery.textScalerOf(context).scale(11.5) / 11.5).clamp(1, 2);
-
-  static double widthFor(BuildContext context) =>
-      136 + ((_textScale(context) - 1) * 40);
-
-  static double heightFor(BuildContext context) =>
-      128 + ((_textScale(context) - 1) * 40);
-
-  static double nameHeightFor(BuildContext context) =>
-      MediaQuery.textScalerOf(context).scale(11.5) * 1.08 * 2 + 4;
-
-  static double actionHeightFor(BuildContext context) =>
-      (MediaQuery.textScalerOf(context).scale(10.5) * 1.25 + 4).clamp(20, 34);
 
   bool get _isNew {
     final createdAt = moment.createdAt;
@@ -512,140 +481,34 @@ class _MomentTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final copy = AppLocalizations.of(context);
     final fresh = _isNew;
-    final palette = context.appPalette;
-    final colors = Theme.of(context).colorScheme;
 
-    return SizedBox(
-      width: widthFor(context),
-      height: heightFor(context),
-      child: Semantics(
-        button: true,
-        excludeSemantics: true,
-        label: chainLength == 1
-            ? copy.text(
-                'Play Voice Moment from ${moment.authorName}',
-                'Odtwórz Voice Moment użytkownika ${moment.authorName}',
-              )
-            : copy.text(
-                'Play $chainLength Voice Moments from ${moment.authorName}',
-                'Odtwórz $chainLength Voice Momentów użytkownika ${moment.authorName}',
-              ),
-        child: InkWell(
-          focusNode: focusNode,
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(14),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _PresenceDot(
-                online: online,
-                child: _MomentRing(
-                  highlighted: fresh,
-                  child: UserAvatar(
-                    radius: 25,
-                    userId: moment.authorId,
-                    photoUrl: moment.authorPhotoUrl,
-                    displayName: moment.authorName,
-                  ),
-                ),
-              ),
-              const SizedBox(height: 7),
-              _MomentNameLabel(name: moment.authorName),
-              const SizedBox(height: 2),
-              SizedBox(
-                height: actionHeightFor(context),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    UserIdentityBadges(
-                      uid: moment.authorId,
-                      variant: IdentityBadgeVariant.icon,
-                    ),
-                    const SizedBox(width: 4),
-                    Text(
-                      // Both are facts the document carries: freshly posted,
-                      // or exactly how long the recording runs.
-                      fresh ? copy.text('New', 'Nowy') : moment.durationLabel,
-                      maxLines: 1,
-                      style: TextStyle(
-                        color: fresh ? colors.secondary : palette.textSecondary,
-                        fontSize: 10.5,
-                        fontWeight: fresh ? FontWeight.w800 : FontWeight.w600,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// A stable two-line name slot shared by Moment and follow suggestions.
-/// Keeping the identity mark out of this row means ordinary full names no
-/// longer lose a quarter of their width to a badge.
-class _MomentNameLabel extends StatelessWidget {
-  const _MomentNameLabel({required this.name});
-
-  final String name;
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = context.appPalette;
-    return SizedBox(
-      width: double.infinity,
-      height: _MomentTile.nameHeightFor(context),
-      child: Center(
-        child: Text(
-          name,
-          maxLines: 2,
-          overflow: TextOverflow.ellipsis,
-          softWrap: true,
-          textAlign: TextAlign.center,
-          style: TextStyle(
-            color: palette.textPrimary,
-            fontSize: 11.5,
-            height: 1.08,
-            fontWeight: FontWeight.w700,
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// A green dot on the ring, and only when presence says so.
-class _PresenceDot extends StatelessWidget {
-  const _PresenceDot({required this.child, required this.online});
-
-  final Widget child;
-  final bool online;
-
-  @override
-  Widget build(BuildContext context) {
-    if (!online) return child;
-    final palette = context.appPalette;
-    return Stack(
-      children: [
-        child,
-        Positioned(
-          right: 3,
-          bottom: 3,
-          child: Container(
-            width: 13,
-            height: 13,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: const Color(0xFF22C55E),
-              border: Border.all(color: palette.surfaceSunken, width: 2),
+    return MomentStoryTile(
+      name: moment.authorName,
+      seen: seen,
+      expandedLabel: true,
+      count: chainLength,
+      online: online,
+      identityUid: moment.authorId,
+      // Both are facts the document carries: freshly posted, or exactly
+      // how long the recording runs.
+      caption: fresh ? copy.text('New', 'Nowy') : moment.durationLabel,
+      captionHighlighted: fresh,
+      userId: moment.authorId,
+      photoUrl: moment.authorPhotoUrl,
+      displayName: moment.authorName,
+      focusNode: focusNode,
+      semanticLabel: chainLength == 1
+          ? copy.template(
+              'Play Voice Moment from {name}',
+              'Odtwórz Voice Moment użytkownika {name}',
+              values: {'name': moment.authorName},
+            )
+          : copy.template(
+              'Play {count} Voice Moments from {name}',
+              'Odtwórz {count} Voice Momentów użytkownika {name}',
+              values: {'count': chainLength, 'name': moment.authorName},
             ),
-          ),
-        ),
-      ],
+      onTap: onTap,
     );
   }
 }
@@ -656,17 +519,18 @@ class _PresenceDot extends StatelessWidget {
 /// (many active Moments per user is the product; the 10-at-once cap is
 /// the server's rule, enforced at reserve time, never pre-guessed here).
 ///
-/// THE WHOLE TILE is the target, not just the 66 pt disc. Every other
-/// tile in this rail already wrapped its column in one [InkWell], while
-/// this one wrapped only the avatar: the name "Your Moment" and the
-/// "New" / duration line under it were dead pixels, so a click that
-/// landed a few pixels low did nothing at all. That asymmetry is the
-/// reported "clicking my own avatar does nothing" — reproduced in a
-/// widget test before it was changed, and pinned by one after.
+/// THE WHOLE TILE is the target, not just the disc. Every other tile in
+/// this rail already wrapped its column in one [InkWell], while this one
+/// wrapped only the avatar: the name and the "New" / duration line under
+/// it were dead pixels, so a click that landed a few pixels low did
+/// nothing at all. That asymmetry is the reported "clicking my own avatar
+/// does nothing" — reproduced in a widget test before it was changed, and
+/// pinned by one after.
 class _YourMomentTile extends StatelessWidget {
   const _YourMomentTile({
     required this.profile,
     required this.mine,
+    required this.seen,
     required this.focusNode,
     required this.onCreate,
     required this.onOpen,
@@ -678,6 +542,11 @@ class _YourMomentTile extends StatelessWidget {
   /// The signed-in user's live Moments, oldest first (story order).
   /// Empty when nothing is live right now.
   final List<VoiceMoment> mine;
+
+  /// Your own chain counts as heard on exactly the same evidence as
+  /// everyone else's — your own `momentViews` docs. Nothing is assumed
+  /// about a Moment you posted but never played back.
+  final bool seen;
   final FocusNode? focusNode;
   final VoidCallback onCreate;
   final ValueChanged<VoiceMoment> onOpen;
@@ -687,193 +556,77 @@ class _YourMomentTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final copy = AppLocalizations.of(context);
     final newest = mine.isEmpty ? null : mine.last;
-    final palette = context.appPalette;
-    final colors = Theme.of(context).colorScheme;
     final fresh =
         newest?.createdAt != null &&
         DateTime.now().difference(newest!.createdAt!) <
             DesktopMomentsStrip.newWindow;
 
-    return SizedBox(
-      width: _MomentTile.widthFor(context),
-      height: _MomentTile.heightFor(context),
-      child: Semantics(
-        button: true,
-        label: newest == null
-            ? copy.text(
-                'Record your first Voice Moment',
-                'Nagraj swój pierwszy Voice Moment',
-              )
-            : (mine.length > 1
-                  ? copy.text(
-                      'Play your ${mine.length} Voice Moments',
-                      _polishPlayOwnMomentsLabel(mine.length),
-                    )
-                  : copy.text(
-                      'Play your Voice Moment',
-                      'Odtwórz swój Voice Moment',
-                    )),
-        child: InkWell(
-          key: const ValueKey('home-your-moment'),
-          focusNode: focusNode,
-          onTap: newest == null
-              ? onCreate
-              : (onOpenChain != null
-                    ? () => onOpenChain!(mine)
-                    : () => onOpen(newest)),
-          borderRadius: BorderRadius.circular(14),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              SizedBox(
-                width: 99,
-                height: _MomentRing.size + 8,
-                child: Stack(
-                  clipBehavior: Clip.none,
-                  children: [
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: _MomentRing(
-                        highlighted: fresh,
-                        child: UserAvatar(
-                          radius: 25,
-                          userId: profile?.uid,
-                          photoUrl: profile?.photoUrl,
-                          mediaRevision: profile?.profileUpdatedAt,
-                          displayName: profile?.displayName,
-                          fallbackIcon: Icons.person_rounded,
-                        ),
-                      ),
-                    ),
-                    // The chain badge: how many of YOUR Moments are live
-                    // right now — a real count from the same stream that
-                    // renders them, never an estimate.
-                    if (mine.length > 1)
-                      Positioned(
-                        left: -1,
-                        top: -1,
-                        child: Container(
-                          key: const ValueKey('home-your-moment-count'),
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 6,
-                            vertical: 2,
-                          ),
-                          decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(999),
-                            gradient: LinearGradient(
-                              colors: [colors.primary, colors.secondary],
-                            ),
-                            border: Border.all(
-                              color: palette.surfaceSunken,
-                              width: 2,
-                            ),
-                          ),
-                          child: Text(
-                            '${mine.length}',
-                            style: TextStyle(
-                              color: colors.onPrimary,
-                              fontSize: 10,
-                              fontWeight: FontWeight.w800,
-                            ),
-                          ),
-                        ),
-                      ),
-                    // Nested inside the tile's own InkWell on purpose: the
-                    // innermost recognizer wins the tap, so the plus still
-                    // means "record" while every other pixel of the tile
-                    // means "play mine".
-                    Positioned(
-                      right: 0,
-                      bottom: 0,
-                      child: Tooltip(
-                        message: copy.text(
-                          'Record a Voice Moment',
-                          'Nagraj Voice Moment',
-                        ),
-                        child: InkWell(
-                          key: const ValueKey('home-record-moment'),
-                          onTap: onCreate,
-                          customBorder: const CircleBorder(),
-                          child: SizedBox(
-                            width: 44,
-                            height: 44,
-                            child: Align(
-                              alignment: Alignment.bottomLeft,
-                              child: Container(
-                                width: 22,
-                                height: 22,
-                                alignment: Alignment.center,
-                                decoration: BoxDecoration(
-                                  shape: BoxShape.circle,
-                                  gradient: const LinearGradient(
-                                    colors: [
-                                      AppColors.primary,
-                                      AppColors.secondary,
-                                    ],
-                                  ),
-                                  border: Border.all(
-                                    color: palette.surfaceSunken,
-                                    width: 2,
-                                  ),
-                                ),
-                                child: const Icon(
-                                  Icons.add_rounded,
-                                  size: 13,
-                                  color: Colors.white,
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 7),
-              const _MomentNameLabel(name: 'YO Moments'),
-              const SizedBox(height: 2),
-              SizedBox(
-                height: _MomentTile.actionHeightFor(context),
-                child: Center(
-                  child: Text(
-                    newest == null
-                        ? copy.text('Record', 'Nagraj')
-                        : (mine.length > 1
-                              ? copy.text(
-                                  '${mine.length} Moments',
-                                  _polishMomentCountLabel(mine.length),
-                                )
-                              : (fresh
-                                    ? copy.text('New', 'Nowy')
-                                    : newest.durationLabel)),
-                    maxLines: 1,
-                    style: TextStyle(
-                      color: newest == null || !fresh
-                          ? palette.textSecondary
-                          : colors.secondary,
-                      fontSize: 10.5,
-                      fontWeight: fresh ? FontWeight.w800 : FontWeight.w600,
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
+    return MomentStoryTile(
+      key: const ValueKey('home-your-moment'),
+      name: copy.moments,
+      seen: seen,
+      // Every tile in this rail gets the same width, so the own slot lines
+      // up with the circle instead of standing out narrower.
+      width: MomentStoryTile.widthFor(context, expanded: true),
+      expandedLabel: true,
+      showAdd: true,
+      // The chain badge: how many of YOUR Moments are live right now — a
+      // real count from the same stream that renders them.
+      count: mine.length,
+      countKey: const ValueKey('home-your-moment-count'),
+      caption: newest == null
+          ? copy.text('Record', 'Nagraj')
+          : (mine.length > 1
+                ? copy.template(
+                    '{count} Moments',
+                    _polishMomentCountLabel(mine.length),
+                    values: {'count': mine.length},
+                  )
+                : (fresh ? copy.text('New', 'Nowy') : newest.durationLabel)),
+      captionHighlighted: newest != null && fresh,
+      userId: profile?.uid,
+      photoUrl: profile?.photoUrl,
+      mediaRevision: profile?.profileUpdatedAt,
+      displayName: profile?.displayName,
+      fallbackIcon: Icons.person_rounded,
+      focusNode: focusNode,
+      semanticLabel: newest == null
+          ? copy.text(
+              'Record your first Voice Moment',
+              'Nagraj swój pierwszy Voice Moment',
+            )
+          : (mine.length > 1
+                ? copy.template(
+                    'Play your {count} Voice Moments',
+                    _polishPlayOwnMomentsLabel(mine.length),
+                    values: {'count': mine.length},
+                  )
+                : copy.text(
+                    'Play your Voice Moment',
+                    'Odtwórz swój Voice Moment',
+                  )),
+      onTap: newest == null
+          ? onCreate
+          : (onOpenChain != null
+                ? () => onOpenChain!(mine)
+                : () => onOpen(newest)),
+      onAddTap: onCreate,
     );
   }
 }
 
+/// Polish templates, not finished strings: the count is substituted by
+/// [AppLocalizations.template] AFTER localization, so English and Polish
+/// keep the same `{count}` placeholder while Polish still picks the right
+/// plural form for that number.
 String _polishPlayOwnMomentsLabel(int count) {
   final form = _polishMomentNoun(count);
   final possessive = form == 'Momenty' ? 'swoje' : 'swoich';
-  return 'Odtwórz $possessive $count Voice $form';
+  return 'Odtwórz $possessive {count} Voice $form';
 }
 
 String _polishMomentCountLabel(int count) =>
-    '$count ${_polishMomentNoun(count)}';
+    '{count} ${_polishMomentNoun(count)}';
 
 String _polishMomentNoun(int count) {
   if (count == 1) return 'Moment';

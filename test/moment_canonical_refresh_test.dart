@@ -104,7 +104,12 @@ void main() {
         );
         await tester.pump();
         expect(find.text('Private stale caption'), findsOneWidget);
-        expect(find.text('Private stale comment'), findsOneWidget);
+        // The detail page previews comments on one line with the
+        // author's name, so the body is a run inside a paragraph.
+        expect(
+          find.textContaining('Private stale comment'),
+          findsOneWidget,
+        );
 
         _resumeApp(tester);
         await tester.pump();
@@ -119,7 +124,7 @@ void main() {
           findsOneWidget,
         );
         expect(find.text('Private stale caption'), findsNothing);
-        expect(find.text('Private stale comment'), findsNothing);
+        expect(find.textContaining('Private stale comment'), findsNothing);
       });
     }
   });

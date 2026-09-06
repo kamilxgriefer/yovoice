@@ -222,6 +222,8 @@ void main() {
       'lib/features/rooms/presentation/screens/room_entry_screen.dart',
       'lib/features/rooms/presentation/widgets/room_chat_sheet.dart',
       'lib/features/friends/presentation/screens/add_friend_screen.dart',
+      'lib/features/friends/presentation/widgets/friend_suggestion_card.dart',
+      'lib/features/friends/presentation/friend_request_error_copy.dart',
       'lib/shared/widgets/profile/profile_photo_viewer.dart',
       'lib/features/reels/presentation/screens/reel_composer_screen.dart',
       'lib/features/reels/presentation/widgets/reel_draft_preview.dart',
