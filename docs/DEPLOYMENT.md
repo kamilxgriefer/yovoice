@@ -125,6 +125,50 @@ link, no Hosting/Functions/Rules/index/Storage deploy.
   submitted twice.
 - **Scope kept.** No tester lists, tracks, groups, backend, Firebase or
   Chrome settings were changed for this step.
+#### "Stay open" community rooms cannot actually stay open — server proposal, 2026-09-07
+
+Reported by the owner: a Community room created with the **Stay open** option
+still ends after the host leaves. What the code actually does:
+
+- The room is not deleted. `executeLeaveRoom` sets `isLive: false` only when
+  the roster empties (`functions/rooms/participants.js` ~686), so voice
+  sleeps when the LAST person leaves, not when the host leaves. The room then
+  disappears from every live list, which is what reads as "ended".
+- Waking it again is server-only by design: `roomVoiceStartAllowed()` in
+  `firestore.rules` returns `false`, with the comment that starting a session
+  is global fanout work and belongs to `startRoomVoice`.
+- `startRoomVoice` lets a non-host start voice only when
+  `room.membersCanStartVoice === true` AND the caller holds a
+  `rooms/{id}/roomMembers/{uid}` document (`functions/rooms/creation.js`
+  ~408).
+- But `createRoom` does not accept `membersCanStartVoice` at all — it is
+  absent from the exact-input allowlist and hard-coded to `false` in
+  `roomDocument()` (~352). The toggle exists only in Room settings, after the
+  fact.
+- And nothing grants a `roomMembers` row to someone who merely joins: the
+  only writer is room creation, for the host (~660). Participants get a
+  `participants` row instead.
+
+So today the option promises "People can keep talking after you leave" while
+the room can only be woken by its host, and only from the room screen.
+
+Two changes make the promise true, both needing a deploy and an owner
+decision because they hand authority to non-hosts:
+
+1. **Accept the choice at creation** — add `membersCanStartVoice` to
+   `CREATE_ROOM_INPUT_KEYS` and honour it in `roomDocument()`, and surface the
+   toggle in the create wizard next to the lifecycle choice.
+2. **Give community joiners standing** — either write a `roomMembers` row
+   when someone joins a `community` room (the smallest change that makes the
+   existing `startRoomVoice` branch reachable), or extend that branch to
+   accept a recent participant. Both widen who can create global fanout, so
+   they need the rate limit and quota that `startRoomVoice` already applies,
+   emulator-backed rules tests, and a line in docs/SECURITY.md.
+
+Until then the honest client-side option is copy that says what actually
+happens: the room stays, voice sleeps when it empties, and the host reopens
+it.
+
 #### Proposed server changes after the Build 21 tester round — NOT deployed, owner decision needed (2026-09-06)
 
 Source tracing of the tester reports (slow room entry, Reel and Voice Moment
