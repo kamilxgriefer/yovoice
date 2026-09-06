@@ -36,14 +36,14 @@ void main() {
         'notification.wav': 35200 / 48000,
       };
       const targetRms = <String, double>{
-        'room_created.wav': -24.39,
-        'room_joined.wav': -24.75,
-        'room_left.wav': -25.74,
-        'participant_joined.wav': -27.12,
-        'participant_left.wav': -29.67,
-        'microphone_muted.wav': -27.61,
-        'microphone_unmuted.wav': -28.35,
-        'notification.wav': -21.61,
+        'room_created.wav': -22.00,
+        'room_joined.wav': -23.00,
+        'room_left.wav': -24.00,
+        'participant_joined.wav': -27.00,
+        'participant_left.wav': -28.00,
+        'microphone_muted.wav': -26.00,
+        'microphone_unmuted.wav': -26.00,
+        'notification.wav': -21.00,
       };
 
       for (final sound in UiSound.values) {

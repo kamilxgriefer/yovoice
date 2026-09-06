@@ -9246,8 +9246,10 @@ participants, velvet ticks for mute/unmute and a calm two-note chime for
 notifications. Loudness is RMS-normalised into a deliberate hierarchy
 (mic ticks ≈ −27 dBFS, room cues ≈ −24, notification ≈ −22), peak-capped,
 low-passed at 6.5 kHz, with 160 frames of exact silence at the end. The
-generator (pure Python, no numpy) is kept in the session scratchpad and
-described here; the pack is the artifact of record. `UiSound.assetPath`
+pack is rendered by the repository's canonical generator
+`tool/generate_ui_sounds.py` (pure Python, deterministic, `--check` runs in
+the Hosting workflow), which now carries the Soft Bells design in place of
+Velvet Prism; the checked-in WAVs are its artifacts. `UiSound.assetPath`
 points at `v4`, the Android and iOS notification masters are byte-identical
 copies, and `v3` is no longer bundled.
 
