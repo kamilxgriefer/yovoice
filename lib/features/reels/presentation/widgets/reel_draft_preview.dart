@@ -12,6 +12,11 @@ import 'reel_composition_canvas.dart';
 import 'reel_local_video_controller.dart';
 import 'reel_playback_coordinator.dart';
 
+/// Builds the decoder for a picked local file. The default is the platform
+/// controller; tests supply a deterministic one without a native player.
+typedef ReelVideoControllerFactory =
+    VideoPlayerController Function(String sourcePath);
+
 /// Maps pointer movement to the existing stored crop recipe. No new wire
 /// interpretation: at 1× there are no spare zoom pixels to pan into.
 ReelCropTransform reelCropFromGesture({
@@ -51,6 +56,8 @@ class ReelDraftPreview extends StatefulWidget {
     this.active = true,
     this.onCropChanged,
     this.onPlayingChanged,
+    this.onPositionChanged,
+    this.videoControllerFactory,
     super.key,
   });
 
@@ -69,6 +76,13 @@ class ReelDraftPreview extends StatefulWidget {
   final ValueChanged<ReelCropTransform>? onCropChanged;
   final ValueChanged<bool>? onPlayingChanged;
 
+  /// Current decoder position, reported on every tick and after every seek so
+  /// a trimmer can draw its playhead without rebuilding the composer.
+  final ValueChanged<Duration>? onPositionChanged;
+
+  /// Optional test/platform override for the local video decoder.
+  final ReelVideoControllerFactory? videoControllerFactory;
+
   @override
   State<ReelDraftPreview> createState() => ReelDraftPreviewState();
 }
@@ -84,10 +98,30 @@ class ReelDraftPreviewState extends State<ReelDraftPreview>
   Offset? _pointerDown;
   int _epoch = 0;
   bool _preparing = true;
+  bool _quiet = false;
   bool _failed = false;
   bool _lastPlaying = false;
+  bool _trimEditing = false;
+  bool _trimDirty = false;
+  bool _resumeAfterTrim = false;
+  int _trimEditToken = 0;
+  Duration? _scrubTarget;
+  bool _scrubbing = false;
+  Duration? _lastPosition;
+  int _preparationCount = 0;
 
   bool get isPlaying => _playback?.isPlaying ?? false;
+
+  /// Whether a trim handle is currently held.
+  bool get isTrimEditing => _trimEditing;
+
+  /// The live coordinator; tests use it to prove a scrub keeps the timeline.
+  @visibleForTesting
+  ReelPlaybackCoordinator? get debugPlayback => _playback;
+
+  /// How many times the timeline was (re)built since the preview mounted.
+  @visibleForTesting
+  int get debugPreparations => _preparationCount;
 
   @override
   void initState() {
@@ -102,14 +136,23 @@ class ReelDraftPreviewState extends State<ReelDraftPreview>
     final sourceChanged = !identical(oldWidget.media.bytes, widget.media.bytes);
     final old = oldWidget.composition;
     final next = widget.composition;
+    final trimChanged =
+        old.trimStartMs != next.trimStartMs || old.trimEndMs != next.trimEndMs;
     if (sourceChanged ||
         !identical(oldWidget.backingAudio?.bytes, widget.backingAudio?.bytes) ||
-        old.trimStartMs != next.trimStartMs ||
-        old.trimEndMs != next.trimEndMs ||
         old.audioTrimStartMs != next.audioTrimStartMs ||
         old.originalAudioVolume != next.originalAudioVolume ||
         old.backingAudioVolume != next.backingAudioVolume) {
       unawaited(_prepare());
+    } else if (trimChanged) {
+      // A trim-only change keeps the decoder and, while a handle is held,
+      // the timeline too: the drag scrubs frames and the release rebuilds
+      // the loop once. Slider and keyboard edits rebuild quietly right away.
+      if (_trimEditing) {
+        _trimDirty = true;
+      } else {
+        unawaited(_prepare(trimOnly: true));
+      }
     } else if (oldWidget.active != widget.active) {
       final lifecycle = WidgetsBinding.instance.lifecycleState;
       unawaited(
@@ -125,10 +168,19 @@ class ReelDraftPreviewState extends State<ReelDraftPreview>
 
   bool _current(int epoch) => mounted && epoch == _epoch;
 
-  Future<void> _prepare() {
+  Future<void> _prepare({bool trimOnly = false}) {
     final epoch = ++_epoch;
+    _preparationCount += 1;
     _preparing = true;
     _failed = false;
+    _trimDirty = false;
+    // A trim-only rebuild on an already decoded clip is a coordinator swap,
+    // not a decode, so it neither blanks the frame nor shows the spinner.
+    _quiet =
+        trimOnly &&
+        widget.media.mediaKind == ReelMediaKind.video &&
+        _videoSourcePath == widget.media.sourcePath &&
+        (_video?.value.isInitialized ?? false);
     if (_lastPlaying) {
       _lastPlaying = false;
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -139,18 +191,24 @@ class ReelDraftPreviewState extends State<ReelDraftPreview>
     // change invalidates older work without opening competing native players.
     _preparations = _preparations
         .catchError((Object _) {})
-        .then((_) => _prepareNow(epoch));
+        .then((_) => _prepareNow(epoch, keepFrame: trimOnly));
     return _preparations;
   }
 
-  Future<void> _prepareNow(int epoch) async {
+  Future<void> _prepareNow(int epoch, {required bool keepFrame}) async {
     if (!_current(epoch)) return;
     final oldPlayback = _playback;
     _playback = null;
     oldPlayback?.removeListener(_onPlayback);
     if (oldPlayback != null) {
       try {
-        await oldPlayback.setActive(false);
+        // Deactivation rewinds to the old start; after a trim the frame the
+        // user just placed must stay put, so only pause before replacing.
+        if (keepFrame) {
+          await oldPlayback.pause();
+        } else {
+          await oldPlayback.setActive(false);
+        }
       } catch (_) {}
       oldPlayback.dispose();
     }
@@ -169,7 +227,9 @@ class ReelDraftPreviewState extends State<ReelDraftPreview>
       if (widget.media.mediaKind == ReelMediaKind.video && _video == null) {
         final path = widget.media.sourcePath;
         if (path == null || path.isEmpty) throw StateError('No local media');
-        final video = createReelLocalVideoController(path);
+        final video =
+            widget.videoControllerFactory?.call(path) ??
+            createReelLocalVideoController(path);
         _video = video;
         _videoSourcePath = path;
         await video.initialize().timeout(const Duration(seconds: 15));
@@ -199,18 +259,32 @@ class ReelDraftPreviewState extends State<ReelDraftPreview>
         widget.active &&
             (foreground == null || foreground == AppLifecycleState.resumed),
       );
-      if (_current(epoch)) setState(() => _preparing = false);
+      if (_current(epoch)) {
+        setState(() {
+          _preparing = false;
+          _quiet = false;
+        });
+      }
     } catch (_) {
       if (_current(epoch)) {
         setState(() {
           _failed = true;
           _preparing = false;
+          _quiet = false;
         });
       }
     }
   }
 
   void _onVideoTick() {
+    final video = _video;
+    if (video != null) {
+      final position = video.value.position;
+      if (position != _lastPosition) {
+        _lastPosition = position;
+        widget.onPositionChanged?.call(position);
+      }
+    }
     final playback = _playback;
     if (playback == null) return;
     unawaited(
@@ -238,6 +312,66 @@ class ReelDraftPreviewState extends State<ReelDraftPreview>
     // The coordinator invalidates an in-flight play synchronously. Navigation
     // must not wait for a native decoder which is still opening local bytes.
     unawaited(_playback?.pause(reset: true).catchError((Object _) {}));
+  }
+
+  /// Holds the timeline while a trim handle moves: playback pauses in place
+  /// (no rewind) and trim-only recipe updates stop rebuilding the loop until
+  /// [endTrimEdit]. Safe to call repeatedly.
+  void beginTrimEdit() {
+    _trimEditToken += 1;
+    if (_trimEditing) return;
+    _trimEditing = true;
+    _resumeAfterTrim = isPlaying;
+    unawaited(_playback?.pause().catchError((Object _) {}));
+  }
+
+  /// Shows the frame at [position] on the existing decoder. Seeks coalesce:
+  /// while one is in flight the newest target wins, so a fast drag never
+  /// queues a backlog of native seeks.
+  Future<void> scrub(Duration position) async {
+    _scrubTarget = position;
+    if (_scrubbing) return;
+    _scrubbing = true;
+    try {
+      while (mounted) {
+        final target = _scrubTarget;
+        if (target == null) break;
+        _scrubTarget = null;
+        final video = _video;
+        if (video == null || !video.value.isInitialized) break;
+        final playback = _playback;
+        if (playback != null && playback.isPlaying) {
+          await playback.pause().catchError((Object _) {});
+        }
+        await video.seekTo(target);
+      }
+    } catch (_) {
+      // A failed seek keeps the last good frame; the recipe still updates.
+    } finally {
+      _scrubbing = false;
+    }
+  }
+
+  /// Releases the hold from [beginTrimEdit]. The composer's pending rebuild
+  /// is allowed to land first so the final range is rebuilt exactly once;
+  /// playback then resumes inside the new range if it was playing before.
+  Future<void> endTrimEdit() async {
+    if (!_trimEditing) return;
+    final token = _trimEditToken;
+    await WidgetsBinding.instance.endOfFrame;
+    if (!mounted || token != _trimEditToken) return;
+    _trimEditing = false;
+    final resume = _resumeAfterTrim;
+    _resumeAfterTrim = false;
+    if (_trimDirty) {
+      _trimDirty = false;
+      await _prepare(trimOnly: true);
+    } else {
+      await _preparations.catchError((Object _) {});
+    }
+    if (resume && mounted && token == _trimEditToken && !_trimEditing) {
+      await toggle();
+    }
   }
 
   Future<void> toggle() async {
@@ -346,7 +480,8 @@ class ReelDraftPreviewState extends State<ReelDraftPreview>
                   ),
                 ),
               ),
-              if (_preparing) const Center(child: CircularProgressIndicator()),
+              if (_preparing && !_quiet)
+                const Center(child: CircularProgressIndicator()),
               if (_failed)
                 Center(
                   child: Material(

@@ -8,6 +8,8 @@ import 'package:yovoice/features/calls/data/services/voice_call_service.dart';
 import 'package:yovoice/features/clubs/data/models/club.dart';
 import 'package:yovoice/features/clubs/data/services/club_service.dart';
 import 'package:yovoice/features/clubs/presentation/screens/club_overview_screen.dart';
+import 'package:yovoice/features/friends/data/services/friend_service.dart';
+import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/rooms/data/models/room_participant.dart';
 import 'package:yovoice/features/rooms/data/models/room_voice_access.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
@@ -21,6 +23,7 @@ import 'package:yovoice/features/rooms/presentation/widgets/room_control_dock.da
 import 'package:yovoice/features/rooms/presentation/widgets/room_ended_state.dart';
 import 'package:yovoice/features/rooms/presentation/widgets/room_chat_sheet.dart';
 import 'package:yovoice/features/rooms/presentation/widgets/room_header.dart';
+import 'package:yovoice/features/rooms/presentation/widgets/invite_to_room_sheet.dart';
 import 'package:yovoice/features/rooms/presentation/widgets/room_hero_banner.dart';
 import 'package:yovoice/features/rooms/presentation/widgets/room_stage.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
@@ -39,6 +42,8 @@ class CommunityVoiceRoomScreen extends StatefulWidget {
     this.entryCoordinator,
     this.muteCoordinator,
     this.clubService,
+    this.friendService,
+    this.messageService,
     this.playInitialJoinSound = true,
     this.startMuted = true,
     super.key,
@@ -53,12 +58,16 @@ class CommunityVoiceRoomScreen extends StatefulWidget {
   /// invents a start control it cannot back up.
   final RoomVoiceEntry? voiceEntry;
 
-  /// Test seams. All five default to the production wiring.
+  /// Test seams. All seven default to the production wiring.
   final RoomService? roomService;
   final VoiceCallService? voiceService;
   final RoomVoiceEntryCoordinator? entryCoordinator;
   final RoomMuteCoordinator? muteCoordinator;
   final ClubService? clubService;
+
+  /// Only the invitation sheet reads these; both are created lazily there.
+  final FriendService? friendService;
+  final MessageService? messageService;
 
   /// Room creation already has its own confirmation; all other entry points
   /// keep the normal connected cue.
@@ -515,6 +524,17 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
 
   // One People drawer for the whole Community room. There is no stage versus
   // listener hierarchy here: the host is first, then everybody else by name.
+  /// Any participant may invite friends to a Community room; the sheet
+  /// itself explains (and offers no list) when the room is private.
+  Future<void> _openInvite() => showInviteToRoomSheet(
+    context,
+    // The live document (visibility can flip while the room is open), not
+    // the snapshot the route was pushed with.
+    room: _entry.room,
+    friendService: widget.friendService,
+    messageService: widget.messageService,
+  );
+
   void _openParticipants(List<RoomParticipant> participants) {
     final copy = AppLocalizations.of(context);
     final ordered = [...participants]
@@ -542,6 +562,10 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
         hostId: widget.room.hostId,
         currentUserId: _uid,
         canModerate: _isHost,
+        onInvite: () {
+          Navigator.of(context).pop();
+          unawaited(_openInvite());
+        },
         onMute: (participant, muted) async {
           await _rooms.moderateParticipantMute(
             roomId: widget.room.id,
@@ -841,6 +865,7 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
   Widget _buildRoom(Club? club) {
     final identity = voiceRoomIdentity(widget.room, club: club);
     final desktop = RoomWorkspace.usesDesktopLayout(context);
+    final copy = AppLocalizations.of(context);
     return StreamBuilder<List<RoomParticipant>>(
       stream: _participants,
       builder: (context, snapshot) {
@@ -903,6 +928,21 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
                               _openParticipants(roomParticipants),
                           onListenersTap: () =>
                               _openParticipants(roomParticipants),
+                          actions: [
+                            IconButton(
+                              key: const ValueKey('room-invite-action'),
+                              tooltip: copy.text(
+                                'Invite to the room',
+                                'Zaproś do pokoju',
+                              ),
+                              onPressed: _openInvite,
+                              color: Colors.white,
+                              icon: const Icon(
+                                Icons.person_add_alt_1_rounded,
+                                size: 22,
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                     ),
@@ -943,6 +983,7 @@ class _ParticipantsSheet extends StatefulWidget {
     required this.canModerate,
     required this.onMute,
     required this.onRemove,
+    this.onInvite,
   });
 
   final String title;
@@ -950,6 +991,10 @@ class _ParticipantsSheet extends StatefulWidget {
   final String hostId;
   final String currentUserId;
   final bool canModerate;
+
+  /// Present when the viewer may invite friends; the sheet then shows an
+  /// Invite action beside its title.
+  final VoidCallback? onInvite;
   final Future<void> Function(RoomParticipant participant, bool muted) onMute;
   final Future<void> Function(RoomParticipant participant) onRemove;
 
@@ -993,6 +1038,17 @@ class _ParticipantsSheetState extends State<_ParticipantsSheet> {
                     ),
                   ),
                 ),
+                if (widget.onInvite != null)
+                  TextButton.icon(
+                    key: const ValueKey('participants-invite-action'),
+                    onPressed: widget.onInvite,
+                    style: TextButton.styleFrom(
+                      foregroundColor: Colors.white,
+                      backgroundColor: Colors.white.withValues(alpha: .08),
+                    ),
+                    icon: const Icon(Icons.person_add_alt_1_rounded, size: 18),
+                    label: Text(copy.text('Invite', 'Zaproś')),
+                  ),
               ],
             ),
           ),

@@ -12,6 +12,7 @@ class ShareRoomSheet extends StatelessWidget {
     required this.shareLink,
     required this.onCopyLink,
     required this.onCopyRoomId,
+    this.onInviteFriends,
   });
 
   final String roomName;
@@ -19,6 +20,10 @@ class ShareRoomSheet extends StatelessWidget {
   final String shareLink;
   final Future<void> Function() onCopyLink;
   final Future<void> Function() onCopyRoomId;
+
+  /// Host only. When present, the sheet leads with an "Invite to the
+  /// podcast" row that closes this sheet and opens the friend picker.
+  final Future<void> Function()? onInviteFriends;
 
   @override
   Widget build(BuildContext context) {
@@ -50,6 +55,22 @@ class ShareRoomSheet extends StatelessWidget {
               style: const TextStyle(color: BroadcastRoomColors.muted),
             ),
             const SizedBox(height: 18),
+            if (onInviteFriends != null) ...[
+              _ActionTile(
+                key: const ValueKey('share-invite-friends'),
+                icon: Icons.person_add_alt_1_rounded,
+                title: copy.text('Invite to the podcast', 'Zaproś do podcastu'),
+                subtitle: copy.text(
+                  'Send friends a direct message with the link',
+                  'Wyślij znajomym wiadomość z linkiem',
+                ),
+                onTap: () {
+                  Navigator.of(context).pop();
+                  onInviteFriends!();
+                },
+              ),
+              const SizedBox(height: 10),
+            ],
             CopyValueTile(
               icon: Icons.link_rounded,
               title: copy.text('Invite link', 'Link z zaproszeniem'),
@@ -129,6 +150,69 @@ class CopyValueTile extends StatelessWidget {
                 ),
               ),
               const Icon(Icons.copy_rounded, color: Colors.white),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Same surface as [CopyValueTile] with a chevron instead of a copy glyph:
+/// the row leads somewhere rather than copying something.
+class _ActionTile extends StatelessWidget {
+  const _ActionTile({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.onTap,
+    super.key,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: BroadcastRoomColors.surfaceSoft,
+      borderRadius: BorderRadius.circular(18),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(18),
+        child: Padding(
+          padding: const EdgeInsets.all(15),
+          child: Row(
+            children: [
+              Icon(icon, color: BroadcastRoomColors.accentSoft),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      subtitle,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: BroadcastRoomColors.muted,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(Icons.chevron_right_rounded, color: Colors.white),
             ],
           ),
         ),

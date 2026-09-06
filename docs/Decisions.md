@@ -9362,3 +9362,101 @@ treat a missing key as "available". Widget/unit tests cover parsing, the
 mapping, the merge write and the picker; emulator rules tests cover the
 value gate. On-device verification is still open.
 
+## ADR-151: Awards are chosen, not just collected — one selection that decorates the account's own identity
+
+**Context.** The Awards screen listed all 100 titles in catalog order with
+locked and unlocked interleaved, and the only visible effect of a selection
+was a small badge on the owner's profile header. Tapping an unlocked title
+already called the deployed `selectMyAchievementTitle` callable, but the
+screen popped itself afterwards (wrong inside the desktop shell slot, where
+`AwardsHubScreen` occupies a content slot with nothing to pop), swallowed
+failures without a message, offered no way to clear a selection, and the
+profile push handed the screen a static profile snapshot so a card could not
+restyle after selection.
+
+**Decision.** `selectedTitleId` stays THE selection; no schema change. A new
+`achievementStyleFor` (achievements/presentation/achievement_style.dart)
+maps a title's rarity to an `AchievementStyle` — the previously reserved,
+never-constructed type — and `DecoratedUserAvatar` and the new `IdentityName`
+render it as the outer avatar ring and the account's name colour, contrast
+adjusted against the surface (`shared/identity/identity_contrast.dart`).
+Awards gains a "Your title" hero with a live preview plus Change and Clear,
+per-track progress tiles, and sections Selected → Unlocked → In progress →
+Locked over the existing category filter. Selection no longer pops the
+screen, surfaces failures, and can be cleared (`selectTitle(null)`, which the
+callable already accepts).
+
+**Reasoning.** Everything above is presentation over data the account already
+owns. Other people still see nothing: `publicProfiles` and `publicBadges` do
+not carry a title, and inventing one client-side would be fabricated
+identity. Rarity colours reuse the palette that the badge contrast test
+already pins.
+
+**Consequences.** The decoration is self-visible only until a follow-up
+package projects `selectedTitleId` through `publicProfiles` — that needs a
+rules deploy BEFORE the function deploy, because `publicProfileSchemaIsExact`
+gates every profile read on an exact key set, and clients read that
+collection directly. At 200% text on a 320 px phone the hero and level card
+fill the first screen, so the category filter is reached by scrolling; the
+responsive test now asserts that explicitly.
+
+## ADR-152: Reel trimming happens on the video, not on a slider under it
+
+**Context.** Trim lived under the Crop tool as a Material `RangeSlider`
+below the preview, with no filmstrip, no live duration, no feedback in the
+preview, and an early return that froze the handles when they came within a
+second of each other. Every tick tore down the playback coordinator and
+flashed the loading spinner.
+
+**Decision.** A first-class `Trim` tool (video media only) with
+`ReelTrimStrip`: a track mapping 0..duration, two ≥44 px handles, a dimmed
+scrim outside the selection, a playhead, a live "start–end · length" label
+and the 90 s cap shown as `Maks. 90 s`. Dragging a handle scrubs the preview
+to that exact time through a new `scrub`/`beginTrimEdit`/`endTrimEdit` API on
+`ReelDraftPreview`, which seeks the existing controller instead of rebuilding
+the coordinator. Handles clamp to a one-second minimum rather than freezing.
+The `RangeSlider` remains inside the Trim tool as the keyboard and
+screen-reader path.
+
+**Reasoning.** Trim is metadata (`trimStartMs`/`trimEndMs` applied by seeking
+and looping at playback), so this needs no server change and no new
+dependency. A true multi-frame filmstrip would need a thumbnail package or
+native code; using the video itself as the frame display gives the same
+feel today.
+
+**Consequences.** The 90 s cap is unchanged and now visible — raising it is a
+separate server decision (`MAX_DURATION_MS`, the 100 MB video cap and a
+streamed upload). Two new strings entered the Reels catalog for all 41
+locale variants.
+
+## ADR-153: Room invites are a real direct message with a room link, rendered as a card
+
+**Context.** Community rooms had no share and no invite affordance at all;
+Broadcast rooms had a Share sheet whose "invite link" used a `/rooms/{id}`
+path the app cannot open (the only handler reads `?room=`, like `?club=` and
+`?moment=`). The receiving half of a first-class invite already exists
+(`roomInvite`/`broadcastInvite` notification types routing to
+`RoomEntryScreen`), but nothing can send one: notifications are server-only.
+
+**Decision.** An invite is an ordinary text direct message containing the
+canonical `https://yovoice.app/?room=<id>` link, sent through the deployed
+`openDirectConversation` + `sendDirectMessage` pair, which accept exactly
+their existing fields. `InviteToRoomPanel` (friends list, search, per-friend
+Send with busy/sent/error, Share link, Copy link) opens from the Community
+room header and roster for any participant, and from the Broadcast header for
+the host, who also keeps Share. Invites are offered only for public rooms —
+an invite grants no access, and a private room shows that instead of a list.
+The chat bubble recognises a canonical room link and renders a room card
+beneath the unchanged message text, resolving the room and failing closed if
+it is gone.
+
+**Reasoning.** No new message type, no fake attachment, no invented backend:
+old clients and the website still see a working URL. A dedicated
+`sendRoomInvite` callable modelled on `sendClubInvite` remains the natural
+follow-up, and needs a deploy.
+
+**Consequences.** Mobile deep links are still not configured (no
+associated-domains, no App Links), so the in-app card is the tappable path;
+the link is a share affordance. The broadcast share link now uses the form
+the app can actually open.
+

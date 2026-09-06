@@ -139,6 +139,23 @@ String localizedAchievementRarity(
   AchievementRarity.mythic => copy.text('Mythic', 'Mityczne'),
 };
 
+/// The human name of an achievement track (the metric every tier of the
+/// track counts). Used by the per-track rollup on the Awards screen.
+String localizedAchievementMetric(AppLocalizations copy, String metric) =>
+    switch (metric) {
+      'messages' => copy.text('Messages', 'Wiadomości'),
+      'followers' => copy.text('Followers', 'Obserwujący'),
+      'voiceMinutes' => copy.text('Voice minutes', 'Minuty rozmów'),
+      'rooms' => copy.text('Rooms created', 'Utworzone pokoje'),
+      'communities' => copy.text('Communities', 'Społeczności'),
+      'friends' => copy.text('Friends', 'Znajomi'),
+      'reactions' => copy.text('Reactions', 'Reakcje'),
+      'hostMinutes' => copy.text('Hosting minutes', 'Minuty prowadzenia'),
+      'activeDays' => copy.text('Active days', 'Aktywne dni'),
+      'moments' => copy.text('Voice Moments', 'Momenty głosowe'),
+      _ => metric,
+    };
+
 String _polishAchievementDescription(AchievementDefinition achievement) {
   final count = achievement.threshold;
 

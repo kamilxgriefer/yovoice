@@ -16,6 +16,15 @@ someone decide what to pick up next.
 
 ## Done
 
+- **Awards you can choose, on-video Reel trimming, and room invites**
+  (2026-09-06, ADR-151/152/153; **SOURCE + SIMULATOR VERIFIED, NOT
+  PUBLISHED**): the Awards hub gains a selected-title hero, track progress
+  and Selected/Unlocked/In progress/Locked sections, and the choice colours
+  the account's own avatar ring and name; Reels gets a Trim tool with
+  handles on the video that scrub the preview; Community and Broadcast rooms
+  can invite friends by direct message with a room card in chat. Verified on
+  an iPhone 17 Pro simulator through `lib/dev/tester_round_preview.dart`.
+
 - **User-set availability status and picker** (2026-09-06, ADR-150;
   **SOURCE + TESTS VERIFIED, NOT DEPLOYED — rules + projection function must
   ship first**): `users/{uid}.availability`, masked projection into

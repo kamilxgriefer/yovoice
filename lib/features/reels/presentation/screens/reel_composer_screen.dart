@@ -16,6 +16,7 @@ import 'package:yovoice/features/reels/data/services/reel_upload.dart';
 import 'package:yovoice/features/reels/data/services/reel_video_probe.dart';
 import 'package:yovoice/features/reels/presentation/reel_visuals.dart';
 import 'package:yovoice/features/reels/presentation/widgets/reel_draft_preview.dart';
+import 'package:yovoice/features/reels/presentation/widgets/reel_trim_strip.dart';
 import 'package:yovoice/shared/widgets/buttons/yo_button.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
@@ -26,7 +27,7 @@ typedef ReelBackingAudioPicker = Future<ReelUploadPayload?> Function();
 
 enum _ComposerStep { media, edit, review }
 
-enum _EditorTool { crop, audio, text, filter }
+enum _EditorTool { crop, trim, audio, text, filter }
 
 class ReelComposerScreen extends StatefulWidget {
   const ReelComposerScreen({
@@ -35,6 +36,7 @@ class ReelComposerScreen extends StatefulWidget {
     this.videoDurationProbe,
     this.backingAudioPicker,
     this.audioPlayerFactory,
+    this.videoControllerFactory,
     this.onPublished,
     super.key,
   });
@@ -50,6 +52,9 @@ class ReelComposerScreen extends StatefulWidget {
   /// Spotify/Apple Music URL is downloaded or treated as an audio file.
   final ReelBackingAudioPicker? backingAudioPicker;
   final AudioPlayer Function()? audioPlayerFactory;
+
+  /// Optional test/platform override for the local preview decoder.
+  final ReelVideoControllerFactory? videoControllerFactory;
   final ValueChanged<String>? onPublished;
 
   @override
@@ -73,6 +78,7 @@ class _ReelComposerScreenState extends State<ReelComposerScreen> {
   _ComposerStep _step = _ComposerStep.media;
   _EditorTool _tool = _EditorTool.crop;
   final _previewKey = GlobalKey<ReelDraftPreviewState>();
+  final _playhead = ValueNotifier<Duration>(Duration.zero);
   bool _previewPlaying = false;
   bool _pickingAudio = false;
   bool _sourcePickerOpen = false;
@@ -107,6 +113,7 @@ class _ReelComposerScreenState extends State<ReelComposerScreen> {
       if (route.isActive) route.navigator?.removeRoute(route);
     }
     _draftModals.clear();
+    _playhead.value = Duration.zero;
     setState(() {
       _ownerId = uid;
       _media = null;
@@ -184,6 +191,7 @@ class _ReelComposerScreenState extends State<ReelComposerScreen> {
     _identityGeneration++;
     unawaited(_identitySubscription?.cancel());
     _scroll.dispose();
+    _playhead.dispose();
     _caption.dispose();
     super.dispose();
   }
@@ -340,9 +348,14 @@ class _ReelComposerScreenState extends State<ReelComposerScreen> {
       // reset the retry-stable session or replace the frozen upload plan.
       if (!_ownsDraft(generation) || _draftContractLocked) return;
       final previousKind = _media?.mediaKind;
+      _playhead.value = Duration.zero;
       setState(() {
         _media = payload;
         _session = null;
+        if (payload.mediaKind != ReelMediaKind.video &&
+            _tool == _EditorTool.trim) {
+          _tool = _EditorTool.crop;
+        }
         _composition = _composition.copyWith(
           crop: const ReelCropTransform(),
           originalAudioVolume: payload.mediaKind == ReelMediaKind.video
@@ -1109,65 +1122,126 @@ class _ReelComposerScreenState extends State<ReelComposerScreen> {
     final previewHeight = wide
         ? math.min(560.0, math.max(280.0, bounds.maxHeight - 160))
         : math.min(350.0, math.max(180.0, bounds.maxHeight * .42));
+    final video = media.mediaKind == ReelMediaKind.video;
+    final trimming =
+        _step == _ComposerStep.edit && _tool == _EditorTool.trim && video;
+    final draftPreview = ReelDraftPreview(
+      key: _previewKey,
+      media: media,
+      backingAudio: _backingAudio,
+      composition: _composition,
+      audioPlayerFactory: widget.audioPlayerFactory,
+      videoControllerFactory: widget.videoControllerFactory,
+      onPositionChanged: (position) => _playhead.value = position,
+      active: !_publishing && !_selecting && !_pickingAudio,
+      cropEnabled:
+          _step == _ComposerStep.edit &&
+          _tool == _EditorTool.crop &&
+          !_draftContractLocked,
+      onCropChanged: (crop) {
+        if (_ownsDraft(generation) && !_draftContractLocked) {
+          setState(() => _composition = _composition.copyWith(crop: crop));
+        }
+      },
+      // Direct manipulation lives in the Text tool only, so it never
+      // competes with the crop gesture. The edit dialogs' sliders stay
+      // as the keyboard/screen-reader path.
+      onTextOverlayChanged:
+          _step == _ComposerStep.edit &&
+              _tool == _EditorTool.text &&
+              !_draftContractLocked
+          ? (overlay) {
+              if (!_ownsDraft(generation) || _draftContractLocked) return;
+              setState(() {
+                _composition = _composition.copyWith(
+                  textOverlays: _composition.textOverlays
+                      .map((item) => item.id == overlay.id ? overlay : item)
+                      .toList(growable: false),
+                );
+              });
+            }
+          : null,
+      onLinkOverlayChanged:
+          _step == _ComposerStep.edit &&
+              _tool == _EditorTool.text &&
+              !_draftContractLocked
+          ? (overlay) {
+              if (!_ownsDraft(generation) || _draftContractLocked) return;
+              setState(() {
+                _composition = _composition.copyWith(
+                  linkOverlays: _composition.linkOverlays
+                      .map((item) => item.id == overlay.id ? overlay : item)
+                      .toList(growable: false),
+                );
+              });
+            }
+          : null,
+      onPlayingChanged: (playing) {
+        if (_ownsDraft(generation)) {
+          setState(() => _previewPlaying = playing);
+        }
+      },
+    );
+    // The trimmer lives on the video: below it on narrow layouts, inside its
+    // bottom band on wide ones. Only the Trim tool shows it, so it never
+    // competes with the crop pinch or the overlay drag for a pointer.
+    final strip = !trimming
+        ? null
+        : ReelTrimStrip(
+            key: const ValueKey('reel-trim-strip'),
+            durationMs: media.durationMs,
+            range: ReelTrimRange(
+              _composition.trimStartMs,
+              _composition.trimEndMs,
+            ),
+            playhead: _playhead,
+            overlay: wide,
+            onChanged: _draftContractLocked
+                ? null
+                : (range) {
+                    if (!_ownsDraft(generation) || _draftContractLocked) return;
+                    setState(() {
+                      _composition = _composition.copyWith(
+                        trimStartMs: range.startMs,
+                        trimEndMs: range.endMs,
+                      );
+                      _error = null;
+                    });
+                  },
+            onScrub: (_, positionMs) {
+              if (_ownsDraft(generation)) {
+                unawaited(
+                  _previewKey.currentState?.scrub(
+                    Duration(milliseconds: positionMs),
+                  ),
+                );
+              }
+            },
+            onEditStarted: () {
+              if (_ownsDraft(generation)) {
+                _previewKey.currentState?.beginTrimEdit();
+              }
+            },
+            onEditEnded: () {
+              if (_ownsDraft(generation)) {
+                unawaited(_previewKey.currentState?.endTrimEdit());
+              }
+            },
+          );
     final preview = Center(
       child: SizedBox(
         width: previewHeight * 9 / 16,
         height: previewHeight,
-        child: ReelDraftPreview(
-          key: _previewKey,
-          media: media,
-          backingAudio: _backingAudio,
-          composition: _composition,
-          audioPlayerFactory: widget.audioPlayerFactory,
-          active: !_publishing && !_selecting && !_pickingAudio,
-          cropEnabled:
-              _step == _ComposerStep.edit &&
-              _tool == _EditorTool.crop &&
-              !_draftContractLocked,
-          onCropChanged: (crop) {
-            if (_ownsDraft(generation) && !_draftContractLocked) {
-              setState(() => _composition = _composition.copyWith(crop: crop));
-            }
-          },
-          // Direct manipulation lives in the Text tool only, so it never
-          // competes with the crop gesture. The edit dialogs' sliders stay
-          // as the keyboard/screen-reader path.
-          onTextOverlayChanged:
-              _step == _ComposerStep.edit &&
-                  _tool == _EditorTool.text &&
-                  !_draftContractLocked
-              ? (overlay) {
-                  if (!_ownsDraft(generation) || _draftContractLocked) return;
-                  setState(() {
-                    _composition = _composition.copyWith(
-                      textOverlays: _composition.textOverlays
-                          .map((item) => item.id == overlay.id ? overlay : item)
-                          .toList(growable: false),
-                    );
-                  });
-                }
-              : null,
-          onLinkOverlayChanged:
-              _step == _ComposerStep.edit &&
-                  _tool == _EditorTool.text &&
-                  !_draftContractLocked
-              ? (overlay) {
-                  if (!_ownsDraft(generation) || _draftContractLocked) return;
-                  setState(() {
-                    _composition = _composition.copyWith(
-                      linkOverlays: _composition.linkOverlays
-                          .map((item) => item.id == overlay.id ? overlay : item)
-                          .toList(growable: false),
-                    );
-                  });
-                }
-              : null,
-          onPlayingChanged: (playing) {
-            if (_ownsDraft(generation)) {
-              setState(() => _previewPlaying = playing);
-            }
-          },
-        ),
+        child: wide && strip != null
+            ? Stack(
+                fit: StackFit.expand,
+                children: <Widget>[
+                  draftPreview,
+                  // Above the 48 px play control at bottom: 12.
+                  Positioned(left: 12, right: 12, bottom: 70, child: strip),
+                ],
+              )
+            : draftPreview,
       ),
     );
     final tools = Column(
@@ -1179,26 +1253,28 @@ class _ReelComposerScreenState extends State<ReelComposerScreen> {
             runSpacing: 8,
             children: [
               for (final tool in _EditorTool.values)
-                ChoiceChip(
-                  key: ValueKey('reel-tool-${tool.name}'),
-                  label: Text(switch (tool) {
-                    _EditorTool.crop => copy.text('Crop', 'Kadr'),
-                    _EditorTool.audio => copy.text('Audio', 'Dźwięk'),
-                    _EditorTool.text => copy.text(
-                      'Text and links',
-                      'Tekst i linki',
-                    ),
-                    _EditorTool.filter => copy.text('Filter', 'Filtr'),
-                  }),
-                  selected: _tool == tool,
-                  onSelected: _publishing
-                      ? null
-                      : (_) {
-                          if (_ownsDraft(generation)) {
-                            setState(() => _tool = tool);
-                          }
-                        },
-                ),
+                if (tool != _EditorTool.trim || video)
+                  ChoiceChip(
+                    key: ValueKey('reel-tool-${tool.name}'),
+                    label: Text(switch (tool) {
+                      _EditorTool.crop => copy.text('Crop', 'Kadr'),
+                      _EditorTool.trim => copy.text('Trim', 'Przytnij'),
+                      _EditorTool.audio => copy.text('Audio', 'Dźwięk'),
+                      _EditorTool.text => copy.text(
+                        'Text and links',
+                        'Tekst i linki',
+                      ),
+                      _EditorTool.filter => copy.text('Filter', 'Filtr'),
+                    }),
+                    selected: _tool == tool,
+                    onSelected: _publishing
+                        ? null
+                        : (_) {
+                            if (_ownsDraft(generation)) {
+                              setState(() => _tool = tool);
+                            }
+                          },
+                  ),
             ],
           ),
           const SizedBox(height: 12),
@@ -1267,6 +1343,25 @@ class _ReelComposerScreenState extends State<ReelComposerScreen> {
           onEditLink: (value) {
             if (_ownsDraft(generation)) unawaited(_editLinkOverlay(value));
           },
+          onTrimScrub: (_, positionMs) {
+            if (_ownsDraft(generation)) {
+              unawaited(
+                _previewKey.currentState?.scrub(
+                  Duration(milliseconds: positionMs),
+                ),
+              );
+            }
+          },
+          onTrimEditStarted: () {
+            if (_ownsDraft(generation)) {
+              _previewKey.currentState?.beginTrimEdit();
+            }
+          },
+          onTrimEditEnded: () {
+            if (_ownsDraft(generation)) {
+              unawaited(_previewKey.currentState?.endTrimEdit());
+            }
+          },
         ),
       ],
     );
@@ -1281,7 +1376,12 @@ class _ReelComposerScreenState extends State<ReelComposerScreen> {
           )
         : Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [preview, const SizedBox(height: 18), tools],
+            children: [
+              preview,
+              if (strip != null) ...[const SizedBox(height: 10), strip],
+              const SizedBox(height: 18),
+              tools,
+            ],
           );
   }
 
@@ -1349,6 +1449,9 @@ class _Editor extends StatelessWidget {
     required this.onAddLink,
     required this.onEditText,
     required this.onEditLink,
+    required this.onTrimScrub,
+    required this.onTrimEditStarted,
+    required this.onTrimEditEnded,
   });
 
   final ReelUploadPayload? media;
@@ -1372,6 +1475,9 @@ class _Editor extends StatelessWidget {
   final VoidCallback onAddLink;
   final ValueChanged<ReelTextOverlay> onEditText;
   final ValueChanged<ReelLinkOverlay> onEditLink;
+  final void Function(ReelTrimHandle handle, int positionMs) onTrimScrub;
+  final VoidCallback onTrimEditStarted;
+  final VoidCallback onTrimEditEnded;
 
   @override
   Widget build(BuildContext context) {
@@ -1556,43 +1662,75 @@ class _Editor extends StatelessWidget {
             ],
             if (!review &&
                 media?.mediaKind == ReelMediaKind.video &&
-                (tool == _EditorTool.crop ||
-                    tool == _EditorTool.audio)) ...<Widget>[
-              if (tool == _EditorTool.crop) ...[
-                const SizedBox(height: 18),
-                Text(copy.text('Trim video', 'Przytnij film')),
-                Semantics(
-                  label: copy.text(
-                    'Video trim range',
-                    'Zakres przycięcia filmu',
+                tool == _EditorTool.trim) ...<Widget>[
+              const SizedBox(height: 12),
+              Text(copy.text('Trim video', 'Przytnij film')),
+              const SizedBox(height: 8),
+              Text(
+                copy.text(
+                  'Drag the handles on the video to set where the Reel starts and ends.',
+                  'Przeciągnij uchwyty na filmie, aby ustawić, gdzie Reel się zaczyna i kończy.',
+                ),
+              ),
+              const SizedBox(height: 8),
+              // Keyboard and screen-reader path; the same clamp as the
+              // on-video handles, so it can never freeze at the 1 s floor.
+              Semantics(
+                label: copy.text('Video trim range', 'Zakres przycięcia filmu'),
+                value:
+                    '${composition.trimStartMs ~/ 1000}–${composition.trimEndMs ~/ 1000} s',
+                child: RangeSlider(
+                  key: const ValueKey('reel-trim-range-slider'),
+                  values: RangeValues(
+                    composition.trimStartMs / 1000,
+                    composition.trimEndMs / 1000,
                   ),
-                  value:
-                      '${composition.trimStartMs ~/ 1000}–${composition.trimEndMs ~/ 1000} s',
-                  child: RangeSlider(
-                    values: RangeValues(
-                      composition.trimStartMs / 1000,
-                      composition.trimEndMs / 1000,
-                    ),
-                    min: 0,
-                    max: media!.durationMs / 1000,
-                    labels: RangeLabels(
-                      '${composition.trimStartMs ~/ 1000}s',
-                      '${composition.trimEndMs ~/ 1000}s',
-                    ),
-                    onChanged: draftLocked
-                        ? null
-                        : (values) {
-                            if (values.end - values.start < 1) return;
+                  min: 0,
+                  max: media!.durationMs / 1000,
+                  labels: RangeLabels(
+                    '${composition.trimStartMs ~/ 1000}s',
+                    '${composition.trimEndMs ~/ 1000}s',
+                  ),
+                  onChangeStart: draftLocked
+                      ? null
+                      : (_) => onTrimEditStarted(),
+                  onChangeEnd: draftLocked ? null : (_) => onTrimEditEnded(),
+                  onChanged: draftLocked
+                      ? null
+                      : (values) {
+                          final current = ReelTrimRange(
+                            composition.trimStartMs,
+                            composition.trimEndMs,
+                          );
+                          final startMs = (values.start * 1000).round();
+                          final endMs = (values.end * 1000).round();
+                          final handle = startMs != current.startMs
+                              ? ReelTrimHandle.start
+                              : ReelTrimHandle.end;
+                          final next = moveReelTrimHandle(
+                            range: current,
+                            handle: handle,
+                            targetMs: handle == ReelTrimHandle.start
+                                ? startMs
+                                : endMs,
+                            durationMs: media!.durationMs,
+                          );
+                          if (next != current) {
                             onComposition(
                               composition.copyWith(
-                                trimStartMs: (values.start * 1000).round(),
-                                trimEndMs: (values.end * 1000).round(),
+                                trimStartMs: next.startMs,
+                                trimEndMs: next.endMs,
                               ),
                             );
-                          },
-                  ),
+                          }
+                          onTrimScrub(handle, next.msFor(handle));
+                        },
                 ),
-              ],
+              ),
+            ],
+            if (!review &&
+                media?.mediaKind == ReelMediaKind.video &&
+                tool == _EditorTool.audio) ...<Widget>[
               if (tool == _EditorTool.audio) ...[
                 Text(copy.text('Original video audio', 'Dźwięk z filmu')),
                 Semantics(

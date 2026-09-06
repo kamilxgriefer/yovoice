@@ -14,8 +14,8 @@ import 'package:yovoice/core/theme/app_colors.dart';
 ///  2. VIP — an entitlement that coexists with EVERY role (an owner can
 ///     be VIP, a moderator can be VIP). Deliberately not a member of
 ///     this enum.
-///  3. ACHIEVEMENT RANK — future cosmetics only (see [AchievementStyle]);
-///     it never appears in this vocabulary and can never imitate it.
+///  3. ACHIEVEMENT RANK — cosmetics only (see [AchievementStyle]); it
+///     never appears in this vocabulary and can never imitate it.
 ///
 /// `superAdmin` on the wire is the owner badge: the server publishes it
 /// only for the confirmed protected-owner uid (a forged or stale value
@@ -111,12 +111,14 @@ class PublicIdentity {
   int get hashCode => Object.hash(role, isVip);
 }
 
-/// RESERVED cosmetic extension point for the Achievement Rank milestone.
+/// The cosmetic an achievement title produces (Achievement Rank milestone).
 ///
-/// Nothing constructs one yet — achievement selection ships only once
-/// server-authoritative achievement data exists, with server-side
-/// validation that the achievement is actually unlocked. The contract it
-/// will honor:
+/// Constructed today by `achievementStyleFor` in the achievements feature
+/// from the signed-in account's own `selectedTitleId` — the server-
+/// validated selection (`selectMyAchievementTitle` refuses a title that is
+/// not unlocked). It decorates SELF-FACING surfaces only until the public
+/// identity projection carries the selection for other viewers. The
+/// contract it honors:
 ///
 ///  * changes ONLY cosmetic rank text, rank color and the avatar frame;
 ///  * never touches the official role badge, the VIP badge, permissions

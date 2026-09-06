@@ -111,7 +111,7 @@ class AchievementService {
             .map((item) => item.id)
             .toList(growable: false),
         'unlockedTitleTimestamps': unlockTimestamps,
-        if (best != null && (data['selectedTitleId'] as String?) == null)
+        if (best != null && _hasNoTitleSelection(data))
           'selectedTitleId': best.id,
         'achievementsUpdatedAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
@@ -161,13 +161,22 @@ class AchievementService {
           .map((item) => item.id)
           .toList(growable: false),
       'unlockedTitleTimestamps': unlockTimestamps,
-      if (best != null && (data['selectedTitleId'] as String?) == null)
+      if (best != null && _hasNoTitleSelection(data))
         'selectedTitleId': best.id,
       'achievementsUpdatedAt': FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));
   }
 
-  Future<void> selectTitle(String achievementId) async {
+  /// Selects [achievementId] as the displayed title, or clears the
+  /// selection when it is null. The server callable validates that the
+  /// title is unlocked; the offline fallback applies the same check
+  /// against the profile's `unlockedTitleIds` before writing.
+  ///
+  /// A cleared selection is written as an explicit `null`, not a deleted
+  /// key — [incrementMetric] and [refreshUnlockedTitles] auto-pick the best
+  /// title only while the key is ABSENT, so a deliberate Clear survives
+  /// the next reconcile instead of being silently re-selected.
+  Future<void> selectTitle(String? achievementId) async {
     try {
       final functions = _functions;
       if (functions == null) {
@@ -184,15 +193,17 @@ class AchievementService {
       return;
     } catch (error) {
       if (_isCallableUnavailable(error)) {
-        final snapshot = await _user.get();
-        final unlocked =
-            (snapshot.data()?['unlockedTitleIds'] as List<dynamic>? ??
-                    const <dynamic>[])
-                .whereType<String>()
-                .toSet();
+        if (achievementId != null) {
+          final snapshot = await _user.get();
+          final unlocked =
+              (snapshot.data()?['unlockedTitleIds'] as List<dynamic>? ??
+                      const <dynamic>[])
+                  .whereType<String>()
+                  .toSet();
 
-        if (!unlocked.contains(achievementId)) {
-          throw StateError('This title has not been unlocked.');
+          if (!unlocked.contains(achievementId)) {
+            throw StateError('This title has not been unlocked.');
+          }
         }
 
         await _user.set({
@@ -203,6 +214,12 @@ class AchievementService {
       rethrow;
     }
   }
+
+  /// True when the profile has never had a title selection written at all
+  /// (neither a choice nor an explicit Clear), which is the only case the
+  /// client auto-picks the best unlocked title.
+  static bool _hasNoTitleSelection(Map<String, dynamic> data) =>
+      !data.containsKey('selectedTitleId');
 
   String _fieldForMetric(String metric) {
     return switch (metric) {

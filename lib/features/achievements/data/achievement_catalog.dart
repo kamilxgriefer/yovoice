@@ -234,17 +234,23 @@ class AchievementCatalog {
         .toList(growable: false);
   }
 
+  /// Prestige order: rarer first, then the higher threshold first. The one
+  /// comparator behind [bestUnlocked] and every "unlocked titles" list in
+  /// the Awards presentation, so the best title is the first one listed.
+  static int compareByPrestige(
+    AchievementDefinition first,
+    AchievementDefinition second,
+  ) {
+    final rarityComparison = second.rarity.index.compareTo(first.rarity.index);
+    if (rarityComparison != 0) return rarityComparison;
+    return second.threshold.compareTo(first.threshold);
+  }
+
   static AchievementDefinition? bestUnlocked(Map<String, int> stats) {
     final unlocked = unlockedBy(stats);
     if (unlocked.isEmpty) return null;
 
-    unlocked.sort((first, second) {
-      final rarityComparison = second.rarity.index.compareTo(
-        first.rarity.index,
-      );
-      if (rarityComparison != 0) return rarityComparison;
-      return second.threshold.compareTo(first.threshold);
-    });
+    unlocked.sort(compareByPrestige);
 
     return unlocked.first;
   }

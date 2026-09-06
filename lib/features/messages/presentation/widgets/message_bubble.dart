@@ -11,6 +11,8 @@ import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/messages/data/models/message.dart';
 import 'package:yovoice/features/messages/presentation/widgets/direct_video_playback_source.dart';
 import 'package:yovoice/features/messages/presentation/widgets/direct_voice_playback_source.dart';
+import 'package:yovoice/features/messages/presentation/widgets/room_link_message_card.dart';
+import 'package:yovoice/features/rooms/data/room_links.dart';
 import 'package:yovoice/shared/widgets/interactions/accessible_context_action.dart';
 
 class MessageBubble extends StatelessWidget {
@@ -22,6 +24,8 @@ class MessageBubble extends StatelessWidget {
     this.audioPlayerFactory,
     this.voiceSourcePreparer,
     this.videoSourcePreparer,
+    this.roomLinkResolver,
+    this.roomLinkOpener,
     super.key,
   });
 
@@ -33,6 +37,12 @@ class MessageBubble extends StatelessWidget {
   final AudioPlayer Function()? audioPlayerFactory;
   final DirectVoiceSourcePreparer? voiceSourcePreparer;
   final DirectVideoSourcePreparer? videoSourcePreparer;
+
+  /// Test seams for the room card a text message can carry (see
+  /// [RoomLinkMessageCard]). Production passes nothing and gets one
+  /// fail-closed Firestore read plus a push to RoomEntryScreen.
+  final RoomLinkResolver? roomLinkResolver;
+  final RoomLinkOpener? roomLinkOpener;
 
   @override
   Widget build(BuildContext context) {
@@ -137,6 +147,9 @@ class MessageBubble extends StatelessWidget {
                       audioPlayerFactory: audioPlayerFactory,
                       voiceSourcePreparer: voiceSourcePreparer,
                       videoSourcePreparer: videoSourcePreparer,
+                      onBrandSurface: isMine,
+                      roomLinkResolver: roomLinkResolver,
+                      roomLinkOpener: roomLinkOpener,
                     ),
                   ],
                 ),
@@ -237,6 +250,9 @@ class _MessageContent extends StatelessWidget {
     required this.audioPlayerFactory,
     required this.voiceSourcePreparer,
     required this.videoSourcePreparer,
+    required this.onBrandSurface,
+    required this.roomLinkResolver,
+    required this.roomLinkOpener,
   });
 
   final Message message;
@@ -248,6 +264,9 @@ class _MessageContent extends StatelessWidget {
   final AudioPlayer Function()? audioPlayerFactory;
   final DirectVoiceSourcePreparer? voiceSourcePreparer;
   final DirectVideoSourcePreparer? videoSourcePreparer;
+  final bool onBrandSurface;
+  final RoomLinkResolver? roomLinkResolver;
+  final RoomLinkOpener? roomLinkOpener;
 
   @override
   Widget build(BuildContext context) {
@@ -298,13 +317,31 @@ class _MessageContent extends StatelessWidget {
           videoSourcePreparer: videoSourcePreparer,
         );
       case MessageType.text:
-        return Text(
+        final text = Text(
           message.content,
           style: TextStyle(
             color: foregroundColor,
             fontSize: 14.5,
             height: 1.35,
           ),
+        );
+        // A room invitation is a plain text message carrying the canonical
+        // `?room=` link (ADR-151): the text stays exactly as sent and a room
+        // card is added beneath it. Anything else renders as before.
+        final roomId = findRoomLinkId(message.content);
+        if (roomId == null) return text;
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            text,
+            RoomLinkMessageCard(
+              roomId: roomId,
+              onBrandSurface: onBrandSurface,
+              resolver: roomLinkResolver,
+              opener: roomLinkOpener,
+            ),
+          ],
         );
     }
   }

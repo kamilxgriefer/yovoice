@@ -97,6 +97,16 @@ void main() {
     );
     await tester.pump();
 
+    // At 200% text on a 320 px phone the selected-title hero, level card and
+    // stats row legitimately fill the first screen, so the category filter is
+    // reached by scrolling. What must hold is that it exists, is reachable,
+    // and nothing overflows on the way.
+    await tester.scrollUntilVisible(
+      find.text('Categories'),
+      220,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pump();
     expect(find.text('Categories'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });

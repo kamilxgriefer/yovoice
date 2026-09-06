@@ -58,12 +58,25 @@ Reported by the owner after the 1.0.0 (21) tester wave. Status per item:
   server callable `setOwnRoomParticipantMute` still cold-starts at
   `minInstances: 0`; unmute remains server-first by design, so its wait is
   unchanged until that callable is warmed (DEPLOYMENT.md proposal).
-- **Open, not yet fixed:** Reel trim/crop handles on the video instead of
-  sliders (design in hand: filmstrip strip + scrub, no new dependency for
-  phase 1); a music library (needs a licensed catalogue — product
-  decision); Reel length above 90 s (server `MAX_DURATION_MS` and the
-  100 MB video cap, deploy); a call dropping when both parties background
-  the app (Android has no foreground service for rooms — not yet traced);
+- **Reel trimming on the video** — fixed in source (ADR-152): a Trim tool
+  with draggable handles that scrub the preview; the slider stays as the
+  accessible fallback and the 90 s cap is now shown.
+- **Awards could not really be "used"** — fixed in source (ADR-151):
+  selection has a hero, Clear, error feedback, no stray pop, and it colours
+  the owner's avatar ring and name. Other people see it only after the
+  follow-up server projection.
+- **No way to invite a friend into a room** — fixed in source (ADR-153) for
+  public rooms: Community (any participant) and Broadcast (host) open an
+  invite sheet that sends a direct message with a room link, rendered as a
+  room card in chat. The broadcast share link form was wrong and is fixed.
+- **Open, not yet fixed:** a music library (needs a licensed catalogue —
+  product decision); Reel length above 90 s (server `MAX_DURATION_MS` and
+  the 100 MB video cap, deploy); a call dropping when both parties
+  background the app — **traced**: Android declares no foreground service,
+  so a minimised process is silenced and frozen; with both sides minimised
+  no audio flows, both freeze and the LiveKit room empties. The fix is a
+  microphone/mediaPlayback foreground service plus reconnect-on-resume, and
+  a Play Console foreground-service-type declaration;
   one tester asked for an invite code — TestFlight shows that prompt when
   the device's Apple ID is not the invited address; awards section redesign
   with selectable badges; inviting friends into a room.

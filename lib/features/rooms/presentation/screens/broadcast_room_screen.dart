@@ -7,11 +7,14 @@ import 'package:yovoice/core/helpers/error_messages.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/space_identity.dart';
 import 'package:yovoice/features/calls/data/services/voice_call_service.dart';
+import 'package:yovoice/features/friends/data/services/friend_service.dart';
+import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/permissions/data/permission_readiness_service.dart';
 import 'package:yovoice/features/rooms/data/models/room_metadata.dart';
 import 'package:yovoice/features/rooms/data/models/room_participant.dart';
 import 'package:yovoice/features/rooms/data/models/room_voice_access.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
+import 'package:yovoice/features/rooms/data/room_links.dart';
 import 'package:yovoice/features/rooms/data/services/room_leave_coordinator.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
 import 'package:yovoice/features/rooms/data/services/room_mute_coordinator.dart';
@@ -24,6 +27,7 @@ import 'package:yovoice/features/rooms/presentation/screens/broadcast_room/sheet
 import 'package:yovoice/features/rooms/presentation/screens/broadcast_room/sheets/participants_sheet.dart';
 import 'package:yovoice/features/rooms/presentation/screens/broadcast_room/sheets/settings_sheet.dart';
 import 'package:yovoice/features/rooms/presentation/screens/broadcast_room/sheets/share_room_sheet.dart';
+import 'package:yovoice/features/rooms/presentation/widgets/invite_to_room_sheet.dart';
 import 'package:yovoice/features/rooms/presentation/widgets/room_chat_sheet.dart';
 import 'package:yovoice/features/rooms/presentation/widgets/room_control_dock.dart';
 import 'package:yovoice/features/rooms/presentation/widgets/room_ended_state.dart';
@@ -42,6 +46,8 @@ class BroadcastRoomScreen extends StatefulWidget {
     this.voiceService,
     this.entryCoordinator,
     this.muteCoordinator,
+    this.friendService,
+    this.messageService,
     this.playInitialJoinSound = true,
     this.startMuted = true,
     super.key,
@@ -53,11 +59,15 @@ class BroadcastRoomScreen extends StatefulWidget {
   /// Null means nothing was resolved, which is treated as "no authority".
   final RoomVoiceEntry? voiceEntry;
 
-  /// Test seams. All four default to the production wiring.
+  /// Test seams. All six default to the production wiring.
   final RoomService? roomService;
   final VoiceCallService? voiceService;
   final RoomVoiceEntryCoordinator? entryCoordinator;
   final RoomMuteCoordinator? muteCoordinator;
+
+  /// Only the host's invitation sheet reads these; created lazily there.
+  final FriendService? friendService;
+  final MessageService? messageService;
 
   /// Room creation already has its own confirmation; all other entry points
   /// keep the normal connected cue.
@@ -121,7 +131,9 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
   String get _uid => _rooms.currentUserId;
   VoiceRoom get _room => _entry.room;
   bool get _isHost => _room.hostId == _uid;
-  String get _shareLink => 'https://yovoice.app/rooms/${widget.room.id}';
+  // The canonical `?room=` form — the only shape the app's deep-link
+  // handler opens. The previous `/rooms/{id}` path led nowhere.
+  String get _shareLink => roomShareLink(widget.room.id);
   AppLocalizations get _copy => AppLocalizations.of(context);
   String _text(String english, String polish) => _copy.text(english, polish);
 
@@ -685,9 +697,19 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
         shareLink: _shareLink,
         onCopyLink: _copyShareLink,
         onCopyRoomId: _copyRoomId,
+        // Host only: a Broadcast is the host's show, so only the host
+        // invites; everyone else keeps the link and the room id.
+        onInviteFriends: _isHost ? _openInvite : null,
       ),
     );
   }
+
+  Future<void> _openInvite() => showInviteToRoomSheet(
+    context,
+    room: _room,
+    friendService: widget.friendService,
+    messageService: widget.messageService,
+  );
 
   Future<void> _openSettings() async {
     if (!_isHost) return;
