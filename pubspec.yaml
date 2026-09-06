@@ -87,7 +87,7 @@ flutter:
     - assets/images/
     - assets/images/atmospheres/
     - assets/icons/
-    - assets/audio/ui/v3/
+    - assets/audio/ui/v4/
 
   fonts:
     - family: Inter

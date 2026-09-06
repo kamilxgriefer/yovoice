@@ -9187,3 +9187,79 @@ becoming a false connected state or reopening capture after hang-up.
   Android device or current production Firebase logs were available.
 - No schema, backend contract, Security Rules or TURN configuration changed, and
   this decision does not publish a tester build.
+
+## ADR-147: Tab fade-through, lit More capsule, bounded conversation open and non-blanking refreshes
+
+**Context.** Build 21 testers reported a "torn screen" when switching tabs
+(a strip and a ghost of Rooms/Chats visible while Home was already selected),
+a dock that lit Home while a More destination was open, a Friends chat bubble
+that "does nothing" or needs several taps, and long waits on Moments and the
+staff panels. Source tracing found: `YoPreservingTabTransition` slid the
+incoming page in from a 12 px offset at 82 % opacity over a still-opaque
+outgoing page; `MobileHome` re-created its one-shot v2 feed stream on every
+tab return, blanking Home; `MoreDestinationHost` was passed
+`moreSelected: false` by design; `openDirectConversation` was awaited with the
+plugin's 60 s default and no busy state on the bubble, while `_runNavigation`
+silently dropped repeat taps; `MomentsFeedView._load` reset to the full-screen
+loading phase on every refresh; `ModerationCenterScreen` read the caller's
+profile twice in series and counted two statuses in series;
+`StaffCenterScreen` waited for a fresh `getMyStaffCapabilities` cold start
+before painting anything.
+
+**Decision.** The transition is a Material fade-through: the outgoing page
+fades out completely within the first 35 % of the 250 ms run, the incoming
+page fades in from 30 % with a 96 → 100 % scale and no horizontal offset;
+`direction` is retained for callers. Home keeps the last feed page as the
+StreamBuilder's initial data across the refresh. A pushed More destination
+keeps the More capsule lit. `MessageService.openConversationTimeout` (15 s)
+bounds the callable; the Friends bubble shows a spinner and disables itself
+per row while opening, and a timeout gets its own copy. Moments refreshes in
+place when content exists and keeps it on error. Moderation resolves staff
+status, role and counts concurrently. Staff Center paints from the session's
+cached capabilities and confirms with a fresh read.
+
+**Reasoning.** Every change is presentation or client sequencing; no schema,
+rule or server contract moves. The transition's directional slide was the
+direct cause of the edge strip, and translucency over an opaque page was the
+ghost. Bounding the callable turns an invisible stall into a named error the
+user can act on. The staff panels' latency is dominated by cold starts, which
+only a warm instance (ADR pending owner approval, see DEPLOYMENT.md) removes;
+parallel reads and cache-first paint are the client's honest share.
+
+**Consequences.** `test/yo_floating_navigation_dock_test.dart` pins opacity
+and scale per frame instead of the 12 px offset. Review captures live under
+`test/.screenshots/review-tab-transition-*`, `review-more-hosted-dock-390`
+and `review-avatar-rings-*` (`tab_transition_review_capture.dart`). The
+More capsule now stays lit in hosted destinations; tapping it reopens the
+sheet. Cold-start latency itself is unchanged until Functions are redeployed
+with more warm callables — a cost decision recorded for the owner.
+
+## ADR-148: "Soft Bells" UI sound pack v4 replaces "Velvet Prism" v3
+
+**Context.** The owner judged the v3 cues (95–360 ms filtered clicks) "a
+total failure" and asked for premium, smooth sounds across the app.
+
+**Decision.** A generated additive-synthesis pack (`assets/audio/ui/v4`,
+48 kHz 16-bit stereo, 0.17–0.78 s): rising triad bloom for room created,
+two ascending/descending notes for join/leave, single soft bubbles for
+participants, velvet ticks for mute/unmute and a calm two-note chime for
+notifications. Loudness is RMS-normalised into a deliberate hierarchy
+(mic ticks ≈ −27 dBFS, room cues ≈ −24, notification ≈ −22), peak-capped,
+low-passed at 6.5 kHz, with 160 frames of exact silence at the end. The
+generator (pure Python, no numpy) is kept in the session scratchpad and
+described here; the pack is the artifact of record. `UiSound.assetPath`
+points at `v4`, the Android and iOS notification masters are byte-identical
+copies, and `v3` is no longer bundled.
+
+**Reasoning.** Bells with slow decays read as calm and premium at low
+volume; clicks read as cheap. RMS targets, not peak, decide how a cue feels
+next to another. Keeping every cue under 0.8 s respects the per-channel
+serialisation in `UiSoundService` (a cue must finish before the next on
+its channel) and the 2 s completion timeout.
+
+**Consequences.** `test/ui_sound_service_test.dart` pins the v4 frame
+counts and RMS values and raises the per-file bound to 160 KB (bundle
++0.8 MB). The push notification sound changes for everyone on the next
+build. The owner has not yet auditioned the pack; if the character is wrong,
+regenerate rather than hand-edit.
+

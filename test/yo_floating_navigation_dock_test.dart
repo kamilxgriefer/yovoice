@@ -1065,7 +1065,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
   testWidgets(
-    'tab fade-through preserves page state and horizontal direction',
+    'tab fade-through preserves page state and never offsets or ghosts pages',
     (tester) async {
       tester.view.physicalSize = const Size(390, 700);
       tester.view.devicePixelRatio = 1;
@@ -1076,12 +1076,41 @@ void main() {
       expect(find.text('Page zero count 1'), findsOneWidget);
       await tester.tap(find.text('Show one'));
       await tester.pump();
-      final right = tester.widget<Transform>(
+      // The incoming page starts fully transparent and slightly scaled
+      // down, with NO horizontal offset — an offset left a strip of the
+      // outgoing tab visible along one edge ("torn screen").
+      final incoming = tester.widget<Transform>(
         find.byKey(const ValueKey('yo-tab-translation-1')),
       );
-      expect(right.transform.getTranslation().x, closeTo(12, .01));
-      expect(right.transform.getTranslation().y, 0);
-      await tester.pump(const Duration(milliseconds: 250));
+      expect(incoming.transform.getTranslation().x, 0);
+      expect(incoming.transform.getTranslation().y, 0);
+      expect(incoming.transform.entry(0, 0), closeTo(.96, .001));
+      expect(
+        tester
+            .widget<Opacity>(find.byKey(const ValueKey('yo-tab-opacity-1')))
+            .opacity,
+        0,
+      );
+      // Half-way through, the outgoing page is already fully transparent —
+      // the two pages are never both translucent over each other.
+      await tester.pump(const Duration(milliseconds: 125));
+      expect(
+        tester
+            .widget<Opacity>(find.byKey(const ValueKey('yo-tab-opacity-0')))
+            .opacity,
+        0,
+      );
+      await tester.pump(const Duration(milliseconds: 125));
+      final settled = tester.widget<Transform>(
+        find.byKey(const ValueKey('yo-tab-translation-1')),
+      );
+      expect(settled.transform.entry(0, 0), closeTo(1, .001));
+      expect(
+        tester
+            .widget<Opacity>(find.byKey(const ValueKey('yo-tab-opacity-1')))
+            .opacity,
+        1,
+      );
       await tester.tap(find.text('Show zero'));
       await tester.pump();
       expect(
@@ -1092,7 +1121,7 @@ void main() {
             .transform
             .getTranslation()
             .x,
-        closeTo(-12, .01),
+        0,
       );
       await tester.pump(const Duration(milliseconds: 250));
       expect(find.text('Page zero count 1'), findsOneWidget);

@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:yovoice/shared/widgets/backgrounds/yo_page_background.dart';
@@ -72,6 +73,9 @@ class _FriendsScreenState extends State<FriendsScreen> {
   final Set<String> _processingRequestIds = <String>{};
   late Stream<int> _requestCountStream;
   bool _navigationInFlight = false;
+  /// Friend whose conversation is being opened right now — drives the
+  /// bubble's busy state on that one row.
+  String? _openingChatFriendId;
   bool _requestFanoutFailed = false;
   String _query = '';
   _FriendsFilter _filter = _FriendsFilter.all;
@@ -164,6 +168,10 @@ class _FriendsScreenState extends State<FriendsScreen> {
   );
 
   Future<void> _startChat(FriendUser friend) => _runNavigation(() async {
+    // The bubble shows its own progress and disables itself while the
+    // server opens the conversation; without it the first tap looked
+    // ignored and the guarded repeat taps were silently dropped.
+    setState(() => _openingChatFriendId = friend.id);
     try {
       final conversationId = await _messageService.openOrCreateConversation(
         otherUserId: friend.id,
@@ -197,8 +205,18 @@ class _FriendsScreenState extends State<FriendsScreen> {
       // communication mute or a rate limit arrives here as a real
       // FirebaseFunctionsException. Raw exception text must never be what
       // the user reads.
+      final copy = AppLocalizations.of(context);
+      final timedOut =
+          error is TimeoutException ||
+          (error is FirebaseFunctionsException &&
+              error.code == 'deadline-exceeded');
       _showMessage(
-        AppLocalizations.of(context).isPolish
+        timedOut
+            ? copy.text(
+                'Opening this conversation is taking too long. Try again.',
+                'Otwieranie rozmowy trwa zbyt długo. Spróbuj ponownie.',
+              )
+            : copy.isPolish
             ? 'Nie udało się otworzyć rozmowy.'
             : intentionalOrFriendly(
                 error,
@@ -206,6 +224,10 @@ class _FriendsScreenState extends State<FriendsScreen> {
               ),
         isError: true,
       );
+    } finally {
+      if (mounted && _openingChatFriendId == friend.id) {
+        setState(() => _openingChatFriendId = null);
+      }
     }
   });
 
@@ -624,6 +646,7 @@ class _FriendsScreenState extends State<FriendsScreen> {
                 child: _FriendCard(
                   friend: friend,
                   profileMediaService: _profileMediaService,
+                  openingChat: _openingChatFriendId == friend.id,
                   onProfile: () => _openProfile(friend),
                   onMessage: () => _startChat(friend),
                 ),
@@ -799,12 +822,18 @@ class _FriendCard extends StatelessWidget {
   const _FriendCard({
     required this.friend,
     this.profileMediaService,
+    this.openingChat = false,
     required this.onProfile,
     required this.onMessage,
   });
 
   final FriendUser friend;
   final ProfileMediaService? profileMediaService;
+
+  /// True while this friend's conversation is being opened: the bubble
+  /// shows a spinner and stops accepting taps (same pattern as the
+  /// profile screen's Message button).
+  final bool openingChat;
   final VoidCallback onProfile;
   final VoidCallback onMessage;
 
@@ -907,13 +936,26 @@ class _FriendCard extends StatelessWidget {
                 ),
               ),
               IconButton.filledTonal(
-                tooltip: copy.text('Message', 'Wiadomość'),
-                onPressed: onMessage,
+                tooltip: openingChat
+                    ? copy.text('Opening chat…', 'Otwieranie czatu…')
+                    : copy.text('Message', 'Wiadomość'),
+                onPressed: openingChat ? null : onMessage,
                 style: IconButton.styleFrom(
                   backgroundColor: colors.secondaryContainer,
                   foregroundColor: colors.onSecondaryContainer,
+                  disabledBackgroundColor: colors.secondaryContainer,
+                  disabledForegroundColor: colors.onSecondaryContainer,
                 ),
-                icon: const Icon(Icons.chat_bubble_rounded, size: 20),
+                icon: openingChat
+                    ? SizedBox(
+                        width: 17,
+                        height: 17,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: colors.onSecondaryContainer,
+                        ),
+                      )
+                    : const Icon(Icons.chat_bubble_rounded, size: 20),
               ),
               const SizedBox(width: 4),
               Icon(Icons.chevron_right_rounded, color: palette.textSecondary),

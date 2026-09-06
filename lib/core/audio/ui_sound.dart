@@ -62,5 +62,5 @@ enum UiSound {
   final double volume;
   final Duration cooldown;
 
-  String get assetPath => 'audio/ui/v3/$fileName';
+  String get assetPath => 'audio/ui/v4/$fileName';
 }

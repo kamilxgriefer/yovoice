@@ -11,12 +11,12 @@ import 'package:yovoice/features/notifications/data/services/push_notification_s
 
 void main() {
   test(
-    'Velvet Prism pack is 48 kHz stereo, bounded and mastered in assets',
+    'Soft Bells v4 pack is 48 kHz stereo, bounded and mastered in assets',
     () {
       final paths = UiSound.values.map((sound) => sound.assetPath).toSet();
       expect(paths, hasLength(UiSound.values.length));
       expect(UiSound.values, hasLength(8));
-      expect(paths, everyElement(startsWith('audio/ui/v3/')));
+      expect(paths, everyElement(startsWith('audio/ui/v4/')));
       final packagedWavs = Directory('assets/audio/ui')
           .listSync(recursive: true)
           .whereType<File>()
@@ -26,24 +26,24 @@ void main() {
       expect(packagedWavs, paths.map((path) => 'assets/$path').toSet());
       final fingerprints = <String>{};
       const expectedSeconds = <String, double>{
-        'room_created.wav': 0.360,
-        'room_joined.wav': 0.240,
-        'room_left.wav': 0.190,
-        'participant_joined.wav': 0.135,
-        'participant_left.wav': 0.125,
-        'microphone_muted.wav': 0.095,
-        'microphone_unmuted.wav': 0.115,
-        'notification.wav': 0.330,
+        'room_created.wav': 37600 / 48000,
+        'room_joined.wav': 29920 / 48000,
+        'room_left.wav': 28960 / 48000,
+        'participant_joined.wav': 20320 / 48000,
+        'participant_left.wav': 20320 / 48000,
+        'microphone_muted.wav': 8320 / 48000,
+        'microphone_unmuted.wav': 8320 / 48000,
+        'notification.wav': 35200 / 48000,
       };
       const targetRms = <String, double>{
-        'room_created.wav': -23,
-        'room_joined.wav': -25,
-        'room_left.wav': -26,
-        'participant_joined.wav': -30,
-        'participant_left.wav': -31,
-        'microphone_muted.wav': -27,
-        'microphone_unmuted.wav': -27,
-        'notification.wav': -20,
+        'room_created.wav': -24.39,
+        'room_joined.wav': -24.75,
+        'room_left.wav': -25.74,
+        'participant_joined.wav': -27.12,
+        'participant_left.wav': -29.67,
+        'microphone_muted.wav': -27.61,
+        'microphone_unmuted.wav': -28.35,
+        'notification.wav': -21.61,
       };
 
       for (final sound in UiSound.values) {
@@ -56,7 +56,7 @@ void main() {
         expect(data.getUint16(22, Endian.little), 2, reason: sound.name);
         expect(data.getUint32(24, Endian.little), 48000, reason: sound.name);
         expect(data.getUint16(34, Endian.little), 16, reason: sound.name);
-        expect(bytes.length, lessThan(96 * 1024), reason: sound.name);
+        expect(bytes.length, lessThan(160 * 1024), reason: sound.name);
 
         final frameCount = data.getUint32(40, Endian.little) ~/ 4;
         expect(
@@ -253,13 +253,13 @@ void main() {
 
     expect(players.keys, UiSoundChannel.values);
     expect(players[UiSoundChannel.room]!.paths, [
-      'audio/ui/v3/room_joined.wav',
+      'audio/ui/v4/room_joined.wav',
     ]);
     expect(players[UiSoundChannel.controls]!.paths, [
-      'audio/ui/v3/microphone_muted.wav',
+      'audio/ui/v4/microphone_muted.wav',
     ]);
     expect(players[UiSoundChannel.notification]!.paths, [
-      'audio/ui/v3/notification.wav',
+      'audio/ui/v4/notification.wav',
     ]);
   });
 

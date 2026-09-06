@@ -18,6 +18,42 @@ about things that are broken, risky, or need verification.
 > before believing the code.
 > [ADR-082](Decisions.md#adr-082-a-feature-is-not-shipped-until-a-user-can-reach-it--reachability-is-part-of-done-and-a-green-suite-cannot-prove-it).
 
+## Build 21 tester round — navigation, latency and creation gaps (2026-09-06; partly fixed in source, not published)
+
+Reported by the owner after the 1.0.0 (21) tester wave. Status per item:
+
+- **Torn screen on tab switch** — fixed in source (ADR-147): fade-through
+  without offset, Home keeps its last feed page while refreshing.
+- **Dock lit Home inside a More destination** — fixed in source: hosted
+  destinations keep the More capsule lit.
+- **Friends chat bubble "does nothing" / needs several taps** — fixed in
+  source: per-row busy state, 15 s bound on `openDirectConversation`, timeout
+  copy. The remaining wait is the callable's cold start (server, see below).
+- **Room entry, Reel publish, Voice Moment publish and staff panels slow** —
+  root cause is shared: every hot-path callable except five is deployed with
+  `minInstances: 0`, each cold start loads the whole 48-module
+  `functions/index.js`, and the flows chain two callables plus an upload.
+  Client share fixed in source (Moments refresh in place; Moderation reads in
+  parallel; Staff Center paints from cache). Server share **needs an owner
+  cost decision and a Functions deploy** — proposal in DEPLOYMENT.md.
+- **Own music in the Reel composer never opens on iOS** — fixed in source:
+  `XTypeGroup` now carries `uniformTypeIdentifiers`, which `file_selector_ios`
+  requires before it will show a picker.
+- **Avatar rings look heavy** — thinned in source (status rings 1.5/1.1 px,
+  Premium frame 1.6 px, softer glow); colours stay the palette's semantic
+  tokens because the ring test enforces 3:1 contrast on the surface.
+- **UI sounds** — replaced by the v4 pack (ADR-148); not yet auditioned by
+  the owner.
+- **Open, not yet fixed:** Reel trim/crop handles on the video instead of
+  sliders; draggable text/link overlays; a music library (needs a licensed
+  catalogue — product decision); Reel length above 90 s (server
+  `MAX_DURATION_MS` and the 100 MB video cap, deploy); "Delete chat" beyond
+  Archive and "Remove friend" from the list; mute latency of several seconds;
+  a call dropping when both parties background the app (Android has no
+  foreground service for rooms); no "Done" affordance over multiline
+  keyboards; one tester asked for an invite code — TestFlight shows that
+  prompt when the device's Apple ID is not the invited address.
+
 ## Direct-call latency and Android connection acceptance (2026-09-06; fixed in source, physical acceptance pending)
 
 Testers reported that private audio and video calls took an exceptionally long

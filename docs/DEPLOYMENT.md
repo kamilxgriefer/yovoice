@@ -125,6 +125,49 @@ link, no Hosting/Functions/Rules/index/Storage deploy.
   submitted twice.
 - **Scope kept.** No tester lists, tracks, groups, backend, Firebase or
   Chrome settings were changed for this step.
+#### Proposed server changes after the Build 21 tester round — NOT deployed, owner decision needed (2026-09-06)
+
+Source tracing of the tester reports (slow room entry, Reel and Voice Moment
+publish, Friends chat open, staff panels) found one shared cause: every
+user-facing callable except `createLiveKitToken`, `startDirectCall`,
+`createDirectCallToken`, `sendDirectMessage` and `sendRoomMessage` is deployed
+with `minInstances: 0`, and each cold start loads the whole 48-module
+`functions/index.js` (livekit-server-sdk, firebase-admin and friends) before
+handling the request. The hot flows chain two such callables plus an upload,
+so a first action after a quiet period routinely pays two cold starts.
+
+Two options, both reversible, neither applied yet:
+
+1. **Warm the hot path** — add to `LATENCY_CRITICAL_USER_CALLABLES`
+   (`functions/integrity/stage_b_functions.js`) and to the equivalent option
+   of the non-Stage-B callables: `openDirectConversation`, `startRoomVoice`,
+   `reserveReelDraftV2`, `finalizeReelDraftV2`, `reserveMomentDraft`,
+   `finalizeMomentDraft`, `getVoiceMomentsFeedV2`, `listReelsV2`,
+   `getMyStaffCapabilities`, `getStaffOverview` (the last is a 1 GiB
+   privileged instance). Rough recurring cost at europe-west1 idle pricing:
+   about 3–5 USD per 256 MiB instance per month, roughly 12–18 USD for the
+   1 GiB one — on the order of 45–60 USD/month for the full list, less if
+   the staff pair is left cold. Update `functions/test/stage_b_bindings.test.js`
+   (pins the two-name list) and this file; deploy with
+   `firebase deploy --only functions:<names>`.
+2. **Make cold starts cheap** — split the hot callables into their own
+   Firebase codebase or lazy-`require` the heavy SDKs so a cold start no
+   longer loads LiveKit/Stripe for a Reel reservation. No recurring cost, a
+   larger refactor, also a deploy.
+
+**Reel length.** Testers hit the 90 s cap (`MAX_DURATION_MS` in
+`functions/reels/contract.js`, mirrored in `reel_upload.dart`, `reel.dart`
+and the composer's `pickVideo(maxDuration:)`). Raising it to 5–10 minutes
+also needs the 100 MB video cap (`MAX_VIDEO_BYTES`, `storage.rules`
+`/reels/`) raised or client-side compression added, and the upload switched
+from `putData` (whole file in memory) to a streamed `putFile`. A phone
+records roughly 60–130 MB per minute at 1080p, so 5 minutes is 300–650 MB
+uncompressed. Recommended first step: 3 minutes, 250 MB, streamed upload,
+then measure.
+
+Nothing above has been deployed; the client fixes from the same round
+(ADR-147/148) ship with the next build regardless.
+
 ### Build 20 coordinated tester release candidate — 2026-09-05
 
 **WEB AND BOTH INVITED TESTER CHANNELS RELEASED; ACCEPTANCE GAPS REMAIN.**

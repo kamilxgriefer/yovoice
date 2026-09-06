@@ -48,7 +48,7 @@ class DecoratedUserAvatar extends StatelessWidget {
     if (frameColors == null || frameColors.isEmpty) return avatar;
 
     return Container(
-      padding: const EdgeInsets.all(2),
+      padding: const EdgeInsets.all(1.4),
       decoration: BoxDecoration(
         shape: BoxShape.circle,
         gradient: frameColors.length > 1

@@ -19,8 +19,8 @@ class PremiumAvatarFrame extends StatefulWidget {
   const PremiumAvatarFrame({
     required this.child,
     this.enabled = true,
-    this.ringWidth = 2.5,
-    this.gap = 2.0,
+    this.ringWidth = 1.6,
+    this.gap = 1.5,
     super.key,
   });
 
@@ -132,9 +132,9 @@ class _PremiumRingPainter extends CustomPainter {
     // Small controlled glow, fixed alpha — cheap and non-distracting.
     final glow = Paint()
       ..style = PaintingStyle.stroke
-      ..strokeWidth = ringWidth * 2.4
-      ..color = const Color(0xFFC026FF).withValues(alpha: 0.18)
-      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 6);
+      ..strokeWidth = ringWidth * 2.2
+      ..color = const Color(0xFFC026FF).withValues(alpha: 0.10)
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4);
     canvas.drawCircle(center, radius, glow);
   }
 

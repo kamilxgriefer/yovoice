@@ -151,21 +151,39 @@ class _StaffCenterScreenState extends State<StaffCenterScreen> {
   @override
   void initState() {
     super.initState();
-    (widget.capabilityService ?? StaffCapabilityService())
+    final service = widget.capabilityService ?? StaffCapabilityService();
+    // Paint from the capabilities the shell already fetched for this
+    // session (a cache hit returns synchronously), then confirm them with a
+    // fresh server read. Waiting for the fresh callable alone meant a cold
+    // start's worth of spinner every time Staff Center opened.
+    var painted = false;
+    void apply(StaffCapabilities capabilities, {required bool fresh}) {
+      if (!mounted) return;
+      if (!fresh && capabilities == StaffCapabilities.none) return;
+      setState(() {
+        final sectionStillVisible = _visibleSections(
+          capabilities,
+        ).contains(_section);
+        _capabilities = capabilities;
+        _loading = false;
+        if (!painted || !sectionStillVisible) {
+          _section =
+              _visibleSections(capabilities).firstOrNull ??
+              StaffSection.overview;
+        }
+        painted = true;
+      });
+    }
+
+    service
+        .load()
+        .then((cached) => apply(cached, fresh: false))
+        .catchError((_) {});
+    service
         .load(refresh: true)
-        .then((capabilities) {
-          if (mounted) {
-            setState(() {
-              _capabilities = capabilities;
-              _loading = false;
-              _section =
-                  _visibleSections(capabilities).firstOrNull ??
-                  StaffSection.overview;
-            });
-          }
-        })
+        .then((capabilities) => apply(capabilities, fresh: true))
         .catchError((_) {
-          if (mounted) {
+          if (mounted && !painted) {
             setState(() {
               _capabilities = StaffCapabilities.none;
               _loading = false;

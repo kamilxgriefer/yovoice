@@ -16,6 +16,12 @@ someone decide what to pick up next.
 
 ## Done
 
+- **Build 21 tester-round fixes: tab fade-through, More capsule, chat bubble,
+  in-place refreshes, thinner avatar rings, Soft Bells v4 sounds**
+  (2026-09-06, ADR-147/148; **SOURCE + CAPTURE VERIFIED, NOT PUBLISHED**):
+  see Bugs.md "Build 21 tester round" for the per-item status and what still
+  needs a server decision.
+
 - **Account-bound Reels and staged Moments creation** (2026-09-06,
   source commit `2f964640`, ADR-145; **SOURCE + LOCAL VISUAL QA VERIFIED, NOT
   PUBLISHED**; [session record](Sessions/2026-09-06-reels-moments-creation.md)):

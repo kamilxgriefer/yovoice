@@ -529,6 +529,9 @@ class MessageService {
     // text, media and calls keep their independent delivery paths.
   }
 
+  /// Client-side deadline for `openDirectConversation` (see the call site).
+  static const Duration openConversationTimeout = Duration(seconds: 15);
+
   Future<String> openOrCreateConversation({
     required String otherUserId,
     required String otherDisplayName,
@@ -554,7 +557,15 @@ class MessageService {
     final functions = _preferLegacyBehaviour ? null : _functions;
 
     if (functions != null) {
-      final callable = functions.httpsCallable('openDirectConversation');
+      // Bounded on purpose: the plugin default is 60 s, which left the
+      // Friends chat bubble frozen for up to a minute when the callable
+      // cold-started or stalled. 15 s covers a cold start plus the two
+      // server transactions; a timeout surfaces as a real error the screen
+      // can name, and a retry simply finds the root the server did create.
+      final callable = functions.httpsCallable(
+        'openDirectConversation',
+        options: HttpsCallableOptions(timeout: openConversationTimeout),
+      );
       final response = await callable.call<Map<Object?, Object?>>({
         'targetUserId': otherUserId,
         'requestId': _newRequestId(),

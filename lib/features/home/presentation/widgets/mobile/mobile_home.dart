@@ -126,6 +126,9 @@ class _MobileHomeState extends State<MobileHome> {
   ProfileService? _profiles;
   final Map<String, Stream<String>> _recentChatPhotoStreams = {};
   Stream<List<VoiceMoment>>? _feed;
+
+  /// Last page the feed delivered; shown while a refresh is in flight.
+  List<VoiceMoment>? _lastFeedPage;
   HomeFeedService? _feedSource;
 
   Stream<List<Conversation>>? _conversations;
@@ -193,6 +196,11 @@ class _MobileHomeState extends State<MobileHome> {
 
   void _handleVisibility() {
     if (!mounted || widget.isVisible?.value != true) return;
+    // The v2 feed is a one-shot projection, so returning to the retained
+    // Home is the refresh point. The previous page stays on screen as the
+    // StreamBuilder's initial data until the new one arrives — re-creating
+    // the stream used to blank Home for a few frames on every tab return,
+    // which testers saw as a torn screen.
     setState(_loadFeed);
   }
 
@@ -289,7 +297,12 @@ class _MobileHomeState extends State<MobileHome> {
             };
             return StreamBuilder<List<VoiceMoment>>(
               stream: _feed,
+              initialData: _lastFeedPage,
               builder: (context, momentSnapshot) {
+                if (momentSnapshot.hasData &&
+                    momentSnapshot.connectionState != ConnectionState.waiting) {
+                  _lastFeedPage = momentSnapshot.data;
+                }
                 final visibleMoments =
                     (momentSnapshot.data ?? const <VoiceMoment>[])
                         .where(

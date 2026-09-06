@@ -1206,10 +1206,12 @@ class _MainShellState extends State<MainShell>
       builder: (_) => MoreDestinationHost(
         body: screen,
         selectedIndex: _mobileIndex,
-        // The More capsule belongs to the real sheet/popover only. Once a
-        // destination is pushed, the panel has closed and the underlying
-        // accepted destination remains the navigation truth.
-        moreSelected: false,
+        // A pushed More destination IS the place the user chose from the
+        // More sheet, so the dock keeps the More capsule lit for as long as
+        // that destination covers the shell. Lighting the tab underneath
+        // instead read as "the bar says I'm on Home while I'm in Settings"
+        // (tester report, build 21). Tapping the lit More reopens the sheet.
+        moreSelected: true,
         unreadConversationCount: _unreadConversationCount,
         unreadConversationCountListenable: _unreadConversationCountListenable,
         unreadNotificationCount: _unreadNotificationCount,

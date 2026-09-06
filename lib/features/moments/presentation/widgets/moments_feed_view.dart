@@ -334,8 +334,15 @@ class _MomentsFeedViewState extends State<MomentsFeedView> {
   }
 
   Future<void> _load() async {
+    // A refresh over content that is already on screen (returning to the
+    // tab, coming back from the recorder after a publish) keeps that
+    // content visible and swaps the new page in when it arrives. Only the
+    // very first load — or a retry after an error — shows the full-screen
+    // loading state; blanking the feed on every return read as a frozen,
+    // torn screen and a second wait after "Voice Moment posted."
+    final hasContent = _result != null && _phase == _Phase.ready;
     setState(() {
-      _phase = _Phase.loading;
+      if (!hasContent) _phase = _Phase.loading;
       _error = null;
       _loadMoreError = null;
       _loadingMore = false;
@@ -351,6 +358,12 @@ class _MomentsFeedViewState extends State<MomentsFeedView> {
       _expireAt(_expiry.now());
     } catch (error) {
       if (!mounted) return;
+      if (hasContent) {
+        // Keep what the user already has; the stale page is still valid
+        // until its own expiry prunes it.
+        setState(() => _loadMoreError = error);
+        return;
+      }
       setState(() {
         _error = error;
         _phase = _Phase.error;

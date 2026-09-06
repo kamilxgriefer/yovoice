@@ -98,13 +98,19 @@ class PeopleStatusAvatar extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             children: [
               Container(
-                padding: const EdgeInsets.all(2.6),
+                padding: const EdgeInsets.all(2),
                 decoration: BoxDecoration(
                   color: palette.surfaceRaised,
                   shape: BoxShape.circle,
+                  // A hairline ring in the palette-owned status colour: the
+                  // label next to it carries the meaning, the ring only
+                  // reinforces it. The colour stays the exact semantic token
+                  // (it is contrast-checked at 3:1 against this surface);
+                  // what changed is the weight — 2.2/1.4 px rings read as
+                  // heavy and cheap against the dark surfaces.
                   border: Border.all(
                     color: statusForeground,
-                    width: active ? 2.2 : 1.4,
+                    width: active ? 1.5 : 1.1,
                   ),
                   boxShadow: active
                       ? [

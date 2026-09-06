@@ -85,10 +85,17 @@ class _ModerationCenterScreenState extends State<ModerationCenterScreen> {
   Future<void> _loadCounts() async {
     final service = _service;
     if (service == null) return;
-    for (final status in const [ReportStatus.open, ReportStatus.inReview]) {
-      final count = await service.countByStatus(status);
-      if (mounted) setState(() => _statusCounts[status] = count);
-    }
+    // Both aggregates in flight at once — they are independent server-side
+    // counts, and waiting for one before asking for the other doubled the
+    // time before the queue header had its numbers.
+    const statuses = [ReportStatus.open, ReportStatus.inReview];
+    final counts = await Future.wait(statuses.map(service.countByStatus));
+    if (!mounted) return;
+    setState(() {
+      for (var i = 0; i < statuses.length; i++) {
+        _statusCounts[statuses[i]] = counts[i];
+      }
+    });
   }
 
   void _refresh() {
@@ -125,8 +132,16 @@ class _ModerationCenterScreenState extends State<ModerationCenterScreen> {
       if (mounted) setState(() => _isStaff = false);
       return;
     }
-    final staff = await service.isActiveStaff();
-    final role = staff ? await service.currentRole() : 'user';
+    // The staff check and the role read are independent (both read the
+    // caller's own profile); running them together removes one full
+    // Firestore round trip from the panel's first paint. The role is only
+    // kept when the account is confirmed as active staff.
+    final results = await Future.wait<Object>([
+      service.isActiveStaff(),
+      service.currentRole(),
+    ]);
+    final staff = results[0] as bool;
+    final role = staff ? results[1] as String : 'user';
     if (!mounted) return;
     setState(() {
       _isStaff = staff;

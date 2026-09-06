@@ -1,11 +1,19 @@
 import 'package:flutter/material.dart';
 
-/// A paint-only directional fade-through over one retained set of tab pages.
+/// A paint-only fade-through over one retained set of tab pages.
 ///
 /// Every child stays mounted under a stable key. Hidden pages are Offstage and
 /// have tickers disabled, while the selected page and (briefly) the outgoing
 /// page share the viewport. This preserves scroll/form/listener state without
 /// rebuilding pages on each animation frame.
+///
+/// Timing follows Material's fade-through: the outgoing page fades out
+/// completely during the first part of the run, and only then does the
+/// incoming page fade in with a slight scale-up. The two are never both
+/// translucent over each other and the incoming page is never offset, so no
+/// strip or ghost of the previous tab can show through while the new tab is
+/// already selected (the "torn screen" reported on Home). [direction] is kept
+/// for callers and tests; it no longer drives a horizontal slide.
 class YoPreservingTabTransition extends StatelessWidget {
   const YoPreservingTabTransition({
     required this.selectedIndex,
@@ -46,20 +54,30 @@ class YoPreservingTabTransition extends StatelessWidget {
               child: children[index],
               builder: (context, child) {
                 final raw = reduceMotion ? 1.0 : animation.value;
-                final t = const Cubic(0.22, 1, 0.36, 1).transform(raw);
                 final transitioning =
                     !reduceMotion && raw < 1 && previousIndex != selectedIndex;
                 final isCurrent = index == selectedIndex;
                 final isOutgoing = transitioning && index == previousIndex;
                 final visible = isCurrent || isOutgoing;
-                final opacity = isCurrent
-                    ? .82 + .18 * t
-                    : isOutgoing
-                    ? 1 - .16 * t
-                    : 1.0;
-                final horizontalOffset = isCurrent && transitioning
-                    ? direction * 12 * (1 - t)
+
+                // Outgoing: gone by 35 % of the run. Incoming: starts at
+                // 30 % and eases in over the remainder, scaling 96 % → 100 %.
+                // The brief overlap happens while the outgoing page is
+                // already nearly transparent, so nothing of it lingers.
+                final outgoingOpacity = transitioning
+                    ? 1 - Curves.easeIn.transform((raw / .35).clamp(0.0, 1.0))
                     : 0.0;
+                final incomingProgress = transitioning
+                    ? Curves.easeOutCubic.transform(
+                        ((raw - .3) / .7).clamp(0.0, 1.0),
+                      )
+                    : 1.0;
+                final opacity = isCurrent
+                    ? incomingProgress
+                    : isOutgoing
+                    ? outgoingOpacity
+                    : 1.0;
+                final scale = isCurrent ? .96 + .04 * incomingProgress : 1.0;
 
                 return Offstage(
                   offstage: !visible,
@@ -70,9 +88,9 @@ class YoPreservingTabTransition extends StatelessWidget {
                       child: Opacity(
                         key: ValueKey('yo-tab-opacity-$index'),
                         opacity: opacity,
-                        child: Transform.translate(
+                        child: Transform.scale(
                           key: ValueKey('yo-tab-translation-$index'),
-                          offset: Offset(horizontalOffset, 0),
+                          scale: scale,
                           child: child,
                         ),
                       ),

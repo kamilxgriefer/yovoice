@@ -397,10 +397,19 @@ class _ReelComposerScreenState extends State<ReelComposerScreen> {
   }
 
   Future<ReelUploadPayload?> _pickLocalBackingAudio() async {
+    // iOS rejects a type group without UTIs (file_selector_ios throws an
+    // ArgumentError before any picker appears) — which is why "choose your
+    // own music" never opened on iPhone. Each platform reads its own field.
     final group = XTypeGroup(
       label: AppLocalizations.of(context).text('Audio', 'Dźwięk'),
       extensions: <String>['mp3', 'm4a', 'wav'],
       mimeTypes: <String>['audio/mpeg', 'audio/mp4', 'audio/wav'],
+      uniformTypeIdentifiers: <String>[
+        'public.mp3',
+        'public.mpeg-4-audio',
+        'com.apple.m4a-audio',
+        'com.microsoft.waveform-audio',
+      ],
     );
     final file = await openFile(acceptedTypeGroups: <XTypeGroup>[group]);
     if (file == null) return null;
