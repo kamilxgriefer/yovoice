@@ -17,8 +17,7 @@ deployables described in
 
 ### Build 21 tester release — 2026-09-06
 
-**iOS RELEASED TO BOTH TESTFLIGHT COHORTS; ANDROID DRAFT PREPARED, AWAITING THE
-OWNER'S AAB DROP.** Runtime frozen at
+**BOTH INVITED TESTER CHANNELS RELEASED.** Runtime frozen at
 `1bb823c67694b95174418f0799f5bad9cf514088` (`main`, tracked tree clean at build
 time, `pubspec.yaml` `1.0.0+21`). Consoles were read before choosing the
 number: TestFlight held 20/19/18/15 with no 21; Play's internal track held
@@ -62,17 +61,21 @@ because her first invitation failed to send; she was already also a member of
 testers" — so no tester lost access; Beta Testers still lists 7. External
 groups are now one.
 
-**Android — everything except the file.** A draft internal-testing release
-(release 16) was created and saved with name `YO Voice Build 21` and en-US
-notes. The AAB was **not** uploaded by the session: the browser automation
-bridge refused the 117 MB file (10 MB cap, tested — not assumed), and this Mac
-holds no Play Developer API credential (no service account; ADC is the owner's
-account without the `androidpublisher` scope). Builds 18–20 reached Play the
-same way — through the console. **Owner action: drop
-`~/Desktop/yovoice-1.0.0-21.aab` into the open "Utwórz wewnętrzną wersję
-testową" form; review and rollout to the existing `YO Voice Internal Testers`
-list (15) follow in the console.** Until then Android testers remain on Build
-20; nothing was promoted, no track was created, no tester list changed.
+**Android — published to the existing internal cohort at 08:28 CEST.** The
+first attempt stopped short: the browser automation bridge refused the 117 MB
+AAB (10 MB cap, tested), and this Mac holds no Play Developer API credential
+(no service account; ADC is the owner's account without the `androidpublisher`
+scope). The gap was closed without a credential change: the owner granted the
+Claude desktop app **Accessibility** permission, after which the Play Console's
+native macOS file picker was driven through System Events ("Go to Folder" with
+the staged path). Play accepted `App bundle 21 (1.0.0)`, API 24+, target SDK
+36; the review page reported "Gotowe do opublikowania" with no errors, and the
+release was published to the **Internal testing** track — "YO Voice Build 21 —
+Dostępna dla testerów wewnętrznych — Opublikowano: 6 wrz 08:28 —
+Niesprawdzona". The tester list `YO Voice Internal Testers` (15) was not
+modified. Nothing was promoted, no track was created. The "(unreviewed)"
+temporary app name remains, as it did for Build 20. Non-owner Android
+installation is not observed from the console and is not inferred.
 
 Scope: invited tester channels only. No production store release, no public
 link, no Hosting/Functions/Rules/index/Storage deploy.
