@@ -80,6 +80,51 @@ installation is not observed from the console and is not inferred.
 Scope: invited tester channels only. No production store release, no public
 link, no Hosting/Functions/Rules/index/Storage deploy.
 
+
+#### Tester notification email — 2026-09-06 08:45–09:17 CEST
+
+- **Channel.** Existing authenticated Workspace mailbox `kamil@yovoice.app`,
+  Gmail web in the Workspace Chrome profile, sending as the alias
+  **YoVoice <hello@yovoice.app>** (the compose window's default From). No
+  personal Gmail, no API credential, no third-party sender. The browser was
+  driven through macOS Accessibility (System Events); the Claude in Chrome
+  extension cannot see that profile and was used only to read the owner's
+  personal inbox for the delivery test.
+- **Message.** Short English text, subject `YO Voice 1.0.0 (21) is ready to
+  test`: update via TestFlight / Play Store (Internal test), one-paragraph
+  change summary, reply-to-report. Plain text with Gmail's HTML alternative,
+  no attachments, no tracking links.
+- **Owner-only delivery test first.** Sent 08:45:03 +0200 to the owner's
+  personal Gmail. Gmail "Show original" on the receiving side: SPF PASS,
+  DKIM PASS (`d=yovoice.app`, `s=google`), DMARC PASS (`p=NONE`), ARC pass,
+  "Delivered after 12 seconds", landed in **Inbox**. Return-Path is the
+  mailbox address and header From is the alias — expected for a Gmail
+  "Send mail as" alias.
+- **Recipient set.** Union of the Play internal-testers list (15) and the
+  TestFlight groups (7 external + 1 internal) = 23 entries, 21 unique
+  addresses; the owner's address is the delivery-test recipient, the other
+  **20** form the wave. Two people are on both stores and received one
+  message. Addresses live only in the session scratchpad, never in this
+  repository.
+- **Submissions.** 20/20 individual messages (one recipient per message, no
+  BCC broadcast) submitted between 08:55:55 and 09:16:58 CEST; Gmail
+  confirmed "Wiadomość została wysłana" for each. Verified afterwards per
+  address with `in:sent to:<addr> subject:"ready to test"` — exactly one
+  result for each of the 21 addresses (20 testers + owner). No duplicates.
+- **Deliveries.** Only the owner-only message is verified delivered. For the
+  20 testers delivery and inbox placement are **not** verified; no bounce or
+  DSN reached the Workspace mailbox as of 09:25 CEST (Mailer-Daemon /
+  Delivery Status / Undeliverable search empty).
+- **Pre-send aborts (nothing sent, nothing resent).** The automation
+  stopped itself five times before clicking Send: once because the front
+  Chrome window was the personal profile, twice on a stale window
+  reference (Chrome appends a memory-usage suffix to the window title),
+  once after a mis-click opened the contacts picker, once on a transient
+  accessibility read (recipient 16 — the compose was correctly filled,
+  re-validated and sent). None of these was a rejection; no message was
+  submitted twice.
+- **Scope kept.** No tester lists, tracks, groups, backend, Firebase or
+  Chrome settings were changed for this step.
 ### Build 20 coordinated tester release candidate — 2026-09-05
 
 **WEB AND BOTH INVITED TESTER CHANNELS RELEASED; ACCEPTANCE GAPS REMAIN.**
