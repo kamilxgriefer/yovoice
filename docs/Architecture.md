@@ -59,6 +59,19 @@ intentionally separate from the room lifecycle. See ADR-135 and the current
 security audit. A broad rollout remains blocked on an authoritative recipient
 capability/minimum-build gate and physical two-device testing.
 
+**2026-09-06 direct-call latency hardening — source verified, physical acceptance
+pending.** Public client waits now fail within bounded product windows: 20
+seconds for one direct-call operation, 8 seconds per callable attempt, 3 seconds
+for reconciliation, 20 seconds for public LiveKit connect and 3 seconds for
+public cleanup. These bounds do not release the underlying stale-session audio
+barrier; a replacement Room cannot start while an earlier raw native connect or
+cleanup may still own process-global audio. The UI can end or dismiss pending
+work immediately, connected is published only after initial media readiness,
+and a validated late acknowledgement is cleanup authority only. This is a
+client hardening of the existing ADR-117/ADR-135 lifecycle, not a schema,
+backend, security-policy or TURN change. See ADR-146. Real Android↔Android and
+Android↔iOS poor-network acceptance remains required before release.
+
 ## Two repos, one Firebase project
 
 ```

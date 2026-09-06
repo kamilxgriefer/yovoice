@@ -9132,3 +9132,58 @@ reported failure on testers' installed versions.
 - Source, emulator, rendered and Simulator checks remain distinct from physical
   upload/playback and deployed-client acceptance. No store build is published
   by this change's source push.
+
+## ADR-146: Bound public direct-call waits without weakening stale-session isolation
+
+**Date:** 2026-09-06
+**Status:** Source verified; physical Android acceptance pending; not deployed
+
+### Context
+
+Testers reported exceptionally slow private audio/video connection and Android
+participants unable to connect. The client could accumulate roughly two minutes
+of 60-second callable/retry waits, pending UI actions could not be interrupted,
+microphone publication failure could still look connected, and late native
+connect, cleanup or camera completion could race teardown. Shortening a visible
+timeout alone would be unsafe if it allowed a new Room to overlap a stale native
+session that still owns process-global audio.
+
+### Decision
+
+Bound one direct-call operation to 20 seconds, each callable attempt to 8 seconds
+and reconciliation to 3 seconds. Bound the public LiveKit connect wait to 20
+seconds and public cleanup wait to 3 seconds. Keep the underlying raw
+connect/cleanup barrier fail-closed after those public bounds: do not construct a
+replacement Room until the old native audio owner has actually settled.
+
+Publish connected only after initial media readiness. Treat microphone
+publication failure as connection failure, explicitly permit listen-only only
+when granted, and keep pending camera candidates tied to their Room so teardown
+can stop them before and after late publication. A validated acknowledgement
+arriving after dismissal is cleanup-only authority and must never reopen media.
+Close, Back and End synchronously establish a finish intent and stop local media;
+server reconciliation may complete asynchronously without keeping the route
+open.
+
+### Reasoning
+
+Users need a bounded, actionable outcome, but connection speed cannot be bought
+by allowing two native audio sessions to overlap. Separating public UX deadlines
+from the stricter internal ownership barrier makes the common failure fast while
+preserving isolation when a platform future never settles. Media readiness and
+cleanup-only late acknowledgements prevent stale asynchronous success from
+becoming a false connected state or reopening capture after hang-up.
+
+### Consequences
+
+- The source gate passes 2,534/2,534 Flutter tests, 47/47 emulator-backed
+  direct-call backend tests, `flutter analyze`, an Android debug APK build and
+  an Android release AAB build.
+- A stuck native session produces a bounded closing/retry error instead of
+  overlapping audio; the internal barrier is intentionally not released by a
+  timeout.
+- Physical Android↔Android and Android↔iOS testing, including poor-network
+  connection and teardown, remains a release condition because no physical
+  Android device or current production Firebase logs were available.
+- No schema, backend contract, Security Rules or TURN configuration changed, and
+  this decision does not publish a tester build.

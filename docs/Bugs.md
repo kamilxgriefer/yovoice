@@ -18,6 +18,34 @@ about things that are broken, risky, or need verification.
 > before believing the code.
 > [ADR-082](Decisions.md#adr-082-a-feature-is-not-shipped-until-a-user-can-reach-it--reachability-is-part-of-done-and-a-green-suite-cannot-prove-it).
 
+## Direct-call latency and Android connection acceptance (2026-09-06; fixed in source, physical acceptance pending)
+
+Testers reported that private audio and video calls took an exceptionally long
+time to connect and that Android participants could not connect at all. The
+source audit confirmed several independent client-side failure amplifiers: the
+previous 60-second callable/retry windows could accumulate to roughly two
+minutes, pending call actions made the UI effectively non-interruptible, a
+microphone publication failure could still surface as connected, and late
+connect, cleanup or camera futures could race teardown and revive stale media.
+
+The direct-call operation is now bounded to 20 seconds, each callable attempt to
+8 seconds and reconciliation to 3 seconds. The public LiveKit connect and
+cleanup waits are bounded to 20 and 3 seconds respectively, while the underlying
+audio cleanup barrier deliberately remains fail-closed: a timed-out stale native
+session cannot authorize a replacement Room. Connected is exposed only after
+initial media readiness. Late validated acknowledgements are retained solely
+for cleanup, camera candidates are stopped across teardown races, and Close,
+Back and End can cancel a pending presentation immediately. See ADR-146.
+
+The source gate passes 2,534/2,534 Flutter tests, 47/47 emulator-backed
+direct-call backend tests, `flutter analyze`, an Android debug APK build and an
+Android release AAB build.
+This does **not** prove the tester report resolved on real devices: no physical
+Android device or current production Firebase logs were available during the
+repair. Android↔Android and Android↔iOS tests on real devices, including a
+poor-network run, remain a release condition. The repair changes no schema,
+backend contract, Security Rules or TURN configuration.
+
 ## Build 20 fixes and remaining acceptance gaps (2026-09-05; invited testing)
 
 ### Reels authorship and creation report — local remediation, live acceptance pending
