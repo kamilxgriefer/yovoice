@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
+import 'package:yovoice/features/friends/data/models/friend_user.dart';
 import 'package:yovoice/features/rooms/presentation/screens/room_settings_screen.dart';
 import 'package:yovoice/features/home/presentation/widgets/shared/home_room_board.dart';
 import 'package:yovoice/features/home/presentation/widgets/shared/home_overview_sections.dart';
@@ -29,6 +30,7 @@ import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
 import 'package:yovoice/shared/widgets/backgrounds/yo_page_background.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 import 'package:yovoice/shared/widgets/states/yo_error_state.dart';
+import 'package:yovoice/features/home/presentation/widgets/shared/home_people_strip.dart';
 
 /// Live-first Home: followed Moments, one featured real room, quick routes,
 /// social activity, recent conversations and owned-room management.
@@ -122,6 +124,10 @@ class _MobileHomeState extends State<MobileHome> {
   RoomService? _rooms;
   Stream<List<VoiceRoom>>? _liveRooms;
   Stream<List<FollowUser>>? _following;
+
+  /// The account's real friends. Home used to take a FriendService and never
+  /// read it, so only followed creators appeared.
+  Stream<List<FriendUser>>? _friends;
   Stream<UserProfile>? _profile;
   ProfileService? _profiles;
   final Map<String, Stream<String>> _recentChatPhotoStreams = {};
@@ -151,6 +157,11 @@ class _MobileHomeState extends State<MobileHome> {
       );
     } catch (_) {
       _following = null;
+    }
+    try {
+      _friends = (widget.friendService ?? FriendService()).watchFriends();
+    } catch (_) {
+      _friends = null;
     }
     try {
       _profiles = widget.profileService ?? ProfileService();
@@ -387,6 +398,10 @@ class _MobileHomeState extends State<MobileHome> {
                       currentUserId: _resolvedUserId,
                       onOpenMoment: widget.onOpenMoment,
                       onOpenChain: widget.onOpenChain,
+                    ),
+                    HomePeopleStrip(
+                      friends: _friends,
+                      onSeeAll: widget.onOpenFriends,
                     ),
                     MobileSectionHeader(
                       title: copy.text('Your recent chats', 'Ostatnie czaty'),

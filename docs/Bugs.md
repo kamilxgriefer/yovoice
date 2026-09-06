@@ -18,6 +18,27 @@ about things that are broken, risky, or need verification.
 > before believing the code.
 > [ADR-082](Decisions.md#adr-082-a-feature-is-not-shipped-until-a-user-can-reach-it--reachability-is-part-of-done-and-a-green-suite-cannot-prove-it).
 
+## Home showed one person instead of the friends list (2026-09-06; fixed in source)
+
+The live-first Home replaced the old "Your people" row and never brought it
+back: `MobileHome` and `DesktopHome` both accept a `FriendService` and never
+called it, so the only people on the screen came from the follow graph —
+`MobileVoiceTrending` caps that at two rows and the desktop creators card at
+four. An account with a dozen friends therefore saw one person, and the
+count never matched the Friends tab.
+
+Fixed by `HomePeopleStrip`
+(lib/features/home/presentation/widgets/shared/home_people_strip.dart): the
+account's real friends from `FriendService.watchFriends()`, online first then
+alphabetical, with the shared availability ring language (green available,
+yellow be right back, red do not disturb, grey offline) and a See all that
+opens the Friends tab. It renders nothing when there are no friends, when the
+read fails, or when there is no session — never a fabricated row. The strip
+takes its height from the measured text so 200 % text at 320 px does not clip
+the status label. Covered by test/home_people_strip_test.dart; the Moments
+rail assertion in test/mobile_home_test.dart was scoped to the rail, since a
+friend without a Moment is now legitimately visible elsewhere on Home.
+
 ## Build 21 tester round — navigation, latency and creation gaps (2026-09-06; partly fixed in source, not published)
 
 Reported by the owner after the 1.0.0 (21) tester wave. Status per item:

@@ -33,6 +33,8 @@ import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
 import 'package:yovoice/shared/widgets/backgrounds/yo_page_background.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 import 'package:yovoice/shared/widgets/states/yo_error_state.dart';
+import 'package:yovoice/features/home/presentation/widgets/shared/home_people_strip.dart';
+import 'package:yovoice/features/friends/data/models/friend_user.dart';
 
 /// "Pulse Home" — the DESKTOP Home surface.
 ///
@@ -137,6 +139,9 @@ class DesktopHome extends StatefulWidget {
 }
 
 class _DesktopHomeState extends State<DesktopHome> {
+  /// See HomePeopleStrip: the desktop Home also took a FriendService
+  /// without ever reading it.
+  Stream<List<FriendUser>>? _friends;
   RoomService? _rooms;
   Stream<List<VoiceRoom>>? _liveRooms;
   Stream<UserProfile>? _profile;
@@ -154,6 +159,11 @@ class _DesktopHomeState extends State<DesktopHome> {
   @override
   void initState() {
     super.initState();
+    try {
+      _friends = (widget.friendService ?? FriendService()).watchFriends();
+    } catch (_) {
+      _friends = null;
+    }
     // Each dependency is optional at runtime: Home must degrade to empty
     // states rather than throw when a service cannot be constructed.
     try {
@@ -402,6 +412,12 @@ class _DesktopHomeState extends State<DesktopHome> {
           currentUserId: widget.currentUserId,
           onOpenMoment: widget.onOpenMoment,
           onOpenChain: widget.onOpenChain,
+        ),
+        const SizedBox(height: 10),
+        HomePeopleStrip(
+          friends: _friends,
+          onSeeAll: widget.onViewAllFriends,
+          horizontalPadding: 0,
         ),
         const SizedBox(height: 22),
         _HomeSectionTitle(

@@ -21,6 +21,7 @@ import 'package:yovoice/features/profile/data/services/profile_service.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
 import 'package:yovoice/features/staff/data/staff_capabilities.dart';
+import 'package:yovoice/features/home/presentation/widgets/mobile/mobile_home_sections.dart';
 
 import 'voice_moment_test_doubles.dart';
 import 'home_watermark_visual_capture.dart';
@@ -585,9 +586,19 @@ void main() {
     }
 
     expect(find.byKey(const ValueKey('home-your-moment')), findsOneWidget);
+    // Scoped to the Moments rail: a friend with no Moment is on Home in the
+    // "Your people" strip (that is the point of that strip), but must never
+    // appear as a Moment author here.
+    final rail = find.byType(MobileMomentsStrip);
+    expect(rail, findsOneWidget);
+    Finder inRail(String text) =>
+        find.descendant(of: rail, matching: find.text(text));
+    // One chain tile in the rail for that author; the same name also appears
+    // in the creators card, which this assertion no longer conflates.
+    expect(inRail('Followed voice'), findsOneWidget);
     expect(find.text('Followed voice'), findsNWidgets(2));
-    expect(find.text('Friend only'), findsNothing);
-    expect(find.text('Silent profile'), findsNothing);
+    expect(inRail('Friend only'), findsNothing);
+    expect(inRail('Silent profile'), findsNothing);
 
     await tester.tap(find.byKey(const ValueKey('home-moment-followed-newer')));
     await tester.pump();

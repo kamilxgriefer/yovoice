@@ -25,6 +25,7 @@ import 'package:yovoice/firebase_options.dart';
 import 'package:yovoice/shared/widgets/inputs/yo_keyboard_done_bar.dart';
 import 'package:yovoice/shared/widgets/profile/availability_picker.dart';
 import 'package:yovoice/shared/widgets/profile/people_status_ring.dart';
+import 'package:yovoice/features/home/presentation/widgets/shared/home_people_strip.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -113,6 +114,11 @@ class _Gallery extends StatelessWidget {
         'Pokój — zaproś znajomego',
         'Lista znajomych, wysyłka zaproszenia i link do udostępnienia.',
         (_) => const _InviteDemo(),
+      ),
+      (
+        'Home — pasek znajomych (bug)',
+        'Home pokazywał tylko obserwowanych twórców; teraz są wszyscy znajomi.',
+        (_) => const _PeopleStripDemo(),
       ),
       (
         'Klawiatura — przycisk Gotowe',
@@ -491,5 +497,43 @@ class _KeyboardDemo extends StatelessWidget {
       ),
     ),
     bottomNavigationBar: const YoKeyboardDoneBar(),
+  );
+}
+
+class _PeopleStripDemo extends StatelessWidget {
+  const _PeopleStripDemo();
+
+  static FriendUser _person(
+    String id,
+    String name, {
+    bool online = false,
+    String? availability,
+  }) => FriendUser(
+    id: id,
+    displayName: name,
+    email: '',
+    photoUrl: null,
+    isOnline: online,
+    availability: availability,
+    lastSeen: DateTime(2026, 9, 6),
+  );
+
+  @override
+  Widget build(BuildContext context) => ListView(
+    children: [
+      const SizedBox(height: 8),
+      HomePeopleStrip(
+        friends: Stream<List<FriendUser>>.value(<FriendUser>[
+          _person('a', 'Ada', online: true, availability: 'available'),
+          _person('b', 'Ola', online: true, availability: 'away'),
+          _person('c', 'Jan', online: true, availability: 'busy'),
+          _person('d', 'Ewa'),
+          _person('e', 'Kuba'),
+          _person('f', 'Marta', online: true),
+          _person('g', 'Tomek'),
+        ]),
+        onSeeAll: () {},
+      ),
+    ],
   );
 }
