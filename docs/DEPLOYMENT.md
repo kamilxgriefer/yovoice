@@ -15,6 +15,43 @@ deployables described in
 | Storage rules | `firebase deploy --only storage` | Manual |
 | `yovoice-website` | Vercel | Automatic, on push to `main` (separate repo) |
 
+### Backend deploy for the Build 22 round — 2026-09-07
+
+Maintainer-authorized on 2026-09-07 in answer to a direct question: deploy
+everything the round needs. Three client features were otherwise inert —
+the availability status, Reel likes and comments, and Reel comment
+moderation all call server code that did not exist in production.
+
+Deployed from `591b8840` (`main`, tracked tree clean), project
+`yovoice-ec54a`, region `europe-west1`, in the order the moderation review
+required.
+
+| Step | Command | Result |
+|---|---|---|
+| 1. Rules | `firebase deploy --only firestore:rules` | `released rules firestore.rules to cloud.firestore`. Only pre-existing warnings (unused `clubMessageModeratorRemovalAllowed`, `parentMomentIsPublished`). |
+| 2. Moderation callables | `firebase deploy --only functions:moderateReport,functions:createReelCommentReport,functions:removeReelComment` | `createReelCommentReport` created, `removeReelComment` created, `moderateReport` updated. |
+| 3. Everything else | `firebase deploy --only functions` | All remaining functions updated, including the engagement callables and the profile projection carrying `deriveVisibleAvailability`. |
+
+Moderation went out **before** engagement on purpose: it guarantees there is
+never a window in which a Reel comment can be created without a removal
+path. Indexes needed no deploy — `status+targetType+createdAt` and
+`status+targetType+reason+createdAt` already exist and match the
+`reelComment` queue query exactly.
+
+**Verified after the deploy, read from the deployed function list, not the
+config:** `setReelLike`, `createReelComment`, `deleteReelComment`,
+`createReelCommentReport`, `removeReelComment` and `moderateReport` are all
+present as v2 callables in `europe-west1` (110 functions total).
+
+Pre-deploy gates: `flutter analyze --no-pub` clean; `flutter test` 2768/2768;
+`firestore-tests` 534 passed / 0 failed; `functions` emulator suite 712
+passing with one failure, `simultaneous reciprocal requests converge on one
+friendship` in `functions/test/social_graph_security.test.js` — a
+pre-existing timing flake last touched in build 16, untouched by this work,
+and passing in isolation (3.4 s versus 8.6 s under full-suite contention).
+
+No Hosting deploy, no Storage rules deploy, no index deploy.
+
 ### Build 21 tester release — 2026-09-06
 
 **BOTH INVITED TESTER CHANNELS RELEASED.** Runtime frozen at
