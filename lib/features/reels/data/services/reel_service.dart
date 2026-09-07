@@ -126,11 +126,28 @@ class ReelService {
   final Map<String, Future<Uri>> _pendingGrants = {};
   final Map<String, String> _deleteRequestIds = <String, String>{};
 
+  /// Retry-stable request ids for the engagement callables, keyed by the exact
+  /// intent they encode. A lost acknowledgement must replay to the identical
+  /// server result instead of double-posting or double-counting, so an id
+  /// survives a failure and is dropped only once the operation completed (or
+  /// the server proved the id can never succeed).
+  final Map<String, String> _engagementRequestIds = <String, String>{};
+
   /// Identity only: profile/claim refreshes do not reset a populated feed.
   String? get currentUserId {
     final uid = _auth.currentUser?.uid;
     return uid == null || uid.isEmpty ? null : uid;
   }
+
+  /// The client's cached view of the outbound-content privilege.
+  ///
+  /// `setReelLike` and `createReelComment` require a verified email; reading a
+  /// Reel and deleting your own comment do not. This is a presentation hint so
+  /// an unverified account is told *why* it cannot post instead of meeting a
+  /// dead control — the server remains the only authority, and a stale cache
+  /// simply means the callable answers `failed-precondition` and the UI shows
+  /// the same explanation.
+  bool get isEmailVerified => _auth.currentUser?.emailVerified ?? false;
 
   Stream<String?> get identityChanges =>
       _auth.userChanges().map((user) => user?.uid).distinct();
@@ -529,9 +546,372 @@ class ReelService {
     return _requiredSafeId(response['reportId'], 'reportId');
   }
 
+  // ---------------------------------------------------------------------
+  // Engagement (likes and comments).
+  //
+  // Every entry point follows the conventions already established above:
+  // `_withIdentity` binds the operation to one signed-in account and discards
+  // a result that lands after an account boundary, `_call` reaches the same
+  // europe-west1 callable surface, and a retry-stable requestId makes a lost
+  // acknowledgement replay instead of duplicating server state.
+  // ---------------------------------------------------------------------
+
+  /// Runs one engagement callable and translates its status code into an
+  /// outcome the UI can explain.
+  ///
+  /// Each branch corresponds to a real refusal in the deployed function. In
+  /// particular `permission-denied` is the backend's single deliberate
+  /// refusal envelope for "this Reel is unavailable" — it deliberately does
+  /// not distinguish a block, a suspension, moderation or expiry, so this
+  /// client must not invent that distinction either.
+  ///
+  /// [retryStableKey] is set only when this service owns the request id for
+  /// the call, so a refusal that poisons that id can release it.
+  Future<Map<Object?, Object?>> _engagementCall(
+    String name,
+    Map<String, Object?> payload, {
+    String? retryStableKey,
+  }) async {
+    try {
+      return await _call(name, payload);
+    } on FirebaseFunctionsException catch (error, stackTrace) {
+      final failure = _classifyEngagement(error);
+      // Only a poisoned id is discarded. `already-exists` means this id is
+      // already bound to a different input, and `invalid-argument` means the
+      // payload will never be accepted; replaying either is pure loss. Every
+      // other refusal left no ledger row, so the id stays retry-stable.
+      if (retryStableKey != null &&
+          (failure == ReelEngagementFailure.conflict ||
+              failure == ReelEngagementFailure.invalid)) {
+        _engagementRequestIds.remove(retryStableKey);
+      }
+      Error.throwWithStackTrace(
+        ReelEngagementException(failure, cause: error),
+        stackTrace,
+      );
+    } on FirebaseException catch (error, stackTrace) {
+      Error.throwWithStackTrace(
+        ReelEngagementException(
+          error.code == 'no-app'
+              ? ReelEngagementFailure.unavailable
+              : ReelEngagementFailure.unknown,
+          cause: error,
+        ),
+        stackTrace,
+      );
+    }
+  }
+
+  static ReelEngagementFailure _classifyEngagement(
+    FirebaseFunctionsException error,
+  ) => switch (error.code) {
+    'unauthenticated' => ReelEngagementFailure.signedOut,
+    // requireActor's email-verification gate on setReelLike and
+    // createReelComment, and the availability deadline on every path.
+    'failed-precondition' => ReelEngagementFailure.emailUnverified,
+    // consumeRateLimit: 60 likes/min, 20 comments/min, 30 deletes/10 min,
+    // 60 views/min, per account.
+    'resource-exhausted' => ReelEngagementFailure.rateLimited,
+    // The single refusal envelope. Never branched on.
+    'permission-denied' || 'not-found' => ReelEngagementFailure.unavailable,
+    'already-exists' => ReelEngagementFailure.conflict,
+    'invalid-argument' => ReelEngagementFailure.invalid,
+    'unavailable' || 'deadline-exceeded' => ReelEngagementFailure.offline,
+    _ => ReelEngagementFailure.unknown,
+  };
+
+  /// Sets this viewer's like state on [reelId].
+  ///
+  /// `changed: false` means the server already held the requested state — a
+  /// successful no-op, not a failure. The returned `likeCount` is always the
+  /// authority, so a caller that applied an optimistic toggle adopts it
+  /// verbatim instead of incrementing its own copy.
+  Future<ReelLikeResult> setLike(
+    String reelId, {
+    required bool liked,
+    String? requestId,
+  }) => _withIdentity((identity) async {
+    final id = _requiredSafeId(reelId, 'reelId');
+    final key = 'like:$id:$liked';
+    final stableRequestId = requestId == null
+        ? _engagementRequestIds.putIfAbsent(
+            key,
+            ReelPublishSession.newRequestId,
+          )
+        : _requiredSafeId(requestId, 'requestId');
+    final response = await _engagementCall('setReelLike', <String, Object?>{
+      'reelId': id,
+      'liked': liked,
+      'requestId': stableRequestId,
+    }, retryStableKey: requestId == null ? key : null);
+    identity.ensureCurrent();
+    final result = ReelLikeResult.fromWire(response);
+    if (result.reelId != id || result.liked != liked) {
+      throw const FormatException('Malformed Reel like response.');
+    }
+    // Both directions are released once either completes: a stale id from an
+    // earlier failed toggle must never be replayed after the opposite toggle
+    // succeeded, or the replay would answer with a long-obsolete count.
+    _engagementRequestIds
+      ..remove('like:$id:true')
+      ..remove('like:$id:false');
+    return result;
+  });
+
+  /// Posts one text comment on [reelId].
+  ///
+  /// [text] is trimmed here so the value hashed into the server's idempotency
+  /// identity is byte-identical across retries of the same attempt.
+  ///
+  /// Unlike a like or a comment deletion, one composition attempt has no
+  /// natural key this service could derive — the same person may legitimately
+  /// post the same words twice. The composer therefore owns [requestId] and
+  /// holds it across retries, exactly as [reportReel] expects of its caller.
+  Future<ReelCommentResult> createComment(
+    String reelId, {
+    required String text,
+    String? requestId,
+  }) => _withIdentity((identity) async {
+    final id = _requiredSafeId(reelId, 'reelId');
+    final body = text.trim();
+    if (body.isEmpty || body.length > ReelComment.maxTextLength) {
+      throw ArgumentError.value(
+        text,
+        'text',
+        'Use 1 to ${ReelComment.maxTextLength} characters.',
+      );
+    }
+    final response =
+        await _engagementCall('createReelComment', <String, Object?>{
+          'reelId': id,
+          'text': body,
+          'requestId': requestId == null
+              ? ReelPublishSession.newRequestId()
+              : _requiredSafeId(requestId, 'requestId'),
+        });
+    identity.ensureCurrent();
+    final result = ReelCommentResult.fromWire(response);
+    if (result.reelId != id) {
+      throw const FormatException('Malformed Reel comment response.');
+    }
+    return result;
+  });
+
+  /// Removes one of this viewer's own comments. The backend refuses any other
+  /// author with the same single refusal envelope; there is no moderator or
+  /// report path on Reel comments yet, so this client offers neither.
+  Future<ReelCommentDeletion> deleteComment(
+    String reelId, {
+    required String commentId,
+    String? requestId,
+  }) => _withIdentity((identity) async {
+    final id = _requiredSafeId(reelId, 'reelId');
+    final comment = _requiredSafeId(commentId, 'commentId');
+    final key = 'commentDelete:$id:$comment';
+    final stableRequestId = requestId == null
+        ? _engagementRequestIds.putIfAbsent(
+            key,
+            ReelPublishSession.newRequestId,
+          )
+        : _requiredSafeId(requestId, 'requestId');
+    final response = await _engagementCall(
+      'deleteReelComment',
+      <String, Object?>{
+        'reelId': id,
+        'commentId': comment,
+        'requestId': stableRequestId,
+      },
+      retryStableKey: requestId == null ? key : null,
+    );
+    identity.ensureCurrent();
+    final result = ReelCommentDeletion.fromWire(response);
+    if (result.reelId != id || result.commentId != comment) {
+      throw const FormatException('Malformed Reel comment deletion response.');
+    }
+    _engagementRequestIds.remove(key);
+    return result;
+  });
+
+  /// Loads one Reel with a page of its comment thread, oldest first.
+  Future<ReelView> loadView(
+    String reelId, {
+    int commentLimit = ReelView.maxCommentLimit,
+    String? commentCursor,
+  }) => _withIdentity((identity) async {
+    final id = _requiredSafeId(reelId, 'reelId');
+    if (commentLimit < 1 || commentLimit > ReelView.maxCommentLimit) {
+      throw ArgumentError.value(
+        commentLimit,
+        'commentLimit',
+        'Use a page size from 1 to ${ReelView.maxCommentLimit}.',
+      );
+    }
+    // A read carries no idempotency identity, so there is no id to keep.
+    final response = await _engagementCall('getReelViewV2', <String, Object?>{
+      'reelId': id,
+      'commentLimit': commentLimit,
+      'commentCursor': commentCursor,
+    });
+    identity.ensureCurrent();
+    final view = ReelView.fromWire(response);
+    if (view.reel.id != id) {
+      throw const FormatException('Malformed Reel view response.');
+    }
+    return view;
+  });
+
   static void clearAllMediaAccessCaches() {
     _grantEpoch += 1;
     _grantCache.clear();
+  }
+}
+
+/// Why an engagement call did not go through, in terms a viewer can act on.
+///
+/// Deliberately coarser than the callable's status codes: [unavailable] is the
+/// backend's one refusal envelope for a Reel this viewer may not engage with,
+/// and splitting it back apart in the client would rebuild exactly the oracle
+/// the server refuses to be.
+enum ReelEngagementFailure {
+  /// The sign-in ended, or the token was rejected.
+  signedOut,
+
+  /// Liking and commenting need a verified email; reading and deleting your
+  /// own comment do not.
+  emailUnverified,
+
+  /// The per-account budget for this operation is spent.
+  rateLimited,
+
+  /// This Reel cannot be engaged with. One refusal, no reason.
+  unavailable,
+
+  /// The retry-stable request id is already bound to different input.
+  conflict,
+
+  /// The payload was rejected outright.
+  invalid,
+
+  /// Transport, not policy.
+  offline,
+
+  /// Anything else, including an undeployed callable.
+  unknown,
+}
+
+/// A refused engagement call, carrying the raw cause for logging only.
+@immutable
+class ReelEngagementException implements Exception {
+  const ReelEngagementException(this.reason, {this.cause});
+
+  final ReelEngagementFailure reason;
+  final Object? cause;
+
+  @override
+  String toString() => 'ReelEngagementException(${reason.name})';
+}
+
+@immutable
+class ReelLikeResult {
+  const ReelLikeResult({
+    required this.reelId,
+    required this.liked,
+    required this.changed,
+    required this.likeCount,
+  });
+
+  final String reelId;
+  final bool liked;
+
+  /// False when the server already held this state. Replaying the same
+  /// requestId returns the identical result, including this flag.
+  final bool changed;
+  final int likeCount;
+
+  factory ReelLikeResult.fromWire(Map<Object?, Object?> raw) {
+    final map = _exactWireMap(raw, const <String>{
+      'reelId',
+      'liked',
+      'changed',
+      'likeCount',
+    }, 'Reel like result');
+    final liked = map['liked'];
+    final changed = map['changed'];
+    final likeCount = map['likeCount'];
+    if (liked is! bool || changed is! bool || likeCount is! int) {
+      throw const FormatException('Malformed Reel like result.');
+    }
+    if (likeCount < 0) {
+      throw const FormatException('Negative Reel like count.');
+    }
+    return ReelLikeResult(
+      reelId: _requiredSafeId(map['reelId'], 'reelId'),
+      liked: liked,
+      changed: changed,
+      likeCount: likeCount,
+    );
+  }
+}
+
+@immutable
+class ReelCommentResult {
+  const ReelCommentResult({
+    required this.reelId,
+    required this.commentId,
+    required this.commentCount,
+  });
+
+  final String reelId;
+  final String commentId;
+  final int commentCount;
+
+  factory ReelCommentResult.fromWire(Map<Object?, Object?> raw) {
+    final map = _exactWireMap(raw, const <String>{
+      'reelId',
+      'commentId',
+      'created',
+      'commentCount',
+    }, 'Reel comment result');
+    final commentCount = map['commentCount'];
+    if (map['created'] != true || commentCount is! int || commentCount < 1) {
+      throw const FormatException('Malformed Reel comment result.');
+    }
+    return ReelCommentResult(
+      reelId: _requiredSafeId(map['reelId'], 'reelId'),
+      commentId: _requiredSafeId(map['commentId'], 'commentId'),
+      commentCount: commentCount,
+    );
+  }
+}
+
+@immutable
+class ReelCommentDeletion {
+  const ReelCommentDeletion({
+    required this.reelId,
+    required this.commentId,
+    required this.commentCount,
+  });
+
+  final String reelId;
+  final String commentId;
+  final int commentCount;
+
+  factory ReelCommentDeletion.fromWire(Map<Object?, Object?> raw) {
+    final map = _exactWireMap(raw, const <String>{
+      'reelId',
+      'commentId',
+      'deleted',
+      'commentCount',
+    }, 'Reel comment deletion');
+    final commentCount = map['commentCount'];
+    if (map['deleted'] != true || commentCount is! int || commentCount < 0) {
+      throw const FormatException('Malformed Reel comment deletion.');
+    }
+    return ReelCommentDeletion(
+      reelId: _requiredSafeId(map['reelId'], 'reelId'),
+      commentId: _requiredSafeId(map['commentId'], 'commentId'),
+      commentCount: commentCount,
+    );
   }
 }
 

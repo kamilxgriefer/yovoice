@@ -11,6 +11,7 @@ import 'package:yovoice/features/reels/data/models/reel.dart';
 import 'package:yovoice/features/reels/data/models/reel_composition.dart';
 import 'package:yovoice/features/reels/data/services/reel_service.dart';
 import 'package:yovoice/features/reels/presentation/widgets/reel_composition_canvas.dart';
+import 'package:yovoice/features/reels/presentation/widgets/reel_engagement_bar.dart';
 import 'package:yovoice/features/reels/presentation/widgets/reel_playback_coordinator.dart';
 import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
 import 'package:yovoice/shared/widgets/states/yo_error_state.dart';
@@ -32,6 +33,10 @@ class ReelCard extends StatefulWidget {
     this.isActive = true,
     this.onDelete,
     this.onReport,
+    this.onLike,
+    this.onComments,
+    this.likePending = false,
+    this.commentsOpen = false,
     super.key,
   });
 
@@ -42,6 +47,19 @@ class ReelCard extends StatefulWidget {
   final bool isActive;
   final Future<void> Function()? onDelete;
   final Future<void> Function()? onReport;
+
+  /// Engagement is owned by the feed, not by the card: the card renders the
+  /// counts it is given and reports intent upwards. That is what keeps a
+  /// card, the wide context panel and an open thread showing one truth.
+  ///
+  /// Null means there is no viewer to act as. An unverified account keeps a
+  /// live control that explains its gate rather than a dead button.
+  final VoidCallback? onLike;
+  final VoidCallback? onComments;
+  final bool likePending;
+
+  /// True while the wide layout already shows this Reel's thread beside it.
+  final bool commentsOpen;
 
   @override
   State<ReelCard> createState() => _ReelCardState();
@@ -201,19 +219,39 @@ class _ReelCardState extends State<ReelCard> with WidgetsBindingObserver {
                   ),
                 ),
               ),
-              PositionedDirectional(
-                start: 18,
-                end: 18,
-                bottom: 18,
-                child: _Footer(
-                  reel: widget.reel,
-                  audioPlaying: _playback.isPlaying,
-                  audioLoading: _playback.isLoading,
-                  audioEnabled: _playback.canToggle,
-                  showAudio: widget.reel.backingAudio != null,
-                  onAudio: _togglePlayback,
-                  onDelete: widget.onDelete,
-                  onReport: widget.onReport,
+              // The footer is aligned to the artwork, not to the card. A card
+              // wider than its inscribed 9:16 frame leaves margins painted in
+              // the ordinary surface colour — light in Pearl — and white
+              // overlay text laid across those margins is unreadable. The
+              // empty area of this stack takes no hits, so the playback
+              // surface underneath still receives them.
+              Center(
+                child: AspectRatio(
+                  aspectRatio: 9 / 16,
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: <Widget>[
+                      PositionedDirectional(
+                        start: 18,
+                        end: 18,
+                        bottom: 18,
+                        child: _Footer(
+                          reel: widget.reel,
+                          audioPlaying: _playback.isPlaying,
+                          audioLoading: _playback.isLoading,
+                          audioEnabled: _playback.canToggle,
+                          showAudio: widget.reel.backingAudio != null,
+                          onAudio: _togglePlayback,
+                          onDelete: widget.onDelete,
+                          onReport: widget.onReport,
+                          onLike: widget.onLike,
+                          onComments: widget.onComments,
+                          likePending: widget.likePending,
+                          commentsOpen: widget.commentsOpen,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ],
@@ -517,9 +555,13 @@ class _Footer extends StatelessWidget {
     required this.audioLoading,
     required this.audioEnabled,
     required this.showAudio,
+    required this.likePending,
+    required this.commentsOpen,
     this.onAudio,
     this.onDelete,
     this.onReport,
+    this.onLike,
+    this.onComments,
   });
 
   final Reel reel;
@@ -527,13 +569,41 @@ class _Footer extends StatelessWidget {
   final bool audioLoading;
   final bool audioEnabled;
   final bool showAudio;
+  final bool likePending;
+  final bool commentsOpen;
   final VoidCallback? onAudio;
   final Future<void> Function()? onDelete;
   final Future<void> Function()? onReport;
+  final VoidCallback? onLike;
+  final VoidCallback? onComments;
 
   @override
   Widget build(BuildContext context) {
     final copy = AppLocalizations.of(context);
+    // Identity and caption first, then the actions that respond to them: the
+    // reading order a screen reader follows is the order that makes sense.
+    // The bar is a Wrap, so a 320 px card folds it to two lines instead of
+    // overflowing, and text scaling has somewhere to go.
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        _identityRow(copy),
+        const SizedBox(height: 4),
+        ReelEngagementBar(
+          likeCount: reel.likeCount,
+          commentCount: reel.commentCount,
+          liked: reel.callerLiked,
+          likePending: likePending,
+          commentsOpen: commentsOpen,
+          onLike: onLike,
+          onComments: onComments,
+        ),
+      ],
+    );
+  }
+
+  Widget _identityRow(AppLocalizations copy) {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.end,
       children: <Widget>[

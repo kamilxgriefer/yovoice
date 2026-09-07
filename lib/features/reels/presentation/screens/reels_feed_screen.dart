@@ -7,7 +7,10 @@ import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/reels/data/models/reel.dart';
 import 'package:yovoice/features/reels/data/services/reel_service.dart';
+import 'package:yovoice/features/reels/presentation/reel_engagement_copy.dart';
 import 'package:yovoice/features/reels/presentation/widgets/reel_card.dart';
+import 'package:yovoice/features/reels/presentation/widgets/reel_comments_view.dart';
+import 'package:yovoice/features/reels/presentation/widgets/reel_engagement_bar.dart';
 import 'package:yovoice/features/reels/presentation/widgets/reel_playback_coordinator.dart';
 import 'package:yovoice/shared/widgets/buttons/yo_button.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
@@ -75,6 +78,16 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
   final Set<String> _reporting = <String>{};
   final Set<String> _deleting = <String>{};
   final Map<String, String> _deleteRequestIds = <String, String>{};
+
+  /// Reels whose like call has not answered yet. The optimistic state is on
+  /// the item itself; this only keeps a second tap from racing the first and
+  /// tells a late comment read whose engagement wins.
+  final Set<String> _likePending = <String>{};
+
+  /// Wide layout only: whether the context panel is currently showing the
+  /// selected Reel's thread. Narrow and medium widths open a sheet instead,
+  /// which owns its own lifetime.
+  bool _commentsPanelOpen = false;
   Timer? _expiryTimer;
   StreamSubscription<String?>? _identitySubscription;
   String? _viewerId;
@@ -130,6 +143,10 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
       _reporting.clear();
       _deleting.clear();
       _deleteRequestIds.clear();
+      // Engagement belongs to the account that produced it. A pending like
+      // and an open thread from the previous sign-in are both discarded.
+      _likePending.clear();
+      _commentsPanelOpen = false;
     });
     _load(reset: true);
   }
@@ -241,6 +258,7 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
         _hasMore = true;
         _reporting.clear();
         _deleting.clear();
+        _likePending.clear();
         _expiryTimer?.cancel();
       } else {
         _loadingMore = true;
@@ -344,6 +362,133 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
         setState(() => _reporting.remove(reel.id));
       }
     }
+  }
+
+  /// Replaces one Reel in place, preserving feed order and identity.
+  ///
+  /// Must be called inside a [setState]; `_items` is replaced rather than
+  /// mutated because an empty feed is a `const` list.
+  void _replaceReel(String id, Reel Function(Reel item) update) {
+    final index = _items.indexWhere((item) => item.id == id);
+    if (index < 0) return;
+    _items = <Reel>[..._items]..[index] = update(_items[index]);
+  }
+
+  /// Adopts server-authoritative engagement reported by an open thread.
+  void _applyEngagement(Reel updated) {
+    if (!mounted) return;
+    setState(() {
+      _replaceReel(updated.id, (item) {
+        // A like is still in flight for this Reel, so its own result — not a
+        // comment read that started before it — is the authority on the like
+        // fields. Adopting them here would undo the optimistic toggle and
+        // make the heart flicker back and forth.
+        if (_likePending.contains(updated.id)) {
+          return item.copyWithEngagement(commentCount: updated.commentCount);
+        }
+        return item.copyWithEngagement(
+          likeCount: updated.likeCount,
+          commentCount: updated.commentCount,
+          callerLiked: updated.callerLiked,
+        );
+      });
+    });
+  }
+
+  void _announce(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(behavior: SnackBarBehavior.floating, content: Text(message)),
+      );
+  }
+
+  /// Toggles this viewer's like optimistically and reconciles with the server.
+  ///
+  /// The optimistic count moves by exactly one and is replaced by the returned
+  /// aggregate on success, or restored to the pre-tap values on any refusal.
+  /// The client never keeps a count it computed itself.
+  Future<void> _toggleLike(Reel reel) async {
+    if (_likePending.contains(reel.id)) return;
+    final generation = _loadGeneration;
+    final viewer = _viewerId;
+    if (viewer == null) return;
+    if (!_service.isEmailVerified) {
+      // A live control that explains its gate, rather than a call the backend
+      // is certain to refuse and a budget spent on the refusal.
+      _announce(reelVerificationNotice(context));
+      return;
+    }
+    final liked = !reel.callerLiked;
+    final restoredLiked = reel.callerLiked;
+    final restoredCount = reel.likeCount;
+    setState(() {
+      _likePending.add(reel.id);
+      _replaceReel(
+        reel.id,
+        (item) => item.copyWithEngagement(
+          callerLiked: liked,
+          likeCount: liked
+              ? item.likeCount + 1
+              : (item.likeCount > 0 ? item.likeCount - 1 : 0),
+        ),
+      );
+    });
+    try {
+      final result = await _service.setLike(reel.id, liked: liked);
+      if (!mounted || !_isCurrentRequest(generation, viewer)) return;
+      setState(() {
+        _replaceReel(
+          reel.id,
+          (item) => item.copyWithEngagement(
+            callerLiked: result.liked,
+            likeCount: result.likeCount,
+          ),
+        );
+      });
+    } catch (error) {
+      if (!mounted || !_isCurrentRequest(generation, viewer)) return;
+      setState(() {
+        _replaceReel(
+          reel.id,
+          (item) => item.copyWithEngagement(
+            callerLiked: restoredLiked,
+            likeCount: restoredCount,
+          ),
+        );
+      });
+      _announce(
+        reelEngagementMessage(
+          context,
+          error,
+          action: ReelEngagementAction.like,
+        ),
+      );
+    } finally {
+      if (_isCurrentRequest(generation, viewer)) {
+        setState(() => _likePending.remove(reel.id));
+      }
+    }
+  }
+
+  /// Opens the thread the way this width can host it.
+  ///
+  /// Wide toggles the context panel that is already on screen; anything
+  /// narrower opens the sheet. Both host the same [ReelCommentsView].
+  void _openComments(Reel reel, {required bool wide}) {
+    if (wide) {
+      setState(() => _commentsPanelOpen = !_commentsPanelOpen);
+      return;
+    }
+    unawaited(
+      showReelCommentsSheet(
+        context,
+        reel: reel,
+        service: _service,
+        onReelUpdated: _applyEngagement,
+      ),
+    );
   }
 
   Future<void> _create() async {
@@ -519,6 +664,10 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
                 ),
               );
             }
+            // The layout, not a device label, decides where a thread can be
+            // hosted: beside the feed when there is room for a panel, in a
+            // sheet over it when there is not.
+            final wide = constraints.maxWidth >= 1100;
             Widget buildFeed({required bool visible}) => Stack(
               children: <Widget>[
                 Positioned.fill(
@@ -532,6 +681,12 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
                     audioPlaybackFactory: widget.audioPlaybackFactory,
                     onReport: _report,
                     onDelete: _delete,
+                    likePending: _likePending,
+                    commentsOpenIndex: wide && _commentsPanelOpen
+                        ? _selected
+                        : null,
+                    onLike: _viewerId == null ? null : _toggleLike,
+                    onComments: (reel) => _openComments(reel, wide: wide),
                     onChanged: (index) {
                       setState(() => _selected = index);
                       if (index >= _items.length - 3) _load(reset: false);
@@ -564,7 +719,7 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
                     builder: (context, visible, child) =>
                         buildFeed(visible: visible),
                   );
-            if (constraints.maxWidth < 1100) {
+            if (!wide) {
               return Center(
                 child: ConstrainedBox(
                   constraints: BoxConstraints(
@@ -581,9 +736,20 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
                 SizedBox(width: 620, child: feed),
                 const SizedBox(width: 32),
                 SizedBox(
-                  width: 320,
+                  // A thread needs more room than a caption does, so the panel
+                  // widens when it is hosting one instead of squeezing the
+                  // conversation into a sidebar built for two lines of text.
+                  width: _commentsPanelOpen ? 380 : 320,
                   child: _WideContextPanel(
                     reel: selected,
+                    service: _service,
+                    commentsOpen: _commentsPanelOpen,
+                    likePending: _likePending.contains(selected.id),
+                    onReelUpdated: _applyEngagement,
+                    onLike: _viewerId == null
+                        ? null
+                        : () => _toggleLike(selected),
+                    onComments: () => _openComments(selected, wide: true),
                     onCreate: widget.onCreate == null || _creating
                         ? null
                         : _create,
@@ -674,6 +840,10 @@ class _FeedPager extends StatelessWidget {
     required this.onChanged,
     required this.onReport,
     required this.onDelete,
+    required this.onComments,
+    required this.likePending,
+    this.onLike,
+    this.commentsOpenIndex,
     this.videoBuilder,
     this.audioPlaybackFactory,
   });
@@ -686,6 +856,16 @@ class _FeedPager extends StatelessWidget {
   final ValueChanged<int> onChanged;
   final Future<void> Function(Reel reel) onReport;
   final Future<void> Function(Reel reel) onDelete;
+  final void Function(Reel reel) onComments;
+
+  /// Null when there is no viewer to like as.
+  final Future<void> Function(Reel reel)? onLike;
+  final Set<String> likePending;
+
+  /// The page whose thread the wide layout is already showing beside the
+  /// feed, so its control reads as a selected toggle. Null at every width
+  /// that opens a sheet instead.
+  final int? commentsOpenIndex;
   final ReelVideoBuilder? videoBuilder;
   final ReelAudioPlaybackFactory? audioPlaybackFactory;
 
@@ -697,21 +877,27 @@ class _FeedPager extends StatelessWidget {
       itemCount: items.length,
       onPageChanged: onChanged,
       itemBuilder: (context, index) {
+        final reel = items[index];
+        final like = onLike;
         return Padding(
           padding: const EdgeInsets.fromLTRB(12, 12, 12, 16),
           child: ReelCard(
-            key: ValueKey<String>(items[index].id),
-            reel: items[index],
+            key: ValueKey<String>(reel.id),
+            reel: reel,
             service: service,
             isActive: isVisible && index == selectedIndex,
             videoBuilder: videoBuilder,
             audioPlaybackFactory: audioPlaybackFactory,
-            onReport: service.isCurrentUserAuthor(items[index])
+            onReport: service.isCurrentUserAuthor(reel)
                 ? null
-                : () => onReport(items[index]),
-            onDelete: service.isCurrentUserAuthor(items[index])
-                ? () => onDelete(items[index])
+                : () => onReport(reel),
+            onDelete: service.isCurrentUserAuthor(reel)
+                ? () => onDelete(reel)
                 : null,
+            onLike: like == null ? null : () => like(reel),
+            onComments: () => onComments(reel),
+            likePending: likePending.contains(reel.id),
+            commentsOpen: commentsOpenIndex == index,
           ),
         );
       },
@@ -904,56 +1090,113 @@ class _ReelReportSheet extends StatelessWidget {
 }
 
 class _WideContextPanel extends StatelessWidget {
-  const _WideContextPanel({required this.reel, this.onCreate});
+  const _WideContextPanel({
+    required this.reel,
+    required this.service,
+    required this.commentsOpen,
+    required this.likePending,
+    required this.onReelUpdated,
+    this.onLike,
+    this.onComments,
+    this.onCreate,
+  });
 
   final Reel reel;
+  final ReelService service;
+  final bool commentsOpen;
+  final bool likePending;
+  final ValueChanged<Reel> onReelUpdated;
+  final VoidCallback? onLike;
+  final VoidCallback? onComments;
   final Future<void> Function()? onCreate;
 
   @override
   Widget build(BuildContext context) {
     final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
+    final header = Padding(
+      padding: EdgeInsets.fromLTRB(24, 24, 24, commentsOpen ? 16 : 24),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Text(
+            copy.text('Now playing', 'Teraz odtwarzane'),
+            style: Theme.of(context).textTheme.labelLarge?.copyWith(
+              color: palette.interactiveForeground,
+            ),
+          ),
+          const SizedBox(height: 10),
+          Text(
+            reel.authorName,
+            style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+              color: palette.textPrimary,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          if (reel.composition.caption.isNotEmpty) ...<Widget>[
+            const SizedBox(height: 12),
+            Text(
+              reel.composition.caption,
+              // A caption may be long. With the thread open it yields the
+              // panel's height to the conversation instead of pushing it off
+              // the bottom; on its own it still reads in full.
+              maxLines: commentsOpen ? 3 : null,
+              overflow: commentsOpen ? TextOverflow.ellipsis : null,
+              style: Theme.of(
+                context,
+              ).textTheme.bodyLarge?.copyWith(color: palette.textSecondary),
+            ),
+          ],
+          const SizedBox(height: 16),
+          ReelEngagementBar(
+            likeCount: reel.likeCount,
+            commentCount: reel.commentCount,
+            liked: reel.callerLiked,
+            likePending: likePending,
+            commentsOpen: commentsOpen,
+            variant: ReelEngagementBarVariant.panel,
+            onLike: onLike,
+            onComments: onComments,
+          ),
+          if (onCreate != null) ...<Widget>[
+            const SizedBox(height: 20),
+            YoButton(
+              label: copy.text('Create Reel', 'Utwórz Reel'),
+              onPressed: onCreate,
+              icon: const Icon(Icons.add_rounded),
+            ),
+          ],
+        ],
+      ),
+    );
     return DecoratedBox(
       decoration: BoxDecoration(
         color: palette.surface,
         border: Border.all(color: palette.border),
         borderRadius: BorderRadius.circular(24),
       ),
-      child: Padding(
-        padding: const EdgeInsets.all(24),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(23),
         child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
+          // Closed, the panel is a caption card and stays its own height.
+          // Open, it hosts a conversation and takes the column it is given.
+          mainAxisSize: commentsOpen ? MainAxisSize.max : MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: <Widget>[
-            Text(
-              copy.text('Now playing', 'Teraz odtwarzane'),
-              style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                color: palette.interactiveForeground,
-              ),
-            ),
-            const SizedBox(height: 10),
-            Text(
-              reel.authorName,
-              style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                color: palette.textPrimary,
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-            if (reel.composition.caption.isNotEmpty) ...<Widget>[
-              const SizedBox(height: 12),
-              Text(
-                reel.composition.caption,
-                style: Theme.of(
-                  context,
-                ).textTheme.bodyLarge?.copyWith(color: palette.textSecondary),
-              ),
-            ],
-            if (onCreate != null) ...<Widget>[
-              const SizedBox(height: 24),
-              YoButton(
-                label: copy.text('Create Reel', 'Utwórz Reel'),
-                onPressed: onCreate,
-                icon: const Icon(Icons.add_rounded),
+            header,
+            if (commentsOpen) ...<Widget>[
+              Divider(height: 1, thickness: 1, color: palette.border),
+              Expanded(
+                child: ReelCommentsView(
+                  key: const ValueKey<String>('reel-comments-panel-view'),
+                  reel: reel,
+                  service: service,
+                  onReelUpdated: onReelUpdated,
+                  // Aligned with the header above rather than with the width
+                  // the thread happens to be given.
+                  gutter: 24,
+                ),
               ),
             ],
           ],

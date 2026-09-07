@@ -230,6 +230,9 @@ class Reel {
     required this.sortKey,
     this.backingAudio,
     this.availability = ReelAvailability.legacyPermanent,
+    this.likeCount = 0,
+    this.commentCount = 0,
+    this.callerLiked = false,
   });
 
   final String id;
@@ -241,6 +244,46 @@ class Reel {
   final DateTime publishedAt;
   final String sortKey;
   final ReelAvailability availability;
+
+  /// Server-owned engagement aggregates.
+  ///
+  /// The backend materializes `likeCount`/`commentCount` on the Reel root
+  /// lazily: every Reel published before the engagement contract carries
+  /// neither key and no backfill runs, so **absent is exactly zero**. The v1
+  /// `listReels` projection never carries them at all. Both facts make these
+  /// three fields optional on the wire and defaulted here rather than
+  /// required — the alternative would reject every already-published Reel.
+  final int likeCount;
+  final int commentCount;
+
+  /// Whether the *calling* viewer has liked this Reel. Never an aggregate:
+  /// the backend answers it from this viewer's own like edge.
+  final bool callerLiked;
+
+  /// Returns the same Reel with new engagement aggregates.
+  ///
+  /// The feed applies an optimistic like through this and then replaces it
+  /// with the server's authoritative counter (or reverts) once the callable
+  /// answers, so a card and the wide context panel can never disagree about
+  /// the same Reel.
+  Reel copyWithEngagement({
+    int? likeCount,
+    int? commentCount,
+    bool? callerLiked,
+  }) => Reel(
+    id: id,
+    authorId: authorId,
+    authorName: authorName,
+    media: media,
+    composition: composition,
+    publishedAt: publishedAt,
+    sortKey: sortKey,
+    backingAudio: backingAudio,
+    availability: availability,
+    likeCount: likeCount ?? this.likeCount,
+    commentCount: commentCount ?? this.commentCount,
+    callerLiked: callerLiked ?? this.callerLiked,
+  );
 
   factory Reel.fromWire(Object? value) {
     final map = _map(value, 'reel');
@@ -286,22 +329,33 @@ class Reel {
 
   /// Strict v2 parser. The legacy parser intentionally remains available for
   /// old call sites/tests, but the live service uses this shape exclusively.
+  ///
+  /// The three engagement keys are accepted but not demanded. A build that
+  /// predates the engagement contract, and a Reel whose counters were never
+  /// materialized, both arrive without them and must read as 0/0/false rather
+  /// than emptying a feed page.
   factory Reel.fromV2Wire(Object? value) {
     final map = _map(value, 'reel');
-    _keys(map, const <String>{
-      'id',
-      'authorId',
-      'authorName',
-      'media',
-      'backingAudio',
-      'composition',
-      'publishedAtMillis',
-      'sortKey',
-      'availability',
-    }, 'reel');
+    _keys(
+      map,
+      const <String>{
+        'id',
+        'authorId',
+        'authorName',
+        'media',
+        'backingAudio',
+        'composition',
+        'publishedAtMillis',
+        'sortKey',
+        'availability',
+      },
+      'reel',
+      optional: _engagementKeys,
+    );
     final legacyShape = <String, Object?>{
       for (final entry in map.entries)
-        if (entry.key != 'availability') entry.key: entry.value,
+        if (entry.key != 'availability' && !_engagementKeys.contains(entry.key))
+          entry.key: entry.value,
     };
     final legacy = Reel.fromWire(legacyShape);
     return Reel(
@@ -314,6 +368,142 @@ class Reel {
       publishedAt: legacy.publishedAt,
       sortKey: legacy.sortKey,
       availability: ReelAvailability.fromWire(map['availability']),
+      likeCount: _tolerantCount(map['likeCount']),
+      commentCount: _tolerantCount(map['commentCount']),
+      callerLiked: map['callerLiked'] == true,
+    );
+  }
+
+  static const Set<String> _engagementKeys = <String>{
+    'likeCount',
+    'commentCount',
+    'callerLiked',
+  };
+}
+
+/// One text comment on a Reel, exactly as `getReelViewV2` projects it.
+///
+/// Parsing is strict on purpose: the projection is server-owned, versioned,
+/// and already drops documents it could not validate, so an unexpected shape
+/// here means the client and the deployed contract disagree. Reporting that
+/// as a visible, retryable failure beats silently hiding somebody's words.
+@immutable
+class ReelComment {
+  const ReelComment({
+    required this.id,
+    required this.authorId,
+    required this.authorName,
+    required this.text,
+    required this.createdAt,
+  });
+
+  static const int maxTextLength = 1000;
+
+  final String id;
+  final String authorId;
+  final String authorName;
+  final String text;
+  final DateTime createdAt;
+
+  factory ReelComment.fromWire(Object? value) {
+    final map = _map(value, 'comment');
+    _keys(map, const <String>{
+      'schemaVersion',
+      'commentId',
+      'type',
+      'authorId',
+      'authorName',
+      'authorPhotoUrl',
+      'text',
+      'durationSeconds',
+      'createdAtMillis',
+    }, 'comment');
+    if (map['schemaVersion'] != 1) {
+      throw const FormatException('Unsupported Reel comment schema.');
+    }
+    // `type` and `durationSeconds` are the fields a later voice reply would
+    // use. Today the contract emits only text with a null duration, and this
+    // client renders only text; accepting anything else would mean inventing
+    // a presentation for content that does not exist yet.
+    if (map['type'] != 'text' || map['durationSeconds'] != null) {
+      throw const FormatException('Unsupported Reel comment type.');
+    }
+    final photo = map['authorPhotoUrl'];
+    if (photo != null && photo is! String) {
+      throw const FormatException('Malformed Reel comment author photo.');
+    }
+    final comment = ReelComment(
+      id: _safeId(map['commentId'], 'commentId'),
+      authorId: _opaqueUid(map['authorId'], 'authorId'),
+      authorName: _string(map['authorName'], 'authorName').trim(),
+      text: _string(map['text'], 'text'),
+      createdAt: DateTime.fromMillisecondsSinceEpoch(
+        _integer(map['createdAtMillis'], 'createdAtMillis'),
+        isUtc: true,
+      ),
+    );
+    if (comment.authorName.isEmpty ||
+        comment.authorName.length > 120 ||
+        comment.text.trim().isEmpty ||
+        comment.text.length > maxTextLength) {
+      throw const FormatException('Malformed Reel comment.');
+    }
+    return comment;
+  }
+}
+
+/// One `getReelViewV2` response: the Reel plus one page of its thread.
+///
+/// Comments are OLDEST-first, so [nextCommentCursor] pages forward in time and
+/// a newly posted comment belongs at the end of a fully loaded thread.
+@immutable
+class ReelView {
+  const ReelView({
+    required this.reel,
+    required this.comments,
+    required this.commentsTruncated,
+    required this.nextCommentCursor,
+  });
+
+  /// The server's own ceiling for one comment page.
+  static const int maxCommentLimit = 7;
+
+  final Reel reel;
+  final List<ReelComment> comments;
+  final bool commentsTruncated;
+  final String? nextCommentCursor;
+
+  factory ReelView.fromWire(Object? value) {
+    final map = _map(value, 'reel view');
+    _keys(map, const <String>{
+      'schemaVersion',
+      'reel',
+      'comments',
+      'commentsTruncated',
+      'nextCommentCursor',
+    }, 'reel view');
+    if (map['schemaVersion'] != 2) {
+      throw const FormatException('Unsupported Reel view schema.');
+    }
+    final rawComments = map['comments'];
+    final truncated = map['commentsTruncated'];
+    final cursor = map['nextCommentCursor'];
+    if (rawComments is! List ||
+        rawComments.length > maxCommentLimit ||
+        truncated is! bool ||
+        (cursor != null && cursor is! String)) {
+      throw const FormatException('Malformed Reel view.');
+    }
+    // A cursor without truncation would page a thread the server just called
+    // complete. Refuse rather than loop on a boundary that cannot advance.
+    if (cursor != null && !truncated) {
+      throw const FormatException('Inconsistent Reel comment page boundary.');
+    }
+    return ReelView(
+      reel: Reel.fromV2Wire(map['reel']),
+      comments: rawComments.map(ReelComment.fromWire).toList(growable: false),
+      commentsTruncated: truncated,
+      nextCommentCursor: cursor as String?,
     );
   }
 }
@@ -371,12 +561,24 @@ Map<String, Object?> _map(Object? value, String label) {
   });
 }
 
-void _keys(Map<String, Object?> map, Set<String> expected, String label) {
-  if (map.keys.toSet().difference(expected).isNotEmpty ||
-      expected.difference(map.keys.toSet()).isNotEmpty) {
+void _keys(
+  Map<String, Object?> map,
+  Set<String> expected,
+  String label, {
+  Set<String> optional = const <String>{},
+}) {
+  final present = map.keys.toSet();
+  if (present.difference(expected.union(optional)).isNotEmpty ||
+      expected.difference(present).isNotEmpty) {
     throw FormatException('$label has an unsupported shape.');
   }
 }
+
+/// An engagement counter is a decorative aggregate, never an authorization
+/// input. Absent, null or corrupt all read as zero so one bad counter cannot
+/// blank a feed page — the same choice the backend makes for a malformed like
+/// edge. Every state-changing call still uses the server's returned counter.
+int _tolerantCount(Object? value) => value is int && value >= 0 ? value : 0;
 
 String _string(Object? value, String label) {
   if (value is! String) throw FormatException('$label must be text.');
