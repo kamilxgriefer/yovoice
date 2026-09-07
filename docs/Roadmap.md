@@ -16,53 +16,102 @@ someone decide what to pick up next.
 
 ## Done
 
-- **Emoji picker and a redesigned Voice Discover** (2026-09-07, ADR-159/160;
+> **Reading the Build 22 round below (2026-09-06 → 2026-09-07).** Everything
+> from `c3cc9d7d` to `591b8840` is in `main` and **no client build carrying
+> any of it has reached a tester** — the last published artifact is still
+> 1.0.0 (21) from `1bb823c6`. `firestore.rules` and all Cloud Functions
+> *were* deployed on 2026-09-07 **from `591b8840`**, recorded in `5f78efb6`
+> ([DEPLOYMENT.md](DEPLOYMENT.md#backend-deploy-for-the-build-22-round--2026-09-07)),
+> so several items read "backend live, client unpublished". Evidence for the
+> whole round is `flutter analyze` clean, **2768/2768** Flutter tests,
+> `firestore-tests` 534/534 and the Functions emulator suite 712 passing with
+> one pre-existing timing flake — plus widget tests and rendered review
+> captures. Where an item says "verified", that is what it means: **no
+> physical device and no production-traffic observation** except where a
+> simulator run is named explicitly. Session record:
+> [2026-09-07-build-22-engagement-and-tester-rounds](Sessions/2026-09-07-build-22-engagement-and-tester-rounds.md).
+
+- **Reel likes and comments, server-owned, with a Reel-comment moderation
+  path** (2026-09-07, source commits `33c5f3e5` + `591b8840`, ADR-161/162;
+  **BACKEND DEPLOYED 2026-09-07, CLIENT SOURCE + TESTS VERIFIED, NOT
+  PUBLISHED**): `setReelLike`, `createReelComment` and `deleteReelComment`
+  each move the child document and the root counter in one Admin SDK
+  transaction with an idempotency ledger entry and a rate budget; the feed
+  owns engagement for every card, applying an optimistic ±1 that the
+  callable's aggregate replaces verbatim and restoring exact pre-tap values
+  on refusal. One `ReelCommentsView` serves the modal sheet below 1100 px and
+  the inline panel above it. The moderation half shipped in the same change —
+  `createReelCommentReport` with a verbatim `targetTextSnapshot`,
+  `removeReelComment` for the Reel's author, a `reelComment` branch in
+  `moderateReport`, and the Moderation Center filter, row, evidence block and
+  remove action. **Two things this does not include:** the in-app *reporter*
+  control and the author-removal control, which are uncommitted working-tree
+  work, so the deployed report path currently has no entry point in the app
+  (Bugs.md, top entry); and catalog translations — the engagement copy is
+  EN/PL only (item 0t).
+
+- **Emoji picker and a redesigned Voice Discover** (2026-09-07, source
+  commits `23a3739c` + `301eebc4`, ADR-159/160;
   **SOURCE + CAPTURE VERIFIED, NOT PUBLISHED**): about 840 emoji with search
   and recents in the three text composers, and Discover rebuilt as a dense
-  grid plus a tight recent list.
+  grid plus a tight recent list. Arbitrary-emoji *reactions* are unchanged and
+  still bounded by the server allowlist and the pinned rules map.
 
 - **Tester round 3: story tiles, comment previews with mentions, friend
   suggestions, a compact More sheet, and two real bug fixes** (2026-09-07,
+  source commits `ca8e0faf` + `f6967a6e` + `4985595a`,
   ADR-155/156/157/158; **SOURCE + CAPTURE VERIFIED, NOT PUBLISHED**): Moments
   rails share one seen-aware story tile; Moment comments preview inline with
   `@` mentions resolved per viewer; Friends gains "People you may know"; the
   More sheet floats above the dock; Home lists real friends again and room
-  tiles resolve the host's avatar from the uid.
+  tiles resolve the host's avatar from the uid. The Your Moments Voice/Reels
+  switch was restyled to the app's pill language in `4985595a`. Mentions
+  deliberately do not notify — that needs a server sender.
 
 - **Voice sessions survive the app being backgrounded on Android**
-  (2026-09-06, ADR-154; **SOURCE + TESTS VERIFIED, NOT PUBLISHED; needs a
-  Play Console foreground-service-type declaration and two-device
-  acceptance**): a microphone/mediaPlayback foreground service with an
-  ongoing notification, started on connect and stopped on disconnect through
-  an injectable seam, plus `LiveKitClient.initialize()` in `main()`.
+  (2026-09-06, source commit `1c7d6cd5`, ADR-154; **SOURCE + TESTS VERIFIED,
+  NOT PUBLISHED; needs a Play Console foreground-service-type declaration and
+  two-device acceptance**): a microphone/mediaPlayback foreground service with
+  an ongoing notification, started on connect and stopped on disconnect
+  through an injectable seam, plus `LiveKitClient.initialize()` in `main()`.
+  An Android debug APK builds with the Kotlin service; no physical two-device
+  call was run. Reconnect-on-resume in the room screens remains open.
 
 - **Awards you can choose, on-video Reel trimming, and room invites**
-  (2026-09-06, ADR-151/152/153; **SOURCE + SIMULATOR VERIFIED, NOT
-  PUBLISHED**): the Awards hub gains a selected-title hero, track progress
-  and Selected/Unlocked/In progress/Locked sections, and the choice colours
-  the account's own avatar ring and name; Reels gets a Trim tool with
-  handles on the video that scrub the preview; Community and Broadcast rooms
-  can invite friends by direct message with a room card in chat. Verified on
-  an iPhone 17 Pro simulator through `lib/dev/tester_round_preview.dart`.
+  (2026-09-06, source commit `fa07bc6e`, ADR-151/152/153; **SOURCE +
+  SIMULATOR VERIFIED, NOT PUBLISHED**): the Awards hub gains a selected-title
+  hero, track progress and Selected/Unlocked/In progress/Locked sections, and
+  the choice colours the account's own avatar ring and name; Reels gets a Trim
+  tool with handles on the video that scrub the preview; Community and
+  Broadcast rooms can invite friends by direct message with a room card in
+  chat. Verified on an iPhone 17 Pro simulator through
+  `lib/dev/tester_round_preview.dart`. Other people see an award decoration
+  only after a follow-up server projection that has not been built.
 
-- **User-set availability status and picker** (2026-09-06, ADR-150;
-  **SOURCE + TESTS VERIFIED, NOT DEPLOYED — rules + projection function must
-  ship first**): `users/{uid}.availability`, masked projection into
-  `socialPresence`, one presence→ring mapping across Home/Friends/chat/
-  preview, `AvailabilityChip` in the profile header, More sheet and desktop
-  sidebar.
+- **User-set availability status and picker** (2026-09-06, source commit
+  `a5f6e90d`, ADR-150; **SOURCE + TESTS VERIFIED; RULES AND PROJECTION
+  DEPLOYED 2026-09-07 from `591b8840`, CLIENT NOT PUBLISHED**):
+  `users/{uid}.availability`, masked projection into `socialPresence`, one
+  presence→ring mapping across Home/Friends/chat/preview, `AvailabilityChip`
+  in the profile header, More sheet and desktop sidebar. The deploy removed
+  the blocker this entry previously carried; end-to-end behaviour on a real
+  device is still unobserved.
 
 - **Tester round 2 client fixes: draggable Reel overlays, keyboard Done bar,
   Remove friend on the list, Unarchive on chat rows, shorter mute busy
-  window** (2026-09-06, ADR-149; **SOURCE + WIDGET TESTS VERIFIED, NOT
-  PUBLISHED; on-device drag feel unverified**): see Bugs.md "Build 21
-  tester round" for what remains server-side.
+  window** (2026-09-06, source commit `c8aa3cad`, ADR-149; **SOURCE + WIDGET
+  TESTS VERIFIED, NOT PUBLISHED; on-device drag feel unverified**): see
+  Bugs.md "Build 21 tester round" for what remains server-side. A true
+  per-user "delete chat" is *not* part of this and still needs a callable.
 
 - **Build 21 tester-round fixes: tab fade-through, More capsule, chat bubble,
   in-place refreshes, thinner avatar rings, Soft Bells v4 sounds**
-  (2026-09-06, ADR-147/148; **SOURCE + CAPTURE VERIFIED, NOT PUBLISHED**):
-  see Bugs.md "Build 21 tester round" for the per-item status and what still
-  needs a server decision.
+  (2026-09-06, source commits `c3cc9d7d` + `509bbcb1`, ADR-147/148; **SOURCE
+  + CAPTURE VERIFIED, NOT PUBLISHED**): see Bugs.md "Build 21 tester round"
+  for the per-item status and what still needs a server decision. `509bbcb1`
+  moved the v4 pack into `tool/generate_ui_sounds.py` so the Hosting
+  workflow's `--check` can prove the checked-in WAVs are the generator's
+  output; the pack has not yet been auditioned by the owner.
 
 - **Account-bound Reels and staged Moments creation** (2026-09-06,
   source commit `2f964640`, ADR-145; **SOURCE + LOCAL VISUAL QA VERIFIED, NOT
@@ -2000,6 +2049,140 @@ Ordered by rough priority — re-prioritize freely, this isn't a queue.
 - **Priority**: Medium. Bounded blast radius (a wrong dot), but it is the
   remaining half of a bug that was just fixed, and a partially-fixed bug is
   the kind that gets re-reported.
+
+### 0r. A report receipt from `getReelViewV2`, so `createReelCommentReport` can check visibility
+
+- **Status**: Not started. The divergence was taken knowingly when the
+  callable shipped on 2026-09-07 and is reasoned at the call site; this item
+  is the remedy that ADR-162 already names.
+- **Description**: Every other moderation endpoint checks access before
+  existence ([ADR-086](Decisions.md#adr-086-a-safety-action-is-never-gated-on-email-verification-and-every-moderation-endpoint-checks-access-before-existence)
+  rule 2). `createReelCommentReport` does not, because the alternative is
+  worse: with a live visibility check and no receipt, a harasser could
+  immunise their own comment by blocking the victim afterwards, and the
+  victim could never file. A receipt issued by `getReelViewV2` — the read the
+  reporter must already have performed to see the comment — lets the report
+  be authorized by the receipt rather than by a read at report time, which
+  restores the rule without reintroducing the block-then-immunise hole.
+- **Dependencies**: A Functions change on both sides (`getReelViewV2` issues
+  and stores the receipt, `createReelCommentReport` verifies and consumes it),
+  a retention decision for the receipts themselves, emulator-backed tests, and
+  a deploy. `voiceMomentReportReceipts` is the existing shape to copy,
+  including its managed TTL.
+- **Priority**: Medium-High. The callable is live and is a weak existence
+  oracle for comment ids until this lands; the shared `reel.report` budget is
+  charged before the target is read, which bounds the cost of probing but does
+  not remove it.
+- **Future considerations**: While no client control exists (see the top entry
+  of [Bugs.md](Bugs.md)), the only reachable caller is a direct callable
+  invocation. Landing the reporter UI without this raises the exposure, so the
+  two should be sequenced together rather than shipped in either order.
+
+### 0s. Retention and deletion for reported Reel comment text
+
+- **Status**: Not started, and live in production since the 2026-09-07 deploy.
+- **Description**: `createReelCommentReport` stores `targetTextSnapshot`, a
+  verbatim copy of a third party's words, in `reports`. The snapshot is
+  necessary — `reels/{id}/comments/{id}` is `read, write: if false` for every
+  client including staff, so it is both the moderator's only view of the
+  reported words and the only evidence that outlives a hard-delete removal.
+  But it is the first third-party content stored in that collection, and it
+  has **no TTL and no account-deletion scrub**: deleting the author's account
+  leaves their words in `reports` indefinitely.
+- **Dependencies**: A privacy decision on the retention period first, then a
+  `deleteAfter`-style field with managed TTL (the pattern
+  `reelCleanupOutbox.deleteAfter` and `voiceMomentReportReceipts.expiresAt`
+  already use), plus a scrub in the account-deletion workers. A TTL policy
+  change is a console/deploy step, not only code.
+- **Priority**: **High.** It is a standing personal-data retention gap in a
+  deployed path, and the kind of thing that is far cheaper to fix before the
+  collection has volume in it than after.
+- **Future considerations**: Decide in the same pass whether author removals —
+  today recorded only in `integrityOperationLedgers`, which no moderator tool
+  reads — need a surface, since ADR-162's distinguishable ledger kind exists
+  precisely so Trust and Safety can count them.
+
+### 0t. Reel engagement copy in the remaining 41 locales
+
+- **Status**: Not started; known at merge on 2026-09-07 rather than
+  discovered afterwards.
+- **Description**: `reel_engagement_copy.dart` builds every like/comment
+  message through inline `copy.text('English', 'Polski')` pairs instead of the
+  canonical catalog, so the other 41 locale variants fall back to English
+  across the whole engagement surface — refusals, the rate-limit and
+  unverified-email notices, and the comment thread's states. The localization
+  source guard does not demand catalog entries on this path, so nothing failed
+  in CI.
+- **Dependencies**: A catalog pass adding the strings with identical
+  placeholders in every supported locale, then
+  `flutter test test/localization_source_guard_test.dart
+  test/localization_catalog_test.dart` and a Polish read-through, per
+  [DEVELOPMENT_WORKFLOW.md](DEVELOPMENT_WORKFLOW.md).
+- **Priority**: Medium. No user is blocked, but this is the workflow's
+  "language is part of the feature, not a later cleanup" step deferred, and
+  the same round did do it properly for ADR-152's two trim strings — so the
+  gap is inconsistency, not policy.
+
+### 0u. Raise the Reel length cap above 90 seconds
+
+- **Status**: Not started. Requested in the Build 21 tester round; the client
+  half of the complaint (an invisible cap and a trim control that froze) is
+  fixed, the cap itself is unchanged.
+- **Description**: `MAX_DURATION_MS = 90 * 1000` in
+  `functions/reels/contract.js` is the publish contract's limit and has been
+  since build 19 (`2529acc7`). `ReelTrimStrip` mirrors it in
+  `reelMaxTrimSelectionMs` and says so in a comment, deliberately displaying
+  and enforcing rather than owning the value.
+- **Dependencies**: A server change and a deploy — `MAX_DURATION_MS`, the
+  100 MB video cap, and a streamed upload, since the current path is not
+  shaped for files that a longer cap would produce. The client constant then
+  follows the server, never the other way round.
+- **Priority**: Medium. It is a product ceiling, not a defect; decide the
+  target length before touching the upload path, because the streamed-upload
+  work is the expensive half.
+
+### 0v. Music for Reels from a licensed catalogue
+
+- **Status**: Not started, and **blocked on a product decision, not on
+  engineering**. Requested repeatedly by testers as "pick music from the web,
+  like Instagram".
+- **Description**: The composer today offers local audio the account owns or
+  is licensed to publish, behind an explicit rights attestation. A searchable
+  catalogue is a different product: it needs licensing, a catalogue backend,
+  and a per-territory rights model.
+- **Dependencies**: A licensing decision first. This must not be approximated
+  by ingesting, downloading or re-publishing another provider's catalogue —
+  the "Media boundary" bullet under **In Progress → Coordinated Build 19
+  tester rollout and acceptance** rules that out explicitly, and it is a
+  legal boundary rather than a stylistic one.
+- **Priority**: Low as engineering, unresolved as product. Until the decision
+  exists, the honest client state is the current one — own/licensed audio
+  only, with no control implying a catalogue exists.
+
+### 0w. Make "Stay open" Community rooms actually stay open
+
+- **Status**: Not started. Traced on 2026-09-07 (`1a58ce14`) and then
+  **deliberately deferred by the maintainer on the same day** — the analysis
+  was the deliverable, the change was not.
+- **Description**: A Community room created with **Stay open** promises
+  "People can keep talking after you leave" and today can only be woken by its
+  host. The full trace — which server fact contributes what, with file and
+  line references — is in
+  [DEPLOYMENT.md](DEPLOYMENT.md#stay-open-community-rooms-cannot-actually-stay-open--server-proposal-2026-09-07)
+  and is not duplicated here.
+- **Dependencies**: The two changes named in that analysis, both needing a
+  deploy and an owner decision because they hand global-fanout authority to
+  non-hosts: accepting `membersCanStartVoice` at creation, and giving
+  community joiners standing for the existing `startRoomVoice` branch. Both
+  need the rate limit and quota `startRoomVoice` already applies,
+  emulator-backed rules tests, and a line in
+  [SECURITY.md](SECURITY.md).
+- **Priority**: Medium — deferred by decision, not by oversight. The cheap
+  interim step is copy that says what actually happens (the room stays, voice
+  sleeps when it empties, the host reopens it); that has not been applied
+  either, so the option currently over-promises in the shipped UI.
+- **Future considerations**: Do not conflate this with item 0p, which is the
+  opposite failure — a member-started room staying live with nobody in it.
 
 ### 0a. ~~Run the public-profile backfill~~ VERIFIED CONSISTENT (2026-08-18)
 

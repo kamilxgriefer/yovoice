@@ -18,6 +18,33 @@ about things that are broken, risky, or need verification.
 > before believing the code.
 > [ADR-082](Decisions.md#adr-082-a-feature-is-not-shipped-until-a-user-can-reach-it--reachability-is-part-of-done-and-a-green-suite-cannot-prove-it).
 
+## OPEN — a Reel comment can be reported by nobody, and its author cannot remove one (2026-09-07)
+
+This is the ADR-082 pattern again, in the direction the box above warns
+about: the server half exists, is tested, and is **deployed**, while no user
+can reach it.
+
+`createReelCommentReport` and `removeReelComment` went live on 2026-09-07
+(`33c5f3e5`, deploy recorded in
+[DEPLOYMENT.md](DEPLOYMENT.md#backend-deploy-for-the-build-22-round--2026-09-07)),
+and the Moderation Center on `main` already renders the `reelComment` filter,
+the row, the quoted-text evidence block and the remove action. But
+`ReelCommentsView` at `main` states in its own doc comment that it offers no
+report control and no author removal — "Reel comments have neither yet" — and
+`ReelService` carries no `createReelCommentReport` or `removeReelComment`
+call. So a viewer who sees an abusive Reel comment has no way to file, and a
+Reel's author has no way to clear it from their own thread; the only remedy
+is still deleting the whole Reel. The moderator queue is real and can receive
+nothing from the app.
+
+The client half is written but **uncommitted** in the working tree
+(`lib/features/reels/presentation/widgets/reel_comment_report_sheet.dart`
+untracked, `reel_service.dart`/`reel_comments_view.dart` modified,
+`test/reel_comment_moderation_test.dart` untracked). Nothing here claims it
+works until it is committed and verified. Until then the honest reading is
+that Reel comments shipped to `main` with creation and own-comment deletion
+only.
+
 ## Room tiles showed the host's initial instead of their avatar (2026-09-07; fixed in source)
 
 Discover's room cards and the live hero drew `room.hostPhotoUrl` with
@@ -33,6 +60,84 @@ to `UserAvatar`; the room-cover widget is unchanged.
 Opening More produced a full-width sheet that hid the dock, including the
 More control itself. It is now a bounded floating card above the dock
 (ADR-158).
+
+## A Reel could not be liked or commented on at all (2026-09-07; fixed in source, backend deployed)
+
+`getReelViewV2` had been returning `likeCount`, `commentCount` and
+`callerLiked` on every v2 Reel and the client parsed them and discarded them —
+nothing referenced the fields, and no engagement callable existed. `33c5f3e5`
+adds `setReelLike`, `createReelComment` and `deleteReelComment`, each moving
+the child document and the root counter in one Admin SDK transaction with an
+idempotency ledger entry and a rate budget, and `591b8840` wires the feed to
+them: an optimistic ±1 that the callable's aggregate replaces verbatim, a
+refusal that restores the exact pre-tap values, and one `ReelCommentsView`
+serving both the modal sheet (<1100 px) and the inline panel so the two
+cannot disagree about a count. `reels/{id}/likes` and `reels/{id}/comments`
+are stated `read, write: if false` rather than inherited from the parent
+match. ADR-161.
+
+Three defects the review caught in the same change: the wide Pearl footer sat
+on the light card margin instead of the artwork, so white overlay text was
+invisible; the panel composer floated mid-panel over dead space; and the like
+control swapped its heart for a spinner while the call was in flight, which
+took back the optimistic feedback it existed to give.
+
+Backend live since the 2026-09-07 deploy. The client is source- and
+widget-test-verified only, and is not in any published build. See the OPEN
+entry at the top of this file for what the moderation half is still missing.
+
+## No way to send an emoji on desktop or web (2026-09-07; fixed in source)
+
+Direct chats, club chat and the in-room chat sheet had no emoji entry point:
+the only emoji a person could send were whatever their system keyboard
+offered, which on desktop and web is nothing at all. The fixed reaction sets
+(six for direct messages, five in rooms) were the only emoji surfaces in the
+product. `YoEmojiPicker` (`23a3739c`, ADR-159) is one widget shared by all
+three composers — roughly 840 emoji in the standard categories, name and
+keyword search, per-device recents through the existing `AppPreferencesStore`
+pattern, insertion at the caret rather than the end of the string, and it
+swaps for the system keyboard instead of stacking on top of it.
+
+Still true afterwards: **reacting** with an arbitrary emoji remains
+impossible. `ALLOWED_DIRECT_REACTIONS` in the messaging Functions and the
+pinned five-key map in `firestore.rules` still bound the reaction sets, so
+widening those is a deploy and a moderation question, not a client change.
+
+## Voice Discover rendered every entry as a full-width slab (2026-09-07; fixed in source)
+
+Reported by the owner as "wielkie klocki": the Discover pool laid every
+engagement-ranked pick out as a full-width audio card of identical weight, so
+two or three filled a phone screen and nothing signalled what was worth
+opening. `moment_discover_tiles.dart` (`301eebc4`, ADR-160) gives density by
+role instead — featured entries in a two-column grid, recent ones in a tight
+row per Moment, the seen-aware story strip above them. Every action the slab
+carried (play, open, delete your own, report, expiry countdown) is still
+reachable, the rare ones behind the row's overflow menu. What Discover
+*shows* is unchanged: the same audience and block rules still decide what
+reaches the list. Captions now truncate to one line in the grid.
+
+## OPEN, deferred by decision — a "Stay open" Community room still ends when the host leaves (2026-09-07)
+
+Reported by the owner: a Community room created with the **Stay open**
+option — copy that promises "People can keep talking after you leave" — is
+gone from every live list once the host goes. The report was traced on
+2026-09-07 and the room turns out not to be deleted; the cause is a chain of
+three server facts, and the two changes that would make the promise true both
+widen who can trigger global fanout. **The full analysis, with file and line
+references and the two proposed changes, is in
+[DEPLOYMENT.md](DEPLOYMENT.md#stay-open-community-rooms-cannot-actually-stay-open--server-proposal-2026-09-07)
+and is not restated here.**
+
+**The maintainer decided on 2026-09-07 to leave this for a later round.** It
+is deferred deliberately, not forgotten, and nothing in the app was changed
+for it — so the option still promises more than it delivers today. The
+smallest honest interim fix named in that analysis is client copy saying what
+actually happens (the room stays, voice sleeps when it empties, the host
+reopens it); that has **not** been applied either.
+
+Adjacent but distinct: Roadmap item 0p is the *opposite* failure — a
+member-started room staying live with nobody in it — and is separately
+landed-in-source, not deployed. Do not conflate the two.
 
 ## Home showed one person instead of the friends list (2026-09-06; fixed in source)
 
@@ -55,9 +160,12 @@ the status label. Covered by test/home_people_strip_test.dart; the Moments
 rail assertion in test/mobile_home_test.dart was scoped to the rail, since a
 friend without a Moment is now legitimately visible elsewhere on Home.
 
-## Build 21 tester round — navigation, latency and creation gaps (2026-09-06; partly fixed in source, not published)
+## Build 21 tester round — navigation, latency and creation gaps (2026-09-06; partly fixed in source, no client published)
 
-Reported by the owner after the 1.0.0 (21) tester wave. Status per item:
+Reported by the owner after the 1.0.0 (21) tester wave. Every fix below is
+source- and test-verified only: **no build carrying any of them has reached a
+tester.** Rules and Functions were deployed on 2026-09-07, so the backend
+halves are live while the client halves are not. Status per item:
 
 - **Torn screen on tab switch** — fixed in source (ADR-147): fade-through
   without offset, Home keeps its last feed page while refreshing.
@@ -95,9 +203,18 @@ Reported by the owner after the 1.0.0 (21) tester wave. Status per item:
   server callable `setOwnRoomParticipantMute` still cold-starts at
   `minInstances: 0`; unmute remains server-first by design, so its wait is
   unchanged until that callable is warmed (DEPLOYMENT.md proposal).
-- **Reel trimming on the video** — fixed in source (ADR-152): a Trim tool
-  with draggable handles that scrub the preview; the slider stays as the
-  accessible fallback and the 90 s cap is now shown.
+- **Reel trimming on the video, and "a recording past a minute is lost"** —
+  partly fixed in source (ADR-152). The publish contract's limit is
+  `MAX_DURATION_MS = 90 * 1000` in `functions/reels/contract.js` and has been
+  90 s since build 19 (`2529acc7`) — it was never 60 s. What the report was
+  actually hitting is that the cap was **invisible** and the only way to get
+  under it was a `RangeSlider` that froze whenever the two handles came
+  within a second of each other, so long footage had no usable path to a
+  publishable selection. There is now a Trim tool with draggable handles
+  that scrub the preview, handles that clamp to a one-second minimum instead
+  of freezing, and `Maks. 90 s` shown on the strip; the slider stays as the
+  keyboard and screen-reader fallback. **Longer than 90 s is still refused**
+  — raising it is a server change and a deploy (Roadmap item 0u).
 - **Awards could not really be "used"** — fixed in source (ADR-151):
   selection has a hero, Clear, error feedback, no stray pop, and it colours
   the owner's avatar ring and name. Other people see it only after the
@@ -106,22 +223,42 @@ Reported by the owner after the 1.0.0 (21) tester wave. Status per item:
   public rooms: Community (any participant) and Broadcast (host) open an
   invite sheet that sends a direct message with a room link, rendered as a
   room card in chat. The broadcast share link form was wrong and is fixed.
-- **Open, not yet fixed:** a music library (needs a licensed catalogue —
-  product decision); Reel length above 90 s (server `MAX_DURATION_MS` and
-  the 100 MB video cap, deploy); a call dropping when both parties
-  background the app — **fixed in source** (ADR-154): a foreground service
-  with microphone/mediaPlayback types now runs while a session is connected,
-  and LiveKit is initialised before WebRTC builds its audio device module.
-  Needs a Play Console foreground-service-type declaration before release,
-  and real two-device acceptance. Reconnect-on-resume in the room screens is
-  still open;
-  one tester asked for an invite code — TestFlight shows that prompt when
-  the device's Apple ID is not the invited address; awards section redesign
-  with selectable badges; inviting friends into a room.
+- **A call ended when both parties minimised the app** — fixed in source
+  (ADR-154): the app declared no foreground service of any type, so a
+  backgrounded process had its microphone silenced and was then frozen once
+  cached; with both sides minimised no audio flowed either way and both
+  LiveKit participants timed out. A foreground service now runs while a
+  session is connected, typed from the session's own rights (microphone when
+  the participant may publish and `RECORD_AUDIO` is granted, mediaPlayback
+  for a listener), and `LiveKitClient.initialize()` runs before `runApp` so
+  the iOS audio-session policy is seeded before WebRTC builds its audio
+  device module. **Still required before release:** the owner must declare
+  both foreground-service types in Play Console, and no two-device
+  acceptance run has happened. **Reconnect-on-resume in the room screens
+  remains open.**
+- **A tester was asked for an invite code** — not an app defect. TestFlight
+  shows that prompt when the Apple ID signed in on the device is not the
+  address the invitation was sent to. No code change; kept here so the next
+  report of it is recognised rather than re-investigated.
 - **User-set availability (green/yellow/red/grey rings + picker)** — built
-  in source (ADR-150). **Blocked on a deploy** of `firestore.rules` and the
-  `onUserPrivacySourceChanged` projection; until then the picker's write
-  is refused and shows its error copy.
+  in source (ADR-150) and **no longer blocked**: `firestore.rules` and the
+  `onUserPrivacySourceChanged` projection carrying `deriveVisibleAvailability`
+  were deployed on 2026-09-07
+  ([DEPLOYMENT.md](DEPLOYMENT.md#backend-deploy-for-the-build-22-round--2026-09-07)).
+  The picker's write is accepted by the deployed rules; no client build
+  carrying the picker has been published to testers, so this is deployed
+  backend plus unpublished client, not an end-to-end observation.
+- **Open, not yet fixed:** a music library for Reels (needs a licensed
+  catalogue and a backend — product decision, Roadmap item 0v); Reel length
+  above 90 s (server `MAX_DURATION_MS`, the 100 MB video cap and a streamed
+  upload, then a deploy — Roadmap item 0u); a true per-user "delete chat"
+  (`users/{uid}/conversationState` written by a new callable — owner decision
+  and deploy); and the cold-start latency on every hot-path callable outside
+  the five warm ones. The 2026-09-07 deploy updated Function *code* and did
+  not change `minInstances` for anything — the warm set is still
+  `createLiveKitToken`, `startDirectCall`, `createDirectCallToken`,
+  `sendDirectMessage` and `sendRoomMessage` — so the latency proposal in
+  DEPLOYMENT.md is still a proposal.
 
 ## Direct-call latency and Android connection acceptance (2026-09-06; fixed in source, physical acceptance pending)
 
@@ -373,6 +510,49 @@ and measured evidence is in
 [TESTING.md](TESTING.md#build-19-tester-release-evidence-2026-09-03).
 
 ## Security
+
+- **OPEN, accepted knowingly 2026-09-07 — `createReelCommentReport` checks no
+  visibility, diverging from ADR-086 rule 2.** Every other moderation
+  endpoint checks access before existence, so a caller who cannot reach the
+  container learns nothing from the refusal. This one does not: it will file
+  a report against a Reel comment the caller may no longer be able to see.
+  The divergence is deliberate and reasoned at the call site — with the check
+  and no receipt, a harasser could immunise their own comment by blocking the
+  victim afterwards, and the victim could then never file. The cost is that
+  the callable is a weak existence oracle for comment ids on the shared
+  `reel.report` budget (charged before the target is read, so a refusal costs
+  the same as a report, which bounds but does not remove it). **The remedy is
+  a report receipt issued by `getReelViewV2`**, so the report can be
+  authorized by the receipt instead of by a live read — Roadmap item 0r.
+  Live in production since the 2026-09-07 deploy; today reachable only by a
+  direct callable invocation, since no client control exists (see the OPEN
+  entry at the top of this file).
+  [ADR-162](Decisions.md#adr-162-reel-comment-moderation-is-three-server-paths-not-one),
+  [ADR-086](Decisions.md#adr-086-a-safety-action-is-never-gated-on-email-verification-and-every-moderation-endpoint-checks-access-before-existence).
+
+- **OPEN, found 2026-09-07 — reported Reel comment text is retained in
+  `reports` indefinitely.** `createReelCommentReport` writes
+  `targetTextSnapshot`, a verbatim copy of the reported comment, because
+  `reels/{id}/comments/{id}` is `read, write: if false` for every client
+  including staff — the snapshot is both the moderator's only view of the
+  words and the only evidence that survives the removal. It is the **first
+  third-party content stored in `reports`**, and it has no TTL field and no
+  account-deletion scrub: deleting the author's account does not remove their
+  words from the reports collection, and nothing expires them. Confirmed in
+  source — `targetTextSnapshot` is written at `functions/reels/service.js`
+  and validated in `functions/moderation/reports.js`, and neither path nor
+  the account-deletion workers touch a retention deadline. Needs a privacy
+  pass deciding a retention period and a deletion path — Roadmap item 0s.
+  Live in production since the 2026-09-07 deploy.
+
+- **OPEN, found 2026-09-07 — author removals of other people's Reel comments
+  are recorded where no moderator can see them.** `removeReelComment` writes
+  its trace only to `integrityOperationLedgers`, which no moderator tool
+  reads, and removal is a hard delete on every path — so an author who
+  removes a comment before anyone reports it leaves no copy anywhere. This
+  was a deliberate trade in ADR-162 (a distinguishable ledger kind exists
+  precisely so Trust and Safety *can* count these separately), but the
+  counting surface does not exist yet.
 
 - **FIXED IN SOURCE 2026-08-29 — logout changed AuthGate but left private
   routes, banners and live-room audio attached to the previous session.**
@@ -1584,6 +1764,22 @@ permission flags).
   rate.
 
 ## UI
+
+- **OPEN, known at merge 2026-09-07 — the new Reel engagement copy is English
+  and Polish only.** `reel_engagement_copy.dart` builds every like/comment
+  message through inline `copy.text('English', 'Polski')` pairs rather than
+  the canonical translation catalog, so the other **41 locale variants fall
+  back to English** for the whole engagement surface: the refusal messages,
+  the rate-limit and unverified-email notices, and the comment thread's
+  states. The localization source guard does not demand catalog entries on
+  this path, so nothing failed — this is a known gap, not a regression that
+  slipped through. Contrast with ADR-152's Reel trim strings, which did enter
+  the catalog for all 41 variants in the same round. A catalog pass is
+  Roadmap item 0t; until it runs, the round violates
+  [DEVELOPMENT_WORKFLOW.md](DEVELOPMENT_WORKFLOW.md)'s "language is part of
+  the feature" step for this surface, and that is stated rather than papered
+  over. Recorded as a consequence in
+  [ADR-161](Decisions.md#adr-161-reel-engagement-is-optimistic-in-the-feed-and-authoritative-on-the-server).
 
 - **FIXED AND RELEASED TO WEB 2026-08-29 — collapsing a live-room chat exposed a large
   multi-row control panel that obscured the Home feed.** Phone and compact-
