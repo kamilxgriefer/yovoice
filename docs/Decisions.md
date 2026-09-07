@@ -9762,3 +9762,89 @@ ADR-086 rule 2: with the check and no receipt, a harasser could
 immunise their own comment by blocking the victim afterwards, and the
 victim could never file. The remedy is a report receipt issued by
 `getReelViewV2`, and the reasoning is recorded at the call site.
+
+## ADR-163: The Reel cap rises to five minutes; the byte cap does not move
+
+**Context.** A tester recorded past the limit and lost the take. The cap
+was `MAX_DURATION_MS = 90 * 1000` in `functions/reels/contract.js`,
+unchanged since build 19, mirrored by four separate `90 * 1000` literals
+on the client with nothing proving they agreed. The maintainer asked for
+five to ten minutes.
+
+**Decision.** The duration cap rises to five minutes everywhere, and the
+client literals collapse onto `maxReelDurationMs` / `minReelDurationMs`
+in `reel_composition.dart` so the two halves cannot drift. `MAX_VIDEO_BYTES`
+stays at 100 MB and `storage.rules` is untouched.
+
+**Reasoning.** The server supports the longer duration for free: the
+trusted probe never downloads `mdat`, so a five-minute recording costs
+about 250 KB of range reads against a 2 MB budget and 22k samples
+against a 500k ceiling. The byte cap is a different question. The upload
+path buffers rather than streams — `reel_upload.dart` does
+`file.readAsBytes()`, `ReelService._upload` calls `putData`, and
+firebase_storage's Android task holds a contiguous `ByteArray` on the
+ART heap; `payload.bytes` stays referenced for retry, so peak use is
+about twice the file size, and the manifest sets no `largeHeap`. The
+capture path sets no quality knob (`image_picker_ios` hardcodes
+`QualityTypeHigh`) and nothing in the repo transcodes, so five minutes
+of 1080p is 300–650 MB. A byte cap sized for that would trade today's
+instant, honest "too large" refusal for an `OutOfMemoryError` five
+minutes into a recording.
+
+**Consequences.** Five minutes works today for already-compressed
+sources — gallery clips, screen recordings, anything at or below about
+2.7 Mbps. A fresh 1080p capture longer than roughly a minute now clears
+the duration check and is refused on size instead, so the tester's exact
+case is improved but not closed. Closing it means switching `_upload`
+from `putData` to `putFile` and then raising both byte caps, which
+reverses the deliberate exclusion of `sourcePath` from the upload
+contract and needs its own ADR and adversarial review. On Android many
+OEM camera apps ignore `EXTRA_DURATION_LIMIT`, so the client
+`pickVideo(maxDuration:)` is advisory there and the server remains the
+real boundary. A Functions deploy is required for the cap to take effect.
+
+## ADR-164: Deleting a chat is per-person, and the cut-off is enforced by rules
+
+**Context.** A conversation could only be archived. The maintainer asked
+for deletion. One participant must never be able to destroy the other's
+copy of a conversation they both took part in, and a "deleted" thread
+that silently returns with all its old messages when the other person
+writes is a privacy failure rather than a bug.
+
+**Decision.** `deleteDirectConversationForMe`, a callable on the Admin
+SDK, sets two additive optional fields on the conversation root:
+`deletedBy` (membership-style hiding, cleared by both send paths so a new
+message revives the thread the way it un-archives one) and
+`deletedSequences` (`{uid: sequence}`, the point that user deleted
+through — monotonic, never cleared, never lowered). Reading
+`conversations/{id}/messages/{id}` now requires `sequence > cut`, with a
+`cut == 0` short circuit. The deleter's unread counter is zeroed, their
+outbox and queued attachments for that conversation are purged including
+the payload bytes, and `readSequences` is deliberately left alone.
+
+**Reasoning.** A callable rather than a rules-guarded write because the
+root is `allow update: if false`, because the cut-off must be read from
+`lastMessageSequence` and written in one transaction or a stale read
+leaves messages visible in a "deleted" thread, and above all because
+`deletedSequences[uid]` is an input to an authorization decision — a
+client that could write it could lower it. The fields are optional
+rather than part of the exact key set because promoting them would make
+`validateConversation` reject every conversation root already in
+production. `readSequences` stays put because it drives the peer's read
+receipts: advancing it would tell them their messages were read at the
+moment this person walked away.
+
+**Consequences.** The `cut == 0` branch never touches `resource`, so
+existing installs' unconstrained queries keep working; a user who
+deletes on an updated device and then opens that thread on a stale build
+gets a fail-closed `permission-denied`. `watchMessages` and the shared
+media stream each also listen to the conversation root to resolve the
+cut-off. When both participants have deleted, nothing is reclaimed —
+the documents remain, hidden from both, and either side can revive them;
+real reclamation needs a resumable quarantined job and its own decision.
+Firestore's on-device cache may physically retain previously synced
+messages until eviction, since there is no per-document purge API.
+`functions/profile/fanout.js` and the direct migration both had to learn
+the new keys, or the fan-out would have silently skipped deleted
+conversations and frozen a stale name and avatar in them for the
+participant who never deleted anything.
