@@ -421,8 +421,8 @@ void main() {
       return harness;
     }
 
-    testWidgets('only your own comment offers deletion, and nothing offers a '
-        'report path that does not exist', (tester) async {
+    testWidgets('only your own comment offers deletion, and it offers no '
+        'report path against yourself', (tester) async {
       await pumpMixedThread(tester);
 
       expect(
@@ -433,8 +433,18 @@ void main() {
         find.byKey(const ValueKey<String>('reel-comment-delete-c1')),
         findsNothing,
       );
-      expect(find.byTooltip('Report comment'), findsNothing);
-      expect(find.byIcon(Icons.flag_outlined), findsNothing);
+      // Your own comment is Delete and nothing else: the backend refuses a
+      // report against yourself, so the control is never offered.
+      expect(
+        find.byKey(const ValueKey<String>('reel-comment-report-c2')),
+        findsNothing,
+      );
+      // Somebody else's comment carries Report, and — since this viewer does
+      // not own the Reel — nothing more than that.
+      expect(
+        find.byKey(const ValueKey<String>('reel-comment-report-c1')),
+        findsOneWidget,
+      );
       expect(find.byIcon(Icons.more_vert_rounded), findsNothing);
     });
 

@@ -6,6 +6,7 @@ import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/reels/data/models/reel.dart';
 import 'package:yovoice/features/reels/data/services/reel_service.dart';
 import 'package:yovoice/features/reels/presentation/reel_engagement_copy.dart';
+import 'package:yovoice/features/reels/presentation/widgets/reel_comment_report_sheet.dart';
 import 'package:yovoice/features/reels/presentation/widgets/reel_engagement_bar.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
@@ -26,6 +27,29 @@ class _CommentPage {
   final List<ReelComment> comments;
 }
 
+/// One report this viewer decided to send, held across retries.
+///
+/// The server binds one request id to one exact input, so the id may be
+/// reused only while the target, the reason and the note are all unchanged.
+/// Keeping the decision beside the id is what makes that checkable — and it
+/// is also what lets a retry re-open the sheet with the reporter's own words
+/// still in it instead of asking them to type the note again.
+@immutable
+class _ReportAttempt {
+  const _ReportAttempt({
+    required this.commentId,
+    required this.request,
+    required this.requestId,
+  });
+
+  final String commentId;
+  final ReelCommentReportRequest request;
+  final String requestId;
+
+  bool matches(String commentId, ReelCommentReportRequest request) =>
+      this.commentId == commentId && this.request == request;
+}
+
 /// The Reel comment thread: oldest first, paginated, with a composer.
 ///
 /// One widget serves both presentations — a modal sheet on narrow and medium
@@ -33,9 +57,19 @@ class _CommentPage {
 /// two can never drift apart in behaviour. Only spacing adapts, and it adapts
 /// to the width it is actually given rather than to a device label.
 ///
-/// There is no report control and no moderator removal here on purpose: Reel
-/// comments have neither yet. Showing a control that goes nowhere would be
-/// worse than showing none.
+/// THREE DIFFERENT AUTHORITIES LIVE ON A COMMENT ROW, and the row offers at
+/// most one of them because they are not interchangeable:
+///
+///  - **Delete** — your own words, `deleteReelComment`.
+///  - **Report** — somebody else's words, `createReelCommentReport`. Filing
+///    one changes nothing that is visible: the reporter is not the person who
+///    decides, so the comment stays exactly where it was.
+///  - **Remove** — somebody else's words on a Reel THIS ACCOUNT AUTHORED,
+///    `removeReelComment`. Destructive and irreversible, so it confirms.
+///
+/// The server is the only authority on all three. Everything decided here is
+/// about which control to *offer*; a control that should not have been shown
+/// meets a refusal, and the refusal is what the viewer is told.
 class ReelCommentsView extends StatefulWidget {
   const ReelCommentsView({
     required this.reel,
@@ -76,6 +110,25 @@ class _ReelCommentsViewState extends State<ReelCommentsView> {
   final List<_CommentPage> _pages = <_CommentPage>[];
   final Set<String> _deleting = <String>{};
 
+  /// Comment ids with a moderation call in flight. Both sets exist so a row
+  /// shows the operation that is actually running on it, and so a second tap
+  /// cannot start a duplicate of either.
+  final Set<String> _reporting = <String>{};
+  final Set<String> _removing = <String>{};
+
+  /// Comments this viewer has reported, kept for as long as the thread is
+  /// open. Reporting is invisible by design — the comment does not move —
+  /// so without this the only feedback is a snackbar that scrolls away, and
+  /// the reporter is left wondering whether it went through. It is a local
+  /// record of what THIS session sent, never a claim about the report's
+  /// outcome.
+  final Set<String> _reported = <String>{};
+
+  /// The report currently being retried, if any. At most one: a person files
+  /// one report at a time, and holding more would mean holding request ids
+  /// for attempts nobody is going to make.
+  _ReportAttempt? _reportAttempt;
+
   String? _nextCursor;
   Object? _error;
   Object? _composerError;
@@ -110,6 +163,10 @@ class _ReelCommentsViewState extends State<ReelCommentsView> {
         !identical(oldWidget.service, widget.service)) {
       _composer.clear();
       _postRequestId = null;
+      // A request id is bound to one target. Carrying one across a Reel
+      // change would replay an old attempt against a new thread.
+      _reportAttempt = null;
+      _reported.clear();
       _load(reset: true);
     }
   }
@@ -142,6 +199,8 @@ class _ReelCommentsViewState extends State<ReelCommentsView> {
         _pages.clear();
         _nextCursor = null;
         _deleting.clear();
+        _reporting.clear();
+        _removing.clear();
       } else {
         _loadingMore = true;
       }
@@ -282,21 +341,7 @@ class _ReelCommentsViewState extends State<ReelCommentsView> {
         commentId: comment.id,
       );
       if (!_isCurrent(generation)) return;
-      setState(() {
-        for (var index = 0; index < _pages.length; index++) {
-          final page = _pages[index];
-          if (!page.comments.any((entry) => entry.id == comment.id)) continue;
-          _pages[index] = _CommentPage(
-            cursor: page.cursor,
-            comments: page.comments
-                .where((entry) => entry.id != comment.id)
-                .toList(growable: false),
-          );
-        }
-      });
-      widget.onReelUpdated(
-        widget.reel.copyWithEngagement(commentCount: result.commentCount),
-      );
+      _dropComment(comment.id, commentCount: result.commentCount);
       _announce(copy.text('Comment deleted.', 'Komentarz został usunięty.'));
     } catch (error) {
       // `_isCurrent` already implies `mounted`; the explicit check is what
@@ -314,6 +359,186 @@ class _ReelCommentsViewState extends State<ReelCommentsView> {
         setState(() => _deleting.remove(comment.id));
       }
     }
+  }
+
+  /// Files a safety report against somebody else's comment.
+  ///
+  /// Nothing about the thread changes on success. The person reporting is not
+  /// the person who decides, and a client that hid the comment the moment it
+  /// was reported would be answering that question on a moderator's behalf —
+  /// and would hand anybody a one-tap way to make words they dislike vanish
+  /// from their own view while the report sits unreviewed.
+  Future<void> _report(ReelComment comment) async {
+    if (_reporting.contains(comment.id) ||
+        _removing.contains(comment.id) ||
+        comment.authorId == _viewerId) {
+      return;
+    }
+    final generation = _generation;
+    final copy = AppLocalizations.of(context);
+    // A previous attempt on THIS comment pre-fills the sheet, so a retry
+    // after a refusal costs one tap and stays byte-identical.
+    final previous = _reportAttempt?.commentId == comment.id
+        ? _reportAttempt
+        : null;
+    final request = await showReelCommentReportSheet(
+      context,
+      authorName: comment.authorName,
+      commentText: comment.text,
+      initialReason: previous?.request.reason,
+      initialNote: previous?.request.note ?? '',
+    );
+    if (request == null || !_isCurrent(generation)) return;
+    // The id is reused only for the identical attempt. A different reason or
+    // a different note is a different operation at the server's ledger, and
+    // replaying the old id against it would answer `already-exists` on a
+    // safety path.
+    final attempt = previous != null && previous.matches(comment.id, request)
+        ? previous
+        : _ReportAttempt(
+            commentId: comment.id,
+            request: request,
+            requestId: ReelPublishSession.newRequestId(),
+          );
+    setState(() {
+      _reportAttempt = attempt;
+      _reporting.add(comment.id);
+    });
+    try {
+      final result = await widget.service.reportComment(
+        widget.reel.id,
+        commentId: comment.id,
+        reason: request.wireReason,
+        note: request.note,
+        requestId: attempt.requestId,
+      );
+      if (!mounted || !_isCurrent(generation)) return;
+      setState(() {
+        _reportAttempt = null;
+        _reported.add(comment.id);
+      });
+      // `created: false` means this reporter had already reported this
+      // comment and the backend deduplicated. Saying "thanks, sent" would
+      // claim a second report that was never filed.
+      _announce(
+        result.created
+            ? copy.text(
+                'Thanks. This comment was sent for review.',
+                'Dziękujemy. Komentarz został wysłany do sprawdzenia.',
+              )
+            : copy.text(
+                'You already reported this comment. It is still with our '
+                    'team.',
+                'Ten komentarz został już przez Ciebie zgłoszony. Nadal '
+                    'zajmuje się nim nasz zespół.',
+              ),
+      );
+    } catch (error) {
+      if (!mounted || !_isCurrent(generation)) return;
+      _announce(
+        reelEngagementMessage(
+          context,
+          error,
+          action: ReelEngagementAction.reportComment,
+        ),
+      );
+    } finally {
+      if (_isCurrent(generation)) {
+        setState(() => _reporting.remove(comment.id));
+      }
+    }
+  }
+
+  /// The Reel's author clearing somebody else's comment off their own thread.
+  ///
+  /// Confirmed first, and worded to say plainly whose words are being
+  /// destroyed and that nothing brings them back. This is the one control
+  /// here that acts on another person's content with no review, so the
+  /// dialog is the whole due process it gets.
+  Future<void> _remove(ReelComment comment) async {
+    if (_removing.contains(comment.id) || _reporting.contains(comment.id)) {
+      return;
+    }
+    final generation = _generation;
+    final copy = AppLocalizations.of(context);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(copy.text('Remove this comment?', 'Usunąć komentarz?')),
+        content: Text(
+          copy.template(
+            "{author}'s comment will be removed from your Reel for "
+                'everyone. This cannot be undone. To have it reviewed '
+                'instead, report it.',
+            'Komentarz od {author} zniknie z Twojego Reela dla wszystkich. '
+                'Tej operacji nie można cofnąć. Jeśli wolisz, aby ocenił go '
+                'nasz zespół, zgłoś go zamiast usuwać.',
+            values: <String, Object>{'author': comment.authorName},
+          ),
+        ),
+        actions: <Widget>[
+          TextButton(
+            key: const ValueKey<String>('reel-comment-remove-cancel'),
+            onPressed: () => Navigator.of(context).pop(false),
+            child: Text(copy.text('Cancel', 'Anuluj')),
+          ),
+          FilledButton(
+            key: const ValueKey<String>('reel-comment-remove-confirm'),
+            onPressed: () => Navigator.of(context).pop(true),
+            child: Text(copy.text('Remove', 'Usuń')),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !_isCurrent(generation)) return;
+    setState(() => _removing.add(comment.id));
+    try {
+      final result = await widget.service.removeComment(
+        widget.reel.id,
+        commentId: comment.id,
+      );
+      if (!mounted || !_isCurrent(generation)) return;
+      // The server's count is the authority, exactly as it is for a like or
+      // a deletion; the client never decrements its own copy.
+      _dropComment(comment.id, commentCount: result.commentCount);
+      _announce(copy.text('Comment removed.', 'Komentarz został usunięty.'));
+    } catch (error) {
+      if (!mounted || !_isCurrent(generation)) return;
+      _announce(
+        reelEngagementMessage(
+          context,
+          error,
+          action: ReelEngagementAction.removeComment,
+        ),
+      );
+    } finally {
+      if (_isCurrent(generation)) {
+        setState(() => _removing.remove(comment.id));
+      }
+    }
+  }
+
+  /// Drops one comment from the loaded pages and adopts the server's count.
+  ///
+  /// Shared by deletion and author removal so the two can never disagree
+  /// about what a thread looks like afterwards. Must be called while current.
+  void _dropComment(String commentId, {required int commentCount}) {
+    setState(() {
+      for (var index = 0; index < _pages.length; index++) {
+        final page = _pages[index];
+        if (!page.comments.any((entry) => entry.id == commentId)) continue;
+        _pages[index] = _CommentPage(
+          cursor: page.cursor,
+          comments: page.comments
+              .where((entry) => entry.id != commentId)
+              .toList(growable: false),
+        );
+      }
+      _reported.remove(commentId);
+    });
+    widget.onReelUpdated(
+      widget.reel.copyWithEngagement(commentCount: commentCount),
+    );
   }
 
   void _announce(String message) {
@@ -407,6 +632,9 @@ class _ReelCommentsViewState extends State<ReelCommentsView> {
       );
     }
     final viewerId = _viewerId;
+    // A presentation hint, never an authority: `removeReelComment` checks the
+    // Reel's author itself, before it even reads the comment.
+    final viewerOwnsReel = viewerId != null && viewerId == widget.reel.authorId;
     return ListView.separated(
       key: const ValueKey<String>('reel-comment-thread'),
       shrinkWrap: true,
@@ -422,13 +650,26 @@ class _ReelCommentsViewState extends State<ReelCommentsView> {
           );
         }
         final comment = comments[index];
+        final own = comment.authorId == viewerId;
         return _CommentTile(
           comment: comment,
           dense: gutter < 16,
-          deleting: _deleting.contains(comment.id),
-          onDelete: comment.authorId == viewerId
-              ? () => _delete(comment)
-              : null,
+          busy:
+              _deleting.contains(comment.id) ||
+              _reporting.contains(comment.id) ||
+              _removing.contains(comment.id),
+          reported: _reported.contains(comment.id),
+          onDelete: own ? () => _delete(comment) : null,
+          // Never on your own comment: `createReelCommentReport` refuses it
+          // outright, and offering a control whose only outcome is a refusal
+          // is worse than offering none.
+          onReport: own ? null : () => _report(comment),
+          // Only the Reel's author, and never on their own words — those are
+          // a Delete, which is the narrower authority and the honest label.
+          // The backend would accept either, but the two leave different
+          // accountability traces and an author clearing their own comment
+          // is not a moderation event.
+          onRemove: !own && viewerOwnsReel ? () => _remove(comment) : null,
         );
       },
     );
@@ -439,14 +680,26 @@ class _CommentTile extends StatelessWidget {
   const _CommentTile({
     required this.comment,
     required this.dense,
-    required this.deleting,
+    required this.busy,
+    required this.reported,
     required this.onDelete,
+    required this.onReport,
+    required this.onRemove,
   });
 
   final ReelComment comment;
   final bool dense;
-  final bool deleting;
+
+  /// A call is in flight on this row. One flag rather than three, because the
+  /// row shows one spinner and refuses every action while it spins.
+  final bool busy;
+
+  /// This viewer reported this comment in this session.
+  final bool reported;
+
   final VoidCallback? onDelete;
+  final VoidCallback? onReport;
+  final VoidCallback? onRemove;
 
   @override
   Widget build(BuildContext context) {
@@ -456,11 +709,17 @@ class _CommentTile extends StatelessWidget {
     final timestamp = copy.relativeCompactTime(comment.createdAt.toLocal());
     return Semantics(
       container: true,
-      label: copy.template(
-        'Comment by {author}',
-        'Komentarz od: {author}',
-        values: <String, Object>{'author': comment.authorName},
-      ),
+      label: reported
+          ? copy.template(
+              'Comment by {author}, reported by you',
+              'Komentarz od: {author}, zgłoszony przez Ciebie',
+              values: <String, Object>{'author': comment.authorName},
+            )
+          : copy.template(
+              'Comment by {author}',
+              'Komentarz od: {author}',
+              values: <String, Object>{'author': comment.authorName},
+            ),
       child: Padding(
         padding: EdgeInsets.symmetric(vertical: dense ? 6 : 8),
         child: Row(
@@ -497,31 +756,150 @@ class _CommentTile extends StatelessWidget {
                       color: palette.textSecondary,
                     ),
                   ),
+                  // The comment is deliberately still here. This says the
+                  // report was sent, not that anything was decided — the
+                  // reporter is not the person who decides.
+                  if (reported) ...<Widget>[
+                    const SizedBox(height: 6),
+                    Row(
+                      key: ValueKey<String>(
+                        'reel-comment-reported-${comment.id}',
+                      ),
+                      mainAxisSize: MainAxisSize.min,
+                      children: <Widget>[
+                        Icon(
+                          Icons.flag_rounded,
+                          size: 14,
+                          color: palette.warningForeground,
+                        ),
+                        const SizedBox(width: 6),
+                        Flexible(
+                          child: Text(
+                            copy.text(
+                              'Reported — with our team',
+                              'Zgłoszone — u naszego zespołu',
+                            ),
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: palette.warningForeground,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
                 ],
               ),
             ),
-            // Delete only, and only your own. Reel comments have no report
-            // path and no moderator removal yet; an overflow menu whose only
-            // real entry is this one would just hide it behind a tap.
-            if (onDelete != null)
-              IconButton(
-                key: ValueKey<String>('reel-comment-delete-${comment.id}'),
-                tooltip: copy.text('Delete comment', 'Usuń komentarz'),
-                color: palette.dangerForeground,
-                onPressed: deleting ? null : onDelete,
-                icon: deleting
-                    ? const SizedBox.square(
-                        dimension: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.delete_outline_rounded, size: 20),
-              ),
+            _actions(context, copy, palette),
           ],
         ),
       ),
     );
   }
+
+  /// ONE trailing control per row, always.
+  ///
+  /// A single available action stays an icon button, so the common cases —
+  /// Delete on your own comment, Report on somebody else's — are one tap and
+  /// visibly present. Only the Reel's author ever has two, and there the menu
+  /// is what keeps a dense thread readable at 320 px and stops a destructive
+  /// Remove from sitting one mis-tap away from Report.
+  Widget _actions(
+    BuildContext context,
+    AppLocalizations copy,
+    AppPalette palette,
+  ) {
+    if (busy) {
+      return const Padding(
+        padding: EdgeInsets.all(14),
+        child: SizedBox.square(
+          dimension: 18,
+          child: CircularProgressIndicator(strokeWidth: 2),
+        ),
+      );
+    }
+    if (onDelete != null) {
+      return IconButton(
+        key: ValueKey<String>('reel-comment-delete-${comment.id}'),
+        tooltip: copy.text('Delete comment', 'Usuń komentarz'),
+        color: palette.dangerForeground,
+        onPressed: onDelete,
+        icon: const Icon(Icons.delete_outline_rounded, size: 20),
+      );
+    }
+    if (onRemove == null) {
+      if (onReport == null) return const SizedBox.shrink();
+      return IconButton(
+        key: ValueKey<String>('reel-comment-report-${comment.id}'),
+        tooltip: reported
+            ? copy.text('Report again', 'Zgłoś ponownie')
+            : copy.text('Report comment', 'Zgłoś komentarz'),
+        // textSecondary, not textTertiary: at tertiary the flag was legible
+        // in Pearl and nearly invisible in the dark theme, and a safety
+        // control that only one theme's users can find is not a control.
+        color: reported ? palette.warningForeground : palette.textSecondary,
+        onPressed: onReport,
+        icon: Icon(
+          reported ? Icons.flag_rounded : Icons.outlined_flag_rounded,
+          size: 20,
+        ),
+      );
+    }
+    return PopupMenuButton<_CommentAction>(
+      key: ValueKey<String>('reel-comment-actions-${comment.id}'),
+      tooltip: copy.text('Comment options', 'Opcje komentarza'),
+      icon: Icon(
+        Icons.more_vert_rounded,
+        size: 20,
+        color: palette.textSecondary,
+      ),
+      onSelected: (action) => switch (action) {
+        _CommentAction.report => onReport?.call(),
+        _CommentAction.remove => onRemove?.call(),
+      },
+      itemBuilder: (context) => <PopupMenuEntry<_CommentAction>>[
+        if (onReport != null)
+          PopupMenuItem<_CommentAction>(
+            key: ValueKey<String>('reel-comment-report-${comment.id}'),
+            value: _CommentAction.report,
+            child: ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: Icon(
+                reported ? Icons.flag_rounded : Icons.outlined_flag_rounded,
+                color: reported
+                    ? palette.warningForeground
+                    : palette.textSecondary,
+              ),
+              title: Text(
+                reported
+                    ? copy.text('Report again', 'Zgłoś ponownie')
+                    : copy.text('Report comment', 'Zgłoś komentarz'),
+              ),
+            ),
+          ),
+        PopupMenuItem<_CommentAction>(
+          key: ValueKey<String>('reel-comment-remove-${comment.id}'),
+          value: _CommentAction.remove,
+          child: ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: Icon(
+              Icons.delete_outline_rounded,
+              color: palette.dangerForeground,
+            ),
+            title: Text(
+              copy.text('Remove from my Reel', 'Usuń z mojego Reela'),
+              style: TextStyle(color: palette.dangerForeground),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
 }
+
+/// The two actions a Reel's author has over somebody else's comment.
+enum _CommentAction { report, remove }
 
 class _LoadMore extends StatelessWidget {
   const _LoadMore({

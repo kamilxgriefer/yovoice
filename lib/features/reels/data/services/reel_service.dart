@@ -12,6 +12,29 @@ import 'package:yovoice/features/reels/data/services/reel_upload.dart';
 
 enum ReelAssetKind { media, backingAudio }
 
+/// The exact reason values `validateReelReportReason` accepts, in the order
+/// the reports contract declares them.
+///
+/// Shared by [ReelService.reportReel] and [ReelService.reportComment] because
+/// the backend shares them: one `REEL_REPORT_REASON_SET` validates both. A
+/// value that is not in this set is an `invalid-argument` at the callable, so
+/// it is refused here first rather than spent against the report budget.
+const Set<String> reelReportReasons = <String>{
+  'spam',
+  'harassment',
+  'hate',
+  'sexual',
+  'violence',
+  'selfHarm',
+  'impersonation',
+  'other',
+};
+
+/// The bound `normalizeText` applies to a report note server-side. Enforced
+/// here as well so an over-long note is a corrected field rather than a
+/// round trip that spends one of ten reports per ten minutes.
+const int maxReelReportNoteLength = 300;
+
 typedef ReelCallableInvoker =
     Future<Map<Object?, Object?>> Function(
       String name,
@@ -516,21 +539,15 @@ class ReelService {
     final id = _requiredSafeId(reelId, 'reelId');
     final cleanReason = reason.trim();
     final cleanNote = note.trim();
-    const reasons = <String>{
-      'spam',
-      'harassment',
-      'hate',
-      'sexual',
-      'violence',
-      'selfHarm',
-      'impersonation',
-      'other',
-    };
-    if (!reasons.contains(cleanReason)) {
+    if (!reelReportReasons.contains(cleanReason)) {
       throw ArgumentError.value(reason, 'reason', 'Choose a report reason.');
     }
-    if (cleanNote.length > 300) {
-      throw ArgumentError.value(note, 'note', 'Use up to 300 characters.');
+    if (cleanNote.length > maxReelReportNoteLength) {
+      throw ArgumentError.value(
+        note,
+        'note',
+        'Use up to $maxReelReportNoteLength characters.',
+      );
     }
     final response = await _call('createReelReport', <String, Object?>{
       'reelId': id,
@@ -567,15 +584,26 @@ class ReelService {
   ///
   /// [retryStableKey] is set only when this service owns the request id for
   /// the call, so a refusal that poisons that id can release it.
+  ///
+  /// [precondition] is what `failed-precondition` means on THIS callable, and
+  /// it is required rather than defaulted because the code carries a
+  /// different fact on each one. On `setReelLike` and `createReelComment` it
+  /// is `requireActor`'s email-verification gate. On
+  /// `createReelCommentReport` there is exactly one source in the deployed
+  /// function — "You cannot report your own comment" — and reporting is
+  /// explicitly NOT verification-gated. On `removeReelComment` the code is
+  /// not reachable at all, so it falls through to the operation's own
+  /// "it failed" copy rather than asserting a reason that is not there.
   Future<Map<Object?, Object?>> _engagementCall(
     String name,
     Map<String, Object?> payload, {
     String? retryStableKey,
+    ReelEngagementFailure precondition = ReelEngagementFailure.emailUnverified,
   }) async {
     try {
       return await _call(name, payload);
     } on FirebaseFunctionsException catch (error, stackTrace) {
-      final failure = _classifyEngagement(error);
+      final failure = _classifyEngagement(error, precondition: precondition);
       // Only a poisoned id is discarded. `already-exists` means this id is
       // already bound to a different input, and `invalid-argument` means the
       // payload will never be accepted; replaying either is pure loss. Every
@@ -603,14 +631,17 @@ class ReelService {
   }
 
   static ReelEngagementFailure _classifyEngagement(
-    FirebaseFunctionsException error,
-  ) => switch (error.code) {
+    FirebaseFunctionsException error, {
+    ReelEngagementFailure precondition = ReelEngagementFailure.emailUnverified,
+  }) => switch (error.code) {
     'unauthenticated' => ReelEngagementFailure.signedOut,
     // requireActor's email-verification gate on setReelLike and
-    // createReelComment, and the availability deadline on every path.
-    'failed-precondition' => ReelEngagementFailure.emailUnverified,
+    // createReelComment, and the availability deadline on every path. The
+    // moderation callables override it; see [_engagementCall].
+    'failed-precondition' => precondition,
     // consumeRateLimit: 60 likes/min, 20 comments/min, 30 deletes/10 min,
-    // 60 views/min, per account.
+    // 60 views/min, 10 reports/10 min, 60 author removals/10 min, per
+    // account.
     'resource-exhausted' => ReelEngagementFailure.rateLimited,
     // The single refusal envelope. Never branched on.
     'permission-denied' || 'not-found' => ReelEngagementFailure.unavailable,
@@ -697,9 +728,12 @@ class ReelService {
     return result;
   });
 
-  /// Removes one of this viewer's own comments. The backend refuses any other
-  /// author with the same single refusal envelope; there is no moderator or
-  /// report path on Reel comments yet, so this client offers neither.
+  /// Removes one of this viewer's own comments.
+  ///
+  /// Narrow on purpose: the backend refuses any other author with the same
+  /// single refusal envelope. An author clearing somebody else's words off
+  /// their own Reel is a different authority and a different event — see
+  /// [removeComment].
   Future<ReelCommentDeletion> deleteComment(
     String reelId, {
     required String commentId,
@@ -727,6 +761,133 @@ class ReelService {
     final result = ReelCommentDeletion.fromWire(response);
     if (result.reelId != id || result.commentId != comment) {
       throw const FormatException('Malformed Reel comment deletion response.');
+    }
+    _engagementRequestIds.remove(key);
+    return result;
+  });
+
+  // -------------------------------------------------------------------
+  // Comment moderation.
+  //
+  // Two different authorities, deliberately kept apart the way the backend
+  // keeps them apart: ANYONE may report somebody else's comment, and only
+  // the REEL'S AUTHOR may remove one from their own thread. Neither is the
+  // same as [deleteComment], which is a person removing their own words.
+  // -------------------------------------------------------------------
+
+  /// Files a safety report against one comment on [reelId].
+  ///
+  /// Reporting is deliberately NOT gated on a verified email — a safety
+  /// action is never gated on an outbound-content privilege — so this path
+  /// does not consult [isEmailVerified] and the callable does not either.
+  ///
+  /// The retry-stable id is keyed on the whole payload the server hashes
+  /// (`reelId`, `commentId`, `reason`, `note`), not on the target alone. The
+  /// server's operation ledger binds one request id to one exact input, so a
+  /// reporter who backs out and files the SAME comment under a DIFFERENT
+  /// reason must get a fresh id — reusing it would answer `already-exists`
+  /// on a safety path. Retrying the identical attempt reuses the id and is
+  /// therefore free and duplicate-proof.
+  ///
+  /// [ReelCommentReport.created] is `false` when this reporter had already
+  /// reported this comment. That is a successful, deduplicated call, not a
+  /// failure: the earlier report still stands.
+  Future<ReelCommentReport> reportComment(
+    String reelId, {
+    required String commentId,
+    required String reason,
+    String note = '',
+    String? requestId,
+  }) => _withIdentity((identity) async {
+    final id = _requiredSafeId(reelId, 'reelId');
+    final comment = _requiredSafeId(commentId, 'commentId');
+    final cleanReason = reason.trim();
+    final cleanNote = note.trim();
+    if (!reelReportReasons.contains(cleanReason)) {
+      throw ArgumentError.value(reason, 'reason', 'Choose a report reason.');
+    }
+    if (cleanNote.length > maxReelReportNoteLength) {
+      throw ArgumentError.value(
+        note,
+        'note',
+        'Use up to $maxReelReportNoteLength characters.',
+      );
+    }
+    final key = 'commentReport:$id:$comment:$cleanReason:$cleanNote';
+    final stableRequestId = requestId == null
+        ? _engagementRequestIds.putIfAbsent(
+            key,
+            ReelPublishSession.newRequestId,
+          )
+        : _requiredSafeId(requestId, 'requestId');
+    final response = await _engagementCall(
+      'createReelCommentReport',
+      <String, Object?>{
+        'reelId': id,
+        'commentId': comment,
+        'reason': cleanReason,
+        'note': cleanNote,
+        'requestId': stableRequestId,
+      },
+      retryStableKey: requestId == null ? key : null,
+      // The one and only source of this code inside the deployed
+      // `createReelCommentReport`.
+      precondition: ReelEngagementFailure.ownComment,
+    );
+    identity.ensureCurrent();
+    final result = ReelCommentReport.fromWire(response);
+    // Every id this service minted for this target is released together: a
+    // stale id from an abandoned reason must never be replayed after the
+    // report landed, or the replay would answer for the wrong attempt.
+    _engagementRequestIds.removeWhere(
+      (candidate, _) => candidate.startsWith('commentReport:$id:$comment:'),
+    );
+    return result;
+  });
+
+  /// Removes somebody else's comment from a Reel THIS ACCOUNT AUTHORED.
+  ///
+  /// Authority is the Reel's author, checked by the server before the comment
+  /// is even read. [isCurrentUserAuthor] is a presentation hint for whether
+  /// to offer the control at all; it is never a substitute for that check,
+  /// and this client must not predict a `permission-denied`.
+  ///
+  /// The returned `commentCount` is the authority, exactly as it is for a
+  /// like or a deletion. `removedAuthorId` is whose words were removed — the
+  /// caller already had it on screen, and it is returned so an accountability
+  /// trace exists on both sides of the call.
+  Future<ReelCommentRemoval> removeComment(
+    String reelId, {
+    required String commentId,
+    String? requestId,
+  }) => _withIdentity((identity) async {
+    final id = _requiredSafeId(reelId, 'reelId');
+    final comment = _requiredSafeId(commentId, 'commentId');
+    final key = 'commentRemove:$id:$comment';
+    final stableRequestId = requestId == null
+        ? _engagementRequestIds.putIfAbsent(
+            key,
+            ReelPublishSession.newRequestId,
+          )
+        : _requiredSafeId(requestId, 'requestId');
+    final response = await _engagementCall(
+      'removeReelComment',
+      <String, Object?>{
+        'reelId': id,
+        'commentId': comment,
+        'requestId': stableRequestId,
+      },
+      retryStableKey: requestId == null ? key : null,
+      // `failed-precondition` is unreachable in the deployed
+      // `removeReelComment`. Mapping it to a reason that is not there would
+      // be an invented explanation, so it falls through to the operation's
+      // own failure copy.
+      precondition: ReelEngagementFailure.unknown,
+    );
+    identity.ensureCurrent();
+    final result = ReelCommentRemoval.fromWire(response);
+    if (result.reelId != id || result.commentId != comment) {
+      throw const FormatException('Malformed Reel comment removal response.');
     }
     _engagementRequestIds.remove(key);
     return result;
@@ -776,9 +937,18 @@ enum ReelEngagementFailure {
   /// The sign-in ended, or the token was rejected.
   signedOut,
 
-  /// Liking and commenting need a verified email; reading and deleting your
-  /// own comment do not.
+  /// Liking and commenting need a verified email; reading, deleting your own
+  /// comment, reporting and clearing your own thread do not.
   emailUnverified,
+
+  /// `createReelCommentReport` refused the target as the caller's own words.
+  ///
+  /// Its own value rather than a shade of [invalid], because it is the one
+  /// refusal on this path a person can act on: the control was offered by
+  /// mistake, or the account changed under them. The client hides Report on
+  /// its own comments already, so reaching this means the two disagreed —
+  /// and the server is the one that is right.
+  ownComment,
 
   /// The per-account budget for this operation is spent.
   rateLimited,
@@ -911,6 +1081,81 @@ class ReelCommentDeletion {
       reelId: _requiredSafeId(map['reelId'], 'reelId'),
       commentId: _requiredSafeId(map['commentId'], 'commentId'),
       commentCount: commentCount,
+    );
+  }
+}
+
+/// The receipt for one filed comment report.
+///
+/// [created] is `false` when this reporter had already reported this comment.
+/// The backend deduplicates on `(reporter, reel, comment)` and answers
+/// successfully, so this is "your earlier report still stands", not "nothing
+/// happened" and certainly not a failure. The UI says which of the two it
+/// was rather than claiming a fresh report either way.
+@immutable
+class ReelCommentReport {
+  const ReelCommentReport({required this.reportId, required this.created});
+
+  final String reportId;
+  final bool created;
+
+  factory ReelCommentReport.fromWire(Map<Object?, Object?> raw) {
+    final map = _exactWireMap(raw, const <String>{
+      'reportId',
+      'created',
+    }, 'Reel comment report');
+    final created = map['created'];
+    if (created is! bool) {
+      throw const FormatException('Malformed Reel comment report.');
+    }
+    return ReelCommentReport(
+      reportId: _requiredSafeId(map['reportId'], 'reportId'),
+      created: created,
+    );
+  }
+}
+
+/// The receipt for a Reel author clearing one comment off their own thread.
+///
+/// [removedAuthorId] is whose words were removed. It is not decoration: an
+/// author who clears every critical comment is a pattern, and a pattern only
+/// exists if the subject of each removal is recorded. The server keeps the
+/// durable trace; this carries the same fact back so the client can announce
+/// honestly what it just did.
+@immutable
+class ReelCommentRemoval {
+  const ReelCommentRemoval({
+    required this.reelId,
+    required this.commentId,
+    required this.commentCount,
+    required this.removedAuthorId,
+  });
+
+  final String reelId;
+  final String commentId;
+  final int commentCount;
+  final String removedAuthorId;
+
+  factory ReelCommentRemoval.fromWire(Map<Object?, Object?> raw) {
+    final map = _exactWireMap(raw, const <String>{
+      'reelId',
+      'commentId',
+      'removed',
+      'commentCount',
+      'removedAuthorId',
+    }, 'Reel comment removal');
+    final commentCount = map['commentCount'];
+    if (map['removed'] != true || commentCount is! int || commentCount < 0) {
+      throw const FormatException('Malformed Reel comment removal.');
+    }
+    return ReelCommentRemoval(
+      reelId: _requiredSafeId(map['reelId'], 'reelId'),
+      commentId: _requiredSafeId(map['commentId'], 'commentId'),
+      commentCount: commentCount,
+      removedAuthorId: _requiredSafeId(
+        map['removedAuthorId'],
+        'removedAuthorId',
+      ),
     );
   }
 }
