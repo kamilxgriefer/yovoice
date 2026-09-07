@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
@@ -5,6 +7,7 @@ import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/features/rooms/data/models/room_message.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
+import 'package:yovoice/shared/widgets/inputs/yo_emoji_picker.dart';
 import 'package:yovoice/shared/widgets/interactions/accessible_context_action.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
@@ -13,6 +16,11 @@ import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
 
 /// The room chat quick-reaction set (board screen 2). Persistent,
 /// rules-backed message reactions — not ephemeral confetti.
+// Pinned by firestore.rules (`after.keys().hasOnly([...])` on the room
+// message reaction map). These five are BOTH the reaction vocabulary and
+// the quick-insert row. The full emoji picker below is composer-only: it
+// never widens this list, because a sixth reaction would be rejected
+// server-side until the rules are changed and deployed.
 const roomReactionEmojis = ['❤️', '😂', '👏', '🔥', '💯'];
 
 /// The real room chat surface. It is permanently visible beside the stage on
@@ -52,6 +60,7 @@ class _RoomChatPanelState extends State<RoomChatPanel> {
   );
   bool _sending = false;
   bool _emojiRowOpen = false;
+  bool _fullPickerOpen = false;
 
   String get _uid =>
       widget.currentUserId ?? FirebaseAuth.instance.currentUser?.uid ?? '';
@@ -90,26 +99,20 @@ class _RoomChatPanelState extends State<RoomChatPanel> {
     }
   }
 
-  /// Inserts one of the room's quick emojis at the caret. Reuses the same
-  /// vocabulary as message reactions — one set, no invented catalog.
+  /// Inserts an emoji at the caret — from the quick row, whose vocabulary is
+  /// the room's five reactions, or from the full picker.
+  ///
+  /// The caret arithmetic moved to [yoInsertEmojiAtCaret] so all three
+  /// composers share one implementation instead of three copies that drift.
   void _insertEmoji(String emoji) {
-    final value = _composer.value;
-    final selection = value.selection;
-    if (!selection.isValid) {
-      _composer.text = value.text + emoji;
-      _composer.selection = TextSelection.collapsed(
-        offset: _composer.text.length,
-      );
-      return;
-    }
-    final text = value.text.replaceRange(selection.start, selection.end, emoji);
-    _composer.value = value.copyWith(
-      text: text,
-      selection: TextSelection.collapsed(
-        offset: selection.start + emoji.length,
-      ),
-      composing: TextRange.empty,
-    );
+    yoInsertEmojiAtCaret(_composer, emoji);
+  }
+
+  /// Swaps the system keyboard for the full picker and back.
+  void _toggleFullPicker() {
+    final opening = !_fullPickerOpen;
+    setState(() => _fullPickerOpen = opening);
+    if (opening) yoHideSystemKeyboard();
   }
 
   Future<void> _toggleReaction(RoomMessage message, String emoji) async {
@@ -270,6 +273,10 @@ class _RoomChatPanelState extends State<RoomChatPanel> {
           final ultraDensePanel =
               MediaQuery.textScalerOf(context).scale(1) >= 1.75 &&
               panelConstraints.maxHeight < 280;
+          // In a sheet this short the full picker would leave no readable
+          // conversation above it, so the affordance is withheld rather than
+          // offered and then ignored. The five-emoji quick row still works.
+          final canOpenFullPicker = panelConstraints.maxHeight >= 320;
           return Column(
             children: [
               if (!ultraDensePanel)
@@ -597,7 +604,17 @@ class _RoomChatPanelState extends State<RoomChatPanel> {
                                   ),
                                 ),
                               ),
-                              SizedBox(width: compactComposer ? 4 : 8),
+                              SizedBox(width: compactComposer ? 2 : 4),
+                              if (canOpenFullPicker)
+                                YoEmojiComposerButton(
+                                  open: _fullPickerOpen,
+                                  onPressed: _toggleFullPicker,
+                                  size: compactComposer ? 40 : 44,
+                                  iconSize: 20,
+                                  color: const Color(0xFF9E92A8),
+                                  activeColor: widget.accent,
+                                ),
+                              SizedBox(width: compactComposer ? 2 : 4),
                               IconButton.filled(
                                 onPressed: _sending ? null : _send,
                                 // The one control a nonspeaking person needs most in
@@ -633,6 +650,18 @@ class _RoomChatPanelState extends State<RoomChatPanel> {
                           );
                         },
                       ),
+                      // Below the composer, never over it, and capped at a
+                      // share of the panel so the conversation above stays
+                      // readable inside a sheet that is already short.
+                      if (_fullPickerOpen && canOpenFullPicker)
+                        YoEmojiPicker(
+                          height: math.min(
+                            260,
+                            panelConstraints.maxHeight * 0.45,
+                          ),
+                          onSelected: _insertEmoji,
+                          onBackspace: () => yoDeleteBackAtCaret(_composer),
+                        ),
                     ],
                   ),
                 ),

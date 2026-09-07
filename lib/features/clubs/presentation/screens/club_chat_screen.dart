@@ -12,6 +12,7 @@ import 'package:yovoice/features/clubs/data/models/club_chat_authority.dart';
 import 'package:yovoice/features/clubs/data/models/club_message.dart';
 import 'package:yovoice/features/clubs/data/services/club_chat_service.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
+import 'package:yovoice/shared/widgets/inputs/yo_emoji_picker.dart';
 import 'package:yovoice/shared/widgets/interactions/accessible_context_action.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
@@ -51,6 +52,7 @@ class _ClubChatScreenState extends State<ClubChatScreen> {
   final TextEditingController _controller = TextEditingController();
   final FocusNode _focusNode = FocusNode();
   bool _sending = false;
+  bool _emojiPickerOpen = false;
 
   /// Both streams are resolved ONCE, not per build. `build()` runs again
   /// on every keystroke-driven `_sending` flip, and a freshly constructed
@@ -79,6 +81,24 @@ class _ClubChatScreenState extends State<ClubChatScreen> {
     _controller.dispose();
     _focusNode.dispose();
     super.dispose();
+  }
+
+  /// Swaps the system keyboard for the emoji picker and back, keeping focus
+  /// on the composer so the caret survives the swap.
+  void _toggleEmojiPicker() {
+    final opening = !_emojiPickerOpen;
+    setState(() => _emojiPickerOpen = opening);
+    if (opening) {
+      if (!_focusNode.hasFocus) _focusNode.requestFocus();
+      yoHideSystemKeyboard();
+    } else {
+      _focusNode.requestFocus();
+    }
+  }
+
+  void _insertEmoji(String emoji) {
+    yoInsertEmojiAtCaret(_controller, emoji);
+    if (!_focusNode.hasFocus) _focusNode.requestFocus();
   }
 
   Future<void> _send() async {
@@ -360,6 +380,7 @@ class _ClubChatScreenState extends State<ClubChatScreen> {
                       controller: _controller,
                       focusNode: _focusNode,
                       sending: _sending,
+                      emojiPickerOpen: _emojiPickerOpen,
                       hint: _isAnnouncements
                           ? copy.text(
                               'Write an announcement…',
@@ -370,6 +391,20 @@ class _ClubChatScreenState extends State<ClubChatScreen> {
                               'Wiadomość na #${widget.channel.name}',
                             ),
                       onSend: _send,
+                      onToggleEmoji: _toggleEmojiPicker,
+                    ),
+                  // Below the composer, never over it: the send button is laid
+                  // out first, so no picker height can cover it.
+                  if (_emojiPickerOpen &&
+                      authority.canSendToChannel(
+                        announcement: _isAnnouncements,
+                      ))
+                    YoEmojiPicker(
+                      onSelected: _insertEmoji,
+                      onBackspace: () {
+                        yoDeleteBackAtCaret(_controller);
+                        if (!_focusNode.hasFocus) _focusNode.requestFocus();
+                      },
                     ),
                 ],
               );
@@ -687,15 +722,19 @@ class _Composer extends StatelessWidget {
     required this.controller,
     required this.focusNode,
     required this.sending,
+    required this.emojiPickerOpen,
     required this.hint,
     required this.onSend,
+    required this.onToggleEmoji,
   });
 
   final TextEditingController controller;
   final FocusNode focusNode;
   final bool sending;
+  final bool emojiPickerOpen;
   final String hint;
   final VoidCallback onSend;
+  final VoidCallback onToggleEmoji;
 
   @override
   Widget build(BuildContext context) {
@@ -743,9 +782,18 @@ class _Composer extends StatelessWidget {
                 ),
               ),
               onSubmitted: (_) => onSend(),
+              // Reaching for the keyboard is the natural way to put the
+              // picker away again.
+              onTap: emojiPickerOpen ? onToggleEmoji : null,
             ),
           ),
-          const SizedBox(width: 9),
+          const SizedBox(width: 2),
+          YoEmojiComposerButton(
+            open: emojiPickerOpen,
+            onPressed: onToggleEmoji,
+            color: palette.textTertiary,
+          ),
+          const SizedBox(width: 2),
           IconButton.filled(
             onPressed: sending ? null : onSend,
             tooltip: AppLocalizations.of(

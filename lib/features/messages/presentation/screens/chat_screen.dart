@@ -33,6 +33,7 @@ import 'package:yovoice/features/profile/data/models/user_profile.dart';
 import 'package:yovoice/features/profile/data/services/profile_media_service.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
+import 'package:yovoice/shared/widgets/inputs/yo_emoji_picker.dart';
 import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
@@ -139,6 +140,7 @@ class _ChatScreenState extends State<ChatScreen> {
   Message? _replyTo;
   bool _sending = false;
   bool _sendingMedia = false;
+  bool _emojiPickerOpen = false;
   bool _mediaPickerOpen = false;
   bool _startingCall = false;
   bool _profilePreviewOpen = false;
@@ -706,6 +708,27 @@ class _ChatScreenState extends State<ChatScreen> {
     } finally {
       if (mounted) setState(() => _startingCall = false);
     }
+  }
+
+  /// Swaps the system keyboard for the emoji picker and back.
+  ///
+  /// Focus stays on the composer in both directions: the caret has to survive
+  /// the swap for insertion to land where the user is typing, and the send
+  /// button has to keep working while the picker is open.
+  void _toggleEmojiPicker() {
+    final opening = !_emojiPickerOpen;
+    setState(() => _emojiPickerOpen = opening);
+    if (opening) {
+      if (!_focusNode.hasFocus) _focusNode.requestFocus();
+      unawaited(yoHideSystemKeyboard());
+    } else {
+      _focusNode.requestFocus();
+    }
+  }
+
+  void _insertEmoji(String emoji) {
+    yoInsertEmojiAtCaret(_controller, emoji);
+    if (!_focusNode.hasFocus) _focusNode.requestFocus();
   }
 
   Future<void> _send() async {
@@ -1524,10 +1547,22 @@ class _ChatScreenState extends State<ChatScreen> {
                   focusNode: _focusNode,
                   sending: _sending,
                   sendingMedia: _sendingMedia,
+                  emojiPickerOpen: _emojiPickerOpen,
                   onSend: _send,
                   onPhoto: _pickAttachment,
                   onVoice: _recordVoiceMessage,
+                  onToggleEmoji: _toggleEmojiPicker,
                 ),
+                // Below the composer, never over it: the send button is laid
+                // out first, so no picker height can cover it.
+                if (_emojiPickerOpen)
+                  YoEmojiPicker(
+                    onSelected: _insertEmoji,
+                    onBackspace: () {
+                      yoDeleteBackAtCaret(_controller);
+                      if (!_focusNode.hasFocus) _focusNode.requestFocus();
+                    },
+                  ),
               ],
             ),
           ),
@@ -2535,18 +2570,22 @@ class _Composer extends StatelessWidget {
     required this.focusNode,
     required this.sending,
     required this.sendingMedia,
+    required this.emojiPickerOpen,
     required this.onSend,
     required this.onPhoto,
     required this.onVoice,
+    required this.onToggleEmoji,
   });
 
   final TextEditingController controller;
   final FocusNode focusNode;
   final bool sending;
   final bool sendingMedia;
+  final bool emojiPickerOpen;
   final VoidCallback onSend;
   final VoidCallback onPhoto;
   final VoidCallback onVoice;
+  final VoidCallback onToggleEmoji;
 
   @override
   Widget build(BuildContext context) {
@@ -2611,6 +2650,10 @@ class _Composer extends StatelessWidget {
                       style: TextStyle(color: palette.textPrimary),
                       decoration: InputDecoration(
                         hintText: copy.text('Message…', 'Wiadomość…'),
+                        // At 320px and 200% text the field is narrow enough
+                        // that a wrapped placeholder would grow the composer
+                        // row and read as broken. Ellipsize instead.
+                        hintMaxLines: 1,
                         hintStyle: TextStyle(color: palette.textTertiary),
                         border: InputBorder.none,
                         contentPadding: const EdgeInsets.fromLTRB(
@@ -2621,7 +2664,15 @@ class _Composer extends StatelessWidget {
                         ),
                       ),
                       onSubmitted: (_) => onSend(),
+                      // Reaching for the keyboard is the natural way to put
+                      // the picker away again.
+                      onTap: emojiPickerOpen ? onToggleEmoji : null,
                     ),
+                  ),
+                  YoEmojiComposerButton(
+                    open: emojiPickerOpen,
+                    onPressed: onToggleEmoji,
+                    color: palette.textTertiary,
                   ),
                   ValueListenableBuilder<TextEditingValue>(
                     valueListenable: controller,
