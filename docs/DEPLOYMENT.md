@@ -15,6 +15,96 @@ deployables described in
 | Storage rules | `firebase deploy --only storage` | Manual |
 | `yovoice-website` | Vercel | Automatic, on push to `main` (separate repo) |
 
+### Build 22 tester release — 2026-09-07
+
+Runtime frozen at `c59d8954` (`main`, tracked tree clean at build time,
+`pubspec.yaml` `1.0.0+22`).
+
+| Gate | Result |
+|---|---|
+| `flutter analyze --no-pub` | clean |
+| `flutter test --no-pub` | 2826 / 2826 |
+| `firestore-tests` (emulator) | 542 passed, 0 failed |
+| `functions` (emulator) | exit 0, no failing tests |
+
+**Artifacts, identity read from the artifacts and not from the config:**
+
+- **AAB** `app.yovoice`, `1.0.0` / version code **22**, `foregroundServiceType`
+  `microphone|mediaPlayback` present in the base manifest, signed by
+  `CN=YO Voice Upload Key, O=YO Voice, C=PL`, `jar verified`; 119,586,288 B;
+  SHA-256 `bd00deafff67f08c2d2676726a2e4903c3a022a51eb4e477e28324b2f066402d`.
+  Staged for the owner at `~/Desktop/yovoice-1.0.0-22.aab` (same hash).
+- **iOS**: `Runner.xcarchive` rebuilt at 08:48 CEST carrying
+  `CFBundleVersion 22`. No local IPA was produced **by design** —
+  `ios/ExportOptionsUpload.plist` sets `destination = upload`, so
+  `flutter build ipa` uploads straight to App Store Connect instead of
+  writing a file. A second export attempt confirmed the upload landed by
+  failing with *"Redundant Binary Upload. You've already uploaded a build
+  with build number '22' for version number '1.0.0'."*
+
+  **Trap worth remembering:** `build/ios/ipa/yo_voice.ipa` still held the
+  **Build 21** binary (Sep 6 08:02, `CFBundleVersion 21`, SHA-256
+  `a696b070…`) because that path is never rewritten under an upload
+  destination. The identical hash to Build 21 is what exposed it. Always
+  read `CFBundleVersion` out of the artifact before trusting it.
+
+**Android — published to the existing internal cohort at 08:53 CEST.**
+The AAB was uploaded through the Play Console's native macOS file picker
+driven by System Events (the browser bridge refuses files over 10 MB, and
+this Mac still holds no Play Developer API credential). Play accepted
+`App bundle 22 (1.0.0)`, API 24+, target SDK 36; the review page reported
+"Gotowe do opublikowania" with no errors and **no foreground-service
+declaration prompt**, despite the new `microphone|mediaPlayback` service.
+Released to **Internal testing** — "YO Voice Build 22 — Dostępna dla
+testerów wewnętrznych — 1 kod wersji — Opublikowano: 7 wrz 08:53 —
+Niesprawdzona". Release notes were supplied in `pl-PL` and `en-US`; Play
+enforces 500 characters per language and rejected the first, longer Polish
+text. The tester list `YO Voice Internal Testers` (15) was not modified,
+nothing was promoted, no track was created.
+
+**iOS — uploaded but NOT yet distributed.** App Store Connect signed the
+session out partway through the release (`authResult=FAILED`), and
+re-authenticating needs the owner's Apple ID password or passkey plus 2FA.
+Build 22 is therefore in App Store Connect but has **not** been assigned to
+`YO Voice Internal Testers` or `YO Voice Beta Testers`, and no "What to
+Test" was saved. **Owner action required:** sign in to App Store Connect,
+then assign build 22 to both groups. Until that happens no iOS tester can
+install it.
+
+Scope: invited tester channels only. No production store release, no public
+link, no Hosting deploy.
+
+#### Tester notification email — 2026-09-07
+
+Same channel and policy as Build 21: the authenticated Workspace mailbox
+`kamil@yovoice.app` in Chrome "Profile 3", sending as the alias
+**YoVoice <hello@yovoice.app>**, driven through macOS Accessibility.
+Compose windows were pre-filled with Gmail's `view=cm` URL parameters and
+sent with Cmd+Return, one recipient per message, no BCC broadcast.
+
+Subject `YO Voice 1.0.0 (22) is ready to test`. The message states Android
+availability as live and iOS as uploaded-and-pending, which is what was
+actually true at send time. It also carries a line explaining that a
+TestFlight redeem-code prompt means the invitation has not been accepted on
+that Apple ID — see the invite-code finding below.
+
+Recipient set: the same union as Build 21 — Play internal (15) plus
+TestFlight external (7) plus TestFlight internal (1) = 23 entries, 21
+unique. The owner's address took the delivery test, the other **20** formed
+the wave. Addresses live only in the session scratchpad, never in this
+repository.
+
+#### The "invite code" report — diagnosed, not an app bug
+
+A tester reported being asked for an invite code. The app has **no**
+invite-code gate anywhere in `lib/`; the auth surface is login, register,
+forgot-password, TOTP and verify-email only. The console explains it:
+`goluszka12389@gmail.com` sits in `YO Voice Beta Testers` with status
+**"Invited"** and has never installed, and TestFlight prompts for a redeem
+code exactly when it is opened without an accepted invitation. That address
+is not on the Play list, so iOS is the only channel for it. No public link
+exists for the group, so the invitation email itself has to be accepted.
+
 ### Backend deploy for the Build 22 round — 2026-09-07
 
 Maintainer-authorized on 2026-09-07 in answer to a direct question: deploy
