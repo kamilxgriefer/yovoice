@@ -12,6 +12,7 @@ class Message {
     required this.sentAt,
     required this.readBy,
     required this.reactions,
+    this.sequence = 0,
     this.mediaUrl,
     this.durationSeconds,
     this.isDeleted = false,
@@ -29,6 +30,12 @@ class Message {
   final DateTime sentAt;
   final List<String> readBy;
   final Map<String, String> reactions;
+
+  /// The server-assigned position of this message in its conversation,
+  /// starting at 1. Load-bearing for delete-for-me: a participant's cut-off
+  /// is a sequence number, and Firestore Rules refuse anything at or below
+  /// it. 0 means a legacy document that predates the canonical schema.
+  final int sequence;
   final String? mediaUrl;
   final int? durationSeconds;
   final bool isDeleted;
@@ -74,6 +81,7 @@ class Message {
         data['readBy'] as List<dynamic>? ?? const <dynamic>[],
       ),
       reactions: _stringMap(data['reactions']),
+      sequence: (data['sequence'] as num?)?.toInt() ?? 0,
       mediaUrl: data['mediaUrl'] as String?,
       durationSeconds: (data['durationSeconds'] as num?)?.toInt(),
       isDeleted: data['isDeleted'] as bool? ?? false,

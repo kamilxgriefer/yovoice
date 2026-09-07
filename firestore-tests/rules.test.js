@@ -3486,6 +3486,180 @@ async function main() {
     },
   );
 
+  // --- delete-for-me: the per-participant read cut-off ---
+  //
+  // "Delete chat" removes a conversation for the person who asked and nobody
+  // else, so the message documents survive and the READ rule is the whole of
+  // the guarantee. These cases run the production-shaped queries — the list
+  // the chat screen issues, the paged media list, and a direct get — because
+  // a rule that only ever gets exercised by a single-document read proves
+  // nothing about the query path a real client takes (ADR-007).
+  const deleterConvo = "conversations/convo-deleted";
+  await testEnv.withSecurityRulesDisabled(async (ctx) => {
+    const db = ctx.firestore();
+    await setDoc(doc(db, deleterConvo), {
+      participantIds: ["host-uid", "invitee-uid"],
+      // host deleted through sequence 2; invitee never deleted anything.
+      deletedBy: ["host-uid"],
+      deletedSequences: { "host-uid": 2, "invitee-uid": 0 },
+      lastMessageSequence: 4,
+    });
+    for (let index = 1; index <= 4; index += 1) {
+      await setDoc(doc(db, `${deleterConvo}/messages/m${index}`), {
+        senderId: index % 2 === 0 ? "host-uid" : "invitee-uid",
+        sequence: index,
+        type: index === 4 ? "image" : "text",
+        content: `message ${index}`,
+        sentAt: Timestamp.fromMillis(1_800_000_000_000 + index * 1000),
+        readBy: [],
+        reactions: {},
+        isDeleted: false,
+      });
+    }
+  });
+
+  await check(
+    "DELETE-FOR-ME: the deleter's unconstrained message list is refused",
+    async () => {
+      // Rules are not filters. Without the matching bound the whole query is
+      // denied rather than quietly returning the deleted history.
+      await assertFails(
+        getDocs(query(collection(host.firestore(), `${deleterConvo}/messages`))),
+      );
+    },
+  );
+
+  await check(
+    "DELETE-FOR-ME: the deleter sees only what arrived after their cut-off",
+    async () => {
+      const snapshot = await assertSucceeds(
+        getDocs(query(
+          collection(host.firestore(), `${deleterConvo}/messages`),
+          where("sequence", ">", 2),
+          orderBy("sequence", "desc"),
+          limit(250),
+        )),
+      );
+      assert.deepEqual(
+        snapshot.docs.map((document) => document.data().sequence).sort(),
+        [3, 4],
+      );
+    },
+  );
+
+  await check(
+    "DELETE-FOR-ME: the deleter cannot ask for a LOWER bound and get history back",
+    async () => {
+      await assertFails(
+        getDocs(query(
+          collection(host.firestore(), `${deleterConvo}/messages`),
+          where("sequence", ">", 0),
+          orderBy("sequence", "desc"),
+        )),
+      );
+    },
+  );
+
+  await check(
+    "DELETE-FOR-ME: the deleter cannot get a deleted message by id",
+    async () => {
+      await assertFails(
+        getDoc(doc(host.firestore(), `${deleterConvo}/messages/m1`)),
+      );
+      await assertSucceeds(
+        getDoc(doc(host.firestore(), `${deleterConvo}/messages/m3`)),
+      );
+    },
+  );
+
+  await check(
+    "DELETE-FOR-ME: the shared-media query is bounded by the cut-off too",
+    async () => {
+      const snapshot = await assertSucceeds(
+        getDocs(query(
+          collection(host.firestore(), `${deleterConvo}/messages`),
+          where("type", "==", "image"),
+          where("sequence", ">", 2),
+          orderBy("sequence", "desc"),
+          limit(48),
+        )),
+      );
+      assert.deepEqual(snapshot.docs.map((document) => document.id), ["m4"]);
+      await assertFails(
+        getDocs(query(
+          collection(host.firestore(), `${deleterConvo}/messages`),
+          where("type", "==", "image"),
+          orderBy("sentAt", "desc"),
+          limit(48),
+        )),
+      );
+    },
+  );
+
+  await check(
+    "DELETE-FOR-ME: the OTHER participant keeps the entire thread, unchanged",
+    async () => {
+      // The whole point: one participant deleting must not narrow, hide or
+      // constrain anything for the other. Their ordinary unconstrained query
+      // still returns all four messages.
+      const snapshot = await assertSucceeds(
+        getDocs(query(
+          collection(invitee.firestore(), `${deleterConvo}/messages`),
+          orderBy("sentAt", "desc"),
+          limit(250),
+        )),
+      );
+      assert.equal(snapshot.docs.length, 4);
+      await assertSucceeds(
+        getDoc(doc(invitee.firestore(), `${deleterConvo}/messages/m1`)),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY: a participant cannot hide the OTHER participant's messages",
+    async () => {
+      // Writing `deletedSequences` for the peer would delete their chat out
+      // from under them; writing it for yourself would let you lower your own
+      // cut-off and read back what you deleted. The root is server-only, so
+      // both are refused, from either side.
+      await assertFails(
+        updateDoc(doc(invitee.firestore(), deleterConvo), {
+          "deletedSequences.host-uid": 4,
+        }),
+      );
+      await assertFails(
+        updateDoc(doc(invitee.firestore(), deleterConvo), {
+          deletedBy: ["host-uid", "invitee-uid"],
+        }),
+      );
+      await assertFails(
+        updateDoc(doc(host.firestore(), deleterConvo), {
+          "deletedSequences.host-uid": 0,
+        }),
+      );
+      await assertFails(
+        updateDoc(doc(host.firestore(), deleterConvo), { deletedBy: [] }),
+      );
+    },
+  );
+
+  await check(
+    "DELETE-FOR-ME: a conversation nobody deleted keeps its plain query",
+    async () => {
+      // The compatibility short circuit. Every install in the wild issues the
+      // unconstrained `sentAt` query; a root with no deletion state at all
+      // must keep serving it.
+      const snapshot = await assertSucceeds(
+        getDocs(query(
+          collection(host.firestore(), "conversations/convo-1/messages"),
+          limit(250),
+        )),
+      );
+      assert.equal(snapshot.docs.length, 1);
+    },
+  );
+
   // --- Notifications (users/{userId}/notifications/{notificationId}) ---
 
   await check(

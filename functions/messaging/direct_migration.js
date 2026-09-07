@@ -38,6 +38,33 @@ function timestampOr(value, fallback) {
   return timestampMillis(value) === null ? fallback : value;
 }
 
+// Carries `deletedBy`/`deletedSequences` through canonicalization, or omits
+// both when the root never had them. Omitting is what keeps this pass a
+// no-op for the roots that predate the feature: adding empty keys would make
+// every already-migrated conversation look like it needed migrating again.
+function canonicalDeletionState(rootData, participants, lastMessageSequence) {
+  const hasDeletedBy = Array.isArray(rootData.deletedBy);
+  const sequences = rootData.deletedSequences;
+  const hasSequences = sequences !== null && typeof sequences === "object" &&
+    !Array.isArray(sequences);
+  if (!hasDeletedBy && !hasSequences) return {};
+  const cutFor = (uid) => {
+    const value = hasSequences ? sequences[uid] : 0;
+    if (!Number.isSafeInteger(value) || value < 0) return 0;
+    return Math.min(value, lastMessageSequence);
+  };
+  return {
+    deletedBy: hasDeletedBy
+      ? [...new Set(
+        rootData.deletedBy.filter((uid) => participants.includes(uid)),
+      )].sort()
+      : [],
+    deletedSequences: Object.fromEntries(
+      participants.map((uid) => [uid, cutFor(uid)]),
+    ),
+  };
+}
+
 function valuesEqual(left, right) {
   if (left === right) return true;
   const leftMs = timestampMillis(left);
@@ -344,6 +371,12 @@ function createDirectMigrationService({
       mutedBy: Array.isArray(rootData.mutedBy)
         ? [...new Set(rootData.mutedBy.filter((uid) => participants.includes(uid)))].sort()
         : [],
+      // Per-user deletion state must SURVIVE canonicalization. Rebuilding the
+      // root without it would silently un-delete every thread someone had
+      // deleted and resurrect the history behind their cut-off — the exact
+      // privacy failure the feature exists to prevent. The cut-off is clamped
+      // to the recomputed length because this pass renumbers `sequence`.
+      ...canonicalDeletionState(rootData, participants, last?.data.sequence ?? 0),
       lastMessage: last === null
         ? ""
         : last.data.isDeleted

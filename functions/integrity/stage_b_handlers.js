@@ -15,6 +15,7 @@ const USER_CALLABLE_METHODS = Object.freeze({
   ],
   editDirectMessage: ["direct", "editDirectMessage"],
   deleteDirectMessage: ["direct", "deleteDirectMessage"],
+  deleteDirectConversationForMe: ["direct", "deleteDirectConversationForMe"],
   setDirectConversationPreference: [
     "direct",
     "setDirectConversationPreference",

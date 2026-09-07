@@ -34,6 +34,7 @@ const DEFAULT_LIMITS = Object.freeze({
   finalize: { maxEvents: 20, windowMs: 10 * 60_000 },
   edit: { maxEvents: 20, windowMs: 60_000 },
   delete: { maxEvents: 20, windowMs: 60_000 },
+  conversationDelete: { maxEvents: 10, windowMs: 60_000 },
   preference: { maxEvents: 60, windowMs: 60_000 },
   reaction: { maxEvents: 60, windowMs: 60_000 },
   read: { maxEvents: 120, windowMs: 60_000 },
@@ -468,6 +469,19 @@ function validatePairGuard(snapshot, conversationId, participants) {
   return guard;
 }
 
+// Per-user deletion state, added long after schemaVersion 2 shipped. It is
+// OPTIONAL rather than part of the exact key set because every conversation
+// root already in production predates it: promoting it to required would make
+// `validateConversation` reject every existing thread — that is, break all
+// direct messaging — until a migration had rewritten every root. The two keys
+// travel together (a cut-off with no membership marker, or the reverse, is
+// meaningless), and the exact-key discipline is otherwise unchanged: nothing
+// else may appear on a root.
+const CONVERSATION_DELETION_KEYS = Object.freeze([
+  "deletedBy",
+  "deletedSequences",
+]);
+
 function validateConversation(snapshot, conversationId, actorId, pairGuard) {
   const { data, participants } = conversationParticipants(snapshot, actorId);
   const expectedKeys = [
@@ -491,8 +505,16 @@ function validateConversation(snapshot, conversationId, actorId, pairGuard) {
     "updatedAt",
   ];
   const keys = Object.keys(data).sort();
-  if (keys.length !== expectedKeys.length ||
-      keys.some((key, index) => key !== expectedKeys[index]) ||
+  const deletionKeys = keys.filter(
+    (key) => CONVERSATION_DELETION_KEYS.includes(key),
+  );
+  const requiredKeys = keys.filter(
+    (key) => !CONVERSATION_DELETION_KEYS.includes(key),
+  );
+  if (requiredKeys.length !== expectedKeys.length ||
+      requiredKeys.some((key, index) => key !== expectedKeys[index]) ||
+      (deletionKeys.length !== 0 &&
+        deletionKeys.length !== CONVERSATION_DELETION_KEYS.length) ||
       data.pairKey !== canonicalPairKey(...participants) ||
       data.schemaVersion !== 2) {
     fail("permission-denied", "The conversation is not canonically bound.");
@@ -534,6 +556,22 @@ function validateConversation(snapshot, conversationId, actorId, pairGuard) {
   nonNegativeCount(data.lastMessageSequence, "lastMessageSequence");
   requireParticipantList(data.archivedBy, participants, "archivedBy");
   requireParticipantList(data.mutedBy, participants, "mutedBy");
+  if (deletionKeys.length !== 0) {
+    requireParticipantList(data.deletedBy, participants, "deletedBy");
+    const deletedSequences = requireParticipantMap(
+      data.deletedSequences,
+      participants,
+      "deletedSequences",
+    );
+    for (const uid of participants) {
+      nonNegativeCount(deletedSequences[uid], `Deleted sequence for ${uid}`);
+      // A cut-off past the end of the thread would hide messages that do not
+      // exist yet — every future message, permanently, for that participant.
+      if (deletedSequences[uid] > data.lastMessageSequence) {
+        fail("data-loss", "A deletion cut-off exceeds the conversation.");
+      }
+    }
+  }
   if (!isPlainObject(data.typing) ||
       Object.keys(data.typing).some((uid) => !participants.includes(uid))) {
     fail("data-loss", "typing is malformed.");
@@ -644,6 +682,18 @@ function setMembership(list, uid, enabled) {
   if (enabled) result.add(uid);
   else result.delete(uid);
   return [...result].sort();
+}
+
+// The conversation-root patch that un-hides a deleted thread when a new
+// message lands. Returns nothing at all for a root that has never carried
+// deletion state, so ordinary sends keep writing the exact same field set
+// they always did rather than adding the key to every conversation in the
+// database on the next message.
+function reviveDeletedBy(data) {
+  if (!Array.isArray(data.deletedBy) || data.deletedBy.length === 0) {
+    return {};
+  }
+  return { deletedBy: [] };
 }
 
 function createDirectMessagingService({
@@ -1075,6 +1125,11 @@ function createDirectMessagingService({
         lastMessageSenderId: auth.uid,
         updatedAt: timing.now,
         archivedBy: [],
+        // A new message revives the thread for BOTH participants, exactly as
+        // it un-archives it. `deletedSequences` is deliberately NOT touched:
+        // the revived thread must contain this message and nothing older, so
+        // whoever deleted it keeps their history hidden forever.
+        ...reviveDeletedBy(context.data),
         unreadCounts,
         typing,
       });
@@ -1568,6 +1623,7 @@ function createDirectMessagingService({
         lastMessageSenderId: auth.uid,
         updatedAt: finalTiming.now,
         archivedBy: [],
+        ...reviveDeletedBy(context.data),
         unreadCounts,
       });
       transaction.delete(reservationRef);
@@ -1828,6 +1884,151 @@ function createDirectMessagingService({
       const result = { conversationId, preference: data.preference, enabled };
       transaction.create(ledgerRef, ledgerData({
         kind: "direct.preference",
+        uid: auth.uid,
+        requestId,
+        inputHash: identity.inputHash,
+        result,
+        now: timing.now,
+      }));
+      return result;
+    });
+  }
+
+  // Delete-for-me. NOT delete-for-both, and there is no server operation that
+  // does the latter: one participant must never be able to destroy the other
+  // participant's copy of a conversation they both took part in.
+  //
+  // WHY A CALLABLE, not a Rules-guarded client write. Three reasons, any one
+  // of which would be sufficient:
+  //   1. `conversations/{id}` is `allow update: if false` and stays that way
+  //      (see the Rules comment on that match block) — the root carries both
+  //      participants' cursors and the peer's server-derived identity.
+  //   2. `deletedSequences[uid]` is an INPUT TO AN AUTHORIZATION DECISION:
+  //      the message read rule below refuses anything at or under it. A
+  //      client that could write its own cut-off could also lower it, which
+  //      is precisely the value it must not control.
+  //   3. The cut-off has to be read from `lastMessageSequence` and written in
+  //      the same transaction. A read-then-write from a client would set the
+  //      cut-off from a stale sequence and leave whatever arrived in between
+  //      visible in a thread the user believes they deleted.
+  async function deleteDirectConversationForMe(request) {
+    const auth = requireActor(request, { verified: false });
+    const data = requireExactInput(
+      request.data,
+      ["conversationId", "requestId"],
+      ["conversationId", "requestId"],
+    );
+    const conversationId = requireId(data.conversationId, "conversationId");
+    const requestId = requireRequestId(data.requestId);
+    const input = { conversationId };
+    const identity = operationIdentity(
+      "direct.conversationDelete",
+      auth.uid,
+      requestId,
+      input,
+    );
+    const timing = time();
+    const preflight = await beginAttemptPreflight({
+      identity,
+      kind: "direct.conversationDelete",
+      uid: auth.uid,
+      requestId,
+      scope: "conversationDelete",
+      timing,
+    });
+    if (preflight.replay) return preflight.replay;
+
+    return db.runTransaction(async (transaction) => {
+      const ledgerRef = ledgerReference(identity);
+      const rateRef = limitReference("conversationDelete", auth.uid);
+      const conversationRef = db.doc(`conversations/${conversationId}`);
+      const [ledger, rate, conversation, profile] = await transactionGetAll(
+        transaction,
+        ledgerRef,
+        rateRef,
+        conversationRef,
+        db.doc(`users/${auth.uid}`),
+      );
+      const replay = assertLedgerReplay(ledger, {
+        kind: "direct.conversationDelete",
+        uid: auth.uid,
+        inputHash: identity.inputHash,
+      });
+      if (replay) return replay;
+      activeProfile(profile, "Your");
+      const preliminary = conversationParticipants(conversation, auth.uid);
+      const pairGuard = await transaction.get(db.doc(
+        `directConversationPairs/${canonicalPairKey(...preliminary.participants)}`,
+      ));
+      const context = validateConversation(
+        conversation,
+        conversationId,
+        auth.uid,
+        pairGuard,
+      );
+      consume(
+        transaction,
+        rate,
+        rateRef,
+        "conversationDelete",
+        auth.uid,
+        timing,
+      );
+
+      const existingSequences = isPlainObject(context.data.deletedSequences)
+        ? context.data.deletedSequences
+        : {};
+      // Monotonic, per participant. A cut-off never moves backwards: deleting
+      // a thread that has since revived hides the revived messages too, and a
+      // replayed or reordered call can never un-hide anything.
+      const deletedSequences = Object.fromEntries(
+        context.participants.map((uid) => [
+          uid,
+          uid === auth.uid
+            ? Math.max(
+              nonNegativeCount(
+                existingSequences[uid] ?? 0,
+                `Deleted sequence for ${uid}`,
+              ),
+              context.data.lastMessageSequence,
+            )
+            : nonNegativeCount(
+              existingSequences[uid] ?? 0,
+              `Deleted sequence for ${uid}`,
+            ),
+        ]),
+      );
+      transaction.update(conversationRef, {
+        deletedBy: setMembership(
+          Array.isArray(context.data.deletedBy) ? context.data.deletedBy : [],
+          auth.uid,
+          true,
+        ),
+        deletedSequences,
+        // Deleting supersedes archiving. A revived thread belongs in the
+        // inbox, not in an Archived tab the user cannot see it from.
+        archivedBy: setMembership(context.data.archivedBy, auth.uid, false),
+        // The deleter's own unread badge. The PEER's counters, read cursors
+        // and archive state are untouched, so nothing they can see in the app
+        // changes and no notification is raised. `deletedBy` itself does sit
+        // on a root both participants may read — exactly as `mutedBy` and
+        // `archivedBy` already do — and no surface renders it.
+        unreadCounts: { ...context.data.unreadCounts, [auth.uid]: 0 },
+        // `readSequences` is deliberately NOT advanced. It drives the peer's
+        // read receipts, so moving it would tell them their messages had been
+        // read at the moment this user walked away from the thread.
+        typing: Object.fromEntries(
+          Object.entries(context.data.typing).filter(
+            ([uid]) => uid !== auth.uid,
+          ),
+        ),
+      });
+      const result = {
+        conversationId,
+        deletedThroughSequence: deletedSequences[auth.uid],
+      };
+      transaction.create(ledgerRef, ledgerData({
+        kind: "direct.conversationDelete",
         uid: auth.uid,
         requestId,
         inputHash: identity.inputHash,
@@ -2229,6 +2430,7 @@ function createDirectMessagingService({
   }
 
   return {
+    deleteDirectConversationForMe,
     deleteDirectMessage,
     editDirectMessage,
     expireAbandonedAttachmentReservations,

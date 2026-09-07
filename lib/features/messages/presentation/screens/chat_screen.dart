@@ -23,6 +23,7 @@ import 'package:yovoice/features/messages/data/services/direct_attachment_outbox
 import 'package:yovoice/features/messages/data/services/message_outbox.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/messages/presentation/screens/shared_media_screen.dart';
+import 'package:yovoice/features/messages/presentation/widgets/delete_conversation_dialog.dart';
 import 'package:yovoice/features/messages/presentation/widgets/direct_picked_video_inspector.dart';
 import 'package:yovoice/features/messages/presentation/widgets/message_bubble.dart';
 import 'package:yovoice/features/moderation/data/services/content_report_service.dart';
@@ -1124,6 +1125,36 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+  /// Delete-for-me from inside the thread. On success the route closes,
+  /// because the conversation this screen is showing is no longer one this
+  /// account has. On failure it stays open and says why — a chat screen that
+  /// popped anyway would look exactly like a successful delete.
+  Future<void> _deleteConversation() async {
+    final confirmed = await confirmDeleteConversation(
+      context,
+      name: _otherDisplayName,
+    );
+    if (confirmed != true || !mounted) return;
+    try {
+      await _service.deleteConversationForMe(widget.conversationId);
+      if (mounted) {
+        Navigator.pop(context);
+      }
+    } catch (error) {
+      if (mounted) {
+        _showMessage(
+          intentionalOrFriendly(
+            error,
+            fallback: AppLocalizations.of(context).text(
+              'Could not delete this chat.',
+              'Nie udało się usunąć tego czatu.',
+            ),
+          ),
+        );
+      }
+    }
+  }
+
   Future<DirectMessageMediaPickAction?> _chooseMediaAction() {
     final palette = context.appPalette;
     final copy = AppLocalizations.of(context);
@@ -1397,6 +1428,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   onBack: () => Navigator.pop(context),
                   onMute: _toggleMute,
                   onArchive: _archiveConversation,
+                  onDelete: _deleteConversation,
                   onSharedMedia: _openSharedMedia,
                   onProfileTap: _openProfilePreview,
                   onCall: () => _startDirectCall(),
@@ -1591,6 +1623,7 @@ class _ChatHeader extends StatelessWidget {
     required this.onBack,
     required this.onMute,
     required this.onArchive,
+    required this.onDelete,
     required this.onSharedMedia,
     required this.onProfileTap,
     required this.onCall,
@@ -1608,6 +1641,7 @@ class _ChatHeader extends StatelessWidget {
   final VoidCallback onBack;
   final VoidCallback onMute;
   final VoidCallback onArchive;
+  final VoidCallback onDelete;
   final VoidCallback onSharedMedia;
 
   /// No dead avatars: tapping the person you're talking to opens their
@@ -1752,6 +1786,8 @@ class _ChatHeader extends StatelessWidget {
                 onMute();
               } else if (value == 'archive') {
                 onArchive();
+              } else if (value == 'delete') {
+                onDelete();
               } else if (value == 'shared-media') {
                 onSharedMedia();
               }
@@ -1799,6 +1835,23 @@ class _ChatHeader extends StatelessWidget {
                     Text(
                       copy.text('Archive', 'Archiwizuj'),
                       style: TextStyle(color: palette.textPrimary),
+                    ),
+                  ],
+                ),
+              ),
+              // Destructive, so it sits last and carries the error colour.
+              PopupMenuItem<String>(
+                key: const ValueKey('chat-delete-action'),
+                value: 'delete',
+                child: Row(
+                  children: [
+                    Icon(Icons.delete_outline_rounded, color: colors.error),
+                    const SizedBox(width: 12),
+                    Flexible(
+                      child: Text(
+                        copy.text('Delete chat', 'Usuń czat'),
+                        style: TextStyle(color: colors.error),
+                      ),
                     ),
                   ],
                 ),

@@ -2183,3 +2183,492 @@ test("canonical message schema passes while extra or missing keys fail closed", 
     (error) => error.code === "data-loss",
   );
 });
+
+// --- delete-for-me -----------------------------------------------------
+//
+// One participant deletes the conversation for THEMSELVES. The other keeps
+// theirs, learns nothing, and if they write again the thread comes back for
+// the deleter holding only what arrived after the cut-off.
+
+test("deleting a conversation hides it for the deleter and nobody else", async () => {
+  const service = directService();
+  const { conversationId } = await open(service);
+  await service.sendDirectMessage(request(A, {
+    conversationId,
+    requestId: "del-send-001",
+    text: "first",
+  }));
+  await service.sendDirectMessage(request(B, {
+    conversationId,
+    requestId: "del-send-002",
+    text: "second",
+  }));
+  const before = (await db.doc(`conversations/${conversationId}`).get()).data();
+
+  const result = await service.deleteDirectConversationForMe(request(A, {
+    conversationId,
+    requestId: "del-conv-001",
+  }));
+
+  assert.deepEqual(result, { conversationId, deletedThroughSequence: 2 });
+  const after = (await db.doc(`conversations/${conversationId}`).get()).data();
+  assert.deepEqual(after.deletedBy, [A]);
+  assert.deepEqual(after.deletedSequences, { [A]: 2, [B]: 0 });
+  // The deleter's own badge is cleared; the PEER's counters, read cursor and
+  // archive state are byte-for-byte what they were.
+  assert.equal(after.unreadCounts[A], 0);
+  assert.equal(after.unreadCounts[B], before.unreadCounts[B]);
+  assert.deepEqual(after.readSequences, before.readSequences);
+  assert.equal(after.lastMessage, before.lastMessage);
+  assert.equal(after.lastMessageSequence, before.lastMessageSequence);
+  // Nothing was destroyed. Both messages are still there for B.
+  assert.equal(
+    (await db.collection(`conversations/${conversationId}/messages`).get()).size,
+    2,
+  );
+});
+
+test("a read cursor is NOT advanced by deleting — the peer's receipts do not move", async () => {
+  // Zeroing the deleter's unread count is private bookkeeping. Advancing
+  // `readSequences` would not be: it is what the other participant's "seen"
+  // state is derived from, so it would tell them their messages had been read
+  // at the exact moment this account walked away from the thread.
+  const service = directService();
+  const { conversationId } = await open(service);
+  await service.sendDirectMessage(request(B, {
+    conversationId,
+    requestId: "del-send-003",
+    text: "did you see this?",
+  }));
+  await service.deleteDirectConversationForMe(request(A, {
+    conversationId,
+    requestId: "del-conv-002",
+  }));
+  const root = (await db.doc(`conversations/${conversationId}`).get()).data();
+  assert.equal(root.readSequences[A], 0);
+});
+
+test("a new message revives the thread WITHOUT returning the deleted history", async () => {
+  const service = directService();
+  const { conversationId } = await open(service);
+  for (const index of [1, 2, 3]) {
+    await service.sendDirectMessage(request(B, {
+      conversationId,
+      requestId: `del-hist-00${index}`,
+      text: `history ${index}`,
+    }));
+  }
+  await service.deleteDirectConversationForMe(request(A, {
+    conversationId,
+    requestId: "del-conv-003",
+  }));
+
+  await service.sendDirectMessage(request(B, {
+    conversationId,
+    requestId: "del-revive-01",
+    text: "still there?",
+  }));
+
+  const root = (await db.doc(`conversations/${conversationId}`).get()).data();
+  // Back in A's list...
+  assert.deepEqual(root.deletedBy, []);
+  // ...but the cut-off is untouched, so the three old messages stay hidden.
+  assert.equal(root.deletedSequences[A], 3);
+  assert.equal(root.lastMessageSequence, 4);
+});
+
+test("an attachment revives the thread on the same terms as a text message", async () => {
+  // The media send is a SECOND write path into the same conversation root.
+  // A revive rule implemented only on `sendDirectMessage` would leave a
+  // thread permanently deleted for someone whose peer replied with a photo.
+  const metadata = new Map();
+  const storage = {
+    async getMetadata(path) {
+      const value = metadata.get(path);
+      if (!value) throw Object.assign(new Error("missing"), { code: "not-found" });
+      return value;
+    },
+    getObjectReference(path) {
+      return `gs://yovoice-test.appspot.com/${path}`;
+    },
+  };
+  const service = directService({}, {
+    storage,
+    mediaProbe: matchingMediaProbe(),
+  });
+  const { conversationId } = await open(service);
+  await service.sendDirectMessage(request(B, {
+    conversationId,
+    requestId: "del-att-send1",
+    text: "before",
+  }));
+  await service.deleteDirectConversationForMe(request(A, {
+    conversationId,
+    requestId: "del-conv-004",
+  }));
+
+  const reserved = await service.reserveDirectMessageAttachment(request(B, {
+    conversationId,
+    type: "image",
+    contentType: "image/jpeg",
+    requestId: "del-att-reserve",
+  }));
+  metadata.set(reserved.storagePath, {
+    size: "2048",
+    contentType: "image/jpeg",
+    generation: "31",
+    metadata: {
+      yovoiceConversationId: conversationId,
+      yovoiceMessageId: reserved.messageId,
+      yovoiceMessagePath:
+        `conversations/${conversationId}/messages/${reserved.messageId}`,
+      yovoiceMediaType: "image",
+      yovoiceOwnerUid: B,
+    },
+  });
+  await service.finalizeDirectMessageAttachment(request(B, {
+    conversationId,
+    messageId: reserved.messageId,
+    objectGeneration: "31",
+    requestId: "del-att-finalize",
+  }));
+
+  const root = (await db.doc(`conversations/${conversationId}`).get()).data();
+  assert.deepEqual(root.deletedBy, []);
+  assert.equal(root.deletedSequences[A], 1);
+  assert.equal(root.lastMessageSequence, 2);
+});
+
+test("deleting twice moves the cut-off forward and never backwards", async () => {
+  const service = directService();
+  const { conversationId } = await open(service);
+  await service.sendDirectMessage(request(B, {
+    conversationId,
+    requestId: "del-again-001",
+    text: "one",
+  }));
+  await service.deleteDirectConversationForMe(request(A, {
+    conversationId,
+    requestId: "del-conv-005",
+  }));
+  await service.sendDirectMessage(request(B, {
+    conversationId,
+    requestId: "del-again-002",
+    text: "two",
+  }));
+  await service.deleteDirectConversationForMe(request(A, {
+    conversationId,
+    requestId: "del-conv-006",
+  }));
+  let root = (await db.doc(`conversations/${conversationId}`).get()).data();
+  assert.equal(root.deletedSequences[A], 2);
+
+  // A delete replayed out of order — the same call arriving late — must not
+  // lower the cut-off and hand history back.
+  await db.doc(`conversations/${conversationId}`).update({
+    lastMessageSequence: 2,
+  });
+  await service.deleteDirectConversationForMe(request(A, {
+    conversationId,
+    requestId: "del-conv-007",
+  }));
+  root = (await db.doc(`conversations/${conversationId}`).get()).data();
+  assert.equal(root.deletedSequences[A], 2);
+});
+
+test("both participants can delete independently without touching each other", async () => {
+  const service = directService();
+  const { conversationId } = await open(service);
+  await service.sendDirectMessage(request(A, {
+    conversationId,
+    requestId: "del-both-001",
+    text: "one",
+  }));
+  await service.sendDirectMessage(request(B, {
+    conversationId,
+    requestId: "del-both-002",
+    text: "two",
+  }));
+  await service.deleteDirectConversationForMe(request(A, {
+    conversationId,
+    requestId: "del-conv-008",
+  }));
+  await service.deleteDirectConversationForMe(request(B, {
+    conversationId,
+    requestId: "del-conv-009",
+  }));
+
+  const root = (await db.doc(`conversations/${conversationId}`).get()).data();
+  assert.deepEqual(root.deletedBy, [A, B].sort());
+  assert.deepEqual(root.deletedSequences, { [A]: 2, [B]: 2 });
+  // Nothing is reclaimed when both sides have deleted: the documents remain,
+  // hidden from both, and either participant can still revive the thread by
+  // writing again. Reclamation is deliberately a separate, resumable job —
+  // see the report accompanying this change.
+  assert.equal(
+    (await db.collection(`conversations/${conversationId}/messages`).get()).size,
+    2,
+  );
+
+  // And a send from either side revives it for BOTH, still without returning
+  // anything either of them deleted.
+  await service.sendDirectMessage(request(B, {
+    conversationId,
+    requestId: "del-both-003",
+    text: "three",
+  }));
+  const revived = (await db.doc(`conversations/${conversationId}`).get()).data();
+  assert.deepEqual(revived.deletedBy, []);
+  assert.deepEqual(revived.deletedSequences, { [A]: 2, [B]: 2 });
+});
+
+test("one participant deleting does not put the OTHER into deletedBy", async () => {
+  // The membership marker is per participant and nothing about A deleting may
+  // hide the thread from B.
+  const service = directService();
+  const { conversationId } = await open(service);
+  await service.sendDirectMessage(request(A, {
+    conversationId,
+    requestId: "del-solo-0001",
+    text: "one",
+  }));
+  await service.deleteDirectConversationForMe(request(A, {
+    conversationId,
+    requestId: "del-conv-017",
+  }));
+  const root = (await db.doc(`conversations/${conversationId}`).get()).data();
+  assert.deepEqual(root.deletedBy, [A]);
+  assert.equal(root.deletedSequences[B], 0);
+});
+
+test("deleting supersedes archiving so a revived thread lands in the inbox", async () => {
+  const service = directService();
+  const { conversationId } = await open(service);
+  await service.setDirectConversationPreference(request(A, {
+    conversationId,
+    enabled: true,
+    preference: "archived",
+    requestId: "del-arch-0001",
+  }));
+  await service.setDirectConversationPreference(request(B, {
+    conversationId,
+    enabled: true,
+    preference: "archived",
+    requestId: "del-arch-0002",
+  }));
+  await service.deleteDirectConversationForMe(request(A, {
+    conversationId,
+    requestId: "del-conv-010",
+  }));
+  const root = (await db.doc(`conversations/${conversationId}`).get()).data();
+  assert.deepEqual(root.archivedBy, [B]);
+  assert.deepEqual(root.deletedBy, [A]);
+});
+
+test("a replayed delete returns the first result and writes nothing new", async () => {
+  const service = directService();
+  const { conversationId } = await open(service);
+  await service.sendDirectMessage(request(B, {
+    conversationId,
+    requestId: "del-replay-s01",
+    text: "one",
+  }));
+  const first = await service.deleteDirectConversationForMe(request(A, {
+    conversationId,
+    requestId: "del-conv-011",
+  }));
+  await service.sendDirectMessage(request(B, {
+    conversationId,
+    requestId: "del-replay-s02",
+    text: "two",
+  }));
+  const replay = await service.deleteDirectConversationForMe(request(A, {
+    conversationId,
+    requestId: "del-conv-011",
+  }));
+
+  assert.deepEqual(replay, first);
+  const root = (await db.doc(`conversations/${conversationId}`).get()).data();
+  // The replay did not re-run against the newer sequence, and did not
+  // re-hide the message that arrived in between.
+  assert.equal(root.deletedSequences[A], 1);
+  assert.deepEqual(root.deletedBy, []);
+});
+
+test("a non-participant cannot delete someone else's conversation", async () => {
+  const service = directService();
+  const { conversationId } = await open(service);
+  await assert.rejects(
+    service.deleteDirectConversationForMe(request(C, {
+      conversationId,
+      requestId: "del-conv-012",
+    })),
+    (error) => error.code === "permission-denied",
+  );
+  const root = (await db.doc(`conversations/${conversationId}`).get()).data();
+  assert.equal(root.deletedBy, undefined);
+});
+
+test("the delete callable accepts no field beyond its own two", async () => {
+  const service = directService();
+  const { conversationId } = await open(service);
+  await assert.rejects(
+    service.deleteDirectConversationForMe(request(A, {
+      conversationId,
+      requestId: "del-conv-013",
+      // A caller-chosen cut-off is exactly the input this operation must
+      // never take: it is an authorization bound, derived on the server.
+      deletedThroughSequence: 99,
+    })),
+    (error) => error.code === "invalid-argument",
+  );
+  await assert.rejects(
+    service.deleteDirectConversationForMe(request(A, {
+      conversationId,
+      requestId: "del-conv-014",
+      targetUserId: B,
+    })),
+    (error) => error.code === "invalid-argument",
+  );
+});
+
+test("deletion state is optional on a root but never half-present or out of range", async () => {
+  const service = directService();
+  const { conversationId } = await open(service);
+  const rootRef = db.doc(`conversations/${conversationId}`);
+  // Absent on every conversation that predates the feature: still canonical.
+  await service.sendDirectMessage(request(A, {
+    conversationId,
+    requestId: "del-shape-0001",
+    text: "legacy shape is fine",
+  }));
+
+  await rootRef.update({ deletedBy: [A] });
+  await assert.rejects(
+    service.sendDirectMessage(request(A, {
+      conversationId,
+      requestId: "del-shape-0002",
+      text: "half-present",
+    })),
+    (error) => error.code === "permission-denied",
+  );
+
+  await rootRef.update({ deletedSequences: { [A]: 99, [B]: 0 } });
+  await assert.rejects(
+    service.sendDirectMessage(request(A, {
+      conversationId,
+      requestId: "del-shape-0003",
+      text: "cut-off past the end",
+    })),
+    (error) => error.code === "data-loss",
+  );
+
+  await rootRef.update({ deletedSequences: { [A]: 1, [B]: 0 } });
+  const sent = await service.sendDirectMessage(request(A, {
+    conversationId,
+    requestId: "del-shape-0004",
+    text: "well formed",
+  }));
+  assert.equal(sent.created, true);
+});
+
+test("a banned account cannot run the delete callable", async () => {
+  const service = directService();
+  const { conversationId } = await open(service);
+  await db.doc(`users/${A}`).update({ banned: true });
+  await assert.rejects(
+    service.deleteDirectConversationForMe(request(A, {
+      conversationId,
+      requestId: "del-conv-015",
+    })),
+    (error) => error.code === "permission-denied",
+  );
+});
+
+test("conversation deletes are rate limited on their own budget", async () => {
+  const service = directService({
+    conversationDelete: { maxEvents: 2, windowMs: 1_000 },
+  });
+  const { conversationId } = await open(service);
+  await service.deleteDirectConversationForMe(request(A, {
+    conversationId,
+    requestId: "del-rate-0001",
+  }));
+  await service.deleteDirectConversationForMe(request(A, {
+    conversationId,
+    requestId: "del-rate-0002",
+  }));
+  await assert.rejects(
+    service.deleteDirectConversationForMe(request(A, {
+      conversationId,
+      requestId: "del-rate-0003",
+    })),
+    (error) => error.code === "resource-exhausted",
+  );
+});
+
+test("the migration carries deletion state instead of resurrecting history", async () => {
+  const service = directService();
+  const { conversationId } = await open(service);
+  for (const index of [1, 2]) {
+    await service.sendDirectMessage(request(B, {
+      conversationId,
+      requestId: `del-mig-00${index}`,
+      text: `history ${index}`,
+    }));
+  }
+  await service.deleteDirectConversationForMe(request(A, {
+    conversationId,
+    requestId: "del-conv-016",
+  }));
+  const migrator = createDirectMigrationService({
+    db,
+    FieldPath,
+    Timestamp,
+    clock: () => nowMs,
+  });
+
+  // The root this pass WOULD write is the assertion that matters: rebuilding
+  // it without the deletion state would un-delete the thread and hand the two
+  // hidden messages straight back.
+  const inspection = await migrator.inspectDirectConversation({
+    conversationId,
+  });
+  assert.deepEqual(inspection.canonicalRoot.deletedBy, [A]);
+  assert.deepEqual(inspection.canonicalRoot.deletedSequences, { [A]: 2, [B]: 0 });
+
+  // A cut-off pointing past the end — which renumbering could otherwise
+  // produce — is clamped rather than left hiding messages that do not exist.
+  await db.doc(`conversations/${conversationId}`).update({
+    deletedSequences: { [A]: 99, [B]: 0 },
+  });
+  const clamped = await migrator.inspectDirectConversation({ conversationId });
+  assert.equal(clamped.canonicalRoot.deletedSequences[A], 2);
+});
+
+test("the migration adds no deletion keys to a root that never had them", async () => {
+  // The other half of the compatibility contract: this pass must stay a no-op
+  // for every conversation nobody has deleted, or it would rewrite the whole
+  // collection on its next run.
+  const service = directService();
+  const { conversationId } = await open(service);
+  await service.sendDirectMessage(request(B, {
+    conversationId,
+    requestId: "del-mig-none1",
+    text: "untouched",
+  }));
+  const migrator = createDirectMigrationService({
+    db,
+    FieldPath,
+    Timestamp,
+    clock: () => nowMs,
+  });
+  const inspection = await migrator.inspectDirectConversation({
+    conversationId,
+  });
+  assert.equal("deletedBy" in inspection.canonicalRoot, false);
+  assert.equal("deletedSequences" in inspection.canonicalRoot, false);
+  // `status` is deliberately not asserted here: it also reports fixture-wide
+  // findings such as duplicate conversations for a shared test uid, so it
+  // says nothing about this root's shape. The key set is what this test owns.
+});

@@ -946,6 +946,55 @@ describe("profile identity Club fan-out authorization", () => {
     assert.equal(conversation.data().participantPhotoUrls[uid], undefined);
   });
 
+  test("a conversation someone deleted for themselves still receives identity updates", async () => {
+    // `deletedBy`/`deletedSequences` are optional keys on the root. A fan-out
+    // that treated them as unknown would judge the whole root non-canonical
+    // and SKIP it — leaving a stale display name and avatar in that thread
+    // forever, for the participant who never deleted anything.
+    await Promise.all([
+      setCanonical({
+        displayName: "Renamed after a delete",
+        photoUrl: "https://example.com/renamed.jpg",
+      }),
+      setCanonicalConversation({
+        names: { [uid]: "Old name", [friendUid]: "Friend" },
+        photos: {
+          [uid]: "https://example.com/old.jpg",
+          [friendUid]: "https://example.com/friend.jpg",
+        },
+        rootOverrides: {
+          deletedBy: [friendUid],
+          deletedSequences: { [uid]: 0, [friendUid]: 0 },
+        },
+      }),
+    ]);
+
+    await run(
+      identityEvent(
+        { displayName: "Old name", photoUrl: "https://example.com/old.jpg" },
+        {
+          displayName: "Renamed after a delete",
+          photoUrl: "https://example.com/renamed.jpg",
+        },
+      ),
+    );
+
+    const conversation = await db
+      .collection("conversations")
+      .doc(conversationId)
+      .get();
+    assert.equal(
+      conversation.data().participantNames[uid],
+      "Renamed after a delete",
+    );
+    // And the deletion state itself is left exactly as it was.
+    assert.deepEqual(conversation.data().deletedBy, [friendUid]);
+    assert.deepEqual(
+      conversation.data().deletedSequences,
+      { [uid]: 0, [friendUid]: 0 },
+    );
+  });
+
   test("fan-out pages safely beyond one 150-target transaction", async () => {
     const count = 151;
     const references = Array.from({ length: count }, (_, index) =>

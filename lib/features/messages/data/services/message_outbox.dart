@@ -547,6 +547,23 @@ class MessageOutbox {
     _notify();
   });
 
+  /// Drops every message still queued for [conversationId] — pending,
+  /// retrying or failed alike.
+  ///
+  /// Used when the account deletes that conversation for itself: unsent text
+  /// is plaintext held on the device, and delivering it later would revive a
+  /// thread the user removed. Silent about entries that do not exist.
+  Future<void> purgeConversation(String conversationId) => _serialize(() async {
+    await load();
+    final before = _entries.length;
+    _entries.removeWhere((entry) => entry.conversationId == conversationId);
+    if (_entries.length == before) {
+      return;
+    }
+    await _persist();
+    _notify();
+  });
+
   /// Claims the delivery loop shared by every service facade for this queue.
   bool tryBeginDelivery() {
     if (_deliveryActive) return false;

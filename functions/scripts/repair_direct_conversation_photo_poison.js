@@ -48,6 +48,12 @@ const ROOT_KEYS = Object.freeze([
   "updatedAt",
 ]);
 
+// Optional per-participant delete-for-me state. Rejecting it as an unknown
+// key would make this repair skip every conversation someone had deleted for
+// themselves — exactly the roots it must still be able to fix. See
+// CONVERSATION_DELETION_KEYS in messaging/direct_integrity.js.
+const ROOT_OPTIONAL_KEYS = Object.freeze(["deletedBy", "deletedSequences"]);
+
 function compareCodeUnits(left, right) {
   return left < right ? -1 : left > right ? 1 : 0;
 }
@@ -56,9 +62,11 @@ function isPlainObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-function exactKeys(value, expected) {
+function exactKeys(value, expected, optional = []) {
   if (!isPlainObject(value)) return false;
-  const keys = Object.keys(value).sort(compareCodeUnits);
+  const keys = Object.keys(value)
+    .filter((key) => !optional.includes(key))
+    .sort(compareCodeUnits);
   return keys.length === expected.length &&
     keys.every((key, index) => key === expected[index]);
 }
@@ -110,7 +118,8 @@ function canonicalIdentityMaps(data, participants) {
 function canonicalRoot(document, guardSnapshot) {
   if (!document?.exists) return null;
   const data = document.data() ?? {};
-  if (!exactKeys(data, ROOT_KEYS) || data.schemaVersion !== 2 ||
+  if (!exactKeys(data, ROOT_KEYS, ROOT_OPTIONAL_KEYS) ||
+      data.schemaVersion !== 2 ||
       !Array.isArray(data.participantIds) ||
       data.participantIds.length !== 2) {
     return null;
@@ -147,7 +156,8 @@ function canonicalRoot(document, guardSnapshot) {
 function poisonCandidate(document, guardSnapshot) {
   if (!document?.exists) return null;
   const data = document.data() ?? {};
-  if (!exactKeys(data, ROOT_KEYS) || data.schemaVersion !== 2 ||
+  if (!exactKeys(data, ROOT_KEYS, ROOT_OPTIONAL_KEYS) ||
+      data.schemaVersion !== 2 ||
       !Array.isArray(data.participantIds) ||
       data.participantIds.length !== 2 ||
       !isPlainObject(data.participantPhotoUrls)) {

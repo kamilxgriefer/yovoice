@@ -37,6 +37,16 @@ const CONVERSATION_ROOT_KEYS = Object.freeze([
   "updatedAt",
 ]);
 
+// Per-participant delete-for-me state. Optional because it appears only on
+// roots where someone has actually deleted the thread; treating it as an
+// unknown key would make this fan-out silently SKIP those conversations,
+// leaving a stale display name and avatar in them forever. See
+// CONVERSATION_DELETION_KEYS in messaging/direct_integrity.js.
+const CONVERSATION_ROOT_OPTIONAL_KEYS = Object.freeze([
+  "deletedBy",
+  "deletedSequences",
+]);
+
 const PAIR_GUARD_KEYS = Object.freeze([
   "conversationId",
   "createdAt",
@@ -49,9 +59,11 @@ function codeUnitCompare(left, right) {
   return left < right ? -1 : left > right ? 1 : 0;
 }
 
-function hasExactKeys(value, expected) {
+function hasExactKeys(value, expected, optional = []) {
   if (!isPlainObject(value)) return false;
-  const keys = Object.keys(value).sort(codeUnitCompare);
+  const keys = Object.keys(value)
+    .filter((key) => !optional.includes(key))
+    .sort(codeUnitCompare);
   return keys.length === expected.length &&
     keys.every((key, index) => key === expected[index]);
 }
@@ -76,7 +88,11 @@ async function fetchAuthUserOrNull(uid) {
 }
 
 function canonicalConversationBinding(data, uid) {
-  if (!hasExactKeys(data, CONVERSATION_ROOT_KEYS) || data.schemaVersion !== 2) {
+  if (!hasExactKeys(
+    data,
+    CONVERSATION_ROOT_KEYS,
+    CONVERSATION_ROOT_OPTIONAL_KEYS,
+  ) || data.schemaVersion !== 2) {
     return null;
   }
   const participantIds = data.participantIds;

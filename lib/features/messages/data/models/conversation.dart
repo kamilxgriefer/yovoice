@@ -17,6 +17,8 @@ class Conversation {
     required this.createdAt,
     required this.archivedBy,
     required this.mutedBy,
+    this.deletedBy = const <String>[],
+    this.deletedSequences = const <String, int>{},
   });
 
   final String id;
@@ -32,6 +34,18 @@ class Conversation {
   final DateTime createdAt;
   final List<String> archivedBy;
   final List<String> mutedBy;
+
+  /// Participants who deleted this conversation for THEMSELVES. Server-owned,
+  /// and cleared for both participants as soon as a new message arrives — a
+  /// deleted thread revives, it does not stay gone.
+  final List<String> deletedBy;
+
+  /// Per-participant deletion cut-off: the `sequence` each one deleted
+  /// through. Unlike [deletedBy] this is never cleared, which is what makes a
+  /// revived thread start empty instead of handing back the deleted history.
+  /// Firestore Rules enforce it on reads; see `conversationDeletedThrough` in
+  /// `firestore.rules`.
+  final Map<String, int> deletedSequences;
 
   String otherUserId(String currentUserId) {
     return participantIds.firstWhere(
@@ -68,6 +82,12 @@ class Conversation {
 
   bool isMutedFor(String userId) => mutedBy.contains(userId);
 
+  bool isDeletedFor(String userId) => deletedBy.contains(userId);
+
+  /// The newest message [userId] deleted through, or 0 when they never
+  /// deleted this conversation.
+  int deletedThroughSequenceFor(String userId) => deletedSequences[userId] ?? 0;
+
   /// Returns an offline-capable conversation snapshot with one participant's
   /// live public identity overlaid. The source object remains immutable and
   /// every unrelated participant/metadata field is preserved.
@@ -93,6 +113,8 @@ class Conversation {
       createdAt: createdAt,
       archivedBy: archivedBy,
       mutedBy: mutedBy,
+      deletedBy: deletedBy,
+      deletedSequences: deletedSequences,
     );
   }
 
@@ -142,6 +164,10 @@ class Conversation {
       mutedBy: List<String>.from(
         data['mutedBy'] as List<dynamic>? ?? const <dynamic>[],
       ),
+      deletedBy: List<String>.from(
+        data['deletedBy'] as List<dynamic>? ?? const <dynamic>[],
+      ),
+      deletedSequences: _intMap(data['deletedSequences']),
     );
   }
 

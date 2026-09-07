@@ -342,10 +342,14 @@ class MessageService {
         .map((snapshot) {
           final items = snapshot.docs
               .map(Conversation.fromFirestore)
+              // A conversation this account deleted is gone from every list,
+              // archived included — `includeArchived` is about a tab, not
+              // about seeing everything.
               .where(
                 (conversation) =>
-                    includeArchived ||
-                    !conversation.isArchivedFor(currentUserId),
+                    !conversation.isDeletedFor(currentUserId) &&
+                    (includeArchived ||
+                        !conversation.isArchivedFor(currentUserId)),
               )
               .toList(growable: false);
 
@@ -354,23 +358,105 @@ class MessageService {
         });
   }
 
+  /// The conversation's messages, minus anything this account deleted.
+  ///
+  /// The cut-off is resolved from the conversation root FIRST and the message
+  /// query is opened only after it is known. That ordering is deliberate:
+  /// starting an unconstrained query optimistically would both flash locally
+  /// cached history that was supposed to be gone and be refused outright by
+  /// Rules, which require the matching `sequence` bound (see
+  /// `conversationDeletedThrough` in `firestore.rules`).
+  ///
+  /// A cut-off of 0 — nobody has deleted this thread, which is every
+  /// conversation until someone does — keeps the exact `sentAt` query this
+  /// method has always used, so the common path is unchanged and works
+  /// against roots and messages that predate the feature.
   Stream<List<Message>> watchMessages(String conversationId) {
-    return _conversations
-        .doc(conversationId)
-        .collection('messages')
-        .orderBy('sentAt', descending: true)
-        .limit(250)
-        .snapshots()
-        .map(
-          (snapshot) =>
-              snapshot.docs.map(Message.fromFirestore).toList(growable: false),
-        );
+    return _watchWithDeletionCutoff<List<Message>>(
+      conversationId,
+      (cutoff) => _messagesQuery(conversationId, cutoff)
+          .snapshots()
+          .map(
+            (snapshot) =>
+                snapshot.docs.map(Message.fromFirestore).toList(
+                  growable: false,
+                ),
+          ),
+    );
+  }
+
+  /// Re-opens [build] whenever this account's deletion cut-off for
+  /// [conversationId] changes, and never before it is known.
+  Stream<T> _watchWithDeletionCutoff<T>(
+    String conversationId,
+    Stream<T> Function(int cutoff) build,
+  ) {
+    final currentUserId = _currentUserId;
+    return Stream<T>.multi((controller) {
+      StreamSubscription<T>? inner;
+      int? appliedCutoff;
+
+      final root = _conversations
+          .doc(conversationId)
+          .snapshots()
+          .listen(
+            (snapshot) {
+              final cutoff = snapshot.exists
+                  ? Conversation.fromFirestore(
+                      snapshot,
+                    ).deletedThroughSequenceFor(currentUserId)
+                  : 0;
+              // Only a delete moves this, so the inner listener is opened
+              // once and rebuilt only when the account really did delete.
+              if (cutoff == appliedCutoff) return;
+              appliedCutoff = cutoff;
+              unawaited(inner?.cancel());
+              inner = build(
+                cutoff,
+              ).listen(controller.add, onError: controller.addError);
+            },
+            // A root that cannot be read cannot be filtered safely, and
+            // falling back to the unfiltered query could surface deleted
+            // history. Surface the failure instead.
+            onError: controller.addError,
+          );
+
+      controller.onCancel = () {
+        unawaited(inner?.cancel());
+        unawaited(root.cancel());
+      };
+    });
+  }
+
+  /// This account's delete-for-me cut-off, read once.
+  Future<int> _deletedThroughSequence(String conversationId) async {
+    final currentUserId = _currentUserId;
+    final snapshot = await _conversations.doc(conversationId).get();
+    if (!snapshot.exists) return 0;
+    return Conversation.fromFirestore(
+      snapshot,
+    ).deletedThroughSequenceFor(currentUserId);
+  }
+
+  Query<Map<String, dynamic>> _messagesQuery(String conversationId, int cutoff) {
+    final messages = _conversations.doc(conversationId).collection('messages');
+    if (cutoff <= 0) {
+      return messages.orderBy('sentAt', descending: true).limit(250);
+    }
+    // `sequence` is assigned in send order, so ordering by it is the same
+    // ordering as `sentAt` — and Firestore requires the inequality field to
+    // lead the sort.
+    return messages
+        .where('sequence', isGreaterThan: cutoff)
+        .orderBy('sequence', descending: true)
+        .limit(250);
   }
 
   Query<Map<String, dynamic>> _sharedMediaQuery({
     required String conversationId,
     required MessageType type,
     required int pageSize,
+    required int cutoff,
   }) {
     if (type == MessageType.text) {
       throw ArgumentError.value(type, 'type', 'Text is not shared media.');
@@ -378,11 +464,16 @@ class MessageService {
     if (pageSize < 1 || pageSize > 100) {
       throw RangeError.range(pageSize, 1, 100, 'pageSize');
     }
-    return _conversations
+    final messages = _conversations
         .doc(conversationId)
         .collection('messages')
-        .where('type', isEqualTo: type.name)
-        .orderBy('sentAt', descending: true)
+        .where('type', isEqualTo: type.name);
+    if (cutoff <= 0) {
+      return messages.orderBy('sentAt', descending: true).limit(pageSize);
+    }
+    return messages
+        .where('sequence', isGreaterThan: cutoff)
+        .orderBy('sequence', descending: true)
         .limit(pageSize);
   }
 
@@ -424,11 +515,15 @@ class MessageService {
     required MessageType type,
     int pageSize = 48,
   }) {
-    return _sharedMediaQuery(
-      conversationId: conversationId,
-      type: type,
-      pageSize: pageSize,
-    ).snapshots().map((snapshot) => _sharedMediaPage(snapshot, pageSize));
+    return _watchWithDeletionCutoff<SharedMediaPage>(
+      conversationId,
+      (cutoff) => _sharedMediaQuery(
+        conversationId: conversationId,
+        type: type,
+        pageSize: pageSize,
+        cutoff: cutoff,
+      ).snapshots().map((snapshot) => _sharedMediaPage(snapshot, pageSize)),
+    );
   }
 
   /// Loads the next older page for [type]. A cursor from another service or
@@ -442,10 +537,13 @@ class MessageService {
     if (cursor is! DocumentSnapshot<Map<String, dynamic>> || !cursor.exists) {
       throw ArgumentError.value(cursor, 'cursor', 'Invalid media cursor.');
     }
+    // The cursor came from a page built at the same cut-off, so the query
+    // shape has to match it — re-resolve rather than assume zero.
     final query = _sharedMediaQuery(
       conversationId: conversationId,
       type: type,
       pageSize: pageSize,
+      cutoff: await _deletedThroughSequence(conversationId),
     ).startAfterDocument(cursor);
     return _sharedMediaPage(await query.get(), pageSize);
   }
@@ -1972,6 +2070,50 @@ class MessageService {
     await _conversations.doc(conversationId).update({
       'archivedBy': FieldValue.arrayRemove([userId]),
     });
+  }
+
+  /// Deletes this conversation FOR THIS ACCOUNT ONLY.
+  ///
+  /// The other participant keeps their copy, is not told, and sees no change.
+  /// If they write again the thread comes back holding only what arrives from
+  /// that point on — the server records a cut-off, and Firestore Rules refuse
+  /// to serve anything at or below it (see `firestore.rules`).
+  ///
+  /// There is no client fallback. Every other participant-owned preference on
+  /// this service degrades to a direct write when the callable is missing, but
+  /// a direct write here would be refused by Rules AND would leave the caller
+  /// believing a deletion happened. A build that cannot reach the callable
+  /// says so instead.
+  Future<void> deleteConversationForMe(String conversationId) async {
+    final functions = _functions;
+    if (_preferLegacyBehaviour || functions == null) {
+      throw StateError(
+        'This build cannot delete conversations. Update YO Voice.',
+      );
+    }
+    try {
+      await functions.httpsCallable('deleteDirectConversationForMe').call({
+        'conversationId': conversationId,
+        'requestId': _newRequestId(),
+      });
+    } catch (error) {
+      if (_isCallableUnavailable(error)) {
+        throw StateError(
+          'This build cannot delete conversations. Update YO Voice.',
+        );
+      }
+      rethrow;
+    }
+    // Only after the server has accepted. Queued work for a thread the user
+    // removed must not be delivered later and resurrect it with content they
+    // believed was gone — the same boundary `clearLocalSensitiveStateForUser`
+    // draws at sign-out, drawn here per conversation.
+    await _purgeLocalConversationState(conversationId);
+  }
+
+  Future<void> _purgeLocalConversationState(String conversationId) async {
+    await outbox.purgeConversation(conversationId);
+    await attachmentOutbox.purgeConversation(conversationId);
   }
 
   static String buildConversationId(String firstId, String secondId) {

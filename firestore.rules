@@ -466,6 +466,22 @@ service cloud.firestore {
           ).data.participantIds;
     }
 
+    // The caller's own delete-for-me cut-off in this conversation: the
+    // sequence number they deleted THROUGH. 0 means they have never deleted
+    // it, which is every conversation that predates the feature and every
+    // participant who has not used it — hence the `.get(..., default)` reads
+    // rather than a required field.
+    //
+    // Written only by `deleteDirectConversationForMe`
+    // (functions/messaging/direct_integrity.js) on the Admin SDK, because the
+    // root is `allow update: if false` and because a client that could write
+    // its own cut-off could lower it.
+    function conversationDeletedThrough(conversationId) {
+      return get(
+        /databases/$(database)/documents/conversations/$(conversationId)
+      ).data.get('deletedSequences', {}).get(request.auth.uid, 0);
+    }
+
     function conversationBlocked(conversationId) {
       let participants = get(
         /databases/$(database)/documents/conversations/$(conversationId)
@@ -2410,12 +2426,42 @@ service cloud.firestore {
       // peer, or rewrite archive/mute preferences. Every supported mutation is
       // owned by the direct-message callables above; Admin SDK writes bypass
       // Rules, while no participant client may mutate the root.
+      //
+      // `deletedSequences` raises the stakes further: it is read by the
+      // message rule below as an authorization bound, so a client write here
+      // would be a client writing its own read permission. See
+      // conversationDeletedThrough().
       allow update: if false;
 
       allow delete: if false;
 
       match /messages/{messageId} {
-        allow read: if isConversationParticipant(conversationId);
+        // Participation, AND the caller's own delete-for-me cut-off.
+        //
+        // "Delete chat" in this app is delete-for-ME: the peer's copy is
+        // never touched, so the message documents survive and this rule is
+        // what makes the deleter's half of that promise real. Without it,
+        // deletion would be a client-side filter — the history would remain
+        // one modified client, or one recovered session, away.
+        //
+        // HOW THE QUERY SIDE WORKS. Rules are not filters, so a caller with a
+        // non-zero cut-off must carry the matching `where('sequence', '>',
+        // cut)` constraint or the whole read is refused; a constraint LOWER
+        // than their cut-off is refused too, which is what stops a modified
+        // client from asking for the history back. `MessageService`
+        // (lib/features/messages/data/services/message_service.dart) resolves
+        // the cut-off from the conversation root before it opens the message
+        // stream, and orders by `sequence` — equivalent to `sentAt`, since
+        // the server assigns one per message in send order.
+        //
+        // The `== 0` short circuit is load-bearing for compatibility: when
+        // nobody has deleted anything the predicate does not mention
+        // `resource` at all, so every existing client's unconstrained query
+        // keeps working exactly as before, including on conversation roots
+        // and messages that predate this feature entirely.
+        allow read: if isConversationParticipant(conversationId) &&
+            (conversationDeletedThrough(conversationId) == 0 ||
+             resource.data.sequence > conversationDeletedThrough(conversationId));
 
         // Server-only, permanently — `sendDirectMessage` is the sole writer.
         // See ADR-105.

@@ -15,6 +15,7 @@ import 'package:yovoice/features/messages/data/models/conversation.dart';
 import 'package:yovoice/features/messages/data/models/message.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/messages/presentation/screens/chat_screen.dart';
+import 'package:yovoice/features/messages/presentation/widgets/delete_conversation_dialog.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
@@ -305,6 +306,43 @@ class _MessagesScreenState extends State<MessagesScreen> {
     }
   }
 
+  /// Delete-for-me, confirmed first.
+  ///
+  /// The confirmation says plainly that only this account's copy goes: a
+  /// dialog that let someone believe they were erasing a conversation from
+  /// the other person's phone would be a lie, and one that let them believe
+  /// the opposite would stop them using the feature at all.
+  Future<void> _deleteConversation(Conversation conversation) async {
+    final currentUserId = _auth.currentUser?.uid;
+    if (currentUserId == null) return;
+    final name = conversation.displayNameFor(
+      conversation.otherUserId(currentUserId),
+    );
+    final confirmed = await confirmDeleteConversation(context, name: name);
+    if (confirmed != true || !mounted) return;
+    try {
+      await _messageService.deleteConversationForMe(conversation.id);
+      if (!mounted) return;
+      _showMessage(
+        AppLocalizations.of(
+          context,
+        ).text('Chat deleted for you.', 'Czat usunięty u Ciebie.'),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      _showMessage(
+        intentionalOrFriendly(
+          error,
+          fallback: AppLocalizations.of(context).text(
+            'Could not delete this chat.',
+            'Nie udało się usunąć tego czatu.',
+          ),
+        ),
+        isError: true,
+      );
+    }
+  }
+
   Future<void> _toggleMute(Conversation conversation, bool isMuted) async {
     try {
       await _messageService.setConversationMuted(
@@ -535,6 +573,7 @@ class _MessagesScreenState extends State<MessagesScreen> {
                                 _unarchiveConversation(conversation),
                             onToggleMute: () =>
                                 _toggleMute(conversation, muted),
+                            onDelete: () => _deleteConversation(conversation),
                           );
                         },
                       );
@@ -884,6 +923,7 @@ class _ConversationTile extends StatelessWidget {
     required this.onArchive,
     required this.onUnarchive,
     required this.onToggleMute,
+    required this.onDelete,
   });
 
   final Conversation conversation;
@@ -898,6 +938,7 @@ class _ConversationTile extends StatelessWidget {
   final VoidCallback onArchive;
   final VoidCallback onUnarchive;
   final VoidCallback onToggleMute;
+  final VoidCallback onDelete;
 
   bool get _archived => conversation.isArchivedFor(currentUserId);
 
@@ -1184,6 +1225,10 @@ class _ConversationTile extends StatelessWidget {
               onArchive();
             }
           },
+          onDelete: () {
+            Navigator.pop(sheetContext);
+            onDelete();
+          },
         );
       },
     );
@@ -1314,6 +1359,7 @@ class _ConversationActionsSheet extends StatelessWidget {
     required this.archived,
     required this.onMute,
     required this.onArchive,
+    required this.onDelete,
   });
 
   final bool muted;
@@ -1323,10 +1369,12 @@ class _ConversationActionsSheet extends StatelessWidget {
   final bool archived;
   final VoidCallback onMute;
   final VoidCallback onArchive;
+  final VoidCallback onDelete;
 
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     final copy = AppLocalizations.of(context);
 
     return Material(
@@ -1342,44 +1390,70 @@ class _ConversationActionsSheet extends StatelessWidget {
           16,
           18 + MediaQuery.paddingOf(context).bottom,
         ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            YoModalSheetChrome(
-              sheetLabel: copy.text('conversation actions', 'opcje rozmowy'),
-              surfaceColor: palette.surfaceRaised,
-            ),
-            const SizedBox(height: 2),
-            ListTile(
-              onTap: onMute,
-              leading: Icon(
-                muted
-                    ? Icons.notifications_active_outlined
-                    : Icons.notifications_off_outlined,
-                color: palette.textPrimary,
+        // Scrollable since Delete joined Mute and Archive: three rows, one of
+        // them two-line, no longer fit a bottom sheet's default height at an
+        // enlarged text scale.
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              YoModalSheetChrome(
+                sheetLabel: copy.text('conversation actions', 'opcje rozmowy'),
+                surfaceColor: palette.surfaceRaised,
               ),
-              title: Text(
-                muted
-                    ? copy.text('Unmute messages', 'Włącz powiadomienia')
-                    : copy.text('Mute messages', 'Wycisz powiadomienia'),
-                style: TextStyle(color: palette.textPrimary),
+              const SizedBox(height: 2),
+              ListTile(
+                onTap: onMute,
+                leading: Icon(
+                  muted
+                      ? Icons.notifications_active_outlined
+                      : Icons.notifications_off_outlined,
+                  color: palette.textPrimary,
+                ),
+                title: Text(
+                  muted
+                      ? copy.text('Unmute messages', 'Włącz powiadomienia')
+                      : copy.text('Mute messages', 'Wycisz powiadomienia'),
+                  style: TextStyle(color: palette.textPrimary),
+                ),
               ),
-            ),
-            ListTile(
-              key: const ValueKey('conversation-archive-action'),
-              onTap: onArchive,
-              leading: Icon(
-                archived ? Icons.unarchive_outlined : Icons.archive_outlined,
-                color: palette.textPrimary,
+              ListTile(
+                key: const ValueKey('conversation-archive-action'),
+                onTap: onArchive,
+                leading: Icon(
+                  archived ? Icons.unarchive_outlined : Icons.archive_outlined,
+                  color: palette.textPrimary,
+                ),
+                title: Text(
+                  archived
+                      ? copy.text(
+                          'Unarchive conversation',
+                          'Przywróć z archiwum',
+                        )
+                      : copy.text('Archive conversation', 'Archiwizuj rozmowę'),
+                  style: TextStyle(color: palette.textPrimary),
+                ),
               ),
-              title: Text(
-                archived
-                    ? copy.text('Unarchive conversation', 'Przywróć z archiwum')
-                    : copy.text('Archive conversation', 'Archiwizuj rozmowę'),
-                style: TextStyle(color: palette.textPrimary),
+              // Last, and in the error colour: archiving is reversible and this
+              // is not.
+              ListTile(
+                key: const ValueKey('conversation-delete-action'),
+                onTap: onDelete,
+                leading: Icon(
+                  Icons.delete_outline_rounded,
+                  color: colors.error,
+                ),
+                title: Text(
+                  copy.text('Delete chat', 'Usuń czat'),
+                  style: TextStyle(color: colors.error),
+                ),
+                subtitle: Text(
+                  copy.text('Removes it for you only', 'Usuwa tylko u Ciebie'),
+                  style: TextStyle(color: palette.textSecondary),
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
