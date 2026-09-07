@@ -167,7 +167,7 @@ class ReelMediaDescriptor {
         duration < 0 ||
         (kind == ReelMediaKind.image && duration != 0) ||
         (kind == ReelMediaKind.video &&
-            (duration < 1000 || duration > 90 * 1000))) {
+            (duration < minReelDurationMs || duration > maxReelDurationMs))) {
       throw const FormatException('Malformed reel media descriptor.');
     }
     return ReelMediaDescriptor(
@@ -210,8 +210,8 @@ class ReelBackingAudioDescriptor {
     );
     if (!RegExp(r'^[0-9]{1,30}$').hasMatch(descriptor.generation) ||
         descriptor.size < 512 ||
-        descriptor.durationMs < 1000 ||
-        descriptor.durationMs > 90 * 1000) {
+        descriptor.durationMs < minReelDurationMs ||
+        descriptor.durationMs > maxReelDurationMs) {
       throw const FormatException('Malformed reel backing audio descriptor.');
     }
     return descriptor;

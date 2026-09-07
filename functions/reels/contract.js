@@ -11,11 +11,34 @@ const {
 
 const REEL_SCHEMA_VERSION = 1;
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+// Deliberately still 100 MB while MAX_DURATION_MS is five minutes. The client
+// reads the whole file into a Uint8List and hands it to `putData`, which copies
+// it into a contiguous JVM ByteArray on Android (firebase_storage
+// FlutterFirebaseStorageTask -> StorageReference.putBytes). Peak cost is about
+// twice the file size, against a per-app heap growth limit that is commonly
+// 192-256 MB. Raising this cap without first switching the upload to a streamed
+// `putFile` would turn today's clean "file too large" rejection into an
+// OutOfMemoryError partway through a long upload, which is strictly worse.
 const MAX_VIDEO_BYTES = 100 * 1024 * 1024;
 const MAX_AUDIO_BYTES = 15 * 1024 * 1024;
 const MIN_MEDIA_BYTES = 128;
 const MIN_AUDIO_BYTES = 512;
-const MAX_DURATION_MS = 90 * 1000;
+// Longest video/backing-audio timeline a Reel may carry. Raised from 90 s on
+// 2026-09-07 after testers lost recordings at the old cap.
+//
+// This is NOT the binding limit on a fresh camera capture — MAX_VIDEO_BYTES is.
+// A phone records roughly 60-130 MB per minute at 1080p, so five minutes of
+// new 1080p footage is 300-650 MB and is still refused by the 100 MB byte cap.
+// The byte cap cannot rise until the client stops buffering the whole file in
+// memory (`readAsBytes` -> `putData`); see the note on MAX_VIDEO_BYTES. Five
+// minutes is reachable today for already-compressed sources (gallery clips,
+// screen recordings, 720p) that fit inside 100 MB.
+//
+// The trusted probe parses bounded `moov` sample tables rather than the media
+// payload, so this raise costs it nothing: a five-minute recording needs about
+// 250 KB of range reads against a 2 MB budget, and ~31k samples against a
+// 500k ceiling (functions/reels/probe.js).
+const MAX_DURATION_MS = 5 * 60 * 1000;
 const MIN_DURATION_MS = 1000;
 const MAX_CAPTION_LENGTH = 2200;
 const MAX_TEXT_OVERLAYS = 8;
@@ -358,7 +381,10 @@ function validateComposition(value, plan) {
     trimEndMs > plan.durationMs ||
     trimEndMs - trimStartMs > MAX_DURATION_MS
   ) {
-    fail("invalid-argument", "Video trim must select between 1 and 90 seconds.");
+    fail(
+      "invalid-argument",
+      "Video trim must select between 1 second and 5 minutes.",
+    );
   }
   const audioAttribution = normalizedText(
     composition.audioAttribution,

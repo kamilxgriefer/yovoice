@@ -6,14 +6,16 @@ import 'package:flutter/material.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
+import 'package:yovoice/features/reels/data/models/reel_composition.dart';
 
-/// Longest selection the Reel publish contract accepts. It mirrors
-/// `functions/reels/contract.js` (`MAX_DURATION_MS`); raising it is a server
-/// decision, so the client only displays and enforces the cap.
-const int reelMaxTrimSelectionMs = 90 * 1000;
+/// Longest selection the Reel publish contract accepts — five minutes. It
+/// mirrors `functions/reels/contract.js` (`MAX_DURATION_MS`) through the
+/// client's single source of truth, [maxReelDurationMs]; raising it is a
+/// server decision, so the client only displays and enforces the cap.
+const int reelMaxTrimSelectionMs = maxReelDurationMs;
 
 /// Shortest selection the Reel publish contract accepts.
-const int reelMinTrimSelectionMs = 1000;
+const int reelMinTrimSelectionMs = minReelDurationMs;
 
 /// Which boundary of the selection a gesture or assistive action moves.
 enum ReelTrimHandle { start, end }

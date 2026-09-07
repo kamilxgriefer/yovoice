@@ -330,7 +330,7 @@ class _ReelComposerScreenState extends State<ReelComposerScreen> {
           ? await _picker.pickImage(source: source.source, imageQuality: 94)
           : await _picker.pickVideo(
               source: source.source,
-              maxDuration: const Duration(seconds: 90),
+              maxDuration: const Duration(milliseconds: maxReelDurationMs),
             );
       if (file == null) return;
       var durationMs = 0;
@@ -1106,8 +1106,8 @@ class _ReelComposerScreenState extends State<ReelComposerScreen> {
           const SizedBox(height: 20),
           Text(
             copy.text(
-              'Photos up to 10 MB. Videos: 1–90 seconds, up to 100 MB.',
-              'Zdjęcia do 10 MB. Filmy: 1–90 sekund, do 100 MB.',
+              'Photos up to 10 MB. Videos: 1 second – 5 minutes, up to 100 MB.',
+              'Zdjęcia do 10 MB. Filmy: od 1 sekundy do 5 minut, do 100 MB.',
             ),
             textAlign: TextAlign.center,
           ),
@@ -1825,8 +1825,8 @@ class _Editor extends StatelessWidget {
             if (!review && tool == _EditorTool.audio) ...[
               Text(
                 copy.text(
-                  'Use your own MP3, M4A or WAV: 1–90 seconds, up to 15 MB.',
-                  'Dodaj własny plik MP3, M4A lub WAV: 1–90 sekund, do 15 MB.',
+                  'Use your own MP3, M4A or WAV: 1 second – 5 minutes, up to 15 MB.',
+                  'Dodaj własny plik MP3, M4A lub WAV: od 1 sekundy do 5 minut, do 15 MB.',
                 ),
               ),
               const SizedBox(height: 12),
@@ -2363,8 +2363,8 @@ String _friendly(BuildContext context, Object error) {
   if (message.toLowerCase().contains('audio') &&
       !message.toLowerCase().contains('original')) {
     return copy.text(
-      'Use your own MP3, M4A or WAV: 1–90 seconds, up to 15 MB.',
-      'Dodaj własny plik MP3, M4A lub WAV: 1–90 sekund, do 15 MB.',
+      'Use your own MP3, M4A or WAV: 1 second – 5 minutes, up to 15 MB.',
+      'Dodaj własny plik MP3, M4A lub WAV: od 1 sekundy do 5 minut, do 15 MB.',
     );
   }
   if (message.toLowerCase().contains('video') ||
@@ -2372,8 +2372,8 @@ String _friendly(BuildContext context, Object error) {
       message.toLowerCase().contains('photo') ||
       message.toLowerCase().contains('image')) {
     return copy.text(
-      'Photos up to 10 MB. Videos: 1–90 seconds, up to 100 MB.',
-      'Zdjęcia do 10 MB. Filmy: 1–90 sekund, do 100 MB.',
+      'Photos up to 10 MB. Videos: 1 second – 5 minutes, up to 100 MB.',
+      'Zdjęcia do 10 MB. Filmy: od 1 sekundy do 5 minut, do 100 MB.',
     );
   }
   if (error is StateError &&

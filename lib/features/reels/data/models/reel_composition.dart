@@ -2,6 +2,21 @@ import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 
+/// Longest video or backing-audio timeline the Reel publish contract accepts.
+///
+/// Single client-side source of truth, mirroring `MAX_DURATION_MS` in
+/// `functions/reels/contract.js`. The server is the authority; every client
+/// check here exists to fail early and locally, never to grant anything. This
+/// is a leaf model file precisely so the models, the upload guard, the trim
+/// strip and the composer all read one value instead of four literals.
+///
+/// Note that duration is not the limit a fresh 1080p camera capture hits first
+/// — [maxReelVideoBytes] is. See the comment there.
+const int maxReelDurationMs = 5 * 60 * 1000;
+
+/// Shortest video or backing-audio timeline the contract accepts.
+const int minReelDurationMs = 1000;
+
 enum ReelMediaKind { image, video }
 
 enum ReelFilter { original, vivid, warm, cool, monochrome }
@@ -261,7 +276,7 @@ class ReelComposition {
     if (backingAudioVolume < 0 || backingAudioVolume > 100) {
       return 'Backing audio volume is invalid.';
     }
-    if (audioTrimStartMs < 0 || audioTrimStartMs > 90 * 1000) {
+    if (audioTrimStartMs < 0 || audioTrimStartMs > maxReelDurationMs) {
       return 'Backing audio trim is invalid.';
     }
     if (audioAttribution.trim().length > 160) {
@@ -286,8 +301,8 @@ class ReelComposition {
           trimStartMs < 0 ||
           trimEndMs <= trimStartMs ||
           trimEndMs > durationMs ||
-          trimEndMs - trimStartMs > 90 * 1000) {
-        return 'Video trim must select between 1 and 90 seconds.';
+          trimEndMs - trimStartMs > maxReelDurationMs) {
+        return 'Video trim must select between 1 second and 5 minutes.';
       }
     }
     return null;

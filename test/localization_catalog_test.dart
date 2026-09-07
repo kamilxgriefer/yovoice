@@ -118,10 +118,10 @@ void main() {
         'Retry preview': 'Ponów podgląd',
         'Play preview': 'Odtwórz podgląd',
         'Pause preview': 'Wstrzymaj podgląd',
-        'Photos up to 10 MB. Videos: 1–90 seconds, up to 100 MB.':
-            'Zdjęcia do 10 MB. Filmy: 1–90 sekund, do 100 MB.',
-        'Use your own MP3, M4A or WAV: 1–90 seconds, up to 15 MB.':
-            'Dodaj własny plik MP3, M4A lub WAV: 1–90 sekund, do 15 MB.',
+        'Photos up to 10 MB. Videos: 1 second – 5 minutes, up to 100 MB.':
+            'Zdjęcia do 10 MB. Filmy: od 1 sekundy do 5 minut, do 100 MB.',
+        'Use your own MP3, M4A or WAV: 1 second – 5 minutes, up to 15 MB.':
+            'Dodaj własny plik MP3, M4A lub WAV: od 1 sekundy do 5 minut, do 15 MB.',
         'Preparing audio': 'Przygotowywanie dźwięku',
         'Your Reels': 'Twoje Reels',
         'No Reels of your own yet': 'Nie masz jeszcze własnych Reels',

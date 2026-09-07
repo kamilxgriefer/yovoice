@@ -55,8 +55,11 @@ class ReelUploadPayload {
       if (bytes.length > maxReelImageBytes || durationMs != 0) {
         throw const FormatException('The selected photo is unsupported.');
       }
-    } else if (durationMs < 1000 || durationMs > 90 * 1000) {
-      throw const FormatException('Choose a video between 1 and 90 seconds.');
+    } else if (durationMs < minReelDurationMs ||
+        durationMs > maxReelDurationMs) {
+      throw const FormatException(
+        'Choose a video between 1 second and 5 minutes.',
+      );
     }
     return ReelUploadPayload(
       bytes: bytes,
@@ -75,8 +78,8 @@ class ReelUploadPayload {
         !contentType.startsWith('audio/') ||
         bytes.length < 512 ||
         bytes.length > maxReelBackingAudioBytes ||
-        durationMs < 1000 ||
-        durationMs > 90 * 1000) {
+        durationMs < minReelDurationMs ||
+        durationMs > maxReelDurationMs) {
       throw const FormatException('The backing audio is unsupported.');
     }
     return ReelUploadPayload(
