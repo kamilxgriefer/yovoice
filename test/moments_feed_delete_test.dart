@@ -272,6 +272,130 @@ void main() {
     }
   }
 
+  /// Discover, where the featured grid sits above the recent list. The
+  /// featured tiles carry their own overflow menu, so the author's exit
+  /// exists on BOTH presentations of the same Moment.
+  Future<void> pumpDiscover(
+    WidgetTester tester, {
+    required MomentService moments,
+    required List<VoiceMoment> pool,
+    Size size = const Size(390, 844),
+  }) async {
+    await tester.binding.setSurfaceSize(size);
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: MomentsScreen(
+          momentService: moments,
+          auth: authMe(),
+          feedService: _QuietFeed(
+            firestore: FakeFirebaseFirestore(),
+            auth: authMe(),
+          ),
+          discoveryService: _StaticDiscovery(pool),
+          playerFactory: _SilentPlayer.new,
+        ),
+      ),
+    );
+    await tester.pump();
+    for (var i = 0; i < 5; i++) {
+      await tester.pump(const Duration(milliseconds: 60));
+    }
+  }
+
+  group('featured grid overflow delete', () {
+    testWidgets('the author deletes from a FEATURED tile menu, and the '
+        'Moment leaves the grid and the list together', (tester) async {
+      final mine = _moment('mine-1', likes: 9, age: const Duration(hours: 1));
+      final moments = await seeded([
+        mine,
+        _moment('mine-2', age: const Duration(hours: 3)),
+      ]);
+      await pumpDiscover(tester, moments: moments, pool: [mine]);
+
+      // The featured presentation exists and is not the row.
+      expect(
+        find.byKey(const ValueKey('moment-featured-mine-1')),
+        findsOneWidget,
+      );
+      expect(find.byKey(const ValueKey('moment-row-mine-1')), findsOneWidget);
+
+      await tester.tap(
+        find.byKey(const ValueKey('moment-featured-menu-mine-1')),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('moment-featured-report-mine-1')),
+        findsNothing,
+        reason: 'reporting your own Moment is not a real intent',
+      );
+      await tester.tap(
+        find.byKey(const ValueKey('moment-featured-delete-mine-1')),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Delete this moment?'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('moment-delete-confirm')));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const ValueKey('moment-featured-mine-1')),
+        findsNothing,
+      );
+      expect(find.byKey(const ValueKey('moment-row-mine-1')), findsNothing);
+    });
+
+    testWidgets('a FEATURED tile of somebody else offers Report and Details, '
+        'never Delete', (tester) async {
+      final theirs = _moment(
+        'theirs',
+        author: 'friend',
+        authorName: 'Ola',
+        likes: 4,
+      );
+      final moments = await seeded(const []);
+      await pumpDiscover(tester, moments: moments, pool: [theirs]);
+
+      await tester.tap(
+        find.byKey(const ValueKey('moment-featured-menu-theirs')),
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const ValueKey('moment-featured-delete-theirs')),
+        findsNothing,
+      );
+      expect(
+        find.byKey(const ValueKey('moment-featured-report-theirs')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('moment-featured-details-theirs')),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('the featured tile Details item opens the same detail page '
+        'the row title does', (tester) async {
+      final theirs = _moment('theirs', author: 'friend', authorName: 'Ola');
+      final moments = await seeded(const []);
+      await pumpDiscover(tester, moments: moments, pool: [theirs]);
+
+      await tester.tap(
+        find.byKey(const ValueKey('moment-featured-menu-theirs')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const ValueKey('moment-featured-details-theirs')),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byType(MomentDetailScreen), findsOneWidget);
+    });
+  });
+
   group('row overflow delete', () {
     testWidgets('the author deletes from the row menu: exact destructive '
         'copy, the row goes immediately, the document goes for real', (

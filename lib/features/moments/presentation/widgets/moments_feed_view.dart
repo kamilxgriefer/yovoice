@@ -21,6 +21,7 @@ import 'package:yovoice/features/moments/data/services/moment_service.dart';
 import 'package:yovoice/features/moments/data/services/moment_views_service.dart';
 import 'package:yovoice/features/moments/presentation/screens/moment_comments_screen.dart';
 import 'package:yovoice/features/moments/presentation/screens/moment_detail_screen.dart';
+import 'package:yovoice/features/moments/presentation/widgets/moment_discover_tiles.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_expiry_accessibility.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_sheet.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_story_tile.dart';
@@ -29,6 +30,7 @@ import 'package:yovoice/features/moments/presentation/widgets/moment_time_labels
 import 'package:yovoice/shared/widgets/identity/official_role_badge.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
+import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
@@ -1117,6 +1119,8 @@ class _MomentsFeedViewState extends State<MomentsFeedView> {
       moments: list,
       selectedId: wide ? (_selectedId ?? list.first.id) : null,
       currentUserId: _uid,
+      playingId: _playingId,
+      isPlaying: _isPlaying,
       footer: _PoolFooter(
         total: list.length,
         moreExists: result.poolExhausted,
@@ -1208,6 +1212,8 @@ class _MomentsFeedViewState extends State<MomentsFeedView> {
           ? (_selectedId ?? list.first.id)
           : null,
       currentUserId: uid,
+      playingId: _playingId,
+      isPlaying: _isPlaying,
       footer: null,
       onOpenChain: (chain) => unawaited(_openChain(chain)),
       onTapMoment: (moment) => _select(moment, wide: wide),
@@ -1405,6 +1411,8 @@ class _FeedColumn extends StatelessWidget {
     required this.moments,
     required this.selectedId,
     required this.currentUserId,
+    required this.playingId,
+    required this.isPlaying,
     required this.footer,
     required this.onOpenChain,
     required this.onTapMoment,
@@ -1424,6 +1432,13 @@ class _FeedColumn extends StatelessWidget {
   final List<VoiceMoment> moments;
   final String? selectedId;
   final String currentUserId;
+
+  /// The wide detail panel's REAL transport state, so the row and tile of
+  /// the Moment actually playing show a pause glyph instead of pretending
+  /// nothing is running. Null on narrow surfaces, where playback lives in
+  /// the story viewer rather than on this page.
+  final String? playingId;
+  final bool isPlaying;
   final Widget? footer;
   final ValueChanged<MomentChain> onOpenChain;
   final ValueChanged<VoiceMoment> onTapMoment;
@@ -1437,74 +1452,91 @@ class _FeedColumn extends StatelessWidget {
   Widget build(BuildContext context) {
     final side = compact ? 16.0 : 24.0;
     final copy = AppLocalizations.of(context);
-    return ListView(
-      key: const ValueKey('moments-feed-scroll'),
-      padding: EdgeInsets.fromLTRB(side, 4, side, 32),
-      children: [
-        if (chains.isNotEmpty) ...[
-          MomentStoryStrip(
-            chains: chains,
-            viewedIds: viewedIds,
-            onOpenChain: onOpenChain,
-          ),
-          const SizedBox(height: 18),
-        ],
-        if (featured.isNotEmpty) ...[
-          _SectionTitle(
-            copy.text('Featured Moments', 'Polecane Momenty'),
-            trailing: onViewAllFeatured == null
-                ? null
-                : TextButton(
-                    key: const ValueKey('moments-featured-view-all'),
-                    onPressed: onViewAllFeatured,
-                    child: Text(
-                      copy.text('View all', 'Zobacz wszystkie'),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-          ),
-          SizedBox(
-            // 210 at 1x, grown with the text scale (capped at 1.6, the same
-            // cap the dock captions use): at 2x a fixed height left the
-            // caption's render box shorter than one line, so its second line
-            // — the one carrying the ellipsis — was clipped away entirely
-            // and the first line's descenders were cut mid-glyph.
-            height:
-                210 *
-                MediaQuery.textScalerOf(
-                  context,
-                ).clamp(maxScaleFactor: 1.6).scale(14) /
-                14,
-            child: ListView.separated(
-              scrollDirection: Axis.horizontal,
-              itemCount: featured.length,
-              separatorBuilder: (_, __) => const SizedBox(width: 12),
-              itemBuilder: (context, index) => _FeaturedCard(
-                key: ValueKey('moment-featured-${featured[index].id}'),
-                moment: featured[index],
-                onTap: () => onTapMoment(featured[index]),
-                onPlay: () => onPlayMoment(featured[index]),
-              ),
+    // Desktop is not a stretched phone: past the canonical feed measure the
+    // list stops growing and centres, so a 1440 window shows a readable
+    // column of rows instead of a caption with 700 pt of empty space beside
+    // it. The background stays full-bleed; only the content is framed.
+    return ResponsiveContentFrame(
+      width: ResponsiveContentWidth.feed,
+      child: ListView(
+        key: const ValueKey('moments-feed-scroll'),
+        padding: EdgeInsets.fromLTRB(side, 4, side, 32),
+        children: [
+          if (chains.isNotEmpty) ...[
+            MomentStoryStrip(
+              chains: chains,
+              viewedIds: viewedIds,
+              onOpenChain: onOpenChain,
             ),
-          ),
-          const SizedBox(height: 20),
+            const SizedBox(height: 18),
+          ],
+          if (featured.isNotEmpty) ...[
+            _SectionTitle(
+              copy.text('Featured Moments', 'Polecane Momenty'),
+              trailing: onViewAllFeatured == null
+                  ? null
+                  : TextButton(
+                      key: const ValueKey('moments-featured-view-all'),
+                      onPressed: onViewAllFeatured,
+                      child: Text(
+                        copy.text('View all', 'Zobacz wszystkie'),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+            ),
+            MomentFeaturedGrid(
+              moments: featured,
+              viewedIds: viewedIds,
+              currentUserId: currentUserId,
+              playingId: playingId,
+              isPlaying: isPlaying,
+              onTap: onTapMoment,
+              onPlay: onPlayMoment,
+              onOpenDetail: onOpenDetail,
+              onReport: onReport,
+              onDelete: onDelete,
+            ),
+            const SizedBox(height: 20),
+          ],
+          _SectionTitle(listTitle),
+          for (var index = 0; index < moments.length; index++) ...[
+            if (index > 0) const _RowDivider(),
+            _MomentRow(
+              key: ValueKey('moment-row-${moments[index].id}'),
+              moment: moments[index],
+              selected: selectedId == moments[index].id,
+              seen: viewedIds.contains(moments[index].id),
+              playing: isPlaying && playingId == moments[index].id,
+              isOwn:
+                  currentUserId.isNotEmpty &&
+                  moments[index].authorId == currentUserId,
+              onTap: () => onTapMoment(moments[index]),
+              onPlay: () => onPlayMoment(moments[index]),
+              onOpenDetail: () => onOpenDetail(moments[index]),
+              onReport: () => onReport(moments[index]),
+              onDelete: () => onDelete(moments[index]),
+            ),
+          ],
+          if (footer != null) ...[const SizedBox(height: 14), footer!],
         ],
-        _SectionTitle(listTitle),
-        for (final moment in moments)
-          _MomentRow(
-            key: ValueKey('moment-row-${moment.id}'),
-            moment: moment,
-            selected: selectedId == moment.id,
-            isOwn: currentUserId.isNotEmpty && moment.authorId == currentUserId,
-            onTap: () => onTapMoment(moment),
-            onPlay: () => onPlayMoment(moment),
-            onOpenDetail: () => onOpenDetail(moment),
-            onReport: () => onReport(moment),
-            onDelete: () => onDelete(moment),
-          ),
-        if (footer != null) ...[const SizedBox(height: 14), footer!],
-      ],
+      ),
+    );
+  }
+}
+
+/// The hairline between two list rows. The rows stopped being cards — a
+/// bordered card per Moment is what made the list read as a stack of
+/// blocks — so the separation is a line, inset past the leading control.
+class _RowDivider extends StatelessWidget {
+  const _RowDivider();
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    return Padding(
+      padding: const EdgeInsets.only(left: 64, right: 8),
+      child: Divider(height: 1, thickness: 1, color: palette.border),
     );
   }
 }
@@ -1564,252 +1596,24 @@ class MomentStoryStrip extends StatelessWidget {
   }
 }
 
-/// A featured card in the mockup's grammar: a big cover area with the
-/// duration badge top-left and the violet play circle over it, then
-/// title, author and the metrics row.
+/// One tight list row: the author's seen-ringed avatar carrying the
+/// transport, the caption (tap it for the full detail page), the author,
+/// the real availability, the real duration, age and counters, and the
+/// overflow menu with Details plus Report on others' Moments or Delete on
+/// the caller's own.
 ///
-/// Audio-first on purpose — the cover is waveform art over a violet
-/// gradient, never a stock image (Moments have no cover images), and the
-/// metrics are the document's real like and comment counters only (no
-/// play counter exists in the schema, so none is printed).
-class _FeaturedCard extends StatelessWidget {
-  const _FeaturedCard({
-    required this.moment,
-    required this.onTap,
-    required this.onPlay,
-    super.key,
-  });
-
-  final VoiceMoment moment;
-  final VoidCallback onTap;
-  final VoidCallback onPlay;
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = context.appPalette;
-    final colors = Theme.of(context).colorScheme;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final copy = AppLocalizations.of(context);
-    final age = momentRelativeAge(moment.createdAt, copy: copy);
-    final expiry = momentExpiryLabel(moment.expiresAt, copy: copy);
-    return Semantics(
-      button: true,
-      label: copy.text(
-        'Featured Moment by ${moment.authorName}',
-        'Polecany Moment użytkownika ${moment.authorName}',
-      ),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(20),
-        child: Container(
-          width: 236,
-          clipBehavior: Clip.antiAlias,
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(20),
-            color: palette.surface,
-            border: Border.all(color: colors.primary.withValues(alpha: .35)),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // The cover: gradient + waveform art, play circle centred,
-              // duration badge top-left — the audio-first stand-in for
-              // the mockup's image cover.
-              Expanded(
-                child: Stack(
-                  fit: StackFit.expand,
-                  children: [
-                    DecoratedBox(
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                          colors: [
-                            Color.lerp(
-                              palette.surface,
-                              colors.primary,
-                              isDark ? .55 : .16,
-                            )!,
-                            Color.lerp(
-                              palette.surface,
-                              colors.secondary,
-                              isDark ? .3 : .1,
-                            )!,
-                            palette.surface,
-                          ],
-                        ),
-                      ),
-                    ),
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 18),
-                      child: Center(
-                        child: StoryWaveform(progress: 0, height: 34),
-                      ),
-                    ),
-                    Center(
-                      child: Semantics(
-                        button: true,
-                        label: copy.text(
-                          'Play this featured Moment',
-                          'Odtwórz ten polecany Moment',
-                        ),
-                        child: Material(
-                          color: colors.primary,
-                          shape: const CircleBorder(),
-                          child: InkWell(
-                            key: ValueKey('moment-featured-play-${moment.id}'),
-                            onTap: onPlay,
-                            customBorder: const CircleBorder(),
-                            child: SizedBox(
-                              width: 44,
-                              height: 44,
-                              child: Icon(
-                                Icons.play_arrow_rounded,
-                                size: 26,
-                                color: colors.onPrimary,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                    if (moment.durationSeconds > 0)
-                      Positioned(
-                        left: 8,
-                        top: 8,
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 7,
-                            vertical: 3,
-                          ),
-                          decoration: BoxDecoration(
-                            color: AppColors.black.withValues(alpha: .55),
-                            borderRadius: BorderRadius.circular(999),
-                          ),
-                          child: Text(
-                            moment.durationLabel,
-                            style: const TextStyle(
-                              color: AppColors.white,
-                              fontSize: 10.5,
-                              fontWeight: FontWeight.w800,
-                            ),
-                          ),
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(12, 9, 12, 10),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      moment.caption.trim().isEmpty
-                          ? copy.text('Voice Moment', 'Voice Moment')
-                          : moment.caption,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: palette.textPrimary,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      moment.authorName,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: palette.textSecondary,
-                        fontSize: 11.5,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    Row(
-                      children: [
-                        if (moment.likeCount > 0) ...[
-                          const Icon(
-                            Icons.favorite_rounded,
-                            size: 12,
-                            color: AppColors.secondary,
-                          ),
-                          const SizedBox(width: 3),
-                          Text(
-                            '${moment.likeCount}',
-                            style: TextStyle(
-                              color: palette.textSecondary,
-                              fontSize: 11,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                        ],
-                        if (moment.commentCount > 0) ...[
-                          Icon(
-                            Icons.mode_comment_rounded,
-                            size: 11,
-                            color: palette.textSecondary,
-                          ),
-                          const SizedBox(width: 3),
-                          Text(
-                            '${moment.commentCount}',
-                            style: TextStyle(
-                              color: palette.textSecondary,
-                              fontSize: 11,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                        ],
-                        // The trailing label is flexible: at a 2x text
-                        // scale the fixed 210-pt card cannot carry it at
-                        // natural width, and ellipsis beats an overflow
-                        // stripe. Exactly ONE trailing fact renders — the
-                        // expiry when a deadline exists (rendered whole,
-                        // where age beside it truncated it to "Expires
-                        // i…" even at 1x), otherwise the age. A permanent
-                        // Moment has no deadline, so it shows its age.
-                        Expanded(
-                          child: Text(
-                            expiry ?? age,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            textAlign: TextAlign.right,
-                            style: TextStyle(
-                              color: expiry != null
-                                  ? palette.warningForeground
-                                  : palette.textTertiary,
-                              fontSize: 11,
-                              fontWeight: expiry != null
-                                  ? FontWeight.w700
-                                  : FontWeight.w400,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// One list row: avatar, play, waveform, caption (tap it for the detail
-/// page), author, real counters, a right column with duration and age —
-/// and the overflow menu carrying Details plus Report on others' Moments
-/// or Delete on the caller's own.
+/// Deliberately NOT a card. A bordered slab per Moment is what made a
+/// phone show two rows and call it a feed; rows are separated by a
+/// hairline now and the list reads as one surface. Below roughly 260 pt of
+/// text-scaled room the trailing facts move under the caption instead of
+/// squeezing a second column — the same row, laid out for the space it
+/// actually has.
 class _MomentRow extends StatelessWidget {
   const _MomentRow({
     required this.moment,
     required this.selected,
+    required this.seen,
+    required this.playing,
     required this.isOwn,
     required this.onTap,
     required this.onPlay,
@@ -1821,6 +1625,13 @@ class _MomentRow extends StatelessWidget {
 
   final VoiceMoment moment;
   final bool selected;
+
+  /// True once this account's own `momentViews` doc exists for the
+  /// Moment. Same fact, same vocabulary as the story tiles.
+  final bool seen;
+
+  /// The wide panel's real transport state for THIS Moment.
+  final bool playing;
   final bool isOwn;
   final VoidCallback onTap;
   final VoidCallback onPlay;
@@ -1844,317 +1655,269 @@ class _MomentRow extends StatelessWidget {
         ? momentAvailabilityLabel(moment.expiresAt, copy: copy)
         : momentExpiryLabel(moment.expiresAt, copy: copy);
     final permanent = moment.isPermanent;
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
-      child: Semantics(
-        button: true,
-        label: copy.text(
-          'Open the Moment by ${moment.authorName}'
-              '${_uploading ? ', still uploading' : ''}',
-          'Otwórz Moment użytkownika ${moment.authorName}'
-              '${_uploading ? ', nadal przesyłany' : ''}',
+    final open = _uploading
+        ? copy.template(
+            'Open the Moment by {name}, still uploading',
+            'Otwórz Moment użytkownika {name}, nadal przesyłany',
+            values: {'name': moment.authorName},
+          )
+        : copy.template(
+            'Open the Moment by {name}',
+            'Otwórz Moment użytkownika {name}',
+            values: {'name': moment.authorName},
+          );
+
+    Widget duration() => Text(
+      moment.durationLabel,
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      style: TextStyle(
+        color: palette.textTertiary,
+        fontSize: 11.5,
+        fontWeight: FontWeight.w600,
+      ),
+    );
+
+    Widget when() => Text(
+      age,
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      style: TextStyle(color: palette.textTertiary, fontSize: 11.5),
+    );
+
+    final counts = <Widget>[
+      if (moment.likeCount > 0)
+        MomentCountChip(
+          count: moment.likeCount,
+          icon: Icons.favorite_rounded,
+          tint: AppColors.secondary,
+          semanticLabel: copy.template(
+            '{count} likes',
+            'Polubienia: {count}',
+            values: {'count': moment.likeCount},
+          ),
         ),
-        child: Material(
-          color: selected
-              ? colors.primary.withValues(alpha: isDark ? .16 : .1)
-              : palette.surface,
-          borderRadius: BorderRadius.circular(18),
-          child: InkWell(
-            onTap: onTap,
-            borderRadius: BorderRadius.circular(18),
-            child: Container(
-              padding: const EdgeInsets.fromLTRB(12, 10, 6, 10),
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(18),
-                border: Border.all(
-                  color: selected
-                      ? colors.primary.withValues(alpha: .55)
-                      : palette.border,
-                ),
-              ),
-              child: Row(
-                children: [
-                  UserAvatar(
-                    radius: 21,
-                    userId: moment.authorId,
-                    photoUrl: moment.authorPhotoUrl,
-                    displayName: moment.authorName,
-                  ),
-                  const SizedBox(width: 10),
-                  IconButton(
-                    key: ValueKey('moment-row-play-${moment.id}'),
-                    onPressed: _uploading ? null : onPlay,
-                    tooltip: _uploading
-                        ? copy.text('Still uploading', 'Nadal przesyłamy')
-                        : copy.text('Play this Moment', 'Odtwórz ten Moment'),
-                    style: IconButton.styleFrom(
-                      backgroundColor: colors.primary.withValues(
-                        alpha: _uploading ? .25 : 1,
-                      ),
-                      foregroundColor: colors.onPrimary,
+      if (moment.commentCount > 0)
+        MomentCountChip(
+          count: moment.commentCount,
+          icon: Icons.mode_comment_rounded,
+          tint: palette.textSecondary,
+          semanticLabel: copy.template(
+            '{count} comments',
+            'Komentarze: {count}',
+            values: {'count': moment.commentCount},
+          ),
+        ),
+    ];
+
+    final availability = _uploading
+        ? Text(
+            copy.text('Uploading…', 'Przesyłanie…'),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(color: palette.textTertiary, fontSize: 11.5),
+          )
+        : expiry == null
+        ? null
+        : Text(
+            expiry,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              // A permanent Moment's label is a calm fact, not a
+              // warning-coloured countdown.
+              color: permanent
+                  ? palette.textTertiary
+                  : palette.warningForeground,
+              fontSize: 11.5,
+              fontWeight: FontWeight.w700,
+            ),
+          );
+
+    return Semantics(
+      button: true,
+      label: '$open, ${MomentSeenAvatar.stateLabel(context, seen: seen)}',
+      child: Material(
+        color: selected
+            ? colors.primary.withValues(alpha: isDark ? .16 : .1)
+            : Colors.transparent,
+        borderRadius: BorderRadius.circular(14),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(14),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(6, 8, 2, 8),
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final scale =
+                    MediaQuery.textScalerOf(context).scale(11.5) / 11.5;
+                // Not a device label: below this much room a second
+                // column of facts would leave the caption two words wide,
+                // so the facts wrap under it instead.
+                final stacked = constraints.maxWidth < 260 * scale;
+                return Row(
+                  // A stacked row's text block is several lines tall; the
+                  // transport reads as belonging to it from the top, not
+                  // floating in the middle of it.
+                  crossAxisAlignment: stacked
+                      ? CrossAxisAlignment.start
+                      : CrossAxisAlignment.center,
+                  children: [
+                    MomentAvatarPlayControl(
+                      controlKey: ValueKey('moment-row-play-${moment.id}'),
+                      moment: moment,
+                      seen: seen,
+                      playing: playing,
+                      enabled: !_uploading,
+                      onTap: onPlay,
                     ),
-                    icon: Icon(
-                      Icons.play_arrow_rounded,
-                      color: colors.onPrimary,
-                      size: 22,
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        // The title is its own tap target: the row body
-                        // still opens the quick sheet/panel, the title
-                        // goes to the full detail page.
-                        GestureDetector(
-                          key: ValueKey('moment-row-title-${moment.id}'),
-                          behavior: HitTestBehavior.opaque,
-                          onTap: _uploading ? null : onOpenDetail,
-                          child: Semantics(
-                            button: !_uploading,
-                            label: copy.text(
-                              'Open details of the Moment by '
-                                  '${moment.authorName}',
-                              'Otwórz szczegóły Momentu użytkownika '
-                                  '${moment.authorName}',
-                            ),
-                            child: Text(
-                              moment.caption.trim().isEmpty
-                                  ? copy.text('Voice Moment', 'Voice Moment')
-                                  : moment.caption,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                color: palette.textPrimary,
-                                fontSize: 13.5,
-                                fontWeight: FontWeight.w700,
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          // The caption is its own tap target: the row
+                          // body still opens the quick sheet or selects
+                          // the panel, the caption goes to the full
+                          // detail page.
+                          GestureDetector(
+                            key: ValueKey('moment-row-title-${moment.id}'),
+                            behavior: HitTestBehavior.opaque,
+                            onTap: _uploading ? null : onOpenDetail,
+                            child: Semantics(
+                              button: !_uploading,
+                              label: copy.template(
+                                'Open details of the Moment by {name}',
+                                'Otwórz szczegóły Momentu użytkownika {name}',
+                                values: {'name': moment.authorName},
+                              ),
+                              child: Text(
+                                moment.caption.trim().isEmpty
+                                    ? copy.text('Voice Moment', 'Voice Moment')
+                                    : moment.caption,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  // Heard is quieter, never unreadable —
+                                  // the story tiles' own rule.
+                                  color: seen
+                                      ? palette.textSecondary
+                                      : palette.textPrimary,
+                                  fontSize: 13.5,
+                                  fontWeight: seen
+                                      ? FontWeight.w600
+                                      : FontWeight.w700,
+                                ),
                               ),
                             ),
                           ),
-                        ),
-                        const SizedBox(height: 3),
-                        StoryWaveform(progress: 0, height: 16),
-                        const SizedBox(height: 4),
-                        Wrap(
-                          spacing: 8,
-                          runSpacing: 2,
-                          crossAxisAlignment: WrapCrossAlignment.center,
-                          children: [
-                            Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Flexible(
-                                  child: Text(
-                                    moment.authorName,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: TextStyle(
-                                      color: palette.textSecondary,
-                                      fontSize: 11.5,
-                                      fontWeight: FontWeight.w700,
-                                    ),
+                          const SizedBox(height: 2),
+                          Row(
+                            children: [
+                              Flexible(
+                                child: Text(
+                                  moment.authorName,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    color: palette.textSecondary,
+                                    fontSize: 11.5,
+                                    fontWeight: FontWeight.w700,
                                   ),
                                 ),
-                                const SizedBox(width: 4),
-                                UserIdentityBadges(
-                                  uid: moment.authorId,
-                                  variant: IdentityBadgeVariant.icon,
-                                ),
+                              ),
+                              const SizedBox(width: 4),
+                              UserIdentityBadges(
+                                uid: moment.authorId,
+                                variant: IdentityBadgeVariant.icon,
+                              ),
+                            ],
+                          ),
+                          // Availability owns a line. Sharing one with the
+                          // author name truncated the fact that matters
+                          // most — "Expires in 14h" rendered as
+                          // "Expires in" — and a countdown nobody can read
+                          // is worse than no countdown.
+                          if (availability != null) ...[
+                            const SizedBox(height: 2),
+                            availability,
+                          ],
+                          if (stacked) ...[
+                            const SizedBox(height: 4),
+                            Wrap(
+                              spacing: 10,
+                              runSpacing: 2,
+                              crossAxisAlignment: WrapCrossAlignment.center,
+                              children: [
+                                if (!_uploading && moment.durationSeconds > 0)
+                                  duration(),
+                                if (!_uploading && age.isNotEmpty) when(),
+                                ...counts,
                               ],
                             ),
-                            if (_uploading)
-                              Text(
-                                copy.text('Uploading…', 'Przesyłanie…'),
-                                style: TextStyle(
-                                  color: palette.textTertiary,
-                                  fontSize: 11.5,
-                                ),
-                              )
-                            else if (expiry != null)
-                              Text(
-                                expiry,
-                                style: TextStyle(
-                                  // A permanent Moment's label is a calm
-                                  // fact, not a warning-coloured countdown.
-                                  color: permanent
-                                      ? palette.textTertiary
-                                      : palette.warningForeground,
-                                  fontSize: 11.5,
-                                  fontWeight: FontWeight.w700,
-                                ),
+                          ],
+                        ],
+                      ),
+                    ),
+                    if (!stacked) ...[
+                      const SizedBox(width: 8),
+                      // Bounded: every sibling of the Expanded centre is
+                      // fixed-width, so an unconstrained "0:45 · 2h ago"
+                      // is wider than the slack a 320 pt phone has and the
+                      // column must squeeze rather than overflow.
+                      ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 116),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            if (!_uploading) ...[
+                              Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  if (moment.durationSeconds > 0)
+                                    Flexible(child: duration()),
+                                  if (moment.durationSeconds > 0 &&
+                                      age.isNotEmpty)
+                                    Text(
+                                      ' · ',
+                                      style: TextStyle(
+                                        color: palette.textTertiary,
+                                        fontSize: 11.5,
+                                      ),
+                                    ),
+                                  if (age.isNotEmpty) Flexible(child: when()),
+                                ],
+                              ),
+                              if (counts.isNotEmpty) const SizedBox(height: 3),
+                            ],
+                            if (counts.isNotEmpty)
+                              Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  for (var i = 0; i < counts.length; i++) ...[
+                                    if (i > 0) const SizedBox(width: 10),
+                                    counts[i],
+                                  ],
+                                ],
                               ),
                           ],
                         ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(width: 6),
-                  // Bounded, because every sibling of the Expanded centre
-                  // is fixed-width: at a 2x text scale an unconstrained
-                  // "0:45 · 2h ago" is wider than the slack a 390-pt
-                  // phone has, and the row must squeeze (ellipsize)
-                  // rather than overflow.
-                  ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 96),
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: [
-                        // The mockup's right column: duration, then age.
-                        if (!_uploading && moment.durationSeconds > 0)
-                          Text(
-                            moment.durationLabel,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: palette.textTertiary,
-                              fontSize: 11,
-                            ),
-                          ),
-                        if (!_uploading && age.isNotEmpty)
-                          Text(
-                            age,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: palette.textTertiary,
-                              fontSize: 11,
-                            ),
-                          ),
-                        if (moment.likeCount > 0)
-                          Padding(
-                            padding: const EdgeInsets.only(top: 2),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                const Icon(
-                                  Icons.favorite_rounded,
-                                  size: 12,
-                                  color: AppColors.secondary,
-                                ),
-                                const SizedBox(width: 3),
-                                Text(
-                                  '${moment.likeCount}',
-                                  style: TextStyle(
-                                    color: palette.textSecondary,
-                                    fontSize: 11.5,
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        if (moment.commentCount > 0)
-                          Padding(
-                            padding: const EdgeInsets.only(top: 2),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(
-                                  Icons.mode_comment_rounded,
-                                  size: 11,
-                                  color: palette.textSecondary,
-                                ),
-                                const SizedBox(width: 3),
-                                Text(
-                                  '${moment.commentCount}',
-                                  style: TextStyle(
-                                    color: palette.textSecondary,
-                                    fontSize: 11.5,
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                      ],
-                    ),
-                  ),
-                  PopupMenuButton<String>(
-                    key: ValueKey('moment-row-menu-${moment.id}'),
-                    tooltip: copy.text('More', 'Więcej'),
-                    color: palette.surfaceRaised,
-                    icon: Icon(
-                      Icons.more_vert_rounded,
-                      size: 20,
-                      color: palette.textSecondary,
-                    ),
-                    onSelected: (value) {
-                      if (value == 'details') onOpenDetail();
-                      if (value == 'report') onReport();
-                      if (value == 'delete') onDelete();
-                    },
-                    itemBuilder: (context) => [
-                      // No Details while the OWN draft is still uploading:
-                      // the detail page's gone-check reads any unpublished
-                      // doc as "reached the end of its availability", which
-                      // would tell an author mid-upload their brand-new
-                      // Moment was deleted.
-                      if (!_uploading)
-                        PopupMenuItem<String>(
-                          value: 'details',
-                          child: Row(
-                            children: [
-                              Icon(
-                                Icons.info_outline_rounded,
-                                size: 18,
-                                color: palette.textSecondary,
-                              ),
-                              const SizedBox(width: 8),
-                              Text(
-                                copy.text('Details', 'Szczegóły'),
-                                style: TextStyle(color: palette.textPrimary),
-                              ),
-                            ],
-                          ),
-                        ),
-                      // Delete on OWN Moments only — the author's exit,
-                      // and for a permanent Moment the only one. Report
-                      // only on others': reporting yourself is not a real
-                      // intent.
-                      if (isOwn)
-                        PopupMenuItem<String>(
-                          key: ValueKey('moment-row-delete-${moment.id}'),
-                          value: 'delete',
-                          child: Row(
-                            children: [
-                              Icon(
-                                Icons.delete_outline_rounded,
-                                size: 18,
-                                color: colors.error,
-                              ),
-                              const SizedBox(width: 8),
-                              Text(
-                                copy.text('Delete', 'Usuń'),
-                                style: TextStyle(color: colors.error),
-                              ),
-                            ],
-                          ),
-                        )
-                      else
-                        PopupMenuItem<String>(
-                          key: ValueKey('moment-row-report-${moment.id}'),
-                          value: 'report',
-                          child: Row(
-                            children: [
-                              Icon(
-                                Icons.flag_outlined,
-                                size: 18,
-                                color: palette.textSecondary,
-                              ),
-                              const SizedBox(width: 8),
-                              Text(
-                                copy.text('Report', 'Zgłoś'),
-                                style: TextStyle(color: palette.textPrimary),
-                              ),
-                            ],
-                          ),
-                        ),
+                      ),
                     ],
-                  ),
-                ],
-              ),
+                    MomentOverflowMenu(
+                      moment: moment,
+                      isOwn: isOwn,
+                      uploading: _uploading,
+                      keyPrefix: 'moment-row',
+                      onOpenDetail: onOpenDetail,
+                      onReport: onReport,
+                      onDelete: onDelete,
+                    ),
+                  ],
+                );
+              },
             ),
           ),
         ),

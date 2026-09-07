@@ -237,6 +237,55 @@ void main() {
       });
     });
 
+    testWidgets('a FEATURED tile\'s menu offers Report and files the same '
+        'report the row does', (tester) async {
+      final functions = _RecordingFunctions();
+      await pumpFeed(tester, functions: functions);
+
+      // The engagement-ranked grid is a second presentation of the same
+      // Moment, so the safety exit has to exist on it too.
+      expect(find.byKey(const ValueKey('moment-featured-v1')), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('moment-featured-menu-v1')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('moment-featured-report-v1')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('report-reason-hate')));
+      await tester.pumpAndSettle();
+
+      expect(functions.calls.single.name, 'createContentReport');
+      expect(functions.calls.single.payload, <String, Object?>{
+        'targetType': 'voiceMoment',
+        'momentId': 'v1',
+        'reason': 'hate',
+        'requestId': ContentReportService.requestIdFor(
+          const ReportedContent.voiceMoment(momentId: 'v1'),
+        ),
+      });
+    });
+
+    testWidgets('the featured tile menu is reachable at a 2x text scale, '
+        'where the grid falls back to one column', (tester) async {
+      final functions = _RecordingFunctions();
+      await pumpFeed(
+        tester,
+        functions: functions,
+        size: const Size(390, 1200),
+        textScale: 2,
+      );
+
+      final menu = find.byKey(const ValueKey('moment-featured-menu-v1'));
+      expect(menu, findsOneWidget);
+      await tester.ensureVisible(menu);
+      await tester.pump();
+      await tester.tap(menu);
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('moment-featured-report-v1')),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    });
+
     testWidgets('your own Moment\'s row offers Delete, never Report', (
       tester,
     ) async {

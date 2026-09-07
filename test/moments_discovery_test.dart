@@ -772,6 +772,100 @@ void main() {
       expect(find.textContaining('Expires in'), findsWidgets);
     });
 
+    testWidgets('the featured section is a GRID of compact tiles above the '
+        'recent list, and every featured Moment is also a row', (tester) async {
+      await tester.binding.setSurfaceSize(const Size(390, 844));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
+      await tester.pumpWidget(
+        host(
+          MomentsScreen(
+            feedService: feed,
+            discoveryService: _StaticDiscovery([
+              _moment('a', author: 'a', likes: 40),
+              _moment('b', author: 'b', likes: 30),
+              _moment('c', author: 'c', likes: 20),
+              _moment('d', author: 'd', likes: 10),
+            ]),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      Rect tile(String id) =>
+          tester.getRect(find.byKey(ValueKey('moment-featured-$id')));
+
+      // Two columns on a phone: 'a' and 'b' share a row, 'c' starts the
+      // next one. A horizontal rail put all four on one line and showed
+      // about one and a half of them.
+      expect(tile('a').top, tile('b').top);
+      expect(tile('a').left, lessThan(tile('b').left));
+      expect(tile('c').top, greaterThan(tile('a').bottom - 1));
+
+      // Compact: a featured tile is a fraction of the width and nowhere
+      // near the 210 pt cover slab it replaced.
+      expect(tile('a').width, lessThan(200));
+      expect(tile('a').height, lessThan(150));
+
+      // Nothing is hidden by the grid: each featured Moment still has its
+      // row, with its own transport and overflow. The list is lazy, so
+      // the far rows are scrolled to rather than assumed built.
+      final scrollable = find
+          .descendant(
+            of: find.byKey(const ValueKey('moments-feed-scroll')),
+            matching: find.byType(Scrollable),
+          )
+          .first;
+      for (final id in ['a', 'b', 'c', 'd']) {
+        await tester.scrollUntilVisible(
+          find.byKey(ValueKey('moment-row-$id')),
+          200,
+          scrollable: scrollable,
+        );
+        expect(find.byKey(ValueKey('moment-row-$id')), findsOneWidget);
+        expect(find.byKey(ValueKey('moment-row-play-$id')), findsOneWidget);
+        expect(find.byKey(ValueKey('moment-row-menu-$id')), findsOneWidget);
+      }
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('a recent row is a tight row, not a card: it fits well '
+        'inside a phone screen and repeats without a bordered slab', (
+      tester,
+    ) async {
+      await tester.binding.setSurfaceSize(const Size(390, 844));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
+      await tester.pumpWidget(
+        host(
+          MomentsScreen(
+            feedService: feed,
+            discoveryService: _StaticDiscovery([
+              _moment('one', author: 'a', likes: 3),
+              _moment('two', author: 'b'),
+            ]),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      final row = tester.getRect(find.byKey(const ValueKey('moment-row-one')));
+      expect(
+        row.height,
+        lessThan(90),
+        reason: 'the card-per-Moment slab was roughly 100 pt tall',
+      );
+      // The leading transport is a real 44 pt target inside that height.
+      final play = tester.getRect(
+        find.byKey(const ValueKey('moment-row-play-one')),
+      );
+      expect(play.width, greaterThanOrEqualTo(44));
+      expect(play.height, greaterThanOrEqualTo(44));
+      expect(tester.takeException(), isNull);
+    });
+
     testWidgets('the footer requests and renders the next opaque page', (
       tester,
     ) async {

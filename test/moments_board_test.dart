@@ -322,6 +322,58 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
+    testWidgets('the FEATURED tile\'s play control opens the story viewer '
+        'at that exact Moment and really plays it', (tester) async {
+      await tester.binding.setSurfaceSize(const Size(390, 844));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
+      final player = _FakeAudioPlayer();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: MomentsScreen(
+            feedService: feed(),
+            auth: authMe(),
+            momentService: privateMoments(),
+            playerFactory: () => player,
+            discoveryService: _StaticDiscovery([
+              _moment(
+                'first',
+                author: 'a',
+                likes: 9,
+                age: const Duration(hours: 4),
+              ),
+              _moment('second', author: 'a', age: const Duration(hours: 1)),
+            ]),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(player.playCount, 0);
+
+      await tester.tap(
+        find.byKey(const ValueKey('moment-featured-play-first')),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(player.playCount, 1);
+      expect(
+        player.lastUrl,
+        'https://storage.googleapis.com/yovoice-test/'
+        'first.m4a?X-Goog-Signature=test',
+      );
+      // Same destination the row's control has: the author's chain,
+      // positioned at the tapped Moment. 'first' is the OLDER of the two.
+      expect(
+        find.byKey(const ValueKey('story-position-indicator')),
+        findsOneWidget,
+      );
+      expect(find.text('1 of 2'), findsOneWidget);
+    });
+
     testWidgets('nothing plays on arrival; the play affordance on a row '
         'opens the story viewer at that exact Moment and really plays it', (
       tester,
