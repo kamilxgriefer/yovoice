@@ -9617,3 +9617,62 @@ as staff rows appear.
 desktop popover is untouched. Captured at 320 and 390 in both themes with the
 dock behind it.
 
+## ADR-159: A built-in emoji picker with its own colour-emoji font stack
+
+**Context.** The app had no emoji picker: people could only insert emoji with
+the system keyboard, and the only emoji surfaces were the fixed reaction sets
+(six for direct messages, five in rooms) that the server and rules pin. The
+owner asked for "all the emoji, like on Instagram".
+
+**Decision.** A shared `YoEmojiPicker` with a built-in catalogue of about 840
+emoji across the standard categories, English and Polish keyword search, a
+category strip and per-device recents — and no new package. Emoji glyphs are
+drawn with the platform colour-emoji families named as the PRIMARY family
+(`Apple Color Emoji`, then Noto/Segoe/Twemoji fallbacks) rather than through
+`fontFamilyFallback`, because the app's Inter face ships flat monochrome
+glyphs for several base codepoints and a primary family always wins over a
+fallback, which would leave a handful of grey outlines in an otherwise
+colour grid. Recents are stored through the existing `AppPreferencesStore`
+interface with the same versioned key naming, but deliberately not as a field
+on `AppPreferences`: that object models settings that every consumer rebuilds
+on, and an interaction history that changes on every tap does not belong
+there. The picker is wired into the three composers that send free text —
+direct messages, club chat and the room chat sheet.
+
+**Reasoning.** A dependency would have brought its own catalogue, its own
+localization and its own update cadence for one screen's worth of UI. The
+catalogue is bounded to emoji that render on the platforms the app supports,
+so nothing shows as tofu. Reaction sets are untouched: the server refuses
+anything outside its allowlist, so offering a full picker there would create
+a control whose result is a refusal.
+
+**Consequences.** Reacting with an arbitrary emoji still needs a server
+change: `ALLOWED_DIRECT_REACTIONS` in the messaging Functions and the pinned
+five-key map in `firestore.rules` for room messages, both of which are a
+deploy and a moderation question. The catalogue is a source file, so new
+Unicode releases arrive by editing it.
+
+## ADR-160: Voice Discover is a dense grid and a tight list, not a stack of slabs
+
+**Context.** The Discover pool in the Moments feed rendered its
+engagement-ranked picks as full-width audio cards. Two or three filled a
+phone screen, which the owner described as huge blocks.
+
+**Decision.** Featured Moments render as a two-column grid of compact tiles
+(seen-aware avatar, author, one caption line, duration, play control and the
+real like and comment counts) and the recent pool as a tight row per Moment.
+The shared pieces live in `moment_discover_tiles.dart` so the feed, the grid
+and the list cannot drift. The story strip keeps the seen/unseen language
+introduced in ADR-155, and every action the slab carried — play, open,
+delete your own, report, expiry countdown — is still reachable, with the rare
+ones behind the row's overflow menu.
+
+**Reasoning.** Discovery is a browsing surface: the job is to show many
+candidates at a glance, which a full-width card actively prevents. Reusing
+the story tile's ring vocabulary means a Moment already heard reads the same
+way in the strip, the grid and the list.
+
+**Consequences.** Captions truncate to one line in the grid, so the caption
+is a hint rather than the content. The feed view lost about 240 lines by
+delegating to the shared tiles.
+

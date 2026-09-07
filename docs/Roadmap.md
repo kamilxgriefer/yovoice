@@ -16,6 +16,11 @@ someone decide what to pick up next.
 
 ## Done
 
+- **Emoji picker and a redesigned Voice Discover** (2026-09-07, ADR-159/160;
+  **SOURCE + CAPTURE VERIFIED, NOT PUBLISHED**): about 840 emoji with search
+  and recents in the three text composers, and Discover rebuilt as a dense
+  grid plus a tight recent list.
+
 - **Tester round 3: story tiles, comment previews with mentions, friend
   suggestions, a compact More sheet, and two real bug fixes** (2026-09-07,
   ADR-155/156/157/158; **SOURCE + CAPTURE VERIFIED, NOT PUBLISHED**): Moments
