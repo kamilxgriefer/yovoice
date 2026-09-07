@@ -11,6 +11,14 @@ enum ReportTargetType {
   /// A published Reel created through the server-authoritative Reel flow.
   reel,
 
+  /// One comment on a Reel, reported through `createReelCommentReport`.
+  ///
+  /// Never a client write. `reels/{id}/comments/{id}` is
+  /// `allow read, write: if false` for every client, staff included, so the
+  /// report is created server-side and carries a snapshot of the reported
+  /// text — it is the only view a moderator has of the words.
+  reelComment,
+
   /// A published Voice Moment reported through `createContentReport`.
   voiceMoment,
 

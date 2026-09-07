@@ -13527,6 +13527,453 @@ async function main() {
     },
   );
 
+  await check(
+    "REELS ENGAGEMENT: likes and comments are unreadable and unwritable by " +
+      "every client, exactly like the Reel itself",
+    async () => {
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        const db = ctx.firestore();
+        await Promise.all([
+          setDoc(doc(db, "reels/reel-engagement"), {
+            schemaVersion: 1,
+            status: "published",
+            moderationStatus: "visible",
+            authorId: "attacker-uid",
+            likeCount: 3,
+            commentCount: 1,
+          }),
+          // The caller's OWN like edge and OWN comment. If any read path
+          // existed it would be this one, and it must still be denied: a
+          // Reel document has never been client-readable, so its engagement
+          // is reached only through the server callables.
+          setDoc(doc(db, "reels/reel-engagement/likes/host-uid"), {
+            schemaVersion: 1,
+            userId: "host-uid",
+            reelId: "reel-engagement",
+            createdAt: Timestamp.fromMillis(1_800_000_000_000),
+          }),
+          setDoc(doc(db, "reels/reel-engagement/comments/comment-1"), {
+            schemaVersion: 1,
+            type: "text",
+            reelId: "reel-engagement",
+            authorId: "host-uid",
+            authorName: "Host",
+            text: "mine",
+            durationSeconds: null,
+            createdAt: Timestamp.fromMillis(1_800_000_000_000),
+          }),
+        ]);
+      });
+
+      const db = host.firestore();
+      const likeRef = doc(db, "reels/reel-engagement/likes/host-uid");
+      const commentRef = doc(db, "reels/reel-engagement/comments/comment-1");
+
+      // Point reads of the caller's own engagement.
+      await assertFails(getDoc(likeRef));
+      await assertFails(getDoc(commentRef));
+      // Listing either subcollection.
+      await assertFails(
+        getDocs(collection(db, "reels/reel-engagement/likes")),
+      );
+      await assertFails(
+        getDocs(
+          query(
+            collection(db, "reels/reel-engagement/comments"),
+            orderBy("createdAt", "asc"),
+            limit(7),
+          ),
+        ),
+      );
+
+      // Forging a like edge for yourself, and for somebody else.
+      await assertFails(
+        setDoc(doc(db, "reels/reel-engagement/likes/host-uid"), {
+          schemaVersion: 1,
+          userId: "host-uid",
+          reelId: "reel-engagement",
+          createdAt: serverTimestamp(),
+        }),
+      );
+      await assertFails(
+        setDoc(doc(db, "reels/reel-engagement/likes/attacker-uid"), {
+          schemaVersion: 1,
+          userId: "attacker-uid",
+          reelId: "reel-engagement",
+          createdAt: serverTimestamp(),
+        }),
+      );
+      await assertFails(deleteDoc(likeRef));
+
+      // Writing a comment directly, editing one, and deleting your own.
+      await assertFails(
+        setDoc(doc(db, "reels/reel-engagement/comments/forged"), {
+          schemaVersion: 1,
+          type: "text",
+          reelId: "reel-engagement",
+          authorId: "host-uid",
+          authorName: "Host",
+          text: "written without a counter, a ledger or a rate budget",
+          durationSeconds: null,
+          createdAt: serverTimestamp(),
+        }),
+      );
+      await assertFails(updateDoc(commentRef, { text: "edited" }));
+      await assertFails(deleteDoc(commentRef));
+    },
+  );
+
+  await check(
+    "REELS ENGAGEMENT: counters on the Reel root are server-only and cannot " +
+      "be seeded, merged or bumped by a client",
+    async () => {
+      const db = host.firestore();
+      const reelRef = doc(db, "reels/reel-engagement");
+      await assertFails(getDoc(reelRef));
+      // Direct set, merge-update and a fresh root carrying a forged count.
+      await assertFails(updateDoc(reelRef, { likeCount: 999999 }));
+      await assertFails(
+        setDoc(reelRef, { commentCount: 0 }, { merge: true }),
+      );
+      await assertFails(
+        setDoc(doc(db, "reels/reel-forged"), {
+          schemaVersion: 1,
+          status: "published",
+          moderationStatus: "visible",
+          authorId: "host-uid",
+          likeCount: 500,
+          commentCount: 500,
+        }),
+      );
+      // A batch that pairs a legitimate-looking child write with the counter
+      // is refused as a whole, not partially applied.
+      const batch = writeBatch(db);
+      batch.set(doc(db, "reels/reel-engagement/likes/host-uid"), {
+        schemaVersion: 1,
+        userId: "host-uid",
+        reelId: "reel-engagement",
+        createdAt: serverTimestamp(),
+      });
+      batch.update(reelRef, { likeCount: 4 });
+      await assertFails(batch.commit());
+    },
+  );
+
+  await check(
+    "REELS ENGAGEMENT: a collectionGroup query over the shared `comments` " +
+      "and `likes` names reaches nothing",
+    async () => {
+      // Reel engagement deliberately reuses the Voice Moment subcollection
+      // names. That is only safe while NO top-level wildcard rule exists for
+      // either name — a nested match cannot authorize a collectionGroup query
+      // (ADR-006), and getting a top-level one wrong fails OPEN. This is the
+      // production-shaped query an attacker would actually run, not a
+      // point-get standing in for it (ADR-007).
+      const db = host.firestore();
+      await assertFails(getDocs(query(collectionGroup(db, "comments"))));
+      await assertFails(getDocs(query(collectionGroup(db, "likes"))));
+      await assertFails(
+        getDocs(
+          query(
+            collectionGroup(db, "comments"),
+            where("reelId", "==", "reel-engagement"),
+          ),
+        ),
+      );
+      await assertFails(
+        getDocs(
+          query(collectionGroup(db, "likes"), where("userId", "==", "host-uid")),
+        ),
+      );
+    },
+  );
+
+  await check(
+    "REELS ENGAGEMENT: an unverified, anonymous or blocked-adjacent client " +
+      "gains no engagement path either",
+    async () => {
+      for (const context of [
+        unverified.firestore(),
+        testEnv.unauthenticatedContext().firestore(),
+        attacker.firestore(),
+      ]) {
+        await assertFails(
+          getDoc(doc(context, "reels/reel-engagement/comments/comment-1")),
+        );
+        await assertFails(
+          setDoc(doc(context, "reels/reel-engagement/likes/host-uid"), {
+            schemaVersion: 1,
+            userId: "host-uid",
+            reelId: "reel-engagement",
+            createdAt: serverTimestamp(),
+          }),
+        );
+      }
+    },
+  );
+
+  // -----------------------------------------------------------------
+  // REEL COMMENT MODERATION
+  //
+  // Three separate boundaries, and all three have to hold at once:
+  //   1. a client cannot FILE a Reel comment report — not for somebody
+  //      else, and not even for itself; `createReelCommentReport` is the
+  //      only writer and it runs on the Admin SDK;
+  //   2. a client cannot REMOVE a Reel comment by writing Firestore,
+  //      including the Reel's own author, who genuinely holds that
+  //      authority but only through `removeReelComment`;
+  //   3. the report's `targetTextSnapshot` — a copy of somebody's words,
+  //      the one field in the queue that quotes reported content — is
+  //      readable by active staff and by nobody else, including the
+  //      reporter and the person reported.
+  // -----------------------------------------------------------------
+
+  const RC_REEL = "reel-comment-moderation";
+  const RC_COMMENT = "0123456789abcdef0123456789abcdef01234567";
+  const RC_REPORT = "server-written-reel-comment-report";
+  const RC_TEXT = "the reported words, quoted into the queue";
+
+  await testEnv.withSecurityRulesDisabled(async (ctx) => {
+    const db = ctx.firestore();
+    await Promise.all([
+      setDoc(doc(db, `reels/${RC_REEL}`), {
+        schemaVersion: 1,
+        status: "published",
+        moderationStatus: "visible",
+        // host-uid owns the Reel; attacker-uid wrote the comment.
+        authorId: "host-uid",
+        commentCount: 1,
+        likeCount: 0,
+      }),
+      setDoc(doc(db, `reels/${RC_REEL}/comments/${RC_COMMENT}`), {
+        schemaVersion: 1,
+        type: "text",
+        reelId: RC_REEL,
+        authorId: "attacker-uid",
+        authorName: "Attacker",
+        text: RC_TEXT,
+        durationSeconds: null,
+        createdAt: Timestamp.fromMillis(1_800_000_000_000),
+      }),
+      // Exactly what createReelCommentReport writes through the Admin SDK.
+      setDoc(doc(db, `reports/${RC_REPORT}`), {
+        schemaVersion: 2,
+        reporterId: "invitee-uid",
+        targetType: "reelComment",
+        targetId: RC_COMMENT,
+        reportedUserId: "attacker-uid",
+        contextPath: `reels/${RC_REEL}/comments/${RC_COMMENT}`,
+        reelId: RC_REEL,
+        commentId: RC_COMMENT,
+        reelAuthorId: "host-uid",
+        targetTextSnapshot: RC_TEXT,
+        note: "",
+        reason: "harassment",
+        status: "open",
+        createdAt: Timestamp.fromMillis(1_800_000_000_000),
+      }),
+    ]);
+  });
+
+  await check(
+    "SECURITY REEL COMMENT REPORTS: no client can file one — the create " +
+      "rule has no reelComment branch and no room for its fields",
+    async () => {
+      const db = invitee.firestore();
+      const full = {
+        schemaVersion: 2,
+        reporterId: "invitee-uid",
+        targetType: "reelComment",
+        targetId: RC_COMMENT,
+        reportedUserId: "attacker-uid",
+        contextPath: `reels/${RC_REEL}/comments/${RC_COMMENT}`,
+        reelId: RC_REEL,
+        commentId: RC_COMMENT,
+        reelAuthorId: "host-uid",
+        targetTextSnapshot: RC_TEXT,
+        note: "",
+        reason: "harassment",
+        status: "open",
+        createdAt: serverTimestamp(),
+      };
+      // The full server shape, at the id the server would use.
+      await assertFails(
+        setDoc(doc(db, `reports/${RC_REPORT}-forged`), full),
+      );
+      // The same shape at the deterministic id the CLIENT path requires,
+      // with the rate-limit document advanced exactly as a legal v1 report
+      // would advance it. The extra keys and the unknown targetType are
+      // both fatal on their own.
+      const batch = writeBatch(db);
+      batch.set(
+        doc(db, `reports/invitee-uid_reelComment_${RC_COMMENT}`),
+        full,
+      );
+      batch.set(doc(db, "reportLimits/invitee-uid"), {
+        lastReportAt: serverTimestamp(),
+        lastReportId: `invitee-uid_reelComment_${RC_COMMENT}`,
+        windowStartAt: serverTimestamp(),
+        windowCount: 1,
+      });
+      await assertFails(batch.commit());
+      // Stripped back to the v1 field allowlist, the targetType still has
+      // no existence branch, so there is nothing to prove the comment is
+      // real or that attacker-uid wrote it.
+      const minimal = writeBatch(db);
+      minimal.set(
+        doc(db, `reports/invitee-uid_reelComment_${RC_COMMENT}`),
+        {
+          reporterId: "invitee-uid",
+          targetType: "reelComment",
+          targetId: RC_COMMENT,
+          reportedUserId: "attacker-uid",
+          contextPath: `reels/${RC_REEL}/comments/${RC_COMMENT}`,
+          reason: "harassment",
+          note: "",
+          status: "open",
+          createdAt: serverTimestamp(),
+        },
+      );
+      minimal.set(doc(db, "reportLimits/invitee-uid"), {
+        lastReportAt: serverTimestamp(),
+        lastReportId: `invitee-uid_reelComment_${RC_COMMENT}`,
+        windowStartAt: serverTimestamp(),
+        windowCount: 1,
+      });
+      await assertFails(minimal.commit());
+    },
+  );
+
+  await check(
+    "SECURITY REEL COMMENT REPORTS: a reporter cannot file one naming " +
+      "somebody else as the reporter, nor smuggle a text snapshot onto a " +
+      "report shape that IS accepted",
+    async () => {
+      const db = attacker.firestore();
+      // Reporter identity is pinned to request.auth.uid on every branch.
+      await assertFails(
+        setDoc(doc(db, `reports/invitee-uid_reelComment_${RC_COMMENT}`), {
+          reporterId: "invitee-uid",
+          targetType: "reelComment",
+          targetId: RC_COMMENT,
+          reportedUserId: "host-uid",
+          contextPath: `reels/${RC_REEL}/comments/${RC_COMMENT}`,
+          reason: "harassment",
+          note: "",
+          status: "open",
+          createdAt: serverTimestamp(),
+        }),
+      );
+      // A `user` report is a shape the client path DOES accept. Adding the
+      // quoted-content field to it must still be refused, or the queue
+      // becomes a place to publish text about somebody under their name.
+      const batch = writeBatch(db);
+      batch.set(doc(db, "reports/attacker-uid_user_invitee-uid"), {
+        reporterId: "attacker-uid",
+        targetType: "user",
+        targetId: "invitee-uid",
+        reportedUserId: "invitee-uid",
+        contextPath: null,
+        reason: "harassment",
+        note: "",
+        status: "open",
+        createdAt: serverTimestamp(),
+        targetTextSnapshot: "words invitee-uid never wrote",
+      });
+      batch.set(doc(db, "reportLimits/attacker-uid"), {
+        lastReportAt: serverTimestamp(),
+        lastReportId: "attacker-uid_user_invitee-uid",
+        windowStartAt: serverTimestamp(),
+        windowCount: 1,
+      });
+      await assertFails(batch.commit());
+    },
+  );
+
+  await check(
+    "SECURITY REEL COMMENT REPORTS: the quoted comment text is readable by " +
+      "active staff and by nobody else — not the reporter, not the person " +
+      "reported, not the Reel's author",
+    async () => {
+      const filed = `reports/${RC_REPORT}`;
+      const staffRead = await getDoc(doc(moderator.firestore(), filed));
+      assert.equal(staffRead.data().targetTextSnapshot, RC_TEXT);
+      assert.equal(staffRead.data().reelId, RC_REEL);
+      assert.equal(staffRead.data().commentId, RC_COMMENT);
+      await assertSucceeds(getDoc(doc(adminStaff.firestore(), filed)));
+
+      // invitee-uid FILED this report; attacker-uid is the person reported;
+      // host-uid owns the Reel it sits under. None of them may read it.
+      for (const context of [
+        invitee.firestore(),
+        attacker.firestore(),
+        host.firestore(),
+        unverified.firestore(),
+        testEnv.unauthenticatedContext().firestore(),
+        revokedMod.firestore(),
+        bannedMod.firestore(),
+      ]) {
+        await assertFails(getDoc(doc(context, filed)));
+      }
+      // Nor list their way to it.
+      await assertFails(
+        getDocs(
+          query(
+            collection(attacker.firestore(), "reports"),
+            where("targetType", "==", "reelComment"),
+          ),
+        ),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY REEL COMMENT REPORTS: not even staff may edit or delete one " +
+      "— triage is moderateReport's alone",
+    async () => {
+      const filed = `reports/${RC_REPORT}`;
+      for (const context of [moderator.firestore(), adminStaff.firestore()]) {
+        await assertFails(updateDoc(doc(context, filed), { status: "resolved" }));
+        await assertFails(
+          updateDoc(doc(context, filed), { targetTextSnapshot: "rewritten" }),
+        );
+        await assertFails(deleteDoc(doc(context, filed)));
+      }
+    },
+  );
+
+  await check(
+    "SECURITY REEL COMMENT REMOVAL: the Reel's author holds real authority " +
+      "over the thread and STILL cannot reach it through Firestore",
+    async () => {
+      // host-uid owns this Reel. removeReelComment will let them clear this
+      // exact comment — through the Admin SDK, with a rate budget, an
+      // idempotency ledger and a durable record of whose words were
+      // removed. None of that exists on a direct client write, so the rule
+      // must deny it even for the one person who is allowed to do it.
+      const db = host.firestore();
+      const commentRef = doc(db, `reels/${RC_REEL}/comments/${RC_COMMENT}`);
+      await assertFails(getDoc(commentRef));
+      await assertFails(deleteDoc(commentRef));
+      await assertFails(updateDoc(commentRef, { text: "" }));
+      // Nor by pairing the delete with an honest counter correction.
+      const batch = writeBatch(db);
+      batch.delete(commentRef);
+      batch.update(doc(db, `reels/${RC_REEL}`), { commentCount: 0 });
+      await assertFails(batch.commit());
+      // And the comment's own author cannot either — deleteReelComment is
+      // the only path there too.
+      await assertFails(
+        deleteDoc(doc(attacker.firestore(), `reels/${RC_REEL}/comments/${RC_COMMENT}`)),
+      );
+      // A moderator has no client path to the content either; theirs is
+      // moderateReport.
+      await assertFails(
+        deleteDoc(doc(moderator.firestore(), `reels/${RC_REEL}/comments/${RC_COMMENT}`)),
+      );
+    },
+  );
+
   console.log(`\n${passed} passed, ${failed} failed`);
   await testEnv.cleanup();
   process.exit(failed > 0 ? 1 : 0);

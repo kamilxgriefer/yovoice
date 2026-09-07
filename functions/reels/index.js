@@ -23,8 +23,22 @@ const REEL_CALLABLE_METHODS = Object.freeze({
   listReelsV2: "listReelsV2",
   getReelMediaAccess: "getReelMediaAccess",
   getReelMediaAccessV2: "getReelMediaAccessV2",
+  getReelViewV2: "getReelViewV2",
   deleteReel: "deleteReel",
   createReelReport: "createReelReport",
+  // Engagement (2026-09). Registered through the same callable options as
+  // every other Reel entry point, so region, memory, instance ceiling and the
+  // staged App Check switch stay identical across the surface.
+  setReelLike: "setReelLike",
+  createReelComment: "createReelComment",
+  deleteReelComment: "deleteReelComment",
+  // Comment moderation (2026-09). `createReelCommentReport` is the reporter's
+  // path into the existing `reports` queue; `removeReelComment` is the Reel
+  // author's authority over their own thread. Staff removal is NOT here — it
+  // is an action on a report, so it stays inside `moderateReport`, which owns
+  // the state machine and writes the audit record.
+  createReelCommentReport: "createReelCommentReport",
+  removeReelComment: "removeReelComment",
 });
 
 function createReelRuntime({

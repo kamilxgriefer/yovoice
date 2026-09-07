@@ -7,12 +7,14 @@ const {
   consumeRateLimit,
   digest,
   fail,
+  incrementCanonicalCount,
   isValidOpaqueUid,
   ledgerData,
   normalizeText,
   operationIdentity,
   rateLimitReference,
   requireActor,
+  requireBoolean,
   requireExactInput,
   requireId,
   requireRequestId,
@@ -33,6 +35,19 @@ const {
   validateSortKey,
   validateStoredAsset,
 } = require("./contract");
+const {
+  MAX_REEL_COMMENT_LENGTH,
+  MAX_REEL_THREAD_COMMENTS,
+  REEL_COMMENT_SCHEMA_VERSION,
+  REEL_LIKE_SCHEMA_VERSION,
+  REEL_VIEW_SCHEMA_VERSION,
+  decodeReelCommentCursor,
+  encodeReelCommentCursor,
+  reelCommentProjection,
+  storedEngagementCount,
+  validateReelComment,
+  validateReelLike,
+} = require("./engagement");
 const {
   DEFAULT_REEL_AVAILABILITY_HOURS,
   PERMANENT_AVAILABILITY,
@@ -69,6 +84,25 @@ const DEFAULT_LIMITS = Object.freeze({
   mediaAccess: Object.freeze({ maxEvents: 120, windowMs: 60 * 1000 }),
   delete: Object.freeze({ maxEvents: 30, windowMs: 60 * 60 * 1000 }),
   report: Object.freeze({ maxEvents: 10, windowMs: 10 * 60 * 1000 }),
+  // Engagement budgets match the deployed Voice Moment values, because the
+  // abuse they bound is the same abuse: one authenticated account driving
+  // counters, notifications and other people's threads. `commentDelete` is
+  // deliberately its own scope rather than sharing `delete` — removing your
+  // own comments must never consume the budget that lets you delete your
+  // own Reel.
+  like: Object.freeze({ maxEvents: 60, windowMs: 60 * 1000 }),
+  comment: Object.freeze({ maxEvents: 20, windowMs: 60 * 1000 }),
+  commentDelete: Object.freeze({ maxEvents: 30, windowMs: 10 * 60 * 1000 }),
+  // The Reel author removing OTHER people's comments from their own Reel is
+  // its own budget, deliberately separate from `commentDelete`. A brigaded
+  // author clearing a raid must not exhaust the budget that lets them delete
+  // their own words elsewhere, and a griefing author cannot borrow that
+  // budget either. It is more generous than commentDelete because a raid is
+  // exactly the case this exists for, and every removal it permits is
+  // confined to a surface the caller already owns outright — the same
+  // account can delete the entire Reel with one `deleteReel` call.
+  commentRemove: Object.freeze({ maxEvents: 60, windowMs: 10 * 60 * 1000 }),
+  view: Object.freeze({ maxEvents: 60, windowMs: 60 * 1000 }),
 });
 
 function createReelService({
@@ -337,8 +371,17 @@ function createReelService({
     { allowHidden = false, allowExpiredStatus = false } = {},
   ) {
     if (!snapshot?.exists) fail("not-found", "The Reel does not exist.");
+    const raw = snapshot.data() ?? {};
+    // `likeCount` and `commentCount` are additive and lazily materialized:
+    // every Reel published before the engagement contract carries neither
+    // key, and the first like or comment writes the one it needs. Both are
+    // therefore OPTIONAL in the exact-schema guard — but only optional, not
+    // unchecked. A present counter must be a real non-negative integer
+    // (storedEngagementCount below); absent is exactly zero. Listing them
+    // unconditionally would reject every already-published Reel, which is
+    // how an exact-schema rule becomes an outage instead of a boundary.
     const value = exactStoredObject(
-      snapshot.data() ?? {},
+      raw,
       [
         "schemaVersion",
         "status",
@@ -351,6 +394,12 @@ function createReelService({
         "sortKey",
         "publishedAt",
         "updatedAt",
+        ...(Object.prototype.hasOwnProperty.call(raw, "likeCount")
+          ? ["likeCount"]
+          : []),
+        ...(Object.prototype.hasOwnProperty.call(raw, "commentCount")
+          ? ["commentCount"]
+          : []),
       ],
       "Reel",
     );
@@ -402,7 +451,18 @@ function createReelService({
     ) {
       fail("data-loss", "The Reel is malformed.");
     }
-    return { ...value, id: snapshot.id, media, backingAudio, composition };
+    return {
+      ...value,
+      id: snapshot.id,
+      media,
+      backingAudio,
+      composition,
+      likeCount: storedEngagementCount(value.likeCount, "Reel likeCount"),
+      commentCount: storedEngagementCount(
+        value.commentCount,
+        "Reel commentCount",
+      ),
+    };
   }
 
   async function reserveReelDraftInternal(request, { version }) {
@@ -1000,6 +1060,52 @@ function createReelService({
     return Promise.all(references.map((reference) => reference.get()));
   }
 
+  // One projection shape for the feed and the single-Reel view, so a client
+  // renders the same object from either call. v1 is byte-frozen for already
+  // installed builds: availability and engagement are v2-only additions.
+  function reelItemProjection(reel, availability, { version, callerLiked }) {
+    const item = {
+      id: reel.id,
+      authorId: reel.authorId,
+      // Published Reels already contain a server-captured, validated name.
+      // Authorization still uses fresh account/restriction/block documents;
+      // avoiding a fifth per-author read does not weaken that decision.
+      authorName: reel.authorName,
+      media: {
+        kind: reel.media.kind,
+        contentType: reel.media.contentType,
+        size: reel.media.size,
+        generation: reel.media.generation,
+        durationMs: reel.media.durationMs,
+      },
+      backingAudio: reel.backingAudio === null
+        ? null
+        : {
+            contentType: reel.backingAudio.contentType,
+            size: reel.backingAudio.size,
+            generation: reel.backingAudio.generation,
+            durationMs: reel.backingAudio.durationMs,
+          },
+      composition: reel.composition,
+      publishedAtMillis: timestampMillis(reel.publishedAt),
+      sortKey: reel.sortKey,
+    };
+    if (version === 2) {
+      item.availability = {
+        schemaVersion: availability.schemaVersion,
+        availabilityHours: availability.availabilityHours,
+        expiresAtMillis: availability.expiresAtMs,
+      };
+      // Counters are aggregates over every engagement edge, including edges
+      // whose author this viewer cannot see. They are deliberately NOT
+      // recomputed per viewer: a filtered count would leak who is blocked.
+      item.likeCount = reel.likeCount;
+      item.commentCount = reel.commentCount;
+      item.callerLiked = callerLiked;
+    }
+    return item;
+  }
+
   async function visibleFeedItem(
     reel,
     viewerId,
@@ -1024,39 +1130,25 @@ function createReelService({
       activeProfile(author, "The author");
       assertNotRestricted(restriction, "The author", nowMs);
       assertNotBlocked(viewerBlock, authorBlock);
-      const item = {
-        id: reel.id,
-        authorId: reel.authorId,
-        // Published Reels already contain a server-captured, validated name.
-        // Authorization still uses fresh account/restriction/block documents;
-        // avoiding a fifth per-author read does not weaken that decision.
-        authorName: reel.authorName,
-        media: {
-          kind: reel.media.kind,
-          contentType: reel.media.contentType,
-          size: reel.media.size,
-          generation: reel.media.generation,
-          durationMs: reel.media.durationMs,
-        },
-        backingAudio: reel.backingAudio === null
-          ? null
-          : {
-              contentType: reel.backingAudio.contentType,
-              size: reel.backingAudio.size,
-              generation: reel.backingAudio.generation,
-              durationMs: reel.backingAudio.durationMs,
-            },
-        composition: reel.composition,
-        publishedAtMillis: timestampMillis(reel.publishedAt),
-        sortKey: reel.sortKey,
-      };
+      // A malformed like edge must never empty a viewer's whole feed page.
+      // It is treated as "not liked" for this render; setReelLike still
+      // refuses to transition from corrupt state.
+      let callerLiked = false;
       if (version === 2) {
-        item.availability = {
-          schemaVersion: availability.schemaVersion,
-          availabilityHours: availability.availabilityHours,
-          expiresAtMillis: availability.expiresAtMs,
-        };
+        try {
+          callerLiked = validateReelLike(
+            snapshotMap.get(`reels/${reel.id}/likes/${viewerId}`),
+            reel.id,
+            viewerId,
+          );
+        } catch (_) {
+          callerLiked = false;
+        }
       }
+      const item = reelItemProjection(reel, availability, {
+        version,
+        callerLiked,
+      });
       return { item, expiresAtMs: availability.expiresAtMs };
     } catch (_) {
       return null;
@@ -1147,6 +1239,16 @@ function createReelService({
       const availabilityReferences = processableEntries
         .filter(({ candidate }) => candidate !== null)
         .map(({ candidate }) => availabilityReference(candidate.id));
+      // `callerLiked` costs one point-get per candidate, fetched in the batch
+      // that already loads availability rather than in a second round trip,
+      // and only for v2 callers. The bounded scan (MAX_REEL_SCAN_PER_REQUEST)
+      // is what keeps this from turning one list call into hundreds of reads.
+      const callerLikeReferences = version === 1
+        ? []
+        : processableEntries
+            .filter(({ candidate }) => candidate !== null)
+            .map(({ candidate }) =>
+              reelReference(candidate.id).collection("likes").doc(auth.uid));
       const authorizationReferences = [...authorIds].flatMap((authorId) => [
         db.doc(`users/${authorId}`),
         db.doc(`restrictions/${authorId}`),
@@ -1155,6 +1257,7 @@ function createReelService({
       ]);
       const references = [
         ...availabilityReferences,
+        ...callerLikeReferences,
         ...authorizationReferences,
       ];
       const snapshots = references.length === 0
@@ -1345,6 +1448,51 @@ function createReelService({
 
   function getReelMediaAccessV2(request) {
     return getReelMediaAccessInternal(request, { version: 2 });
+  }
+
+  // A Reel's root document survives deletion and expiry purge as a
+  // moderation tombstone, so the engagement subcollections cannot be removed
+  // by deleting the root — they are separate documents and would otherwise
+  // outlive the content they describe, holding other people's comment text
+  // indefinitely.
+  //
+  // THE ROOT'S CURRENT STATE IS THE AUTHORITY, NOT THE OUTBOX ROW. A cleanup
+  // row names a reelId and nothing more, and this worker also drains
+  // `reelMediaCleanup` rows written by the abandoned-draft sweep — whose
+  // reservation id is derived from (uid, requestId) and is NOT bound to a
+  // Reel's published state. Purging on the row's word alone therefore let an
+  // engagement-carrying, still-published Reel be stripped of OTHER PEOPLE'S
+  // comments with no author or moderator action, leaving likeCount and
+  // commentCount permanently inflated above the surviving edges — fabricated
+  // social proof that nothing reconciles. So the purge re-reads the root and
+  // proceeds only when the content is genuinely gone: absent, a deletion
+  // tombstone, or a purged-expiry tombstone. Anything else is refused, and
+  // the refusal is reported rather than swallowed.
+  //
+  // It is idempotent, so the worker's existing backoff/retry path replays it
+  // safely, and it is skipped when the injected database has no bulk delete
+  // (unit tests), which costs nothing because those databases are discarded.
+  async function purgeReelEngagement(reelId, { allowExpiredRoot = false } = {}) {
+    if (typeof db.recursiveDelete !== "function") return "unsupported";
+    const reelSnapshot = await reelReference(reelId).get();
+    // `allowExpiredRoot` is granted only by the expiry purge, and only after
+    // validateExpiryCleanupState has proven the root and its availability
+    // sidecar are both expired. It is never passed on the generic path.
+    const retiredByExpiry = allowExpiredRoot &&
+      reelSnapshot.exists &&
+      reelSnapshot.data()?.status === "expired";
+    if (
+      reelSnapshot.exists &&
+      !retiredByExpiry &&
+      !isDeletedReelSnapshot(reelSnapshot) &&
+      !isPurgedExpiredReelSnapshot(reelSnapshot)
+    ) {
+      return "liveRoot";
+    }
+    const reelRef = reelReference(reelId);
+    await db.recursiveDelete(reelRef.collection("likes"));
+    await db.recursiveDelete(reelRef.collection("comments"));
+    return "purged";
   }
 
   function cleanupOutboxId(reelId) {
@@ -1675,6 +1823,991 @@ function createReelService({
       );
       return result;
     });
+  }
+
+  // A Reel comment report is a SIBLING of createReelReport, not a widening
+  // of it, and that is deliberate.
+  //
+  // createReelReport is deployed. Its operation identity hashes exactly
+  // { reelId, reason, note } and its report id is digest(uid, reelId), and
+  // production already holds ledger entries and report documents keyed on
+  // both. Folding an optional commentId into either derivation would re-key
+  // every Reel report already filed — the next retry would stop replaying and
+  // start answering `already-exists` on a safety path. functions/moments/
+  // integrity.js learned that lesson first; see reportIdentityInput() there.
+  // A separate entry point keeps that contract byte-identical and gives the
+  // comment target its own ledger kind and its own report-id namespace, so
+  // reporting a Reel and reporting a comment on it can never collide.
+  //
+  // The report budget IS shared with createReelReport (`report` scope): one
+  // account gets one reporting allowance, the same way createContentReport
+  // spends one `report` scope across Moments and Moment comments.
+  async function createReelCommentReport(request) {
+    // Reporting stays available to an authenticated but not-yet-verified
+    // person, matching createReelReport, setUserBlock and the reports/ create
+    // rule's own comment: a safety action is never gated on verification.
+    const auth = requireActor(request, { verified: false });
+    const data = requireExactInput(
+      request.data,
+      ["commentId", "note", "reason", "reelId", "requestId"],
+      ["commentId", "reason", "reelId", "requestId"],
+    );
+    const reelId = requireId(data.reelId, "reelId");
+    const commentId = requireId(data.commentId, "commentId");
+    const requestId = requireRequestId(data.requestId);
+    const reason = validateReelReportReason(data.reason);
+    const note = data.note === null || data.note === undefined
+      ? ""
+      : normalizeText(data.note, 300, "note", { allowEmpty: true });
+    const identity = operationIdentity(
+      "reel.comment.report",
+      auth.uid,
+      requestId,
+      { commentId, reelId, reason, note },
+    );
+    // One comment can be reported once per reporter. A fresh requestId cannot
+    // manufacture duplicate queue entries for the same target; the operation
+    // ledger still makes an honest retry free.
+    const reportId = digest("reel-comment-report", auth.uid, reelId, commentId)
+      .slice(0, 40);
+    // THE BUDGET IS CHARGED BEFORE THE TARGET IS READ, and that ordering is
+    // the security property, not a detail. createReelReport charges after
+    // its existence checks, which leaves every REFUSED report free: an
+    // authenticated caller can then poll `(reelId, commentId)` pairs without
+    // limit and read the answer off the refusal. Charging up front, exactly
+    // as beginEngagementAttempt does for like/comment/delete/remove, means a
+    // probe costs the same as a report. Only an exact operation-ledger replay
+    // stays free, because a lost acknowledgement must never be more expensive
+    // than the original call.
+    const attempt = await beginEngagementAttempt({
+      identity,
+      kind: "reel.comment.report",
+      uid: auth.uid,
+      scope: "report",
+    });
+    if (attempt.replay) return attempt.replay;
+
+    return db.runTransaction(async (transaction) => {
+      const attemptTime = timing();
+      const ledgerRef = ledgerReference(identity);
+      const reportRef = db.doc(`reports/${reportId}`);
+      const [ledger, actor, reelSnapshot, commentSnapshot, existing] =
+        await transactionGetAll(
+          transaction,
+          ledgerRef,
+          db.doc(`users/${auth.uid}`),
+          reelReference(reelId),
+          reelCommentReference(reelId, commentId),
+          reportRef,
+        );
+      const replay = assertLedgerReplay(ledger, {
+        kind: "reel.comment.report",
+        uid: auth.uid,
+        inputHash: identity.inputHash,
+      });
+      if (replay) return replay;
+      activeProfile(actor, "Your");
+      // ONE refusal envelope for every "there is nothing here to report"
+      // state — a Reel that never existed, a deletion or expiry tombstone
+      // whose thread is already being purged, and a comment id that does not
+      // resolve all answer `not-found` with the same sentence. Reel and
+      // comment ids are 40-character server digests, so this is not a
+      // guessing surface; keeping the envelope uniform means it cannot become
+      // a differential oracle for which half of the pair exists either.
+      const missing = () =>
+        fail("not-found", "That Reel comment is no longer available.");
+      if (
+        !reelSnapshot.exists ||
+        isDeletedReelSnapshot(reelSnapshot) ||
+        isPurgedExpiredReelSnapshot(reelSnapshot) ||
+        !commentSnapshot.exists
+      ) {
+        missing();
+      }
+      // allowHidden / allowExpiredStatus, exactly as deleteReelComment reads
+      // it: expiry retires a Reel from the feed and moderation hides it, but
+      // neither erases the words underneath. Somebody who saw the comment
+      // before either happened must still be able to report it. Availability
+      // is deliberately NOT read here — a missing or lapsed sidecar must
+      // never be the reason a safety action is refused.
+      const reel = validatePublishedReel(reelSnapshot, {
+        allowHidden: true,
+        allowExpiredStatus: true,
+      });
+      const comment = validateReelComment(commentSnapshot, reelId);
+      if (comment.authorId === auth.uid) {
+        fail("failed-precondition", "You cannot report your own comment.");
+      }
+      // THE REPORTER'S CURRENT VISIBILITY OF THIS COMMENT IS DELIBERATELY
+      // NOT CHECKED, AND THAT IS A KNOWN DIVERGENCE FROM ADR-086.
+      //
+      // ADR-086 rule 2 says access is checked before existence for every
+      // moderation target, and getReelViewV2 really does withhold a comment
+      // per-viewer: reelView() resolves assertReelAuthorAudience() for each
+      // distinct commenter, so a block in either direction hides that
+      // person's comment from this reader. Applying the same rule here would
+      // therefore be the consistent thing to do, and it is not done, because
+      // on this target type it costs more safety than it buys:
+      //
+      //  - WITHOUT the check, somebody who can no longer see a comment can
+      //    still name it. The cost is an existence signal for a pair of
+      //    40-character server digests they must already hold, plus a
+      //    staff-visible report naming an account that blocked them. Both
+      //    are now metered — the budget above is charged before any of this
+      //    runs — and every report carries its reporter's uid, so a
+      //    bad-faith reporter is a detectable pattern rather than an
+      //    anonymous one.
+      //  - WITH the check and nothing else, a harasser immunises their own
+      //    comment by blocking the person they harassed: the words stay up,
+      //    the victim can no longer see them, staff cannot read
+      //    `reels/{id}/comments/{id}` at all, and no report can ever be
+      //    filed. That is the exact failure the Voice Moment path spends a
+      //    whole receipt mechanism to avoid.
+      //
+      // The correct resolution is the receipt, not the bare check:
+      // getReelViewV2 issues a short-lived, target-bound, timing-safe token
+      // the way getVoiceMomentView does (issueVoiceReportReceipt in
+      // functions/moments/integrity.js), and this endpoint accepts EITHER a
+      // current audience or a valid receipt. That needs a change to the view
+      // path and a new TTL collection, so it is named here rather than
+      // half-built: until it exists, the block-race safety of the victim is
+      // preferred over the oracle hardening, and this comment is the record
+      // of that choice. Do not add the audience check on its own.
+      if (existing.exists) {
+        const result = { reportId, created: false };
+        transaction.create(
+          ledgerRef,
+          ledgerData({
+            kind: "reel.comment.report",
+            uid: auth.uid,
+            requestId,
+            inputHash: identity.inputHash,
+            result,
+            now: attemptTime.now,
+          }),
+        );
+        return result;
+      }
+      transaction.create(reportRef, {
+        schemaVersion: 2,
+        reporterId: auth.uid,
+        targetType: "reelComment",
+        targetId: commentId,
+        reportedUserId: comment.authorId,
+        contextPath: `reels/${reelId}/comments/${commentId}`,
+        reelId,
+        commentId,
+        reelAuthorId: reel.authorId,
+        // THE COMMENT TEXT IS COPIED INTO THE REPORT ON PURPOSE.
+        //
+        // reels/{id}/comments/{id} is `allow read, write: if false` for every
+        // client including staff, so unlike a Voice Moment comment there is
+        // no second path a moderator could read the reported words through.
+        // Without this field a moderator would be deciding a harassment
+        // report having never seen the harassment. It is also the only
+        // evidence that survives the comment being removed, which is what an
+        // appeal has to be judged against. It is bounded by the same
+        // MAX_REEL_COMMENT_LENGTH the write path enforces, it is readable
+        // only by active staff, and it is never shown to the reported
+        // account. Retention follows the report, not the comment — see the
+        // open decision recorded with this change.
+        targetTextSnapshot: comment.text,
+        note,
+        reason,
+        status: "open",
+        createdAt: attemptTime.now,
+      });
+      const result = { reportId, created: true };
+      transaction.create(
+        ledgerRef,
+        ledgerData({
+          kind: "reel.comment.report",
+          uid: auth.uid,
+          requestId,
+          inputHash: identity.inputHash,
+          result,
+          now: attemptTime.now,
+        }),
+      );
+      return result;
+    });
+  }
+
+  function reelCommentIdFor(uid, reelId, requestId) {
+    return digest("reel-comment", uid, reelId, requestId).slice(0, 40);
+  }
+
+  function reelLikeReference(reelId, uid) {
+    return reelReference(reelId).collection("likes").doc(uid);
+  }
+
+  function reelCommentReference(reelId, commentId) {
+    return reelReference(reelId).collection("comments").doc(commentId);
+  }
+
+  // The per-user budget is charged in its own transaction BEFORE the
+  // operation's graph reads, so a request that is later refused by
+  // availability, a block or a malformed document has still cost the caller
+  // something. Only an exact operation-ledger replay returns free: a lost
+  // acknowledgement must not be more expensive than the original call.
+  async function beginEngagementAttempt({ identity, kind, uid, scope }) {
+    return db.runTransaction(async (transaction) => {
+      const attemptTime = timing();
+      const ledgerRef = ledgerReference(identity);
+      const rateRef = limitReference(scope, uid);
+      const [ledger, rate] = await transactionGetAll(
+        transaction,
+        ledgerRef,
+        rateRef,
+      );
+      const replay = assertLedgerReplay(ledger, {
+        kind,
+        uid,
+        inputHash: identity.inputHash,
+      });
+      if (replay) return { replay };
+      consume(transaction, rate, rateRef, scope, uid, attemptTime);
+      return { replay: null };
+    });
+  }
+
+  // Engagement is authorized by exactly the rule the Reels FEED already
+  // applies to viewing (visibleFeedItem): the author is active and not
+  // communication-muted, and neither side has blocked the other. It is
+  // deliberately not the Voice Moment rule, which additionally consults
+  // profileVisibility — Reels have no per-author audience concept anywhere
+  // in the product today, and inventing one here would make engagement
+  // narrower than the feed that offers it. If a Reel is visible to you, you
+  // may like and comment on it; if it is not, you may do neither.
+  function assertReelViewerState(viewerProfile, viewerRestriction, nowMs) {
+    activeProfile(viewerProfile, "Your");
+    assertNotRestricted(viewerRestriction, "Your", nowMs);
+  }
+
+  function assertReelAuthorAudience({
+    viewerId,
+    authorId,
+    authorProfile,
+    authorRestriction,
+    viewerBlock,
+    authorBlock,
+    nowMs,
+  }) {
+    activeProfile(authorProfile, "The author");
+    assertNotRestricted(authorRestriction, "The author", nowMs);
+    if (viewerId === authorId) return;
+    assertNotBlocked(viewerBlock, authorBlock);
+  }
+
+  function reelAudienceReferences(viewerId, authorId) {
+    if (viewerId === authorId) {
+      // Your own account state was already proven, and a block against
+      // yourself is not expressible. Two reads saved, no check skipped.
+      return [];
+    }
+    return [
+      db.doc(`users/${authorId}`),
+      db.doc(`restrictions/${authorId}`),
+      db.doc(`users/${viewerId}/blocked/${authorId}`),
+      db.doc(`users/${authorId}/blocked/${viewerId}`),
+    ];
+  }
+
+  async function assertReelAudienceInTransaction(transaction, {
+    viewerId,
+    authorId,
+    viewerProfile,
+    viewerRestriction,
+    nowMs,
+  }) {
+    assertReelViewerState(viewerProfile, viewerRestriction, nowMs);
+    const references = reelAudienceReferences(viewerId, authorId);
+    if (references.length === 0) return;
+    const [authorProfile, authorRestriction, viewerBlock, authorBlock] =
+      await transactionGetAll(transaction, ...references);
+    assertReelAuthorAudience({
+      viewerId,
+      authorId,
+      authorProfile,
+      authorRestriction,
+      viewerBlock,
+      authorBlock,
+      nowMs,
+    });
+  }
+
+  // A live Reel: published, visible, and inside its availability window at
+  // the server's request time. The ten-minute expiry sweep is the durable
+  // transition, not a grace period, so engagement stops exactly at the
+  // deadline even when the sweeper has not flipped `status` yet.
+  function engageableReel(reelSnapshot, availabilitySnapshot, nowMs) {
+    const reel = validatePublishedReel(reelSnapshot);
+    const availability = publishedAvailability(
+      availabilitySnapshot,
+      reel,
+      nowMs,
+    );
+    return { reel, availability };
+  }
+
+  async function setReelLike(request) {
+    const auth = requireActor(request);
+    const data = requireExactInput(
+      request.data,
+      ["liked", "reelId", "requestId"],
+      ["liked", "reelId", "requestId"],
+    );
+    const reelId = requireId(data.reelId, "reelId");
+    const requestId = requireRequestId(data.requestId);
+    const liked = requireBoolean(data.liked, "liked");
+    const identity = operationIdentity(
+      "reel.like",
+      auth.uid,
+      requestId,
+      { liked, reelId },
+    );
+    const attempt = await beginEngagementAttempt({
+      identity,
+      kind: "reel.like",
+      uid: auth.uid,
+      scope: "like",
+    });
+    if (attempt.replay) return attempt.replay;
+
+    return db.runTransaction(async (transaction) => {
+      const attemptTime = timing();
+      const ledgerRef = ledgerReference(identity);
+      const reelRef = reelReference(reelId);
+      const likeRef = reelLikeReference(reelId, auth.uid);
+      const [
+        ledger,
+        reelSnapshot,
+        availabilitySnapshot,
+        like,
+        viewerProfile,
+        viewerRestriction,
+      ] = await transactionGetAll(
+        transaction,
+        ledgerRef,
+        reelRef,
+        availabilityReference(reelId),
+        likeRef,
+        db.doc(`users/${auth.uid}`),
+        db.doc(`restrictions/${auth.uid}`),
+      );
+      const replay = assertLedgerReplay(ledger, {
+        kind: "reel.like",
+        uid: auth.uid,
+        inputHash: identity.inputHash,
+      });
+      if (replay) return replay;
+      const { reel } = engageableReel(
+        reelSnapshot,
+        availabilitySnapshot,
+        attemptTime.nowMs,
+      );
+      await assertReelAudienceInTransaction(transaction, {
+        viewerId: auth.uid,
+        authorId: reel.authorId,
+        viewerProfile,
+        viewerRestriction,
+        nowMs: attemptTime.nowMs,
+      });
+      const currentlyLiked = validateReelLike(like, reelId, auth.uid);
+      const changed = currentlyLiked !== liked;
+      let likeCount = reel.likeCount;
+      if (changed && liked) {
+        transaction.create(likeRef, {
+          schemaVersion: REEL_LIKE_SCHEMA_VERSION,
+          userId: auth.uid,
+          reelId,
+          createdAt: attemptTime.now,
+        });
+        likeCount = incrementCanonicalCount(likeCount, "Reel likeCount");
+      } else if (changed) {
+        // The edge and the counter move in one transaction, so this can only
+        // be reached by out-of-band corruption. Refuse rather than write a
+        // negative counter that every later reader would have to defend
+        // against.
+        if (likeCount === 0) {
+          fail("data-loss", "Reel likeCount would become negative.");
+        }
+        transaction.delete(likeRef);
+        likeCount -= 1;
+      }
+      if (changed) {
+        // `update` (not `set`) is what makes the counter additive: it
+        // materializes the field on a Reel published before this contract
+        // without touching any other stored field.
+        transaction.update(reelRef, { likeCount, updatedAt: attemptTime.now });
+      }
+      const result = { reelId, liked, changed, likeCount };
+      transaction.create(
+        ledgerRef,
+        ledgerData({
+          kind: "reel.like",
+          uid: auth.uid,
+          requestId,
+          inputHash: identity.inputHash,
+          result,
+          now: attemptTime.now,
+        }),
+      );
+      return result;
+    });
+  }
+
+  async function createReelComment(request) {
+    const auth = requireActor(request);
+    const data = requireExactInput(
+      request.data,
+      ["reelId", "requestId", "text"],
+      ["reelId", "requestId", "text"],
+    );
+    const reelId = requireId(data.reelId, "reelId");
+    const requestId = requireRequestId(data.requestId);
+    const text = normalizeText(data.text, MAX_REEL_COMMENT_LENGTH, "text");
+    const commentId = reelCommentIdFor(auth.uid, reelId, requestId);
+    const identity = operationIdentity(
+      "reel.comment",
+      auth.uid,
+      requestId,
+      { reelId, text },
+    );
+    const attempt = await beginEngagementAttempt({
+      identity,
+      kind: "reel.comment",
+      uid: auth.uid,
+      scope: "comment",
+    });
+    if (attempt.replay) return attempt.replay;
+
+    return db.runTransaction(async (transaction) => {
+      const attemptTime = timing();
+      const ledgerRef = ledgerReference(identity);
+      const reelRef = reelReference(reelId);
+      const commentRef = reelCommentReference(reelId, commentId);
+      const [
+        ledger,
+        reelSnapshot,
+        availabilitySnapshot,
+        existingComment,
+        viewerProfile,
+        publicProfile,
+        viewerRestriction,
+      ] = await transactionGetAll(
+        transaction,
+        ledgerRef,
+        reelRef,
+        availabilityReference(reelId),
+        commentRef,
+        db.doc(`users/${auth.uid}`),
+        db.doc(`publicProfiles/${auth.uid}`),
+        db.doc(`restrictions/${auth.uid}`),
+      );
+      const replay = assertLedgerReplay(ledger, {
+        kind: "reel.comment",
+        uid: auth.uid,
+        inputHash: identity.inputHash,
+      });
+      if (replay) return replay;
+      const { reel } = engageableReel(
+        reelSnapshot,
+        availabilitySnapshot,
+        attemptTime.nowMs,
+      );
+      await assertReelAudienceInTransaction(transaction, {
+        viewerId: auth.uid,
+        authorId: reel.authorId,
+        viewerProfile,
+        viewerRestriction,
+        nowMs: attemptTime.nowMs,
+      });
+      if (existingComment.exists) {
+        fail("data-loss", "A Reel comment exists without its idempotency ledger.");
+      }
+      // The stored name is server-captured from the canonical public profile,
+      // exactly as the Reel root captures its author's name. A client never
+      // supplies display identity.
+      const canonical = canonicalPublicProfile(publicProfile, auth.uid);
+      transaction.create(commentRef, {
+        schemaVersion: REEL_COMMENT_SCHEMA_VERSION,
+        type: "text",
+        reelId,
+        authorId: auth.uid,
+        authorName: canonical.displayName,
+        text,
+        durationSeconds: null,
+        createdAt: attemptTime.now,
+      });
+      const commentCount = incrementCanonicalCount(
+        reel.commentCount,
+        "Reel commentCount",
+      );
+      transaction.update(reelRef, {
+        commentCount,
+        updatedAt: attemptTime.now,
+      });
+      const result = { reelId, commentId, created: true, commentCount };
+      transaction.create(
+        ledgerRef,
+        ledgerData({
+          kind: "reel.comment",
+          uid: auth.uid,
+          requestId,
+          inputHash: identity.inputHash,
+          result,
+          now: attemptTime.now,
+        }),
+      );
+      return result;
+    });
+  }
+
+  async function deleteReelComment(request) {
+    // Removing your own words is a cleanup/safety action, not publication.
+    // It stays available to an authenticated active account whose email is
+    // not verified yet or whose communication is muted, matching deleteReel
+    // and the Voice Moment comment-delete precedent.
+    const auth = requireActor(request, { verified: false });
+    const data = requireExactInput(
+      request.data,
+      ["commentId", "reelId", "requestId"],
+      ["commentId", "reelId", "requestId"],
+    );
+    const reelId = requireId(data.reelId, "reelId");
+    const commentId = requireId(data.commentId, "commentId");
+    const requestId = requireRequestId(data.requestId);
+    const identity = operationIdentity(
+      "reel.comment.delete",
+      auth.uid,
+      requestId,
+      { commentId, reelId },
+    );
+    const attempt = await beginEngagementAttempt({
+      identity,
+      kind: "reel.comment.delete",
+      uid: auth.uid,
+      scope: "commentDelete",
+    });
+    if (attempt.replay) return attempt.replay;
+
+    return db.runTransaction(async (transaction) => {
+      const attemptTime = timing();
+      const ledgerRef = ledgerReference(identity);
+      const reelRef = reelReference(reelId);
+      const commentRef = reelCommentReference(reelId, commentId);
+      const [ledger, reelSnapshot, comment, viewerProfile] =
+        await transactionGetAll(
+          transaction,
+          ledgerRef,
+          reelRef,
+          commentRef,
+          db.doc(`users/${auth.uid}`),
+        );
+      const replay = assertLedgerReplay(ledger, {
+        kind: "reel.comment.delete",
+        uid: auth.uid,
+        inputHash: identity.inputHash,
+      });
+      if (replay) return replay;
+      activeProfile(viewerProfile, "Your");
+      // A deleted or purged Reel keeps only a moderation tombstone and no
+      // counter to decrement; its engagement is already unreachable and the
+      // cleanup worker removes it. Report that as absence, not corruption.
+      if (
+        isDeletedReelSnapshot(reelSnapshot) ||
+        isPurgedExpiredReelSnapshot(reelSnapshot)
+      ) {
+        fail("not-found", "The Reel does not exist.");
+      }
+      // allowHidden / allowExpiredStatus: expiry retires a Reel from the feed
+      // and moderation hides it, but neither freezes another person's words
+      // in place. Your own comment stays removable.
+      const reel = validatePublishedReel(reelSnapshot, {
+        allowHidden: true,
+        allowExpiredStatus: true,
+      });
+      const commentData = validateReelComment(comment, reelId);
+      if (commentData.authorId !== auth.uid) {
+        fail("permission-denied", "You can only delete your own comment.");
+      }
+      const currentCount = reel.commentCount;
+      if (currentCount === 0) {
+        fail("data-loss", "Reel commentCount would become negative.");
+      }
+      transaction.delete(commentRef);
+      transaction.update(reelRef, {
+        commentCount: currentCount - 1,
+        updatedAt: attemptTime.now,
+      });
+      const result = {
+        reelId,
+        commentId,
+        deleted: true,
+        commentCount: currentCount - 1,
+      };
+      transaction.create(
+        ledgerRef,
+        ledgerData({
+          kind: "reel.comment.delete",
+          uid: auth.uid,
+          requestId,
+          inputHash: identity.inputHash,
+          result,
+          now: attemptTime.now,
+        }),
+      );
+      return result;
+    });
+  }
+
+  // THE REEL AUTHOR'S REMOVAL AUTHORITY, and a SEPARATE callable rather than
+  // a widening of deleteReelComment. The choice was made deliberately.
+  //
+  // deleteReelComment's whole invariant is one provable sentence:
+  // `commentData.authorId !== auth.uid` -> permission-denied. Folding a
+  // second authority into it turns that into "the comment's author OR the
+  // Reel's author", and every future bug in resolving the Reel's author
+  // silently becomes the power to delete ANY comment on ANY Reel. Keeping
+  // the narrow path narrow is the point.
+  //
+  // Three more things follow from the split, and none of them are cosmetic:
+  //
+  //  - AN AUTHOR REMOVING SOMEBODY ELSE'S WORDS IS NOT THE SAME EVENT AS
+  //    SOMEBODY DELETING THEIR OWN. Trust and Safety has to be able to tell
+  //    them apart after the fact — an author who clears every critical
+  //    comment, or who deletes the exact comment that was about to be
+  //    reported, is a pattern, and a pattern only exists if the two actions
+  //    leave distinguishable traces. A separate ledger kind
+  //    (`reel.comment.remove`) is that trace.
+  //  - THE BUDGETS ARE DIFFERENT BY DESIGN. `commentRemove` is deliberately
+  //    more generous than `commentDelete` (a brigaded author clearing a raid
+  //    must not run out), and a shared entry point cannot charge two budgets
+  //    without making replay ambiguous about which one was spent.
+  //  - The refusal sentences differ, and a person deleting their own comment
+  //    should never read a sentence about owning a Reel.
+  //
+  // Scope is exactly the Reel the caller owns. This grants nothing the caller
+  // does not already hold: the same account can delete the whole Reel, and
+  // its comments with it, in one `deleteReel` call. What it does NOT grant is
+  // any reach into another author's thread.
+  async function removeReelComment(request) {
+    // Clearing abuse off your own Reel is a safety action, not publication:
+    // available to an authenticated active account whose email is not
+    // verified yet, exactly like deleteReel and deleteReelComment. A
+    // communication mute is also not a reason to force somebody to keep
+    // harassment under their own Reel — an account in that state can already
+    // delete the entire Reel.
+    const auth = requireActor(request, { verified: false });
+    const data = requireExactInput(
+      request.data,
+      ["commentId", "reelId", "requestId"],
+      ["commentId", "reelId", "requestId"],
+    );
+    const reelId = requireId(data.reelId, "reelId");
+    const commentId = requireId(data.commentId, "commentId");
+    const requestId = requireRequestId(data.requestId);
+    const identity = operationIdentity(
+      "reel.comment.remove",
+      auth.uid,
+      requestId,
+      { commentId, reelId },
+    );
+    const attempt = await beginEngagementAttempt({
+      identity,
+      kind: "reel.comment.remove",
+      uid: auth.uid,
+      scope: "commentRemove",
+    });
+    if (attempt.replay) return attempt.replay;
+
+    return db.runTransaction(async (transaction) => {
+      const attemptTime = timing();
+      const ledgerRef = ledgerReference(identity);
+      const reelRef = reelReference(reelId);
+      const commentRef = reelCommentReference(reelId, commentId);
+      const [ledger, reelSnapshot, comment, viewerProfile] =
+        await transactionGetAll(
+          transaction,
+          ledgerRef,
+          reelRef,
+          commentRef,
+          db.doc(`users/${auth.uid}`),
+        );
+      const replay = assertLedgerReplay(ledger, {
+        kind: "reel.comment.remove",
+        uid: auth.uid,
+        inputHash: identity.inputHash,
+      });
+      if (replay) return replay;
+      activeProfile(viewerProfile, "Your");
+      if (
+        isDeletedReelSnapshot(reelSnapshot) ||
+        isPurgedExpiredReelSnapshot(reelSnapshot)
+      ) {
+        fail("not-found", "The Reel does not exist.");
+      }
+      // allowHidden / allowExpiredStatus for the same reason deleteReelComment
+      // reads it that way: expiry retires a Reel from the feed and moderation
+      // hides it, but the thread underneath is still the author's to clear.
+      const reel = validatePublishedReel(reelSnapshot, {
+        allowHidden: true,
+        allowExpiredStatus: true,
+      });
+      // AUTHORITY BEFORE COMMENT EXISTENCE. Whether a given commentId
+      // resolves is only ever reported to somebody who already owns the
+      // thread, so this endpoint is not a probe for comment ids.
+      //
+      // It DOES still distinguish a real Reel from an absent one for a
+      // non-author — validatePublishedReel runs above and answers
+      // `not-found` — which is stated rather than glossed. That is the same
+      // disclosure deleteReel already makes, Reels are public content, and
+      // unlike the report path every refusal here is metered, so it is not a
+      // free enumeration surface. Do not reorder these two without also
+      // rewriting this paragraph.
+      if (reel.authorId !== auth.uid) {
+        fail(
+          "permission-denied",
+          "Only the Reel's author can remove comments from it.",
+        );
+      }
+      // The author's own comment on their own Reel is removable here too.
+      // Routing it through deleteReelComment instead would mean an author
+      // clearing a thread has to know which comments are theirs, and would
+      // record half of one clean-up under a different kind.
+      const commentData = validateReelComment(comment, reelId);
+      const currentCount = reel.commentCount;
+      if (currentCount === 0) {
+        fail("data-loss", "Reel commentCount would become negative.");
+      }
+      transaction.delete(commentRef);
+      transaction.update(reelRef, {
+        commentCount: currentCount - 1,
+        updatedAt: attemptTime.now,
+      });
+      const result = {
+        reelId,
+        commentId,
+        removed: true,
+        commentCount: currentCount - 1,
+        // WHOSE WORDS WERE REMOVED, recorded on purpose.
+        //
+        // The ledger entry created below is the only durable trace that this
+        // happened at all — `adminAuditLogs` is for staff actions and this is
+        // not one. Without the subject's id the entry says "somebody removed
+        // something", which is not an accountability record. The caller
+        // already knows this uid (they were rendering the thread), so nothing
+        // is disclosed; `integrityOperationLedgers` is `read, write: if false`
+        // for every client, so nothing leaks either.
+        removedAuthorId: commentData.authorId,
+      };
+      transaction.create(
+        ledgerRef,
+        ledgerData({
+          kind: "reel.comment.remove",
+          uid: auth.uid,
+          requestId,
+          inputHash: identity.inputHash,
+          result,
+          now: attemptTime.now,
+        }),
+      );
+      return result;
+    });
+  }
+
+  async function getReelViewV2(request) {
+    const auth = requireActor(request, { verified: false });
+    const data = requireExactInput(
+      request.data,
+      ["commentCursor", "commentLimit", "reelId"],
+      ["reelId"],
+    );
+    const reelId = requireId(data.reelId, "reelId");
+    const commentLimit = data.commentLimit === undefined ||
+        data.commentLimit === null
+      ? MAX_REEL_THREAD_COMMENTS
+      : requireSafeInteger(data.commentLimit, "commentLimit", {
+          min: 1,
+          max: MAX_REEL_THREAD_COMMENTS,
+        });
+    const commentCursor = data.commentCursor === undefined ||
+        data.commentCursor === null
+      ? null
+      : decodeReelCommentCursor(data.commentCursor, { reelId });
+    // Also proves the viewer's own account is active and not muted.
+    const attemptTime = await consumeReadLimit(auth.uid, "view");
+    try {
+      return await reelView(auth, reelId, {
+        attemptTime,
+        commentLimit,
+        commentCursor,
+      });
+    } catch (error) {
+      // One envelope for every refusal, mirroring getVoiceMomentViewV2.
+      // Distinct codes here would turn this callable into a per-Reel oracle:
+      // a caller banks ids from listReelsV2 while access is normal, then
+      // polls to learn "did that author block me", "were they suspended or
+      // muted", "did staff hide this". The rate-limit and input-validation
+      // codes still propagate — they describe the caller's own request, not
+      // somebody else's state.
+      if (
+        ["not-found", "failed-precondition", "permission-denied", "data-loss"]
+          .includes(error?.code)
+      ) {
+        fail("permission-denied", "This Reel is unavailable.");
+      }
+      throw error;
+    }
+  }
+
+  async function reelView(auth, reelId, {
+    attemptTime,
+    commentLimit,
+    commentCursor,
+  }) {
+    const reelRef = reelReference(reelId);
+    const [reelSnapshot, availabilitySnapshot, callerLike] = await getAll(
+      reelRef,
+      availabilityReference(reelId),
+      reelLikeReference(reelId, auth.uid),
+    );
+    const { reel, availability } = engageableReel(
+      reelSnapshot,
+      availabilitySnapshot,
+      attemptTime.nowMs,
+    );
+    const audienceReferences = reelAudienceReferences(auth.uid, reel.authorId);
+    if (audienceReferences.length > 0) {
+      const [authorProfile, authorRestriction, viewerBlock, authorBlock] =
+        await getAll(...audienceReferences);
+      assertReelAuthorAudience({
+        viewerId: auth.uid,
+        authorId: reel.authorId,
+        authorProfile,
+        authorRestriction,
+        viewerBlock,
+        authorBlock,
+        nowMs: attemptTime.nowMs,
+      });
+    }
+
+    let commentQuery = reelRef
+      .collection("comments")
+      .orderBy("createdAt", "asc")
+      .orderBy(FieldPath.documentId(), "asc");
+    if (commentCursor !== null) {
+      commentQuery = commentQuery.startAfter(
+        Timestamp.fromMillis(commentCursor.createdAtMillis),
+        commentCursor.id,
+      );
+    }
+    // MAX + 1 so a full page proves there is another one instead of being
+    // silently truncated into "that was everything".
+    const commentSnapshot = await commentQuery.limit(commentLimit + 1).get();
+    const pageDocuments = commentSnapshot.docs.slice(0, commentLimit);
+    const comments = [];
+    for (const document of pageDocuments) {
+      try {
+        comments.push({
+          id: document.id,
+          data: validateReelComment(document, reelId),
+        });
+      } catch (_) {
+        // A malformed child is never projected, and never fails the page.
+      }
+    }
+
+    // Authorization for comment authors is the same audience rule the Reel
+    // itself uses, resolved once per distinct commenter and bounded by
+    // commentLimit. A comment from an account you blocked (or that blocked
+    // you), a suspended account or a muted account is withheld — the
+    // aggregate commentCount still includes it, because a per-viewer count
+    // would leak exactly who is hidden.
+    const commenterIds = [
+      ...new Set(
+        comments
+          .map(({ data: value }) => value.authorId)
+          .filter((authorId) => authorId !== auth.uid),
+      ),
+    ];
+    const commenterReferences = commenterIds.flatMap((commenterId) => [
+      db.doc(`users/${commenterId}`),
+      db.doc(`restrictions/${commenterId}`),
+      db.doc(`users/${auth.uid}/blocked/${commenterId}`),
+      db.doc(`users/${commenterId}/blocked/${auth.uid}`),
+    ]);
+    const commenterSnapshots = commenterReferences.length === 0
+      ? []
+      : await getAll(...commenterReferences);
+    const visibleCommenters = new Set([auth.uid]);
+    commenterIds.forEach((commenterId, index) => {
+      try {
+        assertReelAuthorAudience({
+          viewerId: auth.uid,
+          authorId: commenterId,
+          authorProfile: commenterSnapshots[index * 4],
+          authorRestriction: commenterSnapshots[index * 4 + 1],
+          viewerBlock: commenterSnapshots[index * 4 + 2],
+          authorBlock: commenterSnapshots[index * 4 + 3],
+          nowMs: attemptTime.nowMs,
+        });
+        visibleCommenters.add(commenterId);
+      } catch (_) {
+        // Withheld from this viewer only.
+      }
+    });
+
+    // The bounded read above can cross the availability deadline. Re-check
+    // against the response clock so a Reel is never served at `expiresAt`
+    // merely because the request began a few milliseconds earlier.
+    const responseTime = timing();
+    if (
+      availability.expiresAtMs !== null &&
+      availability.expiresAtMs <= responseTime.nowMs
+    ) {
+      fail("failed-precondition", "The Reel has expired.");
+    }
+    let callerLiked = false;
+    try {
+      callerLiked = validateReelLike(callerLike, reelId, auth.uid);
+    } catch (_) {
+      callerLiked = false;
+    }
+    const lastDocument = pageDocuments.at(-1) ?? null;
+    const commentsTruncated = commentSnapshot.size > commentLimit;
+    // A corrupt document sitting exactly on the page boundary must not fail
+    // the whole view — the caller chooses commentLimit, so it also chooses
+    // which document lands there. `commentsTruncated` stays true, so the
+    // client still knows the thread continues; only the cursor is withheld.
+    let nextCommentCursor = null;
+    if (commentsTruncated && lastDocument !== null) {
+      try {
+        nextCommentCursor = encodeReelCommentCursor({
+          reelId,
+          id: lastDocument.id,
+          createdAtMillis: timestampMillis(lastDocument.data()?.createdAt),
+        });
+      } catch (_) {
+        nextCommentCursor = null;
+      }
+    }
+    return {
+      schemaVersion: REEL_VIEW_SCHEMA_VERSION,
+      reel: reelItemProjection(reel, availability, {
+        version: 2,
+        callerLiked,
+      }),
+      comments: comments
+        .filter(({ data: value }) => visibleCommenters.has(value.authorId))
+        .map(({ id, data: value }) => reelCommentProjection(id, value)),
+      commentsTruncated,
+      // The cursor advances past the last document actually scanned, not the
+      // last one projected, so a withheld or malformed comment cannot pin a
+      // thread's pagination in place.
+      nextCommentCursor,
+    };
   }
 
   function cleanupBackoffMs(attemptCount) {
@@ -2255,11 +3388,22 @@ function createReelService({
       (reelState === null || reelState.status === "deleted");
     const alreadyPurged = isPurgedExpiredReelSnapshot(reelSnapshot);
     if (!deletionOwnsCleanup && !alreadyPurged) {
+      // This proves far more than the outbox row does: the live root is
+      // `expired`, the availability sidecar agrees and is itself expired, and
+      // its storage objects match. Only that proof unlocks the expired-root
+      // allowance below — a plain cleanup row never gets it, which is what
+      // keeps a still-published Reel's engagement out of reach.
       validateExpiryCleanupState(value, reelSnapshot, availabilitySnapshot);
+      // Engagement before media, for the same reason as the deletion path:
+      // it is idempotent and Firestore-local, while object deletion can
+      // dead-letter and strand other people's comment text.
+      await purgeReelEngagement(value.reelId, { allowExpiredRoot: true });
       await Promise.all(value.storageObjects.map(({ path, generation }) =>
         storage.deleteObject(path, { generation })));
     } else if (alreadyPurged) {
       validatePurgedExpiredReel(reelSnapshot);
+      // A retry after the tombstone landed still finishes the purge.
+      await purgeReelEngagement(value.reelId);
     }
 
     return db.runTransaction(async (transaction) => {
@@ -2340,6 +3484,13 @@ function createReelService({
           claim.leaseToken,
         );
       }
+      // Engagement first, media second. The purge is cheap, idempotent and
+      // depends on nothing outside Firestore, while object deletion can fail
+      // for eight attempts and then dead-letter terminally. Ordering it after
+      // Storage made another person's comment text durably stored, with the
+      // comment's own author already locked out of deleting it (the root is a
+      // tombstone by then), on a failure that has nothing to do with them.
+      const engagement = await purgeReelEngagement(claim.value.reelId);
       await Promise.all(claim.value.storageObjects.map(({ path, generation }) =>
         storage.deleteObject(
           path,
@@ -2349,7 +3500,7 @@ function createReelService({
         reference,
         claim.leaseToken,
       );
-      return { outboxId, completed, stale: !completed };
+      return { outboxId, completed, stale: !completed, engagement };
     } catch (error) {
       await recordCleanupFailure(reference, claim.leaseToken, error);
       throw error;
@@ -2690,20 +3841,26 @@ function createReelService({
   }
 
   return Object.freeze({
+    createReelComment,
+    createReelCommentReport,
     createReelReport,
     deleteReel,
+    deleteReelComment,
     expireAbandonedReelDrafts,
     expirePublishedReels,
     finalizeReelDraft,
     finalizeReelDraftV2,
     getReelMediaAccess,
     getReelMediaAccessV2,
+    getReelViewV2,
     listReels,
     listReelsV2,
     processCleanupOutbox,
     processReadyCleanupOutbox,
+    removeReelComment,
     reserveReelDraft,
     reserveReelDraftV2,
+    setReelLike,
   });
 }
 

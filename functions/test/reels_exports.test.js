@@ -9,6 +9,7 @@ const {
   REEL_EXPIRY_BATCH_SIZE,
   createReelFunctions,
 } = require("../reels");
+const { createReelService } = require("../reels/service");
 
 function fakeRuntime(calls = []) {
   const service = {};
@@ -89,6 +90,59 @@ test("Reel export map registers bounded callables and private maintenance", () =
   const created = registrations.find(({ kind }) => kind === "created");
   assert.equal(created.options.document, "reelCleanupOutbox/{outboxId}");
   assert.equal(created.options.retry, true);
+});
+
+test("every registered Reel callable is implemented by the real service", () => {
+  // The export map and the fake runtime both derive from
+  // REEL_CALLABLE_METHODS, so that pairing alone would keep passing if a
+  // callable were registered against a service method that does not exist —
+  // which in production is a 500 on every invocation, not a test failure.
+  const service = createReelService({
+    db: { doc: () => ({}), collection: () => ({}) },
+    FieldPath: { documentId: () => "__name__" },
+    Timestamp: { fromMillis: (value) => new Date(value) },
+    storage: {
+      getMetadata: async () => ({}),
+      readHeader: async () => Buffer.alloc(0),
+      revokeDownloadTokens: async () => {},
+      getSignedReadUrl: async () => "",
+      deleteObject: async () => {},
+    },
+  });
+  for (const method of Object.values(REEL_CALLABLE_METHODS)) {
+    assert.equal(
+      typeof service[method],
+      "function",
+      `${method} is registered but not implemented`,
+    );
+  }
+  for (const method of [
+    "setReelLike",
+    "createReelComment",
+    "deleteReelComment",
+    "getReelViewV2",
+  ]) {
+    assert.ok(
+      Object.values(REEL_CALLABLE_METHODS).includes(method),
+      `${method} must be exported as a callable`,
+    );
+  }
+  // Comment moderation. These two are the only reporting and removal paths
+  // that CAN exist for a Reel comment: `reels/{id}/comments/{id}` is
+  // `allow read, write: if false`, so a service method that exists but is
+  // never registered is not a dormant feature — it is a Reel whose comments
+  // nobody but their own author can touch. That is the server half of the
+  // launch blocker; the client half (a report control and an author's remove
+  // control in the Reels UI) is not built yet, so registration alone does not
+  // make the gap closed for users. Registration is still the load-bearing
+  // step: drop either name from the export map and the server half regresses
+  // silently, with no other test noticing.
+  for (const method of ["createReelCommentReport", "removeReelComment"]) {
+    assert.ok(
+      Object.values(REEL_CALLABLE_METHODS).includes(method),
+      `${method} must be exported as a callable`,
+    );
+  }
 });
 
 test("cleanup schedule delegates bounded retry and lease selection", async () => {

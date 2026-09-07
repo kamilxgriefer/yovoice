@@ -91,8 +91,13 @@ class MemoryQuery {
     return this._copy({ limit: value });
   }
 
-  startAfter(value) {
-    return this._copy({ startAfter: value });
+  // Firestore takes one boundary value per orderBy clause. A paged
+  // subcollection read (`orderBy(createdAt).orderBy(documentId())`) passes
+  // two, so a single-scalar boundary silently skipped or repeated documents
+  // that share a timestamp. Rest args keep every existing single-value caller
+  // byte-identical.
+  startAfter(...values) {
+    return this._copy({ startAfter: values });
   }
 
   async get() {
@@ -139,12 +144,20 @@ class MemoryQuery {
         return left[0].localeCompare(right[0]);
       });
     if (this.config.startAfter !== null) {
-      const firstOrder = orderBys[0];
+      const normalize = (value) =>
+        value instanceof Date ? value.getTime() : value;
+      const boundary = this.config.startAfter;
       entries = entries.filter((entry) => {
-        const value = orderedValue(entry, firstOrder.field);
-        return firstOrder.direction === "desc"
-          ? value < this.config.startAfter
-          : value > this.config.startAfter;
+        for (let index = 0; index < boundary.length; index += 1) {
+          const order = orderBys[index];
+          if (order === undefined) return true;
+          const left = normalize(orderedValue(entry, order.field));
+          const right = normalize(boundary[index]);
+          if (left === right) continue;
+          return order.direction === "desc" ? left < right : left > right;
+        }
+        // Equal on every ordered field: this IS the boundary document.
+        return false;
       });
     }
     if (this.config.limit !== null) entries = entries.slice(0, this.config.limit);

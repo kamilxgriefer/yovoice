@@ -1288,6 +1288,7 @@ abstract final class _Filters {
     final english = switch (target) {
       ReportTargetType.globalMessage => 'Message',
       ReportTargetType.reel => 'Reel',
+      ReportTargetType.reelComment => 'Reel comment',
       ReportTargetType.voiceMoment => 'Voice Moment',
       ReportTargetType.voiceMomentComment => 'Voice Moment comment',
       ReportTargetType.user => 'Account',
@@ -1295,6 +1296,7 @@ abstract final class _Filters {
     final polish = switch (target) {
       ReportTargetType.globalMessage => 'Wiadomość',
       ReportTargetType.reel => 'Rolka',
+      ReportTargetType.reelComment => 'Komentarz rolki',
       ReportTargetType.voiceMoment => 'Voice Moment',
       ReportTargetType.voiceMomentComment => 'Komentarz Voice Momentu',
       ReportTargetType.user => 'Konto',
@@ -1831,6 +1833,10 @@ class _DetailState extends State<_Detail> {
                             'Voice Moment comment removed and report resolved.',
                             'Komentarz Voice Momentu usunięty, a zgłoszenie rozstrzygnięte.',
                           ),
+                          ReportTargetType.reelComment => copy.text(
+                            'Reel comment removed and report resolved.',
+                            'Komentarz rolki usunięty, a zgłoszenie rozstrzygnięte.',
+                          ),
                           _ => copy.text(
                             'Message removed and report resolved.',
                             'Wiadomość usunięta, a zgłoszenie rozstrzygnięte.',
@@ -1915,8 +1921,42 @@ class _DetailState extends State<_Detail> {
         ),
         const SizedBox(height: 12),
         if (report.targetType == ReportTargetType.voiceMoment ||
-            report.targetType == ReportTargetType.voiceMomentComment) ...[
+            report.targetType == ReportTargetType.voiceMomentComment ||
+            report.targetType == ReportTargetType.reelComment) ...[
           _TargetReference(report: report),
+          const SizedBox(height: 12),
+        ],
+        // The reported words themselves. This is NOT decoration: a Reel
+        // comment document is unreadable by every client including staff, so
+        // this snapshot is the only place a moderator can see what was
+        // actually said — and the only evidence that survives the removal for
+        // a later appeal.
+        if (report.targetType == ReportTargetType.reelComment) ...[
+          // TEXT-DIRECTION ISOLATED, DELIBERATELY. This is the one field in
+          // the panel that renders another account's free text verbatim, and
+          // the person who wrote it chose every character — including any
+          // Unicode bidi override, which without an explicit direction on the
+          // subtree would re-order the labels and ids AROUND it and make the
+          // rest of the evidence unreadable. The characters are not stripped:
+          // a moderator has to see what was actually posted, and altering
+          // evidence to make it render nicely is the wrong trade. Isolating
+          // it contains the damage to this one box.
+          Directionality(
+            textDirection: TextDirection.ltr,
+            child: _Field(
+              label: copy.text('Reported comment', 'Zgłoszony komentarz'),
+              value: (report.targetText ?? '').isEmpty
+                  ? copy.text(
+                      'The reported text was not retained in this report.',
+                      'To zgłoszenie nie zawiera zapisanej treści komentarza.',
+                    )
+                  : report.targetText!,
+              meta: copy.text(
+                'Copied when the report was filed; it outlives the removal.',
+                'Kopia zapisana w chwili zgłoszenia; zostaje po usunięciu.',
+              ),
+            ),
+          ),
           const SizedBox(height: 12),
         ],
         if (report.reportedUserId.isNotEmpty)
@@ -1990,9 +2030,11 @@ class _DetailState extends State<_Detail> {
     final isVoiceMoment = report.targetType == ReportTargetType.voiceMoment;
     final isVoiceComment =
         report.targetType == ReportTargetType.voiceMomentComment;
+    final isReelComment = report.targetType == ReportTargetType.reelComment;
     final canRemove =
         report.targetType == ReportTargetType.globalMessage ||
         isReel ||
+        isReelComment ||
         isVoiceMoment ||
         isVoiceComment;
 
@@ -2110,6 +2152,10 @@ class _DetailState extends State<_Detail> {
                     'Remove Voice Moment comment and resolve',
                     'Usuń komentarz Voice Momentu i rozstrzygnij',
                   ),
+                  ReportTargetType.reelComment => copy.text(
+                    'Remove Reel comment and resolve',
+                    'Usuń komentarz rolki i rozstrzygnij',
+                  ),
                   _ => copy.text(
                     'Remove message and resolve',
                     'Usuń wiadomość i rozstrzygnij',
@@ -2137,6 +2183,10 @@ class _DetailState extends State<_Detail> {
                       'Remove this Voice Moment comment?',
                       'Usunąć ten komentarz Voice Momentu?',
                     ),
+                    ReportTargetType.reelComment => copy.text(
+                      'Remove this Reel comment?',
+                      'Usunąć ten komentarz rolki?',
+                    ),
                     _ => copy.text(
                       'Remove this message?',
                       'Usunąć tę wiadomość?',
@@ -2155,9 +2205,25 @@ class _DetailState extends State<_Detail> {
                       'Remove comment',
                       'Usuń komentarz',
                     ),
+                    ReportTargetType.reelComment => copy.text(
+                      'Remove comment',
+                      'Usuń komentarz',
+                    ),
                     _ => copy.text('Remove message', 'Usuń wiadomość'),
                   },
-                  confirmBody: isReel
+                  confirmBody: isReelComment
+                      ? copy.text(
+                          'The comment is deleted from the Reel and its count '
+                              'is corrected. The text copied into this report '
+                              'is kept as evidence. This is recorded against '
+                              'your account in the moderation audit log.',
+                          'Komentarz zostanie usunięty z rolki, a licznik '
+                              'skorygowany. Treść zapisana w tym zgłoszeniu '
+                              'pozostaje jako dowód. Ta czynność zostanie '
+                              'przypisana do Twojego konta w dzienniku audytu '
+                              'moderacji.',
+                        )
+                      : isReel
                       ? copy.text(
                           'The Reel is hidden from feeds and playback while its '
                               'media is kept as evidence. This is recorded '
@@ -2306,6 +2372,10 @@ class _TargetReference extends StatelessWidget {
         'Reported Voice Moment comment',
         'Zgłoszony komentarz Voice Momentu',
       ),
+      ReportTargetType.reelComment => copy.text(
+        'Reported Reel comment',
+        'Zgłoszony komentarz rolki',
+      ),
       _ => copy.text('Reported target', 'Zgłoszony cel'),
     };
     final value = switch (type) {
@@ -2314,6 +2384,16 @@ class _TargetReference extends StatelessWidget {
       ReportTargetType.voiceMomentComment =>
         '${copy.text('Moment ID', 'ID Momentu')}: ${report.momentId ?? '—'}\n'
             '${copy.text('Comment ID', 'ID komentarza')}: ${report.commentId ?? report.targetId}',
+      // The Reel's owner is shown next to the ids on purpose. It is NOT the
+      // reported account — that is the comment's author, rendered below —
+      // and the difference decides how the report reads: a stranger under
+      // somebody's Reel, or the Reel's own author replying to themselves.
+      // It is also the other party who can remove this comment.
+      ReportTargetType.reelComment =>
+        '${copy.text('Reel ID', 'ID rolki')}: ${report.reelId ?? '—'}\n'
+            '${copy.text('Comment ID', 'ID komentarza')}: ${report.commentId ?? report.targetId}\n'
+            '${copy.text('Reel owner', 'Właściciel rolki')}: ${report.reelAuthorId ?? '—'}'
+            '${report.reelAuthorId != null && report.reelAuthorId == report.reportedUserId ? ' · ${copy.text('same as the reported account', 'to samo konto co zgłoszone')}' : ''}',
       _ => report.targetId.isEmpty ? '—' : report.targetId,
     };
     return _Field(label: label, value: value, meta: report.contextPath);

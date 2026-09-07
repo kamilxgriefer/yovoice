@@ -14,6 +14,16 @@ const {
   MAX_REEL_AVAILABILITY_HOURS,
   MIN_REEL_AVAILABILITY_HOURS,
 } = require("../reels/availability");
+// Pure validators, no service closure: functions/reels/engagement.js requires
+// only the shared guards and the Reel contract, so importing it here adds no
+// cycle and no Firestore handle. It is the SAME validator the write path uses,
+// which is the point — a moderator must never remove a document this file
+// believes is a comment while the engagement contract does not.
+const {
+  MAX_REEL_COMMENT_LENGTH,
+  storedEngagementCount,
+  validateReelComment,
+} = require("../reels/engagement");
 const {
   digest,
   nonNegativeCount,
@@ -97,6 +107,7 @@ const TRANSITIONS = {
 const MAX_MODERATOR_NOTE = 500;
 const SAFE_REPORT_ID = /^[A-Za-z0-9_-]{1,256}$/u;
 const SAFE_REEL_ID = /^[A-Za-z0-9_-]{1,128}$/u;
+const SAFE_REEL_COMMENT_ID = /^[A-Za-z0-9_-]{1,128}$/u;
 const SAFE_VOICE_CONTENT_ID = /^[A-Za-z0-9_-]{1,128}$/u;
 const SAFE_REQUEST_ID = /^[A-Za-z0-9_-]{8,64}$/u;
 const REPORT_STAFF_ROLES = new Set([
@@ -225,6 +236,54 @@ function canonicalModeratableReel(snapshot, report) {
     );
   }
   return { reel, isPurgedEvidence: false };
+}
+
+// A Reel comment report is SELF-CONTAINED, with no legacy shape to tolerate:
+// `createReelCommentReport` is the only writer, the client create rule in
+// firestore.rules cannot produce this targetType at all, and nothing existed
+// before it. So every field is required, and a report that does not carry the
+// full target identity is refused rather than partially trusted.
+//
+// The text snapshot is validated here for the same reason it is stored: a
+// `reels/{id}/comments/{id}` document is `allow read, write: if false` for
+// every client INCLUDING staff, so the snapshot is the moderator's only view
+// of the reported words and the only evidence that survives the removal. A
+// report missing it is not something a moderator can act on honestly.
+function canonicalReelCommentReportTarget(report) {
+  const reelId = report.reelId;
+  const commentId = report.commentId;
+  if (
+    report.schemaVersion !== 2 ||
+    !isValidOpaqueUid(report.reporterId) ||
+    timestampMillis(report.createdAt) === null ||
+    typeof report.reason !== "string" ||
+    report.reason.length === 0 ||
+    report.reason.length > 500 ||
+    typeof report.note !== "string" ||
+    report.note.length > 300 ||
+    typeof reelId !== "string" ||
+    !SAFE_REEL_ID.test(reelId) ||
+    typeof commentId !== "string" ||
+    !SAFE_REEL_COMMENT_ID.test(commentId) ||
+    report.targetId !== commentId ||
+    !isValidOpaqueUid(report.reportedUserId) ||
+    !isValidOpaqueUid(report.reelAuthorId) ||
+    report.contextPath !== `reels/${reelId}/comments/${commentId}` ||
+    typeof report.targetTextSnapshot !== "string" ||
+    report.targetTextSnapshot.length === 0 ||
+    report.targetTextSnapshot.length > MAX_REEL_COMMENT_LENGTH
+  ) {
+    throw new HttpsError(
+      "failed-precondition",
+      "The reported Reel comment reference is invalid.",
+    );
+  }
+  // `reelAuthorId` is deliberately shape-checked but NOT reconciled against
+  // the live Reel root. It exists so a moderator can see whose Reel a
+  // reported comment sat under; it carries no authority, and making it a
+  // precondition would let an unrelated root inconsistency strand a report
+  // that is otherwise fully actionable.
+  return { reelId, commentId, reportedUserId: report.reportedUserId };
 }
 
 function canonicalVoiceReportTarget(report) {
@@ -453,6 +512,21 @@ const moderateReport = onCall(
       }
 
       let contentRemoved = false;
+      // "The content is gone" and "I am the one who removed it" are DIFFERENT
+      // FACTS, and the audit entry has only ever recorded the first.
+      //
+      // That gap matters most on exactly this target type. A Reel's author
+      // can now remove any comment on their own Reel, so "the author deleted
+      // the reported comment before a moderator reached it" is a real and
+      // repeatable event — and it is the pattern Trust and Safety most needs
+      // to be able to count. With only `contentRemoved`, the trail reads
+      // identically whether the moderator acted or was beaten to it.
+      //
+      // Null means "not applicable / not computed", which is every branch but
+      // the Reel comment one today. Extending it to the Voice Moment branch,
+      // which converges the same way, is a follow-up rather than a silent
+      // change to a deployed audit shape.
+      let contentAlreadyRemoved = null;
       if (action === ACTION.REMOVE_AND_RESOLVE) {
         if (report.targetType === "globalMessage") {
           const messageReference = db
@@ -499,6 +573,84 @@ const moderateReport = onCall(
               updatedAt: FieldValue.serverTimestamp(),
             });
             contentRemoved = true;
+          }
+        } else if (report.targetType === "reelComment") {
+          const target = canonicalReelCommentReportTarget(report);
+          const reelReference = db.collection("reels").doc(target.reelId);
+          const commentReference = reelReference
+            .collection("comments")
+            .doc(target.commentId);
+          // Both reads before any write: the counter decision depends on the
+          // root, and the root is only written when the comment is really
+          // there to be removed.
+          const reelSnapshot = await transaction.get(reelReference);
+          const commentSnapshot = await transaction.get(commentReference);
+          const now = FieldValue.serverTimestamp();
+
+          if (!commentSnapshot.exists) {
+            // The report proves the comment existed when it was filed. Its
+            // absence now means the Reel's author removed it, the comment's
+            // own author deleted it, the deletion/expiry purge swept it, or
+            // another report won the race. Every one of those is a successful
+            // convergence on "the words are gone", not a reason to strand a
+            // safety report open forever. The audit entry says which of the
+            // two happened, so a moderator's record never claims a removal
+            // somebody else performed.
+            contentRemoved = true;
+            contentAlreadyRemoved = true;
+          } else {
+            const comment = validateReelComment(
+              commentSnapshot,
+              target.reelId,
+            );
+            if (comment.authorId !== target.reportedUserId) {
+              throw new HttpsError(
+                "failed-precondition",
+                "The reported Reel comment author is inconsistent.",
+              );
+            }
+            const reel = reelSnapshot.exists
+              ? (reelSnapshot.data() ?? {})
+              : null;
+            const rootIsTombstone =
+              reel !== null &&
+              (reel.status === "deleted" ||
+                (reel.status === "expired" &&
+                  Object.prototype.hasOwnProperty.call(reel, "purgedAt")));
+            if (reel === null || rootIsTombstone) {
+              // A deletion or purged-expiry tombstone carries an exact key
+              // set with NO commentCount, and the engagement purge worker is
+              // already draining this thread. Removing the document is still
+              // right — the reported words should not wait on a worker — but
+              // writing a counter onto a tombstone would corrupt it, so the
+              // root is left untouched.
+              transaction.delete(commentReference);
+              contentRemoved = true;
+              contentAlreadyRemoved = false;
+            } else {
+              // An absent counter is exactly zero (the additive engagement
+              // schema), and a Reel that holds a comment while claiming zero
+              // is corruption. Fail closed rather than write a negative
+              // count: this is the same refusal the Voice Moment comment
+              // path makes.
+              const commentCount = storedEngagementCount(
+                reel.commentCount,
+                "Reel commentCount",
+              );
+              if (commentCount === 0) {
+                throw new HttpsError(
+                  "failed-precondition",
+                  "The Reel comment count is inconsistent.",
+                );
+              }
+              transaction.delete(commentReference);
+              transaction.update(reelReference, {
+                commentCount: commentCount - 1,
+                updatedAt: now,
+              });
+              contentRemoved = true;
+              contentAlreadyRemoved = false;
+            }
           }
         } else if (
           report.targetType === "voiceMoment" ||
@@ -646,7 +798,7 @@ const moderateReport = onCall(
         } else {
           throw new HttpsError(
             "failed-precondition",
-            "Only supported messages, Reels, or Voice Moments can be removed this way.",
+            "Only supported messages, Reels, Reel comments, or Voice Moments can be removed this way.",
           );
         }
       }
@@ -697,6 +849,11 @@ const moderateReport = onCall(
           resolution: needsResolution ? resolution : null,
           note: moderatorNote || null,
           contentRemoved,
+          // True when this action resolved a report whose target somebody
+          // else had already removed, false when this moderator's own
+          // transaction removed it, null where the distinction was not
+          // computed. See the declaration for why the two are separated.
+          contentAlreadyRemoved,
           requestId,
         },
         createdAt: FieldValue.serverTimestamp(),

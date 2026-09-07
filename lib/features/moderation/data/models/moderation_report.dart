@@ -31,9 +31,12 @@ class ModerationReport {
     required this.targetType,
     required this.targetId,
     required this.momentId,
+    required this.reelId,
+    required this.reelAuthorId,
     required this.commentId,
     required this.reportedUserId,
     required this.contextPath,
+    required this.targetText,
     required this.reason,
     required this.note,
     required this.createdAt,
@@ -57,9 +60,34 @@ class ModerationReport {
   final ReportTargetType? targetType;
   final String targetId;
   final String? momentId;
+
+  /// The Reel a reported comment sits under. Present only on `reelComment`
+  /// reports, which the server writes with the full target identity.
+  final String? reelId;
+
+  /// Who owns the Reel a reported comment sits under.
+  ///
+  /// Not the person reported — that is [reportedUserId], the comment's
+  /// author. This is surfaced because it is the difference between "a
+  /// stranger left this under someone's Reel" and "the Reel's own author
+  /// wrote it", and because the Reel's author is the other party who can
+  /// remove the comment, so a moderator needs to know who that is.
+  final String? reelAuthorId;
+
   final String? commentId;
   final String reportedUserId;
   final String? contextPath;
+
+  /// The reported words, snapshotted into the report at creation time.
+  ///
+  /// Present only where the reported document itself is unreadable by staff —
+  /// today that is `reelComment` alone. `reels/{id}/comments/{id}` is
+  /// `allow read, write: if false` for every client, so without this field a
+  /// moderator would be deciding a harassment report having never seen the
+  /// harassment. It is also the only evidence that outlives the removal, and
+  /// therefore the only thing an appeal can be judged against.
+  final String? targetText;
+
   final ReportReason? reason;
   final String note;
   final DateTime? createdAt;
@@ -86,6 +114,8 @@ class ModerationReport {
     );
     final schemaVersion = (data['schemaVersion'] as num?)?.toInt();
     final momentId = _nonEmptyString(data['momentId']);
+    final reelId = _nonEmptyString(data['reelId']);
+    final reelAuthorId = _nonEmptyString(data['reelAuthorId']);
     final commentId = _nonEmptyString(data['commentId']);
     final storedTargetId = _nonEmptyString(data['targetId']);
     final targetId =
@@ -93,6 +123,9 @@ class ModerationReport {
         switch (targetType) {
           ReportTargetType.voiceMoment => momentId ?? '',
           ReportTargetType.voiceMomentComment => commentId ?? momentId ?? '',
+          // A reelComment report is server-written and always self-contained,
+          // so this fallback is defensive only — there is no legacy shape.
+          ReportTargetType.reelComment => commentId ?? '',
           _ => '',
         };
     final storedContextPath = _nonEmptyString(data['contextPath']);
@@ -104,6 +137,9 @@ class ModerationReport {
           ReportTargetType.voiceMomentComment
               when momentId != null && commentId != null =>
             'voiceMoments/$momentId/comments/$commentId',
+          ReportTargetType.reelComment
+              when reelId != null && commentId != null =>
+            'reels/$reelId/comments/$commentId',
           _ => null,
         };
 
@@ -114,9 +150,17 @@ class ModerationReport {
       targetType: targetType,
       targetId: targetId,
       momentId: momentId,
+      reelId: reelId,
+      reelAuthorId: reelAuthorId,
       commentId: commentId,
       reportedUserId: _nonEmptyString(data['reportedUserId']) ?? '',
       contextPath: contextPath,
+      // Kept verbatim — NOT trimmed to non-empty and NOT defaulted. A report
+      // whose snapshot is missing must render as missing rather than as an
+      // empty comment, because the two mean different things to a reviewer.
+      targetText: data['targetTextSnapshot'] is String
+          ? data['targetTextSnapshot'] as String
+          : null,
       reason: _enumByName(ReportReason.values, data['reason'] as String?),
       note: data['note'] as String? ?? '',
       createdAt: (data['createdAt'] as Timestamp?)?.toDate(),

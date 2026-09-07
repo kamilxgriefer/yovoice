@@ -2836,6 +2836,23 @@ service cloud.firestore {
           // The target must EXIST, and reportedUserId must be the person
           // who actually owns it — otherwise the collection becomes a
           // free-text channel for naming arbitrary uids.
+          //
+          // THIS LIST IS SHORTER THAN THE SET OF REPORTABLE THINGS, AND
+          // THAT IS THE DESIGN. Only `globalMessage` and `user` can be
+          // proven from here with exists()/get(). Every other target type
+          // in the queue — `reel`, `reelComment`, `voiceMoment`,
+          // `voiceMomentComment`, `directMessage` — is created by a
+          // callable on the Admin SDK, because proving them needs reads a
+          // reporter is not entitled to make: conversation membership, a
+          // Reel's audience, or a `reels/{id}/comments/{id}` document that
+          // is `allow read, write: if false` for every client including
+          // staff. A `reelComment` report additionally carries a snapshot
+          // of the reported words (`targetTextSnapshot`), which is the
+          // moderator's only view of them; the field allowlist above has
+          // no room for it, so a client cannot write one onto any report,
+          // and the missing branch here means a client cannot file this
+          // target type at all. Both refusals are load-bearing — see the
+          // REEL COMMENT MODERATION cases in firestore-tests/rules.test.js.
           (
             (
               request.resource.data.targetType == 'globalMessage' &&
@@ -3795,6 +3812,30 @@ service cloud.firestore {
     // lived generation-bound grant after the callable rechecks eligibility.
     match /reels/{reelId} {
       allow read, write: if false;
+
+      // Engagement is server authority, and its READ boundary is the Reel's
+      // own: nothing. Unlike voiceMoments — which still carries a Build 19
+      // compatibility bridge letting a client read published roots directly —
+      // a Reel document has never been client-readable, so likes and comments
+      // are reached only through getReelViewV2 / listReelsV2, which recheck
+      // account state, restrictions and both block directions per request.
+      // Granting a client read here would open a path the parent does not
+      // have, which is wider than "readable exactly as the Reel is readable".
+      //
+      // Writes are denied for the reason the counters exist: setReelLike,
+      // createReelComment and deleteReelComment move the child document and
+      // the root's likeCount/commentCount in ONE Admin SDK transaction.
+      // A client write is not a smaller version of that — it is the version
+      // with no counter, no idempotency ledger, no rate budget and no
+      // audience check. Subcollection paths inherit no rule from the parent
+      // match, so these blocks are stated rather than assumed.
+      match /likes/{userId} {
+        allow read, write: if false;
+      }
+
+      match /comments/{commentId} {
+        allow read, write: if false;
+      }
     }
 
     match /reelUploadReservations/{reelId} {
