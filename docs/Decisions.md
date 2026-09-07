@@ -9676,3 +9676,89 @@ way in the strip, the grid and the list.
 is a hint rather than the content. The feed view lost about 240 lines by
 delegating to the shared tiles.
 
+
+## ADR-161: Reel engagement is optimistic in the feed and authoritative on the server
+
+**Context.** `setReelLike`, `createReelComment`, `deleteReelComment` and
+`getReelViewV2` shipped server-owned `likeCount`, `commentCount` and
+`callerLiked` on every v2 Reel. The client parsed them and threw them
+away — nothing referenced them, so a Reel could not be liked or
+commented on at all. A like has to feel instant on a vertical feed, yet
+only the callable's counter is trustworthy, and every call can be
+refused: rate limit, unverified email, or the single `permission-denied`
+envelope the backend deliberately does not itemise.
+
+**Decision.** `ReelsFeedScreen` owns engagement for the whole feed rather
+than each card owning its own. A tap applies a ±1 optimistic change, the
+callable's returned aggregate replaces it verbatim, and any refusal
+restores the exact pre-tap values with localized copy. A comment read
+that lands while a like is still in flight adopts only the comment
+count. One `ReelCommentsView` serves both hosts: a modal sheet below
+1100 px and an inline context panel above it, with the host choosing
+placement and the widget deciding behaviour from its own constraints.
+An unverified account keeps a live control that explains the gate rather
+than a dead button, and no request is spent on a refusal the client can
+already predict.
+
+**Reasoning.** Optimism without a server-authoritative replacement
+drifts, and a spinner drawn over an optimistic control cancels the
+feedback it was there to give. Splitting `permission-denied` into
+reasons client-side would rebuild exactly the oracle the backend refuses
+to be. Two hosts around one widget is the only arrangement in which the
+sheet and the panel cannot disagree about a count.
+
+**Consequences.** Engagement state lives in the feed, so any future host
+of `ReelCard` must supply the callbacks or accept read-only counts. The
+wide context panel widens from 320 to 380 px when a thread is open. The
+new engagement copy is EN/PL only; the localization guards do not demand
+catalog entries here, so the other 41 locales fall back to English until
+a catalog pass runs.
+
+## ADR-162: Reel comment moderation is three server paths, not one
+
+**Context.** Reel comments shipped with creation and own-comment
+deletion and nothing else — no report path, and no removal authority
+beyond the comment's own author. `createReelReport` hardcodes
+`targetType: "reel"`, and `moderateReport` had no `reelComment` branch.
+A verified account could post comments on any visible Reel and neither
+the Reel's author nor a moderator could remove them; the only remedy was
+deleting the Reel. `reels/{id}/comments/{id}` is `allow read, write: if
+false` for every client including staff, so unlike a Voice Moment
+comment there is no second path by which a moderator could even read the
+reported words.
+
+**Decision.** Three separate server entry points. `createReelCommentReport`
+is a sibling of `createReelReport`, not a widening of it: folding an
+optional `commentId` into that function's operation identity would re-key
+every Reel report already filed, and the next retry would answer
+`already-exists` on a safety path. It writes a schemaVersion-2 report
+carrying the full target identity plus `targetTextSnapshot`, a verbatim
+copy of the comment, because the collection is unreadable by staff and
+the snapshot is both the moderator's only view of the words and the only
+evidence that outlives the removal. One report per reporter per comment
+is structural, and the shared `reel.report` budget is charged before the
+target is read so refusals cost the same as reports. `removeReelComment`
+gives the Reel's author authority over their own thread as its own
+callable, with its own ledger kind and its own budget. `moderateReport`
+gains a `reelComment` branch whose audit entry carries
+`contentAlreadyRemoved`.
+
+**Reasoning.** The author's authority grants nothing they do not already
+hold — the same account can delete the whole Reel — but "an author
+removed somebody else's words" and "a person deleted their own" are
+different events, and Trust and Safety can only count the first if it
+leaves a distinguishable trace. A shared entry point would also make
+replay ambiguous about which of two deliberately different budgets was
+spent.
+
+**Consequences.** Reported comment text is now retained in `reports`
+indefinitely, with no TTL and no account-deletion scrub; this is the
+first third-party content stored there and needs a privacy pass.
+Removal is a hard delete on every path, so an author who removes before
+anyone reports leaves no copy anywhere. Author removals are recorded
+only in `integrityOperationLedgers`, which no moderator tool reads.
+`createReelCommentReport` performs no visibility check, diverging from
+ADR-086 rule 2: with the check and no receipt, a harasser could
+immunise their own comment by blocking the victim afterwards, and the
+victim could never file. The remedy is a report receipt issued by
+`getReelViewV2`, and the reasoning is recorded at the call site.
