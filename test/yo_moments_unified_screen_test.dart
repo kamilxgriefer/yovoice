@@ -236,6 +236,46 @@ void main() {
     },
   );
 
+  testWidgets('the embedded Reels stage paints no canvas of its own', (
+    tester,
+  ) async {
+    for (final theme in <ThemeData>[AppTheme.darkTheme, AppTheme.lightTheme]) {
+      await _pump(
+        tester,
+        theme: theme,
+        child: MomentsScreen(
+          isRootTab: true,
+          initialFormat: YoMomentsFormat.reels,
+          reelService: _reelServiceWithItem(),
+          onCreateReel: () async {},
+        ),
+      );
+
+      // The destination's own atmosphere has to reach the edge of the card.
+      // A second opaque surface under the feed is exactly the "frame inside a
+      // frame" this layout exists to remove.
+      final stage = tester.widget<Material>(
+        find.byKey(const ValueKey<String>('reels-stage')),
+      );
+      expect(stage.type, MaterialType.transparency);
+      expect(stage.color, isNull);
+
+      final context = tester.element(find.byType(ReelCard).first);
+      final palette = context.appPalette;
+      final opaque = find.descendant(
+        of: find.byKey(const ValueKey<String>('reels-stage')),
+        matching: find.byWidgetPredicate(
+          (widget) =>
+              widget is ColoredBox &&
+              (widget.color == palette.background ||
+                  widget.color == palette.surface),
+        ),
+      );
+      expect(opaque, findsNothing);
+      expect(tester.takeException(), isNull);
+    }
+  });
+
   testWidgets('legacy Reels destination opens unified route-aware screen', (
     tester,
   ) async {

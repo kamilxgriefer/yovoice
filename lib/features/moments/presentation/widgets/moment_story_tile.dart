@@ -167,7 +167,9 @@ class MomentStoryTile extends StatelessWidget {
     bool expanded = false,
   }) {
     var height =
-        discFor(context) + _discGap + nameHeightFor(context, expanded: expanded);
+        discFor(context) +
+        _discGap +
+        nameHeightFor(context, expanded: expanded);
     if (caption) height += _captionGap + captionHeightFor(context);
     return height;
   }
@@ -196,7 +198,11 @@ class MomentStoryTile extends StatelessWidget {
 
     return SizedBox(
       width: tileWidth,
-      height: heightFor(context, caption: caption != null, expanded: expandedLabel),
+      height: heightFor(
+        context,
+        caption: caption != null,
+        expanded: expandedLabel,
+      ),
       child: Semantics(
         button: true,
         // A tile is one atomic action. The `+` is the exception: it
@@ -397,9 +403,7 @@ class _CountBadge extends StatelessWidget {
         // Barely scaled on purpose: the same count is spelled out in the
         // tile's semantic label, so the pill stays a mark on the disc
         // instead of swallowing the avatar at 200 % text.
-        textScaler: MediaQuery.textScalerOf(
-          context,
-        ).clamp(maxScaleFactor: 1.2),
+        textScaler: MediaQuery.textScalerOf(context).clamp(maxScaleFactor: 1.2),
         style: TextStyle(
           color: colors.onPrimary,
           fontSize: 10,

@@ -1,20 +1,25 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
+import 'package:yovoice/core/theme/app_motion.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/reels/data/models/reel.dart';
 import 'package:yovoice/features/reels/data/services/reel_service.dart';
 import 'package:yovoice/features/reels/presentation/reel_engagement_copy.dart';
 import 'package:yovoice/features/reels/presentation/widgets/reel_card.dart';
+import 'package:yovoice/features/reels/presentation/widgets/reel_card_skeleton.dart';
 import 'package:yovoice/features/reels/presentation/widgets/reel_comments_view.dart';
 import 'package:yovoice/features/reels/presentation/widgets/reel_engagement_bar.dart';
 import 'package:yovoice/features/reels/presentation/widgets/reel_playback_coordinator.dart';
-import 'package:yovoice/shared/widgets/buttons/yo_button.dart';
+import 'package:yovoice/features/reels/presentation/widgets/reels_toolbar.dart';
+import 'package:yovoice/shared/widgets/backgrounds/yo_page_background.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
+import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
 import 'package:yovoice/shared/widgets/states/yo_empty_state.dart';
 import 'package:yovoice/shared/widgets/states/yo_error_state.dart';
 import 'package:yovoice/shared/widgets/states/yo_loading_indicator.dart';
@@ -31,6 +36,7 @@ class ReelsFeedScreen extends StatefulWidget {
     this.isVisible,
     this.now,
     this.expiryTimerFactory,
+    this.onOpenAuthor,
     this.embedded = false,
     super.key,
   });
@@ -49,6 +55,11 @@ class ReelsFeedScreen extends StatefulWidget {
   final ValueListenable<bool>? isVisible;
   final DateTime Function()? now;
   final ReelExpiryTimerFactory? expiryTimerFactory;
+
+  /// What a tap on a Reel's author does. Production leaves it null and the
+  /// card opens the shared profile preview; tests inject a seam so widget
+  /// coverage never reaches Firestore.
+  final void Function(Reel reel)? onOpenAuthor;
   final bool embedded;
 
   @override
@@ -590,229 +601,263 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
     }
   }
 
+  /// Everything below the toolbar: the states, the pager, and the transient
+  /// load-more surfaces that sit over it.
+  ///
+  /// [stage] is the box the feed actually got — after the wide panel took its
+  /// column — so the card geometry is derived from real space, never from a
+  /// device label.
+  Widget _buildStage(
+    BuildContext context,
+    BoxConstraints stage,
+    _StageMetrics metrics, {
+    required bool wide,
+  }) {
+    final copy = AppLocalizations.of(context);
+    final pagerPadding = EdgeInsets.fromLTRB(
+      metrics.gutter,
+      metrics.padTop,
+      metrics.gutter,
+      metrics.padBottom,
+    );
+
+    // Every state stands in the middle of the stage and scrolls rather than
+    // overflowing when the text is large and the window is short.
+    Widget scrollableState(Widget child) {
+      return SingleChildScrollView(
+        primary: false,
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            minHeight: stage.hasBoundedHeight ? stage.maxHeight : 0,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: <Widget>[child],
+          ),
+        ),
+      );
+    }
+
+    if (_loading || (_items.isEmpty && _loadingMore)) {
+      // The skeleton holds the exact card geometry so nothing jumps when the
+      // first page lands; the indicator above it owns the live region.
+      return Stack(
+        fit: StackFit.expand,
+        children: <Widget>[
+          Padding(
+            padding: pagerPadding,
+            child: ReelCardSkeleton(borderRadius: metrics.cardRadius),
+          ),
+          scrollableState(
+            YoLoadingIndicator(
+              message: copy.text('Loading Reels', 'Ładowanie Reels'),
+            ),
+          ),
+        ],
+      );
+    }
+    if (_error is _ReelFeedScanPaused && _items.isEmpty) {
+      // Nothing is loading here: the first batch simply held nothing this
+      // viewer can see. Saying "Loading Reels" would have been a lie.
+      return scrollableState(
+        YoEmptyState(
+          icon: Icons.travel_explore_rounded,
+          title: copy.text('No Reels yet', 'Nie ma jeszcze Reels'),
+          subtitle: copy.text(
+            'More Reels are available to check.',
+            'Możesz sprawdzić kolejne Reels.',
+          ),
+          actionLabel: copy.text('Load more', 'Wczytaj więcej'),
+          onAction: () => _load(reset: false),
+        ),
+      );
+    }
+    if (_error != null && _items.isEmpty) {
+      return scrollableState(
+        YoErrorState(
+          error: _error,
+          onRetry: () => _load(reset: _cursor == null),
+        ),
+      );
+    }
+    if (_items.isEmpty) {
+      return scrollableState(
+        YoEmptyState(
+          icon: Icons.smart_display_rounded,
+          title: _ownOnly
+              ? copy.text(
+                  'No Reels of your own yet',
+                  'Nie masz jeszcze własnych Reels',
+                )
+              : copy.text('No Reels yet', 'Nie ma jeszcze Reels'),
+          subtitle: copy.text(
+            'Published photos and short videos will appear here.',
+            'Opublikowane zdjęcia i krótkie filmy pojawią się tutaj.',
+          ),
+          actionLabel: widget.onCreate == null
+              ? null
+              : copy.text('Create Reel', 'Utwórz Reel'),
+          onAction: _creating ? null : _create,
+        ),
+      );
+    }
+
+    // The transient surfaces align with the card, not with the window.
+    final mediaWidth = math.min(
+      math.min(520.0, math.max(0.0, stage.maxWidth - 2 * metrics.gutter)),
+      stage.hasBoundedHeight
+          ? math.max(
+                  0.0,
+                  stage.maxHeight - metrics.padTop - metrics.padBottom,
+                ) *
+                9 /
+                16
+          : 520.0,
+    );
+    final noticeWidth = math.max(
+      240.0,
+      math.min(mediaWidth + 32, math.max(0.0, stage.maxWidth - 32)),
+    );
+
+    Widget buildFeed({required bool visible}) => Stack(
+      children: <Widget>[
+        Positioned.fill(
+          child: _FeedPager(
+            items: _items,
+            controller: _pageController,
+            service: _service,
+            selectedIndex: _selected,
+            isVisible: visible,
+            padding: pagerPadding,
+            cardRadius: metrics.cardRadius,
+            // Wide already carries the author and the caption in the docked
+            // panel; burning them over the video a second time is noise.
+            showIdentity: !wide,
+            videoBuilder: widget.videoBuilder,
+            audioPlaybackFactory: widget.audioPlaybackFactory,
+            onReport: _report,
+            onDelete: _delete,
+            onOpenAuthor: widget.onOpenAuthor,
+            likePending: _likePending,
+            commentsOpenIndex: wide && _commentsPanelOpen ? _selected : null,
+            onLike: _viewerId == null ? null : _toggleLike,
+            onComments: (reel) => _openComments(reel, wide: wide),
+            onChanged: (index) {
+              setState(() => _selected = index);
+              if (index >= _items.length - 3) _load(reset: false);
+            },
+          ),
+        ),
+        if (_error != null)
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 16,
+            child: Center(
+              child: ConstrainedBox(
+                constraints: BoxConstraints(maxWidth: noticeWidth),
+                child: _FeedLoadMoreError(
+                  scanPaused: _error is _ReelFeedScanPaused,
+                  onRetry: () => _load(reset: false),
+                ),
+              ),
+            ),
+          )
+        else if (_loadingMore)
+          PositionedDirectional(
+            end: metrics.gutter,
+            bottom: 16,
+            child: const YoLoadingIndicator(),
+          ),
+      ],
+    );
+
+    final visibility = widget.isVisible;
+    return visibility == null
+        ? buildFeed(visible: true)
+        : ValueListenableBuilder<bool>(
+            valueListenable: visibility,
+            builder: (context, visible, child) => buildFeed(visible: visible),
+          );
+  }
+
   @override
   Widget build(BuildContext context) {
     final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
-    final content = ColoredBox(
-      color: palette.background,
+    final body = Material(
+      key: const ValueKey<String>('reels-stage'),
+      // Deliberately transparent: the moments-studio canvas the destination
+      // already paints must show around the card, exactly as it does on the
+      // Voice half. The card is the only surface on the stage.
+      type: MaterialType.transparency,
       child: SafeArea(
         top: widget.embedded,
         child: LayoutBuilder(
           builder: (context, constraints) {
-            Widget scrollableState(Widget child) {
-              return SingleChildScrollView(
-                primary: false,
-                child: ConstrainedBox(
-                  constraints: BoxConstraints(
-                    minHeight: constraints.hasBoundedHeight
-                        ? constraints.maxHeight
-                        : 0,
-                  ),
-                  child: child,
-                ),
-              );
-            }
-
-            if (_loading || (_items.isEmpty && _loadingMore)) {
-              return scrollableState(
-                YoLoadingIndicator.fullscreen(
-                  message: copy.text('Loading Reels', 'Ładowanie Reels'),
-                ),
-              );
-            }
-            if (_error is _ReelFeedScanPaused && _items.isEmpty) {
-              return scrollableState(
-                YoEmptyState(
-                  icon: Icons.travel_explore_rounded,
-                  title: copy.text('Loading Reels', 'Ładowanie Reels'),
-                  subtitle: copy.text(
-                    'More Reels are available to check.',
-                    'Możesz sprawdzić kolejne Reels.',
-                  ),
-                  actionLabel: copy.text('Load more', 'Wczytaj więcej'),
-                  onAction: () => _load(reset: false),
-                ),
-              );
-            }
-            if (_error != null && _items.isEmpty) {
-              return scrollableState(
-                YoErrorState(
-                  error: _error,
-                  onRetry: () => _load(reset: _cursor == null),
-                ),
-              );
-            }
-            if (_items.isEmpty) {
-              return scrollableState(
-                YoEmptyState(
-                  icon: Icons.movie_creation_outlined,
-                  title: _ownOnly
-                      ? copy.text(
-                          'No Reels of your own yet',
-                          'Nie masz jeszcze własnych Reels',
-                        )
-                      : copy.text('No Reels yet', 'Nie ma jeszcze Reels'),
-                  subtitle: copy.text(
-                    'Published photos and short videos will appear here.',
-                    'Opublikowane zdjęcia i krótkie filmy pojawią się tutaj.',
-                  ),
-                  actionLabel: widget.onCreate == null
-                      ? null
-                      : copy.text('Create Reel', 'Utwórz Reel'),
-                  onAction: _creating ? null : _create,
-                ),
-              );
-            }
+            final metrics = _StageMetrics.of(constraints.maxWidth);
             // The layout, not a device label, decides where a thread can be
             // hosted: beside the feed when there is room for a panel, in a
             // sheet over it when there is not.
-            final wide = constraints.maxWidth >= 1100;
-            Widget buildFeed({required bool visible}) => Stack(
-              children: <Widget>[
-                Positioned.fill(
-                  child: _FeedPager(
-                    items: _items,
-                    controller: _pageController,
-                    service: _service,
-                    selectedIndex: _selected,
-                    isVisible: visible,
-                    videoBuilder: widget.videoBuilder,
-                    audioPlaybackFactory: widget.audioPlaybackFactory,
-                    onReport: _report,
-                    onDelete: _delete,
-                    likePending: _likePending,
-                    commentsOpenIndex: wide && _commentsPanelOpen
-                        ? _selected
-                        : null,
-                    onLike: _viewerId == null ? null : _toggleLike,
-                    onComments: (reel) => _openComments(reel, wide: wide),
-                    onChanged: (index) {
-                      setState(() => _selected = index);
-                      if (index >= _items.length - 3) _load(reset: false);
-                    },
-                  ),
-                ),
-                if (_error != null)
-                  PositionedDirectional(
-                    start: 20,
-                    end: 20,
-                    bottom: 28,
-                    child: _FeedLoadMoreError(
-                      scanPaused: _error is _ReelFeedScanPaused,
-                      onRetry: () => _load(reset: false),
-                    ),
-                  )
-                else if (_loadingMore)
-                  const PositionedDirectional(
-                    end: 24,
-                    bottom: 28,
-                    child: YoLoadingIndicator(),
-                  ),
-              ],
+            final wide = constraints.maxWidth >= _panelBreakpoint;
+            final showPanel = wide && _items.isNotEmpty;
+            final stage = LayoutBuilder(
+              builder: (context, stage) =>
+                  _buildStage(context, stage, metrics, wide: wide),
             );
-            final visibility = widget.isVisible;
-            final feed = visibility == null
-                ? buildFeed(visible: true)
-                : ValueListenableBuilder<bool>(
-                    valueListenable: visibility,
-                    builder: (context, visible, child) =>
-                        buildFeed(visible: visible),
-                  );
-            if (!wide) {
-              return Center(
-                child: ConstrainedBox(
-                  constraints: BoxConstraints(
-                    maxWidth: constraints.maxWidth < 600 ? 600 : 680,
+            Widget below = stage;
+            if (showPanel) {
+              final selected = _items[_selected.clamp(0, _items.length - 1)];
+              below = Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: <Widget>[
+                  Expanded(child: stage),
+                  SizedBox(
+                    width: _panelWidth,
+                    child: _WideContextPanel(
+                      reel: selected,
+                      service: _service,
+                      commentsOpen: _commentsPanelOpen,
+                      likePending: _likePending.contains(selected.id),
+                      onReelUpdated: _applyEngagement,
+                      onLike: _viewerId == null
+                          ? null
+                          : () => _toggleLike(selected),
+                      onComments: () => _openComments(selected, wide: true),
+                      onOpenAuthor: widget.onOpenAuthor,
+                    ),
                   ),
-                  child: feed,
-                ),
+                ],
               );
             }
-            final selected = _items[_selected.clamp(0, _items.length - 1)];
-            return Row(
+            // The same composition the Voice half uses: one chrome row across
+            // the whole destination, then the content and its docked panel
+            // beneath it. Switching format must not move the chrome.
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: <Widget>[
-                const Spacer(),
-                SizedBox(width: 620, child: feed),
-                const SizedBox(width: 32),
-                SizedBox(
-                  // A thread needs more room than a caption does, so the panel
-                  // widens when it is hosting one instead of squeezing the
-                  // conversation into a sidebar built for two lines of text.
-                  width: _commentsPanelOpen ? 380 : 320,
-                  child: _WideContextPanel(
-                    reel: selected,
-                    service: _service,
-                    commentsOpen: _commentsPanelOpen,
-                    likePending: _likePending.contains(selected.id),
-                    onReelUpdated: _applyEngagement,
-                    onLike: _viewerId == null
-                        ? null
-                        : () => _toggleLike(selected),
-                    onComments: () => _openComments(selected, wide: true),
-                    onCreate: widget.onCreate == null || _creating
-                        ? null
-                        : _create,
-                  ),
+                ReelsToolbar(
+                  gutter: metrics.toolbarGutter,
+                  ownOnly: _ownOnly,
+                  onAudienceSelected: _selectAudience,
+                  onRefresh: _loading ? null : () => _load(reset: true),
+                  showCreate: widget.onCreate != null,
+                  onCreate: _creating ? null : _create,
                 ),
-                const Spacer(),
+                Expanded(child: below),
               ],
             );
           },
         ),
       ),
     );
-    final body = Material(
-      color: palette.background,
-      child: Column(
-        children: [
-          ResponsiveContentFrame(
-            width: ResponsiveContentWidth.feed,
-            fillHeight: false,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              child: Wrap(
-                crossAxisAlignment: WrapCrossAlignment.center,
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  ChoiceChip(
-                    key: const ValueKey('reels-discover-filter'),
-                    label: Text(copy.text('Discover', 'Odkrywaj')),
-                    selected: !_ownOnly,
-                    onSelected: (_) => _selectAudience(false),
-                    materialTapTargetSize: MaterialTapTargetSize.padded,
-                  ),
-                  ChoiceChip(
-                    key: const ValueKey('reels-own-filter'),
-                    label: Text(copy.text('Your Reels', 'Twoje Reels')),
-                    selected: _ownOnly,
-                    onSelected: (_) => _selectAudience(true),
-                    materialTapTargetSize: MaterialTapTargetSize.padded,
-                  ),
-                  if (widget.onCreate != null)
-                    FilledButton.icon(
-                      key: const ValueKey('reels-create-persistent'),
-                      onPressed: _creating ? null : _create,
-                      icon: const Icon(Icons.add_rounded),
-                      label: Text(copy.text('Create Reel', 'Utwórz Reel')),
-                    ),
-                  IconButton(
-                    key: const ValueKey('reels-refresh'),
-                    tooltip: copy.text('Refresh', 'Odśwież'),
-                    onPressed: _loading ? null : () => _load(reset: true),
-                    icon: const Icon(Icons.refresh_rounded),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          Expanded(child: content),
-        ],
-      ),
-    );
-    if (widget.embedded) return body;
+    // Nested inside YO Moments this resolves to the child untouched; opened
+    // on its own the feed still stands on the destination's own canvas.
+    final page = YoPageBackground(section: YoPageSection.moments, child: body);
+    if (widget.embedded) return page;
     return Scaffold(
+      backgroundColor: palette.background,
       appBar: AppBar(
         title: Text(copy.text('Reels', 'Reels')),
         actions: widget.onCreate == null
@@ -825,9 +870,67 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
                 ),
               ],
       ),
-      body: body,
+      body: page,
     );
   }
+}
+
+/// Slot width at which a thread can be docked beside the stage instead of
+/// covering it, and the width that column then takes.
+const double _panelBreakpoint = 1100;
+const double _panelWidth = 400;
+
+/// Stage geometry for the width the feed was given.
+///
+/// One card, three densities: the gutters and the corner grow with the room
+/// available, and the card itself is always the 9:16 media inscribed in what
+/// is left.
+@immutable
+class _StageMetrics {
+  const _StageMetrics({
+    required this.toolbarGutter,
+    required this.gutter,
+    required this.padTop,
+    required this.padBottom,
+    required this.cardRadius,
+  });
+
+  factory _StageMetrics.of(double width) {
+    if (width >= _panelBreakpoint) {
+      return const _StageMetrics(
+        // The chrome row matches the Voice half's filter row, so the two
+        // formats of one destination share a rhythm instead of each having
+        // their own.
+        toolbarGutter: 24,
+        gutter: 24,
+        padTop: 8,
+        padBottom: 24,
+        cardRadius: 28,
+      );
+    }
+    if (width >= 600) {
+      return const _StageMetrics(
+        toolbarGutter: 24,
+        gutter: 24,
+        padTop: 8,
+        padBottom: 16,
+        cardRadius: 24,
+      );
+    }
+    return const _StageMetrics(
+      toolbarGutter: 16,
+      gutter: 16,
+      padTop: 4,
+      padBottom: 10,
+      cardRadius: 24,
+    );
+  }
+
+  final double toolbarGutter;
+  final double gutter;
+  final double padTop;
+  final double padBottom;
+  final double cardRadius;
 }
 
 class _FeedPager extends StatelessWidget {
@@ -842,11 +945,19 @@ class _FeedPager extends StatelessWidget {
     required this.onDelete,
     required this.onComments,
     required this.likePending,
+    required this.padding,
+    required this.cardRadius,
+    required this.showIdentity,
     this.onLike,
+    this.onOpenAuthor,
     this.commentsOpenIndex,
     this.videoBuilder,
     this.audioPlaybackFactory,
   });
+
+  /// The widest a Reel stage ever gets. Past this the 9:16 frame stops being
+  /// a phone-shaped object and starts being a poster.
+  static const double maxCardWidth = 520;
 
   final List<Reel> items;
   final PageController controller;
@@ -857,9 +968,13 @@ class _FeedPager extends StatelessWidget {
   final Future<void> Function(Reel reel) onReport;
   final Future<void> Function(Reel reel) onDelete;
   final void Function(Reel reel) onComments;
+  final EdgeInsets padding;
+  final double cardRadius;
+  final bool showIdentity;
 
   /// Null when there is no viewer to like as.
   final Future<void> Function(Reel reel)? onLike;
+  final void Function(Reel reel)? onOpenAuthor;
   final Set<String> likePending;
 
   /// The page whose thread the wide layout is already showing beside the
@@ -880,24 +995,32 @@ class _FeedPager extends StatelessWidget {
         final reel = items[index];
         final like = onLike;
         return Padding(
-          padding: const EdgeInsets.fromLTRB(12, 12, 12, 16),
-          child: ReelCard(
-            key: ValueKey<String>(reel.id),
-            reel: reel,
-            service: service,
-            isActive: isVisible && index == selectedIndex,
-            videoBuilder: videoBuilder,
-            audioPlaybackFactory: audioPlaybackFactory,
-            onReport: service.isCurrentUserAuthor(reel)
-                ? null
-                : () => onReport(reel),
-            onDelete: service.isCurrentUserAuthor(reel)
-                ? () => onDelete(reel)
-                : null,
-            onLike: like == null ? null : () => like(reel),
-            onComments: () => onComments(reel),
-            likePending: likePending.contains(reel.id),
-            commentsOpen: commentsOpenIndex == index,
+          padding: padding,
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: maxCardWidth),
+              child: ReelCard(
+                key: ValueKey<String>(reel.id),
+                reel: reel,
+                service: service,
+                isActive: isVisible && index == selectedIndex,
+                videoBuilder: videoBuilder,
+                audioPlaybackFactory: audioPlaybackFactory,
+                borderRadius: cardRadius,
+                showIdentity: showIdentity,
+                onOpenAuthor: onOpenAuthor,
+                onReport: service.isCurrentUserAuthor(reel)
+                    ? null
+                    : () => onReport(reel),
+                onDelete: service.isCurrentUserAuthor(reel)
+                    ? () => onDelete(reel)
+                    : null,
+                onLike: like == null ? null : () => like(reel),
+                onComments: () => onComments(reel),
+                likePending: likePending.contains(reel.id),
+                commentsOpen: commentsOpenIndex == index,
+              ),
+            ),
           ),
         );
       },
@@ -919,12 +1042,20 @@ class _FeedLoadMoreError extends StatelessWidget {
   Widget build(BuildContext context) {
     final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
+    // A paused scan is not a failure and nothing is loading: the batch we
+    // read held nothing for this viewer, and there is more to check.
     final message = scanPaused
-        ? copy.text('Loading Reels', 'Ładowanie Reels')
+        ? copy.text(
+            'More Reels are available to check.',
+            'Możesz sprawdzić kolejne Reels.',
+          )
         : copy.text(
             'Something went wrong. Please try again.',
             'Coś poszło nie tak. Spróbuj ponownie.',
           );
+    final action = scanPaused
+        ? copy.text('Load more', 'Wczytaj więcej')
+        : copy.text('Try again', 'Spróbuj ponownie');
     return Semantics(
       container: true,
       liveRegion: true,
@@ -965,8 +1096,12 @@ class _FeedLoadMoreError extends StatelessWidget {
               TextButton.icon(
                 key: const ValueKey<String>('reels-load-more-retry'),
                 onPressed: onRetry,
-                icon: const Icon(Icons.refresh_rounded),
-                label: Text(copy.text('Try again', 'Spróbuj ponownie')),
+                icon: Icon(
+                  scanPaused
+                      ? Icons.expand_more_rounded
+                      : Icons.refresh_rounded,
+                ),
+                label: Text(action),
               ),
             ],
           ),
@@ -1089,6 +1224,64 @@ class _ReelReportSheet extends StatelessWidget {
   }
 }
 
+/// Height the closed thread block needs before it starts clipping the control
+/// that opens the conversation, at the reader's own text size.
+///
+/// The block is a divider, its 16/8 padding, and a [Wrap] that folds the
+/// "Comments" label and the "Open thread" button onto separate runs once the
+/// text is enlarged. Measured with a generous hand: it is a floor the docked
+/// panel keeps free for the thread, and over-reserving costs the header a few
+/// pixels it can scroll, while under-reserving would cost the control.
+double _closedThreadFloor(BuildContext context) {
+  final scaler = MediaQuery.textScalerOf(context);
+  final text = Theme.of(context).textTheme;
+  final label = scaler.scale(text.titleMedium?.fontSize ?? 16) * 1.5;
+  final button = math.max(
+    // The button never gives up its accessible target.
+    48.0,
+    scaler.scale(text.labelLarge?.fontSize ?? 14) * 1.4 + 16,
+  );
+  return 1 + 16 + 8 + label + 4 + button;
+}
+
+/// Height the OPEN thread needs before the header may take the rest, at the
+/// reader's own text size.
+///
+/// The open thread is not the closed block wearing a different label: it is a
+/// composer pinned to the bottom of the region with the conversation above
+/// it. Reserving the closed block's height for it leaves the composer alone
+/// filling the region and the comment the reader deliberately opened the
+/// thread for clipped, so the two states get their own floors:
+///
+///  - the composer — its 10/24 padding around a field whose hint folds onto a
+///    second line once the text is enlarged, beside a send target that never
+///    drops under 48 px;
+///  - one whole comment — its 8/8 padding around an author name that wraps at
+///    an accessibility text size, the timestamp that follows it, and a line of
+///    body text, never under the 48 px action target that sets the row's
+///    height at ordinary sizes.
+///
+/// Generous with the same hand as the closed floor, and for the same reason:
+/// over-reserving costs the header a few pixels it can scroll, while
+/// under-reserving costs the reader the conversation itself.
+double _openThreadFloor(BuildContext context) {
+  final scaler = MediaQuery.textScalerOf(context);
+  final text = Theme.of(context).textTheme;
+  final body = scaler.scale(text.bodyMedium?.fontSize ?? 14) * 1.5;
+  final author = scaler.scale(text.labelLarge?.fontSize ?? 14) * 1.4;
+  final timestamp = scaler.scale(text.bodySmall?.fontSize ?? 12) * 1.4;
+  final double composer = 10 + 24 + math.max(48.0, body * 2 + 32);
+  final double comment =
+      8 + 8 + math.max(48.0, author * 2 + timestamp + 2 + body);
+  return 1 + composer + comment;
+}
+
+/// The docked context column of the wide layout.
+///
+/// It is the only place the wide layout says who published the Reel and what
+/// they wrote, so the frame beside it can stay artwork with a rail. Full
+/// height, edge to edge against the slot's right side — a panel, not a card
+/// floating in a gutter.
 class _WideContextPanel extends StatelessWidget {
   const _WideContextPanel({
     required this.reel,
@@ -1098,7 +1291,7 @@ class _WideContextPanel extends StatelessWidget {
     required this.onReelUpdated,
     this.onLike,
     this.onComments,
-    this.onCreate,
+    this.onOpenAuthor,
   });
 
   final Reel reel;
@@ -1108,99 +1301,264 @@ class _WideContextPanel extends StatelessWidget {
   final ValueChanged<Reel> onReelUpdated;
   final VoidCallback? onLike;
   final VoidCallback? onComments;
-  final Future<void> Function()? onCreate;
+  final void Function(Reel reel)? onOpenAuthor;
 
   @override
   Widget build(BuildContext context) {
     final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
-    final header = Padding(
-      padding: EdgeInsets.fromLTRB(24, 24, 24, commentsOpen ? 16 : 24),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          Text(
-            copy.text('Now playing', 'Teraz odtwarzane'),
-            style: Theme.of(context).textTheme.labelLarge?.copyWith(
-              color: palette.interactiveForeground,
-            ),
-          ),
-          const SizedBox(height: 10),
-          Text(
-            reel.authorName,
-            style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-              color: palette.textPrimary,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-          if (reel.composition.caption.isNotEmpty) ...<Widget>[
-            const SizedBox(height: 12),
-            Text(
-              reel.composition.caption,
-              // A caption may be long. With the thread open it yields the
-              // panel's height to the conversation instead of pushing it off
-              // the bottom; on its own it still reads in full.
-              maxLines: commentsOpen ? 3 : null,
-              overflow: commentsOpen ? TextOverflow.ellipsis : null,
-              style: Theme.of(
-                context,
-              ).textTheme.bodyLarge?.copyWith(color: palette.textSecondary),
-            ),
-          ],
-          const SizedBox(height: 16),
-          ReelEngagementBar(
-            likeCount: reel.likeCount,
-            commentCount: reel.commentCount,
-            liked: reel.callerLiked,
-            likePending: likePending,
-            commentsOpen: commentsOpen,
-            variant: ReelEngagementBarVariant.panel,
-            onLike: onLike,
-            onComments: onComments,
-          ),
-          if (onCreate != null) ...<Widget>[
-            const SizedBox(height: 20),
-            YoButton(
-              label: copy.text('Create Reel', 'Utwórz Reel'),
-              onPressed: onCreate,
-              icon: const Icon(Icons.add_rounded),
-            ),
-          ],
-        ],
-      ),
-    );
+    final attribution = reel.composition.audioAttribution;
     return DecoratedBox(
       decoration: BoxDecoration(
         color: palette.surface,
-        border: Border.all(color: palette.border),
-        borderRadius: BorderRadius.circular(24),
+        border: Border(left: BorderSide(color: palette.border)),
       ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(23),
-        child: Column(
-          // Closed, the panel is a caption card and stays its own height.
-          // Open, it hosts a conversation and takes the column it is given.
-          mainAxisSize: commentsOpen ? MainAxisSize.max : MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: <Widget>[
-            header,
-            if (commentsOpen) ...<Widget>[
-              Divider(height: 1, thickness: 1, color: palette.border),
-              Expanded(
-                child: ReelCommentsView(
-                  key: const ValueKey<String>('reel-comments-panel-view'),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          // A caption is user content and can be any length. It yields the
+          // column to the conversation when one is open, and stays inside the
+          // panel when it is not, instead of pushing the stats off the bottom.
+          // What a caption block costs is measured in text, not in pixels: at
+          // an accessibility text size six lines are twice as tall, so the
+          // room a column has to have for them grows with the reader's size.
+          final textScale = MediaQuery.textScalerOf(context).scale(1);
+          final captionLines =
+              commentsOpen || constraints.maxHeight < 520 * textScale ? 3 : 6;
+          final header = Padding(
+            padding: EdgeInsets.fromLTRB(24, 24, 24, commentsOpen ? 16 : 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                ReelAuthorRow(
                   reel: reel,
-                  service: service,
-                  onReelUpdated: onReelUpdated,
-                  // Aligned with the header above rather than with the width
-                  // the thread happens to be given.
-                  gutter: 24,
+                  variant: ReelAuthorRowVariant.panel,
+                  secondaryLine: copy.relativeCompactTime(reel.publishedAt),
+                  onTap: () => _openAuthor(context),
+                ),
+                if (reel.composition.caption.isNotEmpty) ...<Widget>[
+                  const SizedBox(height: 14),
+                  Text(
+                    reel.composition.caption,
+                    maxLines: captionLines,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: palette.textPrimary,
+                      fontSize: 16,
+                      height: 1.5,
+                    ),
+                  ),
+                ],
+                if (attribution.isNotEmpty) ...<Widget>[
+                  const SizedBox(height: 12),
+                  Row(
+                    children: <Widget>[
+                      Icon(
+                        Icons.music_note_rounded,
+                        size: 16,
+                        color: palette.textSecondary,
+                      ),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          attribution,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: palette.textSecondary,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+                const SizedBox(height: 16),
+                ReelEngagementBar(
+                  likeCount: reel.likeCount,
+                  commentCount: reel.commentCount,
+                  liked: reel.callerLiked,
+                  likePending: likePending,
+                  commentsOpen: commentsOpen,
+                  variant: ReelEngagementBarVariant.panel,
+                  onLike: onLike,
+                  onComments: onComments,
+                ),
+              ],
+            ),
+          );
+          // The header is user content and grows without a ceiling — a long
+          // caption at an accessibility text size can want the whole column.
+          // The thread region below it holds the only way into the
+          // conversation on this layout, so the header is the part that
+          // yields: it keeps its natural height while there is room and
+          // scrolls once the column is short, instead of pushing the control
+          // that opens the thread out of the panel. What is reserved depends
+          // on what is down there: the control that opens the conversation
+          // while it is closed, and the conversation itself once it is open —
+          // reserving for the closed block either way would open a thread
+          // with no room to read it in.
+          final threadFloor = commentsOpen
+              ? _openThreadFloor(context)
+              : _closedThreadFloor(context);
+          final headerBox = constraints.hasBoundedHeight
+              ? ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxHeight: math.max(
+                      0,
+                      constraints.maxHeight -
+                          // A column too short to hold both still keeps a
+                          // sliver of identity above the thread instead of
+                          // becoming a control on its own.
+                          math.min(threadFloor, constraints.maxHeight * .75),
+                    ),
+                  ),
+                  child: SingleChildScrollView(primary: false, child: header),
+                )
+              : header;
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              headerBox,
+              Expanded(
+                child: AnimatedSwitcher(
+                  duration: AppMotion.resolve(context, AppMotion.standard),
+                  switchInCurve: AppMotion.standardCurve,
+                  switchOutCurve: AppMotion.standardCurve,
+                  transitionBuilder: (child, animation) => FadeTransition(
+                    opacity: animation,
+                    child: SlideTransition(
+                      position: Tween<Offset>(
+                        begin: const Offset(0, .02),
+                        end: Offset.zero,
+                      ).animate(animation),
+                      child: child,
+                    ),
+                  ),
+                  child: commentsOpen
+                      ? Column(
+                          key: const ValueKey<String>('reel-panel-thread-open'),
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: <Widget>[
+                            Divider(
+                              height: 1,
+                              thickness: 1,
+                              color: palette.border,
+                            ),
+                            Expanded(
+                              child: ReelCommentsView(
+                                key: const ValueKey<String>(
+                                  'reel-comments-panel-view',
+                                ),
+                                reel: reel,
+                                service: service,
+                                onReelUpdated: onReelUpdated,
+                                // Aligned with the header above rather than
+                                // with the width the thread happens to get.
+                                gutter: 24,
+                              ),
+                            ),
+                          ],
+                        )
+                      : Column(
+                          key: const ValueKey<String>(
+                            'reel-panel-thread-closed',
+                          ),
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: <Widget>[
+                            Divider(
+                              height: 1,
+                              thickness: 1,
+                              color: palette.border,
+                            ),
+                            // A pointer-first column that is simply blank
+                            // until something is clicked teaches nothing.
+                            // This says what lives here and offers the way in.
+                            // It scrolls rather than overflowing if the panel
+                            // is ever shorter than this row itself needs.
+                            Flexible(
+                              child: SingleChildScrollView(
+                                primary: false,
+                                child: Padding(
+                                  padding: const EdgeInsets.fromLTRB(
+                                    24,
+                                    16,
+                                    24,
+                                    8,
+                                  ),
+                                  child: Wrap(
+                                    alignment: WrapAlignment.spaceBetween,
+                                    crossAxisAlignment:
+                                        WrapCrossAlignment.center,
+                                    spacing: 12,
+                                    runSpacing: 4,
+                                    children: <Widget>[
+                                      Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: <Widget>[
+                                          Text(
+                                            copy.text('Comments', 'Komentarze'),
+                                            style: Theme.of(context)
+                                                .textTheme
+                                                .titleMedium
+                                                ?.copyWith(
+                                                  color: palette.textPrimary,
+                                                  fontWeight: FontWeight.w800,
+                                                ),
+                                          ),
+                                          const SizedBox(width: 8),
+                                          Text(
+                                            reelCompactCount(reel.commentCount),
+                                            style: Theme.of(context)
+                                                .textTheme
+                                                .bodyMedium
+                                                ?.copyWith(
+                                                  color: palette.textTertiary,
+                                                  fontWeight: FontWeight.w700,
+                                                ),
+                                          ),
+                                        ],
+                                      ),
+                                      TextButton(
+                                        key: const ValueKey<String>(
+                                          'reel-panel-thread-toggle',
+                                        ),
+                                        onPressed: onComments,
+                                        child: Text(
+                                          copy.text(
+                                            'Open thread',
+                                            'Otwórz wątek',
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
                 ),
               ),
             ],
-          ],
-        ),
+          );
+        },
+      ),
+    );
+  }
+
+  void _openAuthor(BuildContext context) {
+    final seam = onOpenAuthor;
+    if (seam != null) {
+      seam(reel);
+      return;
+    }
+    unawaited(
+      showProfilePreview(
+        context,
+        userId: reel.authorId,
+        displayName: reel.authorName,
       ),
     );
   }

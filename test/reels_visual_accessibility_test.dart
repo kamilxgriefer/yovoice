@@ -17,6 +17,7 @@ import 'package:yovoice/features/reels/presentation/reel_visuals.dart';
 import 'package:yovoice/features/reels/presentation/screens/reel_composer_screen.dart';
 import 'package:yovoice/features/reels/presentation/screens/reels_feed_screen.dart';
 import 'package:yovoice/features/reels/presentation/widgets/reel_composition_canvas.dart';
+import 'package:yovoice/shared/widgets/inputs/yo_segmented_pill.dart';
 import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
 
 void _useViewport(WidgetTester tester, Size size, {double textScale = 1}) {
@@ -410,6 +411,94 @@ void main() {
           );
           expect(tester.takeException(), isNull);
         });
+      }
+    }
+  });
+
+  group('feed toolbar', () {
+    const create = ValueKey<String>('reels-create-persistent');
+    const refresh = ValueKey<String>('reels-refresh');
+
+    for (final themeEntry in <String, ThemeData>{
+      'Dark': AppTheme.darkTheme,
+      'Pearl': AppTheme.lightTheme,
+    }.entries) {
+      for (final width in const <double>[320, 390, 430, 768, 1100, 1440]) {
+        for (final textScale in const <double>[1, 2]) {
+          testWidgets('${themeEntry.key} toolbar at ${width.toInt()} px and '
+              '${(textScale * 100).toInt()}% stays whole', (tester) async {
+            _useViewport(tester, Size(width, 900), textScale: textScale);
+            await tester.pumpWidget(
+              MaterialApp(
+                theme: themeEntry.value,
+                home: ReelsFeedScreen(
+                  embedded: true,
+                  service: _feedService(),
+                  onCreate: () async {},
+                  videoBuilder: (_, _, _) =>
+                      const ColoredBox(color: Color(0xFF335577)),
+                ),
+              ),
+            );
+            await tester.pumpAndSettle();
+
+            expect(tester.takeException(), isNull);
+
+            // Every control keeps an accessible target at every size.
+            for (final key in <Key>[create, refresh]) {
+              final size = tester.getSize(find.byKey(key));
+              expect(size.width, greaterThanOrEqualTo(44));
+              expect(size.height, greaterThanOrEqualTo(44));
+            }
+            for (final key in <Key>[
+              const ValueKey<String>('reels-discover-filter'),
+              const ValueKey<String>('reels-own-filter'),
+            ]) {
+              expect(
+                tester.getSize(find.byKey(key)).height,
+                greaterThanOrEqualTo(44),
+              );
+            }
+
+            // Two intentional shapes and nothing in between: the actions sit
+            // on the pill's own line, or wholly on a second line beneath it.
+            // A ragged wrap that reflows control by control is the failure
+            // this guards against. Which shape appears is a measurement in
+            // this locale at this text size, so it is not asserted here — the
+            // font a widget test paints with is not the shipped one.
+            final pill = tester.getRect(find.byType(YoSegmentedPill).first);
+            final refreshRect = tester.getRect(find.byKey(refresh));
+            final createRect = tester.getRect(find.byKey(create));
+            expect(createRect.center.dy, closeTo(refreshRect.center.dy, 2));
+            final oneRow = refreshRect.center.dy < pill.bottom;
+            if (oneRow) {
+              expect(refreshRect.center.dy, closeTo(pill.center.dy, 2));
+              expect(createRect.left, greaterThanOrEqualTo(pill.right - 1));
+            } else {
+              expect(refreshRect.top, greaterThanOrEqualTo(pill.bottom - 1));
+              expect(createRect.top, greaterThanOrEqualTo(pill.bottom - 1));
+            }
+            // An accessibility text size always folds, whatever the width.
+            if (textScale >= 1.6) expect(oneRow, isFalse);
+
+            // The label may not fit beside the pill at every width; the action
+            // must still say its own name when it is reduced to a glyph.
+            final labelled = find.descendant(
+              of: find.byKey(create),
+              matching: find.text('Create Reel'),
+            );
+            if (labelled.evaluate().isEmpty) {
+              expect(find.byTooltip('Create Reel'), findsOneWidget);
+              final icon = tester.widget<Icon>(
+                find.descendant(
+                  of: find.byKey(create),
+                  matching: find.byType(Icon),
+                ),
+              );
+              expect(icon.semanticLabel, 'Create Reel');
+            }
+          });
+        }
       }
     }
   });

@@ -6,6 +6,7 @@ import 'package:video_player/video_player.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/core/theme/app_motion.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/reels/data/models/reel.dart';
 import 'package:yovoice/features/reels/data/models/reel_composition.dart';
@@ -14,16 +15,36 @@ import 'package:yovoice/features/reels/presentation/widgets/reel_composition_can
 import 'package:yovoice/features/reels/presentation/widgets/reel_engagement_bar.dart';
 import 'package:yovoice/features/reels/presentation/widgets/reel_playback_coordinator.dart';
 import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
+import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
+import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 import 'package:yovoice/shared/widgets/states/yo_error_state.dart';
 import 'package:yovoice/shared/widgets/states/yo_loading_indicator.dart';
 
 typedef ReelVideoBuilder =
     Widget Function(BuildContext context, Uri mediaUri, Reel reel);
 
+/// Shadow under the Reel stage in each appearance: heavier in Dark where the
+/// card floats over the moments-studio atmosphere, restrained plum in Pearl.
+List<BoxShadow> reelCardShadow(BuildContext context) {
+  final palette = context.appPalette;
+  final dark = Theme.of(context).brightness == Brightness.dark;
+  return <BoxShadow>[
+    BoxShadow(
+      color: palette.shadow.withValues(alpha: dark ? .45 : .16),
+      blurRadius: 28,
+      offset: const Offset(0, 12),
+    ),
+  ];
+}
+
 /// One real Reel page. Photos render in-app with the non-destructive crop,
 /// filter and overlays. Video uses an injected native player when available;
 /// otherwise the signed media URL opens in the platform player instead of
 /// pretending a static thumbnail is playback.
+///
+/// The card IS the 9:16 media: its border, radius and shadow are drawn on the
+/// inscribed frame, never on a wider box around it, so no gutter of ordinary
+/// surface colour ever appears inside the card.
 class ReelCard extends StatefulWidget {
   const ReelCard({
     required this.reel,
@@ -35,8 +56,11 @@ class ReelCard extends StatefulWidget {
     this.onReport,
     this.onLike,
     this.onComments,
+    this.onOpenAuthor,
     this.likePending = false,
     this.commentsOpen = false,
+    this.showIdentity = true,
+    this.borderRadius = 24,
     super.key,
   });
 
@@ -56,10 +80,20 @@ class ReelCard extends StatefulWidget {
   /// live control that explains its gate rather than a dead button.
   final VoidCallback? onLike;
   final VoidCallback? onComments;
+
+  /// What a tap on the author does. Production leaves it null and opens the
+  /// shared profile preview; tests inject a seam so they never touch
+  /// Firestore.
+  final void Function(Reel reel)? onOpenAuthor;
   final bool likePending;
 
   /// True while the wide layout already shows this Reel's thread beside it.
   final bool commentsOpen;
+
+  /// False when a docked context panel already carries the author and the
+  /// caption, so the frame shows only the action rail and the sound chip.
+  final bool showIdentity;
+  final double borderRadius;
 
   @override
   State<ReelCard> createState() => _ReelCardState();
@@ -149,10 +183,70 @@ class _ReelCardState extends State<ReelCard> with WidgetsBindingObserver {
     }
   }
 
+  void _openAuthor() {
+    final seam = widget.onOpenAuthor;
+    if (seam != null) {
+      seam(widget.reel);
+      return;
+    }
+    unawaited(
+      showProfilePreview(
+        context,
+        userId: widget.reel.authorId,
+        displayName: widget.reel.authorName,
+      ),
+    );
+  }
+
+  Widget _buildMedia(BuildContext context) {
+    final copy = AppLocalizations.of(context);
+    return FutureBuilder<Uri>(
+      future: _media,
+      builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          return YoErrorState(
+            message: copy.text(
+              'This Reel is unavailable right now.',
+              'Ten Reel jest teraz niedostępny.',
+            ),
+            onRetry: () => setState(() => _media = _loadMedia()),
+            compact: true,
+          );
+        }
+        final uri = snapshot.data;
+        if (uri == null) {
+          return YoLoadingIndicator(
+            message: copy.text('Loading Reel', 'Ładowanie Reela'),
+          );
+        }
+        if (widget.reel.media.kind == ReelMediaKind.video &&
+            widget.videoBuilder == null) {
+          return _DefaultReelVideoPlayer(
+            uri: uri,
+            reel: widget.reel,
+            playback: _playback,
+            onToggle: _togglePlayback,
+          );
+        }
+        final media = widget.reel.media.kind == ReelMediaKind.image
+            ? _ReelPhoto(uri: uri)
+            : widget.videoBuilder!(context, uri, widget.reel);
+        return ReelCompositionFrame(
+          composition: widget.reel.composition,
+          media: media,
+          mediaForeground: const _LegibilityScrim(),
+          onOpenLink: (overlay) =>
+              launchUrl(overlay.uri, mode: LaunchMode.externalApplication),
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     final copy = AppLocalizations.of(context);
+    final radius = widget.borderRadius;
     return Semantics(
       container: true,
       label: copy.template(
@@ -160,88 +254,42 @@ class _ReelCardState extends State<ReelCard> with WidgetsBindingObserver {
         'Reel użytkownika {author}',
         values: <String, Object>{'author': widget.reel.authorName},
       ),
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: palette.surfaceSunken,
-          borderRadius: BorderRadius.circular(28),
-          border: Border.all(color: palette.border),
-        ),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(27),
-          child: Stack(
-            fit: StackFit.expand,
-            children: <Widget>[
-              Center(
-                child: AspectRatio(
-                  aspectRatio: 9 / 16,
-                  child: FutureBuilder<Uri>(
-                    future: _media,
-                    builder: (context, snapshot) {
-                      if (snapshot.hasError) {
-                        return YoErrorState(
-                          message: copy.text(
-                            'This Reel is unavailable right now.',
-                            'Ten Reel jest teraz niedostępny.',
-                          ),
-                          onRetry: () => setState(() => _media = _loadMedia()),
-                          compact: true,
-                        );
-                      }
-                      final uri = snapshot.data;
-                      if (uri == null) {
-                        return YoLoadingIndicator(
-                          message: copy.text('Loading Reel', 'Ładowanie Reela'),
-                        );
-                      }
-                      if (widget.reel.media.kind == ReelMediaKind.video &&
-                          widget.videoBuilder == null) {
-                        return _DefaultReelVideoPlayer(
-                          uri: uri,
-                          reel: widget.reel,
-                          playback: _playback,
-                          onToggle: _togglePlayback,
-                        );
-                      }
-                      final media =
-                          widget.reel.media.kind == ReelMediaKind.image
-                          ? _ReelPhoto(uri: uri)
-                          : widget.videoBuilder!(context, uri, widget.reel);
-                      return ReelCompositionFrame(
-                        composition: widget.reel.composition,
-                        media: media,
-                        mediaForeground: const _LegibilityScrim(),
-                        onOpenLink: (overlay) => launchUrl(
-                          overlay.uri,
-                          mode: LaunchMode.externalApplication,
-                        ),
-                      );
-                    },
-                  ),
+      child: Center(
+        child: AspectRatio(
+          aspectRatio: 9 / 16,
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final mediaHeight = constraints.maxHeight;
+              return DecoratedBox(
+                decoration: BoxDecoration(
+                  // Only visible while the media loads or fails.
+                  color: palette.surfaceSunken,
+                  borderRadius: BorderRadius.circular(radius),
+                  border: Border.all(color: palette.border),
+                  boxShadow: reelCardShadow(context),
                 ),
-              ),
-              // The footer is aligned to the artwork, not to the card. A card
-              // wider than its inscribed 9:16 frame leaves margins painted in
-              // the ordinary surface colour — light in Pearl — and white
-              // overlay text laid across those margins is unreadable. The
-              // empty area of this stack takes no hits, so the playback
-              // surface underneath still receives them.
-              Center(
-                child: AspectRatio(
-                  aspectRatio: 9 / 16,
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(radius - 1),
                   child: Stack(
                     fit: StackFit.expand,
                     children: <Widget>[
+                      _buildMedia(context),
+                      // The empty area of this layer takes no hits, so the
+                      // playback surface underneath still receives them.
                       PositionedDirectional(
-                        start: 18,
-                        end: 18,
-                        bottom: 18,
-                        child: _Footer(
+                        start: 0,
+                        end: 0,
+                        bottom: 0,
+                        child: _OverlayFooter(
                           reel: widget.reel,
+                          mediaHeight: mediaHeight,
+                          showIdentity: widget.showIdentity,
                           audioPlaying: _playback.isPlaying,
                           audioLoading: _playback.isLoading,
                           audioEnabled: _playback.canToggle,
-                          showAudio: widget.reel.backingAudio != null,
+                          showAudioToggle: widget.reel.backingAudio != null,
                           onAudio: _togglePlayback,
+                          onOpenAuthor: _openAuthor,
                           onDelete: widget.onDelete,
                           onReport: widget.onReport,
                           onLike: widget.onLike,
@@ -253,8 +301,8 @@ class _ReelCardState extends State<ReelCard> with WidgetsBindingObserver {
                     ],
                   ),
                 ),
-              ),
-            ],
+              );
+            },
           ),
         ),
       ),
@@ -453,14 +501,22 @@ class _DefaultReelVideoPlayerState extends State<_DefaultReelVideoPlayer> {
             onOpenLink: (overlay) =>
                 launchUrl(overlay.uri, mode: LaunchMode.externalApplication),
           ),
-          if (!controller.value.isPlaying)
-            const Center(
-              child: Icon(
-                Icons.play_circle_fill_rounded,
-                size: 72,
-                color: Colors.white,
+          Center(
+            child: IgnorePointer(
+              child: AnimatedOpacity(
+                opacity: controller.value.isPlaying ? 0 : 1,
+                duration: AppMotion.resolve(context, AppMotion.quick),
+                child: const Icon(
+                  Icons.play_circle_fill_rounded,
+                  size: 72,
+                  color: Colors.white,
+                  shadows: <Shadow>[
+                    Shadow(color: Color(0x73000000), blurRadius: 12),
+                  ],
+                ),
               ),
             ),
+          ),
         ],
       ),
     );
@@ -524,6 +580,9 @@ class _VideoPlayerPlayback implements ReelVideoPlayback {
   Future<void> setVolume(double volume) => controller.setVolume(volume);
 }
 
+/// A light base wash inside the composition space: it settles the top edge
+/// and the centre play glyph. The text no longer relies on it — the footer
+/// scrim in card space carries every line.
 class _LegibilityScrim extends StatelessWidget {
   const _LegibilityScrim();
 
@@ -536,11 +595,12 @@ class _LegibilityScrim extends StatelessWidget {
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
             colors: <Color>[
-              Color(0x24000000),
-              Color(0x08000000),
-              Color(0xB8000000),
+              Color(0x1F000000),
+              Color(0x00000000),
+              Color(0x00000000),
+              Color(0x59000000),
             ],
-            stops: <double>[0, .55, 1],
+            stops: <double>[0, .35, .60, 1],
           ),
         ),
       ),
@@ -548,15 +608,21 @@ class _LegibilityScrim extends StatelessWidget {
   }
 }
 
-class _Footer extends StatelessWidget {
-  const _Footer({
+/// Identity column bottom-start, action rail bottom-end, one footer scrim
+/// under both: a ~100 px ramp and then flat 84 % black beneath every line, so
+/// white text clears 4.5:1 even on a pure-white frame.
+class _OverlayFooter extends StatelessWidget {
+  const _OverlayFooter({
     required this.reel,
+    required this.mediaHeight,
+    required this.showIdentity,
     required this.audioPlaying,
     required this.audioLoading,
     required this.audioEnabled,
-    required this.showAudio,
+    required this.showAudioToggle,
     required this.likePending,
     required this.commentsOpen,
+    required this.onOpenAuthor,
     this.onAudio,
     this.onDelete,
     this.onReport,
@@ -565,12 +631,15 @@ class _Footer extends StatelessWidget {
   });
 
   final Reel reel;
+  final double mediaHeight;
+  final bool showIdentity;
   final bool audioPlaying;
   final bool audioLoading;
   final bool audioEnabled;
-  final bool showAudio;
+  final bool showAudioToggle;
   final bool likePending;
   final bool commentsOpen;
+  final VoidCallback onOpenAuthor;
   final VoidCallback? onAudio;
   final Future<void> Function()? onDelete;
   final Future<void> Function()? onReport;
@@ -580,104 +649,364 @@ class _Footer extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final copy = AppLocalizations.of(context);
-    // Identity and caption first, then the actions that respond to them: the
-    // reading order a screen reader follows is the order that makes sense.
-    // The bar is a Wrap, so a 320 px card folds it to two lines instead of
-    // overflowing, and text scaling has somewhere to go.
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: <Widget>[
-        _identityRow(copy),
-        const SizedBox(height: 4),
-        ReelEngagementBar(
-          likeCount: reel.likeCount,
-          commentCount: reel.commentCount,
-          liked: reel.callerLiked,
-          likePending: likePending,
-          commentsOpen: commentsOpen,
-          onLike: onLike,
-          onComments: onComments,
-        ),
-      ],
-    );
-  }
+    // Short media (a phone with the header and the dock on screen) folds the
+    // rail into a row and trims the caption instead of covering the frame.
+    final compact = mediaHeight < 400;
+    // Smaller still — a 320x568 window with the shell's dock leaves a frame
+    // roughly 110 x 196, and three 48 px controls already fill it. The
+    // identity column is dropped here rather than laid out and then clipped
+    // off the top of the card: a half-cut name is worse than none, and the
+    // author is still announced by the card's own semantics. This is a
+    // graceful floor, not a target — a viewport this short really wants a
+    // collapsed header or a dedicated immersive route.
+    final micro = mediaHeight < 320;
+    final captionLines = compact
+        ? 1
+        : mediaHeight < 560
+        ? 2
+        : 3;
+    final showSound =
+        showAudioToggle || reel.composition.audioAttribution.isNotEmpty;
 
-  Widget _identityRow(AppLocalizations copy) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.end,
+    final identity = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
       children: <Widget>[
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: <Widget>[
-              Text(
-                reel.authorName,
+        if (showIdentity && !micro) ...<Widget>[
+          ReelAuthorRow(reel: reel, showAvatar: !compact, onTap: onOpenAuthor),
+          if (reel.composition.caption.isNotEmpty) ...<Widget>[
+            const SizedBox(height: 6),
+            IgnorePointer(
+              child: Text(
+                reel.composition.caption,
+                maxLines: captionLines,
+                overflow: TextOverflow.ellipsis,
                 style: const TextStyle(
                   color: Colors.white,
-                  fontSize: 17,
-                  fontWeight: FontWeight.w800,
+                  fontSize: 15,
+                  height: 1.35,
+                  shadows: reelOverlayTextShadows,
                 ),
               ),
-              if (reel.composition.caption.isNotEmpty) ...<Widget>[
-                const SizedBox(height: 6),
-                Text(
-                  reel.composition.caption,
-                  maxLines: 3,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(color: Colors.white, fontSize: 15),
+            ),
+          ],
+        ],
+        if (showSound && !micro) ...<Widget>[
+          if (showIdentity) const SizedBox(height: 8),
+          _SoundChip(
+            reel: reel,
+            showToggle: showAudioToggle,
+            audioPlaying: audioPlaying,
+            audioLoading: audioLoading,
+            audioEnabled: audioEnabled,
+            onAudio: onAudio,
+          ),
+        ],
+      ],
+    );
+
+    final moderation = onDelete != null
+        ? ReelOverlayPlateButton(
+            icon: Icons.delete_outline_rounded,
+            semanticLabel: copy.text('Delete Reel', 'Usuń Reel'),
+            glyphColor: AppColors.error,
+            onTap: onDelete,
+          )
+        : onReport != null
+        ? ReelOverlayPlateButton(
+            icon: Icons.flag_outlined,
+            semanticLabel: copy.text('Report Reel', 'Zgłoś Reel'),
+            onTap: onReport,
+          )
+        : null;
+    final rail = ReelEngagementBar(
+      likeCount: reel.likeCount,
+      commentCount: reel.commentCount,
+      liked: reel.callerLiked,
+      likePending: likePending,
+      commentsOpen: commentsOpen,
+      railAxis: compact ? Axis.horizontal : Axis.vertical,
+      railTrailing: moderation,
+      onLike: onLike,
+      onComments: onComments,
+    );
+
+    return DecoratedBox(
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: <Color>[Color(0x00000000), Color(0xD6000000)],
+          stops: <double>[0, .40],
+        ),
+      ),
+      child: Padding(
+        padding: EdgeInsetsDirectional.fromSTEB(
+          16,
+          micro
+              ? 8
+              : compact
+              ? 56
+              : 96,
+          12,
+          16,
+        ),
+        child: compact
+            ? Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  identity,
+                  const SizedBox(height: 8),
+                  Align(alignment: AlignmentDirectional.centerEnd, child: rail),
+                ],
+              )
+            : Row(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: <Widget>[
+                  Expanded(child: identity),
+                  const SizedBox(width: 16),
+                  rail,
+                ],
+              ),
+      ),
+    );
+  }
+}
+
+/// Where a [ReelAuthorRow] is drawn, which decides its foreground.
+///
+/// [overlay] sits on artwork of unknown luminance: fixed white with the
+/// shared text shadows. [panel] sits on an ordinary app surface in the wide
+/// layout and uses semantic palette roles.
+enum ReelAuthorRowVariant { overlay, panel }
+
+/// The author of a Reel, as one tappable identity control.
+///
+/// One widget serves the card overlay and the wide context panel so the two
+/// can never disagree about who published a Reel or what tapping the name
+/// does. The avatar resolves through the existing viewer-authorised profile
+/// media service — the Reel wire carries no photo URL and none is invented,
+/// so the initial is the honest fallback.
+class ReelAuthorRow extends StatelessWidget {
+  const ReelAuthorRow({
+    required this.reel,
+    required this.onTap,
+    this.showAvatar = true,
+    this.variant = ReelAuthorRowVariant.overlay,
+    this.secondaryLine,
+    super.key,
+  });
+
+  final Reel reel;
+  final VoidCallback onTap;
+  final bool showAvatar;
+  final ReelAuthorRowVariant variant;
+
+  /// Panel only: a second line under the name, such as the publish time.
+  final String? secondaryLine;
+
+  @override
+  Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
+    final palette = context.appPalette;
+    final overlay = variant == ReelAuthorRowVariant.overlay;
+    final radius = overlay ? 16.0 : 20.0;
+    final name = Text(
+      reel.authorName,
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      style: TextStyle(
+        color: overlay ? Colors.white : palette.textPrimary,
+        fontSize: overlay ? 16 : 18,
+        fontWeight: FontWeight.w800,
+        height: 1.2,
+        shadows: overlay ? reelOverlayTextShadows : null,
+      ),
+    );
+    final secondary = secondaryLine;
+    return Align(
+      alignment: AlignmentDirectional.centerStart,
+      child: AccessibleTapRegion(
+        onTap: onTap,
+        semanticLabel: copy.template(
+          'Open profile for {author}',
+          'Otwórz profil: {author}',
+          values: <String, Object>{'author': reel.authorName},
+        ),
+        borderRadius: overlay ? 999 : 16,
+        minimumSize: const Size(44, 44),
+        focusContrastColor: overlay ? Colors.black : null,
+        child: Padding(
+          padding: EdgeInsetsDirectional.fromSTEB(0, 4, overlay ? 10 : 8, 4),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              if (showAvatar) ...<Widget>[
+                ExcludeSemantics(
+                  child: UserAvatar(
+                    radius: radius,
+                    userId: reel.authorId,
+                    displayName: reel.authorName,
+                  ),
                 ),
+                SizedBox(width: overlay ? 8 : 12),
               ],
-              if (reel.composition.audioAttribution.isNotEmpty) ...<Widget>[
-                const SizedBox(height: 6),
-                Text(
-                  reel.composition.audioAttribution,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(color: Colors.white70, fontSize: 13),
-                ),
-              ],
+              Flexible(
+                child: secondary == null || secondary.isEmpty
+                    ? name
+                    : Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: <Widget>[
+                          name,
+                          const SizedBox(height: 2),
+                          Text(
+                            secondary,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: palette.textTertiary,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
+              ),
             ],
           ),
         ),
-        if (showAudio)
-          IconButton.filledTonal(
-            key: const ValueKey('reel-playback-toggle'),
-            tooltip: reel.media.kind == ReelMediaKind.video
-                ? audioPlaying
-                      ? copy.text('Pause video', 'Wstrzymaj film')
-                      : copy.text('Play video', 'Odtwórz film')
-                : audioPlaying
-                ? copy.text('Pause backing audio', 'Wstrzymaj podkład')
-                : copy.text('Play backing audio', 'Odtwórz podkład'),
-            onPressed: audioLoading || !audioEnabled ? null : onAudio,
-            icon: audioLoading
-                ? const SizedBox.square(
-                    dimension: 20,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : Icon(
-                    audioPlaying
-                        ? Icons.pause_rounded
-                        : Icons.play_arrow_rounded,
+      ),
+    );
+  }
+}
+
+/// The audio line of the frame: attribution (or the generic name) on a 72 %
+/// plate, with the playback toggle leading it when the Reel has backing audio.
+///
+/// The toggle stays an [IconButton] — its key, tooltips and 44 px target are
+/// the contract the playback coordinator coverage holds it to.
+class _SoundChip extends StatelessWidget {
+  const _SoundChip({
+    required this.reel,
+    required this.showToggle,
+    required this.audioPlaying,
+    required this.audioLoading,
+    required this.audioEnabled,
+    this.onAudio,
+  });
+
+  final Reel reel;
+  final bool showToggle;
+  final bool audioPlaying;
+  final bool audioLoading;
+  final bool audioEnabled;
+  final VoidCallback? onAudio;
+
+  @override
+  Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
+    final attribution = reel.composition.audioAttribution;
+    final text = attribution.isNotEmpty
+        ? attribution
+        : copy.text('Backing audio', 'Podkład');
+    final toggleLabel = reel.media.kind == ReelMediaKind.video
+        ? audioPlaying
+              ? copy.text('Pause video', 'Wstrzymaj film')
+              : copy.text('Play video', 'Odtwórz film')
+        : audioPlaying
+        ? copy.text('Pause backing audio', 'Wstrzymaj podkład')
+        : copy.text('Play backing audio', 'Odtwórz podkład');
+    return Align(
+      alignment: AlignmentDirectional.centerStart,
+      child: SizedBox(
+        height: 44,
+        child: Stack(
+          children: <Widget>[
+            // The visible pill is 32 tall; the toggle keeps a 44 px target
+            // that overhangs it by 6 px above and below.
+            const PositionedDirectional(
+              start: 0,
+              end: 0,
+              top: 6,
+              bottom: 6,
+              child: IgnorePointer(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: reelOverlayPlateColor,
+                    borderRadius: BorderRadius.all(Radius.circular(999)),
                   ),
-          ),
-        if (onDelete != null)
-          IconButton(
-            tooltip: copy.text('Delete Reel', 'Usuń Reel'),
-            color: AppColors.error,
-            onPressed: onDelete,
-            icon: const Icon(Icons.delete_outline_rounded),
-          ),
-        if (onReport != null)
-          IconButton(
-            tooltip: copy.text('Report Reel', 'Zgłoś Reel'),
-            color: Colors.white,
-            onPressed: onReport,
-            icon: const Icon(Icons.flag_outlined),
-          ),
-      ],
+                ),
+              ),
+            ),
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                if (showToggle)
+                  IconButton(
+                    key: const ValueKey('reel-playback-toggle'),
+                    tooltip: toggleLabel,
+                    onPressed: audioLoading || !audioEnabled ? null : onAudio,
+                    iconSize: 20,
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints.tightFor(
+                      width: 44,
+                      height: 44,
+                    ),
+                    style: IconButton.styleFrom(
+                      foregroundColor: Colors.white,
+                      disabledForegroundColor: Colors.white.withValues(
+                        alpha: .5,
+                      ),
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                    icon: audioLoading
+                        ? const SizedBox.square(
+                            dimension: 18,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          )
+                        : Icon(
+                            audioPlaying
+                                ? Icons.pause_rounded
+                                : Icons.play_arrow_rounded,
+                          ),
+                  )
+                else
+                  const Padding(
+                    padding: EdgeInsetsDirectional.only(start: 10, end: 6),
+                    child: Icon(
+                      Icons.music_note_rounded,
+                      size: 14,
+                      color: Colors.white,
+                    ),
+                  ),
+                Flexible(
+                  child: Padding(
+                    padding: const EdgeInsetsDirectional.only(end: 10),
+                    child: IgnorePointer(
+                      child: Text(
+                        text,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w600,
+                          height: 1.2,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

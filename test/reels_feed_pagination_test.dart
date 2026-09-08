@@ -177,6 +177,62 @@ void main() {
     },
   );
 
+  testWidgets('a paused scan says what it is instead of claiming to load', (
+    tester,
+  ) async {
+    var listCalls = 0;
+    final service = _service((cursor) async {
+      listCalls += 1;
+      return _page(const <Object?>[], 'cursor_$listCalls');
+    });
+
+    await _pumpFeed(tester, service, onCreate: () async {});
+
+    // The bounded scan gave up with a cursor still in hand. Nothing is
+    // loading, so nothing may say it is.
+    expect(find.text('Loading Reels'), findsNothing);
+    expect(find.text('No Reels yet'), findsOneWidget);
+    expect(find.text('More Reels are available to check.'), findsOneWidget);
+    expect(find.text('Load more'), findsOneWidget);
+  });
+
+  testWidgets('a paused scan over a loaded feed offers Load more, not Retry', (
+    tester,
+  ) async {
+    var listCalls = 0;
+    final service = _service((cursor) async {
+      listCalls += 1;
+      if (cursor == null) {
+        return _page(<Object?>[
+          for (var index = 1; index <= 4; index++) _reelWire(index),
+        ], 'cursor_more');
+      }
+      return _page(const <Object?>[], 'cursor_$listCalls');
+    });
+
+    await _pumpFeed(tester, service);
+    await tester.drag(find.byType(PageView), const Offset(0, -700));
+    await tester.pumpAndSettle();
+
+    final toast = find.byKey(const ValueKey<String>('reels-load-more-error'));
+    expect(toast, findsOneWidget);
+    expect(
+      find.descendant(
+        of: toast,
+        matching: find.text('More Reels are available to check.'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey<String>('reels-load-more-retry')),
+        matching: find.text('Load more'),
+      ),
+      findsOneWidget,
+    );
+    expect(find.text('Loading Reels'), findsNothing);
+  });
+
   testWidgets('host visibility deactivates the selected Reel player', (
     tester,
   ) async {

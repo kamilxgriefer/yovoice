@@ -17,6 +17,7 @@ class AccessibleTapRegion extends StatefulWidget {
     this.circular = false,
     this.minimumSize = const Size(44, 44),
     this.selected,
+    this.selectedBorderColor,
     this.onHover,
     this.focusContrastColor,
     super.key,
@@ -30,6 +31,13 @@ class AccessibleTapRegion extends StatefulWidget {
   final bool circular;
   final Size minimumSize;
   final bool? selected;
+
+  /// The ring drawn while [selected] is true. Defaults to the palette's
+  /// interactive foreground; overlays on artwork pass white so the ring stays
+  /// visible on any frame, and a control whose selected state is already
+  /// carried by its own fill passes [Colors.transparent] to keep the semantic
+  /// state without a second visual.
+  final Color? selectedBorderColor;
   final ValueChanged<bool>? onHover;
 
   /// Optional outer focus color for artwork whose luminance is unknown.
@@ -154,7 +162,8 @@ class _AccessibleTapRegionState extends State<AccessibleTapRegion> {
                                     ? Colors.white
                                     : palette.focus
                               : widget.selected == true
-                              ? palette.interactiveForeground
+                              ? widget.selectedBorderColor ??
+                                    palette.interactiveForeground
                               : _hovered && widget.onTap != null
                               ? palette.borderStrong
                               : Colors.transparent,

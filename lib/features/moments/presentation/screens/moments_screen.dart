@@ -21,6 +21,8 @@ import 'package:yovoice/features/moments/presentation/widgets/moments_feed_view.
 import 'package:yovoice/features/reels/data/services/reel_service.dart';
 import 'package:yovoice/features/reels/presentation/screens/reel_composer_screen.dart';
 import 'package:yovoice/features/reels/presentation/screens/reels_feed_screen.dart';
+import 'package:yovoice/features/reels/presentation/widgets/reel_card.dart';
+import 'package:yovoice/shared/widgets/inputs/yo_segmented_pill.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/navigation/yo_moments_icon.dart';
 import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
@@ -76,6 +78,7 @@ class MomentsScreen extends StatefulWidget {
     this.expiryClock,
     this.expiryTimerFactory,
     this.reelService,
+    this.reelVideoBuilder,
     this.initialFormat = YoMomentsFormat.voice,
     this.onCreateReel,
     super.key,
@@ -128,6 +131,12 @@ class MomentsScreen extends StatefulWidget {
   /// Injection seam for the existing Reels adapter. It is constructed lazily:
   /// a user who stays on Voice does not start the Reels network request.
   final ReelService? reelService;
+
+  /// Injection seam for the Reel frame's decoder. Production leaves it null
+  /// and the card drives the real player; a widget test or a review capture
+  /// supplies a still stand-in, because no decoder runs off-device.
+  @visibleForTesting
+  final ReelVideoBuilder? reelVideoBuilder;
 
   final YoMomentsFormat initialFormat;
 
@@ -343,6 +352,7 @@ class _MomentsScreenState extends State<MomentsScreen> with RouteAware {
                         ),
                         embedded: true,
                         service: widget.reelService,
+                        videoBuilder: widget.reelVideoBuilder,
                         isVisible: _reelsVisible,
                         onCreate: _openReelComposer,
                       )
@@ -478,6 +488,9 @@ class _MomentsHeader extends StatelessWidget {
 }
 
 /// Voice / Reels, in the app's own pill language.
+///
+/// The same [YoSegmentedPill] the Reels toolbar uses for Discover / Your
+/// Reels, so the destination has one switch grammar rather than two.
 class _FormatSwitch extends StatelessWidget {
   const _FormatSwitch({
     required this.selected,
@@ -492,100 +505,24 @@ class _FormatSwitch extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final copy = AppLocalizations.of(context);
-    final palette = context.appPalette;
-    final options = <(YoMomentsFormat, IconData, String)>[
-      (
-        YoMomentsFormat.voice,
-        Icons.mic_rounded,
-        copy.contextualText('yoMoments.voiceFormat', 'Voice', 'Głos'),
-      ),
-      (
-        YoMomentsFormat.reels,
-        Icons.smart_display_rounded,
-        copy.text('Reels', 'Reels'),
-      ),
-    ];
-    return Container(
+    return YoSegmentedPill(
       key: const ValueKey<String>('yo-moments-format-tabs'),
       width: compact ? double.infinity : 340,
-      padding: const EdgeInsets.all(4),
-      decoration: BoxDecoration(
-        color: palette.surfaceSunken,
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: palette.border),
-      ),
-      child: Row(
-        children: [
-          for (final (format, icon, label) in options)
-            Expanded(
-              child: _FormatSegment(
-                icon: icon,
-                label: label,
-                selected: format == selected,
-                onTap: () => onSelected(format),
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-}
-
-class _FormatSegment extends StatelessWidget {
-  const _FormatSegment({
-    required this.icon,
-    required this.label,
-    required this.selected,
-    required this.onTap,
-  });
-
-  final IconData icon;
-  final String label;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = context.appPalette;
-    final colors = Theme.of(context).colorScheme;
-    final foreground = selected ? colors.onPrimary : palette.textSecondary;
-    return Semantics(
-      button: true,
-      selected: selected,
-      label: label,
-      excludeSemantics: true,
-      child: Material(
-        color: selected ? colors.primary : Colors.transparent,
-        borderRadius: BorderRadius.circular(999),
-        child: InkWell(
-          onTap: selected ? null : onTap,
-          borderRadius: BorderRadius.circular(999),
-          child: Container(
-            constraints: const BoxConstraints(minHeight: 40),
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-            alignment: Alignment.center,
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(icon, size: 17, color: foreground),
-                const SizedBox(width: 7),
-                Flexible(
-                  child: Text(
-                    label,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: foreground,
-                      fontSize: 13.5,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
+      trackPadding: 4,
+      segmentMinHeight: 40,
+      fontSize: 13.5,
+      segments: <YoSegmentedPillSegment>[
+        YoSegmentedPillSegment(
+          label: copy.contextualText('yoMoments.voiceFormat', 'Voice', 'Głos'),
+          icon: Icons.mic_rounded,
         ),
-      ),
+        YoSegmentedPillSegment(
+          label: copy.text('Reels', 'Reels'),
+          icon: Icons.smart_display_rounded,
+        ),
+      ],
+      selectedIndex: selected.index,
+      onSelected: (index) => onSelected(YoMomentsFormat.values[index]),
     );
   }
 }

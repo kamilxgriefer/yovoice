@@ -16,6 +16,7 @@ import 'package:yovoice/features/reels/presentation/widgets/reel_engagement_bar.
 
 typedef _Call = ({String name, Map<String, Object?> payload});
 
+final _authorName = find.text('Creator One');
 final _likeAction = find.byKey(const ValueKey<String>('reel-like-action'));
 final _commentsAction = find.byKey(
   const ValueKey<String>('reel-comments-action'),
@@ -197,6 +198,12 @@ void main() {
     expect(_countIn(tester, _inCard(_likeAction)), '4');
     expect(_countIn(tester, _inCard(_commentsAction)), '2');
     expect(_likeIsFilled(tester), isFalse);
+    // Narrow has no panel, so the frame itself carries the identity — once.
+    expect(find.text('Creator One'), findsOneWidget);
+    expect(
+      find.descendant(of: find.byType(ReelCard), matching: _authorName),
+      findsOneWidget,
+    );
   });
 
   testWidgets('assistive technology gets the action, the state and the exact '
@@ -505,6 +512,13 @@ void main() {
       // The panel carries its own bar in the written-label variant.
       expect(find.byType(ReelEngagementBar), findsNWidgets(2));
       expect(find.byType(ReelCommentsView), findsNothing);
+      // Identity is said once: the docked panel says it, the frame beside it
+      // stays artwork with a rail.
+      expect(_authorName, findsOneWidget);
+      expect(
+        find.descendant(of: find.byType(ReelCard), matching: _authorName),
+        findsNothing,
+      );
 
       await tester.tap(_inCard(_commentsAction));
       await tester.pumpAndSettle();
