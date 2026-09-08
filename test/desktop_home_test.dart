@@ -8,6 +8,8 @@ import 'package:firebase_storage_mocks/firebase_storage_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:yovoice/core/presence/presence_service.dart';
+import 'package:yovoice/core/presence/user_availability.dart';
 import 'package:yovoice/core/theme/app_theme.dart';
 import 'package:yovoice/core/theme/role_identity.dart';
 import 'package:yovoice/shared/widgets/backgrounds/yo_page_background.dart';
@@ -32,7 +34,10 @@ import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
 import 'package:yovoice/features/staff/data/staff_capabilities.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_story_tile.dart';
+import 'package:yovoice/shared/widgets/profile/availability_picker.dart';
+import 'package:yovoice/shared/widgets/profile/people_status_ring.dart';
 
+import 'semantics_probe.dart';
 import 'voice_moment_test_doubles.dart';
 import 'home_watermark_visual_capture.dart';
 
@@ -58,6 +63,14 @@ class _RoomStreams extends RoomService {
   @override
   Stream<List<VoiceRoom>> watchOwnedRooms() =>
       Stream.multi((controller) => controller.add(_owned), isBroadcast: true);
+}
+
+class _FailingOwnedRooms extends _RoomStreams {
+  _FailingOwnedRooms() : super(live: const [], owned: const []);
+
+  @override
+  Stream<List<VoiceRoom>> watchOwnedRooms() =>
+      Stream<List<VoiceRoom>>.error(StateError('owned rooms unavailable'));
 }
 
 class _ControlledRoomStream extends _RoomStreams {
@@ -90,6 +103,7 @@ void main() {
     String hostId = '',
     String hostName = 'Host',
     Duration age = Duration.zero,
+    bool isLive = true,
   }) async {
     await db.collection('rooms').doc(id).set({
       'hostId': hostId.isEmpty ? 'host-$id' : hostId,
@@ -101,7 +115,7 @@ void main() {
       'language': 'English',
       'participantCount': participants,
       'memberCount': 0,
-      'isLive': true,
+      'isLive': isLive,
       'roomType': 'community',
       'status': 'active',
       'experience': 'community',
@@ -267,6 +281,7 @@ void main() {
     VoidCallback? onOpenClubs,
     ProfileMediaService? profileMediaService,
     RoomService? roomService,
+    PresenceService? presenceService,
   }) {
     final firebaseAuth = auth();
     final notifications = NotificationService(
@@ -312,6 +327,7 @@ void main() {
         notificationService: notifications,
       ),
       clubChatService: ClubChatService(firestore: db, auth: firebaseAuth),
+      presenceService: presenceService,
       firebaseAuth: firebaseAuth,
     );
   }
@@ -386,20 +402,33 @@ void main() {
   testWidgets('answers its four questions in order, once each', (tester) async {
     useDesktop(tester, const Size(1440, 2600));
     await seedRoom(id: 'r1', name: 'Evening Talks', description: 'Real talk');
+    // Hosted here but not live: "Your active rooms" renders for a host
+    // without adding a second board banner.
+    await seedRoom(
+      id: 'mine',
+      name: 'My hosted room',
+      description: 'Owned, not live',
+      hostId: uid,
+      isLive: false,
+    );
     await tester.pumpWidget(host(buildHome()));
     for (var i = 0; i < 6; i++) {
       await tester.pump(const Duration(milliseconds: 60));
     }
 
     for (final heading in [
+      'Your people',
       'Live for you',
+      'From people you follow',
       'Your active rooms',
       'Your recent chats',
     ]) {
       expect(find.text(heading), findsOneWidget, reason: heading);
     }
+    expect(find.byKey(const ValueKey('home-people-me')), findsOneWidget);
 
     double y(String label) => tester.getTopLeft(find.text(label)).dy;
+    expect(y('Your people'), lessThan(y('Live for you')));
     expect(y('Live for you'), lessThan(y('Your active rooms')));
     expect(y('Your recent chats'), lessThan(y('Your active rooms')));
 
@@ -411,8 +440,10 @@ void main() {
       'Recommended now',
       'Global Chat',
       'Global conversations',
+      'Top creators you follow',
+      'Voice Trending',
     ]) {
-      expect(find.text(gone), findsNothing, reason: '\$gone returned');
+      expect(find.text(gone), findsNothing, reason: '$gone returned');
     }
   });
 
@@ -474,7 +505,7 @@ void main() {
     expect(find.text('Evening Talks'), findsOneWidget);
     expect(find.text('Night Shift'), findsOneWidget);
 
-    // Vertically stacked, not a grid: each banner starts below the last.
+    // The featured room leads; "Rooms for you" starts below it.
     final first = tester.getTopLeft(find.text('Evening Talks'));
     final second = tester.getTopLeft(find.text('Night Shift'));
     expect(second.dy, greaterThan(first.dy));
@@ -485,8 +516,11 @@ void main() {
       closeTo(tester.getTopLeft(banners.first).dx, 1),
     );
 
-    // One primary action per room.
-    expect(find.text('Join room'), findsNWidgets(2));
+    // One primary action per room: the featured banner spells it out, the
+    // compact grid cell shortens it to fit beside the chips.
+    expect(find.byKey(const ValueKey('home-room-join')), findsNWidgets(2));
+    expect(find.text('Join room'), findsOneWidget);
+    expect(find.text('Join'), findsOneWidget);
   });
 
   testWidgets('Join room opens the real room through the shell callback', (
@@ -816,8 +850,9 @@ void main() {
     expect(started, 1);
   });
 
-  testWidgets('an account hosting nothing gets one compact empty state with '
-      'the existing Create Room action', (tester) async {
+  testWidgets('an account hosting nothing gets no owned-rooms section at all', (
+    tester,
+  ) async {
     useDesktop(tester, const Size(1440, 2600));
     await seedRoom(id: 'r1', name: 'Evening Talks', description: 'Real talk');
     await tester.pumpWidget(host(buildHome()));
@@ -825,9 +860,31 @@ void main() {
       await tester.pump(const Duration(milliseconds: 60));
     }
 
-    expect(find.text('You have no rooms yet.'), findsOneWidget);
-    expect(find.text('Create Room'), findsOneWidget);
+    // A permanently empty card whose Create Room button duplicated the
+    // quick-action pill is not information; the section simply hides.
+    expect(find.text('Your active rooms'), findsNothing);
+    expect(find.text('You have no rooms yet.'), findsNothing);
+    expect(find.text('Create Room'), findsNothing);
     expect(find.byTooltip('Manage your room'), findsNothing);
+    // Creating a room is still one tap away, from the quick-action pill.
+    expect(
+      find.byKey(const ValueKey('home-quick-create-room')),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('an owned-rooms failure still renders the section with a '
+      'retry, because an error is not "no rooms"', (tester) async {
+    useDesktop(tester, const Size(1440, 2600));
+    await tester.pumpWidget(host(buildHome(roomService: _FailingOwnedRooms())));
+    for (var i = 0; i < 6; i++) {
+      await tester.pump(const Duration(milliseconds: 60));
+    }
+
+    expect(find.text('Your active rooms'), findsOneWidget);
+    expect(find.text('Could not load rooms'), findsOneWidget);
+    expect(find.text('Try again'), findsOneWidget);
+    expect(find.text('You have no rooms yet.'), findsNothing);
   });
 
   testWidgets('recent chats shows at most the three newest conversations', (
@@ -910,7 +967,7 @@ void main() {
     },
   );
 
-  group('Moments from your circle', () {
+  group('From people you follow', () {
     testWidgets('keeps typical full names readable at 1100 and 1440', (
       tester,
     ) async {
@@ -966,7 +1023,7 @@ void main() {
     });
 
     testWidgets('shows one tile per followed person with an active Moment, '
-        'plus the user\'s own Moment slot', (tester) async {
+        'and no own tile', (tester) async {
       useDesktop(tester, const Size(1440, 820));
       await seedFriend('friend-1', 'Ola');
       await seedFollowing('friend-1', 'Ola');
@@ -1041,7 +1098,11 @@ void main() {
         of: find.byType(MomentStoryTile),
         matching: find.text(text),
       );
-      expect(inRail('You'), findsOneWidget);
+      // The own story tile left Home; "You" is the people rail's first
+      // tile, which is a different surface with a different rule.
+      expect(inRail('You'), findsNothing);
+      expect(find.byKey(const ValueKey('home-your-moment')), findsNothing);
+      expect(find.byKey(const ValueKey('home-record-moment')), findsOneWidget);
       expect(inRail('Ola'), findsWidgets);
       expect(inRail('Marek'), findsWidgets);
       // Nobody outside friends/following/self may appear.
@@ -1054,7 +1115,9 @@ void main() {
       expect(inRail('Celina'), findsWidgets);
       // Compact Home avatars carry no invented presence or redundant status.
       expect(find.text('New'), findsNothing);
-      expect(find.text('Your circle'), findsOneWidget);
+      // The duplicate recap of the same authors left Home entirely.
+      expect(find.text('Your circle'), findsNothing);
+      expect(find.text('From people you follow'), findsOneWidget);
     });
 
     testWidgets('a Moment tile opens the existing viewer and the plus opens '
@@ -1086,7 +1149,14 @@ void main() {
         await tester.pump(const Duration(milliseconds: 60));
       }
 
-      await tester.tap(find.text('Ola').first);
+      // "Ola" is a friend, so she is also a tile in "Your people" now.
+      // The Moment must be opened from the rail, not the friends strip.
+      await tester.tap(
+        find.descendant(
+          of: find.byType(MomentStoryTile),
+          matching: find.text('Ola'),
+        ),
+      );
       await tester.pump();
       expect(opened?.id, 'm1');
       expect(opened?.audioUrl, isNull);
@@ -1123,7 +1193,7 @@ void main() {
         of: find.byType(MomentStoryTile),
         matching: find.text(text),
       );
-      expect(inRail('You'), findsOneWidget);
+      expect(inRail('You'), findsNothing);
       expect(inRail('Ola'), findsNothing);
       expect(inRail('Marek'), findsNothing);
       expect(find.text('Follow'), findsNothing);
@@ -1139,13 +1209,172 @@ void main() {
       }
 
       expect(find.text('YO Moments from your circle'), findsNothing);
+      expect(find.text('From people you follow'), findsOneWidget);
+      // The one "You" on the screen is the people rail's own tile.
       expect(find.text('You'), findsOneWidget);
+      expect(find.byKey(const ValueKey('home-people-me')), findsOneWidget);
+      // The rail keeps a real creation target rather than filler copy.
+      expect(find.byKey(const ValueKey('home-record-moment')), findsOneWidget);
       expect(
         find.textContaining('No Moments from your circle yet'),
         findsNothing,
       );
       expect(find.text('Find creators'), findsNothing);
     });
+  });
+
+  group('availability on desktop Home', () {
+    testWidgets('the greeting row carries the readable chip with a 44 px '
+        'target', (tester) async {
+      useDesktop(tester, const Size(1440, 900));
+      await db.collection('users').doc(uid).set({
+        'uid': uid,
+        'displayName': 'Kamil',
+        'email': 'me@yovoice.app',
+        'availability': UserAvailability.busy.wire,
+      });
+      await tester.pumpWidget(host(buildHome()));
+      for (var i = 0; i < 6; i++) {
+        await tester.pump(const Duration(milliseconds: 60));
+      }
+
+      final chip = find.byType(AvailabilityChip);
+      expect(chip, findsOneWidget);
+      expect(tester.getSize(chip).height, greaterThanOrEqualTo(44));
+      expect(
+        find.descendant(of: chip, matching: find.text('Do not disturb')),
+        findsOneWidget,
+      );
+      // Trailing end of the greeting row: right of the greeting, and above
+      // the friends rail it summarises.
+      expect(
+        tester.getTopLeft(chip).dx,
+        greaterThan(tester.getTopLeft(find.textContaining('Kamil')).dx),
+      );
+      expect(
+        tester.getTopLeft(chip).dy,
+        lessThan(tester.getTopLeft(find.text('Your people')).dy),
+      );
+    });
+
+    testWidgets('the own tile opens the picker as a dialog at >= 900 px and '
+        'writes the choice', (tester) async {
+      useDesktop(tester, const Size(1440, 900));
+      final presence = PresenceService(firestore: db, auth: auth());
+      await tester.pumpWidget(host(buildHome(presenceService: presence)));
+      for (var i = 0; i < 6; i++) {
+        await tester.pump(const Duration(milliseconds: 60));
+      }
+
+      final me = find.byKey(const ValueKey('home-people-me'));
+      expect(me, findsOneWidget);
+      expect(tester.widget<PeopleStatusAvatar>(me).status, PeopleStatus.online);
+
+      await tester.tap(me);
+      await tester.pumpAndSettle();
+      // Wide viewports get the dialog, never the phone sheet.
+      expect(find.byType(Dialog), findsOneWidget);
+      expect(find.text('Your availability'), findsOneWidget);
+
+      await tester.tap(
+        find.byKey(const ValueKey('availability-option-invisible')),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        (await db.collection('users').doc(uid).get()).data()!['availability'],
+        'invisible',
+      );
+      for (var i = 0; i < 6; i++) {
+        await tester.pump(const Duration(milliseconds: 60));
+      }
+      // Invisible is grey to its owner — the projected "Away" ring — and is
+      // still labelled with the state the account actually chose.
+      expect(tester.widget<PeopleStatusAvatar>(me).status, PeopleStatus.away);
+      expect(tester.widget<PeopleStatusAvatar>(me).statusLabel, 'Invisible');
+    });
+
+    testWidgets('the chip is its own semantics node: the greeting and the '
+        'subtitle are never swallowed into a button', (tester) async {
+      useDesktop(tester, const Size(1440, 1200));
+      await db.collection('users').doc(uid).set({
+        'uid': uid,
+        'displayName': 'Kamil',
+        'email': 'me@yovoice.app',
+        'availability': UserAvailability.busy.wire,
+      });
+      final semantics = tester.ensureSemantics();
+      await tester.pumpWidget(host(buildHome()));
+      for (var i = 0; i < 6; i++) {
+        await tester.pump(const Duration(milliseconds: 60));
+      }
+
+      const phrase = 'Availability: Do not disturb. Change';
+      final buttons = compiledButtonLabels(tester);
+      expect(buttons.where((label) => label == phrase).length, 1);
+      // The regression this pins: the greeting Row's Text nodes used to be
+      // merged into the chip's node, giving a 138x44 control a 1396x60
+      // activation region named after the whole greeting.
+      for (final label in buttons) {
+        expect(
+          label,
+          isNot(
+            anyOf(
+              contains('Good '),
+              contains('Here is what sounds good right now'),
+            ),
+          ),
+          reason: 'no control may claim the greeting as its name: "$label"',
+        );
+      }
+      expect(announcedLabelOf(tester, find.byType(AvailabilityChip)), phrase);
+      semantics.dispose();
+    });
+  });
+
+  testWidgets('Your active rooms survives 200% text without clipping', (
+    tester,
+  ) async {
+    // WCAG 1.4.4: at 200 % text the owned-room card must reflow, not be cut
+    // off. The row used to pin itself to artwork + a flat 96 px, and clipped
+    // the Enter button by 36 px.
+    await seedRoom(
+      id: 'mine',
+      name: 'Evening Talks',
+      description: 'Real talk',
+      hostId: uid,
+    );
+    for (final size in const [
+      Size(1100, 1000),
+      Size(1440, 1000),
+      Size(1440, 6000),
+    ]) {
+      useDesktop(tester, size);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: MediaQuery(
+            data: MediaQueryData(
+              size: size,
+              textScaler: const TextScaler.linear(2),
+            ),
+            child: Scaffold(body: buildHome()),
+          ),
+        ),
+      );
+      for (var i = 0; i < 6; i++) {
+        await tester.pump(const Duration(milliseconds: 60));
+      }
+
+      expect(
+        find.text('Your active rooms'),
+        findsOneWidget,
+        reason: 'the section must actually render at ${size.width}',
+      );
+      expect(
+        tester.takeException(),
+        isNull,
+        reason: 'at ${size.width}x${size.height} @200% text',
+      );
+    }
   });
 
   // Every supported desktop size, plus the narrow end of the range.
@@ -1172,13 +1401,24 @@ void main() {
         lastMessage: 'See you tonight',
         unread: 2,
       );
-      await seedRoom(id: 'r1', name: 'Room one', description: 'One');
-      await seedRoom(id: 'r2', name: 'Room two', description: 'Two');
-      await seedRoom(id: 'r3', name: 'Room three', description: 'Three');
+      for (var index = 0; index < 6; index++) {
+        await seedRoom(
+          id: 'r$index',
+          name: 'Room $index',
+          description: 'Room number $index',
+        );
+      }
 
       await tester.pumpWidget(host(buildHome()));
       await tester.pump(const Duration(milliseconds: 200));
 
+      // One featured banner plus at most three: Discover owns the rest, so
+      // Home never mounts a participants listener per live room.
+      expect(
+        find.byType(HomeRoomBanner),
+        findsNWidgets(4),
+        reason: 'Home caps the board at four banners',
+      );
       expect(tester.takeException(), isNull);
     });
   }

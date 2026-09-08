@@ -8,6 +8,10 @@ import 'package:yovoice/features/moments/presentation/widgets/moment_expiry_acce
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
 /// Two real routes, with no permission request or room connection on Home.
+///
+/// One 44 px pill row rather than two 66 px cards: the routes are the same
+/// (`home-quick-create-room`, `home-quick-friends`), the former subtitles
+/// survive as tooltips, and Home gives the space back to people and rooms.
 class HomeQuickActions extends StatelessWidget {
   const HomeQuickActions({
     required this.onCreateRoom,
@@ -21,27 +25,62 @@ class HomeQuickActions extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final copy = AppLocalizations.of(context);
+    final colors = Theme.of(context).colorScheme;
     return LayoutBuilder(
       builder: (context, constraints) {
         final stacked =
             constraints.maxWidth < 350 ||
             MediaQuery.textScalerOf(context).scale(1) >= 1.6;
-        final create = _QuickAction(
-          key: const ValueKey('home-quick-create-room'),
-          icon: Icons.add_rounded,
-          title: copy.homeCreateRoom,
-          subtitle: copy.homeStartConversation,
-          onTap: onCreateRoom,
+        // Filled primary controls take their `onPrimary` foreground as the
+        // 2 px keyboard boundary (UI.md); the neutral pill keeps `focus`.
+        final create = _FocusOutline(
+          radius: 999,
+          color: colors.onPrimary,
+          child: Tooltip(
+            message: copy.homeStartConversation,
+            child: FilledButton.icon(
+              key: const ValueKey('home-quick-create-room'),
+              onPressed: onCreateRoom,
+              style: FilledButton.styleFrom(
+                minimumSize: const Size(0, 44),
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                shape: const StadiumBorder(),
+              ),
+              icon: const Icon(Icons.add_rounded, size: 20),
+              label: Text(
+                copy.homeCreateRoom,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ),
         );
-        final friends = _QuickAction(
-          key: const ValueKey('home-quick-friends'),
-          icon: Icons.person_add_alt_1_rounded,
-          title: copy.friends,
-          subtitle: copy.homeGrowYourCircle,
-          onTap: onFriends,
+        final friends = _FocusOutline(
+          radius: 999,
+          child: Tooltip(
+            message: copy.homeGrowYourCircle,
+            child: OutlinedButton.icon(
+              key: const ValueKey('home-quick-friends'),
+              onPressed: onFriends,
+              style: OutlinedButton.styleFrom(
+                minimumSize: const Size(0, 44),
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                shape: const StadiumBorder(),
+              ),
+              icon: const Icon(Icons.person_add_alt_1_rounded, size: 20),
+              label: Text(
+                copy.friends,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ),
         );
         return stacked
-            ? Column(children: [create, const SizedBox(height: 10), friends])
+            ? Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [create, const SizedBox(height: 10), friends],
+              )
             : Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -51,85 +90,6 @@ class HomeQuickActions extends StatelessWidget {
                 ],
               );
       },
-    );
-  }
-}
-
-class _QuickAction extends StatelessWidget {
-  const _QuickAction({
-    required this.icon,
-    required this.title,
-    required this.subtitle,
-    required this.onTap,
-    super.key,
-  });
-
-  final IconData icon;
-  final String title;
-  final String subtitle;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = context.appPalette;
-    return _FocusOutline(
-      radius: 19,
-      child: Material(
-        color: palette.surface,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(19),
-          side: BorderSide(color: palette.border),
-        ),
-        clipBehavior: Clip.antiAlias,
-        child: InkWell(
-          onTap: onTap,
-          child: Padding(
-            padding: const EdgeInsets.all(14),
-            child: Row(
-              children: [
-                Container(
-                  width: 38,
-                  height: 38,
-                  decoration: BoxDecoration(
-                    color: palette.surfaceRaised,
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Icon(
-                    icon,
-                    color: palette.interactiveForeground,
-                    size: 23,
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        title,
-                        style: TextStyle(
-                          color: palette.textPrimary,
-                          fontSize: 14,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                      const SizedBox(height: 3),
-                      Text(
-                        subtitle,
-                        style: TextStyle(
-                          color: palette.textSecondary,
-                          fontSize: 11.5,
-                          height: 1.3,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
     );
   }
 }
@@ -351,9 +311,13 @@ class HomeRoomsLoading extends StatelessWidget {
 /// A parent focus scope paints the boundary without stealing the native
 /// control's keyboard focus or introducing a second semantic action.
 class _FocusOutline extends StatefulWidget {
-  const _FocusOutline({required this.child, required this.radius});
+  const _FocusOutline({required this.child, required this.radius, this.color});
   final Widget child;
   final double radius;
+
+  /// The boundary colour; defaults to the palette `focus` ring for neutral
+  /// surfaces. A filled primary control passes its `onPrimary`.
+  final Color? color;
   @override
   State<_FocusOutline> createState() => _FocusOutlineState();
 }
@@ -371,7 +335,9 @@ class _FocusOutlineState extends State<_FocusOutline> {
         borderRadius: BorderRadius.circular(widget.radius),
         border: Border.all(
           width: 2,
-          color: _focused ? context.appPalette.focus : Colors.transparent,
+          color: _focused
+              ? (widget.color ?? context.appPalette.focus)
+              : Colors.transparent,
         ),
       ),
       child: widget.child,

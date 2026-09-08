@@ -334,6 +334,7 @@ class DesktopSidebar extends StatelessWidget {
                 profileService: profileService,
                 onTap: onOpenProfile,
                 onSettings: onOpenProfileSettings,
+                shortRail: useCompactCreateActions,
               ),
             ],
           ),
@@ -908,11 +909,17 @@ class _ProfileCard extends StatelessWidget {
     required this.onTap,
     required this.onSettings,
     this.profileService,
+    this.shortRail = false,
   });
 
   final VoidCallback onTap;
   final VoidCallback onSettings;
   final ProfileService? profileService;
+
+  /// The rail is under [DesktopSidebar.compactCreateActionsBelow] and is
+  /// already trading density for keeping every destination visible, the same
+  /// tier that collapses the two create actions into one row.
+  final bool shortRail;
 
   /// The signed-in profile stream, or null when there is no usable
   /// session (sign-out in flight, dev harness). The card then renders its
@@ -983,6 +990,14 @@ class _ProfileCard extends StatelessWidget {
                                   AvailabilityChip(
                                     availability: profile.availability,
                                     compact: true,
+                                    // 42x26 on its own — under the 44x44
+                                    // bar — so the chip reserves its target
+                                    // wherever the rail can pay the 18 px.
+                                    // Below 700 px the rail is already
+                                    // clipping its own nav column, and
+                                    // clipped navigation is the worse
+                                    // failure of the two.
+                                    hitTargetSize: shortRail ? null : 44,
                                   ),
                                 ],
                               ],

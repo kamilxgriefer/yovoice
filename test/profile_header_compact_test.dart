@@ -15,7 +15,12 @@ import 'package:yovoice/shared/identity/public_identity_repository.dart';
 /// desktop the Back arrow floated alone in the far corner. This suite
 /// asserts the redesign's contract:
 ///
-///  * the header region is bounded — at most ~30% of a 390x844 viewport;
+///  * the header region is bounded — at most ~33% of a 390x844 viewport
+///    (was ~30%: the availability chip on the username line now reserves
+///    the 44 px tap target docs/UI.md requires of every interactive
+///    control, which adds ~19 px to the name plate. The budget exists to
+///    stop the old 320 px gradient banner, not to price out a compliant
+///    tap target, so it moves rather than the target);
 ///  * the banner is a slim accent, never a viewport-consuming banner;
 ///  * Back is visible when the route can pop, with a >= 44px target,
 ///    aligned with the content frame (not the screen edge) on desktop;
@@ -126,7 +131,7 @@ void _setSize(WidgetTester tester, Size size, {double textScale = 1.0}) {
 Finder get _backButton => find.byTooltip('Back');
 
 void main() {
-  testWidgets('390x844: header region is at most ~30% of the viewport '
+  testWidgets('390x844: header region is at most ~33% of the viewport '
       'and the banner is a slim accent', (tester) async {
     _setSize(tester, const Size(390, 844));
     await _pumpPushedHeader(tester);
@@ -134,7 +139,7 @@ void main() {
     final headerSize = tester.getSize(find.byType(ProfileHeader));
     expect(
       headerSize.height,
-      lessThanOrEqualTo(844 * 0.30),
+      lessThanOrEqualTo(844 * 0.33),
       reason:
           'the header must never again claim a giant slice of the '
           'viewport (was a fixed 320px = 38% at this size)',
@@ -240,7 +245,9 @@ void main() {
     );
     expect(
       tester.getSize(find.byType(ProfileHeader)).height,
-      lessThanOrEqualTo(295),
+      // 305, not 295: the availability chip on the username line now
+      // reserves its 44 px tap target, which the name plate pays for.
+      lessThanOrEqualTo(305),
       reason: 'the complete owner identity stays substantially compact',
     );
     expect(tester.takeException(), isNull);

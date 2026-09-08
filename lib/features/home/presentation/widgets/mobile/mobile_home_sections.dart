@@ -124,7 +124,14 @@ class MobileSectionHeader extends StatelessWidget {
   }
 }
 
-/// `Moments from your circle` — your own tile first, then the circle's.
+/// The followed-Moments rail — one avatar per followed author with a
+/// playable active chain.
+///
+/// By default the signed-in account's own tile leads the rail (the
+/// standalone story strip). Home passes [showOwnTile] false, because the
+/// account's avatar already leads "Your people", and [trailingRecordTile]
+/// true, so recording stays one tap away and the rail always has a visible
+/// recovery target when the last chain expires.
 class MobileMomentsStrip extends StatelessWidget {
   const MobileMomentsStrip({
     required this.moments,
@@ -137,6 +144,8 @@ class MobileMomentsStrip extends StatelessWidget {
     this.expandedLabels = false,
     this.viewsService,
     this.viewedIds,
+    this.showOwnTile = true,
+    this.trailingRecordTile = false,
     super.key,
   });
 
@@ -162,6 +171,16 @@ class MobileMomentsStrip extends StatelessWidget {
   /// stops this rail from opening a second `momentViews` listener — the
   /// desktop strip resolves the set once and hands it down.
   final Set<String>? viewedIds;
+
+  /// The signed-in account's own story tile, first in the rail. Home hides
+  /// it: the own avatar already leads "Your people" a few rows up, and the
+  /// own chain stays playable from the YO Moments story strip.
+  final bool showOwnTile;
+
+  /// A last tile that records a Voice Moment. When the own tile is hidden
+  /// this is the rail's expiry-recovery focus target, so recovery never
+  /// lands on nothing.
+  final bool trailingRecordTile;
 
   @override
   Widget build(BuildContext context) => MomentViewedIds(
@@ -194,7 +213,9 @@ class MobileMomentsStrip extends StatelessWidget {
     final mineAll = mineChain?.moments ?? const <VoiceMoment>[];
     final mine = mineAll.isEmpty ? null : mineAll.last;
     final visibleMoments = <VoiceMoment>[
-      ...?mineChain?.moments,
+      // Only avatars that are actually in the rail may be announced or
+      // recovered from; a hidden own tile is not in it.
+      if (showOwnTile) ...?mineChain?.moments,
       for (final chain in shown) ...chain.moments,
     ];
 
@@ -214,102 +235,84 @@ class MobileMomentsStrip extends StatelessWidget {
               '$count Voice Moments wygasło i zostało usuniętych ze strony głównej.',
             ),
       builder: (context, recoveryFocus, tileFocusNode) {
-        final yours = MomentStoryTile(
-          key: const ValueKey('home-your-moment'),
-          // Your own chain is heard once every link carries your own
-          // `momentViews` doc; an empty own chain is a quiet ring with
-          // the `+`, never an "unheard" claim about nothing.
-          seen: mineChain == null || !mineChain.hasUnviewed(viewedIds),
-          // This avatar always exists, even when the last own Moment expires.
-          // It is the visible, actionable recovery target for the whole rail.
-          focusNode: recoveryFocus,
-          name: copy.homeYou,
-          userId: profile?.uid ?? currentUserId,
-          // The profile is authoritative. A Moment's denormalized photo can
-          // be older than a newly saved avatar.
-          photoUrl: profile?.photoUrl,
-          mediaRevision: profile?.profileUpdatedAt,
-          displayName: profile?.displayName,
-          fallbackIcon: Icons.person_rounded,
-          showAdd: true,
-          // A real count of YOUR live Moments — the chain badge.
-          count: mineAll.length,
-          countKey: const ValueKey('home-your-moment-count'),
-          semanticLabel: mine == null
-              ? copy.text(
-                  'Record your first Voice Moment',
-                  'Nagraj swój pierwszy Voice Moment',
-                )
-              : (mineAll.length > 1
-                    ? copy.template(
-                        'Play your {count} Voice Moments',
-                        'Odtwórz swoje Voice Moments ({count})',
-                        values: {'count': mineAll.length},
+        // The recovery target is the one tile that always exists: the own
+        // tile when it is shown, otherwise the trailing Record tile.
+        final ownIsRecovery = showOwnTile;
+        final recordIsRecovery = !showOwnTile && trailingRecordTile;
+        final yours = !showOwnTile
+            ? null
+            : MomentStoryTile(
+                key: const ValueKey('home-your-moment'),
+                // Your own chain is heard once every link carries your own
+                // `momentViews` doc; an empty own chain is a quiet ring with
+                // the `+`, never an "unheard" claim about nothing.
+                seen: mineChain == null || !mineChain.hasUnviewed(viewedIds),
+                // This avatar always exists, even when the last own Moment
+                // expires. It is the visible, actionable recovery target for
+                // the whole rail.
+                focusNode: ownIsRecovery ? recoveryFocus : null,
+                name: copy.homeYou,
+                userId: profile?.uid ?? currentUserId,
+                // The profile is authoritative. A Moment's denormalized photo
+                // can be older than a newly saved avatar.
+                photoUrl: profile?.photoUrl,
+                mediaRevision: profile?.profileUpdatedAt,
+                displayName: profile?.displayName,
+                fallbackIcon: Icons.person_rounded,
+                showAdd: true,
+                // A real count of YOUR live Moments — the chain badge.
+                count: mineAll.length,
+                countKey: const ValueKey('home-your-moment-count'),
+                semanticLabel: mine == null
+                    ? copy.text(
+                        'Record your first Voice Moment',
+                        'Nagraj swój pierwszy Voice Moment',
                       )
-                    : copy.text(
-                        'Play your Voice Moment',
-                        'Odtwórz swój Voice Moment',
-                      )),
-          onTap: mine == null
-              ? onCreateMoment
-              : (onOpenChain != null
-                    ? () => onOpenChain!(mineAll)
-                    : () => onOpenMoment(mine)),
-          onAddTap: onCreateMoment,
-        );
+                    : (mineAll.length > 1
+                          ? copy.template(
+                              'Play your {count} Voice Moments',
+                              'Odtwórz swoje Voice Moments ({count})',
+                              values: {'count': mineAll.length},
+                            )
+                          : copy.text(
+                              'Play your Voice Moment',
+                              'Odtwórz swój Voice Moment',
+                            )),
+                onTap: mine == null
+                    ? onCreateMoment
+                    : (onOpenChain != null
+                          ? () => onOpenChain!(mineAll)
+                          : () => onOpenMoment(mine)),
+                onAddTap: onCreateMoment,
+              );
+        final record = !trailingRecordTile
+            ? null
+            : _RecordMomentTile(
+                expandedLabels: expandedLabels,
+                focusNode: recordIsRecovery ? recoveryFocus : null,
+                onTap: onCreateMoment,
+              );
 
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
-            // This is a story rail, not an empty-state card. The signed-in
-            // avatar is always first; every other avatar proves that person
-            // has an active Voice Moment the viewer can open.
+            // This is a story rail, not an empty-state card. Every author
+            // avatar proves that person has an active Voice Moment the
+            // viewer can open.
             SingleChildScrollView(
               scrollDirection: Axis.horizontal,
               clipBehavior: Clip.none,
               child: Row(
                 children: [
-                  Focus(
-                    canRequestFocus: false,
-                    skipTraversal: true,
-                    onFocusChange: (focused) {
-                      if (!focused) return;
-                      WidgetsBinding.instance.addPostFrameCallback((_) {
-                        final target = recoveryFocus.context;
-                        if (target == null ||
-                            !target.mounted ||
-                            !recoveryFocus.hasFocus) {
-                          return;
-                        }
-                        // The expired author can be far along a scrolled
-                        // rail. Recovery must reveal the actual own action,
-                        // not merely move keyboard focus offscreen. Jumping
-                        // avoids motion and respects Reduce Motion as well.
-                        Scrollable.ensureVisible(target);
-                      });
-                    },
-                    child: ListenableBuilder(
-                      listenable: recoveryFocus,
+                  if (yours != null)
+                    _RecoveryOutline(
+                      recoveryFocus: recoveryFocus,
                       child: yours,
-                      builder: (context, child) => DecoratedBox(
-                        key: const ValueKey('home-own-moment-focus-outline'),
-                        position: DecorationPosition.foreground,
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(14),
-                          border: Border.all(
-                            width: 2,
-                            color: recoveryFocus.hasFocus
-                                ? context.appPalette.focus
-                                : Colors.transparent,
-                          ),
-                        ),
-                        child: child,
-                      ),
                     ),
-                  ),
                   for (final chain in shown) ...[
-                    const SizedBox(width: 10),
+                    if (chain != shown.first || yours != null)
+                      const SizedBox(width: 10),
                     MomentStoryTile(
                       expandedLabel: expandedLabels,
                       key: ValueKey('home-moment-${chain.moments.last.id}'),
@@ -339,12 +342,161 @@ class MobileMomentsStrip extends StatelessWidget {
                           : () => onOpenChain!(chain.moments),
                     ),
                   ],
+                  if (record != null) ...[
+                    if (yours != null || shown.isNotEmpty)
+                      const SizedBox(width: 10),
+                    recordIsRecovery
+                        ? _RecoveryOutline(
+                            recoveryFocus: recoveryFocus,
+                            child: record,
+                          )
+                        : record,
+                  ],
                 ],
               ),
             ),
           ],
         );
       },
+    );
+  }
+}
+
+/// Paints the 2 px focus boundary around the rail's recovery target and
+/// scrolls it into view when expiry recovery lands on it.
+class _RecoveryOutline extends StatelessWidget {
+  const _RecoveryOutline({required this.recoveryFocus, required this.child});
+
+  final FocusNode recoveryFocus;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Focus(
+      canRequestFocus: false,
+      skipTraversal: true,
+      onFocusChange: (focused) {
+        if (!focused) return;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          final target = recoveryFocus.context;
+          if (target == null || !target.mounted || !recoveryFocus.hasFocus) {
+            return;
+          }
+          // The expired author can be far along a scrolled rail. Recovery
+          // must reveal the actual own action, not merely move keyboard
+          // focus offscreen. Jumping avoids motion and respects Reduce
+          // Motion as well.
+          Scrollable.ensureVisible(target);
+        });
+      },
+      child: ListenableBuilder(
+        listenable: recoveryFocus,
+        child: child,
+        builder: (context, child) => DecoratedBox(
+          key: const ValueKey('home-own-moment-focus-outline'),
+          position: DecorationPosition.foreground,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              width: 2,
+              color: recoveryFocus.hasFocus
+                  ? context.appPalette.focus
+                  : Colors.transparent,
+            ),
+          ),
+          child: child,
+        ),
+      ),
+    );
+  }
+}
+
+/// The trailing "Record" tile: the same footprint as an author tile, a
+/// microphone disc instead of an avatar. It carries the `home-record-moment`
+/// key the own tile's `+` badge carries in the standalone strip, so Home's
+/// "record from Home" expectations keep one finder.
+class _RecordMomentTile extends StatelessWidget {
+  const _RecordMomentTile({
+    required this.expandedLabels,
+    required this.onTap,
+    this.focusNode,
+  });
+
+  final bool expandedLabels;
+  final VoidCallback onTap;
+  final FocusNode? focusNode;
+
+  @override
+  Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
+    final palette = context.appPalette;
+    final disc = MomentStoryTile.discFor(context);
+    final label = copy.text('Record a Voice Moment', 'Nagraj Voice Moment');
+    return SizedBox(
+      width: MomentStoryTile.widthFor(context, expanded: expandedLabels),
+      height: MomentStoryTile.heightFor(context, expanded: expandedLabels),
+      child: Semantics(
+        button: true,
+        label: label,
+        excludeSemantics: true,
+        onTap: onTap,
+        child: Tooltip(
+          message: label,
+          child: InkWell(
+            key: const ValueKey('home-record-moment'),
+            onTap: onTap,
+            focusNode: focusNode,
+            excludeFromSemantics: true,
+            borderRadius: BorderRadius.circular(14),
+            focusColor: palette.focus.withValues(alpha: .14),
+            hoverColor: palette.interactiveForeground.withValues(alpha: .08),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: disc,
+                  height: disc,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: palette.surfaceRaised,
+                    border: Border.all(color: palette.borderStrong, width: 1.5),
+                  ),
+                  child: Icon(
+                    Icons.mic_rounded,
+                    size: 24,
+                    color: palette.interactiveForeground,
+                  ),
+                ),
+                // The exact metrics an author tile uses, so the label sits
+                // on the same baseline and the tile never overflows its
+                // own `heightFor` at any text scale.
+                const SizedBox(height: 6),
+                SizedBox(
+                  width: double.infinity,
+                  height: MomentStoryTile.nameHeightFor(
+                    context,
+                    expanded: expandedLabels,
+                  ),
+                  child: Center(
+                    child: Text(
+                      copy.text('Record', 'Nagraj'),
+                      maxLines: expandedLabels ? 2 : 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: palette.textPrimary,
+                        fontSize: 11,
+                        height: 1.08,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

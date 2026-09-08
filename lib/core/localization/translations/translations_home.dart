@@ -7,6 +7,7 @@ const homeTranslationKeys = <String>[
   'home.startConversation',
   'home.growYourCircle',
   'home.you',
+  'home.fromPeopleYouFollow',
 ];
 
 const homeTranslations = <String, Map<String, String>>{
@@ -17,6 +18,7 @@ const homeTranslations = <String, Map<String, String>>{
     'home.startConversation': 'Einladen und reden',
     'home.growYourCircle': 'Erweitere deinen Kreis',
     'home.you': 'Du',
+    'home.fromPeopleYouFollow': 'Von Leuten, denen du folgst',
   },
   'es': {
     'home.liveForYou': 'En vivo para ti',
@@ -25,6 +27,7 @@ const homeTranslations = <String, Map<String, String>>{
     'home.startConversation': 'Invita y conversa',
     'home.growYourCircle': 'Amplía tu círculo',
     'home.you': 'Tú',
+    'home.fromPeopleYouFollow': 'De personas que sigues',
   },
   'pt': {
     'home.liveForYou': 'Em direto para ti',
@@ -33,6 +36,7 @@ const homeTranslations = <String, Map<String, String>>{
     'home.startConversation': 'Convida e conversa',
     'home.growYourCircle': 'Expande o teu círculo',
     'home.you': 'Tu',
+    'home.fromPeopleYouFollow': 'De pessoas que segues',
   },
   'pt_BR': {
     'home.liveForYou': 'Ao vivo para você',
@@ -41,6 +45,7 @@ const homeTranslations = <String, Map<String, String>>{
     'home.startConversation': 'Convide e converse',
     'home.growYourCircle': 'Amplie seu círculo',
     'home.you': 'Você',
+    'home.fromPeopleYouFollow': 'De pessoas que você segue',
   },
   'fr': {
     'home.liveForYou': 'En direct pour vous',
@@ -49,6 +54,7 @@ const homeTranslations = <String, Map<String, String>>{
     'home.startConversation': 'Invitez et discutez',
     'home.growYourCircle': 'Élargissez votre cercle',
     'home.you': 'Vous',
+    'home.fromPeopleYouFollow': 'Des personnes que vous suivez',
   },
   'it': {
     'home.liveForYou': 'In diretta per te',
@@ -57,6 +63,7 @@ const homeTranslations = <String, Map<String, String>>{
     'home.startConversation': 'Invita e conversa',
     'home.growYourCircle': 'Amplia la tua cerchia',
     'home.you': 'Tu',
+    'home.fromPeopleYouFollow': 'Dalle persone che segui',
   },
   'uk': {
     'home.liveForYou': 'Наживо для тебе',
@@ -65,6 +72,7 @@ const homeTranslations = <String, Map<String, String>>{
     'home.startConversation': 'Запрошуй і спілкуйся',
     'home.growYourCircle': 'Розширюй своє коло',
     'home.you': 'Ти',
+    'home.fromPeopleYouFollow': 'Від людей, за якими ти стежиш',
   },
   'ru': {
     'home.liveForYou': 'В эфире для вас',
@@ -73,6 +81,7 @@ const homeTranslations = <String, Map<String, String>>{
     'home.startConversation': 'Приглашайте и общайтесь',
     'home.growYourCircle': 'Расширяйте свой круг',
     'home.you': 'Вы',
+    'home.fromPeopleYouFollow': 'От людей, на которых вы подписаны',
   },
   'cs': {
     'home.liveForYou': 'Živě pro vás',
@@ -81,6 +90,7 @@ const homeTranslations = <String, Map<String, String>>{
     'home.startConversation': 'Pozvěte ostatní a povídejte si',
     'home.growYourCircle': 'Rozšiřte svůj okruh',
     'home.you': 'Vy',
+    'home.fromPeopleYouFollow': 'Od lidí, které sledujete',
   },
   'sk': {
     'home.liveForYou': 'Naživo pre vás',
@@ -89,6 +99,7 @@ const homeTranslations = <String, Map<String, String>>{
     'home.startConversation': 'Pozvite ostatných a rozprávajte sa',
     'home.growYourCircle': 'Rozšírte svoj okruh',
     'home.you': 'Vy',
+    'home.fromPeopleYouFollow': 'Od ľudí, ktorých sledujete',
   },
   'bg': {
     'home.liveForYou': 'На живо за теб',
@@ -97,6 +108,7 @@ const homeTranslations = <String, Map<String, String>>{
     'home.startConversation': 'Покани и разговаряй',
     'home.growYourCircle': 'Разшири своя кръг',
     'home.you': 'Ти',
+    'home.fromPeopleYouFollow': 'От хора, които следвате',
   },
   'nl': {
     'home.liveForYou': 'Live voor jou',
@@ -105,6 +117,7 @@ const homeTranslations = <String, Map<String, String>>{
     'home.startConversation': 'Nodig uit en praat',
     'home.growYourCircle': 'Breid je kring uit',
     'home.you': 'Jij',
+    'home.fromPeopleYouFollow': 'Van mensen die je volgt',
   },
   'ro': {
     'home.liveForYou': 'În direct pentru tine',
@@ -113,6 +126,7 @@ const homeTranslations = <String, Map<String, String>>{
     'home.startConversation': 'Invită și discută',
     'home.growYourCircle': 'Extinde-ți cercul',
     'home.you': 'Tu',
+    'home.fromPeopleYouFollow': 'De la persoanele pe care le urmărești',
   },
   'tr': {
     'home.liveForYou': 'Senin için canlı',
@@ -121,6 +135,7 @@ const homeTranslations = <String, Map<String, String>>{
     'home.startConversation': 'Davet et ve sohbet et',
     'home.growYourCircle': 'Çevreni genişlet',
     'home.you': 'Sen',
+    'home.fromPeopleYouFollow': 'Takip ettiğin kişilerden',
   },
   'el': {
     'home.liveForYou': 'Ζωντανά για σένα',
@@ -129,6 +144,7 @@ const homeTranslations = <String, Map<String, String>>{
     'home.startConversation': 'Προσκάλεσε και συζήτησε',
     'home.growYourCircle': 'Διεύρυνε τον κύκλο σου',
     'home.you': 'Εσύ',
+    'home.fromPeopleYouFollow': 'Από άτομα που ακολουθείτε',
   },
   'hu': {
     'home.liveForYou': 'Élőben neked',
@@ -137,6 +153,7 @@ const homeTranslations = <String, Map<String, String>>{
     'home.startConversation': 'Hívj meg másokat és beszélgess',
     'home.growYourCircle': 'Bővítsd a körödet',
     'home.you': 'Te',
+    'home.fromPeopleYouFollow': 'Azoktól, akiket követsz',
   },
   'hr': {
     'home.liveForYou': 'Uživo za tebe',
@@ -145,6 +162,7 @@ const homeTranslations = <String, Map<String, String>>{
     'home.startConversation': 'Pozovi i razgovaraj',
     'home.growYourCircle': 'Proširi svoj krug',
     'home.you': 'Ti',
+    'home.fromPeopleYouFollow': 'Od ljudi koje pratiš',
   },
   'sr': {
     'home.liveForYou': 'Уживо за тебе',
@@ -153,6 +171,7 @@ const homeTranslations = <String, Map<String, String>>{
     'home.startConversation': 'Позови и разговарај',
     'home.growYourCircle': 'Прошири свој круг',
     'home.you': 'Ти',
+    'home.fromPeopleYouFollow': 'Од људи које пратиш',
   },
   'sv': {
     'home.liveForYou': 'Live för dig',
@@ -161,6 +180,7 @@ const homeTranslations = <String, Map<String, String>>{
     'home.startConversation': 'Bjud in och prata',
     'home.growYourCircle': 'Utöka din krets',
     'home.you': 'Du',
+    'home.fromPeopleYouFollow': 'Från personer du följer',
   },
   'da': {
     'home.liveForYou': 'Live til dig',
@@ -169,6 +189,7 @@ const homeTranslations = <String, Map<String, String>>{
     'home.startConversation': 'Invitér og tal sammen',
     'home.growYourCircle': 'Udvid din kreds',
     'home.you': 'Dig',
+    'home.fromPeopleYouFollow': 'Fra personer, du følger',
   },
   'nb': {
     'home.liveForYou': 'Direkte for deg',
@@ -177,6 +198,7 @@ const homeTranslations = <String, Map<String, String>>{
     'home.startConversation': 'Inviter og snakk',
     'home.growYourCircle': 'Utvid kretsen din',
     'home.you': 'Du',
+    'home.fromPeopleYouFollow': 'Fra personer du følger',
   },
   'fi': {
     'home.liveForYou': 'Livenä sinulle',
@@ -185,6 +207,7 @@ const homeTranslations = <String, Map<String, String>>{
     'home.startConversation': 'Kutsu ja juttele',
     'home.growYourCircle': 'Laajenna piiriäsi',
     'home.you': 'Sinä',
+    'home.fromPeopleYouFollow': 'Seuraamiltasi ihmisiltä',
   },
   'lt': {
     'home.liveForYou': 'Tiesiogiai tau',
@@ -193,6 +216,7 @@ const homeTranslations = <String, Map<String, String>>{
     'home.startConversation': 'Pakviesk ir kalbėkis',
     'home.growYourCircle': 'Plėsk savo ratą',
     'home.you': 'Tu',
+    'home.fromPeopleYouFollow': 'Nuo žmonių, kuriuos seki',
   },
   'lv': {
     'home.liveForYou': 'Tiešraidē tev',
@@ -201,6 +225,7 @@ const homeTranslations = <String, Map<String, String>>{
     'home.startConversation': 'Uzaicini un sarunājies',
     'home.growYourCircle': 'Paplašini savu loku',
     'home.you': 'Tu',
+    'home.fromPeopleYouFollow': 'No cilvēkiem, kuriem tu seko',
   },
   'et': {
     'home.liveForYou': 'Otse sulle',
@@ -209,6 +234,7 @@ const homeTranslations = <String, Map<String, String>>{
     'home.startConversation': 'Kutsu ja vestle',
     'home.growYourCircle': 'Laienda oma ringi',
     'home.you': 'Sina',
+    'home.fromPeopleYouFollow': 'Inimestelt, keda jälgid',
   },
   'id': {
     'home.liveForYou': 'Langsung untukmu',
@@ -217,6 +243,7 @@ const homeTranslations = <String, Map<String, String>>{
     'home.startConversation': 'Undang dan mengobrol',
     'home.growYourCircle': 'Perluas lingkaranmu',
     'home.you': 'Kamu',
+    'home.fromPeopleYouFollow': 'Dari orang yang kamu ikuti',
   },
   'vi': {
     'home.liveForYou': 'Trực tiếp dành cho bạn',
@@ -225,6 +252,7 @@ const homeTranslations = <String, Map<String, String>>{
     'home.startConversation': 'Mời và trò chuyện',
     'home.growYourCircle': 'Mở rộng cộng đồng của bạn',
     'home.you': 'Bạn',
+    'home.fromPeopleYouFollow': 'Từ những người bạn theo dõi',
   },
   'zh_CN': {
     'home.liveForYou': '为你推荐的直播',
@@ -233,6 +261,7 @@ const homeTranslations = <String, Map<String, String>>{
     'home.startConversation': '邀请好友来聊天',
     'home.growYourCircle': '扩大你的圈子',
     'home.you': '你',
+    'home.fromPeopleYouFollow': '来自你关注的人',
   },
   'zh_TW': {
     'home.liveForYou': '為你推薦的直播',
@@ -241,6 +270,7 @@ const homeTranslations = <String, Map<String, String>>{
     'home.startConversation': '邀請好友來聊天',
     'home.growYourCircle': '擴大你的圈子',
     'home.you': '你',
+    'home.fromPeopleYouFollow': '來自你追蹤的人',
   },
   'ja': {
     'home.liveForYou': 'あなた向けのライブ',
@@ -249,6 +279,7 @@ const homeTranslations = <String, Map<String, String>>{
     'home.startConversation': '招待して話そう',
     'home.growYourCircle': 'つながりを広げよう',
     'home.you': 'あなた',
+    'home.fromPeopleYouFollow': 'フォロー中の人から',
   },
   'ko': {
     'home.liveForYou': '나를 위한 라이브',
@@ -257,6 +288,7 @@ const homeTranslations = <String, Map<String, String>>{
     'home.startConversation': '초대하고 대화하세요',
     'home.growYourCircle': '인맥을 넓혀 보세요',
     'home.you': '나',
+    'home.fromPeopleYouFollow': '팔로우하는 사람들의 소식',
   },
   'ar': {
     'home.liveForYou': 'مباشر لك',
@@ -265,6 +297,7 @@ const homeTranslations = <String, Map<String, String>>{
     'home.startConversation': 'ادعُ وتحدث',
     'home.growYourCircle': 'وسّع دائرتك',
     'home.you': 'أنت',
+    'home.fromPeopleYouFollow': 'من أشخاص تتابعهم',
   },
   'hi': {
     'home.liveForYou': 'आपके लिए लाइव',
@@ -273,6 +306,7 @@ const homeTranslations = <String, Map<String, String>>{
     'home.startConversation': 'बुलाएँ और बात करें',
     'home.growYourCircle': 'अपना दायरा बढ़ाएँ',
     'home.you': 'आप',
+    'home.fromPeopleYouFollow': 'उन लोगों से जिन्हें आप फ़ॉलो करते हैं',
   },
   'bn': {
     'home.liveForYou': 'আপনার জন্য লাইভ',
@@ -281,6 +315,7 @@ const homeTranslations = <String, Map<String, String>>{
     'home.startConversation': 'আমন্ত্রণ জানান ও কথা বলুন',
     'home.growYourCircle': 'আপনার বৃত্ত বাড়ান',
     'home.you': 'আপনি',
+    'home.fromPeopleYouFollow': 'আপনি যাদের অনুসরণ করেন তাদের থেকে',
   },
   'ur': {
     'home.liveForYou': 'آپ کے لیے لائیو',
@@ -289,6 +324,7 @@ const homeTranslations = <String, Map<String, String>>{
     'home.startConversation': 'مدعو کریں اور بات کریں',
     'home.growYourCircle': 'اپنا حلقہ بڑھائیں',
     'home.you': 'آپ',
+    'home.fromPeopleYouFollow': 'ان لوگوں کی طرف سے جنہیں آپ فالو کرتے ہیں',
   },
   'th': {
     'home.liveForYou': 'ไลฟ์สำหรับคุณ',
@@ -297,6 +333,7 @@ const homeTranslations = <String, Map<String, String>>{
     'home.startConversation': 'ชวนมาพูดคุย',
     'home.growYourCircle': 'ขยายวงสังคมของคุณ',
     'home.you': 'คุณ',
+    'home.fromPeopleYouFollow': 'จากคนที่คุณติดตาม',
   },
   'ms': {
     'home.liveForYou': 'Siaran langsung untuk anda',
@@ -305,6 +342,7 @@ const homeTranslations = <String, Map<String, String>>{
     'home.startConversation': 'Jemput dan berbual',
     'home.growYourCircle': 'Luaskan lingkaran anda',
     'home.you': 'Anda',
+    'home.fromPeopleYouFollow': 'Daripada orang yang anda ikuti',
   },
   'fil': {
     'home.liveForYou': 'Live para sa iyo',
@@ -313,6 +351,7 @@ const homeTranslations = <String, Map<String, String>>{
     'home.startConversation': 'Mag-imbita at makipag-usap',
     'home.growYourCircle': 'Palawakin ang mga kakilala mo',
     'home.you': 'Ikaw',
+    'home.fromPeopleYouFollow': 'Mula sa mga taong sinusundan mo',
   },
   'he': {
     'home.liveForYou': 'בשידור חי בשבילך',
@@ -321,6 +360,7 @@ const homeTranslations = <String, Map<String, String>>{
     'home.startConversation': 'להזמין ולשוחח',
     'home.growYourCircle': 'להרחיב את המעגל שלך',
     'home.you': 'אני',
+    'home.fromPeopleYouFollow': 'מאנשים שאתם עוקבים אחריהם',
   },
   'fa': {
     'home.liveForYou': 'پخش زنده برای شما',
@@ -329,6 +369,7 @@ const homeTranslations = <String, Map<String, String>>{
     'home.startConversation': 'دعوت و گفت‌وگو کنید',
     'home.growYourCircle': 'حلقهٔ خود را گسترش دهید',
     'home.you': 'شما',
+    'home.fromPeopleYouFollow': 'از افرادی که دنبال می‌کنید',
   },
   'sw': {
     'home.liveForYou': 'Moja kwa moja kwa ajili yako',
@@ -337,5 +378,6 @@ const homeTranslations = <String, Map<String, String>>{
     'home.startConversation': 'Alika na zungumza',
     'home.growYourCircle': 'Panua mduara wako',
     'home.you': 'Wewe',
+    'home.fromPeopleYouFollow': 'Kutoka kwa watu unaowafuata',
   },
 };

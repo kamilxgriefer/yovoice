@@ -219,6 +219,13 @@ class AppLocalizations {
   );
   String get homeYou => contextualText('home.you', 'You', 'Ty');
 
+  /// Heading of the demoted followed-Moments rail on Home.
+  String get homeFromPeopleYouFollow => contextualText(
+    'home.fromPeopleYouFollow',
+    'From people you follow',
+    'Od osób, które obserwujesz',
+  );
+
   /// Mobile room-directory destination, distinct from desktop Discover.
   String get navigationRooms =>
       contextualText('navigation.rooms', 'Rooms', 'Pokoje');

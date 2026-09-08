@@ -52,6 +52,8 @@ class DesktopMomentsStrip extends StatefulWidget {
     this.avatarOnly = false,
     this.contentBuilder,
     this.viewsService,
+    this.showOwnTile = true,
+    this.trailingRecordTile = false,
     super.key,
   });
 
@@ -108,6 +110,11 @@ class DesktopMomentsStrip extends StatefulWidget {
     List<VoiceMoment> visibleMoments,
   )?
   contentBuilder;
+
+  /// Forwarded to the avatar-only rail. Home hides the own tile (the own
+  /// avatar leads "Your people") and adds the trailing Record tile.
+  final bool showOwnTile;
+  final bool trailingRecordTile;
 
   /// A Moment counts as "new" for a day after it is posted.
   static const Duration newWindow = Duration(hours: 24);
@@ -254,6 +261,8 @@ class _DesktopMomentsStripState extends State<DesktopMomentsStrip> {
                         onOpenChain: widget.onOpenChain,
                         onCreateMoment: widget.onCreateMoment,
                         expiryClock: widget.expiryClock,
+                        showOwnTile: widget.showOwnTile,
+                        trailingRecordTile: widget.trailingRecordTile,
                         // Already resolved above; the rail must not open a
                         // second listener over the same subcollection.
                         viewedIds: viewedIds,
@@ -293,12 +302,11 @@ class _DesktopMomentsStripState extends State<DesktopMomentsStrip> {
                             ),
                             LayoutBuilder(
                               builder: (context, _) {
-                                final tileHeight =
-                                    MomentStoryTile.heightFor(
-                                      context,
-                                      caption: true,
-                                      expanded: true,
-                                    );
+                                final tileHeight = MomentStoryTile.heightFor(
+                                  context,
+                                  caption: true,
+                                  expanded: true,
+                                );
 
                                 final tiles = <Widget>[
                                   _YourMomentTile(

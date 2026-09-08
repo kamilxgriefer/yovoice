@@ -16,11 +16,7 @@ import 'package:yovoice/features/auth/presentation/screens/verify_email_screen.d
 import 'package:yovoice/features/auth/presentation/widgets/email_verification_banner.dart';
 import 'package:yovoice/features/clubs/presentation/screens/club_overview_screen.dart';
 import 'package:yovoice/features/discover/presentation/screens/discover_screen.dart';
-import 'package:yovoice/features/home/presentation/widgets/desktop/followed_creators_card.dart';
 import 'package:yovoice/features/messages/presentation/screens/chat_screen.dart';
-import 'package:yovoice/features/profile/data/models/follow_user.dart';
-import 'package:yovoice/features/profile/presentation/screens/follow_list_screen.dart';
-import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
 import 'package:yovoice/features/home/presentation/screens/home_screen.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/desktop_home.dart';
 import 'package:yovoice/features/home/presentation/widgets/mobile/mobile_home.dart';
@@ -30,7 +26,6 @@ import 'package:yovoice/features/moments/presentation/screens/moment_detail_scre
 import 'package:yovoice/features/home/presentation/widgets/desktop/desktop_sidebar.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/premium_desktop_card.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/sponsored_card.dart';
-import 'package:yovoice/features/home/presentation/widgets/desktop/voice_trending_card.dart';
 import 'package:yovoice/features/home/presentation/widgets/more_sheet.dart';
 import 'package:yovoice/features/home/presentation/widgets/navigation/yo_floating_navigation_dock.dart';
 import 'package:yovoice/features/home/presentation/widgets/navigation/yo_preserving_tab_transition.dart';
@@ -433,6 +428,8 @@ class _MainShellState extends State<MainShell>
     onOpenConversation: (conversation) =>
         unawaited(_openConversation(conversation)),
     onSeeAllChats: () => _onDestinationSelected(1),
+    // "View all" on the followed-Moments rail: the dock's Your Moments.
+    onSeeAllMoments: () => _onDestinationSelected(_momentsSlot),
   );
 
   /// Desktop Home. Every tab-level destination below goes through
@@ -1424,45 +1421,12 @@ class _MainShellState extends State<MainShell>
     );
   }
 
-  Widget _buildDesktopHomeExtras() {
+  Widget _buildDesktopHomeExtras({required bool inline}) {
     return _DesktopHomeExtras(
-      isVisible: _homeVisible,
-      currentUserId: _currentUserId,
-      onOpenRoom: (room) => unawaited(
-        Navigator.of(context).push<void>(
-          MaterialPageRoute<void>(builder: (_) => RoomEntryScreen(room: room)),
-        ),
-      ),
-      // "View all" on the Voice Trending card goes to Moments. It used to
-      // go to Discover, under a section heading that said "Trending
-      // Moments" while listing live ROOMS — the label was renamed to
-      // "Live rooms" (which keeps its own link to Discover) and the card
-      // gained a real Moments section, so this button now matches what it
-      // sits under.
-      onSeeAll: () => _onDestinationSelected(_momentsSlot),
-      onSeeAllRooms: () =>
-          unawaited(_openMoreDestination(MoreDestination.discover)),
+      inline: inline,
       onCheckPlans: () => unawaited(
         Navigator.of(context).push<void>(
           MaterialPageRoute<void>(builder: (_) => const PremiumScreen()),
-        ),
-      ),
-      onOpenCreator: (creator) => unawaited(
-        showProfilePreview(
-          context,
-          userId: creator.uid,
-          displayName: creator.displayName,
-          photoUrl: creator.photoUrl,
-        ),
-      ),
-      onViewAllCreators: () => unawaited(
-        Navigator.of(context).push<void>(
-          MaterialPageRoute<void>(
-            builder: (_) => FollowListScreen(
-              userId: _currentUserId,
-              type: FollowListType.following,
-            ),
-          ),
         ),
       ),
     );
@@ -1520,10 +1484,14 @@ class _MainShellState extends State<MainShell>
                       child: LayoutBuilder(
                         builder: (context, constraints) {
                           final isHome = _selectedIndex == 0;
+                          // Two static cards do not earn a 344 px rail
+                          // until the main column keeps its two-column
+                          // overview (>= 850 px) beside it; below that the
+                          // cards fold inline under the feed.
                           final useRightRail =
-                              isHome && constraints.maxWidth >= 1100;
+                              isHome && constraints.maxWidth >= 1280;
                           final extras = isHome
-                              ? _buildDesktopHomeExtras()
+                              ? _buildDesktopHomeExtras(inline: !useRightRail)
                               : null;
 
                           return Row(
@@ -1614,63 +1582,42 @@ class _MainShellState extends State<MainShell>
   }
 }
 
-/// Home's desktop right column: Voice Trending, the Premium card, then
-/// the creators this account already follows — all scrolling together so
-/// a short window never clips the bottom of the rail.
+/// The supplementary Home modules: the offer (Premium) and the sponsored
+/// slot — the two static cards with no listeners of their own.
 ///
-/// The order is deliberate: what is loud right now (Trending), the offer
-/// (Premium, unchanged), then who this person specifically follows. The
-/// last two are different questions and are kept as separate modules.
+/// `FollowedCreatorsCard` and `VoiceTrendingCard` no longer mount here:
+/// "Top creators you follow" is one sidebar click away (Find creators, the
+/// profile Following list), live rooms are the board and Discover, and
+/// "Most liked" is the YO Moments "Most engaged" filter. Each of those cost
+/// Home a listener or a callable on every mount for a duplicate answer.
 class _DesktopHomeExtras extends StatelessWidget {
-  const _DesktopHomeExtras({
-    required this.isVisible,
-    required this.currentUserId,
-    required this.onOpenRoom,
-    required this.onSeeAll,
-    required this.onSeeAllRooms,
-    required this.onCheckPlans,
-    required this.onOpenCreator,
-    required this.onViewAllCreators,
-  });
+  const _DesktopHomeExtras({required this.inline, required this.onCheckPlans});
 
-  final ValueListenable<bool> isVisible;
-  final String currentUserId;
-  final ValueChanged<VoiceRoom> onOpenRoom;
-
-  /// The card's "View all" — Moments.
-  final VoidCallback onSeeAll;
-
-  /// The live-rooms section's own link — Discover. Rooms and Moments are
-  /// separate products and the card must not blur them.
-  final VoidCallback onSeeAllRooms;
+  /// True when the shell has folded the rail into the main scroll: the
+  /// cards then sit side by side where the width allows, capped at 520 px
+  /// each, instead of stretching to the full feed width.
+  final bool inline;
   final VoidCallback onCheckPlans;
-  final ValueChanged<FollowUser> onOpenCreator;
-  final VoidCallback onViewAllCreators;
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
+    final premium = PremiumDesktopCard(onCheckPlans: onCheckPlans);
+    const sponsored = SponsoredCard();
+    if (!inline) {
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [premium, const SizedBox(height: 16), sponsored],
+      );
+    }
+    return Wrap(
+      spacing: 16,
+      runSpacing: 16,
       children: [
-        // People first, Premium last: the supplementary modules support
-        // the primary feed rather than selling over it.
-        FollowedCreatorsCard(
-          isVisible: isVisible,
-          currentUserId: currentUserId,
-          onOpenCreator: onOpenCreator,
-          onViewAll: onViewAllCreators,
-        ),
-        const SizedBox(height: 16),
-        VoiceTrendingCard(
-          isVisible: isVisible,
-          onOpenRoom: onOpenRoom,
-          onSeeAll: onSeeAll,
-          onSeeAllRooms: onSeeAllRooms,
-        ),
-        const SizedBox(height: 16),
-        const SponsoredCard(),
-        const SizedBox(height: 16),
-        PremiumDesktopCard(onCheckPlans: onCheckPlans),
+        for (final card in [premium, sponsored])
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 520),
+            child: card,
+          ),
       ],
     );
   }

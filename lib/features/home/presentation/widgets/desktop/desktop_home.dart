@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
+import 'package:yovoice/core/presence/presence_service.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/rooms/presentation/screens/room_settings_screen.dart';
 import 'package:yovoice/features/home/presentation/widgets/shared/home_room_board.dart';
@@ -31,21 +32,23 @@ import 'package:yovoice/features/rooms/data/services/room_service.dart';
 import 'package:yovoice/features/staff/data/staff_capabilities.dart';
 import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
 import 'package:yovoice/shared/widgets/backgrounds/yo_page_background.dart';
+import 'package:yovoice/shared/widgets/profile/availability_picker.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 import 'package:yovoice/shared/widgets/states/yo_error_state.dart';
 import 'package:yovoice/features/home/presentation/widgets/shared/home_people_strip.dart';
 import 'package:yovoice/features/friends/data/models/friend_user.dart';
 
-/// "Pulse Home" — the DESKTOP Home surface.
+/// "Pulse Home" — the DESKTOP Home surface, friends first.
 ///
 /// Every module reads existing production data; nothing here invents a
 /// user, a room, a message or an activity number:
+///  - `Your people` + rings → [FriendService.watchFriends]
 ///  - the room board        → [RoomService.watchLivePublicRooms]
 ///  - face piles / rosters  → [RoomService.watchParticipants] per banner
 ///  - board ranking         → [FollowService.watchFollowing]
 ///  - `Your active rooms`   → [RoomService.watchOwnedRooms]
-///  - greeting identity     → [ProfileService.watchCurrentProfile]
-///  - Moments from the circle → [HomeFeedService.watchSocialMoments]
+///  - greeting + availability → [ProfileService.watchCurrentProfile]
+///  - followed Moments      → [HomeFeedService.watchSocialMoments]
 ///  - recent chats preview → [MessageService.watchConversations] plus the
 ///    current public avatar from [ProfileService.watchProfile]
 ///
@@ -81,6 +84,7 @@ class DesktopHome extends StatefulWidget {
     this.clubChatService,
     this.firebaseAuth,
     this.capabilityService,
+    this.presenceService,
     this.trailingContent,
     this.isVisible,
     super.key,
@@ -125,6 +129,12 @@ class DesktopHome extends StatefulWidget {
   /// Staff capabilities, loaded once per session. Absent or failing, the
   /// board renders the ordinary UI.
   final StaffCapabilityService? capabilityService;
+
+  /// Test seam for the two availability affordances (the greeting chip and
+  /// the "You" tile). Production passes null and the picker constructs a
+  /// service only when a choice is actually made, so simply opening Home
+  /// never touches presence.
+  final PresenceService? presenceService;
 
   /// Supplementary Home modules move below the main feed when the desktop
   /// shell is too narrow to keep a useful 344 px right rail. Nothing is
@@ -250,6 +260,16 @@ class _DesktopHomeState extends State<DesktopHome> {
     });
   }
 
+  void _retryFriends() {
+    setState(() {
+      try {
+        _friends = (widget.friendService ?? FriendService()).watchFriends();
+      } catch (_) {
+        _friends = null;
+      }
+    });
+  }
+
   void _openRoomSettings(VoiceRoom room) {
     // The existing settings screen, which re-checks authorship; rules
     // refuse a non-host write regardless of what the UI offers.
@@ -322,35 +342,27 @@ class _DesktopHomeState extends State<DesktopHome> {
               primary: false,
               padding: const EdgeInsets.fromLTRB(24, 18, 20, 28),
               children: [
-                _GreetingHeader(profile: _profile),
-                const SizedBox(height: 20),
-                // 1. Which followed voices have a Moment I can hear?
-                DesktopMomentsStrip(
-                  avatarOnly: true,
-                  isVisible: widget.isVisible,
+                _GreetingHeader(
                   profile: _profile,
-                  feedService: widget.feedService,
-                  friendService: widget.friendService,
-                  followService: widget.followService,
-                  currentUserId: widget.currentUserId,
-                  onOpenMoment: widget.onOpenMoment,
-                  onOpenChain: widget.onOpenChain,
-                  onCreateMoment: widget.onCreateMoment,
-                  onSeeAll: widget.onSeeAllMoments,
-                  contentBuilder: (context, rail, moments) => Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      rail,
-                      gap,
-                      _buildOverview(
-                        context,
-                        board: board,
-                        moments: moments,
-                        roomsUnavailable: roomsUnavailable,
-                        roomsLoading: !roomsUnavailable && !snapshot.hasData,
-                      ),
-                    ],
-                  ),
+                  presenceService: widget.presenceService,
+                ),
+                const SizedBox(height: 20),
+                // 1. Who can I talk to right now? Me first, then friends.
+                HomePeopleStrip(
+                  friends: _friends,
+                  profile: _profile,
+                  presenceService: widget.presenceService,
+                  onRetry: _retryFriends,
+                  onSeeAll: widget.onViewAllFriends,
+                  horizontalPadding: 0,
+                  expandedLabels: true,
+                ),
+                gap,
+                _buildOverview(
+                  context,
+                  board: board,
+                  roomsUnavailable: roomsUnavailable,
+                  roomsLoading: !roomsUnavailable && !snapshot.hasData,
                 ),
                 if (widget.trailingContent != null) ...[
                   gap,
@@ -367,11 +379,12 @@ class _DesktopHomeState extends State<DesktopHome> {
   Widget _buildOverview(
     BuildContext context, {
     required List<VoiceRoom> board,
-    required List<VoiceMoment> moments,
     required bool roomsUnavailable,
     required bool roomsLoading,
   }) {
     final copy = AppLocalizations.of(context);
+    final enlargedText = MediaQuery.textScalerOf(context).scale(1) >= 1.6;
+    // 2. What is happening right now?
     final liveSection = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -403,109 +416,188 @@ class _DesktopHomeState extends State<DesktopHome> {
         ),
       ],
     );
-    final socialSection = Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        HomeCircleActivity(
-          onFriends: widget.onViewAllFriends,
-          moments: moments,
-          currentUserId: widget.currentUserId,
-          onOpenMoment: widget.onOpenMoment,
-          onOpenChain: widget.onOpenChain,
-        ),
-        const SizedBox(height: 10),
-        HomePeopleStrip(
-          friends: _friends,
-          onSeeAll: widget.onViewAllFriends,
-          horizontalPadding: 0,
-        ),
-        const SizedBox(height: 22),
-        _HomeSectionTitle(
-          copy.text('Your recent chats', 'Ostatnie czaty'),
-          onViewAll: widget.onSeeAllChats,
-        ),
-        StreamBuilder<List<Conversation>>(
-          stream: _conversations,
-          builder: (context, conversationSnapshot) => RecentChats(
-            snapshot: conversationSnapshot,
-            currentUserId: widget.currentUserId,
-            onOpenConversation: widget.onOpenConversation,
-            onFindFriends: widget.onViewAllFriends,
-            style: RecentChatsStyle.desktopBackdrop,
-            photoStreamForUser: _profiles == null
-                ? null
-                : _recentChatPhotoStream,
-            profileMediaService: widget.profileMediaService,
-          ),
-        ),
-      ],
-    );
-    return LayoutBuilder(
-      builder: (context, constraints) => Column(
+    // 3. Which followed voices have a Moment I can hear? The strip owns the
+    // feed / following / momentViews subscriptions; the heading reads the
+    // resolved list through the strip's composition seam so "View all"
+    // appears only when there is something to view.
+    // 4. Which conversations continue?
+    //
+    // Clipped to the column it is given. Both children are horizontal rails
+    // that deliberately paint past their viewport (`Clip.none`) so the next
+    // card peeks over a PHONE's gutter — on desktop that same overhang ran
+    // out of the ~420 px social column and across the empty page margin,
+    // which the 1440 px capture showed as a chat card floating off the
+    // layout. Clipping here keeps the peek and stops the spill.
+    final socialSection = ClipRect(
+      child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (constraints.maxWidth >= 850 &&
-              MediaQuery.textScalerOf(context).scale(1) < 1.6)
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(flex: 3, child: liveSection),
-                const SizedBox(width: 24),
-                Expanded(flex: 2, child: socialSection),
-              ],
-            )
-          else ...[
-            liveSection,
-            socialSection,
-          ],
-          const SizedBox(height: 26),
-          _HomeSectionTitle(
-            copy.text('Your active rooms', 'Twoje aktywne pokoje'),
-            onViewAll: widget.onSeeAllRooms,
-          ),
-          StreamBuilder<List<VoiceRoom>>(
-            stream: _owned,
-            builder: (context, ownedSnapshot) =>
-                ownedSnapshot.hasError || _owned == null
-                ? YoErrorState(
-                    compact: true,
-                    message: copy.text(
-                      'Could not load rooms',
-                      'Nie udało się wczytać pokojów',
-                    ),
-                    onRetry: () =>
-                        setState(() => _owned = _rooms?.watchOwnedRooms()),
-                  )
-                : !ownedSnapshot.hasData
-                ? const HomeRoomsLoading()
-                : HomeActiveRooms(
-                    rooms: ownedSnapshot.data ?? const <VoiceRoom>[],
-                    currentUserId: widget.currentUserId,
-                    onEnter: widget.onOpenRoom,
-                    onEdit: _openRoomSettings,
-                    onDelete: _deleteOwnedRoom,
-                    onCreateRoom: widget.onStartRoom,
+          DesktopMomentsStrip(
+            avatarOnly: true,
+            showOwnTile: false,
+            trailingRecordTile: true,
+            isVisible: widget.isVisible,
+            profile: _profile,
+            feedService: widget.feedService,
+            friendService: widget.friendService,
+            followService: widget.followService,
+            currentUserId: widget.currentUserId,
+            onOpenMoment: widget.onOpenMoment,
+            onOpenChain: widget.onOpenChain,
+            onCreateMoment: widget.onCreateMoment,
+            onSeeAll: widget.onSeeAllMoments,
+            contentBuilder: (context, rail, moments) {
+              final hasFollowedMoments = moments.any(
+                (moment) =>
+                    moment.authorId != widget.currentUserId &&
+                    moment.hasMediaReference,
+              );
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _HomeSectionTitle(
+                    copy.homeFromPeopleYouFollow,
+                    onViewAll: hasFollowedMoments
+                        ? widget.onSeeAllMoments
+                        : null,
                   ),
+                  rail,
+                ],
+              );
+            },
           ),
-          if (board.length > 1 && !roomsUnavailable) ...[
-            const SizedBox(height: 26),
-            _HomeSectionTitle(
-              copy.text('Rooms for you', 'Pokoje dla Ciebie'),
-              onViewAll: widget.onSeeAllRooms,
+          const SizedBox(height: 22),
+          _HomeSectionTitle(
+            copy.text('Your recent chats', 'Ostatnie czaty'),
+            onViewAll: widget.onSeeAllChats,
+          ),
+          StreamBuilder<List<Conversation>>(
+            stream: _conversations,
+            builder: (context, conversationSnapshot) => RecentChats(
+              snapshot: conversationSnapshot,
+              currentUserId: widget.currentUserId,
+              onOpenConversation: widget.onOpenConversation,
+              onFindFriends: widget.onViewAllFriends,
+              style: RecentChatsStyle.desktopBackdrop,
+              photoStreamForUser: _profiles == null
+                  ? null
+                  : _recentChatPhotoStream,
+              profileMediaService: widget.profileMediaService,
             ),
-            for (final room in board.skip(1)) _roomBanner(room),
-          ],
+          ),
         ],
       ),
     );
+    // 5. Three more rooms at most; Discover owns the full list.
+    final moreRooms = board.skip(1).take(3).toList(growable: false);
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final twoColumns = constraints.maxWidth >= 850 && !enlargedText;
+        final roomsGrid = constraints.maxWidth >= 900 && !enlargedText;
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (twoColumns)
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(flex: 3, child: liveSection),
+                  const SizedBox(width: 24),
+                  Expanded(flex: 2, child: socialSection),
+                ],
+              )
+            else ...[
+              liveSection,
+              const SizedBox(height: 26),
+              socialSection,
+            ],
+            if (moreRooms.isNotEmpty && !roomsUnavailable) ...[
+              const SizedBox(height: 26),
+              _HomeSectionTitle(
+                copy.text('Rooms for you', 'Pokoje dla Ciebie'),
+                onViewAll: widget.onSeeAllRooms,
+              ),
+              if (roomsGrid)
+                // Three ~330–370 px cells: phone density, side by side.
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    for (var i = 0; i < 3; i++) ...[
+                      if (i > 0) const SizedBox(width: 16),
+                      Expanded(
+                        child: i < moreRooms.length
+                            ? _roomBanner(moreRooms[i], compact: true)
+                            : const SizedBox.shrink(),
+                      ),
+                    ],
+                  ],
+                )
+              else
+                for (final room in moreRooms) _roomBanner(room),
+            ],
+            // 6. Owned rooms — hosts only. A non-host used to get a
+            // permanently empty card whose Create Room button duplicated
+            // the pill above. An error is still shown: it must never read
+            // as "no rooms". Loading renders nothing (no heading flash).
+            StreamBuilder<List<VoiceRoom>>(
+              stream: _owned,
+              builder: (context, ownedSnapshot) {
+                final failed = ownedSnapshot.hasError || _owned == null;
+                final owned = failed || !ownedSnapshot.hasData
+                    ? const <VoiceRoom>[]
+                    : HomeActiveRooms.ownedBy(
+                        ownedSnapshot.data ?? const <VoiceRoom>[],
+                        widget.currentUserId,
+                      );
+                if (!failed && owned.isEmpty) return const SizedBox.shrink();
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const SizedBox(height: 26),
+                    _HomeSectionTitle(
+                      copy.text('Your active rooms', 'Twoje aktywne pokoje'),
+                      onViewAll: widget.onSeeAllRooms,
+                    ),
+                    if (failed)
+                      YoErrorState(
+                        compact: true,
+                        message: copy.text(
+                          'Could not load rooms',
+                          'Nie udało się wczytać pokojów',
+                        ),
+                        onRetry: () =>
+                            setState(() => _owned = _rooms?.watchOwnedRooms()),
+                      )
+                    else
+                      HomeActiveRooms(
+                        rooms: owned,
+                        currentUserId: widget.currentUserId,
+                        onEnter: widget.onOpenRoom,
+                        onEdit: _openRoomSettings,
+                        onDelete: _deleteOwnedRoom,
+                        onCreateRoom: widget.onStartRoom,
+                      ),
+                  ],
+                );
+              },
+            ),
+          ],
+        );
+      },
+    );
   }
 
-  Widget _roomBanner(VoiceRoom room, {bool featured = false}) => HomeRoomBanner(
+  Widget _roomBanner(
+    VoiceRoom room, {
+    bool featured = false,
+    bool compact = false,
+  }) => HomeRoomBanner(
     key: featured
         ? const ValueKey('home-featured-room')
         : ValueKey('home-room-${room.id}'),
     room: room,
     featured: featured,
+    compact: compact,
     onJoin: widget.onOpenRoom,
     roomService: _rooms,
     currentUserId: widget.currentUserId,
@@ -518,9 +610,10 @@ class _DesktopHomeState extends State<DesktopHome> {
 // ---------------------------------------------------------------- header
 
 class _GreetingHeader extends StatelessWidget {
-  const _GreetingHeader({required this.profile});
+  const _GreetingHeader({required this.profile, required this.presenceService});
 
   final Stream<UserProfile>? profile;
+  final PresenceService? presenceService;
 
   static String _partOfDay(AppLocalizations copy) {
     final hour = DateTime.now().hour;
@@ -533,12 +626,15 @@ class _GreetingHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     final copy = AppLocalizations.of(context);
+    final enlargedText = MediaQuery.textScalerOf(context).scale(1) >= 1.6;
     return StreamBuilder<UserProfile>(
       stream: profile,
       builder: (context, snapshot) {
-        final name = snapshot.data?.displayName.trim() ?? '';
-        return Column(
+        final data = snapshot.data;
+        final name = data?.displayName.trim() ?? '';
+        final words = Column(
           crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
           children: [
             Text(
               name.isEmpty ? _partOfDay(copy) : '${_partOfDay(copy)}, $name',
@@ -557,6 +653,35 @@ class _GreetingHeader extends StatelessWidget {
               ),
               style: TextStyle(color: palette.textSecondary, fontSize: 13.5),
             ),
+          ],
+        );
+        // The readable availability affordance at the trailing end of the
+        // greeting — the same picker the "You" tile in the rail opens.
+        // Only once the profile has emitted; never a guessed state.
+        final chip = data == null
+            ? null
+            : AvailabilityChip(
+                availability: data.availability,
+                presenceService: presenceService,
+                hitTargetSize: 44,
+              );
+        if (chip == null) return words;
+        if (enlargedText) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              words,
+              const SizedBox(height: 8),
+              Align(alignment: AlignmentDirectional.centerStart, child: chip),
+            ],
+          );
+        }
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            Expanded(child: words),
+            const SizedBox(width: 12),
+            chip,
           ],
         );
       },
@@ -833,7 +958,10 @@ class _HomeSectionTitle extends StatelessWidget {
       padding: const EdgeInsets.only(bottom: 12),
       child: Row(
         children: [
-          Flexible(
+          // Expanded, not Flexible + Spacer: those split the free space
+          // evenly, so a heading in the narrower social column ("From
+          // people you follow") ellipsised while half the row sat empty.
+          Expanded(
             child: Text(
               text,
               maxLines: 1,
@@ -846,7 +974,7 @@ class _HomeSectionTitle extends StatelessWidget {
             ),
           ),
           if (onViewAll != null) ...[
-            const Spacer(),
+            const SizedBox(width: 8),
             TextButton(
               onPressed: onViewAll,
               style: TextButton.styleFrom(

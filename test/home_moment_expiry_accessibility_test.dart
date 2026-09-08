@@ -382,6 +382,81 @@ void main() {
     },
   );
 
+  testWidgets(
+    "Home's configuration recovers onto the trailing Record tile when the "
+    'last chain expires',
+    (tester) async {
+      // Home hides the own story tile (its avatar leads "Your people") and
+      // adds a trailing Record tile. The recovery target must follow that
+      // move, or focus lands on a widget that is no longer in the rail.
+      await tester.binding.setSurfaceSize(const Size(320, 844));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      final semantics = tester.ensureSemantics();
+      final announcements = _captureAnnouncements(tester);
+      final clock = _Clock(_anchor);
+      final expiring = _moment(
+        'home-only-chain',
+        createdAt: _anchor.subtract(const Duration(days: 1)),
+        expiresAt: _anchor.add(const Duration(seconds: 10)),
+      );
+      var records = 0;
+
+      Future<void> pump(List<VoiceMoment> moments) => tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: MobileMomentsStrip(
+              moments: moments,
+              profile: _profile(),
+              currentUserId: 'me',
+              expiryClock: () => clock.now,
+              showOwnTile: false,
+              trailingRecordTile: true,
+              onOpenMoment: (_) {},
+              onCreateMoment: () => records++,
+            ),
+          ),
+        ),
+      );
+
+      await pump([expiring]);
+      expect(find.byKey(const ValueKey('home-your-moment')), findsNothing);
+      final tile = find.byKey(const ValueKey('home-moment-home-only-chain'));
+      final tileInk = tester.widget<InkWell>(
+        find.descendant(of: tile, matching: find.byType(InkWell)).first,
+      );
+      tileInk.focusNode!.requestFocus();
+      await tester.pump();
+      expect(tileInk.focusNode!.hasFocus, isTrue);
+
+      clock.now = expiring.expiresAt!;
+      await pump(const <VoiceMoment>[]);
+      await tester.pump();
+      await tester.pump();
+
+      final record = find.byKey(const ValueKey('home-record-moment'));
+      expect(record, findsOneWidget);
+      expect(tester.widget<InkWell>(record).focusNode!.hasFocus, isTrue);
+      expect(tester.getSize(record).width, greaterThanOrEqualTo(44));
+      expect(tester.getSize(record).height, greaterThanOrEqualTo(44));
+      final bounds = tester.getRect(record);
+      expect(bounds.left, greaterThanOrEqualTo(0));
+      expect(bounds.right, lessThanOrEqualTo(320));
+      final outline = tester.widget<DecoratedBox>(
+        find.byKey(const ValueKey('home-own-moment-focus-outline')),
+      );
+      final border = (outline.decoration as BoxDecoration).border! as Border;
+      expect(border.top.width, 2);
+      expect(border.top.color, tester.element(record).appPalette.focus);
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pump();
+      expect(records, 1, reason: 'The recovery target records a Moment.');
+      expect(_messages(announcements), [
+        'One Voice Moment expired and was removed from Home.',
+      ]);
+      semantics.dispose();
+    },
+  );
+
   testWidgets('mobile expiry stays silent for the capped thirteenth author', (
     tester,
   ) async {

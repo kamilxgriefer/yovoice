@@ -1,4 +1,7 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/presence/presence_service.dart';
@@ -185,6 +188,7 @@ class AvailabilityChip extends StatelessWidget {
     this.presenceService,
     this.compact = false,
     this.dense = false,
+    this.hitTargetSize,
     super.key,
   });
 
@@ -197,67 +201,188 @@ class AvailabilityChip extends StatelessWidget {
   /// A shorter chip that sits inline with a text line (profile name plate).
   final bool dense;
 
+  /// Minimum size of the tap target on BOTH axes. The visible pill keeps its
+  /// size; the reserved band around it forwards taps to the pill, the way
+  /// Material buttons meet their 48 px target without growing. Every entry
+  /// point that presents the chip as a touch control passes 44; null leaves
+  /// the chip exactly as wide and tall as its pill.
+  final double? hitTargetSize;
+
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     final copy = AppLocalizations.of(context);
     final status = PeopleStatus.fromOwnAvailability(availability);
     final label = availability.localizedLabel(copy);
+    void open() => showAvailabilityPicker(
+      context,
+      current: availability,
+      presenceService: presenceService,
+    );
+    final pill = Material(
+      color: palette.surfaceSunken.withValues(alpha: .85),
+      borderRadius: BorderRadius.circular(999),
+      child: InkWell(
+        key: const ValueKey('availability-chip'),
+        borderRadius: BorderRadius.circular(999),
+        onTap: open,
+        // The composed phrase on the boundary below is the whole
+        // announcement; the pill's own Text would otherwise repeat the
+        // status a second time inside it.
+        excludeFromSemantics: true,
+        child: Padding(
+          padding: EdgeInsets.fromLTRB(
+            compact ? 8 : 10,
+            dense ? 2 : 5,
+            compact ? 6 : 8,
+            dense ? 2 : 5,
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              AvailabilityDot(status: status, size: dense ? 8 : 10),
+              if (!compact) ...[
+                const SizedBox(width: 6),
+                Flexible(
+                  child: Text(
+                    label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: palette.textPrimary,
+                      fontSize: dense ? 11 : 12,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ],
+              const SizedBox(width: 2),
+              Icon(
+                Icons.expand_more_rounded,
+                size: dense ? 14 : 16,
+                color: palette.textSecondary,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    final target = hitTargetSize;
+    // `container: true` makes this a real semantics boundary. Without it the
+    // annotation merges into whatever compatible siblings sit beside the chip
+    // — the Home greeting Text nodes — and the whole greeting becomes the
+    // accessible name of one giant button.
     return Semantics(
+      container: true,
       button: true,
+      excludeSemantics: true,
       label: copy.template(
         'Availability: {status}. Change',
         'Dostępność: {status}. Zmień',
         values: <String, Object>{'status': label},
       ),
-      child: Material(
-        color: palette.surfaceSunken.withValues(alpha: .85),
-        borderRadius: BorderRadius.circular(999),
-        child: InkWell(
-          key: const ValueKey('availability-chip'),
-          borderRadius: BorderRadius.circular(999),
-          onTap: () => showAvailabilityPicker(
-            context,
-            current: availability,
-            presenceService: presenceService,
-          ),
-          child: Padding(
-            padding: EdgeInsets.fromLTRB(
-              compact ? 8 : 10,
-              dense ? 2 : 5,
-              compact ? 6 : 8,
-              dense ? 2 : 5,
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                AvailabilityDot(status: status, size: dense ? 8 : 10),
-                if (!compact) ...[
-                  const SizedBox(width: 6),
-                  Flexible(
-                    child: Text(
-                      label,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: palette.textPrimary,
-                        fontSize: dense ? 11 : 12,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ),
-                ],
-                const SizedBox(width: 2),
-                Icon(
-                  Icons.expand_more_rounded,
-                  size: dense ? 14 : 16,
-                  color: palette.textSecondary,
-                ),
-              ],
-            ),
-          ),
+      onTap: open,
+      child: target == null
+          ? pill
+          : _HitTargetPadding(minSize: Size(target, target), child: pill),
+    );
+  }
+}
+
+/// Centres its child inside at least [minSize] on both axes and forwards a
+/// hit anywhere in that band to the child's centre — the same mechanism
+/// Material's `_RenderInputPadding` uses for its own minimum tap target, so
+/// the pill's ink stays on the pill while the target meets 44 x 44.
+class _HitTargetPadding extends SingleChildRenderObjectWidget {
+  const _HitTargetPadding({required this.minSize, required super.child});
+
+  final Size minSize;
+
+  @override
+  RenderObject createRenderObject(BuildContext context) =>
+      _RenderHitTargetPadding(minSize);
+
+  @override
+  void updateRenderObject(
+    BuildContext context,
+    _RenderHitTargetPadding renderObject,
+  ) {
+    renderObject.minSize = minSize;
+  }
+}
+
+class _RenderHitTargetPadding extends RenderShiftedBox {
+  _RenderHitTargetPadding(this._minSize) : super(null);
+
+  Size _minSize;
+  Size get minSize => _minSize;
+  set minSize(Size value) {
+    if (value == _minSize) return;
+    _minSize = value;
+    markNeedsLayout();
+  }
+
+  @override
+  double computeMinIntrinsicWidth(double height) =>
+      math.max(child?.getMinIntrinsicWidth(height) ?? 0, minSize.width);
+
+  @override
+  double computeMaxIntrinsicWidth(double height) =>
+      math.max(child?.getMaxIntrinsicWidth(height) ?? 0, minSize.width);
+
+  @override
+  double computeMinIntrinsicHeight(double width) =>
+      math.max(child?.getMinIntrinsicHeight(width) ?? 0, minSize.height);
+
+  @override
+  double computeMaxIntrinsicHeight(double width) =>
+      math.max(child?.getMaxIntrinsicHeight(width) ?? 0, minSize.height);
+
+  Size _sizeFor(Size childSize, BoxConstraints constraints) =>
+      constraints.constrain(
+        Size(
+          math.max(childSize.width, minSize.width),
+          math.max(childSize.height, minSize.height),
         ),
-      ),
+      );
+
+  @override
+  Size computeDryLayout(BoxConstraints constraints) {
+    final child = this.child;
+    if (child == null) return constraints.constrain(minSize);
+    return _sizeFor(child.getDryLayout(constraints.loosen()), constraints);
+  }
+
+  @override
+  void performLayout() {
+    final child = this.child;
+    if (child == null) {
+      size = constraints.constrain(minSize);
+      return;
+    }
+    child.layout(constraints.loosen(), parentUsesSize: true);
+    size = _sizeFor(child.size, constraints);
+    (child.parentData! as BoxParentData).offset = Offset(
+      (size.width - child.size.width) / 2,
+      (size.height - child.size.height) / 2,
+    );
+  }
+
+  @override
+  bool hitTest(BoxHitTestResult result, {required Offset position}) {
+    if (super.hitTest(result, position: position)) return true;
+    final child = this.child;
+    if (child == null || !size.contains(position)) return false;
+    // Mirror Material's `_RenderInputPadding`: a hit in the band lands on
+    // the child's own centre, in the child's coordinates.
+    final center = child.size.center(Offset.zero);
+    return result.addWithRawTransform(
+      transform: MatrixUtils.forceToPoint(center),
+      position: center,
+      hitTest: (BoxHitTestResult result, Offset position) {
+        assert(position == center);
+        return child.hitTest(result, position: center);
+      },
     );
   }
 }

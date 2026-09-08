@@ -115,11 +115,65 @@ class RecentChats extends StatelessWidget {
           },
         );
 
+        Widget row(double width) => Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            for (var index = 0; index < conversations.length; index++) ...[
+              if (index > 0) SizedBox(width: gap),
+              card(conversations[index], width),
+            ],
+          ],
+        );
+
+        // Home's desktop social column is a narrow lane — 330-550 px across
+        // the supported desktop sizes — and, unlike a phone page, it has no
+        // gutter beside it to paint into. Everything this rail lays out has
+        // to fit inside its own box, so it never borrows the phone geometry
+        // below: at 1440x900 that gave a 548.8 px column two 220 px cards
+        // and put the entire third one outside it, 135 px past the rail and
+        // 115 px past the viewport, leaving a half card chopped off at the
+        // column edge.
+        if (style == RecentChatsStyle.desktopBackdrop &&
+            constraints.maxWidth < 600) {
+          // The same three equal columns the wide branch draws, kept for as
+          // long as a card stays as readable as the narrowest phone card
+          // this file has ever shipped (156 px). At 600 px the two branches
+          // agree exactly, so nothing jumps as the shell is resized.
+          const minimumCardWidth = 156.0;
+          final threeUpWidth = (constraints.maxWidth - (gap * 2)) / 3;
+          if (threeUpWidth >= minimumCardWidth) {
+            return SizedBox(height: cardHeight, child: row(threeUpWidth));
+          }
+
+          // Narrower than that, the rail keeps two full cards and a real
+          // 32 px slice of the third — a peek that stays inside the column
+          // and is reachable by trackpad, Shift+wheel and keyboard focus,
+          // which scrolls the focused card into view.
+          const peek = 32.0;
+          final cardWidth = (constraints.maxWidth - (gap * 2) - peek) / 2;
+          return SizedBox(
+            height: cardHeight,
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              // Nothing may paint over the column beside it, so the
+              // overflow this rail scrolls through is clipped to its box.
+              clipBehavior: Clip.hardEdge,
+              child: row(cardWidth),
+            ),
+          );
+        }
+
         // Phones keep every card readable instead of squeezing three tiny
         // columns into the viewport. Around 390 px this shows two complete
         // cards; the third remains one horizontal swipe away.
         if (constraints.maxWidth < 600) {
-          final twoColumnWidth = (constraints.maxWidth - gap) / 2;
+          // A phone borrows its page gutter for that hint — the rail paints
+          // past its own box (Clip.none) and the third card peeks over the
+          // 16 px margin. Home's desktop social column has no gutter to
+          // borrow and is clipped to its width, so the backdrop rail
+          // reserves the peek inside its own box instead of losing it.
+          final peek = style == RecentChatsStyle.desktopBackdrop ? 26.0 : 0.0;
+          final twoColumnWidth = (constraints.maxWidth - gap - peek) / 2;
           final cardWidth = twoColumnWidth.clamp(156.0, 220.0);
           return SizedBox(
             height: cardHeight,
@@ -145,18 +199,7 @@ class RecentChats extends StatelessWidget {
         // Tablets and desktops show at most three equal cards without
         // stretching a one- or two-item list across the entire page.
         final cardWidth = (constraints.maxWidth - (gap * 2)) / 3;
-        return SizedBox(
-          height: cardHeight,
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              for (var index = 0; index < conversations.length; index++) ...[
-                if (index > 0) SizedBox(width: gap),
-                card(conversations[index], cardWidth),
-              ],
-            ],
-          ),
-        );
+        return SizedBox(height: cardHeight, child: row(cardWidth));
       },
     );
   }
@@ -671,19 +714,37 @@ class _RecentChatsMessage extends StatelessWidget {
         borderRadius: BorderRadius.circular(20),
         border: Border.all(color: palette.border),
       ),
-      child: Row(
-        children: [
-          Icon(icon, color: colors.primary),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Text(
-              text,
-              style: TextStyle(color: palette.textSecondary, fontSize: 13),
-            ),
-          ),
-          if (onAction != null)
-            TextButton(onPressed: onAction, child: Text(actionLabel!)),
-        ],
+      child: Builder(
+        builder: (context) {
+          // At enlarged text the action label alone is wider than the card
+          // on a 320 px phone, and a Row cannot shrink a button: the note
+          // and its action stack instead. Same rule as the quick actions.
+          final stacked = MediaQuery.textScalerOf(context).scale(1) >= 1.6;
+          final line = Row(
+            children: [
+              Icon(icon, color: colors.primary),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  text,
+                  style: TextStyle(color: palette.textSecondary, fontSize: 13),
+                ),
+              ),
+              if (onAction != null && !stacked)
+                TextButton(onPressed: onAction, child: Text(actionLabel!)),
+            ],
+          );
+          if (!stacked || onAction == null) return line;
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              line,
+              const SizedBox(height: 4),
+              TextButton(onPressed: onAction, child: Text(actionLabel!)),
+            ],
+          );
+        },
       ),
     );
   }

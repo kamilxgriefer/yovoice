@@ -92,7 +92,12 @@ class PeopleStatusAvatar extends StatelessWidget {
     required this.status,
     required this.onTap,
     this.photoUrl,
+    this.mediaRevision,
     this.radius = 30,
+    this.statusLabel,
+    this.semanticLabel,
+    this.showChangeBadge = false,
+    this.labelWidth,
     super.key,
   });
 
@@ -101,7 +106,29 @@ class PeopleStatusAvatar extends StatelessWidget {
   final PeopleStatus status;
   final VoidCallback onTap;
   final String? photoUrl;
+
+  /// Cache-busting revision for the avatar, as the Home header passes it —
+  /// the signed-in account's own tile must show a freshly saved photo.
+  final Object? mediaRevision;
   final double radius;
+
+  /// Overrides `status.localizedLabel`. The signed-in account's own tile
+  /// prints its chosen availability ("Invisible"), where the projected
+  /// status would say "Away".
+  final String? statusLabel;
+
+  /// Replaces the default "name, status" semantics with one phrase — the
+  /// own tile announces the same "Availability: …. Change" as
+  /// `AvailabilityChip`, so one action has one label everywhere.
+  final String? semanticLabel;
+
+  /// A small caret at the bottom-trailing edge of the disc — the same
+  /// "caret = change availability" grammar the chip uses.
+  final bool showChangeBadge;
+
+  /// Width of the name/status column. Defaults to `radius * 2.4`; the
+  /// desktop rail widens it so full names ellipsise less.
+  final double? labelWidth;
 
   @override
   Widget build(BuildContext context) {
@@ -109,63 +136,101 @@ class PeopleStatusAvatar extends StatelessWidget {
     final palette = context.appPalette;
     final active = status != PeopleStatus.away;
     final statusForeground = status.foreground(palette);
-    final statusLabel = status.localizedLabel(copy);
+    final statusLabel = this.statusLabel ?? status.localizedLabel(copy);
     final borderRadius = BorderRadius.circular(18);
+    final semanticLabel = this.semanticLabel;
 
     return Semantics(
+      container: true,
       excludeSemantics: true,
       button: true,
-      label: displayName,
-      value: statusLabel,
+      label: semanticLabel ?? displayName,
+      value: semanticLabel == null ? statusLabel : null,
       onTap: onTap,
-      child: InkWell(
+      child: PeopleTileInk(
         onTap: onTap,
-        excludeFromSemantics: true,
         borderRadius: borderRadius,
-        focusColor: palette.focus.withValues(alpha: .14),
-        hoverColor: palette.interactiveForeground.withValues(alpha: .08),
-        highlightColor: palette.interactiveForeground.withValues(alpha: .10),
-        splashColor: palette.interactiveForeground.withValues(alpha: .12),
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Container(
-                padding: const EdgeInsets.all(2),
-                decoration: BoxDecoration(
-                  color: palette.surfaceRaised,
-                  shape: BoxShape.circle,
-                  // A hairline ring in the palette-owned status colour: the
-                  // label next to it carries the meaning, the ring only
-                  // reinforces it. The colour stays the exact semantic token
-                  // (it is contrast-checked at 3:1 against this surface);
-                  // what changed is the weight — 2.2/1.4 px rings read as
-                  // heavy and cheap against the dark surfaces.
-                  border: Border.all(
-                    color: statusForeground,
-                    width: active ? 1.5 : 1.1,
+              Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(2),
+                    decoration: BoxDecoration(
+                      color: palette.surfaceRaised,
+                      shape: BoxShape.circle,
+                      // A hairline ring in the palette-owned status colour:
+                      // the label next to it carries the meaning, the ring
+                      // only reinforces it. The colour stays the exact
+                      // semantic token (it is contrast-checked at 3:1
+                      // against this surface); what changed is the weight —
+                      // 2.2/1.4 px rings read as heavy and cheap against the
+                      // dark surfaces.
+                      border: Border.all(
+                        color: statusForeground,
+                        width: active ? 1.5 : 1.1,
+                      ),
+                      boxShadow: active
+                          ? [
+                              BoxShadow(
+                                color: palette.shadow.withValues(alpha: .18),
+                                blurRadius: 10,
+                                offset: const Offset(0, 3),
+                              ),
+                            ]
+                          : null,
+                    ),
+                    child: UserAvatar(
+                      radius: radius,
+                      userId: userId,
+                      photoUrl: photoUrl,
+                      mediaRevision: mediaRevision,
+                      displayName: displayName,
+                    ),
                   ),
-                  boxShadow: active
-                      ? [
-                          BoxShadow(
-                            color: palette.shadow.withValues(alpha: .18),
-                            blurRadius: 10,
-                            offset: const Offset(0, 3),
+                  if (showChangeBadge)
+                    // Physically bottom-right in both text directions: the
+                    // caret badge is an affordance mark, not reading-order
+                    // content, and it overlaps the ring by 3 px so it reads
+                    // as part of the disc.
+                    Positioned(
+                      right: -3,
+                      bottom: -3,
+                      child: ExcludeSemantics(
+                        child: Container(
+                          width: 18,
+                          height: 18,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: palette.surfaceRaised,
+                            border: Border.all(color: palette.border),
                           ),
-                        ]
-                      : null,
-                ),
-                child: UserAvatar(
-                  radius: radius,
-                  userId: userId,
-                  photoUrl: photoUrl,
-                  displayName: displayName,
-                ),
+                          child: Icon(
+                            Icons.expand_more_rounded,
+                            size: 13,
+                            color: palette.textSecondary,
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
               ),
               const SizedBox(height: 7),
               SizedBox(
-                width: radius * 2.4,
+                // The column grows with the reader's text preference, the
+                // same way the Moment story tile does: a fixed 62 px at
+                // 200 % text left every name and status as an ellipsis.
+                width:
+                    (labelWidth ?? radius * 2.4) +
+                    (MediaQuery.textScalerOf(context).scale(10) / 10)
+                            .clamp(1, 2)
+                            .toDouble() *
+                        36 -
+                    36,
                 child: Column(
                   children: [
                     Text(
@@ -181,8 +246,12 @@ class PeopleStatusAvatar extends StatelessWidget {
                     ),
                     const SizedBox(height: 2),
                     Text(
+                      // Two lines: "Be right back" and "Do not disturb"
+                      // do not fit one line inside the 62 px label column,
+                      // and a status truncated to "Be right b…" is the one
+                      // word the ring cannot say on its own.
                       statusLabel,
-                      maxLines: 1,
+                      maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                       textAlign: TextAlign.center,
                       style: TextStyle(
@@ -198,6 +267,76 @@ class PeopleStatusAvatar extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// The people rail's tap surface: the ink wash the tiles already had, plus
+/// the app's semantic focus boundary.
+///
+/// A 14 % focus wash is a 1.2:1 change against the rail's own background —
+/// invisible as an indicator. Keyboard focus therefore also paints the same
+/// 2 px `palette.focus` boundary `AccessibleTapRegion` draws everywhere else,
+/// on the tile's own rounded rect and without touching layout (the ring is a
+/// non-hit-testing overlay, so the tile keeps its size and the wash stays as
+/// a secondary cue).
+///
+/// It contributes no semantics of its own — the caller owns the button node.
+class PeopleTileInk extends StatefulWidget {
+  const PeopleTileInk({
+    required this.onTap,
+    required this.child,
+    this.borderRadius,
+    super.key,
+  });
+
+  final VoidCallback onTap;
+  final Widget child;
+
+  /// Defaults to the rail's 18 px tile radius.
+  final BorderRadius? borderRadius;
+
+  @override
+  State<PeopleTileInk> createState() => _PeopleTileInkState();
+}
+
+class _PeopleTileInkState extends State<PeopleTileInk> {
+  bool _focused = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final borderRadius = widget.borderRadius ?? BorderRadius.circular(18);
+    return Stack(
+      children: [
+        InkWell(
+          onTap: widget.onTap,
+          excludeFromSemantics: true,
+          borderRadius: borderRadius,
+          onFocusChange: (focused) {
+            if (_focused != focused) setState(() => _focused = focused);
+          },
+          focusColor: palette.focus.withValues(alpha: .14),
+          hoverColor: palette.interactiveForeground.withValues(alpha: .08),
+          highlightColor: palette.interactiveForeground.withValues(alpha: .10),
+          splashColor: palette.interactiveForeground.withValues(alpha: .12),
+          child: widget.child,
+        ),
+        Positioned.fill(
+          child: IgnorePointer(
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 120),
+              decoration: BoxDecoration(
+                borderRadius: borderRadius,
+                border: Border.all(
+                  color: _focused ? palette.focus : Colors.transparent,
+                  width: 2,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

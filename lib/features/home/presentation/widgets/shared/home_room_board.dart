@@ -846,9 +846,19 @@ class _CoverScrim extends StatelessWidget {
 
 /// The facets a room actually carries, on one line.
 ///
-/// Anything that does not fit is clipped rather than wrapped: the banner
-/// has no height for a second chip row, and a half-visible chip reads as
-/// "there is more" better than a reflowed layout does.
+/// Anything that does not fit HORIZONTALLY is clipped rather than wrapped:
+/// the banner has no height for a second chip row, and a half-visible chip
+/// reads as "there is more" better than a reflowed layout does.
+///
+/// Vertically nothing may be clipped, and that is what the scaled height
+/// buys. A chip is 26 px tall only while the reader keeps the default text
+/// size; at 200 % its label alone is taller than that, so a flat `26` sliced
+/// every pill in half — the category and language chips on `Rooms for you`
+/// were cut through the middle of their letters on both phone and desktop.
+/// Scaling the box the same way the label scales keeps the horizontal
+/// affordance untouched and, at scale 1, reproduces the old 26 exactly.
+/// The ceiling stops an extreme accessibility size from turning one chip row
+/// into a band taller than the artwork behind it.
 class _TagRow extends StatelessWidget {
   const _TagRow({required this.tags});
 
@@ -858,7 +868,7 @@ class _TagRow extends StatelessWidget {
   Widget build(BuildContext context) {
     if (tags.isEmpty) return const SizedBox.shrink();
     return SizedBox(
-      height: 26,
+      height: MediaQuery.textScalerOf(context).scale(26).clamp(26.0, 52.0),
       child: ClipRect(
         child: OverflowBox(
           alignment: Alignment.centerLeft,
@@ -1025,18 +1035,22 @@ class HomeActiveRooms extends StatelessWidget {
   final VoidCallback onCreateRoom;
   final bool compact;
 
+  /// The rooms this account actually hosts, minus any mid-deletion.
+  ///
+  /// A room mid-deletion must never come back as a tile — the server
+  /// marked it closed and its teardown finishes (or is retried) without
+  /// the host's involvement. Discover already excludes these; showing
+  /// them here with a Start button was how "phantom" rooms survived.
+  /// Both Home variants gate the whole section on this list, so a
+  /// non-host never sees a permanently empty card.
+  static List<VoiceRoom> ownedBy(List<VoiceRoom> rooms, String uid) => rooms
+      .where((room) => room.hostId == uid && !room.deletionInProgress)
+      .toList(growable: false);
+
   @override
   Widget build(BuildContext context) {
     final copy = AppLocalizations.of(context);
-    // A room mid-deletion must never come back as a tile — the server
-    // marked it closed and its teardown finishes (or is retried) without
-    // the host's involvement. Discover already excludes these; showing
-    // them here with a Start button was how "phantom" rooms survived.
-    final mine = rooms
-        .where(
-          (room) => room.hostId == currentUserId && !room.deletionInProgress,
-        )
-        .toList(growable: false);
+    final mine = ownedBy(rooms, currentUserId);
 
     if (mine.isEmpty) {
       final palette = context.appPalette;
@@ -1087,13 +1101,21 @@ class HomeActiveRooms extends StatelessWidget {
     }
 
     final side = compact ? 148.0 : 168.0;
+    // Under the artwork each card carries two text lines, two 8 px gaps and
+    // a 40 px Enter button. Only the text grows with the reader's preference,
+    // so the row reserves a SCALED allowance for it on top of the fixed
+    // chrome: a flat 96 was 36 px short at 200 % text and clipped the button
+    // (a horizontal list constrains its children to the viewport height, so
+    // the card's Column overflowed rather than reflowing).
+    //
+    // 40, not 38: under the app's real typeface (Inter) the two lines are a
+    // hair taller than under the fallback font, and the row overflowed by
+    // 1px — caught the moment the screenshot harness started rendering with
+    // AppTheme instead of a generic dark theme. The extra room is headroom,
+    // not layout, and at scale 1 the height is exactly the previous side+96.
+    final textAllowance = MediaQuery.textScalerOf(context).scale(40);
     return SizedBox(
-      // +96, not +92: under the app's real typeface (Inter) the card's
-      // natural height is a hair taller than under the fallback font, and
-      // the row overflowed by 1px — caught the moment the screenshot
-      // harness started rendering with AppTheme instead of a generic dark
-      // theme. The extra room is headroom, not layout.
-      height: side + 96,
+      height: side + 56 + textAllowance,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
         clipBehavior: Clip.none,

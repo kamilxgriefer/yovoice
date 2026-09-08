@@ -1008,7 +1008,10 @@ class _AvailabilityRow extends StatelessWidget {
           padding: const EdgeInsets.only(bottom: 8),
           child: Align(
             alignment: Alignment.centerLeft,
-            child: AvailabilityChip(availability: profile.availability),
+            child: AvailabilityChip(
+              availability: profile.availability,
+              hitTargetSize: 44,
+            ),
           ),
         );
       },

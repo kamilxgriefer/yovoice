@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
+import 'package:yovoice/core/presence/presence_service.dart';
 import 'package:yovoice/features/friends/data/models/friend_user.dart';
 import 'package:yovoice/features/rooms/presentation/screens/room_settings_screen.dart';
 import 'package:yovoice/features/home/presentation/widgets/shared/home_room_board.dart';
@@ -29,17 +30,20 @@ import 'package:yovoice/features/staff/data/staff_capabilities.dart';
 import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
 import 'package:yovoice/shared/widgets/backgrounds/yo_page_background.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
+import 'package:yovoice/shared/widgets/profile/availability_picker.dart';
 import 'package:yovoice/shared/widgets/states/yo_error_state.dart';
 import 'package:yovoice/features/home/presentation/widgets/shared/home_people_strip.dart';
 
-/// Live-first Home: followed Moments, one featured real room, quick routes,
-/// social activity, recent conversations and owned-room management.
+/// Friends-first Home: the account and its friends with their availability
+/// rings, one featured real room, quick routes, the followed-Moments rail,
+/// recent conversations, a capped room board and owned-room management.
 ///
 /// Every number and face is real:
+///  - friends + presence → [FriendService.watchFriends]
 ///  - live rooms + counts → [RoomService.watchLivePublicRooms]
 ///  - rosters / avatars / speaking → [RoomService.watchParticipants]
-///  - feed → [HomeFeedService.watchSocialMoments], reused by rail and recap
-///  - identity → [ProfileService.watchCurrentProfile]
+///  - feed → [HomeFeedService.watchSocialMoments]
+///  - identity + availability → [ProfileService.watchCurrentProfile]
 class MobileHome extends StatefulWidget {
   const MobileHome({
     required this.onOpenRoom,
@@ -56,6 +60,7 @@ class MobileHome extends StatefulWidget {
     required this.onOpenComments,
     required this.onOpenConversation,
     required this.onSeeAllChats,
+    this.onSeeAllMoments,
     this.roomService,
     this.friendService,
     this.followService,
@@ -64,6 +69,7 @@ class MobileHome extends StatefulWidget {
     this.feedService,
     this.messageService,
     this.capabilityService,
+    this.presenceService,
     this.currentUserId,
     this.isVisible,
     super.key,
@@ -95,6 +101,10 @@ class MobileHome extends StatefulWidget {
   final ValueChanged<Conversation> onOpenConversation;
   final VoidCallback onSeeAllChats;
 
+  /// "View all" on the followed-Moments rail — the dock's Your Moments.
+  /// Optional so harnesses keep compiling; null hides the button.
+  final VoidCallback? onSeeAllMoments;
+
   final RoomService? roomService;
   final FriendService? friendService;
   final FollowService? followService;
@@ -107,6 +117,12 @@ class MobileHome extends StatefulWidget {
 
   final MessageService? messageService;
   final StaffCapabilityService? capabilityService;
+
+  /// Test seam for the two availability affordances (the header chip and
+  /// the "You" tile). Production passes null and the picker constructs a
+  /// service only when a choice is actually made, so simply opening Home
+  /// never touches presence.
+  final PresenceService? presenceService;
 
   /// The signed-in uid. Optional so tests need no Firebase app.
   final String? currentUserId;
@@ -262,6 +278,16 @@ class _MobileHomeState extends State<MobileHome> {
     });
   }
 
+  void _retryFriends() {
+    setState(() {
+      try {
+        _friends = (widget.friendService ?? FriendService()).watchFriends();
+      } catch (_) {
+        _friends = null;
+      }
+    });
+  }
+
   void _openRoomSettings(VoiceRoom room) {
     Navigator.of(context).push<void>(
       MaterialPageRoute<void>(builder: (_) => RoomSettingsScreen(room: room)),
@@ -287,196 +313,258 @@ class _MobileHomeState extends State<MobileHome> {
   }
 
   Widget _buildContent(BuildContext context) {
-    return StreamBuilder<List<VoiceRoom>>(
-      stream: _liveRooms,
-      builder: (context, snapshot) {
-        final copy = AppLocalizations.of(context);
-        final live = snapshot.data ?? const <VoiceRoom>[];
-        // A failed room query is NOT an empty room list — see the same
-        // split in DesktopHome. Without it, "start one and your community
-        // will see it here" was printed over a denial or a dead
-        // connection, which is advice the reader cannot act on.
-        final roomsUnavailable = snapshot.hasError || _liveRooms == null;
-        final roomsLoading = !roomsUnavailable && !snapshot.hasData;
-        final board = rankRoomsForHome(live: live, recommended: live);
-        return StreamBuilder<List<FollowUser>>(
-          stream: _following,
-          builder: (context, followingSnapshot) {
-            final followedIds = {
-              for (final user in followingSnapshot.data ?? const <FollowUser>[])
-                user.uid,
-            };
-            return StreamBuilder<List<VoiceMoment>>(
-              stream: _feed,
-              initialData: _lastFeedPage,
-              builder: (context, momentSnapshot) {
-                if (momentSnapshot.hasData &&
-                    momentSnapshot.connectionState != ConnectionState.waiting) {
-                  _lastFeedPage = momentSnapshot.data;
-                }
-                final visibleMoments =
-                    (momentSnapshot.data ?? const <VoiceMoment>[])
-                        .where(
-                          (moment) =>
-                              moment.authorId == _resolvedUserId ||
-                              followedIds.contains(moment.authorId),
-                        )
-                        .toList(growable: false);
-                return ListView(
-                  // Top inset clears the status bar / notch (the shell's
-                  // mobile body is not wrapped in a SafeArea), and the bottom
-                  // inset clears the floating hub bar so the last card is
-                  // never trapped underneath it.
-                  padding: EdgeInsets.fromLTRB(
-                    16,
-                    MediaQuery.paddingOf(context).top + 10,
-                    16,
-                    128,
-                  ),
-                  children: [
-                    _MobileHeader(
-                      profile: _profile,
-                      onNotifications: widget.onOpenNotifications,
-                      onProfile: widget.onOpenProfile,
-                      unreadNotificationCount: widget.unreadNotificationCount,
+    return LayoutBuilder(
+      builder: (context, constraints) => StreamBuilder<List<VoiceRoom>>(
+        stream: _liveRooms,
+        builder: (context, snapshot) {
+          final copy = AppLocalizations.of(context);
+          final live = snapshot.data ?? const <VoiceRoom>[];
+          // A failed room query is NOT an empty room list — see the same
+          // split in DesktopHome. Without it, "start one and your community
+          // will see it here" was printed over a denial or a dead
+          // connection, which is advice the reader cannot act on.
+          final roomsUnavailable = snapshot.hasError || _liveRooms == null;
+          final roomsLoading = !roomsUnavailable && !snapshot.hasData;
+          // Medium widths (UI.md): 24 px gutters once the body is at least
+          // 600 px wide; the featured banner takes its taller variant there.
+          final width = constraints.maxWidth;
+          final medium = width >= 600;
+          final gutter = medium ? 24.0 : 16.0;
+          return StreamBuilder<List<FollowUser>>(
+            stream: _following,
+            builder: (context, followingSnapshot) {
+              final followedIds = {
+                for (final user
+                    in followingSnapshot.data ?? const <FollowUser>[])
+                  user.uid,
+              };
+              // The same ranking desktop applies: a followed host's live
+              // room leads, so both form factors feature the same room.
+              final board = rankRoomsForHome(
+                live: live,
+                recommended: live,
+                followedHostIds: followedIds,
+              );
+              return StreamBuilder<List<VoiceMoment>>(
+                stream: _feed,
+                initialData: _lastFeedPage,
+                builder: (context, momentSnapshot) {
+                  if (momentSnapshot.hasData &&
+                      momentSnapshot.connectionState !=
+                          ConnectionState.waiting) {
+                    _lastFeedPage = momentSnapshot.data;
+                  }
+                  final visibleMoments =
+                      (momentSnapshot.data ?? const <VoiceMoment>[])
+                          .where(
+                            (moment) =>
+                                moment.authorId == _resolvedUserId ||
+                                followedIds.contains(moment.authorId),
+                          )
+                          .toList(growable: false);
+                  // "View all" only when there is something to view: at
+                  // least one followed author with a playable Moment.
+                  final hasFollowedMoments = visibleMoments.any(
+                    (moment) =>
+                        moment.authorId != _resolvedUserId &&
+                        moment.hasMediaReference,
+                  );
+                  return ListView(
+                    // Top inset clears the status bar / notch (the shell's
+                    // mobile body is not wrapped in a SafeArea), and the
+                    // bottom inset clears the floating hub bar so the last
+                    // card is never trapped underneath it.
+                    padding: EdgeInsets.fromLTRB(
+                      gutter,
+                      MediaQuery.paddingOf(context).top + 10,
+                      gutter,
+                      128,
                     ),
-                    const SizedBox(height: 22),
-                    StreamBuilder<UserProfile>(
-                      stream: _profile,
-                      builder: (context, profileSnapshot) => MobileMomentsStrip(
-                        moments: visibleMoments,
-                        profile: profileSnapshot.data,
-                        currentUserId: _resolvedUserId,
-                        onOpenMoment: widget.onOpenMoment,
-                        onOpenChain: widget.onOpenChain,
-                        onCreateMoment: widget.onCreateMoment,
+                    children: [
+                      _MobileHeader(
+                        profile: _profile,
+                        presenceService: widget.presenceService,
+                        onNotifications: widget.onOpenNotifications,
+                        onProfile: widget.onOpenProfile,
+                        unreadNotificationCount: widget.unreadNotificationCount,
                       ),
-                    ),
-                    MobileSectionHeader(
-                      title: copy.homeLiveForYou,
-                      onSeeAll: widget.onOpenDiscover,
-                    ),
-                    if (roomsUnavailable)
-                      YoErrorState(
-                        message: copy.text(
-                          'Live rooms could not be loaded. Check your connection and try again.',
-                          'Nie udało się wczytać pokojów na żywo. Sprawdź połączenie i spróbuj ponownie.',
-                        ),
-                        onRetry: _retryLiveRooms,
-                        compact: true,
-                      )
-                    else if (roomsLoading)
-                      const HomeRoomsLoading()
-                    else if (board.isEmpty)
-                      _MobileNote(
-                        copy.text(
-                          'No rooms to show yet — start one and your community will see it here.',
-                          'Nie ma jeszcze żadnych pokojów — utwórz pierwszy, a zobaczy go Twoja społeczność.',
-                        ),
-                      )
-                    else
-                      HomeRoomBanner(
-                        key: const ValueKey('home-featured-room'),
-                        room: board.first,
-                        featured: true,
-                        onJoin: widget.onOpenRoom,
-                        roomService: _rooms,
-                        compact: true,
-                        currentUserId: _resolvedUserId,
-                        onManageOwnedRoom: () => _openRoomSettings(board.first),
-                        onDeleteOwnedRoom: () => _deleteOwnedRoom(board.first),
-                        staffCapabilities: _capabilities,
+                      const SizedBox(height: 14),
+                      // 1. Who can I talk to right now? Me first, then my
+                      // friends, online first.
+                      HomePeopleStrip(
+                        friends: _friends,
+                        profile: _profile,
+                        presenceService: widget.presenceService,
+                        onRetry: _retryFriends,
+                        onSeeAll: widget.onOpenFriends,
                       ),
-                    const SizedBox(height: 2),
-                    HomeQuickActions(
-                      onCreateRoom: widget.onCreateRoom,
-                      onFriends: widget.onOpenFriends,
-                    ),
-                    HomeCircleActivity(
-                      onFriends: widget.onOpenFriends,
-                      moments: visibleMoments,
-                      currentUserId: _resolvedUserId,
-                      onOpenMoment: widget.onOpenMoment,
-                      onOpenChain: widget.onOpenChain,
-                    ),
-                    HomePeopleStrip(
-                      friends: _friends,
-                      onSeeAll: widget.onOpenFriends,
-                    ),
-                    MobileSectionHeader(
-                      title: copy.text('Your recent chats', 'Ostatnie czaty'),
-                      onSeeAll: widget.onSeeAllChats,
-                    ),
-                    StreamBuilder<List<Conversation>>(
-                      stream: _conversations,
-                      builder: (context, conversationSnapshot) => RecentChats(
-                        snapshot: conversationSnapshot,
-                        currentUserId: _resolvedUserId,
-                        onOpenConversation: widget.onOpenConversation,
-                        onFindFriends: widget.onOpenFriends,
-                        photoStreamForUser: _profiles == null
-                            ? null
-                            : _recentChatPhotoStream,
-                        profileMediaService: widget.profileMediaService,
-                      ),
-                    ),
-                    MobileSectionHeader(
-                      title: copy.text(
-                        'Your active rooms',
-                        'Twoje aktywne pokoje',
-                      ),
-                      onSeeAll: widget.onOpenDiscover,
-                    ),
-                    StreamBuilder<List<VoiceRoom>>(
-                      stream: _owned,
-                      builder: (context, ownedSnapshot) =>
-                          ownedSnapshot.hasError || _owned == null
-                          ? YoErrorState(
-                              compact: true,
-                              message: copy.text(
-                                'Could not load rooms',
-                                'Nie udało się wczytać pokojów',
-                              ),
-                              onRetry: () => setState(
-                                () => _owned = _rooms?.watchOwnedRooms(),
-                              ),
-                            )
-                          : !ownedSnapshot.hasData
-                          ? const HomeRoomsLoading()
-                          : HomeActiveRooms(
-                              rooms: ownedSnapshot.data ?? const <VoiceRoom>[],
-                              currentUserId: _resolvedUserId,
-                              onEnter: widget.onOpenRoom,
-                              onEdit: _openRoomSettings,
-                              onDelete: _deleteOwnedRoom,
-                              onCreateRoom: widget.onCreateRoom,
-                              compact: true,
-                            ),
-                    ),
-                    if (board.length > 1 && !roomsUnavailable) ...[
+                      // 2. What is happening right now?
                       MobileSectionHeader(
-                        title: copy.text('Rooms for you', 'Pokoje dla Ciebie'),
+                        title: copy.homeLiveForYou,
                         onSeeAll: widget.onOpenDiscover,
                       ),
-                      for (final room in board.skip(1))
+                      if (roomsUnavailable)
+                        YoErrorState(
+                          message: copy.text(
+                            'Live rooms could not be loaded. Check your connection and try again.',
+                            'Nie udało się wczytać pokojów na żywo. Sprawdź połączenie i spróbuj ponownie.',
+                          ),
+                          onRetry: _retryLiveRooms,
+                          compact: true,
+                        )
+                      else if (roomsLoading)
+                        const HomeRoomsLoading()
+                      else if (board.isEmpty)
+                        _MobileNote(
+                          copy.text(
+                            'No rooms to show yet — start one and your community will see it here.',
+                            'Nie ma jeszcze żadnych pokojów — utwórz pierwszy, a zobaczy go Twoja społeczność.',
+                          ),
+                        )
+                      else
                         HomeRoomBanner(
-                          room: room,
+                          key: const ValueKey('home-featured-room'),
+                          room: board.first,
+                          featured: true,
                           onJoin: widget.onOpenRoom,
                           roomService: _rooms,
-                          compact: true,
+                          compact: !medium,
                           currentUserId: _resolvedUserId,
-                          onManageOwnedRoom: () => _openRoomSettings(room),
-                          onDeleteOwnedRoom: () => _deleteOwnedRoom(room),
+                          onManageOwnedRoom: () =>
+                              _openRoomSettings(board.first),
+                          onDeleteOwnedRoom: () =>
+                              _deleteOwnedRoom(board.first),
                           staffCapabilities: _capabilities,
                         ),
+                      const SizedBox(height: 2),
+                      HomeQuickActions(
+                        onCreateRoom: widget.onCreateRoom,
+                        onFriends: widget.onOpenFriends,
+                      ),
+                      // 3. Which followed voices have a Moment I can hear?
+                      MobileSectionHeader(
+                        title: copy.homeFromPeopleYouFollow,
+                        onSeeAll: hasFollowedMoments
+                            ? widget.onSeeAllMoments
+                            : null,
+                      ),
+                      StreamBuilder<UserProfile>(
+                        stream: _profile,
+                        builder: (context, profileSnapshot) =>
+                            MobileMomentsStrip(
+                              moments: visibleMoments,
+                              profile: profileSnapshot.data,
+                              currentUserId: _resolvedUserId,
+                              onOpenMoment: widget.onOpenMoment,
+                              onOpenChain: widget.onOpenChain,
+                              onCreateMoment: widget.onCreateMoment,
+                              // The own avatar already leads "Your people";
+                              // the Record tile keeps creation on Home.
+                              showOwnTile: false,
+                              trailingRecordTile: true,
+                            ),
+                      ),
+                      // 4. Which conversations continue?
+                      MobileSectionHeader(
+                        title: copy.text('Your recent chats', 'Ostatnie czaty'),
+                        onSeeAll: widget.onSeeAllChats,
+                      ),
+                      StreamBuilder<List<Conversation>>(
+                        stream: _conversations,
+                        builder: (context, conversationSnapshot) => RecentChats(
+                          snapshot: conversationSnapshot,
+                          currentUserId: _resolvedUserId,
+                          onOpenConversation: widget.onOpenConversation,
+                          onFindFriends: widget.onOpenFriends,
+                          photoStreamForUser: _profiles == null
+                              ? null
+                              : _recentChatPhotoStream,
+                          profileMediaService: widget.profileMediaService,
+                        ),
+                      ),
+                      // 5. Three more rooms at most; Rooms owns the rest.
+                      if (board.length > 1 && !roomsUnavailable) ...[
+                        MobileSectionHeader(
+                          title: copy.text(
+                            'Rooms for you',
+                            'Pokoje dla Ciebie',
+                          ),
+                          onSeeAll: widget.onOpenDiscover,
+                        ),
+                        for (final room in board.skip(1).take(3))
+                          HomeRoomBanner(
+                            key: ValueKey('home-room-${room.id}'),
+                            room: room,
+                            onJoin: widget.onOpenRoom,
+                            roomService: _rooms,
+                            compact: true,
+                            currentUserId: _resolvedUserId,
+                            onManageOwnedRoom: () => _openRoomSettings(room),
+                            onDeleteOwnedRoom: () => _deleteOwnedRoom(room),
+                            staffCapabilities: _capabilities,
+                          ),
+                      ],
+                      // 6. Owned rooms — hosts only. A non-host used to get a
+                      // permanently empty card whose Create Room button
+                      // duplicated the pill above. An error is still shown:
+                      // it must never read as "no rooms".
+                      StreamBuilder<List<VoiceRoom>>(
+                        stream: _owned,
+                        builder: (context, ownedSnapshot) {
+                          final failed =
+                              ownedSnapshot.hasError || _owned == null;
+                          final owned = failed || !ownedSnapshot.hasData
+                              ? const <VoiceRoom>[]
+                              : HomeActiveRooms.ownedBy(
+                                  ownedSnapshot.data ?? const <VoiceRoom>[],
+                                  _resolvedUserId,
+                                );
+                          if (!failed && owned.isEmpty) {
+                            return const SizedBox.shrink();
+                          }
+                          return Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              MobileSectionHeader(
+                                title: copy.text(
+                                  'Your active rooms',
+                                  'Twoje aktywne pokoje',
+                                ),
+                                onSeeAll: widget.onOpenDiscover,
+                              ),
+                              if (failed)
+                                YoErrorState(
+                                  compact: true,
+                                  message: copy.text(
+                                    'Could not load rooms',
+                                    'Nie udało się wczytać pokojów',
+                                  ),
+                                  onRetry: () => setState(
+                                    () => _owned = _rooms?.watchOwnedRooms(),
+                                  ),
+                                )
+                              else
+                                HomeActiveRooms(
+                                  rooms: owned,
+                                  currentUserId: _resolvedUserId,
+                                  onEnter: widget.onOpenRoom,
+                                  onEdit: _openRoomSettings,
+                                  onDelete: _deleteOwnedRoom,
+                                  onCreateRoom: widget.onCreateRoom,
+                                  compact: true,
+                                ),
+                            ],
+                          );
+                        },
+                      ),
                     ],
-                  ],
-                );
-              },
-            );
-          },
-        );
-      },
+                  );
+                },
+              );
+            },
+          );
+        },
+      ),
     );
   }
 }
@@ -486,12 +574,14 @@ class _MobileHomeState extends State<MobileHome> {
 class _MobileHeader extends StatelessWidget {
   const _MobileHeader({
     required this.profile,
+    required this.presenceService,
     required this.onNotifications,
     required this.onProfile,
     required this.unreadNotificationCount,
   });
 
   final Stream<UserProfile>? profile;
+  final PresenceService? presenceService;
   final VoidCallback onNotifications;
   final VoidCallback onProfile;
   final int unreadNotificationCount;
@@ -541,6 +631,19 @@ class _MobileHeader extends StatelessWidget {
               : copy.notifications,
           badgeCount: unreadNotificationCount,
         );
+        // The readable availability affordance: "● Available ▾" under the
+        // name, the same picker the "You" tile in the rail opens. Only once
+        // the profile has emitted — never a guessed state.
+        final chip = data == null
+            ? null
+            : Align(
+                alignment: AlignmentDirectional.centerStart,
+                child: AvailabilityChip(
+                  availability: data.availability,
+                  presenceService: presenceService,
+                  hitTargetSize: 44,
+                ),
+              );
         final avatar = AccessibleTapRegion(
           onTap: onProfile,
           semanticLabel: copy.text('Open your profile', 'Otwórz swój profil'),
@@ -580,6 +683,7 @@ class _MobileHeader extends StatelessWidget {
               ),
               const SizedBox(height: 8),
               name,
+              if (chip != null) ...[const SizedBox(height: 6), chip],
             ],
           );
         }
@@ -591,7 +695,12 @@ class _MobileHeader extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
-                children: [greeting, const SizedBox(height: 2), name],
+                children: [
+                  greeting,
+                  const SizedBox(height: 2),
+                  name,
+                  if (chip != null) ...[const SizedBox(height: 6), chip],
+                ],
               ),
             ),
             const SizedBox(width: 10),
