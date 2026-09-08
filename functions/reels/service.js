@@ -861,18 +861,30 @@ function createReelService({
     if (!reservation.hasBackingAudio && data.backingAudioGeneration !== null) {
       fail("invalid-argument", "backingAudioGeneration is unexpected.");
     }
-    const media = await verifiedAsset({
-      reservation,
-      generation: mediaGeneration,
-      assetKind: "media",
-    });
-    const backingAudio = reservation.hasBackingAudio
-      ? await verifiedAsset({
-          reservation,
-          generation: backingAudioGeneration,
-          assetKind: "backingAudio",
-        })
-      : null;
+    // The two assets live at disjoint paths and generations and the probe
+    // creates its range-read budget per invocation, so their verification is
+    // independent and runs concurrently. Error precedence is unchanged: a
+    // media failure surfaces before a backing-audio one.
+    const [mediaOutcome, backingAudioOutcome] = await Promise.allSettled([
+      verifiedAsset({
+        reservation,
+        generation: mediaGeneration,
+        assetKind: "media",
+      }),
+      reservation.hasBackingAudio
+        ? verifiedAsset({
+            reservation,
+            generation: backingAudioGeneration,
+            assetKind: "backingAudio",
+          })
+        : Promise.resolve(null),
+    ]);
+    if (mediaOutcome.status === "rejected") throw mediaOutcome.reason;
+    if (backingAudioOutcome.status === "rejected") {
+      throw backingAudioOutcome.reason;
+    }
+    const media = mediaOutcome.value;
+    const backingAudio = backingAudioOutcome.value;
     const trustedPlan = {
       ...reservation,
       durationMs: media.durationMs,

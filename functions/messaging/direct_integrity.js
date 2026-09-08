@@ -842,6 +842,11 @@ function createDirectMessagingService({
       const targetRestrictionRef = db.doc(`restrictions/${targetUserId}`);
       const actorBlockRef = db.doc(`users/${auth.uid}/blocked/${targetUserId}`);
       const targetBlockRef = db.doc(`users/${targetUserId}/blocked/${auth.uid}`);
+      // The canonical conversation id is known before any read, so it joins
+      // the batch. Only a pair guard that points elsewhere (a legacy root
+      // adopted in place by the migration) still costs a dependent read.
+      const defaultConversationRef =
+        db.doc(`conversations/${defaultConversationId}`);
       const privacyRefs = directMessagePrivacyReferences(
         db,
         auth.uid,
@@ -859,6 +864,7 @@ function createDirectMessagingService({
         targetRestriction,
         actorBlock,
         targetBlock,
+        defaultConversation,
         targetFollowsActor,
         actorFriendGuard,
         targetFriendGuard,
@@ -875,6 +881,7 @@ function createDirectMessagingService({
         targetRestrictionRef,
         actorBlockRef,
         targetBlockRef,
+        defaultConversationRef,
         ...privacyRefs,
       );
 
@@ -899,12 +906,15 @@ function createDirectMessagingService({
         recipientFriendGuard: targetFriendGuard,
       });
       let conversationId = defaultConversationId;
+      let conversation = defaultConversation;
       if (pairGuard.exists) {
         const guard = pairGuard.data() ?? {};
         conversationId = requireId(guard.conversationId, "guard conversationId");
       }
       const conversationRef = db.doc(`conversations/${conversationId}`);
-      const conversation = await transaction.get(conversationRef);
+      if (conversationId !== defaultConversationId) {
+        conversation = await transaction.get(conversationRef);
+      }
       consume(transaction, rate, rateRef, "open", auth.uid, timing);
 
       let created = false;

@@ -1,4 +1,4 @@
-const { RoomServiceClient } = require("livekit-server-sdk");
+const { loadLiveKitSdk } = require("./sdk");
 
 const LIVEKIT_SECRETS = Object.freeze([
   "LIVEKIT_API_KEY",
@@ -237,6 +237,7 @@ function getProductionLiveKitControl() {
     throw new Error("LiveKit control-plane configuration is incomplete.");
   }
 
+  const { RoomServiceClient } = loadLiveKitSdk();
   productionControl = createLiveKitControl({
     client: new RoomServiceClient(url, apiKey, apiSecret, {
       requestTimeout: DEFAULT_REQUEST_TIMEOUT_SECONDS,

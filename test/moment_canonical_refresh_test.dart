@@ -106,10 +106,7 @@ void main() {
         expect(find.text('Private stale caption'), findsOneWidget);
         // The detail page previews comments on one line with the
         // author's name, so the body is a run inside a paragraph.
-        expect(
-          find.textContaining('Private stale comment'),
-          findsOneWidget,
-        );
+        expect(find.textContaining('Private stale comment'), findsOneWidget);
 
         _resumeApp(tester);
         await tester.pump();

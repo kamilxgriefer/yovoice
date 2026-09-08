@@ -7,6 +7,7 @@ const {
   REEL_CLEANUP_MAX_BATCHES,
   REEL_CALLABLE_METHODS,
   REEL_EXPIRY_BATCH_SIZE,
+  REEL_WARM_CALLABLES,
   createReelFunctions,
 } = require("../reels");
 const { createReelService } = require("../reels/service");
@@ -86,10 +87,35 @@ test("Reel export map registers bounded callables and private maintenance", () =
     assert.equal(callable.options.region, REGION);
     assert.equal(callable.options.enforceAppCheck, true);
     assert.equal(callable.options.consumeAppCheckToken, true);
+    assert.equal(callable.options.memory, "512MiB");
   }
   const created = registrations.find(({ kind }) => kind === "created");
   assert.equal(created.options.document, "reelCleanupOutbox/{outboxId}");
   assert.equal(created.options.retry, true);
+});
+
+test("only the two Reel publish callables keep a warm instance", () => {
+  // reserveReelDraftV2 and finalizeReelDraftV2 are the two server hops of a
+  // Reel publish; every other Reel callable scales to zero. Each name is its
+  // own Cloud Run service, so a warm instance is a per-name recurring charge
+  // (docs/DEPLOYMENT.md) and the set must not grow by accident.
+  assert.deepEqual(
+    [...REEL_WARM_CALLABLES].sort(),
+    ["finalizeReelDraftV2", "reserveReelDraftV2"],
+  );
+  const functions = createReelFunctions({
+    runtime: fakeRuntime(),
+    registrars: fakeRegistrars([]),
+  });
+  for (const name of Object.keys(REEL_CALLABLE_METHODS)) {
+    assert.equal(
+      functions[name].options.minInstances,
+      REEL_WARM_CALLABLES.has(name) ? 1 : 0,
+      `${name} must ${REEL_WARM_CALLABLES.has(name)
+        ? "remain warm"
+        : "scale to zero"}`,
+    );
+  }
 });
 
 test("every registered Reel callable is implemented by the real service", () => {

@@ -67,6 +67,25 @@ function sourceSignature(user, publicProfile, media) {
   });
 }
 
+// The production storage adapter exposes bucketName as a getter over a bucket
+// that is resolved on first use (utils/lazy_bucket.js). This service is built
+// while functions/index.js is evaluated, so reading the value here would load
+// @google-cloud/storage on every cold start — exactly what the lazy bucket
+// exists to avoid. Validate the declaration instead: an accessor is trusted to
+// produce the name on first use; a plain data property (the test fakes) must
+// already hold a non-empty string. Every consumer reads storage.bucketName at
+// request time, where a missing name still fails closed in the URL parsers.
+function declaresBucketName(storage) {
+  for (let target = storage; target && target !== Object.prototype;
+    target = Object.getPrototypeOf(target)) {
+    const descriptor = Object.getOwnPropertyDescriptor(target, "bucketName");
+    if (!descriptor) continue;
+    if (typeof descriptor.get === "function") return true;
+    return typeof descriptor.value === "string" && descriptor.value !== "";
+  }
+  return false;
+}
+
 function createProfileMediaMigrationService({
   db,
   Timestamp,
@@ -78,7 +97,7 @@ function createProfileMediaMigrationService({
       !storage?.getMetadata || !storage?.listObjects ||
       !storage?.hardenManagedImageMetadata ||
       !storage?.revokeDownloadTokens ||
-      typeof storage.bucketName !== "string" || !storage.bucketName) {
+      !declaresBucketName(storage)) {
     throw new TypeError(
       "db, Timestamp, FieldPath and profile-media storage are required.",
     );

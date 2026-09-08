@@ -37,11 +37,11 @@ Future<bool?> confirmDeleteConversation(
         content: Text(
           copy.template(
             'This removes the conversation with {name} and its messages for '
-            'you only. {name} keeps their copy. If they message you again, '
-            'the chat comes back with the new messages only.',
+                'you only. {name} keeps their copy. If they message you again, '
+                'the chat comes back with the new messages only.',
             'To usunie tylko u Ciebie rozmowę z {name} wraz z wiadomościami. '
-            '{name} zachowa swoją kopię. Jeśli ta osoba napisze ponownie, '
-            'czat wróci wyłącznie z nowymi wiadomościami.',
+                '{name} zachowa swoją kopię. Jeśli ta osoba napisze ponownie, '
+                'czat wróci wyłącznie z nowymi wiadomościami.',
             values: <String, Object>{'name': name},
           ),
           style: TextStyle(color: palette.textSecondary),

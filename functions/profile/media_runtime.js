@@ -9,6 +9,7 @@ const {
   requireSafeInteger,
 } = require("../integrity/guards");
 const { createBucketStorageAdapter } = require("../moments/integrity");
+const { createLazyBucket } = require("../utils/lazy_bucket");
 const { requireProtectedOwner } = require("../utils/auth");
 const { db } = require("../utils/firestore");
 const { createProfileMediaService } = require("./media");
@@ -27,8 +28,9 @@ function createProfileMediaRuntime({
   storage = null,
   clock = () => Date.now(),
 } = {}) {
-  const objectStorage =
-    storage ?? createBucketStorageAdapter(getStorage().bucket());
+  const objectStorage = storage ?? createBucketStorageAdapter(
+    createLazyBucket(() => getStorage().bucket()),
+  );
   const media = createProfileMediaService({
     db: database,
     Timestamp: timestamp,

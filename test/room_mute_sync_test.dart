@@ -170,6 +170,81 @@ void main() {
     expect(await first, isTrue);
   });
 
+  test('only an unmute reports a pending wait', () async {
+    final persisted = Completer<void>();
+    final sync = RoomMuteSync();
+    expect(sync.pendingUnmute, isFalse);
+
+    // Mute: the local track goes off first and the control is released
+    // (ADR-149), so there is no wait to describe.
+    final mute = sync.toggle(
+      currentMuted: false,
+      persistRosterState: (_) => persisted.future,
+      applyMicrophoneState: (_) async {},
+    );
+    await Future<void>.delayed(Duration.zero);
+    expect(sync.isBusy, isFalse);
+    expect(sync.pendingUnmute, isFalse);
+    persisted.complete();
+    expect(await mute, isTrue);
+
+    // Unmute: server-first, so the wait is real and the surface may say so.
+    final unmutePersisted = Completer<void>();
+    final unmute = sync.toggle(
+      currentMuted: true,
+      persistRosterState: (_) => unmutePersisted.future,
+      applyMicrophoneState: (_) async {},
+    );
+    await Future<void>.delayed(Duration.zero);
+    expect(sync.isBusy, isTrue);
+    expect(sync.pendingUnmute, isTrue);
+    unmutePersisted.complete();
+    expect(await unmute, isTrue);
+    expect(sync.pendingUnmute, isFalse);
+  });
+
+  test('a failed unmute clears the pending wait', () async {
+    final sync = RoomMuteSync();
+
+    await expectLater(
+      sync.toggle(
+        currentMuted: true,
+        persistRosterState: (_) async => throw StateError('denied'),
+        applyMicrophoneState: (_) async {},
+      ),
+      throwsStateError,
+    );
+
+    expect(sync.pendingUnmute, isFalse);
+    expect(sync.isBusy, isFalse);
+  });
+
+  test(
+    'pending state reaches every surface through one notification',
+    () async {
+      final persisted = Completer<void>();
+      final observed = <String>[];
+      late final RoomMuteSync sync;
+      sync = RoomMuteSync(
+        onBusyChanged: () =>
+            observed.add('${sync.isBusy}:${sync.pendingUnmute}'),
+      );
+
+      final operation = sync.toggle(
+        currentMuted: true,
+        persistRosterState: (_) => persisted.future,
+        applyMicrophoneState: (_) async {},
+      );
+      await Future<void>.delayed(Duration.zero);
+      persisted.complete();
+      await operation;
+
+      // One notification opening the wait, one closing it — the mini bar and
+      // the room screen see the same two.
+      expect(observed, <String>['true:true', 'false:false']);
+    },
+  );
+
   test('does not apply a stale unmute after the roster await', () async {
     final persisted = Completer<void>();
     final microphoneStates = <bool>[];

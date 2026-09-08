@@ -158,10 +158,10 @@ class FakeRoomService extends RoomService {
   }
 
   @override
-  Future<VoiceRoom> getRoom(String roomId) {
+  Future<VoiceRoom> getRoom(String roomId, {bool resolveCover = true}) {
     final override = getRoomOverride;
     if (override != null) return override(roomId);
-    return super.getRoom(roomId);
+    return super.getRoom(roomId, resolveCover: resolveCover);
   }
 }
 

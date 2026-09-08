@@ -448,6 +448,49 @@ void main() {
       expect(reads, 2);
     });
 
+    testWidgets('a client deadline is reported as a slow server, not offline', (
+      tester,
+    ) async {
+      // The join callables now carry client deadlines, so `deadline-exceeded`
+      // is a normal outcome of a cold or stalled instance. Telling that person
+      // to check their connection sends them to fix something that works, and
+      // the screen's default branch does exactly that for any message it does
+      // not recognise — so the mapping has to exist, not just the string.
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = const Size(390, 844);
+      addTearDown(tester.view.reset);
+      final liveRoom = roomModel(isLive: true);
+      final coordinator = RoomVoiceEntryCoordinator(
+        readRoom: (_) async => liveRoom,
+        resolveAuthority: (_) async => RoomVoiceStartAuthority.none,
+        startVoice: (_) async {},
+        joinRoom: (_, {startMuted = false}) async =>
+            throw FirebaseFunctionsException(
+              code: 'deadline-exceeded',
+              message: 'deadline exceeded',
+            ),
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData.dark(useMaterial3: true),
+          home: RoomEntryScreen(
+            room: liveRoom,
+            coordinator: coordinator,
+            voiceService: _RecordingVoice(),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('room-prejoin-join')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('room-prejoin-error')), findsOneWidget);
+      expect(find.text('Could not join this room. Try again.'), findsOneWidget);
+      expect(find.textContaining('Check your connection'), findsNothing);
+      expect(find.byType(CommunityVoiceRoomScreen), findsNothing);
+    });
+
     testWidgets('denied microphone access creates no roster entry', (
       tester,
     ) async {

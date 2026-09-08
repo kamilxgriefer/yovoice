@@ -1,3 +1,5 @@
+import 'dart:async' show TimeoutException;
+
 import 'package:firebase_core/firebase_core.dart' show FirebaseException;
 import 'package:cloud_functions/cloud_functions.dart';
 
@@ -47,13 +49,21 @@ class RoomVoiceEntryCoordinator {
   /// The production wiring. Constructed lazily so that merely importing this
   /// file cannot touch Firebase — the room screens are reachable from widget
   /// tests that have no Firebase app.
+  /// COVER GRANTS STAY OFF THIS PATH. Entry reads a room to decide whether it
+  /// may be joined; the cover is not part of that decision, and
+  /// `getRoomCoverMediaAccess` is a callable of its own — a cold start sitting
+  /// in the middle of the Join await chain. Both reads warm the same
+  /// process-wide grant cache in the background instead, so the room screen's
+  /// first `watchRoom` emission still finds it, and [enter] carries the
+  /// caller's already-resolved URL forward so nothing on screen goes blank.
   factory RoomVoiceEntryCoordinator.production({RoomService? rooms}) {
     final service = rooms ?? RoomService();
     return RoomVoiceEntryCoordinator(
-      readRoom: service.getRoom,
+      readRoom: (roomId) => service.getRoom(roomId, resolveCover: false),
       resolveAuthority: service.resolveVoiceStartAuthority,
       startVoice: service.startRoomVoice,
-      joinRoom: service.joinRoom,
+      joinRoom: (roomId, {startMuted = false}) =>
+          service.joinRoom(roomId, startMuted: startMuted, resolveCover: false),
       currentUserId: () => service.currentUserId,
     );
   }
@@ -93,7 +103,7 @@ class RoomVoiceEntryCoordinator {
     // blocking entry on a transient read.
     var current = room;
     try {
-      current = await _readRoom(room.id);
+      current = _carryCover(await _readRoom(room.id), room);
     } catch (_) {
       current = room;
     }
@@ -170,7 +180,7 @@ class RoomVoiceEntryCoordinator {
       final joined = await _joinRoom(room.id, startMuted: startMuted);
       return RoomVoiceEntry(
         outcome: outcome,
-        room: joined,
+        room: _carryCover(joined, room),
         authority: authority,
       );
     } catch (error) {
@@ -187,6 +197,25 @@ class RoomVoiceEntryCoordinator {
     }
   }
 
+  /// Keeps a cover URL the caller had already resolved.
+  ///
+  /// A refreshed or joined room comes back with the canonical Storage identity
+  /// but no signed URL, because resolving one is a callable this path
+  /// deliberately does not wait for. Reusing the URL the previous copy carried
+  /// is safe only while it describes the SAME object: the storage path and the
+  /// generation must match, so a cover replaced between the two reads falls
+  /// back to the gradient rather than painting the old image.
+  static VoiceRoom _carryCover(VoiceRoom fresh, VoiceRoom previous) {
+    final carried = previous.imageUrl;
+    if (fresh.imageUrl != null || carried == null) return fresh;
+    if (!fresh.hasCanonicalCover ||
+        fresh.coverStoragePath != previous.coverStoragePath ||
+        fresh.coverGeneration != previous.coverGeneration) {
+      return fresh;
+    }
+    return fresh.withResolvedImageUrl(carried);
+  }
+
   /// Maps transport and application failures to a small allow-list of product
   /// messages. Backend exception text must never cross this presentation
   /// boundary: it can contain implementation details or user-controlled data.
@@ -197,7 +226,13 @@ class RoomVoiceEntryCoordinator {
       return switch (error.code) {
         'permission-denied' => 'You do not have access to this room right now.',
         'not-found' => 'This room no longer exists.',
-        'unavailable' || 'deadline-exceeded' || 'network-request-failed' =>
+        // A client deadline is NOT a missing network. The join callables now
+        // carry their own deadlines, so a cold or stalled instance ends here;
+        // telling that person to check their connection would send them to fix
+        // something that is not broken. It falls through to this operation's
+        // own retry message instead ("Could not start voice. Try again.").
+        'deadline-exceeded' => fallback,
+        'unavailable' || 'network-request-failed' =>
           'You appear to be offline. Check your connection and try again.',
         'resource-exhausted' => 'Voice is busy right now. Try again shortly.',
         'unauthenticated' => 'Please sign in again to join this room.',
@@ -206,6 +241,9 @@ class RoomVoiceEntryCoordinator {
         _ => fallback,
       };
     }
+    // Same reasoning as `deadline-exceeded`: a bounded wait that ran out is a
+    // retry, not an offline report.
+    if (error is TimeoutException) return fallback;
     // Ordered AFTER the callable branch on purpose: FirebaseFunctionsException
     // IS a FirebaseException, and its `.message` carries real product copy
     // while a raw Firestore one carries "[cloud_firestore/permission-denied]
@@ -214,7 +252,8 @@ class RoomVoiceEntryCoordinator {
       return switch (error.code) {
         'permission-denied' => 'You do not have access to this room right now.',
         'not-found' => 'This room no longer exists.',
-        'unavailable' || 'deadline-exceeded' || 'network-request-failed' =>
+        'deadline-exceeded' => fallback,
+        'unavailable' || 'network-request-failed' =>
           'You appear to be offline. Check your connection and try again.',
         'resource-exhausted' => 'Voice is busy right now. Try again shortly.',
         'unauthenticated' => 'Please sign in again to join this room.',

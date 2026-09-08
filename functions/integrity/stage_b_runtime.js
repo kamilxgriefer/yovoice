@@ -28,6 +28,7 @@ const {
   createRoomCoverMigrationService,
 } = require("../rooms/cover_migration");
 const { createTrustedGcsMediaProbe } = require("../reels/probe");
+const { createLazyBucket } = require("../utils/lazy_bucket");
 
 /**
  * Creates one dependency graph for the Stage B bindings.
@@ -53,7 +54,8 @@ function createStageBIntegrityRuntime({
   roomCoverMigrationOptions = {},
 } = {}) {
   const database = db ?? getFirestore();
-  const objectBucket = bucket ?? (storage ? null : getStorage().bucket());
+  const objectBucket = bucket ??
+    (storage ? null : createLazyBucket(() => getStorage().bucket()));
   const objectStorage = storage ?? createBucketStorageAdapter(objectBucket);
   const {
     mediaProbe: configuredDirectMediaProbe,

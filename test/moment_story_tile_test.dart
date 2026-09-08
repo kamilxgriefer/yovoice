@@ -187,8 +187,9 @@ void main() {
           AppColors.secondary,
         ]);
 
-        final quiet =
-            AppPalette.of(tester.element(find.byKey(heardKey))).border;
+        final quiet = AppPalette.of(
+          tester.element(find.byKey(heardKey)),
+        ).border;
         expect(
           _ringColors(tester, heardKey),
           [quiet, quiet],
@@ -331,10 +332,11 @@ void main() {
       await tester.pump();
       await tester.pump();
 
-      expect(_ringColors(tester, const ValueKey('moments-chain-ola')), [
-        AppColors.primary,
-        AppColors.secondary,
-      ], reason: 'one heard link does not make the whole chain heard');
+      expect(
+        _ringColors(tester, const ValueKey('moments-chain-ola')),
+        [AppColors.primary, AppColors.secondary],
+        reason: 'one heard link does not make the whole chain heard',
+      );
     });
 
     testWidgets('a services failure fails OPEN — every ring stays unheard', (

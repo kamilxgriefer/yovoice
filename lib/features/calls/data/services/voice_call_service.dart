@@ -502,6 +502,28 @@ class VoiceCallService extends ChangeNotifier {
     _setStatus(VoiceCallStatus.connecting);
 
     try {
+      // The token is a network round trip; the readiness snapshot is a local
+      // status read (`_platform.status`, never a prompt). Neither depends on
+      // the other, so on the one path where the answer is needed WHATEVER the
+      // grant says — a direct call, which cannot proceed without a microphone
+      // — the read runs alongside the token instead of behind it.
+      //
+      // It stays unstarted everywhere else on purpose. A room's microphone
+      // requirement depends on the grant's `canPublish`, and reading a
+      // permission that will never be used would break the listen-only
+      // contract this service is tested against ("joins muted without asking
+      // for or publishing mic").
+      final readiness = kind == VoiceSessionKind.directCall
+          ? _permissionReadiness.mediaSnapshot(
+              includeCamera: cameraRequestedNow,
+            )
+          : null;
+      if (readiness != null) {
+        // The join can fail on the token before this is awaited; a snapshot
+        // failure must surface at the await below, never as an unhandled
+        // asynchronous error.
+        unawaited(readiness.then<void>((_) {}, onError: (Object _) {}));
+      }
       final connectionInfo = await tokenLoader();
       if (!_isJoinCurrent(joinEpoch, sessionRoomId)) return;
 
@@ -512,6 +534,9 @@ class VoiceCallService extends ChangeNotifier {
         requireMicrophone:
             kind == VoiceSessionKind.directCall || connectionInfo.canPublish,
         requireCamera: cameraRequestedNow,
+        // Built with exactly this `includeCamera`, so it answers the same
+        // question the sequential read would have asked.
+        prefetched: readiness,
       );
       if (!_isJoinCurrent(joinEpoch, sessionRoomId)) return;
 
@@ -1499,14 +1524,18 @@ class VoiceCallService extends ChangeNotifier {
     stopCurrentCapture: stopCurrentCapture,
   );
 
+  /// [prefetched] is a snapshot the caller already started for the same
+  /// `includeCamera`. It is only awaited when a decision genuinely needs it,
+  /// so starting one can never turn a listen-only join into a permission read.
   Future<bool> _checkPermissions({
     required bool requireMicrophone,
     required bool requireCamera,
+    Future<PermissionReadinessSnapshot>? prefetched,
   }) async {
     if (!requireMicrophone && !requireCamera) return true;
-    final snapshot = await _permissionReadiness.mediaSnapshot(
-      includeCamera: requireCamera,
-    );
+    final snapshot =
+        await (prefetched ??
+            _permissionReadiness.mediaSnapshot(includeCamera: requireCamera));
     if (requireMicrophone) {
       final microphone = snapshot[AppPermissionKind.microphone];
       if (!microphone.isUsable) {

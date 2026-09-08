@@ -156,6 +156,55 @@ void main() {
     },
   );
 
+  test(
+    'a private call checks readiness while the token is in flight',
+    () async {
+      final participant = _JoinParticipant();
+      final room = _JoinRoom(participant);
+      final platform = _VoicePermissionPlatform(
+        microphone: AppPermissionAccess.granted,
+        camera: AppPermissionAccess.granted,
+      );
+      final token = Completer<VoiceConnectionInfo>();
+      final service = VoiceCallService.forTesting(
+        roomFactory: () => room,
+        directCallService: _GatedDirectGateway(token.future),
+        tokenService: _JoinRoomTokens(_publisherToken),
+        permissionReadiness: PermissionReadinessService(platform: platform),
+      );
+      addTearDown(service.dispose);
+
+      final joining = _joinPrivate(service);
+
+      // A private call needs the microphone whatever the grant says, so the
+      // local status read has no reason to queue behind the token callable.
+      await platform.firstStatusCheck.future.timeout(
+        const Duration(seconds: 5),
+      );
+      expect(
+        token.isCompleted,
+        isFalse,
+        reason: 'The readiness read ran while the token was still outstanding.',
+      );
+      expect(
+        platform.requests,
+        isEmpty,
+        reason: 'A status read never prompts.',
+      );
+
+      token.complete(_publisherToken);
+      await joining;
+
+      expect(service.status, VoiceCallStatus.connected);
+      expect(
+        platform.statusChecks,
+        <AppPermissionKind>[AppPermissionKind.microphone],
+        reason: 'The started snapshot is the one consumed, not a second read.',
+      );
+      await service.disconnect(playSound: false);
+    },
+  );
+
   for (final directCall in <bool>[false, true]) {
     test('${directCall ? 'private call' : 'room'} respects a narrower '
         'post-connect publishing grant', () async {
@@ -759,6 +808,10 @@ final class _VoicePermissionPlatform implements AppPermissionPlatformGateway {
   final List<AppPermissionKind> requests = <AppPermissionKind>[];
   final List<AppPermissionKind> statusChecks = <AppPermissionKind>[];
 
+  /// Completes the first time a status is read, so a test can observe WHEN
+  /// the read happened relative to the token round trip.
+  final Completer<void> firstStatusCheck = Completer<void>();
+
   @override
   Future<bool> openSettings() async => true;
 
@@ -773,8 +826,19 @@ final class _VoicePermissionPlatform implements AppPermissionPlatformGateway {
   @override
   Future<AppPermissionAccess> status(AppPermissionKind permission) async {
     statusChecks.add(permission);
+    if (!firstStatusCheck.isCompleted) firstStatusCheck.complete();
     return permission == AppPermissionKind.camera ? camera : microphone;
   }
+}
+
+/// A direct-call token that answers only when the test says so, standing in
+/// for `createDirectCallToken`'s network round trip.
+final class _GatedDirectGateway extends Fake implements DirectCallGateway {
+  _GatedDirectGateway(this.token);
+  final Future<VoiceConnectionInfo> token;
+
+  @override
+  Future<VoiceConnectionInfo> createJoinToken(String callId) => token;
 }
 
 const _publisherToken = VoiceConnectionInfo(

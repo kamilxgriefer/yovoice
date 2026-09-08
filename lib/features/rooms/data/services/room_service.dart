@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -61,8 +62,38 @@ class RoomService {
   final String Function() _requestIdFactory;
   static final Map<String, _CachedRoomCoverAccess> _coverAccessCache = {};
   static int _coverAccessCacheEpoch = 0;
-  final Map<String, Future<Uri>> _pendingCoverAccess = {};
+
+  /// In-flight cover grants, shared by every instance like the cache they
+  /// feed. The entry screen's coordinator and the room screen it opens hold
+  /// different `RoomService` instances; keyed by account, room and cover
+  /// generation, one callable in flight serves both instead of each paying
+  /// for its own.
+  static final Map<String, Future<Uri>> _pendingCoverAccess = {};
   final Map<String, _PendingRoomVoiceStart> _pendingRoomVoiceStarts = {};
+  _PrivateProfileRead? _privateProfileMemo;
+
+  /// Client-side deadline for `startRoomVoice`. The plugin default is 60 s;
+  /// a stalled or cold instance should become an actionable failure well
+  /// before that. Safe to retry: the request and session ids are kept in
+  /// [_pendingRoomVoiceStarts] and the server ledger replays them.
+  static const Duration startRoomVoiceTimeout = Duration(seconds: 15);
+
+  /// Client-side deadline for `getRoomCoverMediaAccess`. A missing cover is
+  /// already tolerated (`_resolveRoomCoverSafely`), so a slow grant should
+  /// degrade to the gradient state rather than hold a screen.
+  static const Duration coverAccessTimeout = Duration(seconds: 10);
+
+  /// Client-side deadline for `setOwnRoomParticipantMute`; see [setMuted].
+  static const Duration setMutedDefaultTimeout = Duration(seconds: 15);
+
+  /// How long one read of the caller's own `users/{uid}` document is reused
+  /// between [resolveVoiceStartAuthority] and [joinRoom] on the dormant-room
+  /// path. Both need the same document; the memo turns two reads into one.
+  /// A rename inside this window fails the rules' byte-for-byte displayName
+  /// binding at commit and surfaces as the existing "The room changed while
+  /// you were joining" retry — the same failure class as today's
+  /// millisecond gap, just a wider one.
+  static const Duration privateProfileMemoTtl = Duration(seconds: 10);
 
   FirebaseFunctions get _functions =>
       _functionsOverride ??
@@ -118,59 +149,94 @@ class RoomService {
         cached.expiresAt.isAfter(now.add(const Duration(seconds: 15)))) {
       return Future<Uri>.value(cached.uri);
     }
-    return _pendingCoverAccess.putIfAbsent(cacheKey, () async {
-      try {
-        final payload = <String, Object?>{'roomId': room.id};
-        final response = _coverAccessInvoker != null
-            ? await _coverAccessInvoker(payload)
-            : (await _functions
-                      .httpsCallable('getRoomCoverMediaAccess')
-                      .call<Map<Object?, Object?>>(payload))
-                  .data;
-        if (_auth.currentUser?.uid != uid || epoch != _coverAccessCacheEpoch) {
-          throw StateError('Room cover access was cleared. Try again.');
+    final inFlight = _pendingCoverAccess[cacheKey];
+    if (inFlight != null) return inFlight;
+    // DELIBERATELY NOT `putIfAbsent`. The grant body can fail before its first
+    // suspension — `FirebaseFunctions.instanceFor` throws when there is no
+    // Firebase app — and a `finally` that removes the key would then run
+    // BEFORE `putIfAbsent` inserted it, leaving a failed future in a
+    // process-wide map for the life of the isolate. Build the future, insert
+    // it, and remove it from a completion callback that cannot run before the
+    // insert.
+    final pending = _requestCoverAccess(
+      room: room,
+      uid: uid,
+      path: path,
+      generation: generation,
+      cacheKey: cacheKey,
+      epoch: epoch,
+    );
+    _pendingCoverAccess[cacheKey] = pending;
+    unawaited(
+      pending.then<void>((_) {}, onError: (Object _) {}).whenComplete(() {
+        // Only ever retire OUR entry; a newer request for the same key owns
+        // itself.
+        if (identical(_pendingCoverAccess[cacheKey], pending)) {
+          _pendingCoverAccess.remove(cacheKey);
         }
-        final rawUrl = response['url'];
-        final rawExpiry = response['expiresAtMillis'];
-        final responseGeneration = response['coverGeneration'];
-        final responseType = response['coverContentType'];
-        final responseSize = response['coverSize'];
-        if (response['schemaVersion'] != 1 ||
-            rawUrl is! String ||
-            rawUrl.length > 4096 ||
-            rawExpiry is! int ||
-            responseGeneration != generation ||
-            responseType != room.coverContentType ||
-            responseSize != room.coverSize) {
-          throw const FormatException('Malformed room-cover grant.');
-        }
-        final uri = Uri.tryParse(rawUrl);
-        final expiresAt = DateTime.fromMillisecondsSinceEpoch(
-          rawExpiry,
-          isUtc: true,
-        );
-        final objectPath = uri == null || uri.pathSegments.length < 2
-            ? ''
-            : uri.pathSegments.skip(1).join('/');
-        if (uri == null ||
-            uri.scheme != 'https' ||
-            uri.host != 'storage.googleapis.com' ||
-            uri.hasPort ||
-            uri.userInfo.isNotEmpty ||
-            objectPath != path ||
-            uri.queryParameters['generation'] != generation ||
-            !expiresAt.isAfter(DateTime.now().toUtc())) {
-          throw const FormatException('Unsafe room-cover grant.');
-        }
-        _coverAccessCache[cacheKey] = _CachedRoomCoverAccess(
-          uri: uri,
-          expiresAt: expiresAt,
-        );
-        return uri;
-      } finally {
-        _pendingCoverAccess.remove(cacheKey);
-      }
-    });
+      }),
+    );
+    return pending;
+  }
+
+  Future<Uri> _requestCoverAccess({
+    required VoiceRoom room,
+    required String uid,
+    required String path,
+    required String generation,
+    required String cacheKey,
+    required int epoch,
+  }) async {
+    final payload = <String, Object?>{'roomId': room.id};
+    final response = _coverAccessInvoker != null
+        ? await _coverAccessInvoker(payload)
+        : (await _functions
+                  .httpsCallable(
+                    'getRoomCoverMediaAccess',
+                    options: HttpsCallableOptions(timeout: coverAccessTimeout),
+                  )
+                  .call<Map<Object?, Object?>>(payload))
+              .data;
+    if (_auth.currentUser?.uid != uid || epoch != _coverAccessCacheEpoch) {
+      throw StateError('Room cover access was cleared. Try again.');
+    }
+    final rawUrl = response['url'];
+    final rawExpiry = response['expiresAtMillis'];
+    final responseGeneration = response['coverGeneration'];
+    final responseType = response['coverContentType'];
+    final responseSize = response['coverSize'];
+    if (response['schemaVersion'] != 1 ||
+        rawUrl is! String ||
+        rawUrl.length > 4096 ||
+        rawExpiry is! int ||
+        responseGeneration != generation ||
+        responseType != room.coverContentType ||
+        responseSize != room.coverSize) {
+      throw const FormatException('Malformed room-cover grant.');
+    }
+    final uri = Uri.tryParse(rawUrl);
+    final expiresAt = DateTime.fromMillisecondsSinceEpoch(
+      rawExpiry,
+      isUtc: true,
+    );
+    final objectPath = uri == null || uri.pathSegments.length < 2
+        ? ''
+        : uri.pathSegments.skip(1).join('/');
+    if (uri == null ||
+        uri.scheme != 'https' ||
+        uri.host != 'storage.googleapis.com' ||
+        uri.hasPort ||
+        uri.userInfo.isNotEmpty ||
+        objectPath != path ||
+        uri.queryParameters['generation'] != generation ||
+        !expiresAt.isAfter(DateTime.now().toUtc())) {
+      throw const FormatException('Unsafe room-cover grant.');
+    }
+    _coverAccessCache[cacheKey] = _CachedRoomCoverAccess(
+      uri: uri,
+      expiresAt: expiresAt,
+    );
+    return uri;
   }
 
   Future<VoiceRoom> _resolveRoomCoverSafely(VoiceRoom room) async {
@@ -185,9 +251,50 @@ class RoomService {
     }
   }
 
+  /// Starts resolving [room]'s cover grant without waiting for it.
+  ///
+  /// The entry path reads a room to decide whether it may be joined; the
+  /// cover is not part of that decision, so the grant callable — a cold
+  /// start on its own — should not sit in the await chain. Warming it here
+  /// means the room screen's first `watchRoom` emission finds the grant in
+  /// [_coverAccessCache], or joins the same in-flight future. Failures are
+  /// logged and swallowed exactly as [_resolveRoomCoverSafely] does.
+  void _warmCoverAccess(VoiceRoom room) {
+    if (!room.hasCanonicalCover) return;
+    try {
+      unawaited(
+        resolveCoverUri(room).then<void>(
+          (_) {},
+          onError: (Object error) {
+            debugPrint('Room cover warm-up failed for ${room.id}: $error');
+          },
+        ),
+      );
+    } catch (error) {
+      debugPrint('Room cover warm-up failed for ${room.id}: $error');
+    }
+  }
+
+  /// [room] with its cover grant applied, or [room] unchanged with the grant
+  /// warming in the background.
+  ///
+  /// Resolving costs a callable round trip. A surface that paints the cover
+  /// pays it; the entry path, which only decides whether the room may be
+  /// joined, does not — it warms the same cache instead so the room screen's
+  /// first `watchRoom` emission finds the grant already there.
+  Future<VoiceRoom> _withCover(VoiceRoom room, {required bool resolve}) {
+    if (resolve) return _resolveRoomCoverSafely(room);
+    _warmCoverAccess(room);
+    return Future<VoiceRoom>.value(room);
+  }
+
   static void clearAllCoverAccessCaches() {
     _coverAccessCacheEpoch += 1;
     _coverAccessCache.clear();
+    // In-flight grants belong to the session that started them. The epoch
+    // check already makes them fail closed; dropping them keeps the shared
+    // map from carrying one account's request into the next account's reads.
+    _pendingCoverAccess.clear();
   }
 
   /// A display label for the live-audio session. The LiveKit participant name
@@ -211,8 +318,7 @@ class RoomService {
   /// viewer-authorized profile-media service instead of copying Auth URLs.
   Future<({String displayName, String? photoUrl})> _identity() async {
     final user = _user;
-    final snapshot = await _firestore.collection('users').doc(user.uid).get();
-    final data = snapshot.data();
+    final data = await _readPrivateProfile(user.uid);
     final name = data?['displayName'];
     if (name is! String || name.trim().isEmpty) {
       throw StateError('Your profile does not have a display name.');
@@ -222,6 +328,32 @@ class RoomService {
       displayName: name,
       photoUrl: null,
     );
+  }
+
+  /// One read of `users/{uid}` shared by [_identity] and [_isActiveAccount],
+  /// reused for [privateProfileMemoTtl]. Only a read that succeeded is kept,
+  /// only for the account it was read for, and only until the next account
+  /// boundary — [clearAllCoverAccessCaches] bumps the same epoch on sign-out,
+  /// so a memo can never outlive the session that produced it.
+  Future<Map<String, dynamic>?> _readPrivateProfile(String uid) async {
+    final epoch = _coverAccessCacheEpoch;
+    final memo = _privateProfileMemo;
+    if (memo != null &&
+        memo.uid == uid &&
+        memo.epoch == epoch &&
+        DateTime.now().difference(memo.readAt) <= privateProfileMemoTtl) {
+      return memo.data;
+    }
+    final data = (await _firestore.collection('users').doc(uid).get()).data();
+    if (_coverAccessCacheEpoch == epoch) {
+      _privateProfileMemo = _PrivateProfileRead(
+        uid: uid,
+        data: data,
+        readAt: DateTime.now(),
+        epoch: epoch,
+      );
+    }
+    return data;
   }
 
   Future<VoiceRoom> createRoom({
@@ -406,12 +538,19 @@ class RoomService {
     });
   }
 
-  Future<VoiceRoom> getRoom(String roomId) async {
+  /// Reads one room.
+  ///
+  /// [resolveCover] defaults to true so every existing caller keeps painting
+  /// the cover it always painted. Pass false on a path that only needs the
+  /// room's STATE — the entry coordinator's refresh, for instance — and the
+  /// `getRoomCoverMediaAccess` callable leaves the await chain entirely; the
+  /// grant is still fetched, just concurrently.
+  Future<VoiceRoom> getRoom(String roomId, {bool resolveCover = true}) async {
     final document = await _rooms.doc(roomId).get();
     if (!document.exists) {
       throw StateError('The room no longer exists.');
     }
-    return _resolveRoomCoverSafely(VoiceRoom.fromFirestore(document));
+    return _withCover(VoiceRoom.fromFirestore(document), resolve: resolveCover);
   }
 
   /// Authoritative read for destructive recovery decisions. A normal get may
@@ -616,13 +755,32 @@ class RoomService {
     });
   }
 
-  Future<VoiceRoom> joinRoom(String roomId, {bool startMuted = false}) async {
+  Future<VoiceRoom> joinRoom(
+    String roomId, {
+    bool startMuted = false,
+    bool resolveCover = true,
+  }) async {
     final user = _user;
-    final identity = await _identity();
+    // ISSUED NOW, AWAITED INSIDE THE TRANSACTION. The profile read and the
+    // transaction's room read touch different documents and neither depends on
+    // the other, so serialising them only added a round trip to every join.
+    // The read is still awaited before anything is written, so a profile
+    // without a display name still refuses the join exactly as it did.
+    final identityRead = _identity();
+    // A failure here must surface through the transaction below, not as an
+    // unhandled asynchronous error when a room check throws first.
+    unawaited(identityRead.then<void>((_) {}, onError: (Object _) {}));
     final room = _rooms.doc(roomId);
     final participant = room.collection('participants').doc(user.uid);
 
+    // The document as the transaction committed it. Returning this instead of
+    // re-reading the room afterwards removes the last round trip of the join:
+    // the only field the write moves is the roster count.
+    VoiceRoom? joined;
     await _firestore.runTransaction((transaction) async {
+      // A transaction body can run more than once; never carry a previous
+      // attempt's result forward.
+      joined = null;
       final snapshot = await transaction.get(room);
       final data = snapshot.data();
       if (!snapshot.exists || data == null) {
@@ -634,6 +792,8 @@ class RoomService {
       if (data['isLive'] != true) {
         throw StateError('Voice is not live in this room.');
       }
+      final identity = await identityRead;
+      final captured = VoiceRoom.fromFirestore(snapshot);
 
       final existing = await transaction.get(participant);
       if (existing.exists) {
@@ -656,6 +816,9 @@ class RoomService {
             'updatedAt': FieldValue.serverTimestamp(),
           });
         }
+        // Re-entry adds nobody to the roster, so the captured count already
+        // describes the room the caller is about to see.
+        joined = captured;
         return;
       }
 
@@ -690,13 +853,21 @@ class RoomService {
         'participantCount': count + 1,
         'updatedAt': FieldValue.serverTimestamp(),
       });
+      joined = captured.withParticipantCount(count + 1);
     });
-    return _resolveRoomCoverSafely(VoiceRoom.fromFirestore(await room.get()));
+    // The fallback covers a transaction implementation that could commit
+    // without running the body to completion; it costs a read only when the
+    // captured value is genuinely missing.
+    final result = joined ?? VoiceRoom.fromFirestore(await room.get());
+    return _withCover(result, resolve: resolveCover);
   }
 
   Future<void> joinCommunity(String roomId) async {
     final user = _user;
-    final identity = await _identity();
+    // Same overlap as [joinRoom]: an independent document read has no reason
+    // to sit in front of the transaction that needs it.
+    final identityRead = _identity();
+    unawaited(identityRead.then<void>((_) {}, onError: (Object _) {}));
     final room = _rooms.doc(roomId);
     final member = room.collection('roomMembers').doc(user.uid);
     await _firestore.runTransaction((transaction) async {
@@ -709,6 +880,7 @@ class RoomService {
       if (RoomStatus.fromValue(data['status']) != RoomStatus.active) {
         throw StateError('This community is currently unavailable.');
       }
+      final identity = await identityRead;
       final existing = await transaction.get(member);
       if (existing.exists) return;
       if (data['approvalRequired'] == true) {
@@ -828,7 +1000,12 @@ class RoomService {
     final response = _roomVoiceStartInvoker != null
         ? await _roomVoiceStartInvoker(payload)
         : (await _functions
-                  .httpsCallable('startRoomVoice')
+                  .httpsCallable(
+                    'startRoomVoice',
+                    options: HttpsCallableOptions(
+                      timeout: startRoomVoiceTimeout,
+                    ),
+                  )
                   .call<Map<Object?, Object?>>(payload))
               .data;
     if (response['schemaVersion'] != 1 ||
@@ -1094,8 +1271,20 @@ class RoomService {
     await _functions.httpsCallable('sendRoomMessage').call(payload);
   }
 
+  /// Writes the caller's own roster mute flag.
+  ///
+  /// Bounded on purpose. Unmute is server-first (ADR-149): the microphone is
+  /// not enabled until this write resolves, so the plugin's 60 s default left
+  /// a stalled or cold instance holding the control for a full minute with no
+  /// way out. At [setMutedDefaultTimeout] the callable raises
+  /// `deadline-exceeded`, which `RoomMuteCoordinator` already maps to
+  /// [RoomMuteOutcome.failed] — an honest, retryable failure. The signature is
+  /// unchanged so every existing caller and test double still matches.
   Future<void> setMuted({required String roomId, required bool isMuted}) async {
-    final callable = _functions.httpsCallable('setOwnRoomParticipantMute');
+    final callable = _functions.httpsCallable(
+      'setOwnRoomParticipantMute',
+      options: HttpsCallableOptions(timeout: setMutedDefaultTimeout),
+    );
     await callable.call<Map<Object?, Object?>>({
       'roomId': roomId,
       'isMuted': isMuted,
@@ -1328,8 +1517,10 @@ class RoomService {
   /// offered authority it may not have.
   Future<bool> _isActiveAccount(String userId) async {
     try {
-      final data = (await _firestore.collection('users').doc(userId).get())
-          .data();
+      // Shares [_readPrivateProfile]'s memo with [_identity]: the dormant-room
+      // path asks this question and then joins, and both need the same
+      // document. One read, not two.
+      final data = await _readPrivateProfile(userId);
       if (data == null) return false;
       return data['banned'] != true && data['disabled'] != true;
     } catch (_) {
@@ -1381,4 +1572,24 @@ class _PendingRoomVoiceStart {
 
   final String requestId;
   final String sessionId;
+}
+
+/// One remembered read of the caller's own private profile.
+///
+/// [epoch] is the cover-access cache epoch the read was taken under, which is
+/// the process-wide "the signed-in account changed" signal
+/// ([RoomService.clearAllCoverAccessCaches]); a memo taken before a boundary
+/// is never reused after it.
+class _PrivateProfileRead {
+  const _PrivateProfileRead({
+    required this.uid,
+    required this.data,
+    required this.readAt,
+    required this.epoch,
+  });
+
+  final String uid;
+  final Map<String, dynamic>? data;
+  final DateTime readAt;
+  final int epoch;
 }

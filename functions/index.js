@@ -1,3 +1,4 @@
+const __moduleLoadStartedAt = process.hrtime.bigint();
 const { getApps, initializeApp } = require("firebase-admin/app");
 
 // Let the Admin SDK read the deployed project's canonical bucket from
@@ -15,6 +16,33 @@ if (!getApps().length) {
     __storageBucketOverride
       ? { storageBucket: __storageBucketOverride }
       : undefined,
+  );
+}
+
+// Until the three media runtimes below went lazy (utils/lazy_bucket.js) they
+// each called getStorage().bucket() while this module was evaluated, so a
+// deployment with no bucket configured could not even be discovered: `node
+// index.js` threw "Bucket name not specified or invalid". Resolving the bucket
+// on first object access is what keeps @google-cloud/storage out of every cold
+// start, but it would also turn that loud deploy-time failure into a 500 on the
+// first user upload. Re-assert the precondition here, reading exactly the
+// sources initializeApp reads and constructing nothing.
+const __configuredStorageBucket = () => {
+  if (__storageBucketOverride) return __storageBucketOverride;
+  try {
+    const config = JSON.parse(process.env.FIREBASE_CONFIG || "{}");
+    return typeof config?.storageBucket === "string" ? config.storageBucket : "";
+  } catch (_) {
+    return "";
+  }
+};
+
+if (!__configuredStorageBucket()) {
+  throw new Error(
+    "Bucket name not specified or invalid. Set FIREBASE_CONFIG.storageBucket " +
+      "or FIREBASE_STORAGE_BUCKET before loading the Cloud Functions entry " +
+      "point; the media runtimes resolve their bucket lazily and would " +
+      "otherwise fail on the first upload instead of at deploy discovery.",
   );
 }
 
@@ -550,3 +578,19 @@ exports.onAchievementUserSocialCountersChanged =
   onAchievementUserSocialCountersChanged;
 exports.reconcileAchievementsV1 = reconcileAchievementsV1;
 exports.receiveLiveKitAchievementWebhook = receiveLiveKitAchievementWebhook;
+
+// Cold-start observability. Emitted once per instance start, only inside the
+// Cloud Run / Functions runtime (K_SERVICE and FUNCTION_TARGET are set there
+// and nowhere else): tests that require this module in a child process read
+// its stdout, and deploy discovery has nothing to measure. Logs Explorer:
+// jsonPayload.message="functions module evaluated" grouped by
+// jsonPayload.functionTarget is the before/after for any change to the module
+// graph above — nothing else measures it.
+if (process.env.K_SERVICE || process.env.FUNCTION_TARGET) {
+  require("firebase-functions/v2").logger.info("functions module evaluated", {
+    moduleLoadMs: Number(
+      (process.hrtime.bigint() - __moduleLoadStartedAt) / 1000000n,
+    ),
+    functionTarget: process.env.FUNCTION_TARGET ?? null,
+  });
+}

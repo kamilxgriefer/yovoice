@@ -374,14 +374,10 @@ class MessageService {
   Stream<List<Message>> watchMessages(String conversationId) {
     return _watchWithDeletionCutoff<List<Message>>(
       conversationId,
-      (cutoff) => _messagesQuery(conversationId, cutoff)
-          .snapshots()
-          .map(
-            (snapshot) =>
-                snapshot.docs.map(Message.fromFirestore).toList(
-                  growable: false,
-                ),
-          ),
+      (cutoff) => _messagesQuery(conversationId, cutoff).snapshots().map(
+        (snapshot) =>
+            snapshot.docs.map(Message.fromFirestore).toList(growable: false),
+      ),
     );
   }
 
@@ -396,30 +392,27 @@ class MessageService {
       StreamSubscription<T>? inner;
       int? appliedCutoff;
 
-      final root = _conversations
-          .doc(conversationId)
-          .snapshots()
-          .listen(
-            (snapshot) {
-              final cutoff = snapshot.exists
-                  ? Conversation.fromFirestore(
-                      snapshot,
-                    ).deletedThroughSequenceFor(currentUserId)
-                  : 0;
-              // Only a delete moves this, so the inner listener is opened
-              // once and rebuilt only when the account really did delete.
-              if (cutoff == appliedCutoff) return;
-              appliedCutoff = cutoff;
-              unawaited(inner?.cancel());
-              inner = build(
-                cutoff,
-              ).listen(controller.add, onError: controller.addError);
-            },
-            // A root that cannot be read cannot be filtered safely, and
-            // falling back to the unfiltered query could surface deleted
-            // history. Surface the failure instead.
-            onError: controller.addError,
-          );
+      final root = _conversations.doc(conversationId).snapshots().listen(
+        (snapshot) {
+          final cutoff = snapshot.exists
+              ? Conversation.fromFirestore(
+                  snapshot,
+                ).deletedThroughSequenceFor(currentUserId)
+              : 0;
+          // Only a delete moves this, so the inner listener is opened
+          // once and rebuilt only when the account really did delete.
+          if (cutoff == appliedCutoff) return;
+          appliedCutoff = cutoff;
+          unawaited(inner?.cancel());
+          inner = build(
+            cutoff,
+          ).listen(controller.add, onError: controller.addError);
+        },
+        // A root that cannot be read cannot be filtered safely, and
+        // falling back to the unfiltered query could surface deleted
+        // history. Surface the failure instead.
+        onError: controller.addError,
+      );
 
       controller.onCancel = () {
         unawaited(inner?.cancel());
@@ -438,7 +431,10 @@ class MessageService {
     ).deletedThroughSequenceFor(currentUserId);
   }
 
-  Query<Map<String, dynamic>> _messagesQuery(String conversationId, int cutoff) {
+  Query<Map<String, dynamic>> _messagesQuery(
+    String conversationId,
+    int cutoff,
+  ) {
     final messages = _conversations.doc(conversationId).collection('messages');
     if (cutoff <= 0) {
       return messages.orderBy('sentAt', descending: true).limit(250);

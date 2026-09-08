@@ -331,6 +331,56 @@ class VoiceRoom {
     );
   }
 
+  /// A copy whose roster size has moved.
+  ///
+  /// `joinRoom` hands back the document it read inside its transaction rather
+  /// than paying a second round trip to re-read what it just wrote; the one
+  /// field that write changes is the count, which this keeps honest.
+  VoiceRoom withParticipantCount(int value) {
+    return VoiceRoom(
+      id: id,
+      hostId: hostId,
+      hostName: hostName,
+      hostPhotoUrl: hostPhotoUrl,
+      name: name,
+      description: description,
+      category: category,
+      visibility: visibility,
+      language: language,
+      maxParticipants: maxParticipants,
+      participantCount: value,
+      memberCount: memberCount,
+      isLive: isLive,
+      roomType: roomType,
+      status: status,
+      imageUrl: imageUrl,
+      approvalRequired: approvalRequired,
+      slowModeSeconds: slowModeSeconds,
+      autoMuteNewUsers: autoMuteNewUsers,
+      membersCanStartVoice: membersCanStartVoice,
+      createdAt: createdAt,
+      updatedAt: updatedAt,
+      experience: experience,
+      clubId: clubId,
+      storedClubId: storedClubId,
+      targetAudience: targetAudience,
+      topicTags: topicTags,
+      roomGuidelines: roomGuidelines,
+      conversationStyle: conversationStyle,
+      newcomerFriendly: newcomerFriendly,
+      showFormat: showFormat,
+      topic: topic,
+      audienceCanSpeak: audienceCanSpeak,
+      handRaisingEnabled: handRaisingEnabled,
+      stageLimit: stageLimit,
+      deletionInProgress: deletionInProgress,
+      coverStoragePath: coverStoragePath,
+      coverGeneration: coverGeneration,
+      coverContentType: coverContentType,
+      coverSize: coverSize,
+    );
+  }
+
   /// Supplies a short-lived URL returned by the server without changing the
   /// canonical Storage identity parsed from Firestore. A null URL is the
   /// intentional fail-closed/gradient state.

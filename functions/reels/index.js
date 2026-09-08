@@ -9,6 +9,7 @@ const { requireActor, requireId } = require("../integrity/guards");
 const { createReelMediaProbe } = require("./probe");
 const { createReelService } = require("./service");
 const { createReelStorageAdapter } = require("./storage");
+const { createLazyBucket } = require("../utils/lazy_bucket");
 
 const REGION = "europe-west1";
 const REEL_EXPIRY_BATCH_SIZE = 200;
@@ -40,6 +41,13 @@ const REEL_CALLABLE_METHODS = Object.freeze({
   createReelCommentReport: "createReelCommentReport",
   removeReelComment: "removeReelComment",
 });
+// The two callables on the Reel publish path keep one warm instance each;
+// every other Reel callable scales to zero. Pinned by
+// test/reels_exports.test.js and test/cold_start_module_graph.test.js.
+const REEL_WARM_CALLABLES = Object.freeze(new Set([
+  "reserveReelDraftV2",
+  "finalizeReelDraftV2",
+]));
 
 function createReelRuntime({
   db = null,
@@ -50,7 +58,8 @@ function createReelRuntime({
   serviceOptions = {},
 } = {}) {
   const database = db ?? getFirestore();
-  const resolvedBucket = bucket ?? getStorage().bucket();
+  const resolvedBucket =
+    bucket ?? createLazyBucket(() => getStorage().bucket());
   const objectStorage = storage ?? createReelStorageAdapter(resolvedBucket);
   const resolvedProbe = probeMedia === undefined
     ? createReelMediaProbe(resolvedBucket)
@@ -125,8 +134,13 @@ function createReelFunctions({
   };
   const exportsMap = {};
   for (const [name, method] of Object.entries(REEL_CALLABLE_METHODS)) {
-    exportsMap[name] = registrars.onCall(callableOptions, async (request) =>
-      resolved.service[method](authBoundRequest(request)));
+    exportsMap[name] = registrars.onCall(
+      {
+        ...callableOptions,
+        minInstances: REEL_WARM_CALLABLES.has(name) ? 1 : 0,
+      },
+      async (request) => resolved.service[method](authBoundRequest(request)),
+    );
   }
   const scheduleOptions = {
     region: REGION,
@@ -228,6 +242,7 @@ module.exports = {
   REEL_CLEANUP_BATCH_SIZE,
   REEL_CLEANUP_MAX_BATCHES,
   REEL_CALLABLE_METHODS,
+  REEL_WARM_CALLABLES,
   REEL_EXPIRY_BATCH_SIZE,
   authBoundRequest,
   createReelFunctions,

@@ -403,7 +403,8 @@ void main() {
               signedIn: true,
               mockUser: MockUser(uid: _viewer),
             ),
-            mentionFriendsStream: friends ?? const Stream<List<FriendUser>>.empty(),
+            mentionFriendsStream:
+                friends ?? const Stream<List<FriendUser>>.empty(),
             playerFactory: _SilentPlayer.new,
           ),
         ),

@@ -145,6 +145,77 @@ void main() {
   });
 
   test(
+    'a stalled unmute becomes a retryable failure, not a hung control',
+    () async {
+      // `RoomService.setMuted` now carries a 15 s deadline, so a cold or stalled
+      // `setOwnRoomParticipantMute` raises this instead of holding the control
+      // for the plugin's full 60 s. It must NOT read as "this session is gone".
+      final harness = _Harness(
+        persistError: _ServerRefusal('deadline-exceeded'),
+      );
+
+      final outcome = await harness.coordinator.toggle(roomId: 'room-1');
+
+      expect(outcome, RoomMuteOutcome.failed);
+      expect(harness.events, ['persist:room-1:false']);
+      expect(
+        harness.events,
+        isNot(contains('disconnect')),
+        reason: 'A slow server is not a dead session.',
+      );
+      expect(harness.coordinator.isBusy, isFalse);
+      expect(harness.coordinator.pendingUnmute, isFalse);
+    },
+  );
+
+  test('the unmute wait is visible while it lasts', () async {
+    final gate = Completer<void>();
+    var muted = true;
+    final coordinator = RoomMuteCoordinator(
+      persistRosterState: (_, _) => gate.future,
+      applyMicrophoneState: (targetMuted) async => muted = targetMuted,
+      readCurrentMuted: () => muted,
+      disconnectStaleSession: () async {},
+    );
+
+    expect(coordinator.pendingUnmute, isFalse);
+    final operation = coordinator.toggle(roomId: 'room-1');
+    await Future<void>.delayed(Duration.zero);
+
+    expect(coordinator.isBusy, isTrue);
+    expect(
+      coordinator.pendingUnmute,
+      isTrue,
+      reason:
+          'Unmute stays server-first (ADR-149); the only honest improvement '
+          'is naming the wait instead of showing a dead control.',
+    );
+
+    gate.complete();
+    expect(await operation, RoomMuteOutcome.applied);
+    expect(coordinator.pendingUnmute, isFalse);
+  });
+
+  test('a mute never reports a pending wait', () async {
+    final gate = Completer<void>();
+    var muted = false;
+    final coordinator = RoomMuteCoordinator(
+      persistRosterState: (_, _) => gate.future,
+      applyMicrophoneState: (targetMuted) async => muted = targetMuted,
+      readCurrentMuted: () => muted,
+      disconnectStaleSession: () async {},
+    );
+
+    final operation = coordinator.toggle(roomId: 'room-1');
+    await Future<void>.delayed(Duration.zero);
+
+    expect(coordinator.isBusy, isFalse);
+    expect(coordinator.pendingUnmute, isFalse);
+    gate.complete();
+    expect(await operation, RoomMuteOutcome.applied);
+  });
+
+  test(
     'a stale server refusal never disconnects the replacement room',
     () async {
       final gate = Completer<void>();

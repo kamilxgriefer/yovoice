@@ -6,7 +6,7 @@ const { HttpsError, onCall } = require("firebase-functions/v2/https");
 const { defineSecret, defineString } = require("firebase-functions/params");
 const { onSchedule } = require("firebase-functions/v2/scheduler");
 const { logger } = require("firebase-functions/v2");
-const { AccessToken, TrackSource } = require("livekit-server-sdk");
+const { loadLiveKitSdk } = require("../livekit/sdk");
 
 const { requireAuthentication } = require("../utils/auth");
 const { db, normalizeText } = require("../utils/firestore");
@@ -1355,7 +1355,9 @@ async function recordAuthorizedDirectCallSession({
 }
 
 async function createDirectCallTokenHandler(request, {
-  AccessTokenClass = AccessToken,
+  // Default-parameter expressions evaluate per call, so the SDK loads on the
+  // first real token request and never when a test injects its own class.
+  AccessTokenClass = loadLiveKitSdk().AccessToken,
   apiKey = () => livekitApiKey.value(),
   apiSecret = () => livekitApiSecret.value(),
   serverUrl = () => livekitUrl.value(),
@@ -1412,6 +1414,7 @@ async function createDirectCallTokenHandler(request, {
     );
     const identity = canonicalIdentity(auth.uid, access.profile);
     const mediaType = requireDirectCallMediaType(access.call.mediaType);
+    const { TrackSource } = loadLiveKitSdk();
     const canPublishSources = mediaType === "video"
       ? [TrackSource.MICROPHONE, TrackSource.CAMERA]
       : [TrackSource.MICROPHONE];

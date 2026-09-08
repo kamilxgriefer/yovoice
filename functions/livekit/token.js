@@ -1,7 +1,7 @@
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { defineSecret, defineString } = require("firebase-functions/params");
 const logger = require("firebase-functions/logger");
-const { AccessToken, TrackSource } = require("livekit-server-sdk");
+const { loadLiveKitSdk } = require("./sdk");
 const { Timestamp } = require("firebase-admin/firestore");
 
 const { requireAuthentication } = require("../utils/auth");
@@ -483,7 +483,9 @@ async function recordAuthorizedVoiceSession({
 }
 
 async function createLiveKitTokenHandler(request, {
-  AccessTokenClass = AccessToken,
+  // Default-parameter expressions evaluate per call, so the SDK loads on the
+  // first real token request and never when a test injects its own class.
+  AccessTokenClass = loadLiveKitSdk().AccessToken,
   apiKey = () => livekitApiKey.value(),
   apiSecret = () => livekitApiSecret.value(),
   serverUrl = () => livekitUrl.value(),
@@ -523,6 +525,7 @@ async function createLiveKitTokenHandler(request, {
       permissions;
 
     try {
+      const { TrackSource } = loadLiveKitSdk();
       const accessToken = new AccessTokenClass(
         apiKey(),
         apiSecret(),

@@ -9,8 +9,18 @@ import 'package:flutter/foundation.dart';
 import 'package:yovoice/features/reels/data/models/reel.dart';
 import 'package:yovoice/features/reels/data/models/reel_composition.dart';
 import 'package:yovoice/features/reels/data/services/reel_upload.dart';
+import 'package:yovoice/features/reels/data/services/reel_upload_transport.dart';
 
 enum ReelAssetKind { media, backingAudio }
+
+/// Which part of a publish is running, so a surface can name the wait.
+///
+/// Progress alone cannot: the upload's bytes are measurable and the server's
+/// probe is not, so a single bar necessarily sits still while
+/// `finalizeReelDraftV2` inspects the committed object — legitimately several
+/// seconds for a long video. A stage lets that stretch read as "Publishing…"
+/// rather than as a frozen percentage.
+enum ReelPublishStage { reserving, uploading, finalizing }
 
 /// The exact reason values `validateReelReportReason` accepts, in the order
 /// the reports contract declares them.
@@ -206,23 +216,58 @@ class ReelService {
       _functionsOverride ??
       FirebaseFunctions.instanceFor(region: 'europe-west1');
 
+  /// Client-side deadline for `reserveReelDraftV2`. It writes one draft
+  /// document and answers; anything longer is a cold or stalled instance, and
+  /// the request id makes a retry recover the same reservation.
+  static const Duration reserveTimeout = Duration(seconds: 15);
+
+  /// Client-side deadline for `finalizeReelDraftV2`. Deliberately generous:
+  /// this call range-reads and probes the committed object, which for a long
+  /// video legitimately takes seconds. It still bounds the wait below the
+  /// server's own 120 s, and the request id plus the stored generations make a
+  /// retry idempotent.
+  static const Duration finalizeTimeout = Duration(seconds: 60);
+
+  /// Deadlines by callable. A name that is absent keeps the plugin default —
+  /// read paths are cheap to retry and are not worth a bespoke number.
+  static const Map<String, Duration> _callableTimeouts = <String, Duration>{
+    'reserveReelDraftV2': reserveTimeout,
+    'finalizeReelDraftV2': finalizeTimeout,
+  };
+
   Future<Map<Object?, Object?>> _call(
     String name,
     Map<String, Object?> payload,
   ) async {
     final invoker = _callableInvoker;
     if (invoker != null) return invoker(name, payload);
+    final timeout = _callableTimeouts[name];
     final result = await _functions
-        .httpsCallable(name)
+        .httpsCallable(
+          name,
+          options: timeout == null
+              ? null
+              : HttpsCallableOptions(timeout: timeout),
+        )
         .call<Map<Object?, Object?>>(payload);
     return result.data;
   }
 
+  /// Publishes one draft.
+  ///
+  /// [onStage] is optional and additive: existing callers that only watch
+  /// [onProgress] behave exactly as before.
   Future<String> publish(
     ReelPublishSession session, {
     void Function(double progress)? onProgress,
+    void Function(ReelPublishStage stage)? onStage,
   }) => _withIdentity(
-    (identity) => _publishBound(session, identity, onProgress: onProgress),
+    (identity) => _publishBound(
+      session,
+      identity,
+      onProgress: onProgress,
+      onStage: onStage,
+    ),
     session: session,
   );
 
@@ -230,11 +275,17 @@ class ReelService {
     ReelPublishSession session,
     _ReelIdentityLease identity, {
     void Function(double progress)? onProgress,
+    void Function(ReelPublishStage stage)? onStage,
   }) async {
+    void reportStage(ReelPublishStage stage) {
+      if (identity.isCurrent) onStage?.call(stage);
+    }
+
     final problem = session.plan.validate();
     if (problem != null) throw FormatException(problem);
 
     if (session.reelId == null || session.mediaStoragePath == null) {
+      reportStage(ReelPublishStage.reserving);
       final plan = session.plan;
       final audio = plan.backingAudio;
       final reserved = await _call('reserveReelDraftV2', <String, Object?>{
@@ -280,7 +331,38 @@ class ReelService {
 
     final reelId = session.reelId!;
     identity.ensureCurrent();
+    final audio = session.plan.backingAudio;
+
+    // BYTE-WEIGHTED, NOT STAGE-WEIGHTED. The old split gave the media 0–.8 and
+    // the backing audio .8–.95 whatever they weighed, so a 90 MB video and a
+    // 400 KB track advanced the bar at wildly different real speeds and the
+    // last fifth of the wait was the server's, spent frozen. Weighting by
+    // bytes makes the bar move at the rate the network is actually moving,
+    // and [ReelPublishStage] carries the part that has no measurable size.
+    const uploadShare = .95;
+    final mediaBytes = session.plan.media.size;
+    final audioBytes = audio?.size ?? 0;
+    final totalBytes = mediaBytes + audioBytes;
+    // Bytes already committed by a previous attempt still count as done: a
+    // retry after a lost finalize must not restart the bar at zero.
+    var completedBytes = 0;
+    if (session.mediaGeneration != null) completedBytes += mediaBytes;
+    if (audio != null && session.backingAudioGeneration != null) {
+      completedBytes += audioBytes;
+    }
+
+    void Function(double)? assetProgress(int assetBytes) {
+      if (onProgress == null || totalBytes <= 0) return null;
+      final base = completedBytes;
+      return (progress) {
+        if (!identity.isCurrent) return;
+        final sent = base + (assetBytes * progress.clamp(0, 1));
+        onProgress((sent / totalBytes) * uploadShare);
+      };
+    }
+
     if (session.mediaGeneration == null) {
+      reportStage(ReelPublishStage.uploading);
       final generation = await _upload(
         storagePath: session.mediaStoragePath!,
         payload: session.plan.media,
@@ -289,19 +371,16 @@ class ReelService {
           'reelId': reelId,
           'assetKind': 'media',
         },
-        onProgress: onProgress == null
-            ? null
-            : (progress) {
-                if (identity.isCurrent) onProgress(progress * .8);
-              },
+        onProgress: assetProgress(mediaBytes),
       );
       identity.ensureCurrent();
       session.mediaGeneration = generation;
+      completedBytes += mediaBytes;
     }
 
-    final audio = session.plan.backingAudio;
     if (audio != null && session.backingAudioGeneration == null) {
       identity.ensureCurrent();
+      reportStage(ReelPublishStage.uploading);
       final generation = await _upload(
         storagePath: session.backingAudioStoragePath!,
         payload: audio,
@@ -310,17 +389,15 @@ class ReelService {
           'reelId': reelId,
           'assetKind': 'backingAudio',
         },
-        onProgress: onProgress == null
-            ? null
-            : (progress) {
-                if (identity.isCurrent) onProgress(.8 + (progress * .15));
-              },
+        onProgress: assetProgress(audioBytes),
       );
       identity.ensureCurrent();
       session.backingAudioGeneration = generation;
+      completedBytes += audioBytes;
     }
 
     identity.ensureCurrent();
+    reportStage(ReelPublishStage.finalizing);
     final finalized = await _call('finalizeReelDraftV2', <String, Object?>{
       'requestId': session.requestId,
       'reelId': reelId,
@@ -356,22 +433,36 @@ class ReelService {
     }
     final storage = _storage ?? FirebaseStorage.instance;
     final reference = storage.ref(storagePath);
-    final task = reference.putData(
-      payload.bytes,
-      SettableMetadata(
-        contentType: payload.contentType,
-        customMetadata: metadata,
-      ),
-    );
     StreamSubscription<TaskSnapshot>? progressSubscription;
-    if (onProgress != null) {
-      progressSubscription = task.snapshotEvents.listen((snapshot) {
-        final total = snapshot.totalBytes;
-        if (total > 0) onProgress(snapshot.bytesTransferred / total);
-      });
-    }
     try {
       try {
+        // Streams from the picked file where one exists, copies bytes where it
+        // does not. The declared metadata — and therefore everything the
+        // backend sees — is identical either way.
+        //
+        // STARTED INSIDE THE GUARDED REGION ON PURPOSE. The streamed transport
+        // can fail before it ever hands back a task — the picker's temporary
+        // file evicted, moved or resized between selection and upload — and a
+        // retry reaching that point is exactly the case where a previous
+        // attempt may already have committed the object at this deterministic
+        // path. Started outside, such a throw bypassed the only call site of
+        // [_recoverUpload], so a whole class of lost acknowledgements could
+        // never be reconciled and the publish stalled behind an object it had
+        // already uploaded.
+        final task = await startReelUpload(
+          reference: reference,
+          payload: payload,
+          metadata: SettableMetadata(
+            contentType: payload.contentType,
+            customMetadata: metadata,
+          ),
+        );
+        if (onProgress != null) {
+          progressSubscription = task.snapshotEvents.listen((snapshot) {
+            final total = snapshot.totalBytes;
+            if (total > 0) onProgress(snapshot.bytesTransferred / total);
+          });
+        }
         final snapshot = await task;
         final generation = snapshot.metadata?.generation;
         if (generation != null &&

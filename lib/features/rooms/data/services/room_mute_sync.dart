@@ -12,6 +12,7 @@ class RoomMuteSync {
 
   final void Function()? onBusyChanged;
   bool _busy = false;
+  bool _pendingUnmute = false;
 
   /// Roster writes are chained so they land in the order the user acted,
   /// even when a mute's write is still in flight while the next toggle
@@ -20,15 +21,27 @@ class RoomMuteSync {
 
   bool get isBusy => _busy;
 
+  /// True while an unmute is waiting for its roster write.
+  ///
+  /// [isBusy] alone cannot tell the two directions apart: a mute releases the
+  /// control as soon as the local track is off (ADR-149), so the only
+  /// operation that can hold it is an unmute waiting on server authority. That
+  /// wait is inherent — the microphone must not be enabled before the write
+  /// resolves — so the honest thing a surface can do is SAY so ("Unmuting…")
+  /// rather than render a control that looks broken.
+  bool get pendingUnmute => _pendingUnmute;
+
   Future<void> _persistInOrder(Future<void> Function() persist) {
     final next = _rosterTail.then((_) => persist());
     _rosterTail = next.catchError((Object _) {});
     return next;
   }
 
-  void _setBusy(bool busy) {
-    if (_busy == busy) return;
+  void _setBusy(bool busy, {bool pendingUnmute = false}) {
+    final nextPending = busy && pendingUnmute;
+    if (_busy == busy && _pendingUnmute == nextPending) return;
     _busy = busy;
+    _pendingUnmute = nextPending;
     onBusyChanged?.call();
   }
 
@@ -44,7 +57,7 @@ class RoomMuteSync {
     if (!isCurrent()) return false;
 
     final targetMuted = !currentMuted;
-    _setBusy(true);
+    _setBusy(true, pendingUnmute: !targetMuted);
     try {
       if (targetMuted) {
         if (!isCurrent()) return false;

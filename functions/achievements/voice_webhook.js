@@ -1,4 +1,4 @@
-const { WebhookReceiver } = require("livekit-server-sdk");
+const { loadLiveKitSdk } = require("../livekit/sdk");
 const { isValidOpaqueUid } = require("./identity");
 
 const SUPPORTED_VOICE_EVENTS = new Set([
@@ -107,7 +107,8 @@ async function receiveSignedLiveKitWebhook({
     throw new VoiceWebhookValidationError("LiveKit authorization is required.");
   }
   const body = Buffer.isBuffer(rawBody) ? rawBody.toString("utf8") : rawBody;
-  const verifier = receiver ?? new WebhookReceiver(apiKey, apiSecret);
+  const verifier =
+    receiver ?? new (loadLiveKitSdk().WebhookReceiver)(apiKey, apiSecret);
   // skipAuth is deliberately false. Token issuance, client telemetry and parsed
   // JSON objects are never accepted as evidence of connected voice time.
   //

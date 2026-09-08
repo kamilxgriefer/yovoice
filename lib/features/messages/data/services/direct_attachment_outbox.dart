@@ -712,30 +712,27 @@ class DirectAttachmentOutbox {
   /// be sent to that thread must not survive on the device or be delivered
   /// later. Payload bytes go first, exactly as in [_remove], so a failure
   /// cannot orphan them.
-  Future<void> purgeConversation(String conversationId) =>
-      _serialize(() async {
-        await _ensureLoaded();
-        final doomed = _entries
-            .where((entry) => entry.conversationId == conversationId)
-            .toList(growable: false);
-        if (doomed.isEmpty) return;
-        for (final entry in doomed) {
-          await payloadStore.delete(accountNamespace, entry.id);
-        }
-        final snapshot = List<DirectAttachmentOutboxEntry>.from(_entries);
-        _entries.removeWhere(
-          (entry) => entry.conversationId == conversationId,
-        );
-        try {
-          await _persist();
-        } catch (_) {
-          _entries
-            ..clear()
-            ..addAll(snapshot);
-          rethrow;
-        }
-        _notify();
-      });
+  Future<void> purgeConversation(String conversationId) => _serialize(() async {
+    await _ensureLoaded();
+    final doomed = _entries
+        .where((entry) => entry.conversationId == conversationId)
+        .toList(growable: false);
+    if (doomed.isEmpty) return;
+    for (final entry in doomed) {
+      await payloadStore.delete(accountNamespace, entry.id);
+    }
+    final snapshot = List<DirectAttachmentOutboxEntry>.from(_entries);
+    _entries.removeWhere((entry) => entry.conversationId == conversationId);
+    try {
+      await _persist();
+    } catch (_) {
+      _entries
+        ..clear()
+        ..addAll(snapshot);
+      rethrow;
+    }
+    _notify();
+  });
 
   Future<void> _remove(String id, {required bool requireFailed}) =>
       _serialize(() async {

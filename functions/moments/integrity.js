@@ -3740,7 +3740,11 @@ function createBucketStorageAdapter(bucket) {
     return updated;
   }
   return {
-    bucketName: bucket.name,
+    // A getter, not a captured value: the production bucket is lazy (see
+    // utils/lazy_bucket.js) and its name must not be resolved at load time.
+    get bucketName() {
+      return bucket.name;
+    },
     getObjectReference(path) {
       if (typeof bucket.name !== "string" || !bucket.name) {
         fail("failed-precondition", "The Storage bucket name is unavailable.");

@@ -171,9 +171,17 @@ test("Stage B export map registers every callable, schedule and trigger", () => 
         : "scale to zero"}`,
     );
   }
+  // The warm set is exactly the two send paths plus the first callable of a
+  // chat open and of a dormant-room join. Anything added here is a recurring
+  // Cloud Run charge (docs/DEPLOYMENT.md) and must be a deliberate decision.
   assert.deepEqual(
     LATENCY_CRITICAL_USER_CALLABLES,
-    ["sendDirectMessage", "sendRoomMessage"],
+    [
+      "sendDirectMessage",
+      "sendRoomMessage",
+      "openDirectConversation",
+      "startRoomVoice",
+    ],
   );
   for (const name of callableNames.filter((name) =>
     !Object.hasOwn(USER_CALLABLE_METHODS, name))) {

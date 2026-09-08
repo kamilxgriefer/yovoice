@@ -514,6 +514,19 @@ const CALLABLE_OPTIONS = {
   timeoutSeconds: 120,
 };
 
+// Self-mute is the unmute tap's only server hop, so it keeps one warm
+// instance. It never touches the LiveKit control plane (see
+// executeSetOwnParticipantMute), so it binds no LiveKit secrets either: a
+// future LiveKit call added there fails with an incomplete-configuration
+// error at runtime, by design, rather than silently mounting secrets it does
+// not need. Pinned by test/latency_critical_configuration.test.js.
+const SELF_MUTE_CALLABLE_OPTIONS = Object.freeze({
+  region: REGION,
+  enforceAppCheck: false,
+  timeoutSeconds: 120,
+  minInstances: 1,
+});
+
 // firebase-functions v2 invokes every onCall handler as handler(request,
 // responseProxy). A multi-parameter execute* function must therefore never be
 // registered directly: the streaming response proxy would land in its
@@ -1243,12 +1256,14 @@ async function executeSetOwnParticipantMute(
   return { success: true, roomId, isMuted };
 }
 
-const setOwnRoomParticipantMute = onCall(CALLABLE_OPTIONS, (request) =>
-  executeSetOwnParticipantMute(request),
+const setOwnRoomParticipantMute = onCall(
+  SELF_MUTE_CALLABLE_OPTIONS,
+  (request) => executeSetOwnParticipantMute(request),
 );
 
 module.exports = {
   ROOM_CONTROL_ATTEMPT_POLICY,
+  SELF_MUTE_CALLABLE_OPTIONS,
   deleteRoomSelf,
   endRoomVoiceSelf,
   executeDeleteRoom,

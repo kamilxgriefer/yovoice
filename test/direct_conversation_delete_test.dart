@@ -41,18 +41,19 @@ void main() {
 
   late PublicIdentityRepository originalIdentityRepository;
 
-  Widget host(Widget child, {Locale locale = const Locale('en')}) => MaterialApp(
-    locale: locale,
-    supportedLocales: AppLocalizations.supportedLocales,
-    localizationsDelegates: const [
-      AppLocalizationsDelegate(),
-      GlobalMaterialLocalizations.delegate,
-      GlobalWidgetsLocalizations.delegate,
-      GlobalCupertinoLocalizations.delegate,
-    ],
-    theme: AppTheme.darkTheme,
-    home: child,
-  );
+  Widget host(Widget child, {Locale locale = const Locale('en')}) =>
+      MaterialApp(
+        locale: locale,
+        supportedLocales: AppLocalizations.supportedLocales,
+        localizationsDelegates: const [
+          AppLocalizationsDelegate(),
+          GlobalMaterialLocalizations.delegate,
+          GlobalWidgetsLocalizations.delegate,
+          GlobalCupertinoLocalizations.delegate,
+        ],
+        theme: AppTheme.darkTheme,
+        home: child,
+      );
 
   void useSurface(WidgetTester tester, Size size) {
     tester.view.physicalSize = size;
@@ -133,21 +134,30 @@ void main() {
     testWidgets('offers Delete alongside Archive and confirms before acting', (
       tester,
     ) async {
-      final service = _StubMessageService(
-        conversations: [conversationFor()],
-      );
+      final service = _StubMessageService(conversations: [conversationFor()]);
       await pumpMessages(tester, service, size: narrow);
       await openRowActions(tester);
 
-      expect(find.byKey(const ValueKey('conversation-archive-action')), findsOne);
-      expect(find.byKey(const ValueKey('conversation-delete-action')), findsOne);
+      expect(
+        find.byKey(const ValueKey('conversation-archive-action')),
+        findsOne,
+      );
+      expect(
+        find.byKey(const ValueKey('conversation-delete-action')),
+        findsOne,
+      );
       // The row itself has to say the scope, before the dialog does.
       expect(find.text('Removes it for you only'), findsOne);
 
-      await tester.tap(find.byKey(const ValueKey('conversation-delete-action')));
+      await tester.tap(
+        find.byKey(const ValueKey('conversation-delete-action')),
+      );
       await tester.pumpAndSettle();
 
-      expect(find.byKey(const ValueKey('conversation-delete-dialog')), findsOne);
+      expect(
+        find.byKey(const ValueKey('conversation-delete-dialog')),
+        findsOne,
+      );
       // Nothing has happened yet.
       expect(service.deleted, isEmpty);
       expect(
@@ -166,31 +176,36 @@ void main() {
     testWidgets('cancel leaves the conversation exactly where it was', (
       tester,
     ) async {
-      final service = _StubMessageService(
-        conversations: [conversationFor()],
-      );
+      final service = _StubMessageService(conversations: [conversationFor()]);
       await pumpMessages(tester, service, size: narrow);
       await openRowActions(tester);
-      await tester.tap(find.byKey(const ValueKey('conversation-delete-action')));
+      await tester.tap(
+        find.byKey(const ValueKey('conversation-delete-action')),
+      );
       await tester.pumpAndSettle();
 
-      await tester.tap(find.byKey(const ValueKey('conversation-delete-cancel')));
+      await tester.tap(
+        find.byKey(const ValueKey('conversation-delete-cancel')),
+      );
       await tester.pumpAndSettle();
 
       expect(service.deleted, isEmpty);
-      expect(find.byKey(const ValueKey('conversation-delete-dialog')), findsNothing);
+      expect(
+        find.byKey(const ValueKey('conversation-delete-dialog')),
+        findsNothing,
+      );
       expect(find.text('Them'), findsOne);
     });
 
     testWidgets('confirming removes the row and reports success', (
       tester,
     ) async {
-      final service = _StubMessageService(
-        conversations: [conversationFor()],
-      );
+      final service = _StubMessageService(conversations: [conversationFor()]);
       await pumpMessages(tester, service, size: narrow);
       await openRowActions(tester);
-      await tester.tap(find.byKey(const ValueKey('conversation-delete-action')));
+      await tester.tap(
+        find.byKey(const ValueKey('conversation-delete-action')),
+      );
       await tester.pumpAndSettle();
       await tester.tap(
         find.byKey(const ValueKey('conversation-delete-confirm')),
@@ -219,7 +234,9 @@ void main() {
       );
       await pumpMessages(tester, service, size: narrow);
       await openRowActions(tester);
-      await tester.tap(find.byKey(const ValueKey('conversation-delete-action')));
+      await tester.tap(
+        find.byKey(const ValueKey('conversation-delete-action')),
+      );
       await tester.pumpAndSettle();
       await tester.tap(
         find.byKey(const ValueKey('conversation-delete-confirm')),
@@ -237,9 +254,7 @@ void main() {
     testWidgets('Polish copy carries the same for-you-only promise', (
       tester,
     ) async {
-      final service = _StubMessageService(
-        conversations: [conversationFor()],
-      );
+      final service = _StubMessageService(conversations: [conversationFor()]);
       await pumpMessages(
         tester,
         service,
@@ -251,7 +266,9 @@ void main() {
       expect(find.text('Usuń czat'), findsOne);
       expect(find.text('Usuwa tylko u Ciebie'), findsOne);
 
-      await tester.tap(find.byKey(const ValueKey('conversation-delete-action')));
+      await tester.tap(
+        find.byKey(const ValueKey('conversation-delete-action')),
+      );
       await tester.pumpAndSettle();
 
       expect(find.text('Usunąć czat?'), findsOne);
@@ -266,9 +283,7 @@ void main() {
       testWidgets('${entry.key} reaches Delete and confirms without overflow', (
         tester,
       ) async {
-        final service = _StubMessageService(
-          conversations: [conversationFor()],
-        );
+        final service = _StubMessageService(conversations: [conversationFor()]);
         await pumpMessages(tester, service, size: entry.value);
         await openRowActions(tester);
         await tester.tap(
@@ -368,7 +383,10 @@ void main() {
       await pumpChat(tester, service, size: narrow);
       await chooseDelete(tester);
 
-      expect(find.byKey(const ValueKey('conversation-delete-dialog')), findsOne);
+      expect(
+        find.byKey(const ValueKey('conversation-delete-dialog')),
+        findsOne,
+      );
       await tester.tap(
         find.byKey(const ValueKey('conversation-delete-confirm')),
       );
@@ -401,33 +419,36 @@ void main() {
       expect(find.textContaining('never committed'), findsNothing);
     });
 
-    testWidgets('a mapped transport failure still refuses to look like success', (
-      tester,
-    ) async {
-      final service = _StubMessageService(
-        conversations: [conversationFor()],
-        deleteFailure: FirebaseFunctionsException(
-          code: 'unavailable',
-          message: 'offline',
-        ),
-      );
-      await pumpChat(tester, service, size: narrow);
-      await chooseDelete(tester);
-      await tester.tap(
-        find.byKey(const ValueKey('conversation-delete-confirm')),
-      );
-      await tester.pumpAndSettle();
+    testWidgets(
+      'a mapped transport failure still refuses to look like success',
+      (tester) async {
+        final service = _StubMessageService(
+          conversations: [conversationFor()],
+          deleteFailure: FirebaseFunctionsException(
+            code: 'unavailable',
+            message: 'offline',
+          ),
+        );
+        await pumpChat(tester, service, size: narrow);
+        await chooseDelete(tester);
+        await tester.tap(
+          find.byKey(const ValueKey('conversation-delete-confirm')),
+        );
+        await tester.pumpAndSettle();
 
-      expect(find.byType(ChatScreen), findsOne);
-      expect(find.byType(SnackBar), findsOne);
-      expect(find.textContaining('try again'), findsOne);
-    });
+        expect(find.byType(ChatScreen), findsOne);
+        expect(find.byType(SnackBar), findsOne);
+        expect(find.textContaining('try again'), findsOne);
+      },
+    );
 
     testWidgets('cancel from the thread deletes nothing', (tester) async {
       final service = _StubMessageService(conversations: [conversationFor()]);
       await pumpChat(tester, service, size: narrow);
       await chooseDelete(tester);
-      await tester.tap(find.byKey(const ValueKey('conversation-delete-cancel')));
+      await tester.tap(
+        find.byKey(const ValueKey('conversation-delete-cancel')),
+      );
       await tester.pumpAndSettle();
 
       expect(service.deleted, isEmpty);
@@ -569,66 +590,71 @@ void main() {
       expect(theirs.map((message) => message.content), hasLength(2));
     });
 
-    test('a deleted conversation leaves every list, archived included', () async {
-      await firestore.collection('conversations').doc(conversationId).set({
-        'participantIds': [currentUserId, otherUserId],
-        'participantNames': {currentUserId: 'Me', otherUserId: 'Them'},
-        'unreadCounts': {currentUserId: 0, otherUserId: 0},
-        'archivedBy': <String>[],
-        'mutedBy': <String>[],
-        'deletedBy': <String>[currentUserId],
-        'deletedSequences': {currentUserId: 2, otherUserId: 0},
-        'lastMessage': 'gone',
-        'lastMessageType': 'text',
-        'lastMessageSenderId': otherUserId,
-        'createdAt': Timestamp.fromDate(DateTime.utc(2026, 2, 1)),
-        'updatedAt': Timestamp.fromDate(DateTime.utc(2026, 3, 1)),
-      });
+    test(
+      'a deleted conversation leaves every list, archived included',
+      () async {
+        await firestore.collection('conversations').doc(conversationId).set({
+          'participantIds': [currentUserId, otherUserId],
+          'participantNames': {currentUserId: 'Me', otherUserId: 'Them'},
+          'unreadCounts': {currentUserId: 0, otherUserId: 0},
+          'archivedBy': <String>[],
+          'mutedBy': <String>[],
+          'deletedBy': <String>[currentUserId],
+          'deletedSequences': {currentUserId: 2, otherUserId: 0},
+          'lastMessage': 'gone',
+          'lastMessageType': 'text',
+          'lastMessageSenderId': otherUserId,
+          'createdAt': Timestamp.fromDate(DateTime.utc(2026, 2, 1)),
+          'updatedAt': Timestamp.fromDate(DateTime.utc(2026, 3, 1)),
+        });
 
-      expect(await service.watchConversations().first, isEmpty);
-      expect(
-        await service.watchConversations(includeArchived: true).first,
-        isEmpty,
-      );
-    });
+        expect(await service.watchConversations().first, isEmpty);
+        expect(
+          await service.watchConversations(includeArchived: true).first,
+          isEmpty,
+        );
+      },
+    );
   });
 
   group('local state the deleter leaves behind', () {
-    test('queued attachments for that chat lose their entry AND their bytes', () async {
-      final payloads = _MemoryPayloadStore();
-      final attachments = DirectAttachmentOutbox(
-        ownerId: currentUserId,
-        payloadStore: payloads,
-      );
-      Future<void> queue(String chatId, String fingerprint) => attachments
-          .enqueue(
-            fingerprint: fingerprint,
-            conversationId: chatId,
-            type: MessageType.image,
-            contentType: 'image/jpeg',
-            durationSeconds: null,
-            bytes: Uint8List.fromList(List<int>.filled(64, 7)),
-            reserveRequestId: 'reserve-$fingerprint',
-            finalizeRequestId: 'finalize-$fingerprint',
-          )
-          .then((_) {});
-      await queue(conversationId, 'doomed');
-      await queue('other-chat', 'unrelated');
-      final namespace = attachments.accountNamespace;
-      expect(await payloads.keys(namespace), hasLength(2));
+    test(
+      'queued attachments for that chat lose their entry AND their bytes',
+      () async {
+        final payloads = _MemoryPayloadStore();
+        final attachments = DirectAttachmentOutbox(
+          ownerId: currentUserId,
+          payloadStore: payloads,
+        );
+        Future<void> queue(String chatId, String fingerprint) => attachments
+            .enqueue(
+              fingerprint: fingerprint,
+              conversationId: chatId,
+              type: MessageType.image,
+              contentType: 'image/jpeg',
+              durationSeconds: null,
+              bytes: Uint8List.fromList(List<int>.filled(64, 7)),
+              reserveRequestId: 'reserve-$fingerprint',
+              finalizeRequestId: 'finalize-$fingerprint',
+            )
+            .then((_) {});
+        await queue(conversationId, 'doomed');
+        await queue('other-chat', 'unrelated');
+        final namespace = attachments.accountNamespace;
+        expect(await payloads.keys(namespace), hasLength(2));
 
-      await attachments.purgeConversation(conversationId);
+        await attachments.purgeConversation(conversationId);
 
-      expect(
-        attachments.entries.map((entry) => entry.conversationId),
-        ['other-chat'],
-      );
-      expect(
-        await payloads.keys(namespace),
-        hasLength(1),
-        reason: 'private media bytes must not survive on the device',
-      );
-    });
+        expect(attachments.entries.map((entry) => entry.conversationId), [
+          'other-chat',
+        ]);
+        expect(
+          await payloads.keys(namespace),
+          hasLength(1),
+          reason: 'private media bytes must not survive on the device',
+        );
+      },
+    );
 
     test('queued text for that chat is purged', () async {
       final firestore = FakeFirebaseFirestore();
@@ -694,39 +720,44 @@ void main() {
       expect(service.outbox.entries, hasLength(1));
     });
 
-    test('a build without the callable refuses rather than faking it', () async {
-      final service = MessageService(
-        firestore: FakeFirebaseFirestore(),
-        auth: MockFirebaseAuth(
-          signedIn: true,
-          mockUser: MockUser(uid: currentUserId),
-        ),
-        functions: _DeleteFunctions(
-          failure: FirebaseFunctionsException(
-            code: 'unimplemented',
-            message: 'not deployed',
+    test(
+      'a build without the callable refuses rather than faking it',
+      () async {
+        final service = MessageService(
+          firestore: FakeFirebaseFirestore(),
+          auth: MockFirebaseAuth(
+            signedIn: true,
+            mockUser: MockUser(uid: currentUserId),
           ),
-        ),
-      );
+          functions: _DeleteFunctions(
+            failure: FirebaseFunctionsException(
+              code: 'unimplemented',
+              message: 'not deployed',
+            ),
+          ),
+        );
 
-      await expectLater(
-        service.deleteConversationForMe(conversationId),
-        throwsA(isA<StateError>()),
-      );
-    });
+        await expectLater(
+          service.deleteConversationForMe(conversationId),
+          throwsA(isA<StateError>()),
+        );
+      },
+    );
   });
 }
 
 class _StubMessageService extends MessageService {
-  _StubMessageService({required List<Conversation> conversations, this.deleteFailure})
-    : _conversationState = conversations,
-      super(
-        firestore: FakeFirebaseFirestore(),
-        auth: MockFirebaseAuth(
-          signedIn: true,
-          mockUser: MockUser(uid: 'me-uid'),
-        ),
-      );
+  _StubMessageService({
+    required List<Conversation> conversations,
+    this.deleteFailure,
+  }) : _conversationState = conversations,
+       super(
+         firestore: FakeFirebaseFirestore(),
+         auth: MockFirebaseAuth(
+           signedIn: true,
+           mockUser: MockUser(uid: 'me-uid'),
+         ),
+       );
 
   List<Conversation> _conversationState;
   final Object? deleteFailure;
@@ -735,7 +766,9 @@ class _StubMessageService extends MessageService {
       StreamController<List<Conversation>>.broadcast();
 
   @override
-  Stream<List<Conversation>> watchConversations({bool includeArchived = false}) {
+  Stream<List<Conversation>> watchConversations({
+    bool includeArchived = false,
+  }) {
     return Stream<List<Conversation>>.multi((controller) {
       controller.add(_conversationState);
       final subscription = _conversations.stream.listen(controller.add);
@@ -795,7 +828,9 @@ class _DeleteFunctions implements FirebaseFunctions {
         payloads.add(Map<String, dynamic>.from(parameters! as Map));
         final refusal = failure;
         if (refusal != null) throw refusal;
-        return <String, Object?>{'conversationId': payloads.last['conversationId']};
+        return <String, Object?>{
+          'conversationId': payloads.last['conversationId'],
+        };
       });
 
   @override

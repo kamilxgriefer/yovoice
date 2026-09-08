@@ -320,6 +320,7 @@ class ProfileHeader extends StatelessWidget {
                           AvailabilityChip(
                             availability: profile.availability,
                             dense: true,
+                            hitTargetSize: 44,
                           ),
                         ],
                       ),

@@ -74,6 +74,12 @@ class RoomMuteCoordinator extends ChangeNotifier {
 
   bool get isBusy => _sync.isBusy;
 
+  /// True while an unmute waits for server authority — see
+  /// [RoomMuteSync.pendingUnmute]. Every surface shares this one coordinator,
+  /// so the room screens and the mini bar read the same pending state and can
+  /// describe the wait identically instead of each showing a dead control.
+  bool get pendingUnmute => _sync.pendingUnmute;
+
   Future<RoomMuteOutcome> toggle({
     required String roomId,
     bool Function()? isOperationCurrent,
