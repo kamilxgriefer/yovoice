@@ -62,14 +62,20 @@ enforces 500 characters per language and rejected the first, longer Polish
 text. The tester list `YO Voice Internal Testers` (15) was not modified,
 nothing was promoted, no track was created.
 
-**iOS — uploaded but NOT yet distributed.** App Store Connect signed the
-session out partway through the release (`authResult=FAILED`), and
-re-authenticating needs the owner's Apple ID password or passkey plus 2FA.
-Build 22 is therefore in App Store Connect but has **not** been assigned to
-`YO Voice Internal Testers` or `YO Voice Beta Testers`, and no "What to
-Test" was saved. **Owner action required:** sign in to App Store Connect,
-then assign build 22 to both groups. Until that happens no iOS tester can
-install it.
+**iOS — distributed to both groups later the same morning.** App Store
+Connect signed the session out partway through the release
+(`authResult=FAILED`); the owner signed back in, and build 22 was then
+assigned to `YO Voice Beta Testers` (External, 7) with a "What to Test"
+text and automatic tester notification left on. `YO Voice Internal
+Testers` (Internal, 1) had received it automatically. Status moved straight
+to **Testing** for both groups with no Beta App Review wait, as expected for
+a later build of an already-reviewed version string. The Apple session
+cannot be re-established by Claude (Apple ID password/passkey + 2FA), so
+iOS console work should be done first in future rounds.
+
+**Klaudia re-invited.** `goluszka12389@gmail.com`, still "Invited" in the
+external group, was sent a fresh invitation with the group's **Reinvite**
+action (maintainer-authorized). Status stays "Invited" until she accepts.
 
 Scope: invited tester channels only. No production store release, no public
 link, no Hosting deploy.
