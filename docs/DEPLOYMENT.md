@@ -167,6 +167,37 @@ fresh Beta App Review; build 22 skipped it only because 1.0.0 had already
 been reviewed. Internal testers and all 15 Android testers get it without
 waiting.
 
+#### 2.0.0 tester notification email — 2026-09-08 22:45-22:52 CEST
+
+Same channel and policy as previous rounds: the authenticated Workspace
+mailbox `kamil@yovoice.app` in Chrome "Profile 3", sending as the alias
+**YoVoice <hello@yovoice.app>**, compose windows pre-filled with Gmail's
+`view=cm` URL parameters and sent with Cmd+Return, one recipient per
+message, no BCC. Subject `YO Voice 2.0.0 is ready to test`.
+
+Owner delivery test first, then the 20-address wave (the same 21-unique
+recipient set as build 22). The wave log recorded 20/20 sent between
+22:45 and 22:52, and a follow-up check found **zero leftover compose
+windows** — Gmail closes a compose window only on a successful send, so
+a silent failure would have left one behind. The per-message Sent-folder
+count could not be read this time: Gmail's virtualised list stopped
+exposing rows to the accessibility tree, which is the only way to inspect
+Profile 3 (the browser extension cannot see it and `screencapture` has no
+Screen Recording permission). Stated as a limit of the verification, not
+as a count.
+
+The message says Android is live now and that iOS is in Apple's review
+because the version number changed — which is what was actually true at
+send time.
+
+**A macOS automation trap worth recording.** System Events keystrokes go
+to the ACTIVE tab of the frontmost window, not to whichever tab a CDP
+click focused. The App Store Connect "What to Test" field swallowed three
+typing attempts while the Play Console tab was active in the same window;
+the fix is `set active tab index of window 1` on the target tab BEFORE
+typing. Also: `st` is a reserved AppleScript identifier and fails to
+parse, joining the `note`/`status`/`results`/`target` list already noted.
+
 ### Backend deploy for the Build 22 round — 2026-09-07
 
 Maintainer-authorized on 2026-09-07 in answer to a direct question: deploy
