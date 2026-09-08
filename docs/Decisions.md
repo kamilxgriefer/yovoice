@@ -9848,3 +9848,79 @@ messages until eviction, since there is no per-document purge API.
 the new keys, or the fan-out would have silently skipped deleted
 conversations and frozen a stale name and avatar in them for the
 participant who never deleted anything.
+
+## ADR-165: Home leads with friends and the account's own availability, and carries less
+
+**Context.** The top of Home was a followed-creators Moments rail: a
+follow-graph surface on a screen whose job is "who can I talk to right
+now". The maintainer asked for plain friends there instead, for the
+availability status to sit somewhere far more visible than the profile,
+and for Home to carry less overall. Availability itself already existed
+(ADR-150) but its only entry points were the More sheet, the desktop
+sidebar and the profile header.
+
+**Decision.** `HomePeopleStrip` is promoted to the top of Home and its
+first tile is the signed-in account, drawn with its own availability
+ring and opening `showAvailabilityPicker` on tap. The existing
+`AvailabilityChip` gains a second home in the Home header. Both reuse
+`PresenceService.setAvailability` and the shared picker — no fork. Home
+then sheds weight: the followed-Moments rail moves below "Live for you"
+and loses its own-avatar tile, `HomeCircleActivity` leaves Home as a
+duplicate of that rail, "Rooms for you" is capped at three, "Your active
+rooms" renders only for accounts that actually host one, the two quick
+actions collapse into a single pill row, and the desktop right rail
+keeps only the two static cards. Nothing is deleted: every section that
+leaves Home stays reachable from the tab that owns it.
+
+**Reasoning.** A voice-first product's first screen should answer who is
+around, and presence is that signal — so the friends rail belongs at the
+top and the account's own status belongs in the same rail rather than
+three taps away. The cuts were chosen by cost against value, not by
+taste: the desktop rail alone was opening a third concurrent
+`watchFollowing`, a second feed pagination loop, a popular-feed callable
+and a live-rooms listener, and an uncapped room board mounted a
+participants listener per banner.
+
+**Consequences.** First paint drops roughly one follow subscription, one
+pagination loop, one callable and up to eight participants listeners on
+desktop, and up to eight on mobile. `PeopleStatusAvatar` grows optional
+label, semantics and badge parameters; every other caller is untouched.
+The availability picker now has four entry points that must stay
+consistent, and the Home header composes its own semantics label, so the
+chip is annotated as a real semantics container to stop it swallowing
+the greeting.
+
+## ADR-166: Latency is attacked at the cold start, not by making the client optimistic
+
+**Context.** Joining a room, unmuting, publishing a Reel and opening a
+conversation were all reported as slow. Every hot-path callable outside
+five warm ones ran at `minInstances: 0`, and each cold start evaluated
+the whole module graph of `functions/index.js`, so a first action after a
+quiet period routinely paid two cold starts.
+
+**Decision.** Warm five more interactive callables, lazy-require the
+heavy SDKs so a cold start no longer pays for modules it will not use,
+and emit a one-line `functions module evaluated` log carrying
+`moduleLoadMs` per instance start so the change is measurable rather
+than asserted. On the client, run independent round trips concurrently
+on the join path and stream the Reel upload with `putFile` instead of
+buffering it with `putData`, keeping a `putData` fallback for web.
+Unmute stays server-first: ADR-149 is not relaxed.
+
+**Reasoning.** The wait was mostly cold start, so making the client
+optimistic would have hidden the delay rather than removed it — and on
+mute specifically it would have shown a state the server had not
+granted. Streaming the upload also removes the buffered copy that
+capped Reel size, without letting any local path cross the backend
+boundary: `sourcePath` stays out of the upload contract and is consumed
+only device-side.
+
+**Consequences.** The always-on Cloud Run set doubles from five to ten
+instances, which is a real recurring cost recorded in
+`docs/DEPLOYMENT.md`. The cold-start log line is gated on
+`K_SERVICE`/`FUNCTION_TARGET` so it stays silent during deploy discovery
+and in tests. Upload recovery had to be widened to cover a transport
+that throws before it returns a task, which the streamed path can do
+when the picked file is gone or resized between selection and upload.
+No Storage rules test exercises `putFile`, so metadata equivalence
+between the two transports is verified by source reading only.
