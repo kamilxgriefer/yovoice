@@ -111,6 +111,62 @@ code exactly when it is opened without an accepted invitation. That address
 is not on the Play list, so iOS is the only channel for it. No public link
 exists for the group, so the invitation email itself has to be accepted.
 
+### 2.0.0 (23) tester release — 2026-09-08
+
+The friends-first Home, the Reels tab rebuild and the latency round. Runtime
+frozen at `9d0c0ba1` (`main`, tracked tree clean at build time,
+`pubspec.yaml` `2.0.0+23`). The version string moves to **2.0.0** at the
+maintainer's request because this is a large round.
+
+| Gate | Result |
+|---|---|
+| `flutter analyze --no-pub` | clean |
+| `dart format --set-exit-if-changed lib/ test/` | 705 files, 0 changed |
+| `flutter test --no-pub` | 2976 / 2976 |
+| `firestore-tests` (emulator) | 542 passed, 0 failed |
+| `functions` (emulator) | 2 failures, both proven load flakes — `concurrent duplicate requests produce one root and one roster row` and `simultaneous reciprocal requests converge on one friendship` took 11.9 s and 9.4 s under contention and pass in 3.5 s / 3.4 s when their two files are re-run alone |
+
+**Backend deployed first**, from `585740dc`: rules (already current, indexes
+redeployed) then `firebase deploy --only functions --force` — **180
+functions updated, 0 failed**. The `--force` was required and is a real
+cost decision: the always-on set doubles from five warm callables to ten
+(all 256 MiB), roughly **15-25 USD/month more**, on the order of 30-50 USD
+total. Reversible by redeploying those five with `minInstances: 0`. The
+newly warm five are `sendDirectMessage`, `sendRoomMessage`,
+`openDirectConversation`, `startRoomVoice` and `setOwnRoomParticipantMute`,
+alongside `reserveReelDraftV2` / `finalizeReelDraftV2`; see ADR-166.
+
+**AAB** `app.yovoice`, `2.0.0` / version code **23**, signed by
+`CN=YO Voice Upload Key, O=YO Voice, C=PL`, `jar verified`; 119,716,436 B;
+SHA-256 `efa8d645d8a581346aedccc6ccb47c7e8961609c4c2cc492ad08ae78c2b606b7`.
+Staged for the owner at `~/Desktop/yovoice-2.0.0-23.aab` (same hash).
+
+**Android — published to the existing internal cohort at 22:34 CEST.**
+"YO Voice 2.0.0 — Dostępna dla testerów wewnętrznych — 1 kod wersji —
+Opublikowano: 8 wrz 22:34 — Niesprawdzona". Release notes in `pl-PL` and
+`en-US`; Play's 500-character-per-language cap rejected the first Polish
+draft again, as it did for build 22. The tester list (15) was not modified,
+nothing was promoted, no track was created.
+
+**iOS — uploaded, awaiting processing at the time of writing.** The same
+trap as build 22, one step further: `flutter build ipa` with
+`ios/ExportOptionsUpload.plist` uploads and writes no IPA, and this time it
+also **crashed after a successful upload** with
+`PathNotFoundException: build/ios/ipa` — because that directory had been
+moved aside during the build-22 round and an upload destination never
+recreates it. The archive itself is correct (`CFBundleVersion 23`,
+`CFBundleShortVersionString 2.0.0`, built 22:34). A direct
+`xcodebuild -exportArchive` then answered *"Redundant Binary Upload. You've
+already uploaded a build with build number '23' for version number
+'2.0.0'"*, which is the proof the upload landed. **Lesson: a non-zero exit
+from `flutter build ipa` under an upload plist does not mean the upload
+failed — check App Store Connect before rebuilding.**
+
+Because **2.0.0 is a new version string**, the external group requires a
+fresh Beta App Review; build 22 skipped it only because 1.0.0 had already
+been reviewed. Internal testers and all 15 Android testers get it without
+waiting.
+
 ### Backend deploy for the Build 22 round — 2026-09-07
 
 Maintainer-authorized on 2026-09-07 in answer to a direct question: deploy
