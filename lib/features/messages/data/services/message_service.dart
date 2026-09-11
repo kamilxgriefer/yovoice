@@ -14,7 +14,9 @@ import 'package:image_picker/image_picker.dart';
 
 import 'package:yovoice/features/messages/data/models/conversation.dart';
 import 'package:yovoice/features/messages/data/models/message.dart';
+import 'package:yovoice/features/messages/data/services/direct_attachment_delivery_progress.dart';
 import 'package:yovoice/features/messages/data/services/direct_attachment_outbox.dart';
+import 'package:yovoice/features/messages/data/services/direct_attachment_payload_source.dart';
 import 'package:yovoice/features/messages/data/services/direct_attachment_payload_store.dart';
 import 'package:yovoice/features/messages/data/services/message_outbox.dart';
 import 'package:yovoice/features/moments/data/services/recorded_audio.dart';
@@ -93,7 +95,7 @@ class _DirectAttachmentReservation {
         storagePath.isEmpty ||
         expiresAtMillis is! int ||
         type.isEmpty ||
-        type.first == MessageType.text) {
+        (type.first == MessageType.text || type.first == MessageType.gif)) {
       throw StateError('Malformed attachment reservation from YO Voice.');
     }
     return _DirectAttachmentReservation(
@@ -166,6 +168,14 @@ class MessageService {
   final Map<String, Future<void>> _attachmentDeliveries = {};
   DirectAttachmentOutbox? _attachmentOutbox;
   String? _attachmentOutboxOwnerId;
+
+  /// Which phase each in-flight attachment delivery is in, right now.
+  ///
+  /// Live process state, not queue state: the durable manifest keeps saying
+  /// what survives a restart, and this says what is happening this second so a
+  /// queued card can show a real percentage instead of an endless "Sending…".
+  final DirectAttachmentDeliveryProgress attachmentDelivery =
+      DirectAttachmentDeliveryProgress();
 
   /// The queue of messages written but not yet accepted by the server.
   ///
@@ -454,7 +464,7 @@ class MessageService {
     required int pageSize,
     required int cutoff,
   }) {
-    if (type == MessageType.text) {
+    if (type == MessageType.text || type == MessageType.gif) {
       throw ArgumentError.value(type, 'type', 'Text is not shared media.');
     }
     if (pageSize < 1 || pageSize > 100) {
@@ -1088,6 +1098,7 @@ class MessageService {
       timer.cancel();
     }
     _attachmentDrainTimers.clear();
+    attachmentDelivery.dispose();
   }
 
   /// Sends an image through the server-reserved private attachment flow.
@@ -1160,10 +1171,18 @@ class MessageService {
     await _deliverAttachment(entry.id, queue: queue);
   }
 
-  /// Publishes an already-finished AAC/MP4 recording as a private voice DM.
-  /// The caller keeps ownership of [audio] so a failed finalize can be retried
-  /// without forcing the person to record again.
-  Future<void> sendVoiceMessage({
+  /// Copies a finished recording into the durable outbox and returns the queue
+  /// entry, without contacting the server.
+  ///
+  /// STREAMED, NOT BUFFERED. This used to start with `audio.readBytes()` —
+  /// the whole recording resident, hashed as one buffer, then written to disk
+  /// a second time while the first copy was still alive. A finished recording
+  /// is already a file (or a browser Blob); it is read once, in chunks, to
+  /// fingerprint it and once more to copy it, and it is never all in the heap.
+  /// Nothing the backend sees changes: no device path is declared anywhere,
+  /// and the reservation still carries only type, contentType and duration.
+  Future<(DirectAttachmentOutbox, DirectAttachmentOutboxEntry)>
+  _queueVoiceMessage({
     required String conversationId,
     required RecordedAudio audio,
     required int durationSeconds,
@@ -1174,8 +1193,9 @@ class MessageService {
       throw StateError('Voice messages must be between 1 and 60 seconds.');
     }
     final contentType = normalizeAudioContentType(audio.contentType);
-    final bytes = await audio.readBytes();
-    if (bytes.lengthInBytes != audio.byteLength) {
+    final source = DirectAttachmentPayloadSource.recording(audio);
+    final digest = await source.digest();
+    if (digest.length != audio.byteLength) {
       throw const VoiceRecordingException(
         VoiceRecordingProblem.recordingUnusable,
         'The recording changed before it could be saved safely.',
@@ -1183,18 +1203,67 @@ class MessageService {
       );
     }
     final queue = attachmentOutbox;
-    final entry = await queue.enqueue(
-      fingerprint: sha256.convert(bytes).toString(),
+    final entry = await queue.enqueueSource(
+      fingerprint: digest.fingerprint,
       conversationId: conversationId,
       type: MessageType.voice,
       contentType: contentType,
       durationSeconds: durationSeconds,
-      bytes: bytes,
+      source: source,
       reserveRequestId: _newRequestId(),
       finalizeRequestId: _newRequestId(),
     );
     _listenForConnectivity();
+    return (queue, entry);
+  }
+
+  /// Publishes an already-finished AAC/MP4 recording as a private voice DM and
+  /// waits for the server to accept it.
+  ///
+  /// The recording is retained by the durable outbox, not by the caller, so a
+  /// failed finalize is retried from the queued copy rather than by asking
+  /// somebody to record again.
+  Future<void> sendVoiceMessage({
+    required String conversationId,
+    required RecordedAudio audio,
+    required int durationSeconds,
+  }) async {
+    final (queue, entry) = await _queueVoiceMessage(
+      conversationId: conversationId,
+      audio: audio,
+      durationSeconds: durationSeconds,
+    );
     await _deliverAttachment(entry.id, queue: queue);
+  }
+
+  /// Queues a voice message durably and returns as soon as it cannot be lost,
+  /// leaving delivery to run in the background.
+  ///
+  /// This is what the recorder sheet awaits. The point at which a voice
+  /// message becomes safe is the enqueue — bytes copied into app-private
+  /// storage, manifest persisted — not the finalize, so holding a modal open
+  /// across two callables and an upload bought the person nothing but a
+  /// spinner. Everything after the enqueue is reported on the queued card in
+  /// the thread: progress while it uploads, "Waiting for connection" while it
+  /// retries, "Not sent" with Retry and Discard when it gives up. Returns the
+  /// outbox entry id so a caller can follow exactly that entry.
+  Future<String> enqueueVoiceMessage({
+    required String conversationId,
+    required RecordedAudio audio,
+    required int durationSeconds,
+  }) async {
+    final (queue, entry) = await _queueVoiceMessage(
+      conversationId: conversationId,
+      audio: audio,
+      durationSeconds: durationSeconds,
+    );
+    // The delivery's own error handling is the outbox: it marks the entry
+    // retrying or failed before it rethrows, and the queued card renders that.
+    // Rethrowing into an unawaited future would only reach the zone handler.
+    unawaited(
+      _deliverAttachment(entry.id, queue: queue).catchError((Object _) {}),
+    );
+    return entry.id;
   }
 
   Future<void> flushAttachmentOutbox() =>
@@ -1220,7 +1289,9 @@ class MessageService {
 
     final canonical = <String>{
       for (final message in messages)
-        if (message.senderId == ownerId && message.type != MessageType.text)
+        if (message.senderId == ownerId &&
+            message.type != MessageType.text &&
+            message.type != MessageType.gif)
           '${message.conversationId}\u0000${message.id}\u0000${message.type.name}',
     };
     if (canonical.isEmpty) return;
@@ -1316,6 +1387,7 @@ class MessageService {
     if (_auth.currentUser?.uid != queue.ownerId) return;
     var entry = queue.entry(entryId);
     if (entry == null) return;
+    attachmentDelivery.report(entryId, DirectAttachmentDeliveryStage.preparing);
     try {
       // A lease can expire while the process is offline or between upload and
       // finalize. Rotation is bounded and atomic in the manifest; the durable
@@ -1339,6 +1411,10 @@ class MessageService {
               entry.generation != null &&
               entry.generation!.isNotEmpty) {
             try {
+              attachmentDelivery.report(
+                entryId,
+                DirectAttachmentDeliveryStage.finalizing,
+              );
               await _finalizeDirectAttachment(
                 reservation,
                 entry.generation!,
@@ -1375,6 +1451,10 @@ class MessageService {
 
         if (reservation == null) {
           try {
+            attachmentDelivery.report(
+              entryId,
+              DirectAttachmentDeliveryStage.reserving,
+            );
             reservation = await _reserveDirectAttachment(
               conversationId: entry.conversationId,
               type: entry.type,
@@ -1415,6 +1495,11 @@ class MessageService {
         var generation = entry.generation;
         if (generation == null || generation.isEmpty) {
           try {
+            attachmentDelivery.report(
+              entryId,
+              DirectAttachmentDeliveryStage.uploading,
+              progress: 0,
+            );
             generation = await _uploadDirectAttachment(
               reservation,
               contentType: entry.contentType,
@@ -1423,6 +1508,11 @@ class MessageService {
                 entry!.id,
                 reference,
                 metadata,
+                onProgress: (value) => attachmentDelivery.report(
+                  entryId,
+                  DirectAttachmentDeliveryStage.uploading,
+                  progress: value,
+                ),
               ),
             );
           } catch (error) {
@@ -1464,6 +1554,10 @@ class MessageService {
 
         entry = (await queue.markFinalizeAttempted(entry.id))!;
         try {
+          attachmentDelivery.report(
+            entryId,
+            DirectAttachmentDeliveryStage.finalizing,
+          );
           await _finalizeDirectAttachment(
             reservation,
             generation,
@@ -1505,6 +1599,11 @@ class MessageService {
         await queue.markFailed(entryId, error);
       }
       rethrow;
+    } finally {
+      // The queued card falls back to the durable status — "Waiting for
+      // connection", "Not sent" — the moment there is no live delivery, which
+      // is exactly true once this returns or throws.
+      attachmentDelivery.clear(entryId);
     }
   }
 

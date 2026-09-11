@@ -9,6 +9,12 @@ import 'package:yovoice/features/reels/data/services/reel_service.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
 
+/// An optional host-owned lifetime boundary for a private comment overlay.
+/// The builder is deferred so a revoked host never constructs its private UI.
+/// Omitting this preserves the existing standalone thread presentation.
+typedef ReelCommentOverlayBuilder =
+    Widget Function(BuildContext context, WidgetBuilder contentBuilder);
+
 /// What a reporter decided, before anything has been sent.
 ///
 /// The sheet collects intent and returns it; the call belongs to the thread
@@ -67,6 +73,7 @@ Future<ReelCommentReportRequest?> showReelCommentReportSheet(
   required String commentText,
   ReportReason? initialReason,
   String initialNote = '',
+  ReelCommentOverlayBuilder? overlayBuilder,
 }) {
   return showModalBottomSheet<ReelCommentReportRequest>(
     context: context,
@@ -78,12 +85,16 @@ Future<ReelCommentReportRequest?> showReelCommentReportSheet(
       context,
       maxWidth: 520,
     ),
-    builder: (context) => ReelCommentReportSheet(
-      authorName: authorName,
-      commentText: commentText,
-      initialReason: initialReason,
-      initialNote: initialNote,
-    ),
+    builder: (context) {
+      Widget contentBuilder(BuildContext context) => ReelCommentReportSheet(
+        authorName: authorName,
+        commentText: commentText,
+        initialReason: initialReason,
+        initialNote: initialNote,
+      );
+      return overlayBuilder?.call(context, contentBuilder) ??
+          contentBuilder(context);
+    },
   );
 }
 

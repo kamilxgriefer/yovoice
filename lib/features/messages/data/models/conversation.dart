@@ -133,6 +133,7 @@ class Conversation {
       case MessageType.video:
         return '${prefix}Video';
       case MessageType.text:
+      case MessageType.gif:
         return '$prefix$lastMessage';
     }
   }

@@ -23,21 +23,40 @@ class AppPreferences {
     this.theme = AppThemePreference.dark,
     this.language = AppLanguagePreference.system,
     this.soundEffectsEnabled = true,
+    this.gifAutoLoadEnabled = true,
   });
 
   final AppThemePreference theme;
   final AppLanguagePreference language;
   final bool soundEffectsEnabled;
 
+  /// Whether GIFs fetch themselves as soon as they appear.
+  ///
+  /// This is a PRIVACY control, not a data-saver toggle, and it is the only
+  /// one a recipient has. GIFs are served from the provider's own CDN because
+  /// GIPHY's terms require hotlinking and forbid rehosting, so displaying one
+  /// necessarily shows the viewer's IP address and User-Agent to a third
+  /// party — including the person who merely RECEIVED the GIF and never chose
+  /// to interact with GIPHY at all. Off means a placeholder carrying the
+  /// stored title with a tap-to-load affordance, and no provider contact of
+  /// any kind until the person chooses. It covers the picker grid, the
+  /// recents row and received GIF bubbles alike.
+  ///
+  /// Default on, matching [soundEffectsEnabled]: the feature is unusable off
+  /// by default, and the disclosure lives in Settings and in the privacy copy.
+  final bool gifAutoLoadEnabled;
+
   AppPreferences copyWith({
     AppThemePreference? theme,
     AppLanguagePreference? language,
     bool? soundEffectsEnabled,
+    bool? gifAutoLoadEnabled,
   }) {
     return AppPreferences(
       theme: theme ?? this.theme,
       language: language ?? this.language,
       soundEffectsEnabled: soundEffectsEnabled ?? this.soundEffectsEnabled,
+      gifAutoLoadEnabled: gifAutoLoadEnabled ?? this.gifAutoLoadEnabled,
     );
   }
 }
@@ -74,6 +93,7 @@ class AppPreferencesController extends ChangeNotifier {
   static const _themeKey = 'appearance.theme.v1';
   static const _languageKey = 'appearance.language.v1';
   static const _soundEffectsKey = 'audio.sound_effects.enabled.v1';
+  static const _gifAutoLoadKey = 'media.gif_auto_load.enabled.v1';
 
   static final instance = AppPreferencesController(
     store: SharedPreferencesAppPreferencesStore(),
@@ -91,11 +111,13 @@ class AppPreferencesController extends ChangeNotifier {
       _store.read(_themeKey),
       _store.read(_languageKey),
       _store.read(_soundEffectsKey),
+      _store.read(_gifAutoLoadKey),
     ]);
     _value = AppPreferences(
       theme: _parseTheme(values[0]),
       language: _parseLanguage(values[1]),
       soundEffectsEnabled: _parseSoundEffects(values[2]),
+      gifAutoLoadEnabled: _parseFlag(values[3]),
     );
     _loaded = true;
     notifyListeners();
@@ -143,6 +165,20 @@ class AppPreferencesController extends ChangeNotifier {
     }
   }
 
+  Future<void> setGifAutoLoadEnabled(bool enabled) async {
+    if (_value.gifAutoLoadEnabled == enabled) return;
+    final previous = _value;
+    _value = _value.copyWith(gifAutoLoadEnabled: enabled);
+    notifyListeners();
+    try {
+      await _store.write(_gifAutoLoadKey, enabled.toString());
+    } catch (_) {
+      _value = previous;
+      notifyListeners();
+      rethrow;
+    }
+  }
+
   static AppThemePreference _parseTheme(String? value) {
     return AppThemePreference.values.firstWhere(
       (candidate) => candidate.name == value,
@@ -158,10 +194,15 @@ class AppPreferencesController extends ChangeNotifier {
     );
   }
 
-  static bool _parseSoundEffects(String? value) {
+  static bool _parseSoundEffects(String? value) => _parseFlag(value);
+
+  /// Absent, unreadable and unrecognised all mean the default (on). A
+  /// preference store that cannot be read must never silently turn a feature
+  /// off — the person would have no way to tell that from the feature being
+  /// broken.
+  static bool _parseFlag(String? value) {
     return switch (value) {
       'false' => false,
-      'true' || null => true,
       _ => true,
     };
   }
@@ -179,5 +220,18 @@ class AppPreferencesScope extends InheritedNotifier<AppPreferencesController> {
         .dependOnInheritedWidgetOfExactType<AppPreferencesScope>();
     assert(scope != null, 'No AppPreferencesScope found in this context.');
     return scope!.notifier!;
+  }
+
+  /// The controller, or null where no scope has been installed.
+  ///
+  /// [of] is right for a screen that cannot work without preferences. This is
+  /// for a widget that merely READS one and has an honest default — a shared
+  /// composer widget, say, which is also mounted by focused widget tests that
+  /// have no reason to build the whole app shell. Asserting there would make
+  /// every such test install a scope to exercise something unrelated.
+  static AppPreferencesController? maybeOf(BuildContext context) {
+    return context
+        .dependOnInheritedWidgetOfExactType<AppPreferencesScope>()
+        ?.notifier;
   }
 }

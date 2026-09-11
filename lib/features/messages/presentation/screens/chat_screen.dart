@@ -9,6 +9,7 @@ import 'package:image_picker/image_picker.dart';
 
 import 'package:yovoice/core/helpers/error_messages.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
+import 'package:yovoice/core/preferences/app_preferences.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 
@@ -16,9 +17,15 @@ import 'package:yovoice/features/calls/data/services/direct_call_service.dart';
 import 'package:yovoice/features/calls/data/models/direct_call.dart';
 import 'package:yovoice/features/calls/data/services/voice_call_service.dart';
 import 'package:yovoice/features/calls/presentation/screens/direct_call_screen.dart';
+import 'package:yovoice/features/media/data/models/gif_asset.dart';
+import 'package:yovoice/features/media/data/services/gif_catalog_service.dart';
+import 'package:yovoice/features/media/data/services/gif_message_controller.dart';
+import 'package:yovoice/features/media/data/services/gif_transport.dart';
+import 'package:yovoice/shared/widgets/inputs/yo_gif_send_status.dart';
 import 'package:yovoice/features/permissions/data/permission_readiness_service.dart';
 import 'package:yovoice/features/messages/data/models/message.dart';
 import 'package:yovoice/features/messages/data/services/active_conversation_registry.dart';
+import 'package:yovoice/features/messages/data/services/direct_attachment_delivery_progress.dart';
 import 'package:yovoice/features/messages/data/services/direct_attachment_outbox.dart';
 import 'package:yovoice/features/messages/data/services/message_outbox.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
@@ -34,7 +41,7 @@ import 'package:yovoice/features/profile/data/models/user_profile.dart';
 import 'package:yovoice/features/profile/data/services/profile_media_service.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
-import 'package:yovoice/shared/widgets/inputs/yo_emoji_picker.dart';
+import 'package:yovoice/shared/widgets/inputs/yo_composer_panel.dart';
 import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
@@ -71,10 +78,14 @@ class ChatScreen extends StatefulWidget {
     this.videoPicker,
     this.videoInspector,
     this.profilePreviewAction,
+    this.gifService,
+    this.gifMessageInvoker,
     super.key,
   });
 
   final String conversationId;
+  final GifCatalogService? gifService;
+  final GifMessageInvoker? gifMessageInvoker;
   final String otherUserId;
   final String otherDisplayName;
   final String otherEmail;
@@ -126,6 +137,15 @@ class _ChatScreenState extends State<ChatScreen> {
       widget.voiceCallService ?? VoiceCallService.instance;
   final TextEditingController _controller = TextEditingController();
   final FocusNode _focusNode = FocusNode();
+  late final GifCatalogService _gifService =
+      widget.gifService ??
+      GifCatalogService(transport: FunctionsGifTransport());
+  late final GifMessageController _gifDelivery = GifMessageController(
+    callable: 'sendDirectMessage',
+    target: {'conversationId': widget.conversationId},
+    currentUserId: () => _currentUserId,
+    invoke: widget.gifMessageInvoker,
+  );
 
   late final Stream<List<Message>> _messages;
   late final Stream<bool> _typing;
@@ -141,7 +161,13 @@ class _ChatScreenState extends State<ChatScreen> {
   Message? _replyTo;
   bool _sending = false;
   bool _sendingMedia = false;
-  bool _emojiPickerOpen = false;
+
+  /// Which composer panel is open, or `null` for none.
+  ///
+  /// One nullable enum replaces the old `bool _emojiPickerOpen`: with a single
+  /// mounted body inside [YoComposerPanel], two stacked panels are
+  /// structurally impossible rather than merely avoided.
+  YoComposerPanelTab? _composerPanel;
   bool _mediaPickerOpen = false;
   bool _startingCall = false;
   bool _profilePreviewOpen = false;
@@ -246,6 +272,8 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   void dispose() {
+    _gifDelivery.dispose();
+    if (widget.gifService == null) _gifService.dispose();
     ActiveConversationRegistry.instance.leave(_registeredConversationId);
     _typingTimer?.cancel();
     final shouldClearTyping = _typingAnnounced;
@@ -711,14 +739,18 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  /// Swaps the system keyboard for the emoji picker and back.
+  /// Swaps the system keyboard for the composer panel and back.
   ///
   /// Focus stays on the composer in both directions: the caret has to survive
   /// the swap for insertion to land where the user is typing, and the send
-  /// button has to keep working while the picker is open.
-  void _toggleEmojiPicker() {
-    final opening = !_emojiPickerOpen;
-    setState(() => _emojiPickerOpen = opening);
+  /// button has to keep working while the panel is open.
+  void _toggleComposerPanel() {
+    final opening = _composerPanel == null;
+    setState(() {
+      // Opens on the tab last used anywhere in the app, so somebody who
+      // reaches for GIFs does not land on emoji every time.
+      _composerPanel = opening ? YoComposerPanelTabStore.instance.value : null;
+    });
     if (opening) {
       if (!_focusNode.hasFocus) _focusNode.requestFocus();
       unawaited(yoHideSystemKeyboard());
@@ -727,9 +759,29 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+  void _selectComposerTab(YoComposerPanelTab tab) {
+    setState(() => _composerPanel = tab);
+    unawaited(YoComposerPanelTabStore.instance.remember(tab));
+  }
+
   void _insertEmoji(String emoji) {
     yoInsertEmojiAtCaret(_controller, emoji);
     if (!_focusNode.hasFocus) _focusNode.requestFocus();
+  }
+
+  void _sendGif(GifAsset asset) {
+    final reply = _replyTo;
+    final owner = _currentUserId;
+    unawaited(
+      _gifDelivery.send(asset, replyToMessageId: reply?.id).then((_) {
+        if (mounted &&
+            _currentUserId == owner &&
+            _gifDelivery.failure == null &&
+            identical(_replyTo, reply)) {
+          setState(() => _replyTo = null);
+        }
+      }),
+    );
   }
 
   Future<void> _send() async {
@@ -859,6 +911,7 @@ class _ChatScreenState extends State<ChatScreen> {
       builder: (sheetContext) {
         return _MessageActionsSheet(
           isMine: message.isMine(_currentUserId),
+          canEdit: message.type != MessageType.gif,
           onReaction: (emoji) {
             Navigator.pop(sheetContext);
             unawaited(_toggleReaction(message, emoji));
@@ -1351,8 +1404,12 @@ class _ChatScreenState extends State<ChatScreen> {
         maxWidth: 520,
       ),
       builder: (_) => _VoiceMessageRecorderSheet(
+        // Awaits the durable enqueue only. Once the bytes are in app-private
+        // storage and the manifest is persisted, the message cannot be lost,
+        // and the reserve/upload/finalize chain reports itself on the queued
+        // card in the thread instead of behind a modal.
         onSend: (audio, durationSeconds) async {
-          await _service.sendVoiceMessage(
+          await _service.enqueueVoiceMessage(
             conversationId: widget.conversationId,
             audio: audio,
             durationSeconds: durationSeconds,
@@ -1507,6 +1564,7 @@ class _ChatScreenState extends State<ChatScreen> {
                             return _QueuedMediaMessageCard(
                               key: ValueKey('queued-media-${entry.id}'),
                               entry: entry,
+                              delivery: _service.attachmentDelivery,
                               onRetry: () =>
                                   unawaited(_retryQueuedAttachment(entry)),
                               onDiscard: () =>
@@ -1574,26 +1632,40 @@ class _ChatScreenState extends State<ChatScreen> {
                       setState(() => _replyTo = null);
                     },
                   ),
+                YoGifSendStatus(controller: _gifDelivery),
                 _Composer(
                   controller: _controller,
                   focusNode: _focusNode,
                   sending: _sending,
                   sendingMedia: _sendingMedia,
-                  emojiPickerOpen: _emojiPickerOpen,
+                  emojiPickerOpen: _composerPanel != null,
                   onSend: _send,
                   onPhoto: _pickAttachment,
                   onVoice: _recordVoiceMessage,
-                  onToggleEmoji: _toggleEmojiPicker,
+                  onToggleEmoji: _toggleComposerPanel,
                 ),
                 // Below the composer, never over it: the send button is laid
-                // out first, so no picker height can cover it.
-                if (_emojiPickerOpen)
-                  YoEmojiPicker(
-                    onSelected: _insertEmoji,
+                // out first, so no panel height can cover it.
+                if (_composerPanel != null)
+                  YoComposerPanel(
+                    tab: _composerPanel!,
+                    onTabChanged: _selectComposerTab,
+                    onEmojiSelected: _insertEmoji,
                     onBackspace: () {
                       yoDeleteBackAtCaret(_controller);
                       if (!_focusNode.hasFocus) _focusNode.requestFocus();
                     },
+                    gifService: _gifService
+                      ..locale = AppLocalizations.of(
+                        context,
+                      ).locale.languageCode,
+                    gifDelivery: _gifDelivery,
+                    onGifSelected: _sendGif,
+                    gifAutoLoad:
+                        AppPreferencesScope.maybeOf(
+                          context,
+                        )?.value.gifAutoLoadEnabled ??
+                        true,
                   ),
               ],
             ),
@@ -1656,210 +1728,272 @@ class _ChatHeader extends StatelessWidget {
     final colors = Theme.of(context).colorScheme;
     final copy = AppLocalizations.of(context);
 
-    return Container(
-      key: const ValueKey('chat-header'),
-      padding: const EdgeInsets.fromLTRB(7, 8, 8, 8),
-      decoration: BoxDecoration(
-        color: palette.navigationSurface.withValues(alpha: .96),
-        border: Border(bottom: BorderSide(color: palette.border)),
-      ),
-      child: Row(
-        children: [
-          IconButton(
-            onPressed: onBack,
-            tooltip: copy.text('Back to chats', 'Wróć do czatów'),
-            icon: Icon(
-              Icons.arrow_back_ios_new_rounded,
-              color: palette.textPrimary,
-              size: 20,
+    return StreamBuilder<ChatPresence>(
+      stream: presenceStream,
+      builder: (context, snapshot) {
+        final presence = snapshot.data;
+        final presenceLabel = _presenceText(presence, copy);
+        final presenceStatus = Tooltip(
+          message: presenceLabel,
+          excludeFromSemantics: true,
+          child: Text(
+            presenceLabel,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: _presenceColor(presence, palette),
+              fontSize: 11,
             ),
           ),
-          Expanded(
-            child: Semantics(
-              button: true,
-              label: copy.template(
-                'Open {displayName} profile',
-                'Otwórz profil: {displayName}',
-                values: {'displayName': displayName},
-              ),
-              child: InkWell(
-                onTap: onProfileTap,
-                borderRadius: BorderRadius.circular(14),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 2),
-                  child: Row(
-                    children: [
-                      _Avatar(
-                        userId: userId,
-                        name: displayName,
-                        url: photoUrl,
-                        mediaRevision: mediaRevision,
-                        profileMediaService: profileMediaService,
-                        radius: 20,
-                      ),
-                      const SizedBox(width: 11),
-                      Expanded(
-                        child: StreamBuilder<ChatPresence>(
-                          stream: presenceStream,
-                          builder: (context, snapshot) {
-                            final presence = snapshot.data;
-
-                            return Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Wrap(
-                                  spacing: 6,
-                                  crossAxisAlignment: WrapCrossAlignment.center,
-                                  children: [
-                                    Text(
-                                      displayName,
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: TextStyle(
-                                        color: palette.textPrimary,
-                                        fontSize: 15,
-                                        fontWeight: FontWeight.w900,
+        );
+        return Container(
+          key: const ValueKey('chat-header'),
+          padding: const EdgeInsets.fromLTRB(7, 8, 8, 8),
+          decoration: BoxDecoration(
+            color: palette.navigationSurface.withValues(alpha: .96),
+            border: Border(bottom: BorderSide(color: palette.border)),
+          ),
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              // Four action targets must not reduce the person's identity to
+              // a few letters. The stream stays above this responsive layout
+              // so resizing never re-subscribes to a single-use presence stream.
+              final reflowActions =
+                  constraints.maxWidth < 460 ||
+                  (constraints.maxWidth < 640 &&
+                      MediaQuery.textScalerOf(context).scale(14) > 20);
+              final children = <Widget>[
+                IconButton(
+                  onPressed: onBack,
+                  tooltip: copy.text('Back to chats', 'Wróć do czatów'),
+                  icon: Icon(
+                    Icons.arrow_back_ios_new_rounded,
+                    color: palette.textPrimary,
+                    size: 20,
+                  ),
+                ),
+                Expanded(
+                  child: Semantics(
+                    button: true,
+                    label: copy.template(
+                      'Open {displayName} profile',
+                      'Otwórz profil: {displayName}',
+                      values: {'displayName': displayName},
+                    ),
+                    child: InkWell(
+                      onTap: onProfileTap,
+                      borderRadius: BorderRadius.circular(14),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 2),
+                        child: Row(
+                          children: [
+                            _Avatar(
+                              userId: userId,
+                              name: displayName,
+                              url: photoUrl,
+                              mediaRevision: mediaRevision,
+                              profileMediaService: profileMediaService,
+                              radius: 20,
+                            ),
+                            const SizedBox(width: 11),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Wrap(
+                                    spacing: 6,
+                                    crossAxisAlignment:
+                                        WrapCrossAlignment.center,
+                                    children: [
+                                      Text(
+                                        displayName,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                          color: palette.textPrimary,
+                                          fontSize: 15,
+                                          fontWeight: FontWeight.w900,
+                                        ),
                                       ),
-                                    ),
-                                    UserIdentityBadges(uid: userId),
+                                      if (!reflowActions)
+                                        UserIdentityBadges(uid: userId),
+                                    ],
+                                  ),
+                                  if (!reflowActions) ...[
+                                    const SizedBox(height: 2),
+                                    presenceStatus,
                                   ],
-                                ),
-                                const SizedBox(height: 2),
-                                Text(
-                                  _presenceText(
-                                    presence,
-                                    AppLocalizations.of(context),
-                                  ),
-                                  style: TextStyle(
-                                    color: _presenceColor(presence, palette),
-                                    fontSize: 11,
-                                  ),
-                                ),
-                              ],
-                            );
-                          },
+                                ],
+                              ),
+                            ),
+                          ],
                         ),
                       ),
-                    ],
+                    ),
                   ),
                 ),
-              ),
-            ),
-          ),
-          IconButton(
-            onPressed: callBusy ? null : onCall,
-            tooltip: callBusy
-                ? copy.text(
-                    'Starting voice call',
-                    'Rozpoczynanie połączenia głosowego',
-                  )
-                : copy.text(
-                    'Start voice call',
-                    'Rozpocznij połączenie głosowe',
+                IconButton(
+                  onPressed: callBusy ? null : onCall,
+                  tooltip: callBusy
+                      ? copy.text(
+                          'Starting voice call',
+                          'Rozpoczynanie połączenia głosowego',
+                        )
+                      : copy.text(
+                          'Start voice call',
+                          'Rozpocznij połączenie głosowe',
+                        ),
+                  icon: callBusy
+                      ? SizedBox.square(
+                          dimension: 20,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: colors.primary,
+                          ),
+                        )
+                      : Icon(Icons.call_rounded, color: palette.textPrimary),
+                ),
+                IconButton(
+                  onPressed: callBusy ? null : onVideoCall,
+                  tooltip: callBusy
+                      ? copy.text('Starting call', 'Rozpoczynanie połączenia')
+                      : copy.text(
+                          'Start video call',
+                          'Rozpocznij połączenie wideo',
+                        ),
+                  icon: Icon(
+                    Icons.videocam_rounded,
+                    color: callBusy
+                        ? palette.textTertiary
+                        : palette.textPrimary,
                   ),
-            icon: callBusy
-                ? SizedBox.square(
-                    dimension: 20,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: colors.primary,
-                    ),
-                  )
-                : Icon(Icons.call_rounded, color: palette.textPrimary),
-          ),
-          IconButton(
-            onPressed: callBusy ? null : onVideoCall,
-            tooltip: callBusy
-                ? copy.text('Starting call', 'Rozpoczynanie połączenia')
-                : copy.text('Start video call', 'Rozpocznij połączenie wideo'),
-            icon: Icon(
-              Icons.videocam_rounded,
-              color: callBusy ? palette.textTertiary : palette.textPrimary,
-            ),
-          ),
-          PopupMenuButton<String>(
-            tooltip: copy.text('Conversation options', 'Opcje rozmowy'),
-            color: palette.surfaceRaised,
-            icon: Icon(Icons.more_horiz_rounded, color: palette.textPrimary),
-            onSelected: (value) {
-              if (value == 'mute') {
-                onMute();
-              } else if (value == 'archive') {
-                onArchive();
-              } else if (value == 'delete') {
-                onDelete();
-              } else if (value == 'shared-media') {
-                onSharedMedia();
-              }
-            },
-            itemBuilder: (_) => [
-              PopupMenuItem<String>(
-                value: 'shared-media',
-                child: Row(
-                  children: [
-                    Icon(Icons.perm_media_outlined, color: palette.textPrimary),
-                    const SizedBox(width: 12),
-                    Text(
-                      copy.text('Shared media', 'Udostępnione multimedia'),
-                      style: TextStyle(color: palette.textPrimary),
-                    ),
-                  ],
                 ),
-              ),
-              PopupMenuItem<String>(
-                value: 'mute',
-                child: Row(
-                  children: [
-                    Icon(
-                      muted
-                          ? Icons.notifications_active_outlined
-                          : Icons.notifications_off_outlined,
-                      color: palette.textPrimary,
+                PopupMenuButton<String>(
+                  tooltip: copy.text('Conversation options', 'Opcje rozmowy'),
+                  color: palette.surfaceRaised,
+                  icon: Icon(
+                    Icons.more_horiz_rounded,
+                    color: palette.textPrimary,
+                  ),
+                  onSelected: (value) {
+                    if (value == 'mute') {
+                      onMute();
+                    } else if (value == 'archive') {
+                      onArchive();
+                    } else if (value == 'delete') {
+                      onDelete();
+                    } else if (value == 'shared-media') {
+                      onSharedMedia();
+                    }
+                  },
+                  itemBuilder: (_) => [
+                    PopupMenuItem<String>(
+                      value: 'shared-media',
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.perm_media_outlined,
+                            color: palette.textPrimary,
+                          ),
+                          const SizedBox(width: 12),
+                          Text(
+                            copy.text(
+                              'Shared media',
+                              'Udostępnione multimedia',
+                            ),
+                            style: TextStyle(color: palette.textPrimary),
+                          ),
+                        ],
+                      ),
                     ),
-                    const SizedBox(width: 12),
-                    Text(
-                      muted
-                          ? copy.text('Unmute', 'Włącz powiadomienia')
-                          : copy.text('Mute', 'Wycisz'),
-                      style: TextStyle(color: palette.textPrimary),
+                    PopupMenuItem<String>(
+                      value: 'mute',
+                      child: Row(
+                        children: [
+                          Icon(
+                            muted
+                                ? Icons.notifications_active_outlined
+                                : Icons.notifications_off_outlined,
+                            color: palette.textPrimary,
+                          ),
+                          const SizedBox(width: 12),
+                          Text(
+                            muted
+                                ? copy.text('Unmute', 'Włącz powiadomienia')
+                                : copy.text('Mute', 'Wycisz'),
+                            style: TextStyle(color: palette.textPrimary),
+                          ),
+                        ],
+                      ),
                     ),
-                  ],
-                ),
-              ),
-              PopupMenuItem<String>(
-                value: 'archive',
-                child: Row(
-                  children: [
-                    Icon(Icons.archive_outlined, color: palette.textPrimary),
-                    const SizedBox(width: 12),
-                    Text(
-                      copy.text('Archive', 'Archiwizuj'),
-                      style: TextStyle(color: palette.textPrimary),
+                    PopupMenuItem<String>(
+                      value: 'archive',
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.archive_outlined,
+                            color: palette.textPrimary,
+                          ),
+                          const SizedBox(width: 12),
+                          Text(
+                            copy.text('Archive', 'Archiwizuj'),
+                            style: TextStyle(color: palette.textPrimary),
+                          ),
+                        ],
+                      ),
                     ),
-                  ],
-                ),
-              ),
-              // Destructive, so it sits last and carries the error colour.
-              PopupMenuItem<String>(
-                key: const ValueKey('chat-delete-action'),
-                value: 'delete',
-                child: Row(
-                  children: [
-                    Icon(Icons.delete_outline_rounded, color: colors.error),
-                    const SizedBox(width: 12),
-                    Flexible(
-                      child: Text(
-                        copy.text('Delete chat', 'Usuń czat'),
-                        style: TextStyle(color: colors.error),
+                    // Destructive, so it sits last and carries the error colour.
+                    PopupMenuItem<String>(
+                      key: const ValueKey('chat-delete-action'),
+                      value: 'delete',
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.delete_outline_rounded,
+                            color: colors.error,
+                          ),
+                          const SizedBox(width: 12),
+                          Flexible(
+                            child: Text(
+                              copy.text('Delete chat', 'Usuń czat'),
+                              style: TextStyle(color: colors.error),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ],
                 ),
-              ),
-            ],
+              ];
+              return Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Row(
+                    children: [
+                      ...children.take(2),
+                      if (!reflowActions) ...children.skip(2),
+                    ],
+                  ),
+                  if (reflowActions)
+                    Wrap(
+                      spacing: 8,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        UserIdentityBadges(uid: userId),
+                        presenceStatus,
+                      ],
+                    ),
+                  if (reflowActions)
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: children.skip(2).toList(),
+                    ),
+                ],
+              );
+            },
           ),
-        ],
-      ),
+        );
+      },
     );
   }
 
@@ -2459,12 +2593,18 @@ class _QueuedTextMessageBubble extends StatelessWidget {
 class _QueuedMediaMessageCard extends StatelessWidget {
   const _QueuedMediaMessageCard({
     required this.entry,
+    required this.delivery,
     required this.onRetry,
     required this.onDiscard,
     super.key,
   });
 
   final DirectAttachmentOutboxEntry entry;
+
+  /// Live delivery phase for every attachment currently being sent. Only this
+  /// card's own entry is read from it, and only while it is queued.
+  final DirectAttachmentDeliveryProgress delivery;
+
   final VoidCallback onRetry;
   final VoidCallback onDiscard;
 
@@ -2472,33 +2612,75 @@ class _QueuedMediaMessageCard extends StatelessWidget {
     MessageType.voice => copy.text('Voice message', 'Wiadomość głosowa'),
     MessageType.video => copy.text('Video', 'Film'),
     MessageType.image => copy.text('Photo', 'Zdjęcie'),
-    MessageType.text => copy.text('Message', 'Wiadomość'),
+    MessageType.text || MessageType.gif => copy.text('Message', 'Wiadomość'),
   };
 
-  String _status(AppLocalizations copy) => switch (entry.status) {
-    DirectAttachmentOutboxStatus.queued => copy.text('Sending…', 'Wysyłanie…'),
-    DirectAttachmentOutboxStatus.retrying => copy.text(
-      'Waiting for connection',
-      'Oczekiwanie na połączenie',
-    ),
-    DirectAttachmentOutboxStatus.failed => copy.text('Not sent', 'Nie wysłano'),
-  };
+  /// What is actually true about this attachment right now.
+  ///
+  /// The durable status wins: a queue that has given up says "Not sent" and a
+  /// queue waiting on the network says so, whatever any stale live phase might
+  /// claim. Below that, a queued entry with no live delivery is genuinely not
+  /// uploading — after a relaunch, for instance, because Storage restarts the
+  /// object from zero rather than resuming it — so it says it is waiting
+  /// rather than pretending bytes are moving.
+  String _status(AppLocalizations copy, DirectAttachmentDeliveryState? live) {
+    switch (entry.status) {
+      case DirectAttachmentOutboxStatus.failed:
+        return copy.text('Not sent', 'Nie wysłano');
+      case DirectAttachmentOutboxStatus.retrying:
+        return copy.text('Waiting for connection', 'Oczekiwanie na połączenie');
+      case DirectAttachmentOutboxStatus.queued:
+        break;
+    }
+    if (live == null) {
+      return copy.text('Waiting to send', 'Oczekuje na wysłanie');
+    }
+    return switch (live.stage) {
+      DirectAttachmentDeliveryStage.preparing ||
+      DirectAttachmentDeliveryStage.reserving => copy.text(
+        'Preparing…',
+        'Przygotowywanie…',
+      ),
+      DirectAttachmentDeliveryStage.uploading =>
+        live.progress == null
+            ? copy.text('Sending…', 'Wysyłanie…')
+            : copy.template(
+                'Sending… {percent}%',
+                'Wysyłanie… {percent}%',
+                values: {'percent': (live.progress! * 100).round()},
+              ),
+      DirectAttachmentDeliveryStage.finalizing => copy.text(
+        'Finishing…',
+        'Kończenie…',
+      ),
+    };
+  }
 
   IconData get _kindIcon => switch (entry.type) {
     MessageType.voice => Icons.graphic_eq_rounded,
     MessageType.video => Icons.video_file_outlined,
     MessageType.image => Icons.image_outlined,
-    MessageType.text => Icons.chat_bubble_outline_rounded,
+    MessageType.text || MessageType.gif => Icons.chat_bubble_outline_rounded,
   };
 
   @override
   Widget build(BuildContext context) {
+    return ValueListenableBuilder<Map<String, DirectAttachmentDeliveryState>>(
+      valueListenable: delivery,
+      builder: (context, states, _) => _build(context, states[entry.id]),
+    );
+  }
+
+  Widget _build(BuildContext context, DirectAttachmentDeliveryState? live) {
     final failed = entry.status == DirectAttachmentOutboxStatus.failed;
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
     final copy = AppLocalizations.of(context);
     final kind = _kind(copy);
-    final status = _status(copy);
+    final active = entry.status == DirectAttachmentOutboxStatus.queued
+        ? live
+        : null;
+    final status = _status(copy, live);
     final semanticSubject = switch (entry.type) {
       MessageType.voice => copy.text(
         'Your voice message',
@@ -2506,7 +2688,8 @@ class _QueuedMediaMessageCard extends StatelessWidget {
       ),
       MessageType.video => copy.text('Your video', 'Twój film'),
       MessageType.image => copy.text('Your photo', 'Twoje zdjęcie'),
-      MessageType.text => copy.text('Your message', 'Twoja wiadomość'),
+      MessageType.text ||
+      MessageType.gif => copy.text('Your message', 'Twoja wiadomość'),
     };
     final statusColor = failed ? colors.onErrorContainer : palette.focus;
     final maxWidth = (MediaQuery.sizeOf(context).width * 0.82).clamp(
@@ -2580,6 +2763,26 @@ class _QueuedMediaMessageCard extends StatelessWidget {
                   ),
                 ],
               ),
+              if (active != null) ...[
+                const SizedBox(height: 10),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(4),
+                  child: LinearProgressIndicator(
+                    key: ValueKey('progress-media-${entry.id}'),
+                    // Determinate only while Storage is actually reporting
+                    // transferred bytes. Reserving and finalizing are single
+                    // round trips with no measurable middle, so they keep the
+                    // indeterminate bar rather than inventing a fraction.
+                    value:
+                        active.stage == DirectAttachmentDeliveryStage.uploading
+                        ? active.progress
+                        : null,
+                    minHeight: 4,
+                    backgroundColor: palette.border,
+                    color: palette.focus,
+                  ),
+                ),
+              ],
               const SizedBox(height: 4),
               Wrap(
                 alignment: WrapAlignment.end,
@@ -3020,10 +3223,14 @@ class _VoiceMessageRecorderSheetState
       _error = null;
     });
     try {
+      // Before the handoff, not after: the outbox copies from the recorder's
+      // own file, and the preview player is holding that same file open.
       await _stopPreview();
       await widget.onSend(audio, _durationSeconds);
+      // The queue owns the recording now and has already released the
+      // recorder's copy. Discarding here would be a second delete of a file
+      // this sheet no longer owns.
       _audio = null;
-      await audio.discard();
       if (mounted) Navigator.pop(context);
     } on VoiceRecordingException catch (error) {
       if (mounted) {
@@ -3210,6 +3417,7 @@ class _VoiceMessageRecorderSheetState
 class _MessageActionsSheet extends StatelessWidget {
   const _MessageActionsSheet({
     required this.isMine,
+    required this.canEdit,
     required this.onReaction,
     required this.onReply,
     required this.onEdit,
@@ -3218,6 +3426,7 @@ class _MessageActionsSheet extends StatelessWidget {
   });
 
   final bool isMine;
+  final bool canEdit;
   final ValueChanged<String> onReaction;
   final VoidCallback onReply;
   final VoidCallback onEdit;
@@ -3288,7 +3497,7 @@ class _MessageActionsSheet extends StatelessWidget {
                 style: TextStyle(color: palette.textPrimary),
               ),
             ),
-            if (isMine)
+            if (isMine && canEdit)
               ListTile(
                 onTap: onEdit,
                 leading: Icon(Icons.edit_outlined, color: palette.textPrimary),
@@ -3368,6 +3577,6 @@ String _localizedMessagePreview(Message message, AppLocalizations copy) {
     MessageType.voice => copy.text('Voice message', 'Wiadomość głosowa'),
     MessageType.image => copy.text('Photo', 'Zdjęcie'),
     MessageType.video => copy.text('Video', 'Film'),
-    MessageType.text => message.content,
+    MessageType.text || MessageType.gif => message.content,
   };
 }

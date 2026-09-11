@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
+import 'package:yovoice/core/preferences/app_preferences.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/messages/data/models/message.dart';
 import 'package:yovoice/features/messages/presentation/widgets/direct_video_playback_source.dart';
@@ -14,6 +15,7 @@ import 'package:yovoice/features/messages/presentation/widgets/direct_voice_play
 import 'package:yovoice/features/messages/presentation/widgets/room_link_message_card.dart';
 import 'package:yovoice/features/rooms/data/room_links.dart';
 import 'package:yovoice/shared/widgets/interactions/accessible_context_action.dart';
+import 'package:yovoice/shared/widgets/media/yo_gif_view.dart';
 
 class MessageBubble extends StatelessWidget {
   const MessageBubble({
@@ -290,6 +292,20 @@ class _MessageContent extends StatelessWidget {
     }
 
     switch (message.type) {
+      case MessageType.gif:
+        final gif = message.gif;
+        if (gif == null) {
+          return Text(
+            message.content,
+            style: TextStyle(color: foregroundColor),
+          );
+        }
+        return YoGifView(
+          asset: gif,
+          autoLoad:
+              AppPreferencesScope.maybeOf(context)?.value.gifAutoLoadEnabled ??
+              true,
+        );
       case MessageType.voice:
         return _VoiceMessageContent(
           message: message,
@@ -992,7 +1008,7 @@ class DirectMessageMediaPreview extends StatelessWidget {
         width: photoWidth,
         height: photoHeight,
       ),
-      MessageType.text => const SizedBox.shrink(),
+      MessageType.text || MessageType.gif => const SizedBox.shrink(),
     };
   }
 }

@@ -233,7 +233,7 @@ void main() {
     expect(find.text('Loading Reels'), findsNothing);
   });
 
-  testWidgets('host visibility deactivates the selected Reel player', (
+  testWidgets('host visibility suspends rather than deselects the Reel', (
     tester,
   ) async {
     final visible = ValueNotifier<bool>(true);
@@ -245,7 +245,11 @@ void main() {
 
     visible.value = false;
     await tester.pump();
-    expect(tester.widget<ReelCard>(find.byType(ReelCard)).isActive, isFalse);
+    expect(tester.widget<ReelCard>(find.byType(ReelCard)).isActive, isTrue);
+    expect(
+      tester.widget<ReelCard>(find.byType(ReelCard)).isHostVisible,
+      isFalse,
+    );
   });
 
   testWidgets(

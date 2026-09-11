@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
-import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
+import 'package:yovoice/core/theme/app_spacing.dart';
+import 'package:yovoice/features/home/presentation/widgets/shared/home_section_header.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/desktop_home.dart'
     show RoomVisual;
 import 'package:yovoice/features/moments/data/models/moment_chain.dart';
@@ -30,100 +31,6 @@ import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 ///
 /// Every section is safe down to a 320pt viewport minus page padding.
 
-/// Shared section heading. `See all` is optional and always a 44pt target.
-class MobileSectionHeader extends StatelessWidget {
-  const MobileSectionHeader({
-    required this.title,
-    this.live = false,
-    this.onSeeAll,
-    super.key,
-  });
-
-  final String title;
-  final bool live;
-  final VoidCallback? onSeeAll;
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = context.appPalette;
-    final copy = AppLocalizations.of(context);
-    final enlargedText = MediaQuery.textScalerOf(context).scale(1) >= 1.6;
-    final titleWidget = Text(
-      title,
-      maxLines: 2,
-      overflow: TextOverflow.visible,
-      style: TextStyle(
-        color: palette.textPrimary,
-        fontSize: 16.5,
-        fontWeight: FontWeight.w800,
-      ),
-    );
-    final viewAllButton = onSeeAll == null
-        ? null
-        : TextButton(
-            onPressed: onSeeAll,
-            style: TextButton.styleFrom(
-              minimumSize: const Size(44, 44),
-              padding: const EdgeInsets.symmetric(horizontal: 8),
-              foregroundColor: palette.interactiveForeground,
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  copy.text('View all', 'Zobacz wszystkie'),
-                  style: const TextStyle(
-                    fontSize: 12.5,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                const SizedBox(width: 2),
-                const Icon(Icons.chevron_right_rounded, size: 18),
-              ],
-            ),
-          );
-    final titleAndStatus = Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Flexible(child: titleWidget),
-        if (live) ...[
-          const SizedBox(width: 6),
-          Container(
-            width: 6,
-            height: 6,
-            decoration: const BoxDecoration(
-              shape: BoxShape.circle,
-              color: AppColors.live,
-            ),
-          ),
-        ],
-      ],
-    );
-
-    return Padding(
-      padding: const EdgeInsets.only(top: 18, bottom: 10),
-      child: enlargedText
-          ? Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                titleAndStatus,
-                if (viewAllButton != null)
-                  Align(alignment: Alignment.centerRight, child: viewAllButton),
-              ],
-            )
-          : Row(
-              children: [
-                Expanded(child: titleAndStatus),
-                if (viewAllButton != null) ...[
-                  const SizedBox(width: 8),
-                  viewAllButton,
-                ],
-              ],
-            ),
-    );
-  }
-}
-
 /// The followed-Moments rail — one avatar per followed author with a
 /// playable active chain.
 ///
@@ -146,6 +53,7 @@ class MobileMomentsStrip extends StatelessWidget {
     this.viewedIds,
     this.showOwnTile = true,
     this.trailingRecordTile = false,
+    this.horizontalPadding = 0,
     super.key,
   });
 
@@ -181,6 +89,12 @@ class MobileMomentsStrip extends StatelessWidget {
   /// this is the rail's expiry-recovery focus target, so recovery never
   /// lands on nothing.
   final bool trailingRecordTile;
+
+  /// The page gutter, applied INSIDE the horizontal scroll view rather than
+  /// around it. The rail then starts flush with the rest of the page while
+  /// its tiles scroll under the frame's edge — a deliberate peek — instead
+  /// of painting past the layout the way `Clip.none` used to.
+  final double horizontalPadding;
 
   @override
   Widget build(BuildContext context) => MomentViewedIds(
@@ -285,13 +199,33 @@ class MobileMomentsStrip extends StatelessWidget {
                           : () => onOpenMoment(mine)),
                 onAddTap: onCreateMoment,
               );
+        // With nobody else's Moment to show and no own tile, a 60 px disc
+        // alone under a heading is a section that is not a section. The
+        // same action becomes a real labelled control instead — same key,
+        // same focus node, same semantics, same callback; only the shape
+        // changes, so expiry recovery still lands on it.
+        final soloRecord = trailingRecordTile && !showOwnTile && shown.isEmpty;
         final record = !trailingRecordTile
             ? null
-            : _RecordMomentTile(
-                expandedLabels: expandedLabels,
-                focusNode: recordIsRecovery ? recoveryFocus : null,
-                onTap: onCreateMoment,
-              );
+            : (soloRecord
+                  ? _RecordMomentPill(
+                      focusNode: recordIsRecovery ? recoveryFocus : null,
+                      onTap: onCreateMoment,
+                    )
+                  : _RecordMomentTile(
+                      expandedLabels: expandedLabels,
+                      focusNode: recordIsRecovery ? recoveryFocus : null,
+                      onTap: onCreateMoment,
+                    ));
+
+        if (soloRecord) {
+          return Padding(
+            padding: EdgeInsets.symmetric(horizontal: horizontalPadding),
+            child: recordIsRecovery
+                ? _RecoveryOutline(recoveryFocus: recoveryFocus, child: record!)
+                : record!,
+          );
+        }
 
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -302,7 +236,12 @@ class MobileMomentsStrip extends StatelessWidget {
             // viewer can open.
             SingleChildScrollView(
               scrollDirection: Axis.horizontal,
-              clipBehavior: Clip.none,
+              // The rail is full-bleed and carries the page gutter itself,
+              // so its tiles scroll UNDER the frame edge instead of
+              // painting past the layout (`Clip.none` reached x = 391.9 on
+              // a 390 px screen).
+              clipBehavior: Clip.hardEdge,
+              padding: EdgeInsets.symmetric(horizontal: horizontalPadding),
               child: Row(
                 children: [
                   if (yours != null)
@@ -312,7 +251,7 @@ class MobileMomentsStrip extends StatelessWidget {
                     ),
                   for (final chain in shown) ...[
                     if (chain != shown.first || yours != null)
-                      const SizedBox(width: 10),
+                      const SizedBox(width: AppRhythm.item),
                     MomentStoryTile(
                       expandedLabel: expandedLabels,
                       key: ValueKey('home-moment-${chain.moments.last.id}'),
@@ -344,7 +283,7 @@ class MobileMomentsStrip extends StatelessWidget {
                   ],
                   if (record != null) ...[
                     if (yours != null || shown.isNotEmpty)
-                      const SizedBox(width: 10),
+                      const SizedBox(width: AppRhythm.item),
                     recordIsRecovery
                         ? _RecoveryOutline(
                             recoveryFocus: recoveryFocus,
@@ -411,6 +350,95 @@ class _RecoveryOutline extends StatelessWidget {
   }
 }
 
+/// The Record affordance when it is the ONLY thing the rail has to show:
+/// a full-width labelled pill instead of a lone 60 px disc under a heading
+/// that promises content there is none of.
+///
+/// Everything the rail depends on is unchanged — the same
+/// `home-record-moment` key on the same [InkWell], the same focus node, the
+/// same one-button semantics, the same callback — so expiry recovery, the
+/// focus outline and every existing finder keep working. Only the shape
+/// differs.
+class _RecordMomentPill extends StatelessWidget {
+  const _RecordMomentPill({required this.onTap, this.focusNode});
+
+  final VoidCallback onTap;
+  final FocusNode? focusNode;
+
+  @override
+  Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
+    final palette = context.appPalette;
+    // The string the disc tile already carries — no new copy.
+    final label = copy.text('Record a Voice Moment', 'Nagraj Voice Moment');
+    final radius = BorderRadius.circular(999);
+    return Semantics(
+      button: true,
+      label: label,
+      excludeSemantics: true,
+      onTap: onTap,
+      child: Tooltip(
+        message: label,
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            key: const ValueKey('home-record-moment'),
+            onTap: onTap,
+            focusNode: focusNode,
+            excludeFromSemantics: true,
+            borderRadius: radius,
+            focusColor: palette.focus.withValues(alpha: .14),
+            hoverColor: palette.interactiveForeground.withValues(alpha: .08),
+            child: Container(
+              width: double.infinity,
+              constraints: const BoxConstraints(minHeight: 44),
+              padding: const EdgeInsets.symmetric(
+                horizontal: AppRhythm.title,
+                vertical: AppRhythm.tight,
+              ),
+              decoration: BoxDecoration(
+                borderRadius: radius,
+                border: Border.all(color: palette.borderStrong, width: 1.5),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(
+                    Icons.mic_rounded,
+                    size: 20,
+                    color: palette.interactiveForeground,
+                  ),
+                  const SizedBox(width: AppRhythm.tight),
+                  Flexible(
+                    child: Text(
+                      label,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      // Start, not centre. On one line the row centres the
+                      // whole lockup and this changes nothing; once the
+                      // label wraps (200 % text on a 320 px phone) its box
+                      // fills the pill, and centring the words inside THAT
+                      // box left the microphone stranded ~100 px away at
+                      // the pill's leading edge, reading as a stray glyph
+                      // rather than the label's icon.
+                      textAlign: TextAlign.start,
+                      style: TextStyle(
+                        color: palette.textPrimary,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 /// The trailing "Record" tile: the same footprint as an author tile, a
 /// microphone disc instead of an avatar. It carries the `home-record-moment`
 /// key the own tile's `+` badge carries in the standalone strip, so Home's
@@ -470,7 +498,7 @@ class _RecordMomentTile extends StatelessWidget {
                 // The exact metrics an author tile uses, so the label sits
                 // on the same baseline and the tile never overflows its
                 // own `heightFor` at any text scale.
-                const SizedBox(height: 6),
+                const SizedBox(height: AppRhythm.tight),
                 SizedBox(
                   width: double.infinity,
                   height: MomentStoryTile.nameHeightFor(
@@ -530,7 +558,7 @@ class MobileLiveRail extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
-            MobileSectionHeader(
+            HomeSectionHeader(
               title: copy.text('Live around you', 'Na żywo w pobliżu'),
               live: true,
               onSeeAll: onSeeAll,

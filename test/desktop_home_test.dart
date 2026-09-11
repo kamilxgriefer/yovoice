@@ -399,53 +399,65 @@ void main() {
     ProfileMediaService.clearAllMediaAccessCaches();
   });
 
-  testWidgets('answers its four questions in order, once each', (tester) async {
-    useDesktop(tester, const Size(1440, 2600));
-    await seedRoom(id: 'r1', name: 'Evening Talks', description: 'Real talk');
-    // Hosted here but not live: "Your active rooms" renders for a host
-    // without adding a second board banner.
-    await seedRoom(
-      id: 'mine',
-      name: 'My hosted room',
-      description: 'Owned, not live',
-      hostId: uid,
-      isLive: false,
-    );
-    await tester.pumpWidget(host(buildHome()));
-    for (var i = 0; i < 6; i++) {
-      await tester.pump(const Duration(milliseconds: 60));
-    }
+  testWidgets(
+    'wide Home answers its four questions in parallel columns, once each',
+    (tester) async {
+      useDesktop(tester, const Size(1440, 2600));
+      await seedRoom(id: 'r1', name: 'Evening Talks', description: 'Real talk');
+      // Hosted here but not live: "Your active rooms" renders for a host
+      // without adding a second board banner.
+      await seedRoom(
+        id: 'mine',
+        name: 'My hosted room',
+        description: 'Owned, not live',
+        hostId: uid,
+        isLive: false,
+      );
+      await tester.pumpWidget(host(buildHome()));
+      for (var i = 0; i < 6; i++) {
+        await tester.pump(const Duration(milliseconds: 60));
+      }
 
-    for (final heading in [
-      'Your people',
-      'Live for you',
-      'From people you follow',
-      'Your active rooms',
-      'Your recent chats',
-    ]) {
-      expect(find.text(heading), findsOneWidget, reason: heading);
-    }
-    expect(find.byKey(const ValueKey('home-people-me')), findsOneWidget);
+      for (final heading in [
+        'Your people',
+        'Live for you',
+        'Your active rooms',
+        'Your recent chats',
+      ]) {
+        expect(find.text(heading), findsOneWidget, reason: heading);
+      }
+      // Nothing followed is playable here, so the followed-Moments heading
+      // is gated off and its Record affordance carries the section instead.
+      expect(find.text('From people you follow'), findsNothing);
+      expect(find.text('Record a Voice Moment'), findsOneWidget);
+      expect(find.byKey(const ValueKey('home-people-me')), findsOneWidget);
 
-    double y(String label) => tester.getTopLeft(find.text(label)).dy;
-    expect(y('Your people'), lessThan(y('Live for you')));
-    expect(y('Live for you'), lessThan(y('Your active rooms')));
-    expect(y('Your recent chats'), lessThan(y('Your active rooms')));
+      double y(String label) => tester.getTopLeft(find.text(label)).dy;
+      // Approved wide layout: people/chats form the secondary column beside
+      // the primary conversation, with retained owned rooms below both.
+      expect(y('Your people'), closeTo(y('Live for you'), 0.01));
+      expect(
+        tester.getTopLeft(find.text('Your people')).dx,
+        greaterThan(tester.getTopLeft(find.text('Live for you')).dx),
+      );
+      expect(y('Live for you'), lessThan(y('Your active rooms')));
+      expect(y('Your recent chats'), lessThan(y('Your active rooms')));
 
-    // The removed compositions must not come back.
-    for (final gone in [
-      'Live around you',
-      'Your circle',
-      'For you',
-      'Recommended now',
-      'Global Chat',
-      'Global conversations',
-      'Top creators you follow',
-      'Voice Trending',
-    ]) {
-      expect(find.text(gone), findsNothing, reason: '$gone returned');
-    }
-  });
+      // The removed compositions must not come back.
+      for (final gone in [
+        'Live around you',
+        'Your circle',
+        'For you',
+        'Recommended now',
+        'Global Chat',
+        'Global conversations',
+        'Top creators you follow',
+        'Voice Trending',
+      ]) {
+        expect(find.text(gone), findsNothing, reason: '$gone returned');
+      }
+    },
+  );
 
   testWidgets('live loading, true empty and error are distinct states', (
     tester,
@@ -458,19 +470,16 @@ void main() {
     );
     await tester.pump(const Duration(milliseconds: 100));
     expect(find.byKey(const ValueKey('home-rooms-loading')), findsOneWidget);
-    expect(find.textContaining('No rooms to show yet'), findsNothing);
+    expect(find.textContaining('No rooms are live right now'), findsNothing);
     expect(find.byType(HomeRoomBanner), findsNothing);
     controller.add([]);
     await tester.pump();
     expect(find.byKey(const ValueKey('home-rooms-loading')), findsNothing);
-    expect(find.textContaining('No rooms to show yet'), findsOneWidget);
+    expect(find.textContaining('No rooms are live right now'), findsOneWidget);
     controller.addError(StateError('test connection loss'));
     await tester.pump();
-    expect(find.textContaining('No rooms to show yet'), findsNothing);
-    expect(
-      find.textContaining('Live rooms could not be loaded'),
-      findsOneWidget,
-    );
+    expect(find.textContaining('No rooms are live right now'), findsNothing);
+    expect(find.text('Check your connection and try again.'), findsOneWidget);
     expect(
       find.byKey(const ValueKey('home-quick-create-room')),
       findsOneWidget,
@@ -754,7 +763,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 60));
     }
 
-    expect(find.textContaining('No rooms to show yet'), findsOneWidget);
+    expect(find.textContaining('No rooms are live right now'), findsOneWidget);
     expect(find.text('Join room'), findsNothing);
   });
 
@@ -882,7 +891,10 @@ void main() {
     }
 
     expect(find.text('Your active rooms'), findsOneWidget);
-    expect(find.text('Could not load rooms'), findsOneWidget);
+    expect(
+      find.text('This is taking longer than expected. Please try again.'),
+      findsOneWidget,
+    );
     expect(find.text('Try again'), findsOneWidget);
     expect(find.text('You have no rooms yet.'), findsNothing);
   });
@@ -1209,7 +1221,10 @@ void main() {
       }
 
       expect(find.text('YO Moments from your circle'), findsNothing);
-      expect(find.text('From people you follow'), findsOneWidget);
+      // An empty circle is not a section: the heading is gated on real
+      // followed Moments and the Record affordance takes its pill form.
+      expect(find.text('From people you follow'), findsNothing);
+      expect(find.text('Record a Voice Moment'), findsOneWidget);
       // The one "You" on the screen is the people rail's own tile.
       expect(find.text('You'), findsOneWidget);
       expect(find.byKey(const ValueKey('home-people-me')), findsOneWidget);

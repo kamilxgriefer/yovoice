@@ -3,10 +3,12 @@ import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
+import 'package:yovoice/core/theme/app_spacing.dart';
 import 'package:yovoice/features/friends/data/models/friend_user.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/home/data/services/home_feed_service.dart';
 import 'package:yovoice/features/home/presentation/widgets/mobile/mobile_home_sections.dart';
+import 'package:yovoice/features/home/presentation/widgets/shared/home_section_status.dart';
 import 'package:yovoice/features/moments/data/models/moment_chain.dart';
 import 'package:yovoice/features/moments/data/services/moment_views_service.dart';
 import 'package:yovoice/features/profile/data/models/follow_user.dart';
@@ -165,6 +167,19 @@ class _DesktopMomentsStripState extends State<DesktopMomentsStrip> {
     setState(_loadMoments);
   }
 
+  void _retryMoments() {
+    setState(() {
+      _loadMoments();
+      try {
+        _following = (widget.followService ?? FollowService()).watchFollowing(
+          widget.currentUserId ?? '',
+        );
+      } catch (_) {
+        _following = null;
+      }
+    });
+  }
+
   @override
   void didUpdateWidget(covariant DesktopMomentsStrip oldWidget) {
     super.didUpdateWidget(oldWidget);
@@ -222,7 +237,21 @@ class _DesktopMomentsStripState extends State<DesktopMomentsStrip> {
                 return StreamBuilder<List<VoiceMoment>>(
                   stream: _moments,
                   builder: (context, snapshot) {
-                    final all = snapshot.data ?? const <VoiceMoment>[];
+                    final unavailable =
+                        snapshot.hasError ||
+                        followingSnapshot.hasError ||
+                        _moments == null ||
+                        _following == null;
+                    final loading =
+                        !unavailable &&
+                        (!snapshot.hasData || !followingSnapshot.hasData);
+                    // A failed media read removes its whole page. A failed
+                    // following read removes followed authors via the gate
+                    // below, but must not revoke a separately authorized own
+                    // chain in the standalone (non-Home) presentation.
+                    final all = snapshot.hasError || _moments == null
+                        ? const <VoiceMoment>[]
+                        : snapshot.data ?? const <VoiceMoment>[];
                     final playable = all
                         .where((moment) => moment.hasMediaReference)
                         .toList(growable: false);
@@ -252,7 +281,8 @@ class _DesktopMomentsStripState extends State<DesktopMomentsStrip> {
                     ];
 
                     if (widget.avatarOnly) {
-                      final rail = MobileMomentsStrip(
+                      final content = MobileMomentsStrip(
+                        key: const ValueKey('desktop-home-moments-rail'),
                         expandedLabels: true,
                         moments: visibleMoments,
                         profile: profile,
@@ -266,6 +296,30 @@ class _DesktopMomentsStripState extends State<DesktopMomentsStrip> {
                         // Already resolved above; the rail must not open a
                         // second listener over the same subcollection.
                         viewedIds: viewedIds,
+                      );
+                      final rail = Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (unavailable) ...[
+                            HomeSectionError(
+                              key: const ValueKey('home-moments-error'),
+                              error: snapshot.error ?? followingSnapshot.error,
+                              message: copy.text(
+                                'Moments could not load',
+                                'Nie udało się wczytać Momentów',
+                              ),
+                              onRetry: _retryMoments,
+                            ),
+                            const SizedBox(height: AppRhythm.item),
+                          ] else if (loading) ...[
+                            const LinearProgressIndicator(
+                              key: ValueKey('home-moments-loading'),
+                            ),
+                            const SizedBox(height: AppRhythm.item),
+                          ],
+                          content,
+                        ],
                       );
                       return widget.contentBuilder?.call(
                             context,

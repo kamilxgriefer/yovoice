@@ -12,10 +12,10 @@ import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_theme.dart';
 import 'package:yovoice/features/friends/data/models/friend_user.dart';
 import 'package:yovoice/features/home/presentation/widgets/shared/home_people_strip.dart';
+import 'package:yovoice/features/home/presentation/widgets/shared/home_section_status.dart';
 import 'package:yovoice/features/profile/data/models/profile_visibility.dart';
 import 'package:yovoice/features/profile/data/models/user_profile.dart';
 import 'package:yovoice/shared/widgets/profile/people_status_ring.dart';
-import 'package:yovoice/shared/widgets/states/yo_error_state.dart';
 
 FriendUser _friend(
   String id,
@@ -276,7 +276,7 @@ void main() {
     expect(find.byKey(const ValueKey('home-people-me')), findsOneWidget);
     expect(find.byKey(const ValueKey('home-people-add')), findsOneWidget);
     expect(find.byKey(const ValueKey('home-people-loading')), findsNothing);
-    expect(find.byType(YoErrorState), findsNothing);
+    expect(find.byType(HomeSectionError), findsNothing);
     expect(
       find.byWidgetPredicate(
         (widget) =>
@@ -312,7 +312,7 @@ void main() {
     expect(find.byKey(const ValueKey('home-people-loading')), findsOneWidget);
     expect(find.byKey(const ValueKey('home-people-me')), findsOneWidget);
     expect(find.byKey(const ValueKey('home-people-add')), findsNothing);
-    expect(find.byType(YoErrorState), findsNothing);
+    expect(find.byType(HomeSectionError), findsNothing);
 
     // Error: the friends read failed. The heading and the account stay; the
     // rail must never claim the account has no friends.
@@ -327,7 +327,7 @@ void main() {
     await tester.pump();
     expect(find.text('Your people'), findsOneWidget);
     expect(find.byKey(const ValueKey('home-people-me')), findsOneWidget);
-    expect(find.byType(YoErrorState), findsOneWidget);
+    expect(find.byType(HomeSectionError), findsOneWidget);
     expect(find.text('Friends could not be loaded.'), findsOneWidget);
     expect(find.byKey(const ValueKey('home-people-add')), findsNothing);
     expect(find.byKey(const ValueKey('home-people-loading')), findsNothing);

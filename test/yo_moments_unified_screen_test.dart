@@ -121,6 +121,7 @@ void main() {
               disableAnimations: true,
             ),
             child: MomentsScreen(
+              key: UniqueKey(),
               isRootTab: true,
               initialFormat: YoMomentsFormat.reels,
               reelService: _emptyReelService(),
@@ -129,8 +130,17 @@ void main() {
           ),
         );
 
-        expect(find.text('YO Moments'), findsOneWidget);
-        if (size.width <= 390) {
+        expect(
+          find.text('YO Moments'),
+          size.width < 600 ? findsNothing : findsOneWidget,
+        );
+        // Mobile Reels has compact format controls over the media. Its full
+        // title belongs to Voice, where it must still reflow at 200%.
+        if (size.width < 600) {
+          _expectTextFullyLaidOut(tester, find.text('Voice'));
+          _expectTextFullyLaidOut(tester, find.text('Reels'));
+          await tester.tap(find.text('Voice'));
+          await tester.pumpAndSettle();
           final title = find.byKey(const ValueKey<String>('yo-moments-title'));
           final text = tester.widget<Text>(title);
           expect(text.maxLines, isNull);
@@ -208,17 +218,21 @@ void main() {
 
       hostVisible.value = false;
       await tester.pump();
-      expect(tester.widget<ReelCard>(reel).isActive, isFalse);
+      expect(tester.widget<ReelCard>(reel).isActive, isTrue);
+      expect(tester.widget<ReelCard>(reel).isHostVisible, isFalse);
       hostVisible.value = true;
       await tester.pump();
       expect(tester.widget<ReelCard>(reel).isActive, isTrue);
+      expect(tester.widget<ReelCard>(reel).isHostVisible, isTrue);
 
       await tester.tap(find.text('Voice'));
       await tester.pump();
-      expect(tester.widget<ReelCard>(reel).isActive, isFalse);
+      expect(tester.widget<ReelCard>(reel).isActive, isTrue);
+      expect(tester.widget<ReelCard>(reel).isHostVisible, isFalse);
       await tester.tap(find.text('Reels'));
       await tester.pump();
       expect(tester.widget<ReelCard>(reel).isActive, isTrue);
+      expect(tester.widget<ReelCard>(reel).isHostVisible, isTrue);
 
       final navigator = Navigator.of(tester.element(find.text('YO Moments')));
       unawaited(
@@ -229,10 +243,12 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      expect(tester.widget<ReelCard>(reel).isActive, isFalse);
+      expect(tester.widget<ReelCard>(reel).isActive, isTrue);
+      expect(tester.widget<ReelCard>(reel).isHostVisible, isFalse);
       navigator.pop();
       await tester.pumpAndSettle();
       expect(tester.widget<ReelCard>(reel).isActive, isTrue);
+      expect(tester.widget<ReelCard>(reel).isHostVisible, isTrue);
     },
   );
 

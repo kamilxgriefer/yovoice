@@ -230,6 +230,10 @@ void main() {
       'lib/features/reels/presentation/screens/reels_feed_screen.dart',
       'lib/features/moments/presentation/screens/record_voice_moment_screen.dart',
       'lib/features/moments/presentation/screens/moments_screen.dart',
+      'lib/shared/widgets/inputs/yo_composer_panel.dart',
+      'lib/shared/widgets/inputs/yo_gif_picker.dart',
+      'lib/shared/widgets/inputs/yo_gif_send_status.dart',
+      'lib/shared/widgets/media/yo_gif_view.dart',
     };
     final localizedCall = RegExp(
       r'''\.(?:text|template)\(\s*((?:(?:'(?:\\.|[^'])*'|"(?:\\.|[^"])*")\s*)+),''',
@@ -246,6 +250,21 @@ void main() {
               '\n'.allMatches(source.substring(0, match.start)).length + 1;
           missing.add('$path:$line "$key"');
         }
+      }
+    }
+
+    // Settings still contains legacy copy outside this round; its new GIF
+    // privacy controls must obey the same complete-catalog release gate.
+    const settingsPath =
+        'lib/features/settings/presentation/screens/settings_screen.dart';
+    final settingsSource = File(settingsPath).readAsStringSync();
+    for (final match in localizedCall.allMatches(settingsSource)) {
+      final key = _joinedCatalogLiteral(match.group(1)!);
+      if (key.contains('GIF') && !appTranslationKeys.contains(key)) {
+        final line =
+            '\n'.allMatches(settingsSource.substring(0, match.start)).length +
+            1;
+        missing.add('$settingsPath:$line "$key"');
       }
     }
 

@@ -2229,7 +2229,7 @@ String _localizedConversationPreview(
     MessageType.voice => copy.text('Voice message', 'Wiadomość głosowa'),
     MessageType.image => copy.text('Photo', 'Zdjęcie'),
     MessageType.video => copy.text('Video', 'Film'),
-    MessageType.text => conversation.lastMessage,
+    MessageType.text || MessageType.gif => conversation.lastMessage,
   };
   return '$prefix$content';
 }

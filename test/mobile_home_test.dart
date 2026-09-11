@@ -24,6 +24,7 @@ import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
 import 'package:yovoice/features/staff/data/staff_capabilities.dart';
 import 'package:yovoice/features/home/presentation/widgets/mobile/mobile_home_sections.dart';
+import 'package:yovoice/features/home/presentation/widgets/shared/home_overview_sections.dart';
 import 'package:yovoice/features/home/presentation/widgets/shared/home_room_board.dart';
 import 'package:yovoice/shared/widgets/profile/availability_picker.dart';
 import 'package:yovoice/shared/widgets/profile/people_status_ring.dart';
@@ -367,8 +368,12 @@ void main() {
     // Only the people tile says "You" now: the Moments rail's own tile
     // left Home, and the trailing Record tile took over creation.
     expect(find.text('You'), findsOneWidget);
-    expect(find.text('From people you follow'), findsOneWidget);
+    // With nothing followed to hear, a heading promising followed Moments
+    // is a promise Home cannot keep: the section header is gated on real
+    // content and the Record affordance becomes a labelled action instead.
+    expect(find.text('From people you follow'), findsNothing);
     expect(find.byKey(const ValueKey('home-record-moment')), findsOneWidget);
+    expect(find.text('Record a Voice Moment'), findsOneWidget);
     expect(find.byKey(const ValueKey('home-your-moment')), findsNothing);
     expect(find.text('Live for you'), findsOneWidget);
     expect(find.text('Your active rooms'), findsOneWidget);
@@ -376,8 +381,8 @@ void main() {
 
     double y(String label) => tester.getTopLeft(find.text(label)).dy;
     expect(y('You'), lessThan(y('Live for you')));
-    expect(y('Live for you'), lessThan(y('From people you follow')));
-    expect(y('From people you follow'), lessThan(y('Your recent chats')));
+    expect(y('Live for you'), lessThan(y('Record a Voice Moment')));
+    expect(y('Record a Voice Moment'), lessThan(y('Your recent chats')));
     expect(y('Your recent chats'), lessThan(y('Your active rooms')));
     expect(find.byKey(const ValueKey('home-featured-room')), findsOneWidget);
 
@@ -533,7 +538,7 @@ void main() {
     await tester.pumpWidget(host(buildHome()));
     await tester.pump(const Duration(milliseconds: 150));
 
-    expect(find.textContaining('No rooms to show yet'), findsOneWidget);
+    expect(find.textContaining('No rooms are live right now'), findsOneWidget);
     // The recommended list hides rather than showing filler rows.
     expect(find.text('Recommended now'), findsNothing);
     // An account hosting nothing gets no permanently empty owned-rooms
@@ -934,6 +939,33 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('a host keeps "Your active rooms" when the board also fills '
+      '"Rooms for you"', (tester) async {
+    // The owned-rooms block sits after a variable-length section. Unkeyed,
+    // its list child shifted index the moment the board grew, which
+    // rebuilt it from scratch, re-subscribed to an already-emitted
+    // broadcast stream, and left the host's own rooms silently missing.
+    usePhone(tester, const Size(390, 3000));
+    await seedRoom(id: 'r1', name: 'Evening Talks', description: 'Real talk');
+    await seedRoom(id: 'r2', name: 'Night Shift', description: 'Late talk');
+    await seedRoom(
+      id: 'mine',
+      name: 'Morning Coffee',
+      description: 'Owned and live',
+      hostId: uid,
+    );
+
+    await tester.pumpWidget(host(buildHome()));
+    for (var i = 0; i < 10; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+
+    expect(find.text('Rooms for you'), findsOneWidget);
+    expect(find.text('Your active rooms'), findsOneWidget);
+    expect(find.text('Could not load rooms'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('a medium width is not a stretched phone: wider gutters and '
       'the taller featured banner', (tester) async {
     // The mobile shell also serves tablets and a resized desktop window.
@@ -950,10 +982,23 @@ void main() {
       await tester.pumpWidget(host(buildHome()));
       await tester.pump(const Duration(milliseconds: 250));
 
+      // The gutter lives on the page children now, not on the ListView:
+      // the two rails are full-bleed so their tiles can scroll under the
+      // frame edge. Measure what the reader sees — the left ink of a
+      // gutter-wrapped section — rather than a padding value.
       final list = tester.widget<ListView>(find.byType(ListView).first);
-      final padding = list.padding! as EdgeInsets;
-      expect(padding.left, gutter, reason: 'left gutter at $width');
-      expect(padding.right, gutter, reason: 'right gutter at $width');
+      expect((list.padding! as EdgeInsets).left, 0);
+      expect((list.padding! as EdgeInsets).right, 0);
+      expect(
+        tester.getTopLeft(find.text('Live for you')).dx,
+        gutter,
+        reason: 'left gutter at $width',
+      );
+      expect(
+        tester.getTopRight(find.byType(HomeQuickActions)).dx,
+        width - gutter,
+        reason: 'right gutter at $width',
+      );
 
       final featured = tester.widget<HomeRoomBanner>(
         find.byKey(const ValueKey('home-featured-room')),

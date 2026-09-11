@@ -5,15 +5,17 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:video_player/video_player.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
-import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_motion.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/reels/data/models/reel.dart';
 import 'package:yovoice/features/reels/data/models/reel_composition.dart';
 import 'package:yovoice/features/reels/data/services/reel_service.dart';
+import 'package:yovoice/features/reels/presentation/sharing/reel_share.dart';
 import 'package:yovoice/features/reels/presentation/widgets/reel_composition_canvas.dart';
 import 'package:yovoice/features/reels/presentation/widgets/reel_engagement_bar.dart';
 import 'package:yovoice/features/reels/presentation/widgets/reel_playback_coordinator.dart';
+import 'package:yovoice/features/reels/presentation/widgets/reel_overlay_measure.dart';
+import 'package:yovoice/features/reels/presentation/widgets/reel_private_overlay_guard.dart';
 import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
 import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
@@ -51,16 +53,24 @@ class ReelCard extends StatefulWidget {
     required this.service,
     this.videoBuilder,
     this.audioPlaybackFactory,
+    this.videoPlaybackFactory,
+    this.soundOn,
+    this.autoplay = true,
     this.isActive = true,
+    this.isHostVisible = true,
     this.onDelete,
     this.onReport,
     this.onLike,
     this.onComments,
+    this.onShare,
     this.onOpenAuthor,
     this.likePending = false,
     this.commentsOpen = false,
     this.showIdentity = true,
     this.borderRadius = 24,
+    this.fillViewport = false,
+    this.mediaTopInset = 0,
+    this.now,
     super.key,
   });
 
@@ -68,7 +78,25 @@ class ReelCard extends StatefulWidget {
   final ReelService service;
   final ReelVideoBuilder? videoBuilder;
   final ReelAudioPlaybackFactory? audioPlaybackFactory;
+
+  /// Supplies the video engine instead of the built-in decoder. Production
+  /// leaves it null; a host that already owns a player — and the autoplay
+  /// coverage, which must not start a platform decoder — provides one.
+  final ReelVideoPlaybackFactory? videoPlaybackFactory;
+
+  /// The viewer's sound preference, shared by every card in a feed so it is
+  /// turned on once rather than per Reel. Null gives this card its own, which
+  /// starts silent.
+  final ValueNotifier<bool>? soundOn;
+
+  /// Whether a video Reel starts itself once it is the active page. Photo
+  /// Reels never do — their backing track is content, not ambience.
+  final bool autoplay;
   final bool isActive;
+
+  /// Host navigation obscures the same page; it is not a swipe away from it.
+  /// Suspend without seeking or forgetting the viewer's deliberate pause.
+  final bool isHostVisible;
   final Future<void> Function()? onDelete;
   final Future<void> Function()? onReport;
 
@@ -80,6 +108,7 @@ class ReelCard extends StatefulWidget {
   /// live control that explains its gate rather than a dead button.
   final VoidCallback? onLike;
   final VoidCallback? onComments;
+  final Future<void> Function()? onShare;
 
   /// What a tap on the author does. Production leaves it null and opens the
   /// shared profile preview; tests inject a seam so they never touch
@@ -94,16 +123,227 @@ class ReelCard extends StatefulWidget {
   /// caption, so the frame shows only the action rail and the sound chip.
   final bool showIdentity;
   final double borderRadius;
+  final bool fillViewport;
+  final double mediaTopInset;
+  @visibleForTesting
+  final DateTime Function()? now;
 
   @override
   State<ReelCard> createState() => _ReelCardState();
 }
 
 class _ReelCardState extends State<ReelCard> with WidgetsBindingObserver {
+  late Uri? _initialMediaUri = widget.service.cachedMediaUri(widget.reel.id);
   late Future<Uri> _media = _loadMedia();
   late ReelPlaybackCoordinator _playback = _createPlayback();
+  Timer? _watchTimer;
+  Duration _watched = Duration.zero;
+  bool _photoReady = false;
+  bool _viewRecorded = false;
+  int _mediaRevision = 0;
+  int _automaticRefreshes = 0;
+  double _footerHeight = 0;
+  final Set<ValueNotifier<bool>> _detailLifetimes = {};
+  DateTime get _now => (widget.now ?? DateTime.now)();
 
-  Future<Uri> _loadMedia() => widget.service.resolveMediaUri(widget.reel.id);
+  void _retireDetails() {
+    for (final lifetime in _detailLifetimes) {
+      // This can run while a card is removed during tree finalization. The
+      // callback's current() gate is already false; notify the separate modal
+      // only after the locked build phase rather than setting its state here.
+      scheduleMicrotask(() {
+        if (_detailLifetimes.contains(lifetime)) lifetime.value = false;
+      });
+    }
+  }
+
+  Future<void> _openDetails({bool includeActions = false}) async {
+    final reel = widget.reel;
+    final service = widget.service;
+    final uid = service.currentUserId;
+    if (uid == null ||
+        _playbackSuspended ||
+        !widget.isActive ||
+        !reel.availability.isAvailableAt(_now)) {
+      return;
+    }
+    final lifetime = ValueNotifier<bool>(true);
+    _detailLifetimes.add(lifetime);
+    final identity = service.identityChanges.listen((id) {
+      if (id != uid) lifetime.value = false;
+    }, onError: (Object _) => lifetime.value = false);
+    bool current() =>
+        mounted &&
+        lifetime.value &&
+        _appResumed &&
+        identical(widget.service, service) &&
+        widget.reel.id == reel.id &&
+        service.currentUserId == uid &&
+        reel.availability.isAvailableAt(_now);
+    try {
+      final action = await showModalBottomSheet<String>(
+        context: context,
+        useSafeArea: true,
+        showDragHandle: true,
+        isScrollControlled: true,
+        builder: (_) => ValueListenableBuilder<bool>(
+          valueListenable: lifetime,
+          builder: (context, alive, _) => ReelPrivateOverlayGuard(
+            service: service,
+            viewerId: uid,
+            now: () => _now,
+            contentExpiresAt: reel.availability.contentExpiresAt,
+            initiallyAllowed: alive && current(),
+            contentBuilder: (context) {
+              final copy = AppLocalizations.of(context);
+              return SafeArea(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.fromLTRB(24, 8, 24, 24),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Text(
+                        reel.authorName,
+                        style: Theme.of(context).textTheme.titleLarge,
+                      ),
+                      TextButton.icon(
+                        onPressed: () {
+                          if (current()) Navigator.pop(context, 'profile');
+                        },
+                        icon: const Icon(Icons.person_outline_rounded),
+                        label: Text(copy.profile),
+                      ),
+                      if (reel.composition.caption.isNotEmpty) ...[
+                        const SizedBox(height: 16),
+                        SelectableText(reel.composition.caption),
+                      ],
+                      for (final link in reel.composition.linkOverlays)
+                        ListTile(
+                          key: ValueKey('reel-details-link-${link.id}'),
+                          contentPadding: EdgeInsets.zero,
+                          leading: const Icon(Icons.link_rounded),
+                          title: Text(link.label),
+                          trailing: const Icon(Icons.open_in_new_rounded),
+                          onTap: () {
+                            if (current()) {
+                              unawaited(
+                                launchUrl(
+                                  link.uri,
+                                  mode: LaunchMode.externalApplication,
+                                ),
+                              );
+                            }
+                          },
+                        ),
+                      if (includeActions && widget.onReport != null)
+                        ListTile(
+                          leading: const Icon(Icons.flag_outlined),
+                          title: Text(copy.text('Report Reel', 'Zgłoś Reel')),
+                          onTap: () {
+                            if (current()) Navigator.pop(context, 'report');
+                          },
+                        ),
+                      if (includeActions && widget.onDelete != null)
+                        ListTile(
+                          leading: Icon(
+                            Icons.delete_outline_rounded,
+                            color: Theme.of(context).colorScheme.error,
+                          ),
+                          title: Text(copy.text('Delete Reel', 'Usuń Reel')),
+                          onTap: () {
+                            if (current()) Navigator.pop(context, 'delete');
+                          },
+                        ),
+                    ],
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      );
+      if (!current()) return;
+      if (action == 'profile') _openAuthor();
+      if (action == 'report') await widget.onReport?.call();
+      if (action == 'delete') await widget.onDelete?.call();
+    } finally {
+      unawaited(identity.cancel());
+      _detailLifetimes.remove(lifetime);
+      lifetime.dispose();
+    }
+  }
+
+  EdgeInsets get _compositionInsets => EdgeInsets.fromLTRB(
+    16,
+    widget.fillViewport ? widget.mediaTopInset + 12 : 56,
+    16,
+    _footerHeight + 8,
+  );
+
+  /// Owned only when the host supplied none, so a card outside a feed still
+  /// has a sound preference to toggle.
+  ValueNotifier<bool>? _ownSoundOn;
+
+  /// False while the app is not in the foreground, and while any route stands
+  /// above the feed — the comment sheet, a profile preview, a report sheet, a
+  /// confirmation dialog. One signal covers all of them because they are all
+  /// pushed routes, so nothing new has to be threaded down for each.
+  bool _appResumed = true;
+  bool _routeIsCurrent = true;
+
+  ValueNotifier<bool> get _soundOn => widget.soundOn ?? _ownSoundOn!;
+
+  Future<Uri> _loadMedia({bool forceRefresh = false}) => widget.service
+      .resolveMediaUri(widget.reel.id, forceRefresh: forceRefresh);
+
+  void _refreshMedia({bool automatic = false}) {
+    if (!mounted || (automatic && _automaticRefreshes > 0)) return;
+    if (automatic) _automaticRefreshes++;
+    _photoReady = false;
+    _syncWatchTimer();
+    setState(() {
+      _initialMediaUri = null;
+      _mediaRevision++;
+      _media = _loadMedia(forceRefresh: true);
+    });
+  }
+
+  void _syncWatchTimer() {
+    _watchTimer?.cancel();
+    _watchTimer = null;
+    if (!widget.isActive ||
+        _playbackSuspended ||
+        _viewRecorded ||
+        !_photoReady ||
+        widget.reel.media.kind != ReelMediaKind.image) {
+      return;
+    }
+    _watchTimer = Timer(const Duration(seconds: 3), () {
+      _watchTimer = null;
+      _onViewedProgress(const Duration(seconds: 3));
+    });
+  }
+
+  void _onViewedProgress(Duration progress) {
+    if (!mounted ||
+        _viewRecorded ||
+        !widget.isActive ||
+        _playbackSuspended ||
+        !widget.reel.availability.isAvailableAt(_now.toUtc())) {
+      return;
+    }
+    _watched += progress;
+    if (_watched < const Duration(seconds: 3)) return;
+    _viewRecorded = true;
+    unawaited(widget.service.recordViewed(widget.reel));
+  }
+
+  void _onPhotoReady() {
+    if (_photoReady) return;
+    _photoReady = true;
+    _syncWatchTimer();
+  }
 
   ReelPlaybackCoordinator _createPlayback() => ReelPlaybackCoordinator(
     reel: widget.reel,
@@ -112,41 +352,97 @@ class _ReelCardState extends State<ReelCard> with WidgetsBindingObserver {
       asset: ReelAssetKind.backingAudio,
     ),
     audioPlaybackFactory: widget.audioPlaybackFactory,
+    autoplay: widget.autoplay,
+    // Autoplay is the only thing that ever starts without a gesture, so it
+    // starts silent: a voice-first app opening loud in a quiet room is a real
+    // harm, and a browser refuses an unmuted ungestured start outright.
+    muted: !_soundOn.value,
+    onVideoProgress: _onViewedProgress,
   );
 
   @override
   void initState() {
     super.initState();
+    _appResumed =
+        WidgetsBinding.instance.lifecycleState == null ||
+        WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed;
     WidgetsBinding.instance.addObserver(this);
+    if (widget.soundOn == null) _ownSoundOn = ValueNotifier<bool>(false);
+    _soundOn.addListener(_onSoundPreferenceChanged);
     _playback.addListener(_onPlaybackChanged);
     if (!widget.isActive) {
       unawaited(_playback.setActive(false).catchError((Object _) {}));
     }
+    if (_playbackSuspended) unawaited(_applyPlaybackSuspension());
+    _syncWatchTimer();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // ModalRoute.of registers this element as a dependent of the route's
+    // "is current" status, so pushing or popping anything above the feed
+    // brings us back here without a listener of our own.
+    final current = ModalRoute.of(context)?.isCurrent ?? true;
+    if (current == _routeIsCurrent) return;
+    _routeIsCurrent = current;
+    unawaited(_applyPlaybackSuspension());
   }
 
   @override
   void didUpdateWidget(covariant ReelCard oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.soundOn, widget.soundOn)) {
+      (oldWidget.soundOn ?? _ownSoundOn)?.removeListener(
+        _onSoundPreferenceChanged,
+      );
+      if (widget.soundOn == null) _ownSoundOn ??= ValueNotifier<bool>(false);
+      _soundOn.addListener(_onSoundPreferenceChanged);
+      _onSoundPreferenceChanged();
+    }
     final sourceChanged =
         oldWidget.reel.id != widget.reel.id ||
         !identical(oldWidget.service, widget.service) ||
         !identical(oldWidget.audioPlaybackFactory, widget.audioPlaybackFactory);
     if (sourceChanged) {
+      _retireDetails();
       _playback.removeListener(_onPlaybackChanged);
       _playback.dispose();
       _playback = _createPlayback()..addListener(_onPlaybackChanged);
+      _initialMediaUri = widget.service.cachedMediaUri(widget.reel.id);
       _media = _loadMedia();
+      _watched = Duration.zero;
+      _viewRecorded = false;
+      _photoReady = false;
+      _automaticRefreshes = 0;
       if (!widget.isActive) {
         unawaited(_playback.setActive(false).catchError((Object _) {}));
       }
+      // Page selection and host visibility are independent. A replaced
+      // coordinator must retain both gates even when this page is inactive;
+      // selecting it later must not start a decoder behind a hidden host.
+      if (_playbackSuspended) {
+        unawaited(_applyPlaybackSuspension());
+      }
     } else if (oldWidget.isActive != widget.isActive) {
       unawaited(_playback.setActive(widget.isActive).catchError((Object _) {}));
+    }
+    if (oldWidget.commentsOpen != widget.commentsOpen ||
+        oldWidget.isHostVisible != widget.isHostVisible) {
+      unawaited(_applyPlaybackSuspension());
+    }
+    if (sourceChanged || oldWidget.isActive != widget.isActive) {
+      _syncWatchTimer();
     }
   }
 
   @override
   void dispose() {
+    _retireDetails();
+    _watchTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
+    _soundOn.removeListener(_onSoundPreferenceChanged);
+    _ownSoundOn?.dispose();
     _playback.removeListener(_onPlaybackChanged);
     _playback.dispose();
     super.dispose();
@@ -154,9 +450,33 @@ class _ReelCardState extends State<ReelCard> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) return;
-    unawaited(_playback.pause().catchError((Object _) {}));
+    final resumed = state == AppLifecycleState.resumed;
+    if (resumed == _appResumed) return;
+    _appResumed = resumed;
+    if (!resumed) _retireDetails();
+    unawaited(_applyPlaybackSuspension());
   }
+
+  /// Everything that must silence a Reel without counting as a hand-pause.
+  bool get _playbackSuspended =>
+      !_appResumed ||
+      !_routeIsCurrent ||
+      !widget.isHostVisible ||
+      widget.commentsOpen;
+
+  Future<void> _applyPlaybackSuspension() {
+    _syncWatchTimer();
+    return _playback
+        .setAutoplaySuspended(_playbackSuspended)
+        .catchError((Object _) {});
+  }
+
+  void _onSoundPreferenceChanged() {
+    unawaited(_playback.setMuted(!_soundOn.value).catchError((Object _) {}));
+    if (mounted) setState(() {});
+  }
+
+  void _toggleSound() => _soundOn.value = !_soundOn.value;
 
   void _onPlaybackChanged() {
     if (mounted) setState(() {});
@@ -198,10 +518,20 @@ class _ReelCardState extends State<ReelCard> with WidgetsBindingObserver {
     );
   }
 
+  Future<void> _share() =>
+      widget.onShare?.call() ??
+      showReelShareSheet(
+        context,
+        reelId: widget.reel.id,
+        service: widget.service,
+      );
+
   Widget _buildMedia(BuildContext context) {
     final copy = AppLocalizations.of(context);
     return FutureBuilder<Uri>(
+      key: ValueKey(_mediaRevision),
       future: _media,
+      initialData: _initialMediaUri,
       builder: (context, snapshot) {
         if (snapshot.hasError) {
           return YoErrorState(
@@ -209,7 +539,7 @@ class _ReelCardState extends State<ReelCard> with WidgetsBindingObserver {
               'This Reel is unavailable right now.',
               'Ten Reel jest teraz niedostępny.',
             ),
-            onRetry: () => setState(() => _media = _loadMedia()),
+            onRetry: _refreshMedia,
             compact: true,
           );
         }
@@ -219,6 +549,20 @@ class _ReelCardState extends State<ReelCard> with WidgetsBindingObserver {
             message: copy.text('Loading Reel', 'Ładowanie Reela'),
           );
         }
+        final videoPlaybackFactory = widget.videoPlaybackFactory;
+        if (widget.reel.media.kind == ReelMediaKind.video &&
+            videoPlaybackFactory != null) {
+          return _HostedReelVideoPlayer(
+            uri: uri,
+            reel: widget.reel,
+            playback: _playback,
+            playbackFactory: videoPlaybackFactory,
+            videoBuilder: widget.videoBuilder,
+            onToggle: _togglePlayback,
+            fillViewport: widget.fillViewport,
+            overlaySafeInsets: _compositionInsets,
+          );
+        }
         if (widget.reel.media.kind == ReelMediaKind.video &&
             widget.videoBuilder == null) {
           return _DefaultReelVideoPlayer(
@@ -226,12 +570,24 @@ class _ReelCardState extends State<ReelCard> with WidgetsBindingObserver {
             reel: widget.reel,
             playback: _playback,
             onToggle: _togglePlayback,
+            onRetry: _refreshMedia,
+            onFailure: () => _refreshMedia(automatic: true),
+            fillViewport: widget.fillViewport,
+            overlaySafeInsets: _compositionInsets,
           );
         }
         final media = widget.reel.media.kind == ReelMediaKind.image
-            ? _ReelPhoto(uri: uri)
+            ? _ReelPhoto(
+                uri: uri,
+                onReady: _onPhotoReady,
+                onRetry: _refreshMedia,
+                onFailure: () => _refreshMedia(automatic: true),
+              )
             : widget.videoBuilder!(context, uri, widget.reel);
         return ReelCompositionFrame(
+          fillViewport: widget.fillViewport,
+          overlayInsetsInViewport: true,
+          overlaySafeInsets: _compositionInsets,
           composition: widget.reel.composition,
           media: media,
           mediaForeground: const _LegibilityScrim(),
@@ -254,55 +610,112 @@ class _ReelCardState extends State<ReelCard> with WidgetsBindingObserver {
         'Reel użytkownika {author}',
         values: <String, Object>{'author': widget.reel.authorName},
       ),
-      child: Center(
-        child: AspectRatio(
-          aspectRatio: 9 / 16,
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              final mediaHeight = constraints.maxHeight;
-              return DecoratedBox(
-                decoration: BoxDecoration(
-                  // Only visible while the media loads or fails.
-                  color: palette.surfaceSunken,
-                  borderRadius: BorderRadius.circular(radius),
-                  border: Border.all(color: palette.border),
-                  boxShadow: reelCardShadow(context),
-                ),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(radius - 1),
-                  child: Stack(
-                    fit: StackFit.expand,
-                    children: <Widget>[
-                      _buildMedia(context),
-                      // The empty area of this layer takes no hits, so the
-                      // playback surface underneath still receives them.
-                      PositionedDirectional(
-                        start: 0,
-                        end: 0,
-                        bottom: 0,
-                        child: _OverlayFooter(
-                          reel: widget.reel,
-                          mediaHeight: mediaHeight,
-                          showIdentity: widget.showIdentity,
-                          audioPlaying: _playback.isPlaying,
-                          audioLoading: _playback.isLoading,
-                          audioEnabled: _playback.canToggle,
-                          showAudioToggle: widget.reel.backingAudio != null,
-                          onAudio: _togglePlayback,
-                          onOpenAuthor: _openAuthor,
-                          onDelete: widget.onDelete,
-                          onReport: widget.onReport,
-                          onLike: widget.onLike,
-                          onComments: widget.onComments,
-                          likePending: widget.likePending,
-                          commentsOpen: widget.commentsOpen,
-                        ),
-                      ),
-                    ],
+      child: LayoutBuilder(
+        builder: (context, viewport) => Center(
+          child: AspectRatio(
+            aspectRatio:
+                widget.fillViewport &&
+                    viewport.hasBoundedHeight &&
+                    viewport.maxHeight > 0
+                ? viewport.maxWidth / viewport.maxHeight
+                : 9 / 16,
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final mediaHeight = constraints.maxHeight;
+                return DecoratedBox(
+                  decoration: BoxDecoration(
+                    // Only visible while the media loads or fails.
+                    color: palette.surfaceSunken,
+                    borderRadius: BorderRadius.circular(radius),
+                    border: widget.fillViewport
+                        ? null
+                        : Border.all(color: palette.border),
+                    boxShadow: widget.fillViewport
+                        ? null
+                        : reelCardShadow(context),
                   ),
-                ),
-              );
-            },
+                  child: ClipRRect(
+                    key: const ValueKey('reel-viewport'),
+                    borderRadius: BorderRadius.circular(
+                      (radius - 1).clamp(0, double.infinity),
+                    ),
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: <Widget>[
+                        _buildMedia(context),
+                        // Autoplay is silent, so the way back to sound has to
+                        // be visible on the frame itself and never move: top
+                        // trailing corner, clear of the footer at every height.
+                        if (widget.reel.media.kind == ReelMediaKind.video &&
+                            !widget.fillViewport)
+                          PositionedDirectional(
+                            top: 8,
+                            end: 8,
+                            child: _SoundToggle(
+                              soundOn: _soundOn.value,
+                              onToggle: _toggleSound,
+                            ),
+                          ),
+                        // The empty area of this layer takes no hits — its scrim
+                        // is behind an IgnorePointer — so the playback surface
+                        // underneath still receives them.
+                        PositionedDirectional(
+                          start: 0,
+                          end: 0,
+                          bottom: 0,
+                          child: ReelOverlayMeasure(
+                            key: const ValueKey('reel-footer'),
+                            onSize: (size) {
+                              if (mounted &&
+                                  (_footerHeight - size.height).abs() > .5) {
+                                setState(() => _footerHeight = size.height);
+                              }
+                            },
+                            child: _OverlayFooter(
+                              reel: widget.reel,
+                              // Chrome consumes readable space even though it
+                              // overlays the video. Fold controls before they
+                              // cover authored links on a short/large-text view.
+                              mediaHeight:
+                                  mediaHeight -
+                                  (widget.fillViewport
+                                      ? widget.mediaTopInset
+                                      : 0),
+                              showIdentity: widget.showIdentity,
+                              audioPlaying: _playback.isPlaying,
+                              audioLoading: _playback.isLoading,
+                              audioEnabled: _playback.canToggle,
+                              showAudioToggle: widget.reel.backingAudio != null,
+                              onAudio: _togglePlayback,
+                              onOpenAuthor: _openAuthor,
+                              onCaption: () => _openDetails(),
+                              onMore: () => _openDetails(includeActions: true),
+                              onDelete: widget.onDelete,
+                              onReport: widget.onReport,
+                              onLike: widget.onLike,
+                              onComments: widget.onComments,
+                              onShare: _share,
+                              likePending: widget.likePending,
+                              commentsOpen: widget.commentsOpen,
+                              immersive: widget.fillViewport,
+                              soundToggle:
+                                  widget.fillViewport &&
+                                      widget.reel.media.kind ==
+                                          ReelMediaKind.video
+                                  ? _SoundToggle(
+                                      soundOn: _soundOn.value,
+                                      onToggle: _toggleSound,
+                                    )
+                                  : null,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
           ),
         ),
       ),
@@ -311,9 +724,17 @@ class _ReelCardState extends State<ReelCard> with WidgetsBindingObserver {
 }
 
 class _ReelPhoto extends StatelessWidget {
-  const _ReelPhoto({required this.uri});
+  const _ReelPhoto({
+    required this.uri,
+    required this.onReady,
+    required this.onRetry,
+    required this.onFailure,
+  });
 
   final Uri uri;
+  final VoidCallback onReady;
+  final VoidCallback onRetry;
+  final VoidCallback onFailure;
 
   @override
   Widget build(BuildContext context) {
@@ -321,13 +742,134 @@ class _ReelPhoto extends StatelessWidget {
       uri.toString(),
       fit: BoxFit.cover,
       filterQuality: FilterQuality.high,
-      errorBuilder: (_, _, _) => ColoredBox(
-        color: context.appPalette.surfaceSunken,
-        child: Icon(
-          Icons.broken_image_outlined,
-          size: 52,
-          color: context.appPalette.textTertiary,
-        ),
+      frameBuilder: (context, child, frame, synchronouslyLoaded) {
+        if (frame != null || synchronouslyLoaded) onReady();
+        return child;
+      },
+      errorBuilder: (_, _, _) {
+        WidgetsBinding.instance.addPostFrameCallback((_) => onFailure());
+        return YoErrorState(
+          compact: true,
+          message: AppLocalizations.of(context).text(
+            'This Reel is unavailable right now.',
+            'Ten Reel jest teraz niedostępny.',
+          ),
+          onRetry: onRetry,
+        );
+      },
+    );
+  }
+}
+
+/// The sound switch for a video Reel.
+///
+/// It exists because autoplay is silent: without a control on the frame the
+/// only way back to sound would be a second tap that also stops the video.
+/// It shows the state the viewer is in, not the action, which is why the
+/// glyph is a crossed-out speaker while muted.
+class _SoundToggle extends StatelessWidget {
+  const _SoundToggle({required this.soundOn, required this.onToggle});
+
+  final bool soundOn;
+  final VoidCallback onToggle;
+
+  @override
+  Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
+    return ReelOverlayPlateButton(
+      key: const ValueKey<String>('reel-sound-toggle'),
+      icon: soundOn ? Icons.volume_up_rounded : Icons.volume_off_rounded,
+      semanticLabel: soundOn
+          ? copy.text('Turn sound off', 'Wyłącz dźwięk')
+          : copy.text('Turn sound on', 'Włącz dźwięk'),
+      onTap: onToggle,
+    );
+  }
+}
+
+/// A Reel driven by a video engine the host supplied instead of the built-in
+/// decoder. It owns exactly the same contract as [_DefaultReelVideoPlayer]:
+/// attach on ready — which is what arms autoplay — and detach on disposal.
+class _HostedReelVideoPlayer extends StatefulWidget {
+  const _HostedReelVideoPlayer({
+    required this.uri,
+    required this.reel,
+    required this.playback,
+    required this.playbackFactory,
+    required this.onToggle,
+    this.videoBuilder,
+    this.fillViewport = false,
+    required this.overlaySafeInsets,
+  });
+
+  final Uri uri;
+  final Reel reel;
+  final ReelPlaybackCoordinator playback;
+  final ReelVideoPlaybackFactory playbackFactory;
+  final ReelVideoBuilder? videoBuilder;
+  final bool fillViewport;
+  final EdgeInsets overlaySafeInsets;
+  final Future<void> Function() onToggle;
+
+  @override
+  State<_HostedReelVideoPlayer> createState() => _HostedReelVideoPlayerState();
+}
+
+class _HostedReelVideoPlayerState extends State<_HostedReelVideoPlayer> {
+  ReelVideoPlayback? _driver;
+
+  @override
+  void initState() {
+    super.initState();
+    _attach();
+  }
+
+  @override
+  void didUpdateWidget(covariant _HostedReelVideoPlayer oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.uri != widget.uri ||
+        oldWidget.reel.id != widget.reel.id ||
+        !identical(oldWidget.playback, widget.playback)) {
+      _detach(oldWidget.playback);
+      _attach();
+    }
+  }
+
+  void _attach() {
+    final driver = widget.playbackFactory(widget.uri, widget.reel);
+    _driver = driver;
+    unawaited(widget.playback.attachVideo(driver).catchError((Object _) {}));
+  }
+
+  void _detach(ReelPlaybackCoordinator playback) {
+    final driver = _driver;
+    _driver = null;
+    if (driver != null) playback.detachVideo(driver);
+  }
+
+  @override
+  void dispose() {
+    _detach(widget.playback);
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final builder = widget.videoBuilder;
+    return ReelPlaybackSurface(
+      isPlaying: widget.playback.isPlaying,
+      onToggle: widget.onToggle,
+      child: ReelCompositionFrame(
+        fillViewport: widget.fillViewport,
+        overlayInsetsInViewport: true,
+        overlaySafeInsets: widget.overlaySafeInsets,
+        composition: widget.reel.composition,
+        media: builder == null
+            ? const ColoredBox(color: Colors.black)
+            : builder(context, widget.uri, widget.reel),
+        mediaForeground: const _LegibilityScrim(),
+        onOpenLink: (overlay) =>
+            launchUrl(overlay.uri, mode: LaunchMode.externalApplication),
       ),
     );
   }
@@ -339,12 +881,20 @@ class _DefaultReelVideoPlayer extends StatefulWidget {
     required this.reel,
     required this.playback,
     required this.onToggle,
+    required this.onRetry,
+    required this.onFailure,
+    this.fillViewport = false,
+    required this.overlaySafeInsets,
   });
 
   final Uri uri;
   final Reel reel;
   final ReelPlaybackCoordinator playback;
   final Future<void> Function() onToggle;
+  final VoidCallback onRetry;
+  final VoidCallback onFailure;
+  final bool fillViewport;
+  final EdgeInsets overlaySafeInsets;
 
   @override
   State<_DefaultReelVideoPlayer> createState() =>
@@ -376,7 +926,14 @@ class _DefaultReelVideoPlayerState extends State<_DefaultReelVideoPlayer> {
   }
 
   Future<void> _initialize() async {
-    final controller = VideoPlayerController.networkUrl(widget.uri);
+    final controller = VideoPlayerController.networkUrl(
+      widget.uri,
+      // A Reel that starts itself must never take the audio route away from
+      // something the person is actually in. AVAudioSession is process-global
+      // on iOS and the codebase keeps it under LiveKit/recording control, so
+      // this player mixes rather than interrupting a live room or a recording.
+      videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
+    );
     _controller = controller;
     try {
       await controller.initialize();
@@ -396,7 +953,10 @@ class _DefaultReelVideoPlayerState extends State<_DefaultReelVideoPlayer> {
       if (!mounted || !identical(_controller, controller)) return;
       if (mounted) setState(() => _error = null);
     } catch (error) {
-      if (mounted) setState(() => _error = error);
+      if (mounted && identical(_controller, controller)) {
+        setState(() => _error = error);
+        widget.onFailure();
+      }
     }
   }
 
@@ -411,6 +971,7 @@ class _DefaultReelVideoPlayerState extends State<_DefaultReelVideoPlayer> {
             controller.value.errorDescription ?? 'Video playback failed.',
           ),
         );
+        widget.onFailure();
       }
       return;
     }
@@ -457,11 +1018,7 @@ class _DefaultReelVideoPlayerState extends State<_DefaultReelVideoPlayer> {
             runSpacing: 8,
             children: <Widget>[
               OutlinedButton.icon(
-                onPressed: () {
-                  _disposeController();
-                  setState(() => _error = null);
-                  _initialize();
-                },
+                onPressed: widget.onRetry,
                 icon: const Icon(Icons.refresh_rounded),
                 label: Text(copy.text('Retry', 'Spróbuj ponownie')),
               ),
@@ -488,6 +1045,9 @@ class _DefaultReelVideoPlayerState extends State<_DefaultReelVideoPlayer> {
         fit: StackFit.expand,
         children: <Widget>[
           ReelCompositionFrame(
+            fillViewport: widget.fillViewport,
+            overlayInsetsInViewport: true,
+            overlaySafeInsets: widget.overlaySafeInsets,
             composition: widget.reel.composition,
             media: FittedBox(
               fit: BoxFit.cover,
@@ -623,11 +1183,16 @@ class _OverlayFooter extends StatelessWidget {
     required this.likePending,
     required this.commentsOpen,
     required this.onOpenAuthor,
+    required this.onCaption,
+    required this.onMore,
+    required this.immersive,
+    this.soundToggle,
     this.onAudio,
     this.onDelete,
     this.onReport,
     this.onLike,
     this.onComments,
+    required this.onShare,
   });
 
   final Reel reel;
@@ -640,18 +1205,25 @@ class _OverlayFooter extends StatelessWidget {
   final bool likePending;
   final bool commentsOpen;
   final VoidCallback onOpenAuthor;
+  final VoidCallback onCaption;
+  final VoidCallback onMore;
+  final bool immersive;
+  final Widget? soundToggle;
   final VoidCallback? onAudio;
   final Future<void> Function()? onDelete;
   final Future<void> Function()? onReport;
   final VoidCallback? onLike;
   final VoidCallback? onComments;
+  final VoidCallback onShare;
 
   @override
   Widget build(BuildContext context) {
     final copy = AppLocalizations.of(context);
     // Short media (a phone with the header and the dock on screen) folds the
     // rail into a row and trims the caption instead of covering the frame.
-    final compact = mediaHeight < 400;
+    final extraScale = (MediaQuery.textScalerOf(context).scale(14) / 14 - 1)
+        .clamp(0.0, 2.0);
+    final compact = mediaHeight < 400 + extraScale * 180;
     // Smaller still — a 320x568 window with the shell's dock leaves a frame
     // roughly 110 x 196, and three 48 px controls already fill it. The
     // identity column is dropped here rather than laid out and then clipped
@@ -673,10 +1245,31 @@ class _OverlayFooter extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: <Widget>[
         if (showIdentity && !micro) ...<Widget>[
-          ReelAuthorRow(reel: reel, showAvatar: !compact, onTap: onOpenAuthor),
-          if (reel.composition.caption.isNotEmpty) ...<Widget>[
+          if (compact)
+            Row(
+              children: [
+                Expanded(
+                  child: ReelAuthorRow(
+                    reel: reel,
+                    showAvatar: false,
+                    onTap: onOpenAuthor,
+                  ),
+                ),
+                if (reel.composition.caption.isNotEmpty)
+                  _ReelCaption(
+                    reel: reel,
+                    onTap: onCaption,
+                    child: const Icon(Icons.notes_rounded, color: Colors.white),
+                  ),
+              ],
+            )
+          else
+            ReelAuthorRow(reel: reel, onTap: onOpenAuthor),
+          if (!compact && reel.composition.caption.isNotEmpty) ...<Widget>[
             const SizedBox(height: 6),
-            IgnorePointer(
+            _ReelCaption(
+              reel: reel,
+              onTap: onCaption,
               child: Text(
                 reel.composition.caption,
                 maxLines: captionLines,
@@ -705,20 +1298,6 @@ class _OverlayFooter extends StatelessWidget {
       ],
     );
 
-    final moderation = onDelete != null
-        ? ReelOverlayPlateButton(
-            icon: Icons.delete_outline_rounded,
-            semanticLabel: copy.text('Delete Reel', 'Usuń Reel'),
-            glyphColor: AppColors.error,
-            onTap: onDelete,
-          )
-        : onReport != null
-        ? ReelOverlayPlateButton(
-            icon: Icons.flag_outlined,
-            semanticLabel: copy.text('Report Reel', 'Zgłoś Reel'),
-            onTap: onReport,
-          )
-        : null;
     final rail = ReelEngagementBar(
       likeCount: reel.likeCount,
       commentCount: reel.commentCount,
@@ -726,52 +1305,125 @@ class _OverlayFooter extends StatelessWidget {
       likePending: likePending,
       commentsOpen: commentsOpen,
       railAxis: compact ? Axis.horizontal : Axis.vertical,
-      railTrailing: moderation,
+      railAdditional: [
+        ReelOverlayPlateButton(
+          key: const ValueKey('reel-share-action'),
+          icon: Icons.send_outlined,
+          semanticLabel: copy.text('Share Reel', 'Udostępnij Reel'),
+          onTap: onShare,
+        ),
+      ],
+      railTrailing: Wrap(
+        direction: compact ? Axis.horizontal : Axis.vertical,
+        spacing: 14,
+        runSpacing: 8,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: [
+          ?soundToggle,
+          _ReelOverflowButton(onTap: onMore),
+        ],
+      ),
       onLike: onLike,
       onComments: onComments,
     );
 
-    return DecoratedBox(
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: <Color>[Color(0x00000000), Color(0xD6000000)],
-          stops: <double>[0, .40],
-        ),
-      ),
-      child: Padding(
-        padding: EdgeInsetsDirectional.fromSTEB(
-          16,
-          micro
-              ? 8
-              : compact
-              ? 56
-              : 96,
-          12,
-          16,
-        ),
-        child: compact
-            ? Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                mainAxisSize: MainAxisSize.min,
-                children: <Widget>[
-                  identity,
-                  const SizedBox(height: 8),
-                  Align(alignment: AlignmentDirectional.centerEnd, child: rail),
-                ],
-              )
-            : Row(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: <Widget>[
-                  Expanded(child: identity),
-                  const SizedBox(width: 16),
-                  rail,
-                ],
+    // The scrim is a sibling behind the controls, not their parent: a
+    // BoxDecoration hit-tests as opaque over its whole box, so a gradient
+    // wrapped around this footer swallows every tap in the lower part of the
+    // frame — including the tap that pauses the video.
+    return Stack(
+      children: <Widget>[
+        const Positioned.fill(
+          child: IgnorePointer(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: <Color>[Color(0x00000000), Color(0xD6000000)],
+                  stops: <double>[0, .40],
+                ),
               ),
-      ),
+            ),
+          ),
+        ),
+        Padding(
+          padding: EdgeInsetsDirectional.fromSTEB(
+            16,
+            compact
+                ? 8
+                : immersive
+                ? 24
+                // The desktop context panel already carries the identity.
+                // Do not reserve its decorative fade above an empty column:
+                // that space belongs to the authored, large-text links.
+                : !showIdentity
+                ? 8
+                : 96,
+            12,
+            16,
+          ),
+          child: compact
+              ? Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    identity,
+                    const SizedBox(height: 8),
+                    Align(
+                      alignment: AlignmentDirectional.centerEnd,
+                      child: rail,
+                    ),
+                  ],
+                )
+              : Row(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: <Widget>[
+                    Expanded(child: identity),
+                    const SizedBox(width: 16),
+                    rail,
+                  ],
+                ),
+        ),
+      ],
     );
   }
+}
+
+/// Long captions remain reachable without expanding over the action rail.
+/// A modal route also suspends playback through the card's route visibility.
+class _ReelCaption extends StatelessWidget {
+  const _ReelCaption({
+    required this.reel,
+    required this.onTap,
+    required this.child,
+  });
+  final Reel reel;
+  final VoidCallback onTap;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => AccessibleTapRegion(
+    semanticLabel: reel.composition.caption,
+    minimumSize: const Size(44, 44),
+    borderRadius: 8,
+    focusContrastColor: Colors.black,
+    onTap: onTap,
+    child: child,
+  );
+}
+
+class _ReelOverflowButton extends StatelessWidget {
+  const _ReelOverflowButton({required this.onTap});
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => ReelOverlayPlateButton(
+    key: const ValueKey('reel-more-action'),
+    icon: Icons.more_horiz_rounded,
+    semanticLabel: MaterialLocalizations.of(context).moreButtonTooltip,
+    onTap: onTap,
+  );
 }
 
 /// Where a [ReelAuthorRow] is drawn, which decides its foreground.

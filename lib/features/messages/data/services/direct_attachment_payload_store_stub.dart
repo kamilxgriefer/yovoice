@@ -2,6 +2,8 @@ import 'dart:typed_data';
 
 import 'package:firebase_storage/firebase_storage.dart';
 
+import 'package:yovoice/features/messages/data/services/direct_attachment_payload_source.dart';
+
 import 'direct_attachment_payload_store.dart';
 
 DirectAttachmentPayloadStore createDirectAttachmentPayloadStore() =>
@@ -15,12 +17,19 @@ class _MemoryDirectAttachmentPayloadStore
       '$accountNamespace:$entryId';
 
   @override
-  Future<void> write(
+  Future<void> adopt(
     String accountNamespace,
     String entryId,
-    Uint8List bytes,
+    DirectAttachmentPayloadSource source,
   ) async {
-    _payloads[_key(accountNamespace, entryId)] = Uint8List.fromList(bytes);
+    final builder = BytesBuilder(copy: false);
+    await for (final chunk in source.openRead()) {
+      builder.add(chunk);
+    }
+    if (builder.length != source.length) {
+      throw StateError('The attachment changed while it was being saved.');
+    }
+    _payloads[_key(accountNamespace, entryId)] = builder.takeBytes();
   }
 
   @override
@@ -41,8 +50,9 @@ class _MemoryDirectAttachmentPayloadStore
     String accountNamespace,
     String entryId,
     Reference reference,
-    SettableMetadata metadata,
-  ) async {
+    SettableMetadata metadata, {
+    void Function(double progress)? onProgress,
+  }) async {
     final bytes = _payloads[_key(accountNamespace, entryId)];
     if (bytes == null) {
       throw StateError('Pending attachment bytes are missing.');

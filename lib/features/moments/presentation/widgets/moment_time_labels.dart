@@ -21,16 +21,17 @@ String momentRelativeAge(
   final diff = (now ?? DateTime.now()).difference(createdAt);
   if (diff.inMinutes < 1) return _text(copy, 'now', 'teraz');
   if (diff.inMinutes < 60) {
-    return _text(copy, '${diff.inMinutes}m ago', '${diff.inMinutes} min temu');
+    return _template(copy, '{count}m ago', '{count} min temu', diff.inMinutes);
   }
   if (diff.inHours < 24) {
-    return _text(copy, '${diff.inHours}h ago', '${diff.inHours} godz. temu');
+    return _template(copy, '{count}h ago', '{count} godz. temu', diff.inHours);
   }
   final days = diff.inDays;
-  return _text(
+  return _template(
     copy,
-    '${days}d ago',
-    days == 1 ? '1 dzień temu' : '$days dni temu',
+    '{count}d ago',
+    days == 1 ? '{count} dzień temu' : '{count} dni temu',
+    days,
   );
 }
 
@@ -54,24 +55,27 @@ String? momentExpiryLabel(
   if (remaining.isNegative) return null;
   if (remaining.inHours >= 48) {
     final days = remaining.inDays;
-    return _text(
+    return _template(
       copy,
-      'Expires in ${days}d',
-      days == 1 ? 'Wygasa za 1 dzień' : 'Wygasa za $days dni',
+      'Expires in {count}d',
+      days == 1 ? 'Wygasa za {count} dzień' : 'Wygasa za {count} dni',
+      days,
     );
   }
   if (remaining.inHours >= 1) {
-    return _text(
+    return _template(
       copy,
-      'Expires in ${remaining.inHours}h',
-      'Wygasa za ${remaining.inHours} godz.',
+      'Expires in {count}h',
+      'Wygasa za {count} godz.',
+      remaining.inHours,
     );
   }
   if (remaining.inMinutes >= 1) {
-    return _text(
+    return _template(
       copy,
-      'Expires in ${remaining.inMinutes}m',
-      'Wygasa za ${remaining.inMinutes} min',
+      'Expires in {count}m',
+      'Wygasa za {count} min',
+      remaining.inMinutes,
     );
   }
   return _text(copy, 'Expires soon', 'Wkrótce wygaśnie');
@@ -95,3 +99,12 @@ String? momentAvailabilityLabel(
 
 String _text(AppLocalizations? copy, String english, String polish) =>
     copy?.text(english, polish) ?? english;
+
+String _template(
+  AppLocalizations? copy,
+  String english,
+  String polish,
+  int count,
+) =>
+    copy?.template(english, polish, values: {'count': count}) ??
+    english.replaceAll('{count}', count.toString());

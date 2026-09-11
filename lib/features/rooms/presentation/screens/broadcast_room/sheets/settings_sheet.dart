@@ -194,14 +194,19 @@ class _BroadcastSettingsSheetState extends State<BroadcastSettingsSheet> {
                     controller: _name,
                     label: copy.text('Show name', 'Nazwa audycji'),
                     maxLength: 80,
+                    textInputAction: TextInputAction.next,
                   ),
                   const SizedBox(height: 12),
                   SettingsField(
                     controller: _topic,
                     label: copy.text('Episode topic', 'Temat odcinka'),
                     maxLength: RoomMetadataLimits.maxPodcastTopicLength,
+                    textInputAction: TextInputAction.next,
                   ),
                   const SizedBox(height: 12),
+                  // Deliberately still a newline field: an episode
+                  // description is prose. The Update footer below is
+                  // pinned above the keyboard, and Done closes it.
                   SettingsField(
                     controller: _description,
                     label: copy.text('Episode description', 'Opis odcinka'),
@@ -211,11 +216,15 @@ class _BroadcastSettingsSheetState extends State<BroadcastSettingsSheet> {
                   const SizedBox(height: 14),
                   DropdownButtonFormField<ShowFormat>(
                     initialValue: _showFormat,
+                    isExpanded: true,
+                    itemHeight: null,
                     dropdownColor: BroadcastRoomColors.surfaceSoft,
                     decoration: settingsDecoration(
                       copy.text('Show format', 'Format audycji'),
                     ),
-                    style: const TextStyle(color: Colors.white),
+                    style: Theme.of(
+                      context,
+                    ).textTheme.titleMedium?.copyWith(color: Colors.white),
                     items: [
                       for (final format in ShowFormat.values)
                         DropdownMenuItem(
@@ -228,6 +237,8 @@ class _BroadcastSettingsSheetState extends State<BroadcastSettingsSheet> {
                     },
                   ),
                   const SizedBox(height: 12),
+                  // Deliberately still a newline field: guidelines are
+                  // written as a short list.
                   SettingsField(
                     controller: _guidelines,
                     label: copy.text('Guest guidelines', 'Wskazówki dla gości'),
@@ -266,11 +277,15 @@ class _BroadcastSettingsSheetState extends State<BroadcastSettingsSheet> {
                   const SizedBox(height: 10),
                   DropdownButtonFormField<String>(
                     initialValue: _visibility,
+                    isExpanded: true,
+                    itemHeight: null,
                     dropdownColor: BroadcastRoomColors.surfaceSoft,
                     decoration: settingsDecoration(
                       copy.text('Visibility', 'Widoczność'),
                     ),
-                    style: const TextStyle(color: Colors.white),
+                    style: Theme.of(
+                      context,
+                    ).textTheme.titleMedium?.copyWith(color: Colors.white),
                     items: [
                       DropdownMenuItem(
                         value: 'public',
@@ -323,6 +338,7 @@ class _BroadcastSettingsSheetState extends State<BroadcastSettingsSheet> {
                               child: SettingsField(
                                 controller: _category,
                                 label: copy.text('Category', 'Kategoria'),
+                                textInputAction: TextInputAction.next,
                               ),
                             ),
                             const SizedBox(width: 10),
@@ -330,6 +346,7 @@ class _BroadcastSettingsSheetState extends State<BroadcastSettingsSheet> {
                               child: SettingsField(
                                 controller: _language,
                                 label: copy.text('Language', 'Język'),
+                                textInputAction: TextInputAction.next,
                               ),
                             ),
                           ],
@@ -403,38 +420,61 @@ class _BroadcastSettingsSheetState extends State<BroadcastSettingsSheet> {
                       ],
                     ),
                   ),
-                  const SizedBox(height: 18),
-                  FilledButton.icon(
-                    onPressed: _saving ? null : _save,
-                    style: FilledButton.styleFrom(
-                      backgroundColor: BroadcastRoomColors.accent,
-                      minimumSize: const Size.fromHeight(54),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(17),
-                      ),
-                    ),
-                    icon: _saving
-                        ? const SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: Colors.white,
-                            ),
-                          )
-                        : const Icon(Icons.save_rounded),
-                    label: Text(
-                      _saving
-                          ? copy.text('Saving…', 'Zapisywanie…')
-                          : copy.text('Update podcast', 'Zaktualizuj podcast'),
-                    ),
-                  ),
                 ],
               ),
             ),
           ),
           const YoKeyboardDoneBar(),
+          // Update used to sit at the end of the scroll, which put it behind
+          // the keyboard the moment any field was edited. Pinned here it is
+          // always visible, directly under the Done bar, and inside the
+          // sheet's own viewInsets padding so the keyboard never covers it.
+          _updateFooter(copy),
         ],
+      ),
+    );
+  }
+
+  Widget _updateFooter(AppLocalizations copy) {
+    return DecoratedBox(
+      decoration: const BoxDecoration(
+        color: BroadcastRoomColors.surface,
+        border: Border(top: BorderSide(color: BroadcastRoomColors.border)),
+      ),
+      child: SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(18, 12, 18, 12),
+          child: FilledButton.icon(
+            key: const ValueKey('podcast-settings-update'),
+            onPressed: _saving ? null : _save,
+            style: FilledButton.styleFrom(
+              backgroundColor: BroadcastRoomColors.accent,
+              minimumSize: const Size.fromHeight(54),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(17),
+              ),
+            ),
+            icon: _saving
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Colors.white,
+                    ),
+                  )
+                : const Icon(Icons.save_rounded),
+            label: Text(
+              _saving
+                  ? copy.text('Saving…', 'Zapisywanie…')
+                  : copy.text('Update podcast', 'Zaktualizuj podcast'),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -459,6 +499,7 @@ class SettingsField extends StatelessWidget {
     this.maxLines = 1,
     this.maxLength,
     this.keyboardType,
+    this.textInputAction,
   });
 
   final TextEditingController controller;
@@ -467,6 +508,12 @@ class SettingsField extends StatelessWidget {
   final int? maxLength;
   final TextInputType? keyboardType;
 
+  /// Declared on single-line text fields so the platform draws the right
+  /// key. Number fields get no return key on iOS at all, and multiline
+  /// fields keep Return as a line break — both rely on the Done bar and the
+  /// pinned Update footer below it.
+  final TextInputAction? textInputAction;
+
   @override
   Widget build(BuildContext context) {
     return TextField(
@@ -474,6 +521,7 @@ class SettingsField extends StatelessWidget {
       maxLines: maxLines,
       maxLength: maxLength,
       keyboardType: keyboardType,
+      textInputAction: textInputAction,
       style: const TextStyle(color: Colors.white),
       cursorColor: BroadcastRoomColors.accent,
       decoration: settingsDecoration(label),

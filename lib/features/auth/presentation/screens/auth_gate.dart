@@ -12,6 +12,7 @@ import 'package:yovoice/features/auth/providers/auth_provider.dart';
 import 'package:yovoice/features/home/presentation/screens/main_shell.dart';
 import 'package:yovoice/features/notifications/data/services/push_notification_service.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
+import 'package:yovoice/features/reels/presentation/navigation/reel_link_coordinator.dart';
 import 'package:yovoice/shared/widgets/theme/yo_immersive_dark_surface.dart';
 
 class AuthGate extends ConsumerWidget {
@@ -19,6 +20,7 @@ class AuthGate extends ConsumerWidget {
     super.key,
     this.initiallySignedOut = false,
     this.initialAuthError,
+    this.reelLinkIntent,
   });
 
   /// A route-stack reset after logout already knows the session is gone. Show
@@ -29,6 +31,7 @@ class AuthGate extends ConsumerWidget {
   /// Preserves an auth-stream failure while the route stack is replaced, so a
   /// private screen cannot remain above the boundary during an auth error.
   final Object? initialAuthError;
+  final ReelLinkIntentController? reelLinkIntent;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -101,7 +104,10 @@ class AuthGate extends ConsumerWidget {
 
             return KeyedSubtree(
               key: ValueKey('auth-user-${user.uid}'),
-              child: const _AuthenticatedEntry(),
+              child: _AuthenticatedEntry(
+                userId: user.uid,
+                reelLinkIntent: reelLinkIntent,
+              ),
             );
           },
         );
@@ -131,7 +137,10 @@ class AuthGate extends ConsumerWidget {
 }
 
 class _AuthenticatedEntry extends StatefulWidget {
-  const _AuthenticatedEntry();
+  const _AuthenticatedEntry({required this.userId, this.reelLinkIntent});
+
+  final String userId;
+  final ReelLinkIntentController? reelLinkIntent;
 
   @override
   State<_AuthenticatedEntry> createState() => _AuthenticatedEntryState();
@@ -184,7 +193,21 @@ class _AuthenticatedEntryState extends State<_AuthenticatedEntry> {
           );
         }
 
-        return MainShell(onboardingReadiness: _pushOnboardingReadiness);
+        final intent = widget.reelLinkIntent;
+        final shell = MainShell(
+          onboardingReadiness: intent == null
+              ? _pushOnboardingReadiness
+              : Future.wait<void>([
+                  _pushOnboardingReadiness,
+                  intent.initialVisitCompleted,
+                ]),
+        );
+        if (intent == null) return shell;
+        return ReelLinkEntryCoordinator(
+          controller: intent,
+          userId: widget.userId,
+          child: shell,
+        );
       },
     );
   }

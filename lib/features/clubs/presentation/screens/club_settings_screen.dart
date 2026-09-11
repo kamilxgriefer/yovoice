@@ -139,19 +139,51 @@ class _ClubSettingsScreenState extends State<ClubSettingsScreen> {
         backgroundColor: palette.background,
         foregroundColor: palette.textPrimary,
         title: Text(copy.text('Club settings', 'Ustawienia klubu')),
+        // The form's own Save button sits at the end of a long scroll, so
+        // the keyboard buried it while any field was being edited. Room
+        // settings and Edit profile already keep Save in the app bar, where
+        // it stays visible above the keyboard; this matches them. The
+        // in-form button stays exactly where it was.
+        actions: [
+          TextButton(
+            key: const ValueKey('club-settings-appbar-save'),
+            onPressed: _saving ? null : _save,
+            child: Text(
+              _saving
+                  ? copy.text('SAVING...', 'ZAPISYWANIE...')
+                  : copy.text('SAVE', 'ZAPISZ'),
+              style: const TextStyle(fontWeight: FontWeight.w900),
+            ),
+          ),
+        ],
       ),
-      bottomNavigationBar: const YoKeyboardDoneBar(),
+      bottomNavigationBar: const YoKeyboardSafeBottomBar(
+        // Scaffold pins this slot to the bottom of the window, behind
+        // the keyboard; the wrapper lifts it onto the keyboard.
+        child: YoKeyboardDoneBar(),
+      ),
       body: ResponsiveContentFrame(
         width: ResponsiveContentWidth.form,
         child: ListView(
           keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
           padding: const EdgeInsets.fromLTRB(18, 16, 18, 120),
           children: [
-            _field(_name, copy.text('Club name', 'Nazwa klubu')),
+            _field(
+              _name,
+              copy.text('Club name', 'Nazwa klubu'),
+              textInputAction: TextInputAction.next,
+            ),
             const SizedBox(height: 14),
+            // Deliberately still a newline field: a Club description is
+            // prose, and authors do use line breaks. The keyboard bar is
+            // what finishes it.
             _field(_description, copy.text('Description', 'Opis'), maxLines: 4),
             const SizedBox(height: 14),
-            _field(_language, copy.text('Default language', 'Domyślny język')),
+            _field(
+              _language,
+              copy.text('Default language', 'Domyślny język'),
+              textInputAction: TextInputAction.done,
+            ),
             const SizedBox(height: 20),
             Text(
               copy.text('Privacy', 'Prywatność'),
@@ -319,12 +351,17 @@ class _ClubSettingsScreenState extends State<ClubSettingsScreen> {
     TextEditingController controller,
     String label, {
     int maxLines = 1,
+    TextInputAction? textInputAction,
   }) {
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
     return TextField(
       controller: controller,
       maxLines: maxLines,
+      // `next` moves to the following field and `done` closes the keyboard
+      // on its own; both are declared rather than inherited so the platform
+      // draws the right key.
+      textInputAction: textInputAction,
       style: TextStyle(color: palette.textPrimary),
       decoration: InputDecoration(
         labelText: label,

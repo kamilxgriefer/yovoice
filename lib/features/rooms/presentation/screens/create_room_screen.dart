@@ -383,22 +383,27 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
           ),
         ),
       ),
-      bottomNavigationBar: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const YoKeyboardDoneBar(),
-          _BottomBar(
-            identity: identity,
-            step: _step,
-            busy: _busy,
-            onBack: _step == _Step.identity ? null : _back,
-            onNext: _step == _Step.experience ? null : _next,
-            onCreate: _step == _Step.experience ? _create : null,
-            createLabel: _isBroadcast
-                ? copy.text('Create Podcast Room', 'Utwórz pokój podcastowy')
-                : copy.text('Create Room', 'Utwórz pokój'),
-          ),
-        ],
+      // Scaffold pins this slot to the bottom of the window, behind the
+      // keyboard; the wrapper lifts the whole footer onto the keyboard so
+      // Continue and Create are never stranded underneath it.
+      bottomNavigationBar: YoKeyboardSafeBottomBar(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const YoKeyboardDoneBar(),
+            _BottomBar(
+              identity: identity,
+              step: _step,
+              busy: _busy,
+              onBack: _step == _Step.identity ? null : _back,
+              onNext: _step == _Step.experience ? null : _next,
+              onCreate: _step == _Step.experience ? _create : null,
+              createLabel: _isBroadcast
+                  ? copy.text('Create Podcast Room', 'Utwórz pokój podcastowy')
+                  : copy.text('Create Room', 'Utwórz pokój'),
+            ),
+          ],
+        ),
       ),
     );
     return YoImmersiveDarkSurface(child: content);
@@ -442,6 +447,7 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
                 ? copy.text('e.g. Flutter Weekly', 'np. Flutter Weekly')
                 : copy.text('e.g. Late Night Talk', 'np. Nocne rozmowy'),
             maxLength: 50,
+            textInputAction: TextInputAction.next,
             validator: (value) => (value?.trim().length ?? 0) < 3
                 ? copy.text(
                     'Enter at least 3 characters',
@@ -460,12 +466,16 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
                 'O czym dzisiaj rozmawiacie?',
               ),
               maxLength: RoomMetadataLimits.maxPodcastTopicLength,
+              textInputAction: TextInputAction.next,
               validator: (value) => (value?.trim().length ?? 0) < 3
                   ? copy.text('Add a short topic', 'Dodaj krótki temat')
                   : null,
             ),
           ],
           const SizedBox(height: 14),
+          // Deliberately still a newline field: a room description is prose.
+          // The bottom bar with Back/Next is pinned above the keyboard, so
+          // the step can always be finished without hiding the keyboard.
           _Field(
             controller: _description,
             identity: identity,
@@ -526,6 +536,9 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
                 label: copy.text('Add a tag', 'Dodaj tag'),
                 hint: copy.text('e.g. flutter', 'np. flutter'),
                 maxLength: RoomMetadataLimits.maxTopicTagLength,
+                // Explicit: the inherited action was already `done`, and
+                // this is what makes `onSubmitted` fire at all.
+                textInputAction: TextInputAction.done,
                 onSubmitted: (_) => _addTag(),
               ),
             ),
@@ -742,6 +755,8 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
         const SizedBox(height: 20),
         _SectionLabel(copy.text('Room guidelines', 'Zasady pokoju'), identity),
         const SizedBox(height: 10),
+        // Deliberately still a newline field: guidelines are written as a
+        // short list. The pinned bottom bar carries Create.
         _Field(
           controller: _guidelines,
           identity: identity,
@@ -1441,6 +1456,7 @@ class _Field extends StatelessWidget {
     this.maxLines = 1,
     this.validator,
     this.onSubmitted,
+    this.textInputAction,
   });
 
   final TextEditingController controller;
@@ -1452,6 +1468,11 @@ class _Field extends StatelessWidget {
   final String? Function(String?)? validator;
   final ValueChanged<String>? onSubmitted;
 
+  /// Declared on single-line fields so the platform draws the right key and
+  /// [onSubmitted] can actually fire. Left null on multiline fields, where
+  /// Return stays a line break and the pinned bottom bar finishes the step.
+  final TextInputAction? textInputAction;
+
   @override
   Widget build(BuildContext context) {
     return TextFormField(
@@ -1459,6 +1480,7 @@ class _Field extends StatelessWidget {
       validator: validator,
       maxLength: maxLength,
       maxLines: maxLines,
+      textInputAction: textInputAction,
       onFieldSubmitted: onSubmitted,
       style: const TextStyle(color: Colors.white),
       cursorColor: identity.primary,

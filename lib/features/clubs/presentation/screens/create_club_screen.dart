@@ -323,6 +323,10 @@ class _CreateClubScreenState extends State<CreateClubScreen> {
                   'np. Założyciele YO Voice',
                 ),
                 maxLength: 40,
+                // Declared, not inherited: the platform draws "next" and the
+                // return key moves on to the description instead of doing
+                // nothing visible.
+                textInputAction: TextInputAction.next,
                 validator: (value) {
                   final length = value?.trim().length ?? 0;
                   if (length < 3) {
@@ -343,6 +347,10 @@ class _CreateClubScreenState extends State<CreateClubScreen> {
                   'Co łączy tę społeczność?',
                 ),
                 maxLength: 220,
+                // Deliberately left on the newline action: a club
+                // description is prose people do break into lines. The
+                // pinned Create bar below and the keyboard Done bar are
+                // what finish it.
                 maxLines: 4,
               ),
               const SizedBox(height: 26),
@@ -455,70 +463,75 @@ class _CreateClubScreenState extends State<CreateClubScreen> {
           ),
         ),
       ),
-      bottomNavigationBar: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const YoKeyboardDoneBar(),
-          SafeArea(
-            top: false,
-            child: Container(
-              decoration: BoxDecoration(
-                color: palette.surfaceRaised,
-                border: Border(top: BorderSide(color: palette.border)),
-              ),
-              child: ResponsiveContentFrame(
-                width: ResponsiveContentWidth.form,
-                fillHeight: false,
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(18, 14, 18, 14),
-                  child: SizedBox(
-                    height: 58,
-                    child: FilledButton.icon(
-                      key: const ValueKey('space-identity-create-cta'),
-                      onPressed: _busy || _pickingImage ? null : _createClub,
-                      style: FilledButton.styleFrom(
-                        backgroundColor: identityVisuals.cta,
-                        foregroundColor: identityVisuals.onCta,
-                        disabledBackgroundColor: _busy
-                            ? identityVisuals.cta
-                            : palette.surfaceSunken,
-                        disabledForegroundColor: _busy
-                            ? identityVisuals.onCta
-                            : palette.textTertiary,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(19),
+      // Scaffold pins this slot to the bottom of the window, behind the
+      // keyboard; the wrapper lifts the whole footer onto the keyboard so
+      // Create is never stranded underneath it.
+      bottomNavigationBar: YoKeyboardSafeBottomBar(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const YoKeyboardDoneBar(),
+            SafeArea(
+              top: false,
+              child: Container(
+                decoration: BoxDecoration(
+                  color: palette.surfaceRaised,
+                  border: Border(top: BorderSide(color: palette.border)),
+                ),
+                child: ResponsiveContentFrame(
+                  width: ResponsiveContentWidth.form,
+                  fillHeight: false,
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(18, 14, 18, 14),
+                    child: SizedBox(
+                      height: 58,
+                      child: FilledButton.icon(
+                        key: const ValueKey('space-identity-create-cta'),
+                        onPressed: _busy || _pickingImage ? null : _createClub,
+                        style: FilledButton.styleFrom(
+                          backgroundColor: identityVisuals.cta,
+                          foregroundColor: identityVisuals.onCta,
+                          disabledBackgroundColor: _busy
+                              ? identityVisuals.cta
+                              : palette.surfaceSunken,
+                          disabledForegroundColor: _busy
+                              ? identityVisuals.onCta
+                              : palette.textTertiary,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(19),
+                          ),
                         ),
-                      ),
-                      icon: _busy
-                          ? SizedBox(
-                              width: 20,
-                              height: 20,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2.5,
-                                color: identityVisuals.spinner,
-                              ),
-                            )
-                          : const Icon(Icons.add_business_rounded),
-                      label: Text(
-                        _busy
-                            ? (widget.isFamily
-                                  ? copy.text(
-                                      'Creating Family Room...',
-                                      'Tworzenie pokoju rodzinnego...',
-                                    )
-                                  : copy.text(
-                                      'Creating club...',
-                                      'Tworzenie klubu...',
-                                    ))
-                            : (widget.isFamily
-                                  ? copy.text(
-                                      'Create Family Room',
-                                      'Utwórz pokój rodzinny',
-                                    )
-                                  : copy.text('Create Club', 'Utwórz klub')),
-                        style: const TextStyle(
-                          fontSize: 17,
-                          fontWeight: FontWeight.w900,
+                        icon: _busy
+                            ? SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2.5,
+                                  color: identityVisuals.spinner,
+                                ),
+                              )
+                            : const Icon(Icons.add_business_rounded),
+                        label: Text(
+                          _busy
+                              ? (widget.isFamily
+                                    ? copy.text(
+                                        'Creating Family Room...',
+                                        'Tworzenie pokoju rodzinnego...',
+                                      )
+                                    : copy.text(
+                                        'Creating club...',
+                                        'Tworzenie klubu...',
+                                      ))
+                              : (widget.isFamily
+                                    ? copy.text(
+                                        'Create Family Room',
+                                        'Utwórz pokój rodzinny',
+                                      )
+                                    : copy.text('Create Club', 'Utwórz klub')),
+                          style: const TextStyle(
+                            fontSize: 17,
+                            fontWeight: FontWeight.w900,
+                          ),
                         ),
                       ),
                     ),
@@ -526,8 +539,8 @@ class _CreateClubScreenState extends State<CreateClubScreen> {
                 ),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -725,7 +738,7 @@ class _MediaPickerCard extends StatelessWidget {
         onTap: onTap,
         borderRadius: BorderRadius.circular(20),
         child: Container(
-          height: 150,
+          constraints: const BoxConstraints(minHeight: 150),
           padding: const EdgeInsets.all(12),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(20),
@@ -735,6 +748,7 @@ class _MediaPickerCard extends StatelessWidget {
             children: [
               Center(
                 child: Column(
+                  mainAxisSize: MainAxisSize.min,
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     if (bytes == null)
@@ -801,6 +815,7 @@ class _Field extends StatelessWidget {
     required this.maxLength,
     this.maxLines = 1,
     this.validator,
+    this.textInputAction,
   });
   final TextEditingController controller;
   final String label;
@@ -808,6 +823,9 @@ class _Field extends StatelessWidget {
   final int maxLength;
   final int maxLines;
   final String? Function(String?)? validator;
+
+  /// Left null on multiline fields, where Return stays a line break.
+  final TextInputAction? textInputAction;
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
@@ -816,6 +834,7 @@ class _Field extends StatelessWidget {
       controller: controller,
       maxLength: maxLength,
       maxLines: maxLines,
+      textInputAction: textInputAction,
       validator: validator,
       style: TextStyle(color: palette.textPrimary),
       decoration: InputDecoration(

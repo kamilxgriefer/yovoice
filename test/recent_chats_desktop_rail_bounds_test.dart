@@ -15,6 +15,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:yovoice/core/theme/app_spacing.dart';
 import 'package:yovoice/features/clubs/data/services/club_chat_service.dart';
 import 'package:yovoice/features/clubs/data/services/club_service.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
@@ -386,7 +387,9 @@ void main() {
       of: find.byType(RecentChats),
       matching: find.byType(InkWell),
     );
-    expect(tester.getSize(cards.first).width, 190);
+    // (390 - AppRhythm.item) / 2: one rail pitch for both presentations
+    // now, so the phone card is 189 rather than the old 190.
+    expect(tester.getSize(cards.first).width, (390 - AppRhythm.item) / 2);
     expect(tester.getSize(find.byType(RecentChats)).height, 148);
     expect(tester.takeException(), isNull);
   });

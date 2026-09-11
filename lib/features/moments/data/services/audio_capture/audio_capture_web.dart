@@ -228,6 +228,25 @@ class BlobRecordedAudio extends RecordedAudio {
     return buffer.toDart.asUint8List();
   }
 
+  /// Slices the Blob rather than materializing it.
+  ///
+  /// A browser Blob is already outside the Dart heap — that is the whole
+  /// reason `putBlob` exists — so reading it a megabyte at a time keeps it
+  /// that way for the fingerprint pass too.
+  @override
+  Stream<List<int>> openRead() async* {
+    if (_discarded) {
+      throw StateError('This Voice Moment recording has been discarded.');
+    }
+    const chunkSize = 1024 * 1024;
+    final total = blob.size;
+    for (var start = 0; start < total; start += chunkSize) {
+      final end = start + chunkSize < total ? start + chunkSize : total;
+      final buffer = await blob.slice(start, end).arrayBuffer().toDart;
+      yield buffer.toDart.asUint8List();
+    }
+  }
+
   @override
   Future<String> uploadTo(
     Reference reference,

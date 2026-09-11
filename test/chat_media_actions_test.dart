@@ -14,6 +14,7 @@ import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_theme.dart';
 import 'package:yovoice/features/messages/data/models/message.dart';
 import 'package:yovoice/features/messages/data/services/direct_attachment_outbox.dart';
+import 'package:yovoice/features/messages/data/services/direct_attachment_payload_source.dart';
 import 'package:yovoice/features/messages/data/services/direct_attachment_payload_store.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/messages/presentation/screens/chat_screen.dart';
@@ -460,11 +461,6 @@ class _TestPayloadStore implements DirectAttachmentPayloadStore {
   String _key(String namespace, String id) => '$namespace:$id';
 
   @override
-  Future<void> write(String namespace, String id, Uint8List bytes) async {
-    payloads[_key(namespace, id)] = Uint8List.fromList(bytes);
-  }
-
-  @override
   Future<bool> exists(String namespace, String id) async =>
       payloads.containsKey(_key(namespace, id));
 
@@ -489,10 +485,24 @@ class _TestPayloadStore implements DirectAttachmentPayloadStore {
   }
 
   @override
+  Future<void> adopt(
+    String namespace,
+    String id,
+    DirectAttachmentPayloadSource source,
+  ) async {
+    final builder = BytesBuilder(copy: false);
+    await for (final chunk in source.openRead()) {
+      builder.add(chunk);
+    }
+    payloads['$namespace:$id'] = builder.takeBytes();
+  }
+
+  @override
   Future<String> upload(
     String namespace,
     String id,
     Reference reference,
-    SettableMetadata metadata,
-  ) => throw UnsupportedError('The widget test never uploads media.');
+    SettableMetadata metadata, {
+    void Function(double progress)? onProgress,
+  }) => throw UnsupportedError('The widget test never uploads media.');
 }

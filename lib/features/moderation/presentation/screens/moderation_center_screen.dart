@@ -3,8 +3,10 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
+import 'package:yovoice/core/preferences/app_preferences.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_immersive_colors.dart';
+import 'package:yovoice/features/media/data/models/gif_asset.dart';
 import 'package:yovoice/features/messages/data/models/global_message.dart';
 import 'package:yovoice/features/moderation/data/models/moderation_report.dart';
 import 'package:yovoice/features/moderation/data/services/moderation_service.dart';
@@ -12,6 +14,8 @@ import 'package:yovoice/features/moderation/data/services/report_service.dart';
 import 'package:yovoice/features/moderation/presentation/report_reason_labels.dart';
 import 'package:yovoice/features/moderation/presentation/widgets/report_audit_timeline.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
+import 'package:yovoice/shared/widgets/inputs/yo_keyboard_done_bar.dart';
+import 'package:yovoice/shared/widgets/media/yo_gif_view.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
 import 'package:yovoice/shared/widgets/theme/yo_immersive_dark_surface.dart';
@@ -71,7 +75,18 @@ class _ModerationCenterScreenState extends State<ModerationCenterScreen> {
 
   /// Client-side narrowing of the LOADED page only (id, reason, note,
   /// target) — bounded and honest; server text search does not exist.
-  String _searchQuery = '';
+  final TextEditingController _searchController = TextEditingController();
+  String get _searchQuery => _searchController.text;
+
+  void _updateSearch(String query) {
+    if (_searchController.text != query) {
+      _searchController.value = TextEditingValue(
+        text: query,
+        selection: TextSelection.collapsed(offset: query.length),
+      );
+    }
+    setState(() {});
+  }
 
   /// Open / In-review totals from the server-side count aggregate.
   /// Null means "could not be counted" and the badge is simply omitted —
@@ -124,6 +139,12 @@ class _ModerationCenterScreenState extends State<ModerationCenterScreen> {
       _service = null;
     }
     _resolveAuthority();
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
   }
 
   Future<void> _resolveAuthority() async {
@@ -192,6 +213,7 @@ class _ModerationCenterScreenState extends State<ModerationCenterScreen> {
           targetFilter: _targetFilter,
           reasonFilter: _reasonFilter,
           searchQuery: _searchQuery,
+          searchController: _searchController,
           statusCounts: _statusCounts,
           limit: _limit,
           selectedId: _selectedId,
@@ -213,7 +235,7 @@ class _ModerationCenterScreenState extends State<ModerationCenterScreen> {
             _limit = ModerationService.pageSize;
             _selectedId = null;
           }),
-          onSearch: (query) => setState(() => _searchQuery = query),
+          onSearch: _updateSearch,
           onRefresh: _refresh,
           onSelect: (id) => setState(() => _selectedId = id),
           onLoadMore: () =>
@@ -276,6 +298,15 @@ class _ModerationCenterScreenState extends State<ModerationCenterScreen> {
                 ),
               ],
             ),
+      // The internal moderator note is a multiline field with the Resolve
+      // actions below it in the scroll; on a phone the keyboard covered
+      // both the note and the buttons with no way out. The shared bar sits
+      // directly above the keyboard here.
+      bottomNavigationBar: const YoKeyboardSafeBottomBar(
+        // Scaffold pins this slot to the bottom of the window, behind
+        // the keyboard; the wrapper lifts it onto the keyboard.
+        child: YoKeyboardDoneBar(),
+      ),
       body: content,
     );
     return YoImmersiveDarkSurface(child: scaffold);
@@ -391,6 +422,7 @@ class _ModerationWorkspace extends StatelessWidget {
     required this.targetFilter,
     required this.reasonFilter,
     required this.searchQuery,
+    required this.searchController,
     required this.statusCounts,
     required this.limit,
     required this.selectedId,
@@ -416,6 +448,7 @@ class _ModerationWorkspace extends StatelessWidget {
   final ReportTargetType? targetFilter;
   final ReportReason? reasonFilter;
   final String searchQuery;
+  final TextEditingController searchController;
   final Map<ReportStatus, int?> statusCounts;
   final int limit;
   final String? selectedId;
@@ -482,6 +515,7 @@ class _ModerationWorkspace extends StatelessWidget {
           builder: (context, constraints) {
             final narrow = constraints.maxWidth < 700;
             final split = constraints.maxWidth >= 900;
+            final detailOnly = !split && selected != null;
 
             // Very large screens keep a sane line length instead of a
             // panoramic wall.
@@ -492,39 +526,45 @@ class _ModerationWorkspace extends StatelessWidget {
                   _WorkspaceHeader(roleLabel: roleLabel, onRefresh: onRefresh),
                   const SizedBox(height: 14),
                 ],
-                _SummaryStrip(
-                  narrow: narrow,
-                  statusCounts: statusCounts,
-                  loadedCount: loaded.length,
-                  status: status,
-                ),
-                const SizedBox(height: 12),
-                _StatusTabs(
-                  status: status,
-                  statusCounts: statusCounts,
-                  onStatus: onStatus,
-                ),
-                const SizedBox(height: 10),
-                _Toolbar(
-                  narrow: narrow,
-                  searchQuery: searchQuery,
-                  activeFilterCount:
-                      (targetFilter == null ? 0 : 1) +
-                      (reasonFilter == null ? 0 : 1),
-                  onSearch: onSearch,
-                  onRefresh: onRefresh,
-                  onOpenFilters: () => _openFilters(context, narrow),
-                ),
-                if (_hasActiveFilters) ...[
-                  const SizedBox(height: 8),
-                  _ActiveFilterChips(
-                    targetFilter: targetFilter,
-                    reasonFilter: reasonFilter,
-                    onTargetFilter: onTargetFilter,
-                    onReasonFilter: onReasonFilter,
+                // A selected report owns the narrow pane, including its
+                // scroll viewport. Queue controls must not consume that
+                // viewport when the note's keyboard opens; Back restores
+                // the unchanged queue/filter state.
+                if (!detailOnly) ...[
+                  _SummaryStrip(
+                    narrow: narrow,
+                    statusCounts: statusCounts,
+                    loadedCount: loaded.length,
+                    status: status,
                   ),
+                  const SizedBox(height: 12),
+                  _StatusTabs(
+                    status: status,
+                    statusCounts: statusCounts,
+                    onStatus: onStatus,
+                  ),
+                  const SizedBox(height: 10),
+                  _Toolbar(
+                    narrow: narrow,
+                    searchController: searchController,
+                    activeFilterCount:
+                        (targetFilter == null ? 0 : 1) +
+                        (reasonFilter == null ? 0 : 1),
+                    onSearch: onSearch,
+                    onRefresh: onRefresh,
+                    onOpenFilters: () => _openFilters(context, narrow),
+                  ),
+                  if (_hasActiveFilters) ...[
+                    const SizedBox(height: 8),
+                    _ActiveFilterChips(
+                      targetFilter: targetFilter,
+                      reasonFilter: reasonFilter,
+                      onTargetFilter: onTargetFilter,
+                      onReasonFilter: onReasonFilter,
+                    ),
+                  ],
+                  const SizedBox(height: 12),
                 ],
-                const SizedBox(height: 12),
                 Expanded(
                   child: _content(
                     snapshot: snapshot,
@@ -950,7 +990,7 @@ class _StatusTab extends StatelessWidget {
 class _Toolbar extends StatelessWidget {
   const _Toolbar({
     required this.narrow,
-    required this.searchQuery,
+    required this.searchController,
     required this.activeFilterCount,
     required this.onSearch,
     required this.onRefresh,
@@ -958,7 +998,7 @@ class _Toolbar extends StatelessWidget {
   });
 
   final bool narrow;
-  final String searchQuery;
+  final TextEditingController searchController;
   final int activeFilterCount;
   final ValueChanged<String> onSearch;
   final VoidCallback onRefresh;
@@ -974,7 +1014,13 @@ class _Toolbar extends StatelessWidget {
             height: 40,
             child: TextField(
               onChanged: onSearch,
-              controller: null,
+              // This controller has the same lifetime as the active filter,
+              // including when a narrow report detail replaces the toolbar.
+              controller: searchController,
+              // Declared rather than inherited, matching every other
+              // search box in the app: the platform draws "search" and
+              // the key closes the keyboard.
+              textInputAction: TextInputAction.search,
               style: const TextStyle(color: Colors.white, fontSize: 13),
               decoration: InputDecoration(
                 hintText: copy.text(
@@ -1291,6 +1337,7 @@ abstract final class _Filters {
       ReportTargetType.reelComment => 'Reel comment',
       ReportTargetType.voiceMoment => 'Voice Moment',
       ReportTargetType.voiceMomentComment => 'Voice Moment comment',
+      ReportTargetType.gifAsset => 'GIF',
       ReportTargetType.user => 'Account',
     };
     final polish = switch (target) {
@@ -1299,6 +1346,7 @@ abstract final class _Filters {
       ReportTargetType.reelComment => 'Komentarz rolki',
       ReportTargetType.voiceMoment => 'Voice Moment',
       ReportTargetType.voiceMomentComment => 'Komentarz Voice Momentu',
+      ReportTargetType.gifAsset => 'GIF',
       ReportTargetType.user => 'Konto',
     };
     return copy?.text(english, polish) ?? english;
@@ -1837,6 +1885,10 @@ class _DetailState extends State<_Detail> {
                             'Reel comment removed and report resolved.',
                             'Komentarz rolki usunięty, a zgłoszenie rozstrzygnięte.',
                           ),
+                          ReportTargetType.gifAsset => copy.text(
+                            'GIF blocked and report resolved.',
+                            'GIF zablokowany, a zgłoszenie rozstrzygnięte.',
+                          ),
                           _ => copy.text(
                             'Message removed and report resolved.',
                             'Wiadomość usunięta, a zgłoszenie rozstrzygnięte.',
@@ -1959,8 +2011,34 @@ class _DetailState extends State<_Detail> {
           ),
           const SizedBox(height: 12),
         ],
+        // THE REPORTED GIF ITSELF. Staff cannot read `gifAssets`, and nothing
+        // about a GIF is rehosted here, so this snapshot plus the CDN URL the
+        // server stamped on the report is the only view a moderator has of
+        // the thing they are being asked to judge — and a picture cannot be
+        // judged from its title.
+        if (report.targetType == ReportTargetType.gifAsset) ...[
+          _ReportedGif(report: report),
+          const SizedBox(height: 12),
+        ],
         if (report.reportedUserId.isNotEmpty)
           _ReportedAccount(userId: report.reportedUserId, service: service)
+        else if (report.targetType == ReportTargetType.gifAsset)
+          // NOT the "identity was not retained" line below. An empty
+          // `reportedUserId` on a GIF report is not missing data — it is the
+          // design: the asset belongs to the provider, no YO Voice member
+          // posted it into existence, and naming one here would drag an
+          // innocent account into a sanction workflow.
+          _Field(
+            label: copy.text('Reported account', 'Zgłoszone konto'),
+            value: copy.text(
+              'None. A GIF belongs to the provider, not to a member.',
+              'Brak. GIF należy do dostawcy, nie do użytkownika.',
+            ),
+            meta: copy.text(
+              'Blocking it removes the GIF for everyone; it sanctions nobody.',
+              'Zablokowanie usuwa GIF dla wszystkich; nie karze nikogo.',
+            ),
+          )
         else
           _Field(
             label: copy.text('Reported account', 'Zgłoszone konto'),
@@ -2031,12 +2109,14 @@ class _DetailState extends State<_Detail> {
     final isVoiceComment =
         report.targetType == ReportTargetType.voiceMomentComment;
     final isReelComment = report.targetType == ReportTargetType.reelComment;
+    final isGif = report.targetType == ReportTargetType.gifAsset;
     final canRemove =
         report.targetType == ReportTargetType.globalMessage ||
         isReel ||
         isReelComment ||
         isVoiceMoment ||
-        isVoiceComment;
+        isVoiceComment ||
+        isGif;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -2091,6 +2171,9 @@ class _DetailState extends State<_Detail> {
           ],
         ),
         const SizedBox(height: 10),
+        // Deliberately still a newline field: a 500-character internal
+        // note is written as a short list as often as a sentence. The
+        // keyboard Done bar in `bottomNavigationBar` finishes it.
         TextField(
           controller: _note,
           maxLength: ModerationService.maxModeratorNoteLength,
@@ -2156,6 +2239,13 @@ class _DetailState extends State<_Detail> {
                     'Remove Reel comment and resolve',
                     'Usuń komentarz rolki i rozstrzygnij',
                   ),
+                  // "Block", not "remove": we never hosted this asset and
+                  // cannot delete it. The verb has to match what actually
+                  // happens, or a moderator will believe the GIF is gone.
+                  ReportTargetType.gifAsset => copy.text(
+                    'Block GIF and resolve',
+                    'Zablokuj GIF i rozstrzygnij',
+                  ),
                   _ => copy.text(
                     'Remove message and resolve',
                     'Usuń wiadomość i rozstrzygnij',
@@ -2187,6 +2277,10 @@ class _DetailState extends State<_Detail> {
                       'Remove this Reel comment?',
                       'Usunąć ten komentarz rolki?',
                     ),
+                    ReportTargetType.gifAsset => copy.text(
+                      'Block this GIF?',
+                      'Zablokować ten GIF?',
+                    ),
                     _ => copy.text(
                       'Remove this message?',
                       'Usunąć tę wiadomość?',
@@ -2208,6 +2302,10 @@ class _DetailState extends State<_Detail> {
                     ReportTargetType.reelComment => copy.text(
                       'Remove comment',
                       'Usuń komentarz',
+                    ),
+                    ReportTargetType.gifAsset => copy.text(
+                      'Block GIF',
+                      'Zablokuj GIF',
                     ),
                     _ => copy.text('Remove message', 'Usuń wiadomość'),
                   },
@@ -2242,6 +2340,27 @@ class _DetailState extends State<_Detail> {
                               'przekazane do bezpiecznego czyszczenia. Ta czynność '
                               'zostanie przypisana do Twojego konta w dzienniku '
                               'audytu moderacji.',
+                        )
+                      : isGif
+                      // THE LIMIT IS STATED, NOT GLOSSED. Blocking stops the
+                      // GIF appearing in search and stops it being sent from
+                      // now on. It does NOT blank the ones already in a
+                      // conversation: those hotlink the provider's CDN and no
+                      // client consults a blocklist while rendering. A
+                      // moderator who is not told that will believe a job is
+                      // finished when it is not.
+                      ? copy.text(
+                          'The GIF stops appearing in search and can no longer '
+                              'be sent. GIFs already sent stay visible where '
+                              'they were sent — remove those messages '
+                              'individually. This is recorded against your '
+                              'account in the moderation audit log.',
+                          'GIF przestanie pojawiać się w wyszukiwaniu i nie '
+                              'będzie można go wysłać. GIF-y już wysłane '
+                              'pozostaną widoczne tam, gdzie je wysłano — te '
+                              'wiadomości usuń pojedynczo. Ta czynność zostanie '
+                              'przypisana do Twojego konta w dzienniku audytu '
+                              'moderacji.',
                         )
                       : copy.text(
                           'The message is hidden from the community and kept '
@@ -2397,6 +2516,112 @@ class _TargetReference extends StatelessWidget {
       _ => report.targetId.isEmpty ? '—' : report.targetId,
     };
     return _Field(label: label, value: value, meta: report.contextPath);
+  }
+}
+
+/// The reported GIF, as evidence.
+///
+/// Everything shown here was snapshotted onto the report when it was filed,
+/// because `gifAssets` is closed to every client including staff. The picture
+/// is fetched from the provider's CDN — nothing about a GIF is rehosted — so
+/// it is rendered through [YoGifView], which means the moderator's own
+/// "Load GIFs automatically" preference is honoured here exactly as it is in a
+/// chat bubble. A moderator who has that off gets a tap-to-load placeholder
+/// rather than a silent third-party request; the decision to look is theirs.
+class _ReportedGif extends StatelessWidget {
+  const _ReportedGif({required this.report});
+
+  final ModerationReport report;
+
+  /// `giphy:abc123` -> ('giphy', 'abc123'). Null for anything else, so a
+  /// malformed or legacy report degrades to its text snapshot instead of
+  /// rendering a broken frame.
+  static (String, String)? _parseTargetId(String value) {
+    final separator = value.indexOf(':');
+    if (separator <= 0 || separator == value.length - 1) return null;
+    return (value.substring(0, separator), value.substring(separator + 1));
+  }
+
+  /// The label out of `"<provider>:<id> — <title>"`, which is the shape
+  /// `evidenceSnapshot()` writes in functions/media/gif/moderation.js.
+  static String _titleFrom(String? snapshot, String fallback) {
+    if (snapshot == null) return fallback;
+    final separator = snapshot.indexOf(' — ');
+    if (separator < 0) return snapshot.isEmpty ? fallback : snapshot;
+    final title = snapshot.substring(separator + 3).trim();
+    return title.isEmpty ? fallback : title;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
+    final parsed = _parseTargetId(report.targetId);
+    final mediaUrl = report.targetMediaUrl;
+    final title = _titleFrom(report.targetText, copy.text('GIF', 'GIF'));
+    final autoLoad =
+        AppPreferencesScope.maybeOf(context)?.value.gifAutoLoadEnabled ?? true;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          copy.text('Reported GIF', 'Zgłoszony GIF'),
+          style: const TextStyle(
+            color: Color(0xFF9A90AC),
+            fontSize: 11,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        const SizedBox(height: 6),
+        if (parsed != null && mediaUrl != null)
+          YoGifView(
+            key: const ValueKey('moderation-gif-evidence'),
+            asset: GifAsset(
+              provider: parsed.$1,
+              id: parsed.$2,
+              title: title,
+              rating: 'g',
+              previewUrl: mediaUrl,
+              url: mediaUrl,
+              // The report stores no dimensions, and the pinned rendition is
+              // a fixed HEIGHT one, so a square box is the honest assumption:
+              // it reserves the right height and lets the width clamp.
+              width: 200,
+              height: 200,
+            ),
+            height: 150,
+            maxWidth: 240,
+            autoLoad: autoLoad,
+          )
+        else
+          _Field(
+            label: copy.text('Preview', 'Podgląd'),
+            value: copy.text(
+              'This report did not retain a preview of the GIF.',
+              'To zgłoszenie nie zawiera podglądu GIF-a.',
+            ),
+          ),
+        const SizedBox(height: 8),
+        // TEXT-DIRECTION ISOLATED for the same reason the Reel comment
+        // snapshot is: the title is a third party's free text and may carry
+        // Unicode bidi overrides that would otherwise re-order the ids and
+        // labels around it. The characters are shown, not stripped — this is
+        // evidence.
+        Directionality(
+          textDirection: TextDirection.ltr,
+          child: _Field(
+            label: copy.text('Asset', 'Zasób'),
+            value: (report.targetText ?? '').isEmpty
+                ? report.targetId
+                : report.targetText!,
+            meta: copy.text(
+              'Copied when the report was filed; it outlives the block.',
+              'Kopia zapisana w chwili zgłoszenia; zostaje po zablokowaniu.',
+            ),
+          ),
+        ),
+      ],
+    );
   }
 }
 

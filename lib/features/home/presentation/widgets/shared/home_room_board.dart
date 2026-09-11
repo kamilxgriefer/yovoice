@@ -200,7 +200,10 @@ class HomeRoomBanner extends StatelessWidget {
             '${_polishListeningCount(room.participantCount)}.',
       ),
       child: Container(
-        margin: EdgeInsets.only(bottom: compact ? 14 : 12),
+        // No margin of its own: a banner's LAYOUT box is its INK box, and
+        // the gap between stacked banners is one declared AppRhythm.item
+        // owned by the caller. The internal 14/12 px margin was invisible
+        // in the source and different on the two platforms.
         constraints: BoxConstraints(
           minHeight: featured ? (compact ? 246 : 288) : (compact ? 168 : 140),
         ),

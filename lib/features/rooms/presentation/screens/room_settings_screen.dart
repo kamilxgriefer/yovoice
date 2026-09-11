@@ -462,7 +462,11 @@ class _RoomSettingsScreenState extends State<RoomSettingsScreen> {
           ),
         ],
       ),
-      bottomNavigationBar: const YoKeyboardDoneBar(),
+      bottomNavigationBar: const YoKeyboardSafeBottomBar(
+        // Scaffold pins this slot to the bottom of the window, behind
+        // the keyboard; the wrapper lifts it onto the keyboard.
+        child: YoKeyboardDoneBar(),
+      ),
       body: ResponsiveContentFrame(
         width: ResponsiveContentWidth.form,
         child: Form(
@@ -560,6 +564,7 @@ class _RoomSettingsScreenState extends State<RoomSettingsScreen> {
                     controller: _name,
                     label: copy.text('Room name', 'Nazwa pokoju'),
                     maxLength: 50,
+                    textInputAction: TextInputAction.next,
                     validator: (value) => (value?.trim().length ?? 0) < 3
                         ? copy.text(
                             'Enter at least 3 characters',
@@ -567,6 +572,9 @@ class _RoomSettingsScreenState extends State<RoomSettingsScreen> {
                           )
                         : null,
                   ),
+                  // Deliberately still a newline field: a room description
+                  // is prose. SAVE stays in the app bar above the keyboard
+                  // and the keyboard Done bar closes the keyboard.
                   _TextField(
                     controller: _description,
                     label: copy.text('Description', 'Opis'),
@@ -849,6 +857,7 @@ class _TextField extends StatelessWidget {
     this.maxLength,
     this.maxLines = 1,
     this.validator,
+    this.textInputAction,
   });
 
   final TextEditingController controller;
@@ -856,6 +865,10 @@ class _TextField extends StatelessWidget {
   final int? maxLength;
   final int maxLines;
   final String? Function(String?)? validator;
+
+  /// Declared on single-line fields so the platform draws the right key.
+  /// Left null on multiline fields, where Return stays a line break.
+  final TextInputAction? textInputAction;
 
   @override
   Widget build(BuildContext context) {
@@ -865,6 +878,7 @@ class _TextField extends StatelessWidget {
         controller: controller,
         maxLength: maxLength,
         maxLines: maxLines,
+        textInputAction: textInputAction,
         validator: validator,
         style: const TextStyle(color: Colors.white),
         decoration: InputDecoration(

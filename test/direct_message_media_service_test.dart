@@ -12,6 +12,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:yovoice/features/messages/data/models/message.dart';
+import 'package:yovoice/features/messages/data/services/direct_attachment_payload_source.dart';
 import 'package:yovoice/features/messages/data/services/direct_attachment_payload_store.dart';
 import 'package:yovoice/features/messages/data/services/direct_attachment_outbox.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
@@ -1169,8 +1170,16 @@ class _MemoryPayloadStore implements DirectAttachmentPayloadStore {
   String _key(String namespace, String id) => '$namespace:$id';
 
   @override
-  Future<void> write(String namespace, String id, Uint8List bytes) async {
-    payloads[_key(namespace, id)] = Uint8List.fromList(bytes);
+  Future<void> adopt(
+    String namespace,
+    String id,
+    DirectAttachmentPayloadSource source,
+  ) async {
+    final builder = BytesBuilder(copy: false);
+    await for (final chunk in source.openRead()) {
+      builder.add(chunk);
+    }
+    payloads[_key(namespace, id)] = builder.takeBytes();
   }
 
   @override
@@ -1191,8 +1200,9 @@ class _MemoryPayloadStore implements DirectAttachmentPayloadStore {
     String namespace,
     String id,
     Reference reference,
-    SettableMetadata metadata,
-  ) async {
+    SettableMetadata metadata, {
+    void Function(double progress)? onProgress,
+  }) async {
     final bytes = payloads[_key(namespace, id)];
     if (bytes == null) throw StateError('missing test payload');
     uploadCount += 1;
@@ -1247,8 +1257,28 @@ class _Recording extends RecordedAudio {
   String? contentTypeAtUpload;
   Map<String, String>? customMetadataAtUpload;
 
+  int readBytesCalls = 0;
+  int openReadCalls = 0;
+  int discardCalls = 0;
+
   @override
-  Future<Uint8List> readBytes() async => Uint8List(byteLength);
+  Future<Uint8List> readBytes() async {
+    readBytesCalls += 1;
+    return Uint8List(byteLength);
+  }
+
+  /// Chunked on purpose: the durable outbox must never need this recording
+  /// resident, and a test that hands it back in one piece would not notice if
+  /// it started to.
+  @override
+  Stream<List<int>> openRead() async* {
+    openReadCalls += 1;
+    const chunk = 512;
+    for (var offset = 0; offset < byteLength; offset += chunk) {
+      final end = offset + chunk < byteLength ? offset + chunk : byteLength;
+      yield Uint8List(end - offset);
+    }
+  }
 
   @override
   Future<String> uploadTo(
@@ -1263,7 +1293,9 @@ class _Recording extends RecordedAudio {
   }
 
   @override
-  Future<void> discard() async {}
+  Future<void> discard() async {
+    discardCalls += 1;
+  }
 }
 
 class _RecoveryStorage implements FirebaseStorage {

@@ -700,14 +700,48 @@ void main() {
       }
     }
 
-    Future<void> open(WidgetTester tester) async {
-      tester.view.physicalSize = const Size(1440, 1200);
+    Future<void> open(
+      WidgetTester tester, {
+      Size size = const Size(1440, 1200),
+    }) async {
+      tester.view.physicalSize = size;
       tester.view.devicePixelRatio = 1.0;
       addTearDown(tester.view.reset);
       await tester.pumpWidget(
         MaterialApp(home: ModerationCenterScreen(moderationService: service)),
       );
       await tester.pumpAndSettle();
+    }
+
+    for (final width in [390.0, 768.0]) {
+      testWidgets(
+        'search and filter survive narrow detail and back at $width',
+        (tester) async {
+          await seedReports(2);
+          await open(tester, size: Size(width, 844));
+          final search = find.byWidgetPredicate(
+            (widget) =>
+                widget is TextField &&
+                widget.decoration?.hintText == 'Search loaded reports…',
+          );
+          await tester.enterText(search, 'msg-0');
+          await tester.pumpAndSettle();
+          expect(find.text('Spam or scam'), findsOneWidget);
+          await tester.tap(find.text('Spam or scam'));
+          await tester.pumpAndSettle();
+          expect(search, findsNothing);
+          await tester.tap(find.byTooltip('Back to the queue'));
+          await tester.pumpAndSettle();
+          expect(tester.widget<TextField>(search).controller!.text, 'msg-0');
+          expect(find.text('Spam or scam'), findsOneWidget);
+
+          await tester.enterText(search, '');
+          await tester.pumpAndSettle();
+          expect(tester.widget<TextField>(search).controller!.text, isEmpty);
+          expect(find.text('Spam or scam'), findsNWidgets(2));
+          expect(tester.takeException(), isNull);
+        },
+      );
     }
 
     testWidgets('every visible filter reaches watchQueue as a real argument', (

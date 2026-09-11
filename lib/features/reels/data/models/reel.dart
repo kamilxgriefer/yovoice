@@ -218,6 +218,101 @@ class ReelBackingAudioDescriptor {
   }
 }
 
+/// A signed read URL for one Reel's primary media, delivered inside the feed
+/// page instead of by a second callable.
+///
+/// This is the same artefact `getReelMediaAccessV2` mints, for the same
+/// viewer, bound to the same immutable object generation. Carrying it on the
+/// feed item does not widen access — see the security note on
+/// [Reel.mediaGrant] — it only removes a round trip from the path to the
+/// first video frame.
+@immutable
+class ReelMediaGrant {
+  const ReelMediaGrant({
+    required this.uri,
+    required this.expiresAt,
+    required this.generation,
+  });
+
+  final Uri uri;
+
+  /// Server-stamped absolute deadline of the signature. Already clamped
+  /// server-side to the content's own expiry.
+  final DateTime expiresAt;
+
+  /// The Storage object generation the signature is bound to. It must equal
+  /// the descriptor's generation, or the URL names an object this feed item
+  /// does not describe.
+  final String generation;
+
+  /// Parses the optional `mediaGrant` key, answering null for anything this
+  /// build cannot fully validate.
+  ///
+  /// TOLERANT ON PURPOSE, unlike every required key in this file. A grant is
+  /// a latency optimisation, never an authorization input: the dedicated
+  /// `getReelMediaAccessV2` callable remains the only way a URL is obtained
+  /// when this one is absent or unusable. Throwing here would let one
+  /// malformed hint — a backend rolled forward, a field renamed — blank an
+  /// entire feed page, trading a certain outage for a saved round trip.
+  static ReelMediaGrant? tryFromWire(
+    Object? value, {
+    required ReelMediaDescriptor media,
+    required ReelAvailability availability,
+  }) {
+    if (value is! Map) return null;
+    final map = <String, Object?>{};
+    for (final entry in value.entries) {
+      final key = entry.key;
+      if (key is! String) return null;
+      map[key] = entry.value;
+    }
+    const expected = <String>{'url', 'expiresAtMillis', 'generation'};
+    if (map.keys.toSet().difference(expected).isNotEmpty ||
+        expected.difference(map.keys.toSet()).isNotEmpty) {
+      return null;
+    }
+    final rawUrl = map['url'];
+    final rawExpiry = map['expiresAtMillis'];
+    final rawGeneration = map['generation'];
+    if (rawUrl is! String ||
+        rawExpiry is! int ||
+        rawExpiry <= 0 ||
+        // DateTime only accepts instants within 100 million days of epoch.
+        // An optional corrupt hint must not throw while decoding the page.
+        rawExpiry > 8640000000000000 ||
+        rawGeneration is! String ||
+        // Generation binding is what makes the URL describe *this* item's
+        // object rather than some other version of the same path.
+        rawGeneration != media.generation) {
+      return null;
+    }
+    final uri = Uri.tryParse(rawUrl);
+    if (uri == null ||
+        uri.scheme != 'https' ||
+        uri.host != 'storage.googleapis.com' ||
+        uri.userInfo.isNotEmpty ||
+        uri.hasPort) {
+      return null;
+    }
+    final expiresAt = DateTime.fromMillisecondsSinceEpoch(
+      rawExpiry,
+      isUtc: true,
+    );
+    final contentExpiresAt = availability.contentExpiresAt;
+    // A signature may never outlive the content it points at. The backend
+    // already clamps it; disagreeing means one of the two is wrong, and the
+    // safe reading is to fall back to the dedicated callable.
+    if (contentExpiresAt != null && expiresAt.isAfter(contentExpiresAt)) {
+      return null;
+    }
+    return ReelMediaGrant(
+      uri: uri,
+      expiresAt: expiresAt,
+      generation: rawGeneration,
+    );
+  }
+}
+
 @immutable
 class Reel {
   const Reel({
@@ -233,6 +328,7 @@ class Reel {
     this.likeCount = 0,
     this.commentCount = 0,
     this.callerLiked = false,
+    this.mediaGrant,
   });
 
   final String id;
@@ -260,6 +356,21 @@ class Reel {
   /// the backend answers it from this viewer's own like edge.
   final bool callerLiked;
 
+  /// The pre-minted media URL, present only when the caller asked for inline
+  /// grants **and** the backend chose to mint one for this item.
+  ///
+  /// WHY THIS DOES NOT WIDEN ACCESS. The URL is handed to the same
+  /// authenticated principal that `getReelMediaAccessV2` would have handed it
+  /// to milliseconds later on the very next call — no new recipient, no
+  /// broadcast, nothing persisted. The eligible set is unchanged: only Reels
+  /// the feed already decided this viewer may see. It stays V4-signed, bound
+  /// to one immutable object generation, and clamped by the content's own
+  /// expiry. The client treats it as a cache-warm hint for the *current*
+  /// account only ([ReelService.fetchFeed] keys it by the signed-in uid and
+  /// drops it on any identity boundary), and never as evidence of
+  /// authorization — every state-changing call still asks the backend.
+  final ReelMediaGrant? mediaGrant;
+
   /// Returns the same Reel with new engagement aggregates.
   ///
   /// The feed applies an optimistic like through this and then replaces it
@@ -283,6 +394,7 @@ class Reel {
     likeCount: likeCount ?? this.likeCount,
     commentCount: commentCount ?? this.commentCount,
     callerLiked: callerLiked ?? this.callerLiked,
+    mediaGrant: mediaGrant,
   );
 
   factory Reel.fromWire(Object? value) {
@@ -334,6 +446,12 @@ class Reel {
   /// predates the engagement contract, and a Reel whose counters were never
   /// materialized, both arrive without them and must read as 0/0/false rather
   /// than emptying a feed page.
+  ///
+  /// `mediaGrant` is tolerated the same way, and for a sharper reason: this
+  /// parser rejects *any* key it was not told about, so a build that did not
+  /// know the name would empty the Reels tab the moment the backend started
+  /// returning it. Accepting-and-ignoring is what makes the server side of
+  /// the contract shippable independently of an installed client.
   factory Reel.fromV2Wire(Object? value) {
     final map = _map(value, 'reel');
     _keys(
@@ -350,14 +468,15 @@ class Reel {
         'availability',
       },
       'reel',
-      optional: _engagementKeys,
+      optional: _optionalKeys,
     );
     final legacyShape = <String, Object?>{
       for (final entry in map.entries)
-        if (entry.key != 'availability' && !_engagementKeys.contains(entry.key))
+        if (entry.key != 'availability' && !_optionalKeys.contains(entry.key))
           entry.key: entry.value,
     };
     final legacy = Reel.fromWire(legacyShape);
+    final availability = ReelAvailability.fromWire(map['availability']);
     return Reel(
       id: legacy.id,
       authorId: legacy.authorId,
@@ -367,10 +486,15 @@ class Reel {
       composition: legacy.composition,
       publishedAt: legacy.publishedAt,
       sortKey: legacy.sortKey,
-      availability: ReelAvailability.fromWire(map['availability']),
+      availability: availability,
       likeCount: _tolerantCount(map['likeCount']),
       commentCount: _tolerantCount(map['commentCount']),
       callerLiked: map['callerLiked'] == true,
+      mediaGrant: ReelMediaGrant.tryFromWire(
+        map['mediaGrant'],
+        media: legacy.media,
+        availability: availability,
+      ),
     );
   }
 
@@ -378,6 +502,11 @@ class Reel {
     'likeCount',
     'commentCount',
     'callerLiked',
+  };
+
+  static const Set<String> _optionalKeys = <String>{
+    ..._engagementKeys,
+    'mediaGrant',
   };
 }
 

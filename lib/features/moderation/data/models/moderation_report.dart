@@ -37,6 +37,7 @@ class ModerationReport {
     required this.reportedUserId,
     required this.contextPath,
     required this.targetText,
+    required this.targetMediaUrl,
     required this.reason,
     required this.note,
     required this.createdAt,
@@ -87,6 +88,18 @@ class ModerationReport {
   /// harassment. It is also the only evidence that outlives the removal, and
   /// therefore the only thing an appeal can be judged against.
   final String? targetText;
+
+  /// The reported media itself, snapshotted onto the report at creation.
+  ///
+  /// Written today only by `reportGifAsset`, and for the same reason
+  /// [targetText] exists: `gifAssets` is `allow read, write: if false` for
+  /// every client including staff, and a GIF is a picture — a moderator
+  /// deciding whether it is safe has to SEE it, not read its title. It points
+  /// at the provider's own CDN because nothing about a GIF is rehosted here,
+  /// so loading it is a third-party request; the Moderation Center honours
+  /// `AppPreferences.gifAutoLoadEnabled` when rendering it, exactly like a
+  /// chat bubble does.
+  final String? targetMediaUrl;
 
   final ReportReason? reason;
   final String note;
@@ -161,6 +174,7 @@ class ModerationReport {
       targetText: data['targetTextSnapshot'] is String
           ? data['targetTextSnapshot'] as String
           : null,
+      targetMediaUrl: _nonEmptyString(data['targetMediaUrl']),
       reason: _enumByName(ReportReason.values, data['reason'] as String?),
       note: data['note'] as String? ?? '',
       createdAt: (data['createdAt'] as Timestamp?)?.toDate(),

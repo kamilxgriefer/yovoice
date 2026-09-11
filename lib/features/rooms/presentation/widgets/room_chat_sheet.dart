@@ -1,13 +1,20 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
+import 'package:yovoice/core/preferences/app_preferences.dart';
+import 'package:yovoice/features/media/data/services/gif_catalog_service.dart';
+import 'package:yovoice/features/media/data/services/gif_message_controller.dart';
+import 'package:yovoice/features/media/data/services/gif_transport.dart';
+import 'package:yovoice/shared/widgets/inputs/yo_gif_send_status.dart';
+import 'package:yovoice/shared/widgets/media/yo_gif_view.dart';
 import 'package:yovoice/features/rooms/data/models/room_message.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
-import 'package:yovoice/shared/widgets/inputs/yo_emoji_picker.dart';
+import 'package:yovoice/shared/widgets/inputs/yo_composer_panel.dart';
 import 'package:yovoice/shared/widgets/interactions/accessible_context_action.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
@@ -35,6 +42,8 @@ class RoomChatPanel extends StatefulWidget {
     this.service,
     this.currentUserId,
     this.onMessageActionsRouteChanged,
+    this.gifService,
+    this.gifMessageInvoker,
     super.key,
   });
 
@@ -44,6 +53,8 @@ class RoomChatPanel extends StatefulWidget {
   final VoidCallback? onClose;
   final ScrollController? scrollController;
   final RoomService? service;
+  final GifCatalogService? gifService;
+  final GifMessageInvoker? gifMessageInvoker;
   final String? currentUserId;
   final ValueChanged<ModalBottomSheetRoute<void>?>?
   onMessageActionsRouteChanged;
@@ -55,18 +66,36 @@ class RoomChatPanel extends StatefulWidget {
 class _RoomChatPanelState extends State<RoomChatPanel> {
   late final _service = widget.service ?? RoomService();
   final _composer = TextEditingController();
+  late final GifCatalogService _gifService =
+      widget.gifService ??
+      GifCatalogService(transport: FunctionsGifTransport());
+  late final GifMessageController _gifDelivery = GifMessageController(
+    callable: 'sendRoomMessage',
+    target: {'roomId': widget.roomId},
+    currentUserId: () => _uid,
+    invoke: widget.gifMessageInvoker,
+  );
   late final Stream<List<RoomMessage>> _messages = _service.watchRoomMessages(
     widget.roomId,
   );
   bool _sending = false;
   bool _emojiRowOpen = false;
-  bool _fullPickerOpen = false;
+
+  /// Which composer panel is open, or `null` for none.
+  ///
+  /// One nullable enum replaces the old `bool _fullPickerOpen`: with a single
+  /// mounted body inside [YoComposerPanel], two stacked panels are
+  /// structurally impossible rather than merely avoided. The five-emoji quick
+  /// row above the composer is a different thing entirely and is untouched.
+  YoComposerPanelTab? _composerPanel;
 
   String get _uid =>
       widget.currentUserId ?? FirebaseAuth.instance.currentUser?.uid ?? '';
 
   @override
   void dispose() {
+    _gifDelivery.dispose();
+    if (widget.gifService == null) _gifService.dispose();
     _composer.dispose();
     super.dispose();
   }
@@ -108,11 +137,19 @@ class _RoomChatPanelState extends State<RoomChatPanel> {
     yoInsertEmojiAtCaret(_composer, emoji);
   }
 
-  /// Swaps the system keyboard for the full picker and back.
-  void _toggleFullPicker() {
-    final opening = !_fullPickerOpen;
-    setState(() => _fullPickerOpen = opening);
+  /// Swaps the system keyboard for the composer panel and back.
+  void _toggleComposerPanel() {
+    final opening = _composerPanel == null;
+    setState(() {
+      // Opens on the tab last used anywhere in the app.
+      _composerPanel = opening ? YoComposerPanelTabStore.instance.value : null;
+    });
     if (opening) yoHideSystemKeyboard();
+  }
+
+  void _selectComposerTab(YoComposerPanelTab tab) {
+    setState(() => _composerPanel = tab);
+    unawaited(YoComposerPanelTabStore.instance.remember(tab));
   }
 
   Future<void> _toggleReaction(RoomMessage message, String emoji) async {
@@ -607,8 +644,8 @@ class _RoomChatPanelState extends State<RoomChatPanel> {
                               SizedBox(width: compactComposer ? 2 : 4),
                               if (canOpenFullPicker)
                                 YoEmojiComposerButton(
-                                  open: _fullPickerOpen,
-                                  onPressed: _toggleFullPicker,
+                                  open: _composerPanel != null,
+                                  onPressed: _toggleComposerPanel,
                                   size: compactComposer ? 40 : 44,
                                   iconSize: 20,
                                   color: const Color(0xFF9E92A8),
@@ -650,17 +687,37 @@ class _RoomChatPanelState extends State<RoomChatPanel> {
                           );
                         },
                       ),
+                      YoGifSendStatus(controller: _gifDelivery),
                       // Below the composer, never over it, and capped at a
                       // share of the panel so the conversation above stays
                       // readable inside a sheet that is already short.
-                      if (_fullPickerOpen && canOpenFullPicker)
-                        YoEmojiPicker(
+                      if (_composerPanel != null && canOpenFullPicker)
+                        YoComposerPanel(
+                          tab: _composerPanel!,
+                          onTabChanged: _selectComposerTab,
+                          // Capped at a share of the panel so the conversation
+                          // above stays readable inside a sheet that is
+                          // already short — the same cap the emoji picker had.
                           height: math.min(
                             260,
                             panelConstraints.maxHeight * 0.45,
                           ),
-                          onSelected: _insertEmoji,
+                          // A 260px panel has no room for a recents row on top
+                          // of a grid, so the GIF tab drops it rather than
+                          // compressing everything into an unusable strip.
+                          compact: true,
+                          onEmojiSelected: _insertEmoji,
                           onBackspace: () => yoDeleteBackAtCaret(_composer),
+                          gifService: _gifService
+                            ..locale = copy.locale.languageCode,
+                          gifDelivery: _gifDelivery,
+                          onGifSelected: (asset) =>
+                              unawaited(_gifDelivery.send(asset)),
+                          gifAutoLoad:
+                              AppPreferencesScope.maybeOf(
+                                context,
+                              )?.value.gifAutoLoadEnabled ??
+                              true,
                         ),
                     ],
                   ),
@@ -791,14 +848,26 @@ class _MessageRow extends StatelessWidget {
                     ],
                   ),
                   const SizedBox(height: 3),
-                  Text(
-                    message.text,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 14,
-                      height: 1.35,
+                  if (!message.isDeleted && message.gif != null)
+                    YoGifView(
+                      asset: message.gif!,
+                      autoLoad:
+                          AppPreferencesScope.maybeOf(
+                            context,
+                          )?.value.gifAutoLoadEnabled ??
+                          true,
+                    )
+                  else
+                    Text(
+                      message.isDeleted
+                          ? copy.text('Message deleted', 'Wiadomość usunięta')
+                          : message.text,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 14,
+                        height: 1.35,
+                      ),
                     ),
-                  ),
                   if (message.reactions.isNotEmpty) ...[
                     const SizedBox(height: 5),
                     Wrap(

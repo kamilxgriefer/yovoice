@@ -81,6 +81,7 @@ void main() {
           ...currentReleaseTranslationKeys,
           ...currentReleaseCompactTranslationKeys,
           ...currentReleaseChatMediaTranslationKeys,
+          ...currentReleaseAttachmentProgressTranslationKeys,
           ...authCallReleaseTranslationKeys,
           ...directCallRefusalTranslationKeys,
           ...reelsTranslationKeys,
@@ -684,6 +685,7 @@ void main() {
         ...currentReleaseTranslationKeys,
         ...currentReleaseCompactTranslationKeys,
         ...currentReleaseChatMediaTranslationKeys,
+        ...currentReleaseAttachmentProgressTranslationKeys,
         ...authCallReleaseTranslationKeys,
         ...directCallRefusalTranslationKeys,
         ...reelsTranslationKeys,
@@ -765,6 +767,8 @@ void main() {
         'Reels',
         // Video is an established loanword in several supported languages.
         'Video',
+        // A medium acronym plus an untrusted title contains no English prose.
+        'GIF: {title}',
       };
       const naturallyUnchangedPairs = <String>{
         // Established Malay and Filipino media-editor loanwords, not fallback.
@@ -773,6 +777,9 @@ void main() {
         'ms|Unit',
         'fil|Media',
         'fil|Audio',
+        // Emoji is the established name of the medium in these languages.
+        'ms|Emoji',
+        'sw|Emoji',
         // CLDR display names that are genuinely identical to English.
         'ms|Hindi',
         'ms|Urdu',

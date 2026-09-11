@@ -1,14 +1,10 @@
-// The STRUCTURE of YO Moments -> Voice -> Discover after the density
-// rework: a featured GRID whose column count comes from the width it
-// actually has, and a recent list of tight rows rather than a card each.
-//
-// These are the assertions that would have caught the reported defect
-// ("huge blocks, very weak"): a 210 pt cover slab in a rail that showed
-// one and a half of four cards, and a bordered ~100 pt card per Moment.
-// Widths straddle the feed's own breakpoints — 320 / 390 / 768 / 1440 —
-// and the 200 % text frame proves the grid degrades to one column instead
-// of overflowing.
+// Approved YO Moments -> Voice -> Discover: one readable card per
+// recording, no featured duplicate or auto-selected desktop detail panel.
+// Widths straddle 320 / 390 / 768 / 1440; 200 % text must preserve the
+// real caption, duration, inline transport and author-chain entry.
+// The old tile helper's pure contract remains independently covered.
 
+import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -18,6 +14,7 @@ import 'package:yovoice/features/moments/data/services/moment_views_service.dart
 import 'package:yovoice/features/moments/presentation/widgets/moment_discover_tiles.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_story_tile.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moments_feed_view.dart';
+import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 
 final DateTime _anchor = DateTime.now();
 
@@ -47,8 +44,8 @@ VoiceMoment _moment(
   );
 }
 
-/// Engagement descends with the letter, so the featured order is
-/// deterministic: a, b, c, d, then the rest.
+/// Same timestamps retain a deterministic recent-order tie-break by ID.
+/// Real engagement remains distinct from that ordering.
 final _pool = <VoiceMoment>[
   _moment('a', author: 'p1', likes: 90, comments: 30),
   _moment('b', author: 'p2', likes: 70, comments: 20),
@@ -62,18 +59,22 @@ class _StaticDiscovery implements MomentDiscoveryService {
   _StaticDiscovery(this.moments);
 
   final List<VoiceMoment> moments;
+  int loadCalls = 0;
 
   @override
   Future<MomentDiscoveryFeed> loadDiscoveryFeed({
     int poolSize = MomentDiscoveryService.defaultPoolSize,
     int? seed,
-  }) async => MomentDiscoveryFeed(
-    moments: moments,
-    fetchedCount: moments.length,
-    drops: const <String, MomentDropReason>{},
-    seed: seed ?? 0,
-    poolExhausted: false,
-  );
+  }) async {
+    loadCalls += 1;
+    return MomentDiscoveryFeed(
+      moments: moments,
+      fetchedCount: moments.length,
+      drops: const <String, MomentDropReason>{},
+      seed: seed ?? 0,
+      poolExhausted: false,
+    );
+  }
 
   @override
   Stream<Map<String, MomentEngagement>> watchEngagement({
@@ -91,21 +92,172 @@ class _StaticDiscovery implements MomentDiscoveryService {
 class _StaticViews implements MomentViewsService {
   _StaticViews(this.viewed);
 
-  final Set<String> viewed;
+  // Null deliberately means the listener has NOT emitted, not an empty
+  // but resolved viewed set. Both states must avoid false "heard" rings.
+  final Set<String>? viewed;
+  int watchCalls = 0;
+  final List<String> markedIds = <String>[];
 
   @override
-  Stream<Set<String>> watchViewedMomentIds() =>
-      Stream<Set<String>>.value(viewed);
+  Stream<Set<String>> watchViewedMomentIds() {
+    watchCalls += 1;
+    return viewed == null
+        ? const Stream<Set<String>>.empty()
+        : Stream<Set<String>>.value(viewed!);
+  }
 
   @override
-  Future<void> markViewed(String momentId) async {}
+  Future<void> markViewed(String momentId) async {
+    markedIds.add(momentId);
+  }
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
+Future<void> _pumpFeed(
+  WidgetTester tester, {
+  required Size size,
+  double textScale = 1,
+  Set<String>? viewed = const <String>{},
+}) async {
+  await tester.binding.setSurfaceSize(size);
+  addTearDown(() => tester.binding.setSurfaceSize(null));
+  final auth = MockFirebaseAuth(
+    signedIn: true,
+    mockUser: MockUser(uid: 'layout-viewer'),
+  );
+  final discovery = _StaticDiscovery(_pool);
+  final views = _StaticViews(viewed);
+  var playerCreations = 0;
+  await tester.pumpWidget(
+    MaterialApp(
+      theme: ThemeData.dark(useMaterial3: true),
+      home: MediaQuery(
+        data: MediaQueryData(
+          size: size,
+          textScaler: TextScaler.linear(textScale),
+        ),
+        child: Scaffold(
+          body: MomentsFeedView(
+            auth: auth,
+            onRecord: () {},
+            discoveryService: discovery,
+            viewsService: views,
+            playerFactory: () {
+              playerCreations += 1;
+              throw StateError(
+                'Rendering a recording must not start a player.',
+              );
+            },
+          ),
+        ),
+      ),
+    ),
+  );
+  await tester.pump();
+  for (var i = 0; i < 5; i++) {
+    await tester.pump(const Duration(milliseconds: 50));
+  }
+  expect(discovery.loadCalls, 1, reason: 'The fixture must reach discovery.');
+  expect(views.watchCalls, 1, reason: 'Viewed state must actually subscribe.');
+  expect(views.markedIds, isEmpty, reason: 'Arriving is not listening.');
+  expect(playerCreations, 0, reason: 'There is no autoplay on arrival.');
+  expect(find.byKey(const ValueKey('moments-discovery-error')), findsNothing);
+}
+
+Finder _feedScrollable() => find
+    .descendant(
+      of: find.byKey(const ValueKey('moments-feed-scroll')),
+      matching: find.byType(Scrollable),
+    )
+    .first;
+
+double _listWidth(Size size) =>
+    size.width < ResponsiveContentWidth.list.maxWidth
+    ? size.width
+    : ResponsiveContentWidth.list.maxWidth;
+
+double _gutter(Size size) => size.width < 600
+    ? 16
+    : size.width < 1100
+    ? 24
+    : 32;
+
+void _expectSingleColumn(WidgetTester tester, Size size) {
+  final list = tester.getRect(
+    find.byKey(const ValueKey('moments-feed-scroll')),
+  );
+  expect(list.width, _listWidth(size));
+  expect(list.left, (size.width - _listWidth(size)) / 2);
+  final a = tester.getRect(find.byKey(const ValueKey('moment-row-a')));
+  final b = tester.getRect(find.byKey(const ValueKey('moment-row-b')));
+  expect(a.left, list.left + _gutter(size));
+  expect(a.width, list.width - 2 * _gutter(size));
+  expect(b.left, a.left);
+  expect(b.width, a.width);
+  expect(a.bottom, lessThanOrEqualTo(b.top));
+  expect(find.byKey(const ValueKey('moments-detail-panel')), findsNothing);
+  for (final moment in _pool) {
+    expect(find.byKey(ValueKey('moment-featured-${moment.id}')), findsNothing);
+    expect(
+      find.byKey(ValueKey('moments-chain-${moment.authorId}')),
+      findsNothing,
+    );
+  }
+}
+
+Future<void> _expectReadableCard(
+  WidgetTester tester,
+  Size size, {
+  String id = 'a',
+}) async {
+  final card = find.byKey(ValueKey('moment-row-$id'));
+  await tester.scrollUntilVisible(card, 240, scrollable: _feedScrollable());
+  expect(card, findsOneWidget);
+  final moment = _pool.singleWhere((item) => item.id == id);
+  expect(
+    find.descendant(of: card, matching: find.text(moment.caption)),
+    findsOneWidget,
+  );
+  expect(
+    find.descendant(of: card, matching: find.text('1:03')),
+    findsOneWidget,
+  );
+  final progress = tester.widget<Slider>(
+    find.byKey(ValueKey('moment-row-progress-$id')),
+  );
+  expect(progress.max, 63000);
+  expect(progress.value, 0);
+  expect(
+    progress.onChanged,
+    isNull,
+    reason: 'No implicit playback or seeking.',
+  );
+  for (final control in ['chain', 'menu', 'play']) {
+    final finder = find.byKey(ValueKey('moment-row-$control-$id'));
+    await tester.ensureVisible(finder);
+    await tester.pump();
+    expect(finder.hitTestable(), findsOneWidget);
+    final target = tester.getRect(finder);
+    final rect = tester.getRect(card);
+    expect(target.width, greaterThanOrEqualTo(44));
+    expect(target.height, greaterThanOrEqualTo(44));
+    expect(rect.contains(target.topLeft), isTrue);
+    expect(rect.contains(target.bottomRight), isTrue);
+    expect(rect.width, _listWidth(size) - 2 * _gutter(size));
+    expect(rect.left, (size.width - _listWidth(size)) / 2 + _gutter(size));
+  }
+  final play = tester.widget<IconButton>(
+    find.byKey(ValueKey('moment-row-play-$id')),
+  );
+  expect(play.onPressed, isNotNull);
+  expect(play.tooltip, 'Play');
+  expect(tester.takeException(), isNull);
+}
+
 void main() {
-  group('the featured column rule reads available width, not a device', () {
+  group('the retained tile helper reads available width, not a device', () {
     test('four phone/tablet/desktop measures resolve to 1, 2, 3 and 4', () {
       // The width the grid receives: the viewport minus the feed's own
       // gutter (16 compact / 24 otherwise), and on 1100+ minus the detail
@@ -126,210 +278,87 @@ void main() {
   });
 
   group('the Discover structure at every width', () {
-    Future<void> pump(
-      WidgetTester tester, {
-      required Size size,
-      double textScale = 1,
-      Set<String> viewed = const <String>{},
-    }) async {
-      await tester.binding.setSurfaceSize(size);
-      addTearDown(() => tester.binding.setSurfaceSize(null));
-      await tester.pumpWidget(
-        MaterialApp(
-          theme: ThemeData.dark(useMaterial3: true),
-          home: MediaQuery(
-            data: MediaQueryData(
-              size: size,
-              textScaler: TextScaler.linear(textScale),
-            ),
-            child: Scaffold(
-              body: MomentsFeedView(
-                onRecord: () {},
-                discoveryService: _StaticDiscovery(_pool),
-                viewsService: _StaticViews(viewed),
-              ),
-            ),
-          ),
-        ),
-      );
-      await tester.pump();
-      for (var i = 0; i < 5; i++) {
-        await tester.pump(const Duration(milliseconds: 50));
-      }
-    }
-
-    /// Featured tile rectangles grouped into visual rows by their top edge.
-    List<List<String>> gridRows(WidgetTester tester) {
-      final byTop = <double, List<(double, String)>>{};
-      for (final id in ['a', 'b', 'c', 'd', 'e', 'f']) {
-        final finder = find.byKey(ValueKey('moment-featured-$id'));
-        if (finder.evaluate().isEmpty) continue;
-        final rect = tester.getRect(finder);
-        byTop.putIfAbsent(rect.top, () => []).add((rect.left, id));
-      }
-      final tops = byTop.keys.toList()..sort();
-      return [
-        for (final top in tops)
-          (byTop[top]!..sort((a, b) => a.$1.compareTo(b.$1)))
-              .map((entry) => entry.$2)
-              .toList(),
-      ];
-    }
-
-    testWidgets('320: one column, capped at two tiles so the recent list is '
-        'not pushed off the first screen', (tester) async {
-      await pump(tester, size: const Size(320, 800));
-      expect(gridRows(tester), [
-        ['a'],
-        ['b'],
-      ]);
-      expect(tester.takeException(), isNull);
-    });
-
-    testWidgets('390: a two-by-two grid, not a rail with a card and a half', (
+    testWidgets('320: one column keeps all six recordings reachable once', (
       tester,
     ) async {
-      await pump(tester, size: const Size(390, 844));
-      expect(gridRows(tester), [
-        ['a', 'b'],
-        ['c', 'd'],
-      ]);
-      // Every tile of a row shares its top and sits left of the next.
-      final a = tester.getRect(find.byKey(const ValueKey('moment-featured-a')));
-      final b = tester.getRect(find.byKey(const ValueKey('moment-featured-b')));
-      expect(a.top, b.top);
-      expect(a.width, closeTo(b.width, 0.5));
-      expect(a.right, lessThanOrEqualTo(b.left));
-      // Compact by construction: the slab this replaced was 236 x 210.
-      expect(a.width, lessThan(200));
-      expect(a.height, lessThan(150));
-      expect(tester.takeException(), isNull);
+      const size = Size(320, 800);
+      await _pumpFeed(tester, size: size);
+      _expectSingleColumn(tester, size);
+      for (final moment in _pool) {
+        await _expectReadableCard(tester, size, id: moment.id);
+      }
     });
 
-    testWidgets('768: three columns and one complete row — never an orphan '
-        'cell in a second row', (tester) async {
-      await pump(tester, size: const Size(768, 1024));
-      expect(gridRows(tester), [
-        ['a', 'b', 'c'],
-      ]);
-      expect(tester.takeException(), isNull);
-    });
+    testWidgets(
+      '390: full-width recording cards have equal width and never overlap',
+      (tester) async {
+        const size = Size(390, 844);
+        await _pumpFeed(tester, size: size);
+        _expectSingleColumn(tester, size);
+        await _expectReadableCard(tester, size);
+      },
+    );
 
-    testWidgets('1440: four columns beside the detail panel, and the list '
-        'stops at the canonical measure instead of stretching', (tester) async {
-      await pump(tester, size: const Size(1440, 900));
-      expect(gridRows(tester), [
-        ['a', 'b', 'c', 'd'],
-      ]);
-      expect(
-        find.byKey(const ValueKey('moments-detail-panel')),
-        findsOneWidget,
-      );
-      // Desktop is not a stretched phone: the scrolling content is bounded
-      // well inside the 1080 pt the feed column receives.
-      final list = tester.getRect(
-        find.byKey(const ValueKey('moments-feed-scroll')),
-      );
-      expect(list.width, lessThanOrEqualTo(1040));
-      expect(list.width, greaterThan(600));
-      expect(tester.takeException(), isNull);
-    });
-
-    testWidgets('200 % text on a phone: one column, and the row facts stack '
-        'under the caption rather than overflowing', (tester) async {
-      await pump(tester, size: const Size(390, 1400), textScale: 2);
-      expect(gridRows(tester), [
-        ['a'],
-        ['b'],
-      ]);
-      expect(find.byKey(const ValueKey('moment-row-a')), findsOneWidget);
-      expect(find.byKey(const ValueKey('moment-row-play-a')), findsOneWidget);
-      expect(tester.takeException(), isNull);
-    });
-
-    testWidgets('320 at 200 % text still renders without an overflow', (
+    testWidgets('768: tablet cards use one column with 24 pt page gutters', (
       tester,
     ) async {
-      await pump(tester, size: const Size(320, 1400), textScale: 2);
-      expect(find.byKey(const ValueKey('moment-row-a')), findsOneWidget);
-      expect(tester.takeException(), isNull);
+      const size = Size(768, 1024);
+      await _pumpFeed(tester, size: size);
+      _expectSingleColumn(tester, size);
+      await _expectReadableCard(tester, size);
     });
+
+    testWidgets(
+      '1440: the centered list stops at 880 pt without an automatic detail panel',
+      (tester) async {
+        const size = Size(1440, 900);
+        await _pumpFeed(tester, size: size);
+        _expectSingleColumn(tester, size);
+        await _expectReadableCard(tester, size);
+      },
+    );
+
+    testWidgets(
+      '390 at 200 % text preserves caption, duration and reachable controls',
+      (tester) async {
+        const size = Size(390, 1400);
+        await _pumpFeed(tester, size: size, textScale: 2);
+        _expectSingleColumn(tester, size);
+        await _expectReadableCard(tester, size);
+      },
+    );
+
+    testWidgets(
+      '320 at 200 % text keeps a complete single-card transport in bounds',
+      (tester) async {
+        const size = Size(320, 1400);
+        await _pumpFeed(tester, size: size, textScale: 2);
+        _expectSingleColumn(tester, size);
+        await _expectReadableCard(tester, size);
+      },
+    );
   });
 
-  group('a recent entry is a row, not a card', () {
-    Future<void> pump(WidgetTester tester, Size size) async {
-      await tester.binding.setSurfaceSize(size);
-      addTearDown(() => tester.binding.setSurfaceSize(null));
-      await tester.pumpWidget(
-        MaterialApp(
-          theme: ThemeData.dark(useMaterial3: true),
-          home: Scaffold(
-            body: MomentsFeedView(
-              onRecord: () {},
-              discoveryService: _StaticDiscovery(_pool),
-              viewsService: _StaticViews(const {'a'}),
-            ),
-          ),
-        ),
-      );
-      await tester.pump();
-      for (var i = 0; i < 5; i++) {
-        await tester.pump(const Duration(milliseconds: 50));
-      }
-    }
-
+  group('each recording has real transport within the readable measure', () {
     for (final size in const [
       Size(320, 800),
       Size(390, 844),
       Size(768, 1024),
       Size(1440, 900),
     ]) {
-      testWidgets('at ${size.width.toInt()} a row stays tight and keeps a '
-          '44 pt transport target', (tester) async {
-        await pump(tester, size);
-
-        final row = tester.getRect(find.byKey(const ValueKey('moment-row-a')));
-        expect(
-          row.height,
-          lessThan(90),
-          reason: 'the bordered card per Moment was roughly 100 pt tall',
-        );
-        final play = tester.getRect(
-          find.byKey(const ValueKey('moment-row-play-a')),
-        );
-        expect(play.width, greaterThanOrEqualTo(44));
-        expect(play.height, greaterThanOrEqualTo(44));
-        // The transport sits inside the row, not on a slab of its own.
-        expect(row.contains(play.center), isTrue);
-        expect(tester.takeException(), isNull);
-      });
+      testWidgets(
+        'at ${size.width.toInt()} a card keeps exact duration, progress and 44 pt controls',
+        (tester) async {
+          await _pumpFeed(tester, size: size, viewed: const {'a'});
+          await _expectReadableCard(tester, size);
+        },
+      );
     }
   });
 
   group(
     'heard reads as heard in Discover, in the story tiles\' vocabulary',
     () {
-      Future<void> pump(WidgetTester tester, Set<String> viewed) async {
-        await tester.binding.setSurfaceSize(const Size(390, 844));
-        addTearDown(() => tester.binding.setSurfaceSize(null));
-        await tester.pumpWidget(
-          MaterialApp(
-            theme: ThemeData.dark(useMaterial3: true),
-            home: Scaffold(
-              body: MomentsFeedView(
-                onRecord: () {},
-                discoveryService: _StaticDiscovery(_pool),
-                viewsService: _StaticViews(viewed),
-              ),
-            ),
-          ),
-        );
-        await tester.pump();
-        for (var i = 0; i < 5; i++) {
-          await tester.pump(const Duration(milliseconds: 50));
-        }
-      }
-
       MomentSeenAvatar avatarIn(WidgetTester tester, Key key) =>
           tester.widget<MomentSeenAvatar>(
             find
@@ -340,28 +369,28 @@ void main() {
                 .first,
           );
 
-      testWidgets('a heard Moment dims on BOTH its featured tile and its row; '
+      testWidgets('a heard Moment dims on its single-card chain entry; '
           'an unheard one does not', (tester) async {
-        await pump(tester, {'a'});
+        await _pumpFeed(tester, size: const Size(390, 844), viewed: {'a'});
 
         expect(
-          avatarIn(tester, const ValueKey('moment-featured-a')).seen,
+          avatarIn(tester, const ValueKey('moment-row-chain-a')).seen,
           isTrue,
         );
         expect(avatarIn(tester, const ValueKey('moment-row-a')).seen, isTrue);
         expect(
-          avatarIn(tester, const ValueKey('moment-featured-b')).seen,
+          avatarIn(tester, const ValueKey('moment-row-chain-b')).seen,
           isFalse,
         );
         expect(avatarIn(tester, const ValueKey('moment-row-b')).seen, isFalse);
       });
 
-      testWidgets('unknown viewed state fails OPEN: nothing is greyed out '
+      testWidgets('unknown viewed state stays unheard: nothing is greyed out '
           'before the momentViews listener has said anything', (tester) async {
-        await pump(tester, const <String>{});
+        await _pumpFeed(tester, size: const Size(390, 844), viewed: null);
         for (final id in ['a', 'b']) {
           expect(
-            avatarIn(tester, ValueKey('moment-featured-$id')).seen,
+            avatarIn(tester, ValueKey('moment-row-chain-$id')).seen,
             isFalse,
           );
           expect(avatarIn(tester, ValueKey('moment-row-$id')).seen, isFalse);
@@ -370,7 +399,7 @@ void main() {
 
       testWidgets('the ring stops are the story tile\'s own definition, so the '
           'two surfaces cannot drift apart', (tester) async {
-        await pump(tester, {'a'});
+        await _pumpFeed(tester, size: const Size(390, 844), viewed: {'a'});
         final context = tester.element(find.byType(MomentsFeedView));
         expect(
           MomentStoryTile.ringColors(context, seen: true),

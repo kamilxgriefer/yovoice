@@ -59,6 +59,7 @@ class ReelEngagementBar extends StatelessWidget {
     this.variant = ReelEngagementBarVariant.rail,
     this.railAxis = Axis.vertical,
     this.railTrailing,
+    this.railAdditional = const [],
     super.key,
   });
 
@@ -86,6 +87,7 @@ class ReelEngagementBar extends StatelessWidget {
   /// your own — laid out by the rail itself so the three plates share one
   /// wrapping run and can never overflow a very small frame.
   final Widget? railTrailing;
+  final List<Widget> railAdditional;
 
   @override
   Widget build(BuildContext context) {
@@ -178,6 +180,7 @@ class ReelEngagementBar extends StatelessWidget {
         showCount: showCounts,
         onTap: onComments,
       ),
+      ...railAdditional,
       ?trailing,
     ];
     if (!horizontal) {
@@ -200,7 +203,7 @@ class ReelEngagementBar extends StatelessWidget {
     // totals stay in every control's spoken label either way.
     return LayoutBuilder(
       builder: (context, constraints) {
-        final count = 2 + (trailing == null ? 0 : 1);
+        final count = 2 + railAdditional.length + (trailing == null ? 0 : 1);
         final labelled =
             constraints.hasBoundedWidth &&
             constraints.maxWidth >=
@@ -555,8 +558,8 @@ class _PanelPill extends StatelessWidget {
       minimumSize: const Size(48, 44),
       child: AnimatedContainer(
         duration: AppMotion.resolve(context, AppMotion.quick),
-        height: 44,
-        padding: const EdgeInsets.symmetric(horizontal: 14),
+        constraints: const BoxConstraints(minHeight: 44),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
         decoration: BoxDecoration(
           color: highlighted ? colors.primaryContainer : palette.surfaceMuted,
           borderRadius: BorderRadius.circular(999),
@@ -564,11 +567,12 @@ class _PanelPill extends StatelessWidget {
             color: highlighted ? colors.primary : palette.border,
           ),
         ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
+        child: Wrap(
+          spacing: 8,
+          runSpacing: 4,
+          crossAxisAlignment: WrapCrossAlignment.center,
           children: <Widget>[
             Icon(icon, size: 20, color: iconColor ?? secondary),
-            const SizedBox(width: 8),
             // The count stays the first text so a reader (or a test) that
             // asks for "the number in this pill" gets the number.
             Text(
@@ -580,10 +584,8 @@ class _PanelPill extends StatelessWidget {
                 fontWeight: FontWeight.w800,
               ),
             ),
-            const SizedBox(width: 5),
             Text(
               label,
-              maxLines: 1,
               style: TextStyle(
                 color: secondary,
                 fontSize: 13,

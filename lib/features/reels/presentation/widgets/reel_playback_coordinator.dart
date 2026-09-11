@@ -37,6 +37,16 @@ abstract interface class ReelAudioPlayback {
 }
 
 typedef ReelAudioPlaybackFactory = ReelAudioPlayback Function();
+
+/// Supplies the video engine for one resolved Reel media URL.
+///
+/// The feed leaves this null and the card builds a real
+/// [VideoPlayerController]. A host that already owns a decoder — and the
+/// deterministic coverage of the autoplay policy, which must not spin up a
+/// platform decoder — supplies its own, exactly as [ReelAudioPlaybackFactory]
+/// does for the backing track.
+typedef ReelVideoPlaybackFactory =
+    ReelVideoPlayback Function(Uri uri, Reel reel);
 typedef ReelPlaybackTimerFactory =
     Timer Function(Duration duration, void Function() callback);
 
@@ -46,6 +56,9 @@ typedef ReelPlaybackTimerFactory =
 /// video trim, is corrected only after a bounded drift, and is reset together
 /// with the video on every composition loop. Photo Reels use the selected
 /// backing-audio interval as their finite timeline and never loop by surprise.
+///
+/// Autoplay is opt-in and video-only. See [autoplay] for the exact policy and
+/// the reasons a Reel refuses to start itself.
 class ReelPlaybackCoordinator extends ChangeNotifier {
   ReelPlaybackCoordinator({
     required Reel reel,
@@ -53,6 +66,9 @@ class ReelPlaybackCoordinator extends ChangeNotifier {
     ReelAudioPlaybackFactory? audioPlaybackFactory,
     DateTime Function()? now,
     ReelPlaybackTimerFactory? timerFactory,
+    bool autoplay = false,
+    bool muted = false,
+    this.onVideoProgress,
     this.driftTolerance = const Duration(milliseconds: 180),
     this.driftCorrectionInterval = const Duration(milliseconds: 750),
   }) : reel = reel,
@@ -63,7 +79,9 @@ class ReelPlaybackCoordinator extends ChangeNotifier {
        _audioPlaybackFactory =
            audioPlaybackFactory ?? _AudioplayersReelAudioPlayback.new,
        _now = now ?? DateTime.now,
-       _timerFactory = timerFactory ?? Timer.new;
+       _timerFactory = timerFactory ?? Timer.new,
+       _autoplayEnabled = autoplay,
+       _muted = muted;
 
   /// Local drafts reuse the exact timeline without inventing server IDs,
   /// author identities, grants or published content.
@@ -78,15 +96,22 @@ class ReelPlaybackCoordinator extends ChangeNotifier {
     this.driftTolerance = const Duration(milliseconds: 180),
     this.driftCorrectionInterval = const Duration(milliseconds: 750),
   }) : reel = null,
+       onVideoProgress = null,
        _mediaKind = mediaKind,
        _composition = composition,
        _backingAudioDurationMs = backingAudioDurationMs,
        _resolveBackingAudioUri = resolveBackingAudioUri,
        _audioPlaybackFactory = audioPlaybackFactory,
        _now = now ?? DateTime.now,
-       _timerFactory = timerFactory ?? Timer.new;
+       _timerFactory = timerFactory ?? Timer.new,
+       // A composer preview belongs to the person editing it: it starts when
+       // they ask for it and never on its own.
+       _autoplayEnabled = false,
+       _muted = false;
 
   final Reel? reel;
+  final ValueChanged<Duration>? onVideoProgress;
+  Duration? _lastViewedPosition;
   final ReelMediaKind _mediaKind;
   final ReelComposition _composition;
   final int? _backingAudioDurationMs;
@@ -94,6 +119,7 @@ class ReelPlaybackCoordinator extends ChangeNotifier {
   final ReelAudioPlaybackFactory _audioPlaybackFactory;
   final DateTime Function() _now;
   final ReelPlaybackTimerFactory _timerFactory;
+  final bool _autoplayEnabled;
   final Duration driftTolerance;
   final Duration driftCorrectionInterval;
 
@@ -108,6 +134,17 @@ class ReelPlaybackCoordinator extends ChangeNotifier {
   bool _audioLoaded = false;
   bool _active = true;
   bool _desiredPlaying = false;
+  bool _muted;
+
+  /// Set only by [toggle] turning playback off — a deliberate hand-pause.
+  /// Autoplay stands down for as long as this Reel stays the active page, and
+  /// the flag is cleared when the viewer scrolls away from it.
+  bool _viewerPaused = false;
+
+  /// Set by the host while something outside the timeline stands in front of
+  /// this Reel: an open thread, a sheet or a pushed route above the feed, or
+  /// the app in the background.
+  bool _autoplaySuspended = false;
   bool _playing = false;
   bool _loading = false;
   bool _loopQueued = false;
@@ -119,6 +156,26 @@ class ReelPlaybackCoordinator extends ChangeNotifier {
   bool get isPlaying => _playing;
   bool get isLoading => _loading;
   bool get isActive => _active;
+
+  /// Whether this Reel is allowed to start itself. False for photo Reels and
+  /// for every composer preview.
+  bool get autoplayEnabled =>
+      _autoplayEnabled && _mediaKind == ReelMediaKind.video;
+
+  /// True while both engines are held at zero. Mute is a viewing preference,
+  /// not a property of the Reel: the composition's own mix is restored the
+  /// moment the viewer turns sound on.
+  bool get isMuted => _effectiveMuted;
+
+  /// A photo Reel's backing track *is* its content, so muting one would leave
+  /// nothing at all. Mute is therefore a video-only state.
+  bool get _effectiveMuted => _muted && _mediaKind == ReelMediaKind.video;
+
+  double get _videoVolume =>
+      _effectiveMuted ? 0 : _composition.originalAudioVolume / 100;
+  double get _backingAudioVolume =>
+      _effectiveMuted ? 0 : _composition.backingAudioVolume / 100;
+
   bool get _hasPlayableBackingAudio {
     final duration = _backingAudioDurationMs;
     return duration != null && _composition.audioTrimStartMs < duration;
@@ -154,20 +211,30 @@ class ReelPlaybackCoordinator extends ChangeNotifier {
     milliseconds: _backingAudioDurationMs ?? _composition.audioTrimStartMs,
   );
 
-  Future<void> attachVideo(ReelVideoPlayback video) {
+  /// The decoder is ready. This is the earliest moment a video Reel can play,
+  /// so it is also where autoplay is armed — [canToggle] needs a player, which
+  /// is why arming on [setActive] alone would miss the very first card.
+  Future<void> attachVideo(ReelVideoPlayback video) async {
     final previous = _video;
     _video = video;
-    _notify();
-    return _enqueue(() async {
-      if (previous != null && !identical(previous, video)) {
-        await previous.pause();
-      }
-      await video.setVolume(_composition.originalAudioVolume / 100);
-      final position = video.position;
-      if (position < _videoStart || position >= _videoEnd) {
-        await video.seek(_videoStart);
-      }
-    });
+    try {
+      // The player is recorded synchronously so canToggle is true at once, but
+      // listeners are told only after the first await: a host may attach from
+      // initState, and notifying there would rebuild during a build.
+      await _enqueue(() async {
+        if (previous != null && !identical(previous, video)) {
+          await previous.pause();
+        }
+        await video.setVolume(_videoVolume);
+        final position = video.position;
+        if (position < _videoStart || position >= _videoEnd) {
+          await video.seek(_videoStart);
+        }
+      });
+    } finally {
+      _notify();
+    }
+    await autoplay();
   }
 
   void detachVideo(ReelVideoPlayback video) {
@@ -177,29 +244,95 @@ class ReelPlaybackCoordinator extends ChangeNotifier {
     _desiredPlaying = false;
     _setPlaying(false);
     _cancelPhotoEndTimer();
+    // Straight to the player, not through the queue: a page being scrolled
+    // away is detached and then disposed in the same frame, and a queued
+    // command is dropped by disposal. Nothing else can reach this player any
+    // more — every queued operation reads _video when it runs, and it is
+    // already null.
+    unawaited(video.pause().catchError((Object _) {}));
     unawaited(
       _enqueue(() async {
-        await video.pause();
         if (_audioLoaded) await _audio?.pause();
       }).catchError((Object _) {}),
     );
     _notify();
   }
 
-  /// Activating a neighbouring page never resumes it implicitly. Deactivation
-  /// is immediate so a slow media grant cannot start sound after a swipe.
+  /// Becoming the active page starts an autoplaying Reel and nothing else: a
+  /// coordinator with autoplay off still never resumes implicitly, and a
+  /// suspended one waits for whatever is in front of it to go away.
+  /// Deactivation is immediate so a slow media grant cannot start sound after
+  /// a swipe.
   Future<void> setActive(bool active) {
     if (_active == active) return Future<void>.value();
     _active = active;
     if (!active) {
       _commandVersion += 1;
       _desiredPlaying = false;
+      // The hand-pause belonged to that visit. Scrolling back to this Reel
+      // later starts it again, the same as reaching it for the first time.
+      _viewerPaused = false;
       _setPlaying(false);
       _cancelPhotoEndTimer();
     }
     _notify();
-    if (active) return Future<void>.value();
+    if (active) return autoplay();
     return _enqueue(() => _pauseEngines(reset: true));
+  }
+
+  /// Starts this Reel without a tap.
+  ///
+  /// Safe to call from anywhere that could make autoplay newly possible — it
+  /// refuses unless every one of these holds: autoplay is enabled for this
+  /// coordinator, the media is video, this is the active page, nothing is
+  /// suspending playback, the viewer has not paused it by hand, and there is
+  /// a player to drive. Only one coordinator in a feed is ever active, so the
+  /// single-player invariant is unchanged.
+  Future<void> autoplay() {
+    final blocked =
+        !autoplayEnabled ||
+        _disposed ||
+        !_active ||
+        _autoplaySuspended ||
+        _viewerPaused ||
+        _desiredPlaying ||
+        !canToggle;
+    if (blocked) return Future<void>.value();
+    final command = ++_commandVersion;
+    _desiredPlaying = true;
+    return _enqueue(() async {
+      if (command != _commandVersion) return;
+      await _playNow(command);
+    });
+  }
+
+  /// Holds autoplay off while something outside the timeline stands in front
+  /// of this Reel — an open thread, a sheet or a pushed route, or the app in
+  /// the background. Suspending always pauses, whether or not this Reel
+  /// autoplays, so a hand-started photo Reel stops too. Releasing restarts
+  /// only what autoplay would have started on its own.
+  Future<void> setAutoplaySuspended(bool suspended) {
+    if (_autoplaySuspended == suspended) return Future<void>.value();
+    _autoplaySuspended = suspended;
+    if (!suspended) return autoplay();
+    return pause();
+  }
+
+  /// Applies the viewer's sound preference to both engines live, without
+  /// interrupting playback.
+  Future<void> setMuted(bool muted) {
+    if (_muted == muted) return Future<void>.value();
+    _muted = muted;
+    _notify();
+    return _enqueue(() async {
+      if (_disposed) return;
+      final video = _video;
+      if (video != null) await video.setVolume(_videoVolume);
+      final audio = _audio;
+      if (audio != null && _audioLoaded) {
+        await audio.setVolume(_backingAudioVolume);
+      }
+    });
   }
 
   Future<void> toggle() {
@@ -207,6 +340,9 @@ class ReelPlaybackCoordinator extends ChangeNotifier {
     final shouldPlay = !_desiredPlaying;
     final command = ++_commandVersion;
     _desiredPlaying = shouldPlay;
+    // A hand-pause outranks autoplay: it must not be undone by the next
+    // attach, tick or suspension release on this same page.
+    _viewerPaused = !shouldPlay;
     return _enqueue(() async {
       if (command != _commandVersion) return;
       if (shouldPlay) {
@@ -231,6 +367,18 @@ class ReelPlaybackCoordinator extends ChangeNotifier {
   Future<void> synchronizeVideoTick() async {
     final video = _video;
     if (_disposed || !_active || video == null) return;
+    final position = _playing && !_autoplaySuspended && video.isPlaying
+        ? video.position
+        : null;
+    final previousPosition = _lastViewedPosition;
+    _lastViewedPosition = position;
+    if (position != null && previousPosition != null) {
+      final delta = position - previousPosition;
+      // Readiness, buffering and a seek do not constitute an eligible watch.
+      if (delta > Duration.zero && delta <= const Duration(seconds: 1)) {
+        onVideoProgress?.call(delta);
+      }
+    }
     if (_playing && video.position >= _videoEnd) {
       if (_loopQueued) return;
       _loopQueued = true;
@@ -270,7 +418,7 @@ class ReelPlaybackCoordinator extends ChangeNotifier {
       if (_mediaKind == ReelMediaKind.video && video == null) return;
 
       if (video != null) {
-        await video.setVolume(_composition.originalAudioVolume / 100);
+        await video.setVolume(_videoVolume);
         if (video.position < _videoStart || video.position >= _videoEnd) {
           await video.seek(_videoStart);
         }
@@ -285,7 +433,7 @@ class ReelPlaybackCoordinator extends ChangeNotifier {
         return;
       }
       if (audio != null) {
-        await audio.setVolume(_composition.backingAudioVolume / 100);
+        await audio.setVolume(_backingAudioVolume);
         final expected = video == null
             ? _validPhotoAudioPosition(_audioPosition)
             : _expectedAudioPosition(video.position);
@@ -382,7 +530,7 @@ class ReelPlaybackCoordinator extends ChangeNotifier {
     final uri = await _resolveBackingAudioUri();
     if (_disposed) return audio;
     await audio.load(uri);
-    await audio.setVolume(_composition.backingAudioVolume / 100);
+    await audio.setVolume(_backingAudioVolume);
     await audio.seek(_audioStart);
     _audioPosition = _audioStart;
     _audioLoaded = true;
@@ -481,6 +629,7 @@ class ReelPlaybackCoordinator extends ChangeNotifier {
   }
 
   void _setPlaying(bool value) {
+    if (!value) _lastViewedPosition = null;
     if (_playing == value) return;
     _playing = value;
     _notify();

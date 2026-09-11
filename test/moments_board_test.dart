@@ -1,26 +1,27 @@
-// The Voice Moments stories feed: the ranking seam the surface renders,
-// the story strip and row list, the story viewer with its chains, the
+// The Voice Moments single-card feed: the ranking seam the surface renders,
+// per-recording author-chain entry, the story viewer with its chains, the
 // per-viewer viewed-state, the live counters, and the filter chips.
 //
 // HISTORY: this file used to pin the Discover AVATAR BOARD (circle tiles,
 // a bottom player, a shuffle control). The stories redesign replaced that
-// surface with a feed — strip of author chains, featured cards, a recent
-// list and a story viewer — so every widget-level claim in here has been
-// re-targeted at the new UI. What each old test PROVED was kept:
+// surface with a stories feed. The approved 2026-09-11 handoff now removes
+// duplicate Featured/Recent cards and the automatic wide detail panel. These
+// tests target one readable card per recording; public story/detail/sheet
+// contracts survive through explicit actions. What each old test PROVED stays:
 //
 //  * most-engaged-first ordering is asserted where the feed claims it
-//    (the Featured rail and the "Most engaged" filter);
+//    (the "Most engaged" filter, not a duplicate Featured rail);
 //  * live like/comment counters still update without a reload;
-//  * the play affordance really plays, and nothing plays on arrival;
+//  * inline play really plays the selected recording, with no arrival grant;
+//  * the avatar opens the real author chain at the first unheard recording;
 //  * the Following slice still opens the full card (playback, like,
 //    comment, offline download) via the Moment sheet;
-//  * every width lays out without overflow, with the detail panel a
-//    desktop-only composition.
+//  * every width lays out without overflow as a bounded, lazy reading list.
 //
 // DELETED, not silently dropped: "the shuffle is still there, and it is
 // a different order". The weighted-shuffle board order was a property of
 // the removed avatar board; the feed's Discover filter now renders
-// newest-first with an engagement-ranked Featured rail, and the shuffle
+// newest-first, with a separate engagement filter, and the shuffle
 // arithmetic itself is still proven in moments_discovery_test.dart. The
 // re-target that survives is that the reload control performs a real
 // second load.
@@ -107,6 +108,34 @@ Map<String, dynamic> _doc(VoiceMoment moment) => <String, dynamic>{
   'isDeleted': false,
 };
 
+Finder _feedScrollable() => find.descendant(
+  of: find.byKey(const ValueKey('moments-feed-scroll')),
+  matching: find.byWidgetPredicate(
+    (widget) =>
+        widget is Scrollable && widget.axisDirection == AxisDirection.down,
+  ),
+);
+
+/// Lazy cards must be reached through the actual list. Callers walk forward
+/// through the expected order instead of requiring every recording to mount.
+Future<void> _revealFeedRow(WidgetTester tester, String id) async {
+  final row = find.byKey(ValueKey('moment-row-$id'));
+  if (row.evaluate().isEmpty) {
+    await tester.scrollUntilVisible(row, 220, scrollable: _feedScrollable());
+  }
+  await tester.ensureVisible(row);
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 20));
+  expect(row, findsOneWidget);
+}
+
+Future<double> _rowContentTop(WidgetTester tester, String id) async {
+  await _revealFeedRow(tester, id);
+  final scroll = tester.state<ScrollableState>(_feedScrollable());
+  return tester.getTopLeft(find.byKey(ValueKey('moment-row-$id'))).dy +
+      scroll.position.pixels;
+}
+
 void main() {
   late PublicIdentityRepository originalIdentity;
 
@@ -128,13 +157,16 @@ void main() {
   MockFirebaseAuth authMe() =>
       MockFirebaseAuth(signedIn: true, mockUser: MockUser(uid: _me));
 
-  MomentService privateMoments({FakeFirebaseFirestore? firestore}) {
+  MomentService privateMoments({
+    FakeFirebaseFirestore? firestore,
+    List<Map<String, Object?>>? mediaRequests,
+  }) {
     final database = firestore ?? FakeFirebaseFirestore();
     return MomentService(
       firestore: database,
       auth: authMe(),
       storage: MockFirebaseStorage(),
-      mediaAccessInvoker: fakeMomentMediaAccessInvoker(),
+      mediaAccessInvoker: fakeMomentMediaAccessInvoker(requests: mediaRequests),
       readService: VoiceMomentReadService(
         viewInvoker: fakeVoiceMomentViewInvoker(
           firestore: database,
@@ -225,8 +257,8 @@ void main() {
   });
 
   group('the Discover feed', () {
-    testWidgets('the Featured rail leads with the most-engaged Moment, and '
-        'the Most engaged filter orders the whole list by engagement — '
+    testWidgets('Discover has no duplicate Featured rail, and the Most '
+        'engaged filter orders every recording by engagement — '
         'regardless of the order the pool was handed', (tester) async {
       await tester.binding.setSurfaceSize(const Size(390, 844));
       addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -240,9 +272,14 @@ void main() {
             // most-liked Moment LAST. This is exactly the old reported
             // "a popular one gets buried".
             discoveryService: _StaticDiscovery([
-              _moment('quiet', author: 'a'),
+              _moment('quiet', author: 'a', age: const Duration(hours: 1)),
               _moment('talked', author: 'c', likes: 2, comments: 6),
-              _moment('loud', author: 'b', likes: 40),
+              _moment(
+                'loud',
+                author: 'b',
+                likes: 40,
+                age: const Duration(hours: 3),
+              ),
             ]),
           ),
         ),
@@ -250,11 +287,9 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 50));
 
-      // Discover's Featured rail is engagement-ranked: 40 likes leads.
-      final featuredLoud = find.byKey(const ValueKey('moment-featured-loud'));
-      expect(featuredLoud, findsOneWidget);
-      // The horizontal rail lays lazily; the leftmost card is the proof.
-      expect(tester.getTopLeft(featuredLoud).dx, lessThan(80));
+      // Discover is newest first; popularity has its own explicit filter.
+      expect(find.byKey(const ValueKey('moment-row-quiet')), findsOneWidget);
+      expect(find.byKey(const ValueKey('moment-featured-loud')), findsNothing);
 
       // The Most engaged filter re-orders the entire list. The chip may
       // sit past the fold of the horizontal chip scroller on a phone.
@@ -268,25 +303,26 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 50));
 
-      Offset at(String id) =>
-          tester.getTopLeft(find.byKey(ValueKey('moment-row-$id')));
-      expect(
-        at('loud').dy,
-        lessThan(at('talked').dy),
-        reason: '40 likes must sit ahead of 2 likes and 6 comments',
-      );
-      expect(
-        at('talked').dy,
-        lessThan(at('quiet').dy),
-        reason: 'engagement of any kind must sit ahead of none',
-      );
-      // The real count travels with the row.
+      final loudTop = await _rowContentTop(tester, 'loud');
+      // The real count travels with the actual action, not decorative copy.
       expect(
         find.descendant(
-          of: find.byKey(const ValueKey('moment-row-loud')),
-          matching: find.text('40'),
+          of: find.byKey(const ValueKey('moment-row-like-loud')),
+          matching: find.text('Likes: 40'),
         ),
         findsOneWidget,
+      );
+      final talkedTop = await _rowContentTop(tester, 'talked');
+      final quietTop = await _rowContentTop(tester, 'quiet');
+      expect(
+        loudTop,
+        lessThan(talkedTop),
+        reason: 'Likes: 40 must sit ahead of Likes: 2 and Comments: 6',
+      );
+      expect(
+        talkedTop,
+        lessThan(quietTop),
+        reason: 'engagement of any kind must sit ahead of none',
       );
     });
 
@@ -313,81 +349,41 @@ void main() {
       await tester.pump(const Duration(milliseconds: 50));
 
       expect(find.byKey(const ValueKey('moment-row-solo')), findsOneWidget);
-      expect(find.byKey(const ValueKey('moments-chain-me')), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('moment-row-chain-solo')),
+        findsOneWidget,
+      );
+      expect(find.byKey(const ValueKey('moments-chain-me')), findsNothing);
       expect(find.byKey(const ValueKey('moments-create-cta')), findsOneWidget);
       expect(
         find.text('That is the only live Moment right now.'),
         findsOneWidget,
       );
+      await tester.tap(find.byKey(const ValueKey('moments-create-cta')));
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('yo-moments-create-sheet')),
+        findsOneWidget,
+      );
+      expect(find.text('Create Voice Moment'), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets('the FEATURED tile\'s play control opens the story viewer '
-        'at that exact Moment and really plays it', (tester) async {
-      await tester.binding.setSurfaceSize(const Size(390, 844));
-      addTearDown(() => tester.binding.setSurfaceSize(null));
-
-      final player = _FakeAudioPlayer();
-      await tester.pumpWidget(
-        MaterialApp(
-          home: MomentsScreen(
-            feedService: feed(),
-            auth: authMe(),
-            momentService: privateMoments(),
-            playerFactory: () => player,
-            discoveryService: _StaticDiscovery([
-              _moment(
-                'first',
-                author: 'a',
-                likes: 9,
-                age: const Duration(hours: 4),
-              ),
-              _moment('second', author: 'a', age: const Duration(hours: 1)),
-            ]),
-          ),
-        ),
-      );
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 50));
-
-      expect(player.playCount, 0);
-
-      await tester.tap(
-        find.byKey(const ValueKey('moment-featured-play-first')),
-      );
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 400));
-      await tester.pump(const Duration(milliseconds: 100));
-
-      expect(player.playCount, 1);
-      expect(
-        player.lastUrl,
-        'https://storage.googleapis.com/yovoice-test/'
-        'first.m4a?X-Goog-Signature=test',
-      );
-      // Same destination the row's control has: the author's chain,
-      // positioned at the tapped Moment. 'first' is the OLDER of the two.
-      expect(
-        find.byKey(const ValueKey('story-position-indicator')),
-        findsOneWidget,
-      );
-      expect(find.text('1 of 2'), findsOneWidget);
-    });
-
-    testWidgets('nothing plays on arrival; the play affordance on a row '
-        'opens the story viewer at that exact Moment and really plays it', (
+    testWidgets('the older recording has one reachable card whose inline '
+        'play targets that exact Moment, without opening a story', (
       tester,
     ) async {
       await tester.binding.setSurfaceSize(const Size(390, 844));
       addTearDown(() => tester.binding.setSurfaceSize(null));
 
       final player = _FakeAudioPlayer();
+      final mediaRequests = <Map<String, Object?>>[];
       await tester.pumpWidget(
         MaterialApp(
           home: MomentsScreen(
             feedService: feed(),
             auth: authMe(),
-            momentService: privateMoments(),
+            momentService: privateMoments(mediaRequests: mediaRequests),
             playerFactory: () => player,
             discoveryService: _StaticDiscovery([
               _moment(
@@ -404,28 +400,110 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 50));
 
-      // Audio that starts by itself is how a person closes the tab.
       expect(player.playCount, 0);
+      expect(mediaRequests, isEmpty);
 
-      await tester.tap(find.byKey(const ValueKey('moment-row-play-second')));
+      await _revealFeedRow(tester, 'first');
+      final play = find.byKey(const ValueKey('moment-row-play-first'));
+      await tester.ensureVisible(play);
+      await tester.tap(play);
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 400));
       await tester.pump(const Duration(milliseconds: 100));
 
       expect(player.playCount, 1);
+      expect(mediaRequests.map((request) => request['momentId']), ['first']);
       expect(
         player.lastUrl,
         'https://storage.googleapis.com/yovoice-test/'
-        'second.m4a?X-Goog-Signature=test',
+        'first.m4a?X-Goog-Signature=test',
       );
-      // The viewer opened the author's chain POSITIONED at the tapped
-      // Moment: `second` is the newer of the two, so "2 of 2".
+      expect(find.byType(MomentStoryViewer), findsNothing);
+      expect(find.byKey(const ValueKey('moment-row-first')), findsOneWidget);
+      expect(find.byKey(const ValueKey('moment-featured-first')), findsNothing);
       expect(
-        find.byKey(const ValueKey('story-position-indicator')),
+        find.descendant(of: play, matching: find.byIcon(Icons.pause_rounded)),
         findsOneWidget,
       );
-      expect(find.text('2 of 2'), findsOneWidget);
     });
+
+    testWidgets(
+      'nothing requests media or records a view on arrival; row '
+      'play starts the exact recording inline and marks only that one heard',
+      (tester) async {
+        await tester.binding.setSurfaceSize(const Size(390, 844));
+        addTearDown(() => tester.binding.setSurfaceSize(null));
+
+        final player = _FakeAudioPlayer();
+        final mediaRequests = <Map<String, Object?>>[];
+        final db = FakeFirebaseFirestore();
+        final views = MomentViewsService(firestore: db, auth: authMe());
+        await tester.pumpWidget(
+          MaterialApp(
+            home: MomentsScreen(
+              feedService: feed(),
+              auth: authMe(),
+              momentService: privateMoments(mediaRequests: mediaRequests),
+              viewsService: views,
+              playerFactory: () => player,
+              discoveryService: _StaticDiscovery([
+                _moment(
+                  'first',
+                  author: 'a',
+                  likes: 9,
+                  age: const Duration(hours: 4),
+                ),
+                _moment('second', author: 'a', age: const Duration(hours: 1)),
+              ]),
+            ),
+          ),
+        );
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 50));
+
+        // Audio that starts by itself is how a person closes the tab.
+        expect(player.playCount, 0);
+        expect(mediaRequests, isEmpty);
+        expect(
+          (await db
+                  .collection('users')
+                  .doc(_me)
+                  .collection('momentViews')
+                  .get())
+              .docs,
+          isEmpty,
+        );
+
+        await tester.tap(find.byKey(const ValueKey('moment-row-play-second')));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 400));
+        await tester.pump(const Duration(milliseconds: 100));
+
+        expect(player.playCount, 1);
+        expect(mediaRequests.map((request) => request['momentId']), ['second']);
+        expect(
+          player.lastUrl,
+          'https://storage.googleapis.com/yovoice-test/'
+          'second.m4a?X-Goog-Signature=test',
+        );
+        expect(find.byType(MomentStoryViewer), findsNothing);
+        final heard = await db
+            .collection('users')
+            .doc(_me)
+            .collection('momentViews')
+            .get();
+        expect(heard.docs.map((doc) => doc.id), ['second']);
+        expect(heard.docs.single.data().keys.toList(), ['viewedAt']);
+        expect(
+          tester
+              .widget<Slider>(
+                find.byKey(const ValueKey('moment-row-progress-second')),
+              )
+              .value,
+          120,
+        );
+      },
+    );
 
     testWidgets('likes and comments go live WITHOUT a reload — the reported '
         'defect', (tester) async {
@@ -434,30 +512,36 @@ void main() {
 
       final counters = StreamController<Map<String, MomentEngagement>>();
       addTearDown(counters.close);
+      final discovery = _StaticDiscovery([
+        _moment('solo', author: 'a', likes: 1),
+      ], counters: counters.stream);
 
       await tester.pumpWidget(
         MaterialApp(
           home: MomentsScreen(
             feedService: feed(),
             auth: authMe(),
-            discoveryService: _StaticDiscovery([
-              _moment('solo', author: 'a', likes: 1),
-            ], counters: counters.stream),
+            discoveryService: discovery,
           ),
         ),
       );
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 50));
 
-      final row = find.byKey(const ValueKey('moment-row-solo'));
+      final like = find.byKey(const ValueKey('moment-row-like-solo'));
+      final comments = find.byKey(const ValueKey('moment-row-comments-solo'));
       // First paint already shows the real loaded count...
       expect(
-        find.descendant(of: row, matching: find.text('1')),
+        find.descendant(of: like, matching: find.text('Likes: 1')),
         findsOneWidget,
       );
-      // ...and a zero comment count renders NOTHING, never a fabricated
-      // "0".
-      expect(find.descendant(of: row, matching: find.text('0')), findsNothing);
+      // ...and zero comments have an honest action label, no invented count.
+      expect(
+        find.descendant(of: comments, matching: find.text('Comments')),
+        findsOneWidget,
+      );
+      expect(find.text('Comments: 0'), findsNothing);
+      expect(discovery.loads, 1);
 
       // A like landing afterwards arrives without any reload.
       counters.add(<String, MomentEngagement>{
@@ -467,12 +551,17 @@ void main() {
       await tester.pump();
 
       expect(
-        find.descendant(of: row, matching: find.text('7')),
+        find.descendant(of: like, matching: find.text('Likes: 7')),
         findsOneWidget,
       );
       expect(
-        find.descendant(of: row, matching: find.text('3')),
+        find.descendant(of: comments, matching: find.text('Comments: 3')),
         findsOneWidget,
+      );
+      expect(
+        discovery.loads,
+        1,
+        reason: 'live counters cannot require a reload',
       );
     });
 
@@ -501,7 +590,7 @@ void main() {
       final row = find.byKey(const ValueKey('moment-row-solo'));
       expect(row, findsOneWidget);
       expect(
-        find.descendant(of: row, matching: find.text('4')),
+        find.descendant(of: row, matching: find.text('Likes: 4')),
         findsOneWidget,
       );
       expect(tester.takeException(), isNull);
@@ -595,21 +684,35 @@ void main() {
             await tester.pump();
           }
           expect(tester.takeException(), isNull);
-          // The list is the surface: the first row is reachable at every
-          // width, and the detail panel is a desktop-only composition —
-          // never a stretched phone extra.
+          // Every width is the approved bounded reading list. The automatic
+          // wide panel was removed, not the card's transport/detail actions.
           expect(firstRow, findsOneWidget);
-          if (width >= 1100) {
-            expect(
-              find.byKey(const ValueKey('moments-detail-panel')),
-              findsOneWidget,
-            );
-          } else {
-            expect(
-              find.byKey(const ValueKey('moments-detail-panel')),
-              findsNothing,
-            );
-          }
+          expect(
+            find.byKey(const ValueKey('moments-detail-panel')),
+            findsNothing,
+          );
+          expect(
+            find.byKey(const ValueKey('moment-featured-m0')),
+            findsNothing,
+          );
+          final cardBounds = tester.getRect(firstRow);
+          expect(cardBounds.left, greaterThanOrEqualTo(0));
+          expect(cardBounds.right, lessThanOrEqualTo(width));
+          expect(cardBounds.width, lessThanOrEqualTo(880));
+          final play = find.byKey(const ValueKey('moment-row-play-m0'));
+          await tester.ensureVisible(play);
+          await tester.pump();
+          expect(play.hitTestable(), findsOneWidget);
+          expect(tester.getSize(play).shortestSide, greaterThanOrEqualTo(44));
+          expect(
+            find.byKey(const ValueKey('moment-row-progress-m0')),
+            findsOneWidget,
+          );
+          expect(
+            find.byKey(const ValueKey('moment-row-title-m0')),
+            findsOneWidget,
+          );
+          expect(tester.takeException(), isNull);
           // Rows mounted by the accessibility scroll queue identity-badge
           // resolution on a one-millisecond batch timer. Drain that real
           // post-mount work rather than leaving a timer past tree disposal.
@@ -798,7 +901,7 @@ void main() {
       expect(snapshot.docs.single.data().keys.toList(), ['viewedAt']);
     });
 
-    testWidgets('a chain opened from the strip starts at the first Moment '
+    testWidgets('a chain opened from a card avatar starts at the first Moment '
         'this account has NOT heard', (tester) async {
       await tester.binding.setSurfaceSize(const Size(390, 844));
       addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -829,7 +932,14 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 50));
 
-      await tester.tap(find.byKey(const ValueKey('moments-chain-a')));
+      expect(player.playCount, 0);
+      expect(
+        (await db.collection('users').doc(_me).collection('momentViews').get())
+            .docs
+            .map((doc) => doc.id),
+        ['c1'],
+      );
+      await tester.tap(find.byKey(const ValueKey('moment-row-chain-c3')));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 400));
       await tester.pump(const Duration(milliseconds: 100));
@@ -840,6 +950,13 @@ void main() {
         'https://storage.googleapis.com/yovoice-test/'
         'c2.m4a?X-Goog-Signature=test',
       );
+      expect(player.playCount, 1);
+      final heard = await db
+          .collection('users')
+          .doc(_me)
+          .collection('momentViews')
+          .get();
+      expect(heard.docs.map((doc) => doc.id), unorderedEquals(['c1', 'c2']));
     });
   });
 
@@ -929,7 +1046,13 @@ void main() {
       expect(find.byKey(const ValueKey('moment-row-social-1')), findsOneWidget);
       expect(find.byKey(const ValueKey('moment-row-pool-new')), findsNothing);
       expect(find.byKey(const ValueKey('moment-row-pool-liked')), findsNothing);
-      expect(find.text('From your circle'), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('moment-row-social-1')),
+          matching: find.text('Author friend'),
+        ),
+        findsOneWidget,
+      );
     });
   });
 
@@ -994,15 +1117,8 @@ void main() {
         social: [_moment('theirs', author: 'friend', likes: 3)],
       );
 
-      for (final id in ['mine-1', 'mine-2', 'theirs']) {
-        expect(
-          find.byKey(ValueKey('moment-row-$id')),
-          findsOneWidget,
-          reason: '$id should have a row',
-        );
-      }
-
       // My own row: Delete offered, Report absent.
+      await _revealFeedRow(tester, 'mine-1');
       await tester.tap(find.byKey(const ValueKey('moment-row-menu-mine-1')));
       await tester.pumpAndSettle();
       expect(
@@ -1016,7 +1132,16 @@ void main() {
       await tester.tapAt(Offset.zero); // dismiss the menu
       await tester.pumpAndSettle();
 
+      // The third complete card can be outside the lazy viewport. Reach all
+      // three actual recordings; do not shrink the pool to fit the old rows.
+      for (final id in ['mine-2', 'theirs']) {
+        await _revealFeedRow(tester, id);
+      }
+
       // Someone else's row: Report offered, Delete absent.
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('moment-row-menu-theirs')),
+      );
       await tester.tap(find.byKey(const ValueKey('moment-row-menu-theirs')));
       await tester.pumpAndSettle();
       expect(
@@ -1132,9 +1257,7 @@ void main() {
         // Mine lead the list; the circle's rows queue below them and are
         // reachable by scrolling the (lazy) feed.
         expect(find.byKey(const ValueKey('moment-row-mine-0')), findsOneWidget);
-        // The FEED's vertical scrollable specifically: on wide layouts
-        // the detail panel scrolls vertically too, and the feed column
-        // comes first in the tree.
+        // The feed's own vertical scrollable, not horizontal format/filters.
         await tester.scrollUntilVisible(
           find.byKey(const ValueKey('moment-row-theirs-0')),
           200,

@@ -171,14 +171,24 @@ abstract class RecordedAudio {
     '${runtimeType.toString()} does not expose a local playback source.',
   );
 
-  /// Materializes the local recording for a durable upload outbox.
+  /// Materializes the whole recording as one heap buffer.
   ///
-  /// Moment publishing keeps using the platform-native [uploadTo] path. Direct
-  /// messages call this once before reserving anything so an app termination
-  /// cannot destroy the only copy of an unfinalized voice message.
+  /// Nothing in the app needs this any more — the direct-message outbox used
+  /// to, and now streams instead — so prefer [openRead] and reach for this
+  /// only where a consumer genuinely cannot work a chunk at a time.
   Future<Uint8List> readBytes() => throw UnsupportedError(
     '${runtimeType.toString()} cannot be copied into a durable outbox.',
   );
+
+  /// Reads the recording in bounded, sequential chunks.
+  ///
+  /// Direct messages copy a finished recording into app-private storage and
+  /// fingerprint it before anything is reserved, so an app termination cannot
+  /// destroy the only copy of an unsent voice message. Both operations stream,
+  /// so neither needs the recording resident — which is why this exists
+  /// alongside [readBytes] rather than on top of it.
+  Stream<List<int>> openRead() =>
+      throw UnsupportedError('${runtimeType.toString()} cannot be streamed.');
 
   /// Uploads this recording to [reference] with [metadata] and returns the
   /// stored object's generation, which `finalizeMomentDraft` requires.

@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math';
 
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
@@ -12,6 +13,12 @@ import 'package:yovoice/features/reels/data/services/reel_upload.dart';
 import 'package:yovoice/features/reels/data/services/reel_upload_transport.dart';
 
 enum ReelAssetKind { media, backingAudio }
+
+enum ReelFeedScope { discover, own }
+
+/// What this process has learned about the deployed `listReelsV2` input
+/// contract. See [ReelService._inlineGrantSupport].
+enum _InlineGrantSupport { unknown, supported, unsupported }
 
 /// Which part of a publish is running, so a surface can name the wait.
 ///
@@ -142,21 +149,64 @@ class ReelService {
     FirebaseStorage? storage,
     ReelCallableInvoker? callableInvoker,
     ReelUploadInvoker? uploadInvoker,
+    FirebaseFirestore? firestore,
   }) : _auth = auth ?? FirebaseAuth.instance,
        _functionsOverride = functions,
        _storage = storage,
        _callableInvoker = callableInvoker,
-       _uploadInvoker = uploadInvoker;
+       _uploadInvoker = uploadInvoker,
+       _firestore = firestore;
 
   final FirebaseAuth _auth;
   final FirebaseFunctions? _functionsOverride;
   final FirebaseStorage? _storage;
   final ReelCallableInvoker? _callableInvoker;
   final ReelUploadInvoker? _uploadInvoker;
+  final FirebaseFirestore? _firestore;
+  final Map<String, DateTime> _recordedViews = <String, DateTime>{};
 
   static final Map<String, _CachedReelGrant> _grantCache = {};
   static int _grantEpoch = 0;
   final Map<String, Future<Uri>> _pendingGrants = {};
+
+  /// Ceiling on the process-wide signed-URL cache.
+  ///
+  /// The map is static and was previously cleared only on an identity change
+  /// or a delete, so a long session accumulated one entry per Reel ever
+  /// played for the lifetime of the process. Inline grants and neighbour
+  /// prefetch fill it faster than tap-to-play did, so it is now bounded:
+  /// expired entries are dropped on every write and the soonest-to-expire
+  /// entries are evicted past this cap. Eviction costs a re-mint at worst,
+  /// never a wrong URL.
+  static const int maxCachedMediaGrants = 64;
+
+  /// Floor and ceiling of the refresh margin applied to a cached grant.
+  ///
+  /// The margin used to be a flat 15 s, which was a sixth of the backend's
+  /// 90 s signature and would be a fortieth of a 10-minute one. It is now
+  /// proportional — a tenth of the grant's own lifetime, clamped to this
+  /// range — so a short grant keeps the behaviour it had and a long grant
+  /// gets a margin wide enough to re-mint before playback reaches it.
+  static const Duration minGrantSafetyWindow = Duration(seconds: 15);
+  static const Duration maxGrantSafetyWindow = Duration(seconds: 60);
+
+  /// What this process knows about the deployed `listReelsV2` contract.
+  ///
+  /// `requireExactInput` refuses an unknown key with `invalid-argument`, so a
+  /// client that sends the optional `mediaGrants` flag to a backend which
+  /// predates the contract would break the Reels tab outright. Rather than
+  /// depend on a deploy order nobody can enforce on installed builds, the
+  /// refusal is *verified*: the same request is replayed without the flag,
+  /// and only if that succeeds — proving the flag and nothing else was the
+  /// problem — does this process stop sending it.
+  ///
+  /// The probe runs only while the answer is [_InlineGrantSupport.unknown].
+  /// Once a flagged call has succeeded, `invalid-argument` means something
+  /// else is wrong (a rejected cursor, an out-of-range limit) and is reported
+  /// immediately, so a request that will always fail cannot cost two round
+  /// trips every time it is retried.
+  static _InlineGrantSupport _inlineGrantSupport = _InlineGrantSupport.unknown;
+  static _InlineGrantSupport _feedScopeSupport = _InlineGrantSupport.unknown;
   final Map<String, String> _deleteRequestIds = <String, String>{};
 
   /// Retry-stable request ids for the engagement callables, keyed by the exact
@@ -519,42 +569,289 @@ class ReelService {
     }
   }
 
-  Future<ReelFeedPage> fetchFeed({String? cursor, int limit = 10}) =>
-      _withIdentity((identity) async {
-        if (limit < 1 || limit > 20) {
-          throw ArgumentError.value(
-            limit,
-            'limit',
-            'Use a page size from 1 to 20.',
-          );
-        }
-        final response = await _call('listReelsV2', <String, Object?>{
-          'cursor': cursor,
-          'limit': limit,
-        });
-        identity.ensureCurrent();
-        final page = ReelFeedPage.fromV2Wire(response);
-        final now = DateTime.now().toUtc();
-        return ReelFeedPage(
-          items: page.items
-              .where((reel) => reel.availability.isAvailableAt(now))
-              .toList(growable: false),
-          nextCursor: page.nextCursor,
-        );
-      });
+  /// Loads one feed page.
+  ///
+  /// [warmLeadingMedia] starts the media grant for the first item of the
+  /// first page as soon as the page is parsed, instead of waiting for the
+  /// card to mount and ask. It is not an extra request: `_pendingGrants`
+  /// dedupes it with the card's own call, so this only moves the same round
+  /// trip earlier, off the serial `list -> build -> resolve` path. It is
+  /// skipped entirely when the backend already inlined a usable grant, when
+  /// paging (a later page's first item is not on screen), and when the page
+  /// is empty.
+  Future<ReelFeedPage> fetchFeed({
+    String? cursor,
+    int limit = 10,
+    bool warmLeadingMedia = true,
+    ReelFeedScope scope = ReelFeedScope.discover,
+    bool includeSeen = false,
+  }) => _withIdentity((identity) async {
+    if (limit < 1 || limit > 20) {
+      throw ArgumentError.value(
+        limit,
+        'limit',
+        'Use a page size from 1 to 20.',
+      );
+    }
+    if (scope == ReelFeedScope.own && includeSeen) {
+      throw ArgumentError('Your Reels already includes watched Reels.');
+    }
+    final response = await _listScopedReels(
+      cursor: cursor,
+      limit: limit,
+      scope: scope,
+      includeSeen: includeSeen,
+    );
+    identity.ensureCurrent();
+    final page = ReelFeedPage.fromV2Wire(response);
+    final now = DateTime.now().toUtc();
+    final items = page.items
+        .where(
+          (reel) =>
+              reel.availability.isAvailableAt(now) &&
+              (scope != ReelFeedScope.own || reel.authorId == identity.uid),
+        )
+        .toList(growable: false);
+    _adoptInlineGrants(items, uid: identity.uid, now: now);
+    if (warmLeadingMedia && cursor == null && items.isNotEmpty) {
+      unawaited(prefetchMediaUri(items.first.id));
+    }
+    return ReelFeedPage(items: items, nextCursor: page.nextCursor);
+  });
 
+  Future<Map<Object?, Object?>> _listScopedReels({
+    required String? cursor,
+    required int limit,
+    required ReelFeedScope scope,
+    required bool includeSeen,
+  }) async {
+    final flags = <String, Object?>{
+      if (scope == ReelFeedScope.own) 'scope': 'own',
+      if (includeSeen) 'includeSeen': true,
+    };
+    if (flags.isEmpty || _feedScopeSupport == _InlineGrantSupport.unsupported) {
+      return _listReels(cursor: cursor, limit: limit);
+    }
+    try {
+      final result = await _listReels(
+        cursor: cursor,
+        limit: limit,
+        flags: flags,
+      );
+      _feedScopeSupport = _InlineGrantSupport.supported;
+      return result;
+    } on FirebaseFunctionsException catch (error, stack) {
+      if (error.code != 'invalid-argument' ||
+          _feedScopeSupport == _InlineGrantSupport.supported) {
+        rethrow;
+      }
+      // Only a successful identical unscoped request proves an old server.
+      // Authorization, missing-index and transient errors never trigger this.
+      Map<Object?, Object?> recovered;
+      try {
+        recovered = await _listReels(cursor: cursor, limit: limit);
+      } catch (_) {
+        Error.throwWithStackTrace(error, stack);
+      }
+      _feedScopeSupport = _InlineGrantSupport.unsupported;
+      return recovered;
+    }
+  }
+
+  /// Called only after the visible card has accumulated real viewing time.
+  /// Older rules may refuse the additive ledger; ranking failure must not
+  /// interrupt playback. A failed write can be attempted on a later watch.
+  Future<void> recordViewed(Reel reel) async {
+    final uid = currentUserId;
+    final now = DateTime.now().toUtc();
+    if (uid == null ||
+        reel.authorId == uid ||
+        !reel.availability.isAvailableAt(now)) {
+      return;
+    }
+    final key = '$_grantEpoch:$uid:${reel.id}';
+    final previous = _recordedViews[key];
+    if (previous != null &&
+        now.difference(previous) < const Duration(hours: 6)) {
+      return;
+    }
+    _recordedViews[key] = now;
+    try {
+      await (_firestore ?? FirebaseFirestore.instance)
+          .collection('users')
+          .doc(uid)
+          .collection('reelViews')
+          .doc(reel.id)
+          .set(<String, Object?>{
+            'viewedAt': FieldValue.serverTimestamp(),
+            'expiresAt': Timestamp.fromDate(now.add(const Duration(days: 90))),
+          });
+      while (_recordedViews.length > 256) {
+        _recordedViews.remove(_recordedViews.keys.first);
+      }
+    } catch (_) {
+      _recordedViews.remove(key);
+    }
+  }
+
+  /// Calls `listReelsV2`, asking for inline media grants while this process
+  /// still believes the deployed backend understands the flag.
+  ///
+  /// See [_inlineGrantSupport] for why the refusal is probed rather than
+  /// assumed away by deploy order.
+  Future<Map<Object?, Object?>> _listReels({
+    required String? cursor,
+    required int limit,
+    Map<String, Object?> flags = const {},
+  }) async {
+    final unflagged = <String, Object?>{
+      'cursor': cursor,
+      'limit': limit,
+      ...flags,
+    };
+    if (_inlineGrantSupport == _InlineGrantSupport.unsupported) {
+      return _call('listReelsV2', unflagged);
+    }
+    try {
+      final response = await _call('listReelsV2', <String, Object?>{
+        ...unflagged,
+        'mediaGrants': true,
+      });
+      _inlineGrantSupport = _InlineGrantSupport.supported;
+      return response;
+    } on FirebaseFunctionsException catch (error, stackTrace) {
+      if (error.code != 'invalid-argument' ||
+          _inlineGrantSupport == _InlineGrantSupport.supported) {
+        rethrow;
+      }
+      Map<Object?, Object?>? recovered;
+      try {
+        recovered = await _call('listReelsV2', unflagged);
+      } catch (_) {
+        // The request was refused for its own reasons — a poisoned cursor,
+        // an out-of-range limit. Report that, and keep asking for grants.
+        recovered = null;
+      }
+      if (recovered == null) Error.throwWithStackTrace(error, stackTrace);
+      _inlineGrantSupport = _InlineGrantSupport.unsupported;
+      return recovered;
+    }
+  }
+
+  /// Seeds the signed-URL cache from grants the backend inlined in the page.
+  ///
+  /// WHY THIS DOES NOT WIDEN ACCESS: the grant was minted by the backend for
+  /// this authenticated viewer, for a Reel the feed already authorized them
+  /// to see, bound to one immutable object generation and clamped to the
+  /// content's own expiry. It is stored under the *current* uid's cache key
+  /// and behind [_grantEpoch], so a sign-out, an account switch or a
+  /// privacy-boundary clear drops it exactly like a grant minted by
+  /// `getReelMediaAccessV2`. Nothing here decides what a viewer may see; the
+  /// server already did, twice.
+  void _adoptInlineGrants(
+    List<Reel> items, {
+    required String uid,
+    required DateTime now,
+  }) {
+    var adopted = false;
+    for (final reel in items) {
+      final grant = reel.mediaGrant;
+      if (grant == null) continue;
+      final candidate = _CachedReelGrant(
+        uri: grant.uri,
+        expiresAt: grant.expiresAt,
+        issuedAt: now,
+      );
+      // A grant that arrives already inside its own refresh margin buys
+      // nothing and would mask a needed re-mint.
+      if (!candidate.isUsableAt(now)) continue;
+      final key = _grantKey(uid, reel.id, ReelAssetKind.media);
+      final existing = _grantCache[key];
+      if (existing != null &&
+          !existing.expiresAt.isBefore(candidate.expiresAt)) {
+        continue;
+      }
+      _grantCache[key] = candidate;
+      adopted = true;
+    }
+    if (adopted) _pruneGrantCache(now);
+  }
+
+  static String _grantKey(String uid, String reelId, ReelAssetKind asset) =>
+      '$uid:$reelId:${asset.name}';
+
+  /// Drops expired entries and enforces [maxCachedMediaGrants], evicting the
+  /// soonest-to-expire first — the entries with the least value left.
+  static void _pruneGrantCache(DateTime now) {
+    _grantCache.removeWhere((_, grant) => !grant.expiresAt.isAfter(now));
+    final excess = _grantCache.length - maxCachedMediaGrants;
+    if (excess <= 0) return;
+    final ordered = _grantCache.keys.toList()
+      ..sort(
+        (a, b) =>
+            _grantCache[a]!.expiresAt.compareTo(_grantCache[b]!.expiresAt),
+      );
+    for (final key in ordered.take(excess)) {
+      _grantCache.remove(key);
+    }
+  }
+
+  /// The already-minted URL for [reelId], or null when there is none worth
+  /// using yet.
+  ///
+  /// Synchronous and non-throwing on purpose: it exists so a surface can
+  /// start a decoder in its first `build`/`initState` instead of painting a
+  /// spinner while a `Future` that is already complete settles a microtask
+  /// later. A null answer means "ask [resolveMediaUri]", never "unavailable".
+  Uri? cachedMediaUri(
+    String reelId, {
+    ReelAssetKind asset = ReelAssetKind.media,
+  }) {
+    final uid = currentUserId;
+    if (uid == null || !_safeIdPattern.hasMatch(reelId)) return null;
+    final cached = _grantCache[_grantKey(uid, reelId, asset)];
+    if (cached == null) return null;
+    return cached.isUsableAt(DateTime.now().toUtc()) ? cached.uri : null;
+  }
+
+  /// Warms the grant for [reelId] without blocking or throwing.
+  ///
+  /// Deliberately cheap to over-call: it issues nothing when a usable grant
+  /// is already cached (the inline-grant case), and joins an in-flight mint
+  /// instead of starting a second one. Callers use it for the one neighbour
+  /// a swipe can reach and for a grant that has entered its refresh margin
+  /// while a Reel is still playing.
+  Future<void> prefetchMediaUri(
+    String reelId, {
+    ReelAssetKind asset = ReelAssetKind.media,
+  }) async {
+    try {
+      if (cachedMediaUri(reelId, asset: asset) != null) return;
+      await resolveMediaUri(reelId, asset: asset);
+    } catch (_) {
+      // Speculative work must never surface as a failure: the real request
+      // that needs this URL reports its own error.
+    }
+  }
+
+  /// Resolves a playable URL for [reelId].
+  ///
+  /// [forceRefresh] bypasses the cached grant and mints a new one. It is the
+  /// recovery path for a player that failed mid-session on an expired
+  /// signature: the cached entry is only replaced once a fresh grant is in
+  /// hand, so a failed refresh leaves the previous URL untouched.
   Future<Uri> resolveMediaUri(
     String reelId, {
     ReelAssetKind asset = ReelAssetKind.media,
+    bool forceRefresh = false,
   }) {
     final uid = _auth.currentUser?.uid ?? '';
     final cleanId = _requiredSafeId(reelId, 'reelId');
     if (uid.isEmpty) throw StateError('Sign in before playing a Reel.');
-    final key = '$uid:$cleanId:${asset.name}';
+    final key = _grantKey(uid, cleanId, asset);
     final now = DateTime.now().toUtc();
     final cached = _grantCache[key];
-    if (cached != null &&
-        cached.expiresAt.isAfter(now.add(const Duration(seconds: 15)))) {
+    if (!forceRefresh && cached != null && cached.isUsableAt(now)) {
       return Future<Uri>.value(cached.uri);
     }
     return _pendingGrants.putIfAbsent(key, () async {
@@ -580,7 +877,9 @@ class ReelService {
         _grantCache[key] = _CachedReelGrant(
           uri: grant.uri,
           expiresAt: grant.expiresAt,
+          issuedAt: checkedAt,
         );
+        _pruneGrantCache(checkedAt);
         return grant.uri;
       } finally {
         _pendingGrants.remove(key);
@@ -1016,6 +1315,38 @@ class ReelService {
     _grantEpoch += 1;
     _grantCache.clear();
   }
+
+  /// Restores the belief that the backend accepts inline grant requests.
+  ///
+  /// Test-only. In production the latch is a one-way, process-lifetime fact
+  /// about the deployed backend, and re-probing it on every feed page would
+  /// spend a wasted round trip per page against an old deployment.
+  @visibleForTesting
+  static void debugResetInlineGrantSupport() {
+    _inlineGrantSupport = _InlineGrantSupport.unknown;
+    _feedScopeSupport = _InlineGrantSupport.unknown;
+  }
+
+  /// Whether this process is still asking `listReelsV2` for inline grants.
+  @visibleForTesting
+  static bool get debugInlineGrantsSupported =>
+      _inlineGrantSupport != _InlineGrantSupport.unsupported;
+
+  /// How many signed URLs are held in the process-wide cache.
+  @visibleForTesting
+  static int get debugCachedGrantCount => _grantCache.length;
+
+  /// The refresh margin a grant of [lifetime] carries. Pure arithmetic,
+  /// exposed so the clamp can be asserted without waiting out a real TTL.
+  @visibleForTesting
+  static Duration debugGrantSafetyWindow(Duration lifetime) {
+    final issuedAt = DateTime.utc(2024);
+    return _CachedReelGrant(
+      uri: Uri.parse('https://storage.googleapis.com/probe'),
+      issuedAt: issuedAt,
+      expiresAt: issuedAt.add(lifetime),
+    ).safetyWindow;
+  }
 }
 
 /// Why an engagement call did not go through, in terms a viewer can act on.
@@ -1305,10 +1636,43 @@ class _ReelIdentityLease {
 
 @immutable
 class _CachedReelGrant {
-  const _CachedReelGrant({required this.uri, required this.expiresAt});
+  const _CachedReelGrant({
+    required this.uri,
+    required this.expiresAt,
+    required this.issuedAt,
+  });
 
   final Uri uri;
   final DateTime expiresAt;
+
+  /// When this client took delivery of the grant. The signature's full
+  /// lifetime is unknowable from the wire (the backend sends only a
+  /// deadline), and delivery is within one round trip of minting, so this is
+  /// the honest local approximation the refresh margin is derived from.
+  final DateTime issuedAt;
+
+  Duration get _lifetime {
+    final lifetime = expiresAt.difference(issuedAt);
+    return lifetime.isNegative ? Duration.zero : lifetime;
+  }
+
+  /// A tenth of the grant's lifetime, clamped to
+  /// [ReelService.minGrantSafetyWindow]..[ReelService.maxGrantSafetyWindow].
+  Duration get safetyWindow {
+    final proportional = Duration(microseconds: _lifetime.inMicroseconds ~/ 10);
+    if (proportional < ReelService.minGrantSafetyWindow) {
+      return ReelService.minGrantSafetyWindow;
+    }
+    if (proportional > ReelService.maxGrantSafetyWindow) {
+      return ReelService.maxGrantSafetyWindow;
+    }
+    return proportional;
+  }
+
+  /// Usable means "will still be valid long enough to be worth handing out".
+  /// Inside the margin the answer is no, so the caller re-mints *before* a
+  /// player would fail on it rather than after.
+  bool isUsableAt(DateTime now) => expiresAt.isAfter(now.add(safetyWindow));
 }
 
 @immutable
@@ -1504,8 +1868,10 @@ DateTime? _contentExpiry(
   return _positiveTimestamp(raw, label);
 }
 
+final RegExp _safeIdPattern = RegExp(r'^[A-Za-z0-9_-]{1,128}$');
+
 String _requiredSafeId(Object? value, String label) {
-  if (value is! String || !RegExp(r'^[A-Za-z0-9_-]{1,128}$').hasMatch(value)) {
+  if (value is! String || !_safeIdPattern.hasMatch(value)) {
     throw FormatException('$label is invalid.');
   }
   return value;

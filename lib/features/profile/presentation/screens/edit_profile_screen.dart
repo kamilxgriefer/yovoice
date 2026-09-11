@@ -517,7 +517,11 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       // ~800px tall ("the banner is enormous"). 640 keeps the preview a
       // compact cover card at every width; mobile is unaffected because
       // phones never reach the cap.
-      bottomNavigationBar: const YoKeyboardDoneBar(),
+      bottomNavigationBar: const YoKeyboardSafeBottomBar(
+        // Scaffold pins this slot to the bottom of the window, behind
+        // the keyboard; the wrapper lifts it onto the keyboard.
+        child: YoKeyboardDoneBar(),
+      ),
       body: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 640),
@@ -603,6 +607,9 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                   ),
                   maxLength: 80,
                 ),
+                // Deliberately still a newline field — a bio is prose, and
+                // people do lay it out in lines. Save sits in the app bar
+                // above the keyboard and the Done bar closes the keyboard.
                 _field(
                   _bio,
                   copy.text('Bio', 'O mnie'),
@@ -662,7 +669,13 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                   ),
                   hint: copy.text('Spanish, Dutch', 'Hiszpański, niderlandzki'),
                 ),
-                _field(_website, copy.text('Website', 'Strona internetowa')),
+                // Last field in the form: Return closes the keyboard rather
+                // than hunting for a next field that does not exist.
+                _field(
+                  _website,
+                  copy.text('Website', 'Strona internetowa'),
+                  textInputAction: TextInputAction.done,
+                ),
               ],
             ),
           ),
@@ -682,8 +695,15 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     String? helper,
     String? Function(String?)? validator,
     String? semanticLabel,
+    TextInputAction? textInputAction,
   }) {
     final palette = context.appPalette;
+    // Every single-line field declares its return key instead of inheriting
+    // one, so the platform draws "next" and Return walks the form. Multiline
+    // fields (the bio) keep Return as a line break: Save lives in the app
+    // bar above the keyboard, and the keyboard Done bar closes the keyboard.
+    final action =
+        textInputAction ?? (maxLines == 1 ? TextInputAction.next : null);
     return Padding(
       padding: const EdgeInsets.only(bottom: 14),
       child: Semantics(
@@ -694,6 +714,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           controller: controller,
           maxLines: maxLines,
           maxLength: maxLength,
+          textInputAction: action,
           readOnly: readOnly,
           style: TextStyle(color: palette.textPrimary),
           validator:

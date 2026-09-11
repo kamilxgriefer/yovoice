@@ -1,8 +1,11 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/presence/user_availability.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
+import 'package:yovoice/core/theme/app_spacing.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
 /// Centralized status-ring language from the Home mockup — one place
@@ -98,6 +101,7 @@ class PeopleStatusAvatar extends StatelessWidget {
     this.semanticLabel,
     this.showChangeBadge = false,
     this.labelWidth,
+    this.tilePadding = const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
     super.key,
   });
 
@@ -122,13 +126,24 @@ class PeopleStatusAvatar extends StatelessWidget {
   /// `AvailabilityChip`, so one action has one label everywhere.
   final String? semanticLabel;
 
-  /// A small caret at the bottom-trailing edge of the disc — the same
+  /// Adds the caret to the tile's own status line — the same
   /// "caret = change availability" grammar the chip uses.
+  ///
+  /// It used to be an 18 px disc overlapping the status ring: grey on grey,
+  /// covering the one element that carries the tile's meaning, and implying
+  /// a 16 px target that never existed (the whole tile is the target). The
+  /// affordance now rides the status label, where it is legible and cannot
+  /// smudge the avatar.
   final bool showChangeBadge;
 
   /// Width of the name/status column. Defaults to `radius * 2.4`; the
   /// desktop rail widens it so full names ellipsise less.
   final double? labelWidth;
+
+  /// The tile's own outer padding. A rail that owns its pitch (Home's
+  /// people strip) passes [EdgeInsets.zero] so the tile's layout box equals
+  /// its ink box and the gap between tiles is the only spacing there is.
+  final EdgeInsets tilePadding;
 
   @override
   Widget build(BuildContext context) {
@@ -151,86 +166,66 @@ class PeopleStatusAvatar extends StatelessWidget {
         onTap: onTap,
         borderRadius: borderRadius,
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+          padding: tilePadding,
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Stack(
-                clipBehavior: Clip.none,
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(2),
-                    decoration: BoxDecoration(
-                      color: palette.surfaceRaised,
-                      shape: BoxShape.circle,
-                      // A hairline ring in the palette-owned status colour:
-                      // the label next to it carries the meaning, the ring
-                      // only reinforces it. The colour stays the exact
-                      // semantic token (it is contrast-checked at 3:1
-                      // against this surface); what changed is the weight —
-                      // 2.2/1.4 px rings read as heavy and cheap against the
-                      // dark surfaces.
-                      border: Border.all(
-                        color: statusForeground,
-                        width: active ? 1.5 : 1.1,
-                      ),
-                      boxShadow: active
-                          ? [
-                              BoxShadow(
-                                color: palette.shadow.withValues(alpha: .18),
-                                blurRadius: 10,
-                                offset: const Offset(0, 3),
-                              ),
-                            ]
-                          : null,
-                    ),
-                    child: UserAvatar(
-                      radius: radius,
-                      userId: userId,
-                      photoUrl: photoUrl,
-                      mediaRevision: mediaRevision,
-                      displayName: displayName,
-                    ),
+              Container(
+                padding: const EdgeInsets.all(2),
+                decoration: BoxDecoration(
+                  color: palette.surfaceRaised,
+                  shape: BoxShape.circle,
+                  // A hairline ring in the palette-owned status colour:
+                  // the label next to it carries the meaning, the ring
+                  // only reinforces it. The colour stays the exact
+                  // semantic token (it is contrast-checked at 3:1
+                  // against this surface); what changed is the weight —
+                  // 2.2/1.4 px rings read as heavy and cheap against the
+                  // dark surfaces.
+                  border: Border.all(
+                    color: statusForeground,
+                    width: active ? 1.5 : 1.1,
                   ),
-                  if (showChangeBadge)
-                    // Physically bottom-right in both text directions: the
-                    // caret badge is an affordance mark, not reading-order
-                    // content, and it overlaps the ring by 3 px so it reads
-                    // as part of the disc.
-                    Positioned(
-                      right: -3,
-                      bottom: -3,
-                      child: ExcludeSemantics(
-                        child: Container(
-                          width: 18,
-                          height: 18,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: palette.surfaceRaised,
-                            border: Border.all(color: palette.border),
+                  boxShadow: active
+                      ? [
+                          BoxShadow(
+                            color: palette.shadow.withValues(alpha: .18),
+                            blurRadius: 10,
+                            offset: const Offset(0, 3),
                           ),
-                          child: Icon(
-                            Icons.expand_more_rounded,
-                            size: 13,
-                            color: palette.textSecondary,
-                          ),
-                        ),
-                      ),
-                    ),
-                ],
+                        ]
+                      : null,
+                ),
+                child: UserAvatar(
+                  radius: radius,
+                  userId: userId,
+                  photoUrl: photoUrl,
+                  mediaRevision: mediaRevision,
+                  displayName: displayName,
+                ),
               ),
-              const SizedBox(height: 7),
+              const SizedBox(height: AppRhythm.tight),
               SizedBox(
                 // The column grows with the reader's text preference, the
                 // same way the Moment story tile does: a fixed 62 px at
                 // 200 % text left every name and status as an ellipsis.
-                width:
-                    (labelWidth ?? radius * 2.4) +
-                    (MediaQuery.textScalerOf(context).scale(10) / 10)
-                            .clamp(1, 2)
-                            .toDouble() *
-                        36 -
-                    36,
+                //
+                // It is never narrower than the status's longest word:
+                // Flutter breaks a word wider than its line, so "Nie
+                // przeszkadzać" used to render as "Nie przesz / kadzać".
+                width: math.max(
+                  (labelWidth ?? radius * 2.4) +
+                      (MediaQuery.textScalerOf(context).scale(10) / 10)
+                              .clamp(1, 2)
+                              .toDouble() *
+                          36 -
+                      36,
+                  _StatusLine.minimumWidth(
+                    context,
+                    statusLabel,
+                    showCaret: showChangeBadge,
+                  ),
+                ),
                 child: Column(
                   children: [
                     Text(
@@ -244,21 +239,17 @@ class PeopleStatusAvatar extends StatelessWidget {
                         fontWeight: FontWeight.w700,
                       ),
                     ),
-                    const SizedBox(height: 2),
-                    Text(
+                    const SizedBox(height: AppRhythm.hairline),
+                    _StatusLine(
                       // Two lines: "Be right back" and "Do not disturb"
                       // do not fit one line inside the 62 px label column,
                       // and a status truncated to "Be right b…" is the one
                       // word the ring cannot say on its own.
-                      statusLabel,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        color: statusForeground,
-                        fontSize: 10.5,
-                        fontWeight: FontWeight.w600,
-                      ),
+                      label: statusLabel,
+                      foreground: statusForeground,
+                      // "Available ⌄" — the caret rides the words it is
+                      // about rather than the avatar it used to smudge.
+                      showCaret: showChangeBadge,
                     ),
                   ],
                 ),
@@ -267,6 +258,97 @@ class PeopleStatusAvatar extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// The tile's status line, with the optional "change availability" caret.
+///
+/// The caret sits beside the status words, in the exact grammar
+/// [AvailabilityChip] already ships (a `Flexible` label and an
+/// `expand_more_rounded` glyph): legible, always present, and never over
+/// the avatar. It used to be an 18 px disc overlapping the status ring —
+/// grey on grey, covering the one element that carries the tile's meaning.
+///
+/// Deliberately NOT an inline `WidgetSpan` in the label's own paragraph:
+/// an ellipsised line drops the span (the affordance would vanish exactly
+/// when the label is longest), and an inline widget's global transform is
+/// unresolvable at enlarged text, which quietly breaks anything that
+/// measures the tile.
+///
+/// It carries no semantics of its own — the tile already announces
+/// "You. Availability: {status}. Change".
+class _StatusLine extends StatelessWidget {
+  const _StatusLine({
+    required this.label,
+    required this.foreground,
+    required this.showCaret,
+  });
+
+  final String label;
+  final Color foreground;
+  final bool showCaret;
+
+  static const double _fontSize = 10.5;
+
+  static const TextStyle _baseStyle = TextStyle(
+    fontSize: _fontSize,
+    fontWeight: FontWeight.w600,
+  );
+
+  /// The narrowest column in which no single word of [label] has to break,
+  /// measured in the same style and text scale the line renders with, plus
+  /// the caret when it rides the line.
+  static double minimumWidth(
+    BuildContext context,
+    String label, {
+    required bool showCaret,
+  }) {
+    final scaler = MediaQuery.textScalerOf(context);
+    final style = DefaultTextStyle.of(context).style.merge(_baseStyle);
+    final direction = Directionality.of(context);
+    var widest = 0.0;
+    for (final word in label.split(RegExp(r'\s+'))) {
+      if (word.isEmpty) continue;
+      final painter = TextPainter(
+        text: TextSpan(text: word, style: style),
+        textDirection: direction,
+        textScaler: scaler,
+        maxLines: 1,
+      )..layout();
+      widest = math.max(widest, painter.width);
+      painter.dispose();
+    }
+    final caret = showCaret ? scaler.scale(12) + 2 : 0.0;
+    return (widest + caret).ceilToDouble() + 1;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final style = _baseStyle.copyWith(color: foreground);
+    final text = Text(
+      label,
+      maxLines: 2,
+      overflow: TextOverflow.ellipsis,
+      textAlign: TextAlign.center,
+      style: style,
+    );
+    if (!showCaret) return text;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        Flexible(child: text),
+        const SizedBox(width: 2),
+        ExcludeSemantics(
+          child: Icon(
+            Icons.expand_more_rounded,
+            // Tracks the reader's text preference, the way the words do.
+            size: MediaQuery.textScalerOf(context).scale(12),
+            color: foreground,
+          ),
+        ),
+      ],
     );
   }
 }

@@ -18,7 +18,7 @@ import 'package:yovoice/features/rooms/data/services/room_service.dart';
 /// FAILS rather than returning nothing.
 ///
 /// Both screens read `snapshot.data ?? const <VoiceRoom>[]` with no
-/// `hasError` branch and then printed "No rooms to show yet — start one and
+/// `hasError` branch and then printed "No rooms are live right now — start one and
 /// your community will see it here." That is the same collapse that hid the
 /// Discover clubs rail, with an extra harm: it hands the reader an action
 /// ("start one") in the one situation where the app does not know whether
@@ -144,10 +144,27 @@ void main() {
     );
     await tester.pump(const Duration(milliseconds: 150));
 
-    expect(find.textContaining('could not be loaded'), findsOneWidget);
-    expect(find.textContaining('No rooms to show yet'), findsNothing);
-    expect(find.byIcon(Icons.cloud_off_rounded), findsOneWidget);
-    expect(find.text('Try again'), findsOneWidget);
+    final error = find.byKey(const ValueKey('home-rooms-error'));
+    expect(error, findsOneWidget);
+    expect(
+      find.descendant(
+        of: error,
+        matching: find.text("You don't have permission to do that."),
+      ),
+      findsOneWidget,
+    );
+    expect(find.textContaining('No rooms are live right now'), findsNothing);
+    expect(
+      find.descendant(
+        of: error,
+        matching: find.byIcon(Icons.cloud_off_outlined),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: error, matching: find.text('Try again')),
+      findsOneWidget,
+    );
   });
 
   testWidgets('mobile: an empty room list still reads as empty', (
@@ -164,7 +181,7 @@ void main() {
     );
     await tester.pump(const Duration(milliseconds: 150));
 
-    expect(find.textContaining('No rooms to show yet'), findsOneWidget);
+    expect(find.textContaining('No rooms are live right now'), findsOneWidget);
     expect(find.textContaining('could not be loaded'), findsNothing);
   });
 
@@ -180,10 +197,27 @@ void main() {
     );
     await tester.pump(const Duration(milliseconds: 150));
 
-    expect(find.textContaining('could not be loaded'), findsOneWidget);
-    expect(find.textContaining('No rooms to show yet'), findsNothing);
-    expect(find.byIcon(Icons.cloud_off_rounded), findsOneWidget);
-    expect(find.text('Try again'), findsOneWidget);
+    final error = find.byKey(const ValueKey('home-rooms-error'));
+    expect(error, findsOneWidget);
+    expect(
+      find.descendant(
+        of: error,
+        matching: find.text("You don't have permission to do that."),
+      ),
+      findsOneWidget,
+    );
+    expect(find.textContaining('No rooms are live right now'), findsNothing);
+    expect(
+      find.descendant(
+        of: error,
+        matching: find.byIcon(Icons.cloud_off_outlined),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: error, matching: find.text('Try again')),
+      findsOneWidget,
+    );
   });
 
   testWidgets('desktop: an empty room list still reads as empty', (
@@ -200,7 +234,7 @@ void main() {
     );
     await tester.pump(const Duration(milliseconds: 150));
 
-    expect(find.textContaining('No rooms to show yet'), findsOneWidget);
+    expect(find.textContaining('No rooms are live right now'), findsOneWidget);
     expect(find.textContaining('could not be loaded'), findsNothing);
   });
 
@@ -212,14 +246,17 @@ void main() {
 
     await tester.pumpWidget(host(mobileHome(rooms: rooms)));
     await tester.pump(const Duration(milliseconds: 150));
-    expect(find.text('Try again'), findsOneWidget);
+    final error = find.byKey(const ValueKey('home-rooms-error'));
+    final retry = find.descendant(of: error, matching: find.text('Try again'));
+    expect(retry, findsOneWidget);
 
-    await tester.tap(find.text('Try again'));
+    await tester.tap(retry);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 150));
 
     expect(rooms.subscriptions, 2);
-    expect(find.textContaining('No rooms to show yet'), findsOneWidget);
+    expect(error, findsNothing);
+    expect(find.textContaining('No rooms are live right now'), findsOneWidget);
     expect(find.textContaining('could not be loaded'), findsNothing);
   });
 
@@ -231,14 +268,17 @@ void main() {
 
     await tester.pumpWidget(host(desktopHome(rooms: rooms)));
     await tester.pump(const Duration(milliseconds: 150));
-    expect(find.text('Try again'), findsOneWidget);
+    final error = find.byKey(const ValueKey('home-rooms-error'));
+    final retry = find.descendant(of: error, matching: find.text('Try again'));
+    expect(retry, findsOneWidget);
 
-    await tester.tap(find.text('Try again'));
+    await tester.tap(retry);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 150));
 
     expect(rooms.subscriptions, 2);
-    expect(find.textContaining('No rooms to show yet'), findsOneWidget);
+    expect(error, findsNothing);
+    expect(find.textContaining('No rooms are live right now'), findsOneWidget);
     expect(find.textContaining('could not be loaded'), findsNothing);
   });
 }

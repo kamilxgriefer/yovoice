@@ -179,6 +179,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
+  Future<void> _setGifAutoLoadEnabled(bool enabled) async {
+    final copy = AppLocalizations.of(context);
+    try {
+      await AppPreferencesScope.of(context).setGifAutoLoadEnabled(enabled);
+    } catch (_) {
+      _notify(
+        copy.text(
+          'Could not save the GIF preference.',
+          'Nie udało się zapisać ustawienia GIF-ów.',
+        ),
+        isError: true,
+      );
+    }
+  }
+
   Future<void> _openPermissionSetup() async {
     await showPermissionSetupSheet(
       context,
@@ -885,6 +900,31 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ).value.soundEffectsEnabled,
                 activeTrackColor: colors.primary,
                 onChanged: _setSoundEffectsEnabled,
+              ),
+            ),
+            // The one privacy control a GIF RECIPIENT has.
+            //
+            // GIFs are served from the provider's own CDN because GIPHY's
+            // terms require hotlinking and forbid rehosting, so displaying one
+            // shows this device's IP address and User-Agent to a third party —
+            // including when somebody else sent it. The subtitle says that
+            // plainly rather than describing this as a data-saver.
+            _SettingsTile(
+              icon: Icons.gif_box_outlined,
+              title: copy.text(
+                'Load GIFs automatically',
+                'Wczytuj GIF-y automatycznie',
+              ),
+              subtitle: copy.text(
+                'Off: the GIF provider receives your device data only when '
+                    'you tap to load a GIF.',
+                'Wyłączone: dostawca GIF-ów otrzymuje dane urządzenia dopiero, '
+                    'gdy dotkniesz GIF-a, aby go wczytać.',
+              ),
+              trailing: Switch.adaptive(
+                value: AppPreferencesScope.of(context).value.gifAutoLoadEnabled,
+                activeTrackColor: colors.primary,
+                onChanged: _setGifAutoLoadEnabled,
               ),
             ),
           ],

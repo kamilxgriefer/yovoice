@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:yovoice/features/media/data/models/gif_asset.dart';
 
 class RoomMessage {
   const RoomMessage({
@@ -9,6 +10,8 @@ class RoomMessage {
     required this.text,
     required this.createdAt,
     required this.reactions,
+    this.gif,
+    this.isDeleted = false,
   });
 
   final String id;
@@ -17,6 +20,8 @@ class RoomMessage {
   final String? senderPhotoUrl;
   final String text;
   final DateTime? createdAt;
+  final GifAsset? gif;
+  final bool isDeleted;
 
   /// Emoji -> list of user ids that reacted with this emoji.
   final Map<String, List<String>> reactions;
@@ -51,6 +56,10 @@ class RoomMessage {
       senderName: data['senderName'] as String? ?? 'YO Voice user',
       senderPhotoUrl: null,
       text: data['text'] as String? ?? '',
+      isDeleted: data['isDeleted'] == true,
+      gif: data['isDeleted'] == true || data['type'] != 'gif'
+          ? null
+          : GifAsset.fromMessage(data['gif']),
       createdAt: (data['createdAt'] as Timestamp?)?.toDate(),
       reactions: reactions,
     );

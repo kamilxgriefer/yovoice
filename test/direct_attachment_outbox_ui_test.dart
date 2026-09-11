@@ -8,7 +8,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:yovoice/features/messages/data/models/message.dart';
+import 'package:yovoice/features/messages/data/services/direct_attachment_delivery_progress.dart';
 import 'package:yovoice/features/messages/data/services/direct_attachment_outbox.dart';
+import 'package:yovoice/features/messages/data/services/direct_attachment_payload_source.dart';
 import 'package:yovoice/features/messages/data/services/direct_attachment_payload_store.dart';
 import 'package:yovoice/features/messages/data/services/message_outbox.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
@@ -75,15 +77,21 @@ void main() {
     WidgetTester tester,
     _MediaOutboxMessageService service, {
     TextScaler textScaler = TextScaler.noScaling,
+    Size viewport = const Size(320, 780),
   }) async {
-    tester.view.physicalSize = const Size(320, 780);
+    tester.view.physicalSize = viewport;
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
     await tester.pumpWidget(
       MaterialApp(
         theme: ThemeData.dark(useMaterial3: true),
         home: MediaQuery(
-          data: MediaQueryData(textScaler: textScaler),
+          // Derived from the view rather than built from scratch: a
+          // MediaQueryData with only a textScaler reports Size.zero, and the
+          // chat bubbles size themselves from MediaQuery width.
+          data: MediaQueryData.fromView(
+            tester.view,
+          ).copyWith(textScaler: textScaler),
           child: ChatScreen(
             conversationId: conversationId,
             otherUserId: otherUserId,
@@ -134,12 +142,17 @@ void main() {
     expect(service.retryCalls, 1);
   });
 
-  testWidgets('queued media exposes no recovery controls', (tester) async {
+  testWidgets('queued media with no live delivery says it is waiting rather '
+      'than claiming to be sending', (tester) async {
     final entry = (await tester.runAsync(enqueue))!;
     final service = _MediaOutboxMessageService(mediaOutbox, auth());
     await pumpChat(tester, service);
 
-    expect(find.text('Sending…'), findsOneWidget);
+    // Nothing is uploading: this entry is durable and idle, which is exactly
+    // what a relaunched app shows before the drain restarts the transfer.
+    expect(find.text('Waiting to send'), findsOneWidget);
+    expect(find.text('Sending…'), findsNothing);
+    expect(find.byKey(ValueKey('progress-media-${entry.id}')), findsNothing);
     expect(find.byKey(ValueKey('retry-media-${entry.id}')), findsNothing);
     expect(find.byKey(ValueKey('discard-media-${entry.id}')), findsNothing);
     expect(
@@ -167,6 +180,160 @@ void main() {
       ),
       isTrue,
     );
+  });
+
+  testWidgets('an uploading attachment shows its real percentage and a '
+      'determinate bar', (tester) async {
+    final entry = (await tester.runAsync(
+      () => enqueue(type: MessageType.voice),
+    ))!;
+    final service = _MediaOutboxMessageService(mediaOutbox, auth());
+    await pumpChat(tester, service);
+
+    service.attachmentDelivery.report(
+      entry.id,
+      DirectAttachmentDeliveryStage.uploading,
+      progress: 0.42,
+    );
+    await tester.pump();
+
+    expect(find.text('Sending… 42%'), findsOneWidget);
+    final bar = tester.widget<LinearProgressIndicator>(
+      find.byKey(ValueKey('progress-media-${entry.id}')),
+    );
+    expect(bar.value, closeTo(0.42, 0.001));
+    expect(
+      find.bySemanticsLabel(
+        RegExp('Your voice message. Status: Sending… 42%.'),
+      ),
+      findsOneWidget,
+      reason: 'a screen reader must hear the same progress the bar draws',
+    );
+  });
+
+  testWidgets('phases without a measurable fraction stay indeterminate '
+      'instead of inventing one', (tester) async {
+    final entry = (await tester.runAsync(
+      () => enqueue(type: MessageType.voice),
+    ))!;
+    final service = _MediaOutboxMessageService(mediaOutbox, auth());
+    await pumpChat(tester, service);
+
+    service.attachmentDelivery.report(
+      entry.id,
+      DirectAttachmentDeliveryStage.reserving,
+    );
+    await tester.pump();
+    expect(find.text('Preparing…'), findsOneWidget);
+    expect(
+      tester
+          .widget<LinearProgressIndicator>(
+            find.byKey(ValueKey('progress-media-${entry.id}')),
+          )
+          .value,
+      isNull,
+    );
+
+    service.attachmentDelivery.report(
+      entry.id,
+      DirectAttachmentDeliveryStage.finalizing,
+    );
+    await tester.pump();
+    expect(find.text('Finishing…'), findsOneWidget);
+    expect(
+      tester
+          .widget<LinearProgressIndicator>(
+            find.byKey(ValueKey('progress-media-${entry.id}')),
+          )
+          .value,
+      isNull,
+    );
+
+    // An indeterminate indicator animates forever. Leave none running at the
+    // end of a test, or the next pumpAndSettle in this file never settles.
+    service.attachmentDelivery.clear(entry.id);
+    await tester.pump();
+  });
+
+  testWidgets('a failed attachment reports the failure, not a stale phase', (
+    tester,
+  ) async {
+    final entry = (await tester.runAsync(
+      () => enqueue(type: MessageType.voice),
+    ))!;
+    await tester.runAsync(
+      () => mediaOutbox.markFailed(entry.id, StateError('refused')),
+    );
+    final service = _MediaOutboxMessageService(mediaOutbox, auth());
+    await pumpChat(tester, service);
+
+    // A phase left over from the attempt that just failed must not outrank
+    // what the durable queue knows.
+    service.attachmentDelivery.report(
+      entry.id,
+      DirectAttachmentDeliveryStage.uploading,
+      progress: 0.9,
+    );
+    await tester.pump();
+
+    expect(find.text('Not sent'), findsOneWidget);
+    expect(find.textContaining('Sending…'), findsNothing);
+    expect(
+      find.byKey(ValueKey('progress-media-${entry.id}')),
+      findsNothing,
+      reason: 'nothing is uploading once the queue has given up',
+    );
+    expect(find.byKey(ValueKey('retry-media-${entry.id}')), findsOneWidget);
+    expect(find.byKey(ValueKey('discard-media-${entry.id}')), findsOneWidget);
+  });
+
+  testWidgets('progress survives 320px at 200% text and a wide window', (
+    tester,
+  ) async {
+    final entry = (await tester.runAsync(
+      () => enqueue(type: MessageType.voice),
+    ))!;
+    final service = _MediaOutboxMessageService(mediaOutbox, auth());
+    await pumpChat(tester, service, textScaler: const TextScaler.linear(2));
+    service.attachmentDelivery.report(
+      entry.id,
+      DirectAttachmentDeliveryStage.uploading,
+      progress: 0.07,
+    );
+    await tester.pump();
+
+    expect(find.text('Sending… 7%'), findsOneWidget);
+    final narrowBar = tester.getSize(
+      find.byKey(ValueKey('progress-media-${entry.id}')),
+    );
+    expect(narrowBar.width, lessThanOrEqualTo(320));
+    expect(
+      narrowBar.height,
+      greaterThanOrEqualTo(4),
+      reason: 'the bar must survive doubled text without being squeezed away',
+    );
+    expect(tester.takeException(), isNull);
+
+    // Desktop: the bubble is capped rather than stretched across the window,
+    // so the bar is measured against that cap and not the viewport.
+    await pumpChat(tester, service, viewport: const Size(1280, 900));
+    service.attachmentDelivery.report(
+      entry.id,
+      DirectAttachmentDeliveryStage.uploading,
+      progress: 0.07,
+    );
+    await tester.pump();
+    expect(find.text('Sending… 7%'), findsOneWidget);
+    final wideBar = tester.getSize(
+      find.byKey(ValueKey('progress-media-${entry.id}')),
+    );
+    expect(wideBar.width, lessThanOrEqualTo(380));
+    expect(
+      wideBar.width,
+      greaterThan(narrowBar.width),
+      reason: 'a wider window gives the bubble its full cap, not the window',
+    );
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('failed Discard invokes the service action', (tester) async {
@@ -240,8 +407,16 @@ class _MemoryPayloadStore implements DirectAttachmentPayloadStore {
   String _key(String namespace, String id) => '$namespace:$id';
 
   @override
-  Future<void> write(String namespace, String id, Uint8List bytes) async {
-    payloads[_key(namespace, id)] = Uint8List.fromList(bytes);
+  Future<void> adopt(
+    String namespace,
+    String id,
+    DirectAttachmentPayloadSource source,
+  ) async {
+    final builder = BytesBuilder(copy: false);
+    await for (final chunk in source.openRead()) {
+      builder.add(chunk);
+    }
+    payloads[_key(namespace, id)] = builder.takeBytes();
   }
 
   @override
@@ -259,8 +434,9 @@ class _MemoryPayloadStore implements DirectAttachmentPayloadStore {
     String namespace,
     String id,
     Reference reference,
-    SettableMetadata metadata,
-  ) => throw UnimplementedError();
+    SettableMetadata metadata, {
+    void Function(double progress)? onProgress,
+  }) => throw UnimplementedError();
 
   @override
   Future<void> delete(String namespace, String id) async {

@@ -17,6 +17,8 @@ import 'package:yovoice/features/reels/presentation/widgets/reel_card.dart';
 /// injected `onOpenAuthor` seam so no widget test ever reaches Firestore.
 const _like = ValueKey<String>('reel-like-action');
 const _comments = ValueKey<String>('reel-comments-action');
+const _share = ValueKey<String>('reel-share-action');
+const _more = ValueKey<String>('reel-more-action');
 
 Finder _inCard(Finder finder) =>
     find.descendant(of: find.byType(ReelCard), matching: finder);
@@ -111,20 +113,23 @@ Future<List<Reel>> _pumpFeed(
 }
 
 void main() {
-  testWidgets('the rail runs like, comment, report down one column', (
+  testWidgets('the rail runs like, comment, share, more down one column', (
     tester,
   ) async {
     await _pumpFeed(tester);
 
     final like = tester.getCenter(_inCard(find.byKey(_like)));
     final comment = tester.getCenter(_inCard(find.byKey(_comments)));
-    final report = tester.getCenter(_inCard(find.byTooltip('Report Reel')));
+    final share = tester.getCenter(_inCard(find.byKey(_share)));
+    final more = tester.getCenter(_inCard(find.byKey(_more)));
 
     expect(like.dy, lessThan(comment.dy));
-    expect(comment.dy, lessThan(report.dy));
+    expect(comment.dy, lessThan(share.dy));
+    expect(share.dy, lessThan(more.dy));
     // One column, not a scattered set of controls.
     expect(comment.dx, closeTo(like.dx, 1));
-    expect(report.dx, closeTo(like.dx, 1));
+    expect(share.dx, closeTo(like.dx, 1));
+    expect(more.dx, closeTo(like.dx, 1));
     // The rail sits against the trailing edge, the identity against the other.
     expect(like.dx, greaterThan(tester.getCenter(find.byType(ReelCard)).dx));
   });
@@ -134,11 +139,15 @@ void main() {
   ) async {
     await _pumpFeed(tester, authorId: 'viewer');
 
-    expect(_inCard(find.byTooltip('Delete Reel')), findsOneWidget);
-    expect(_inCard(find.byTooltip('Report Reel')), findsNothing);
+    expect(find.text('Delete Reel'), findsNothing);
+    expect(find.text('Report Reel'), findsNothing);
     final like = tester.getCenter(_inCard(find.byKey(_like)));
-    final delete = tester.getCenter(_inCard(find.byTooltip('Delete Reel')));
-    expect(delete.dy, greaterThan(like.dy));
+    final more = tester.getCenter(_inCard(find.byKey(_more)));
+    expect(more.dy, greaterThan(like.dy));
+    await tester.tap(_inCard(find.byKey(_more)));
+    await tester.pumpAndSettle();
+    expect(find.text('Delete Reel'), findsOneWidget);
+    expect(find.text('Report Reel'), findsNothing);
   });
 
   testWidgets('each count belongs to the control it counts', (tester) async {
@@ -158,7 +167,8 @@ void main() {
     for (final finder in <Finder>[
       _inCard(find.byKey(_like)),
       _inCard(find.byKey(_comments)),
-      _inCard(find.byTooltip('Report Reel')),
+      _inCard(find.byKey(_share)),
+      _inCard(find.byKey(_more)),
     ]) {
       final size = tester.getSize(finder);
       expect(size.width, greaterThanOrEqualTo(44));
@@ -201,7 +211,8 @@ void main() {
     for (final finder in <Finder>[
       _inCard(find.byKey(_like)),
       _inCard(find.byKey(_comments)),
-      _inCard(find.byTooltip('Report Reel')),
+      _inCard(find.byKey(_share)),
+      _inCard(find.byKey(_more)),
     ]) {
       expect(tester.getSize(finder).height, greaterThanOrEqualTo(44));
     }

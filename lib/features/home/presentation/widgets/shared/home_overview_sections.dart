@@ -2,6 +2,10 @@ import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
+import 'package:yovoice/core/theme/app_radius.dart';
+import 'package:yovoice/core/theme/app_sizing.dart';
+import 'package:yovoice/core/theme/app_spacing.dart';
+import 'package:yovoice/core/theme/app_typography.dart';
 import 'package:yovoice/features/moments/data/models/moment_chain.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_expiry_accessibility.dart';
@@ -28,9 +32,31 @@ class HomeQuickActions extends StatelessWidget {
     final colors = Theme.of(context).colorScheme;
     return LayoutBuilder(
       builder: (context, constraints) {
+        final scaler = MediaQuery.textScalerOf(context);
+        final style = Theme.of(context).textTheme.labelLarge!;
+        double labelWidth(String label) {
+          final painter = TextPainter(
+            text: TextSpan(text: label, style: style),
+            textDirection: Directionality.of(context),
+            textScaler: scaler,
+            maxLines: 1,
+          )..layout();
+          final width = painter.width;
+          painter.dispose();
+          return width;
+        }
+
+        // Layout follows the actual localized labels, not a blanket text-
+        // scale switch: a wide column can still keep both actions at 200%.
+        final minimumActionWidth =
+            (labelWidth(copy.homeCreateRoom) > labelWidth(copy.friends)
+                ? labelWidth(copy.homeCreateRoom)
+                : labelWidth(copy.friends)) +
+            (AppRhythm.title * 2) +
+            20 +
+            AppRhythm.tight;
         final stacked =
-            constraints.maxWidth < 350 ||
-            MediaQuery.textScalerOf(context).scale(1) >= 1.6;
+            constraints.maxWidth < minimumActionWidth * 2 + AppRhythm.item;
         // Filled primary controls take their `onPrimary` foreground as the
         // 2 px keyboard boundary (UI.md); the neutral pill keeps `focus`.
         final create = _FocusOutline(
@@ -42,16 +68,21 @@ class HomeQuickActions extends StatelessWidget {
               key: const ValueKey('home-quick-create-room'),
               onPressed: onCreateRoom,
               style: FilledButton.styleFrom(
-                minimumSize: const Size(0, 44),
-                padding: const EdgeInsets.symmetric(horizontal: 16),
+                // Shrink-wrapped: Material otherwise inflates the LAYOUT
+                // box to 48 px around a 44 px control, and those two
+                // invisible pixels turned Home's declared 12 px gap into a
+                // measured 14. The 44 px target is the `minimumSize`.
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                visualDensity: VisualDensity.standard,
+                minimumSize: const Size(0, AppSizing.minimumTouchTarget),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: AppRhythm.title,
+                  vertical: AppRhythm.tight,
+                ),
                 shape: const StadiumBorder(),
               ),
               icon: const Icon(Icons.add_rounded, size: 20),
-              label: Text(
-                copy.homeCreateRoom,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
+              label: Text(copy.homeCreateRoom, textAlign: TextAlign.center),
             ),
           ),
         );
@@ -63,33 +94,81 @@ class HomeQuickActions extends StatelessWidget {
               key: const ValueKey('home-quick-friends'),
               onPressed: onFriends,
               style: OutlinedButton.styleFrom(
-                minimumSize: const Size(0, 44),
-                padding: const EdgeInsets.symmetric(horizontal: 16),
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                visualDensity: VisualDensity.standard,
+                minimumSize: const Size(0, AppSizing.minimumTouchTarget),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: AppRhythm.title,
+                  vertical: AppRhythm.tight,
+                ),
                 shape: const StadiumBorder(),
               ),
               icon: const Icon(Icons.person_add_alt_1_rounded, size: 20),
-              label: Text(
-                copy.friends,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
+              label: Text(copy.friends, textAlign: TextAlign.center),
             ),
           ),
         );
         return stacked
             ? Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [create, const SizedBox(height: 10), friends],
+                children: [
+                  create,
+                  const SizedBox(height: AppRhythm.item),
+                  friends,
+                ],
               )
             : Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Expanded(child: create),
-                  const SizedBox(width: 12),
+                  const SizedBox(width: AppRhythm.item),
                   Expanded(child: friends),
                 ],
               );
       },
+    );
+  }
+}
+
+/// A genuine empty room directory is an invitation, not a blank live hero.
+/// The two actions remain the same shell routes; displaying this card does
+/// not create a room, join audio, or request microphone permission.
+class HomeConversationInvitation extends StatelessWidget {
+  const HomeConversationInvitation({required this.actions, super.key});
+
+  final Widget actions;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final copy = AppLocalizations.of(context);
+    return DecoratedBox(
+      key: const ValueKey('home-conversation-invitation'),
+      decoration: BoxDecoration(
+        color: palette.surface,
+        borderRadius: AppRadius.lg,
+        border: Border.all(color: palette.border),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(AppRhythm.title),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              copy.text(
+                'No rooms are live right now — start one and your community will hear it.',
+                'Teraz nie ma żadnych pokojów na żywo — utwórz pierwszy, a usłyszy go Twoja społeczność.',
+              ),
+              style: AppTypography.bodyMedium.copyWith(
+                color: palette.textSecondary,
+              ),
+            ),
+            const SizedBox(height: AppRhythm.title),
+            actions,
+          ],
+        ),
+      ),
     );
   }
 }

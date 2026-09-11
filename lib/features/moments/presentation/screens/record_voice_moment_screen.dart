@@ -131,6 +131,21 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
   static const Color _error = AppColors.error;
   static const Color _warning = AppColors.warning;
 
+  /// What [_header] will take: 8 px of top padding plus the taller of the
+  /// 48 px Back target and the centered title.
+  ///
+  /// The title is 19 sp at height 1.15 — one line, inside the 48 px target, on
+  /// any phone at normal text. Enlarged text wraps it to a second line on a
+  /// narrow screen, so assume two there rather than over-reporting the room
+  /// the stage has left. The title's own scale is clamped at 1.6, which is
+  /// also the scale above which every decision using this measure has already
+  /// fallen back to one uninterrupted scroll path.
+  static double _headerExtent(double textScale, double width) {
+    final line = 19 * math.min(textScale, 1.6) * 1.15;
+    final lines = width < 380 && textScale > 1.15 ? 2 : 1;
+    return 8 + math.max(48, line * lines);
+  }
+
   static const int _maxSeconds = 60;
   static const int _meterBarCount = 27;
   static const int _compactMeterBarCount = 19;
@@ -428,6 +443,7 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
     _recorder = widget.recorder ?? VoiceMomentRecorder();
     _captionController.addListener(_onCaptionChanged);
     _availabilityAmountController.addListener(_onAvailabilityAmountChanged);
+    _captionFocus.addListener(_handleCaptionFocus);
     unawaited(_resolveSupport());
   }
 
@@ -437,7 +453,9 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
     _ticker?.cancel();
     unawaited(_levels?.cancel());
     _publishFocus.dispose();
-    _captionFocus.dispose();
+    _captionFocus
+      ..removeListener(_handleCaptionFocus)
+      ..dispose();
     _availabilityAmountFocus.dispose();
     _captionController
       ..removeListener(_onCaptionChanged)
@@ -449,6 +467,14 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
     // ordered cleanup; this is the safety net for parent-route teardown.
     unawaited(_releaseResources());
     super.dispose();
+  }
+
+  /// The keyboard opening, closing or resizing re-lays the whole stage while
+  /// someone is mid-sentence. Keep the field they are typing in on screen
+  /// instead of leaving it wherever the reflow pushed it.
+  @override
+  void didChangeMetrics() {
+    if (_captionFocus.hasFocus) _ensureCaptionVisible();
   }
 
   @override
@@ -1273,6 +1299,31 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
   String get _timeLabel =>
       '${_formatDuration(_elapsedSeconds)} / ${_formatDuration(_maxSeconds)}';
 
+  /// Focusing the caption opens the keyboard, which re-lays the stage: the
+  /// footer either stays pinned or moves onto the keyboard bar, and the
+  /// scroll extent changes underneath the field. Bring the field back to a
+  /// readable place once that new layout exists, rather than leaving it
+  /// wherever the reflow happened to push it.
+  void _handleCaptionFocus() {
+    if (!_captionFocus.hasFocus) return;
+    _ensureCaptionVisible();
+  }
+
+  void _ensureCaptionVisible() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_captionFocus.hasFocus) return;
+      final target = _captionFieldKey.currentContext;
+      if (target == null) return;
+      unawaited(
+        Scrollable.ensureVisible(
+          target,
+          duration: const Duration(milliseconds: 180),
+          alignment: 0.1,
+        ),
+      );
+    });
+  }
+
   // ------------------------------------------------------------------- view
 
   bool get _isReview =>
@@ -1290,67 +1341,95 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
       onPopInvokedWithResult: (didPop, result) {
         if (!didPop && !busy) unawaited(_leave(result));
       },
-      child: Scaffold(
-        backgroundColor: _background,
-        body: Container(
-          decoration: const BoxDecoration(
-            gradient: RadialGradient(
-              center: Alignment(0, -0.8),
-              radius: 1.1,
-              colors: [_skyTop, AppImmersiveColors.surface, _background],
-            ),
-          ),
-          child: SafeArea(
-            child: Column(
-              children: [
-                _header(busy),
-                Expanded(
-                  child: LayoutBuilder(
-                    builder: (context, constraints) {
-                      final width = constraints.maxWidth;
-                      final textScale = MediaQuery.textScalerOf(
-                        context,
-                      ).scale(1);
-                      // A short keyboard viewport and enlarged text need one
-                      // uninterrupted scroll path, not a footer that consumes
-                      // the space needed to read or edit the recording.
-                      final wide =
-                          width >= 1100 &&
-                          textScale < 1.6 &&
-                          constraints.maxHeight >= 480;
-                      final pinActions =
-                          _isReview &&
-                          constraints.maxHeight >= 460 &&
-                          textScale < 1.6 &&
-                          MediaQuery.viewInsetsOf(context).bottom == 0;
-                      final body = wide
-                          ? _wideBody(width, showActions: !pinActions)
-                          : _stackedBody(width, showActions: !pinActions);
-                      return Column(
-                        children: [
-                          Expanded(
-                            // Start each visual stage at its heading, not at
-                            // the scroll offset of the previous capture/form.
-                            // Publishing and retry stay in the same stage.
-                            child: KeyedSubtree(
-                              key: ValueKey(_isReview),
-                              child: body,
-                            ),
-                          ),
-                          if (pinActions) _reviewActionBar(width, wide: wide),
-                          // While the keyboard is up the action bar is
-                          // unpinned by design; this gives the caption an
-                          // explicit way out instead of a blank slot.
-                          const YoKeyboardDoneBar(),
-                        ],
-                      );
-                    },
-                  ),
+      // The layout decisions are taken here, OUTSIDE the Scaffold: the body
+      // slot has its bottom view inset stripped (Scaffold has already shrunk
+      // the body above the keyboard), so a keyboard-conditioned decision made
+      // inside the body always reads a zero inset and can never fire.
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final media = MediaQuery.of(context);
+          final width = constraints.maxWidth;
+          final textScale = media.textScaler.scale(1);
+          final keyboardInset = media.viewInsets.bottom;
+          final keyboardOpen = keyboardInset > 0;
+          // What the stage itself actually gets: the surface minus the safe
+          // areas, the header and the keyboard. This is the same measure the
+          // in-body LayoutBuilder used to report, now keyboard-aware for
+          // real rather than in name only.
+          final stageHeight = math.max(
+            0.0,
+            constraints.maxHeight -
+                media.padding.top -
+                media.padding.bottom -
+                _headerExtent(textScale, width) -
+                keyboardInset,
+          );
+          // A short keyboard viewport and enlarged text need one
+          // uninterrupted scroll path, not a footer that consumes
+          // the space needed to read or edit the recording.
+          final wide = width >= 1100 && textScale < 1.6 && stageHeight >= 480;
+          final pinActions = _isReview && stageHeight >= 460 && textScale < 1.6;
+          // When the keyboard leaves too little room to pin the footer, the
+          // primary action rides on the keyboard bar instead of falling into
+          // the scroll behind the keyboard, which is where testers lost it.
+          // Enlarged text keeps Done alone and lets the scroll carry Publish.
+          final dockPublish =
+              _isReview && keyboardOpen && !pinActions && textScale < 1.6;
+          final showActions = !pinActions && !dockPublish;
+          final body = wide
+              ? _wideBody(width, showActions: showActions)
+              : _stackedBody(width, showActions: showActions);
+          return Scaffold(
+            backgroundColor: _background,
+            body: Container(
+              decoration: const BoxDecoration(
+                gradient: RadialGradient(
+                  center: Alignment(0, -0.8),
+                  radius: 1.1,
+                  colors: [_skyTop, AppImmersiveColors.surface, _background],
                 ),
-              ],
+              ),
+              child: SafeArea(
+                child: Column(
+                  children: [
+                    _header(busy),
+                    Expanded(
+                      // Start each visual stage at its heading, not at the
+                      // scroll offset of the previous capture/form.
+                      // Publishing and retry stay in the same stage.
+                      child: KeyedSubtree(
+                        key: ValueKey(_isReview),
+                        child: body,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             ),
-          ),
-        ),
+            // Null while nothing is docked, so the body keeps its own bottom
+            // safe-area padding exactly as before. Scaffold pins this slot to
+            // the bottom of the WINDOW — behind the keyboard — so the chrome
+            // is lifted by the keyboard inset; the body is then shrunk by the
+            // chrome's full height and nothing overlaps.
+            bottomNavigationBar: !keyboardOpen && !pinActions
+                ? null
+                : YoKeyboardSafeBottomBar(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        YoKeyboardDoneBar(
+                          action: dockPublish ? _dockedPublish() : null,
+                        ),
+                        if (pinActions)
+                          SafeArea(
+                            top: false,
+                            child: _reviewActionBar(width, wide: wide),
+                          ),
+                      ],
+                    ),
+                  ),
+          );
+        },
       ),
     );
     return YoImmersiveDarkSurface(child: content);
@@ -1380,6 +1459,14 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
             child: Text(
               copy.text('Record Voice Moment', 'Nagraj Voice Moment'),
               textAlign: TextAlign.center,
+              // The title keeps every word — it is never truncated — but it
+              // stops growing at the same 1.6 scale where this screen already
+              // switches to a single scroll path. At 200% on a 320 px phone it
+              // otherwise wrapped to five lines and took 220 of the 268 px the
+              // keyboard leaves, starving the stage it is a heading for.
+              textScaler: MediaQuery.textScalerOf(
+                context,
+              ).clamp(maxScaleFactor: 1.6),
               style: const TextStyle(
                 color: Colors.white,
                 fontSize: 19,
@@ -2457,8 +2544,22 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
             _phase != VoiceMomentRecordingPhase.publishing &&
             !_publishContractLocked,
         maxLength: _captionMaxLength,
-        maxLines: 3,
-        minLines: 3,
+        // A 140-character caption is a one-line label, not prose. Left to
+        // the multiline default, Flutter sends `TextInputAction.newline`,
+        // the platform draws a return arrow instead of a confirm key, and
+        // `performAction` deliberately ignores newline — so Return could
+        // only add a line break and there was no way to finish typing.
+        // Declaring the text keyboard and the done action makes Return
+        // confirm on a software keyboard and on a hardware one, at the
+        // deliberate cost of typed line breaks in a caption.
+        keyboardType: TextInputType.text,
+        textInputAction: TextInputAction.done,
+        onSubmitted: (_) => _captionFocus.unfocus(),
+        // Two lines at rest, growing to five: at 320 px a full-length
+        // caption needs about four lines, and the old fixed three-line box
+        // scrolled the tail out of sight with nothing to say it had.
+        minLines: 2,
+        maxLines: 5,
         style: const TextStyle(color: Colors.white),
         decoration: InputDecoration(
           // A real label, not just a hint: a hint is the field's only
@@ -2708,6 +2809,51 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
   /// the busy state is expressed through the label and styling instead.
   void _ignoreWhileBusy() {}
 
+  /// One label for the primary action wherever it is drawn — the pinned
+  /// footer, the scrolling stage, or the keyboard bar.
+  String _publishLabel() {
+    if (_phase == VoiceMomentRecordingPhase.publishing) {
+      return _copy.text('Publishing…', 'Publikowanie…');
+    }
+    return _notice?.problem == VoiceRecordingProblem.uploadFailed
+        ? _copy.text('Try again', 'Spróbuj ponownie')
+        : _copy.text('Publish', 'Opublikuj');
+  }
+
+  /// Publishing from the keyboard bar drops focus first.
+  ///
+  /// That is not cosmetic: the upload-failure recovery scrolls `_publishKey`
+  /// back into view and focuses it, and while the action is docked on the
+  /// keyboard bar that button is not in the tree at all. Closing the keyboard
+  /// re-pins the footer, so the recovery path still finds its target.
+  void _publishFromKeyboardBar() {
+    FocusManager.instance.primaryFocus?.unfocus();
+    unawaited(_publish());
+  }
+
+  /// The primary action while the keyboard covers the footer. Compact by
+  /// design: it shares one row with Done, down to a 320 px screen.
+  Widget _dockedPublish() {
+    final publishing = _phase == VoiceMomentRecordingPhase.publishing;
+    return FilledButton(
+      key: const ValueKey('voice-moment-docked-publish'),
+      onPressed: publishing ? _ignoreWhileBusy : _publishFromKeyboardBar,
+      style: FilledButton.styleFrom(
+        backgroundColor: publishing ? _primary.withValues(alpha: .5) : _primary,
+        foregroundColor: publishing ? Colors.white70 : Colors.white,
+        // The painted height, not just the padded hit area.
+        minimumSize: const Size(112, 48),
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      ),
+      child: Text(
+        _publishLabel(),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      ),
+    );
+  }
+
   Widget _actions({required bool stacked}) {
     final publishing = _phase == VoiceMomentRecordingPhase.publishing;
 
@@ -2777,16 +2923,7 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
           else
             const Icon(Icons.publish_rounded),
           const SizedBox(width: 8),
-          Flexible(
-            child: Text(
-              publishing
-                  ? _copy.text('Publishing…', 'Publikowanie…')
-                  : (_notice?.problem == VoiceRecordingProblem.uploadFailed
-                        ? _copy.text('Try again', 'Spróbuj ponownie')
-                        : _copy.text('Publish', 'Opublikuj')),
-              textAlign: TextAlign.center,
-            ),
-          ),
+          Flexible(child: Text(_publishLabel(), textAlign: TextAlign.center)),
         ],
       ),
     );

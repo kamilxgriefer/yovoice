@@ -6,6 +6,7 @@ import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_gradients.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
+import 'package:yovoice/core/theme/app_spacing.dart';
 import 'package:yovoice/features/moments/data/services/moment_views_service.dart';
 import 'package:yovoice/shared/widgets/identity/official_role_badge.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
@@ -107,7 +108,10 @@ class MomentStoryTile extends StatelessWidget {
 
   static const double _nameSize = 11;
   static const double _captionSize = 10.5;
-  static const double _discGap = 6;
+
+  /// Disc → name. One shared step (AppRhythm.tight) so the story tile and
+  /// the people tile beside it on Home breathe identically.
+  static const double _discGap = AppRhythm.tight;
   static const double _captionGap = 2;
   static const double _ringWidth = 2.5;
   static const double _ringInset = 2;

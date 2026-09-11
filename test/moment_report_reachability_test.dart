@@ -17,6 +17,7 @@ import 'package:yovoice/features/moments/data/services/moment_service.dart';
 import 'package:yovoice/features/moments/data/services/offline_voice_moment_service.dart';
 import 'package:yovoice/features/moments/data/services/voice_moment_read_service.dart';
 import 'package:yovoice/features/moments/presentation/screens/moment_comments_screen.dart';
+import 'package:yovoice/features/moments/presentation/screens/moment_detail_screen.dart';
 import 'package:yovoice/features/moments/presentation/screens/moments_screen.dart';
 import 'package:yovoice/shared/identity/public_identity_repository.dart';
 
@@ -31,7 +32,7 @@ import 'voice_moment_test_doubles.dart';
 /// Three kinds of surface, because Moments has three places a person
 /// meets someone else's content: the full Moment card (the sheet the
 /// Following rows open), the feed itself (rows, the story viewer, and on
-/// desktop the detail panel), and a comment thread.
+/// desktop the explicitly opened detail screen), and a comment thread.
 ///
 /// HISTORY: the middle group used to pump the Discover avatar board
 /// (`MomentDiscoveryView`). The stories redesign replaced that surface
@@ -237,17 +238,18 @@ void main() {
       });
     });
 
-    testWidgets('a FEATURED tile\'s menu offers Report and files the same '
-        'report the row does', (tester) async {
+    testWidgets('the single Discover card has no featured duplicate and '
+        'its menu files the same report', (tester) async {
       final functions = _RecordingFunctions();
       await pumpFeed(tester, functions: functions);
 
-      // The engagement-ranked grid is a second presentation of the same
-      // Moment, so the safety exit has to exist on it too.
-      expect(find.byKey(const ValueKey('moment-featured-v1')), findsOneWidget);
-      await tester.tap(find.byKey(const ValueKey('moment-featured-menu-v1')));
+      // Removing the duplicate presentation must not remove its safety exit.
+      expect(find.byKey(const ValueKey('moment-featured-v1')), findsNothing);
+      expect(find.byKey(const ValueKey('moment-row-v1')), findsOneWidget);
+      expect(find.text('caption'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('moment-row-menu-v1')));
       await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('moment-featured-report-v1')));
+      await tester.tap(find.byKey(const ValueKey('moment-row-report-v1')));
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('report-reason-hate')));
       await tester.pumpAndSettle();
@@ -263,8 +265,8 @@ void main() {
       });
     });
 
-    testWidgets('the featured tile menu is reachable at a 2x text scale, '
-        'where the grid falls back to one column', (tester) async {
+    testWidgets('the card menu is reachable at a 2x text scale and still '
+        'files the report', (tester) async {
       final functions = _RecordingFunctions();
       await pumpFeed(
         tester,
@@ -273,17 +275,31 @@ void main() {
         textScale: 2,
       );
 
-      final menu = find.byKey(const ValueKey('moment-featured-menu-v1'));
+      final menu = find.byKey(const ValueKey('moment-row-menu-v1'));
       expect(menu, findsOneWidget);
       await tester.ensureVisible(menu);
       await tester.pump();
       await tester.tap(menu);
       await tester.pumpAndSettle();
       expect(
-        find.byKey(const ValueKey('moment-featured-report-v1')),
+        find.byKey(const ValueKey('moment-row-report-v1')),
         findsOneWidget,
       );
       expect(tester.takeException(), isNull);
+      await tester.tap(find.byKey(const ValueKey('moment-row-report-v1')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('report-reason-hate')));
+      await tester.pumpAndSettle();
+
+      expect(functions.calls.single.name, 'createContentReport');
+      expect(functions.calls.single.payload, <String, Object?>{
+        'targetType': 'voiceMoment',
+        'momentId': 'v1',
+        'reason': 'hate',
+        'requestId': ContentReportService.requestIdFor(
+          const ReportedContent.voiceMoment(momentId: 'v1'),
+        ),
+      });
     });
 
     testWidgets('your own Moment\'s row offers Delete, never Report', (
@@ -313,7 +329,7 @@ void main() {
       final functions = _RecordingFunctions();
       await pumpFeed(tester, functions: functions);
 
-      await tester.tap(find.byKey(ValueKey('moments-chain-$authorUid')));
+      await tester.tap(find.byKey(const ValueKey('moment-row-chain-v1')));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 400));
 
@@ -339,7 +355,7 @@ void main() {
       final functions = _RecordingFunctions();
       await pumpFeed(tester, functions: functions, author: viewerUid);
 
-      await tester.tap(find.byKey(ValueKey('moments-chain-$viewerUid')));
+      await tester.tap(find.byKey(const ValueKey('moment-row-chain-v1')));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 400));
 
@@ -363,7 +379,7 @@ void main() {
       );
       expect(tester.takeException(), isNull);
 
-      await tester.tap(find.byKey(ValueKey('moments-chain-$authorUid')));
+      await tester.tap(find.byKey(const ValueKey('moment-row-chain-v1')));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 400));
       expect(
@@ -379,16 +395,24 @@ void main() {
       expect(rect.right, lessThanOrEqualTo(360));
     });
 
-    testWidgets('the desktop detail panel offers Report beside Like and '
+    testWidgets('the explicit desktop detail offers Report beside Like and '
         'Share, and files it', (tester) async {
       final functions = _RecordingFunctions();
       await pumpFeed(tester, functions: functions, size: const Size(1440, 900));
 
-      expect(find.byKey(const ValueKey('detail-like')), findsOneWidget);
-      expect(find.byKey(const ValueKey('detail-share')), findsOneWidget);
-      expect(find.byKey(const ValueKey('detail-report-v1')), findsOneWidget);
+      expect(find.byType(MomentDetailScreen), findsNothing);
+      await tester.tap(find.byKey(const ValueKey('moment-row-title-v1')));
+      await tester.pumpAndSettle();
 
-      await tester.tap(find.byKey(const ValueKey('detail-report-v1')));
+      expect(find.byType(MomentDetailScreen), findsOneWidget);
+      expect(find.byKey(const ValueKey('moment-detail-like')), findsOneWidget);
+      expect(find.byKey(const ValueKey('moment-detail-share')), findsOneWidget);
+      final report = find.byKey(const ValueKey('moment-detail-report-v1'));
+      expect(report, findsOneWidget);
+
+      await tester.ensureVisible(report);
+      await tester.pump();
+      await tester.tap(report);
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('report-reason-harassment')));
       await tester.pumpAndSettle();

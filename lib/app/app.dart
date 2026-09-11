@@ -25,6 +25,7 @@ import 'package:yovoice/features/notifications/data/services/push_notification_s
 import 'package:yovoice/features/notifications/data/models/app_notification.dart';
 import 'package:yovoice/features/notifications/presentation/notification_router.dart';
 import 'package:yovoice/features/notifications/presentation/widgets/yo_top_notification_host.dart';
+import 'package:yovoice/features/reels/presentation/navigation/reel_link_coordinator.dart';
 
 @visibleForTesting
 void clearSessionSnackBars(ScaffoldMessengerState messenger) {
@@ -251,20 +252,28 @@ class _YoVoiceAppState extends State<YoVoiceApp> {
   final _topNotifications = YoTopNotificationController();
   ForegroundNotificationStreamSource? _streamNotifications;
   late final AuthEpochRouteResetter _authRouteResetter;
+  late final ReelLinkIntentController _reelLinkIntent;
   StreamSubscription<User?>? _authRouteSubscription;
   bool _foregroundRetryScheduled = false;
 
   @override
   void initState() {
     super.initState();
+    _reelLinkIntent = ReelLinkIntentController(initialUri: Uri.base);
     _authRouteResetter = AuthEpochRouteResetter(
       navigatorKey: notificationNavigatorKey,
       routeFactory: _authBoundaryRoute,
       onPrincipalExit: _clearPresentationAndDisconnectForAuthEpoch,
     );
     _authRouteSubscription = FirebaseAuth.instance.authStateChanges().listen(
-      (user) => _authRouteResetter.handlePrincipal(user?.uid),
-      onError: _authRouteResetter.handleError,
+      (user) {
+        _reelLinkIntent.handlePrincipal(user?.uid);
+        _authRouteResetter.handlePrincipal(user?.uid);
+      },
+      onError: (Object error, StackTrace stackTrace) {
+        _reelLinkIntent.handleAuthError();
+        _authRouteResetter.handleError(error, stackTrace);
+      },
     );
     PushNotificationService.instance.onNotificationTap =
         (type, targetId, actorId, notificationId) {
@@ -316,6 +325,7 @@ class _YoVoiceAppState extends State<YoVoiceApp> {
     PushNotificationService.instance.claimForegroundNotification = null;
     PushNotificationService.instance.onInAppForegroundNotification = null;
     unawaited(_authRouteSubscription?.cancel());
+    _reelLinkIntent.dispose();
     unawaited(_streamNotifications?.dispose());
     super.dispose();
   }
@@ -329,6 +339,7 @@ class _YoVoiceAppState extends State<YoVoiceApp> {
         child: AuthGate(
           initiallySignedOut: initiallySignedOut,
           initialAuthError: initialAuthError,
+          reelLinkIntent: _reelLinkIntent,
         ),
       ),
     );

@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:yovoice/features/media/data/models/gif_asset.dart';
 
 class ClubMessage {
   const ClubMessage({
@@ -14,6 +15,7 @@ class ClubMessage {
     required this.isDeleted,
     this.deletedBy,
     this.deletedByRole,
+    this.gif,
   });
 
   final String id;
@@ -26,6 +28,7 @@ class ClubMessage {
   final DateTime sentAt;
   final DateTime? editedAt;
   final bool isDeleted;
+  final GifAsset? gif;
 
   /// Who performed the removal. Absent on live messages, and absent on
   /// removals written before the client started stamping it — so a null
@@ -76,6 +79,9 @@ class ClubMessage {
           _readDate(data['sentAt']) ?? DateTime.fromMillisecondsSinceEpoch(0),
       editedAt: _readDate(data['editedAt']),
       isDeleted: data['isDeleted'] as bool? ?? false,
+      gif: data['isDeleted'] == true || data['type'] != 'gif'
+          ? null
+          : GifAsset.fromMessage(data['gif']),
       deletedBy: _nullableString(data['deletedBy']),
       deletedByRole: _nullableString(data['deletedByRole']),
     );

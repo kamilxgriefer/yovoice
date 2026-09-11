@@ -17,6 +17,7 @@ import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/messages/data/models/conversation.dart';
 import 'package:yovoice/features/messages/data/models/message.dart';
 import 'package:yovoice/features/messages/data/services/direct_attachment_outbox.dart';
+import 'package:yovoice/features/messages/data/services/direct_attachment_payload_source.dart';
 import 'package:yovoice/features/messages/data/services/direct_attachment_payload_store.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/messages/presentation/screens/chat_screen.dart';
@@ -890,8 +891,16 @@ class _MemoryPayloadStore implements DirectAttachmentPayloadStore {
   );
 
   @override
-  Future<void> write(String namespace, String id, Uint8List bytes) async {
-    _bytes[_key(namespace, id)] = bytes;
+  Future<void> adopt(
+    String namespace,
+    String id,
+    DirectAttachmentPayloadSource source,
+  ) async {
+    final builder = BytesBuilder(copy: false);
+    await for (final chunk in source.openRead()) {
+      builder.add(chunk);
+    }
+    _bytes[_key(namespace, id)] = builder.takeBytes();
   }
 
   @override

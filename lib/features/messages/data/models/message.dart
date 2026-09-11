@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:yovoice/features/media/data/models/gif_asset.dart';
 
-enum MessageType { text, voice, image, video }
+enum MessageType { text, voice, image, video, gif }
 
 class Message {
   const Message({
@@ -20,6 +21,7 @@ class Message {
     this.replyToMessageId,
     this.replyToSenderId,
     this.replyToContent,
+    this.gif,
   });
 
   final String id;
@@ -43,6 +45,7 @@ class Message {
   final String? replyToMessageId;
   final String? replyToSenderId;
   final String? replyToContent;
+  final GifAsset? gif;
 
   bool isMine(String currentUserId) => senderId == currentUserId;
 
@@ -61,6 +64,7 @@ class Message {
       case MessageType.video:
         return 'Video';
       case MessageType.text:
+      case MessageType.gif:
         return content;
     }
   }
@@ -85,6 +89,9 @@ class Message {
       mediaUrl: data['mediaUrl'] as String?,
       durationSeconds: (data['durationSeconds'] as num?)?.toInt(),
       isDeleted: data['isDeleted'] as bool? ?? false,
+      gif: data['isDeleted'] == true || data['type'] != 'gif'
+          ? null
+          : GifAsset.fromMessage(data['gif']),
       editedAt: _nullableDateTimeFromValue(data['editedAt']),
       replyToMessageId: data['replyToMessageId'] as String?,
       replyToSenderId: data['replyToSenderId'] as String?,

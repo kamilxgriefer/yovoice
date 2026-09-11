@@ -24,6 +24,7 @@ class ReelsToolbar extends StatelessWidget {
     required this.gutter,
     required this.showCreate,
     this.onCreate,
+    this.immersive = false,
     super.key,
   });
 
@@ -43,6 +44,7 @@ class ReelsToolbar extends StatelessWidget {
   /// publish already in flight keeps the button and disables it.
   final bool showCreate;
   final VoidCallback? onCreate;
+  final bool immersive;
 
   static const double _rowHeight = 44;
   static const double _pillIconSize = 16;
@@ -78,6 +80,76 @@ class ReelsToolbar extends StatelessWidget {
     final createLabel = copy.text('Create Reel', 'Utwórz Reel');
     final refreshLabel = copy.text('Refresh', 'Odśwież');
 
+    if (immersive) {
+      return Padding(
+        padding: EdgeInsets.fromLTRB(gutter, 0, gutter, 4),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: LayoutBuilder(
+                builder: (context, constraints) => Wrap(
+                  children: [
+                    for (final own in [false, true])
+                      Semantics(
+                        selected: ownOnly == own,
+                        child: TextButton(
+                          key: ValueKey(
+                            own ? 'reels-own-filter' : 'reels-discover-filter',
+                          ),
+                          onPressed: () => onAudienceSelected(own),
+                          style: TextButton.styleFrom(
+                            foregroundColor: Colors.white,
+                            minimumSize: const Size(44, 44),
+                            padding: const EdgeInsets.symmetric(horizontal: 12),
+                            textStyle: theme.textTheme.labelLarge?.copyWith(
+                              fontSize: 13,
+                              fontWeight: ownOnly == own
+                                  ? FontWeight.w800
+                                  : FontWeight.w500,
+                            ),
+                          ),
+                          child: Text(
+                            own ? ownLabel : discoverLabel,
+                            style: TextStyle(
+                              decoration: ownOnly == own
+                                  ? TextDecoration.underline
+                                  : null,
+                              decorationColor: Colors.white,
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+            if (showCreate)
+              IconButton(
+                key: const ValueKey('reels-create-persistent'),
+                tooltip: createLabel,
+                color: Colors.white,
+                constraints: const BoxConstraints.tightFor(
+                  width: 44,
+                  height: 44,
+                ),
+                onPressed: onCreate,
+                icon: const Icon(Icons.add_rounded),
+              ),
+            IconButton(
+              key: const ValueKey('reels-refresh'),
+              tooltip: refreshLabel,
+              color: Colors.white,
+              disabledColor: Colors.white60,
+              constraints: const BoxConstraints.tightFor(width: 44, height: 44),
+              onPressed: onRefresh,
+              icon: const Icon(Icons.refresh_rounded, size: 22),
+            ),
+          ],
+        ),
+      );
+    }
+
     // Measured with the very style each control renders in — family, fallback
     // and letter spacing included. A fit decision taken against a different
     // typeface than the one that ships is not a measurement, it is a guess.
@@ -90,18 +162,22 @@ class ReelsToolbar extends StatelessWidget {
     final createTextStyle = (theme.textTheme.labelLarge ?? const TextStyle())
         .copyWith(fontSize: _createFontSize, fontWeight: FontWeight.w700);
 
-    YoSegmentedPill pill({double? width, int labelMaxLines = 1}) {
+    YoSegmentedPill pill({
+      double? width,
+      int labelMaxLines = 1,
+      bool showIcons = true,
+    }) {
       return YoSegmentedPill(
         segments: <YoSegmentedPillSegment>[
           YoSegmentedPillSegment(
             key: const ValueKey<String>('reels-discover-filter'),
             label: discoverLabel,
-            icon: Icons.explore_outlined,
+            icon: showIcons ? Icons.explore_outlined : null,
           ),
           YoSegmentedPillSegment(
             key: const ValueKey<String>('reels-own-filter'),
             label: ownLabel,
-            icon: Icons.person_outline_rounded,
+            icon: showIcons ? Icons.person_outline_rounded : null,
           ),
         ],
         selectedIndex: ownOnly ? 1 : 0,
@@ -221,11 +297,37 @@ class ReelsToolbar extends StatelessWidget {
               textScaler.scale(1) >= 1.6 || minimumRow > available;
 
           if (accessibilityLayout) {
+            // At large text sizes the labels carry the meaning; removing
+            // decorative icons gives each word room before adding a second
+            // line. If even a complete word cannot fit, preserve readable
+            // labels in a horizontally scrollable switch, never mid-word
+            // fragments or a smaller accessibility font.
+            final longestWord =
+                <String>[
+                  ...discoverLabel.split(RegExp(r'\s+')),
+                  ...ownLabel.split(RegExp(r'\s+')),
+                ].fold<double>(
+                  0,
+                  (width, word) =>
+                      math.max(width, _textWidth(context, word, pillTextStyle)),
+                );
+            final wholeWordsFit =
+                2 * (_pillSegmentPadding + longestWord) <= available;
+            final audienceSwitch = wholeWordsFit
+                ? pill(
+                    width: double.infinity,
+                    labelMaxLines: 2,
+                    showIcons: pillWidth <= available,
+                  )
+                : SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: pill(width: pillWidth),
+                  );
             return Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               mainAxisSize: MainAxisSize.min,
               children: <Widget>[
-                pill(width: double.infinity, labelMaxLines: 2),
+                audienceSwitch,
                 const SizedBox(height: 8),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.end,

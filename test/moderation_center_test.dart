@@ -531,6 +531,143 @@ void main() {
     });
   });
 
+  /// GIF reports (ADR-172).
+  ///
+  /// `reportGifAsset` writes these server-side with `targetType: 'gifAsset'`,
+  /// and before this group existed the Moderation Center could not act on one
+  /// at all: the enum had no such value, so `targetType` parsed to null, the
+  /// panel showed the "identity was not retained" line for what is in fact a
+  /// deliberate absence, and `canRemove` was false — leaving a moderator
+  /// looking at a reported GIF with no way to block it while the server
+  /// endpoint that blocks it sat there working.
+  group('GIF reports', () {
+    Future<void> seedGifReport({String id = 'gif-report'}) async {
+      await db.collection('reports').doc(id).set({
+        'schemaVersion': 2,
+        'reporterId': 'reporter-uid',
+        'targetType': 'gifAsset',
+        'targetId': 'giphy:abc123',
+        // Empty BY DESIGN — no YO Voice account is at fault for a third
+        // party's asset. See functions/media/gif/moderation.js.
+        'reportedUserId': '',
+        'gifProvider': 'giphy',
+        'gifId': 'abc123',
+        'targetTextSnapshot': 'giphy:abc123 — Dancing cat',
+        'targetMediaUrl': 'https://media.giphy.com/media/abc123/200h.gif',
+        'reason': 'sexual',
+        'note': 'not safe for a G rating',
+        'createdAt': Timestamp.now(),
+        'status': 'open',
+      });
+    }
+
+    Future<void> openAsStaff(WidgetTester tester) async {
+      useDesktop(tester);
+      await seedAccount(mod, role: 'moderator');
+      await tester.pumpWidget(
+        host(
+          ModerationCenterScreen(
+            moderationService: service(mod, role: 'moderator'),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+    }
+
+    test('a GIF report parses as its own target type, with no account '
+        'blamed', () async {
+      await seedGifReport();
+
+      final report = ModerationReport.fromFirestore(
+        await db.collection('reports').doc('gif-report').get(),
+      );
+
+      expect(report.targetType, ReportTargetType.gifAsset);
+      expect(report.targetId, 'giphy:abc123');
+      expect(report.targetText, 'giphy:abc123 — Dancing cat');
+      expect(
+        report.targetMediaUrl,
+        'https://media.giphy.com/media/abc123/200h.gif',
+      );
+      // The absence is the design, not lost data.
+      expect(report.reportedUserId, isEmpty);
+    });
+
+    testWidgets('a reported GIF is typed, previewed and blockable', (
+      tester,
+    ) async {
+      await seedGifReport();
+      await openAsStaff(tester);
+
+      // Typed in the queue rather than rendering as an unlabelled row.
+      expect(rowsWithTarget('GIF'), findsWidgets);
+      await tester.tap(rowsWithTarget('GIF').first);
+      await tester.pumpAndSettle();
+
+      // The evidence a moderator judges from: the picture and the snapshot
+      // that outlives the block. `gifAssets` is unreadable by staff, so if
+      // these are not on the report they do not exist anywhere.
+      expect(find.byKey(const ValueKey('moderation-gif-evidence')), findsOne);
+      expect(find.text('giphy:abc123 — Dancing cat'), findsOneWidget);
+
+      // The honest account line, NOT "identity was not retained".
+      expect(
+        find.text('None. A GIF belongs to the provider, not to a member.'),
+        findsOneWidget,
+      );
+      expect(
+        find.textContaining('was not retained in this earlier report'),
+        findsNothing,
+      );
+
+      // The action exists, and says "block" rather than "remove", because
+      // we never hosted the asset and cannot delete it.
+      expect(find.text('Block GIF and resolve'), findsOneWidget);
+      expect(find.text('Remove message and resolve'), findsNothing);
+    });
+
+    testWidgets('the block confirmation states what blocking does NOT do', (
+      tester,
+    ) async {
+      await seedGifReport();
+      await openAsStaff(tester);
+      await tester.tap(rowsWithTarget('GIF').first);
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Block GIF and resolve'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Block this GIF?'), findsOneWidget);
+      // The limit is stated rather than glossed: a moderator who believes
+      // the GIF vanishes from history will close a case that is not closed.
+      expect(
+        find.textContaining('GIFs already sent stay visible'),
+        findsOneWidget,
+      );
+    });
+
+    test('a GIF report can never be filed through the client write path', () {
+      final reports = ReportService(
+        firestore: db,
+        auth: authFor('reporter-uid'),
+      );
+
+      // Rules can only prove `globalMessage` and `user` from a client write,
+      // so this would be refused with `permission-denied` — which the
+      // service otherwise reads as "you already reported this". Being told a
+      // report exists when none was filed is worse than an error.
+      expect(
+        () => reports.report(
+          targetType: ReportTargetType.gifAsset,
+          targetId: 'giphy:abc123',
+          reportedUserId: '',
+          reason: ReportReason.sexual,
+        ),
+        throwsA(isA<ArgumentError>()),
+      );
+    });
+  });
+
   group('report model', () {
     test(
       'a self-contained v2 Voice comment keeps immutable target identity',

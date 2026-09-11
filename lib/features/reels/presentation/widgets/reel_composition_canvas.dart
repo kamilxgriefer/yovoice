@@ -50,6 +50,8 @@ class ReelCompositionFrame extends StatelessWidget {
     this.onTextOverlayChanged,
     this.onLinkOverlayChanged,
     this.overlaySafeInsets = const EdgeInsets.fromLTRB(16, 16, 16, 132),
+    this.fillViewport = false,
+    this.overlayInsetsInViewport = false,
     super.key,
   });
 
@@ -66,36 +68,61 @@ class ReelCompositionFrame extends StatelessWidget {
   final ValueChanged<ReelLinkOverlay>? onLinkOverlayChanged;
   final EdgeInsets overlaySafeInsets;
 
+  /// The mobile feed reflows normalized stickers into the available viewport;
+  /// it never stretches the source media or clips a fitted 9:16 sticker layer.
+  /// The composer and portrait previews retain their canonical design canvas.
+  final bool fillViewport;
+
+  /// Player controls are measured in physical layout pixels. Composer callers
+  /// keep design-canvas units; native playback opts in to scale those insets.
+  final bool overlayInsetsInViewport;
+
   static const designSize = Size(390, 390 * 16 / 9);
 
   @override
-  Widget build(BuildContext context) => AspectRatio(
-    aspectRatio: 9 / 16,
-    child: LayoutBuilder(
-      builder: (context, constraints) {
-        final scale = math.min(
-          constraints.maxWidth / designSize.width,
-          constraints.maxHeight / designSize.height,
-        );
-        return FittedBox(
-          fit: BoxFit.contain,
-          child: SizedBox.fromSize(
-            size: designSize,
-            child: ReelCompositionCanvas(
-              composition: composition,
-              media: media,
-              mediaForeground: mediaForeground,
-              onOpenLink: onOpenLink,
-              onTextOverlayChanged: onTextOverlayChanged,
-              onLinkOverlayChanged: onLinkOverlayChanged,
-              overlaySafeInsets: overlaySafeInsets,
-              minimumLinkExtent: onOpenLink == null || scale <= 0
-                  ? 44
-                  : math.max(44, 44 / scale),
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, viewport) => AspectRatio(
+      aspectRatio:
+          fillViewport && viewport.hasBoundedHeight && viewport.maxHeight > 0
+          ? viewport.maxWidth / viewport.maxHeight
+          : 9 / 16,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final canvas = fillViewport && constraints.maxWidth > 0
+              ? Size(
+                  designSize.width,
+                  designSize.width *
+                      constraints.maxHeight /
+                      constraints.maxWidth,
+                )
+              : designSize;
+          final scale = math.min(
+            constraints.maxWidth / canvas.width,
+            constraints.maxHeight / canvas.height,
+          );
+          return FittedBox(
+            fit: BoxFit.contain,
+            child: SizedBox.fromSize(
+              size: canvas,
+              child: ReelCompositionCanvas(
+                composition: composition,
+                media: media,
+                mediaForeground: mediaForeground,
+                onOpenLink: onOpenLink,
+                onTextOverlayChanged: onTextOverlayChanged,
+                onLinkOverlayChanged: onLinkOverlayChanged,
+                overlaySafeInsets:
+                    (fillViewport || overlayInsetsInViewport) && scale > 0
+                    ? overlaySafeInsets / scale
+                    : overlaySafeInsets,
+                minimumLinkExtent: onOpenLink == null || scale <= 0
+                    ? 44
+                    : math.max(44, 44 / scale),
+              ),
             ),
-          ),
-        );
-      },
+          );
+        },
+      ),
     ),
   );
 }

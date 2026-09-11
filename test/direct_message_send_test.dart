@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:math';
-import 'dart:typed_data';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
@@ -11,6 +10,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:yovoice/features/messages/data/models/message.dart';
+import 'package:yovoice/features/messages/data/services/direct_attachment_payload_source.dart';
 import 'package:yovoice/features/messages/data/services/direct_attachment_payload_store.dart';
 import 'package:yovoice/features/messages/data/services/message_outbox.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
@@ -1529,7 +1529,11 @@ class _FirstAttemptUnavailableFunctions implements FirebaseFunctions {
 /// host unit-test process for an application-support directory.
 class _EmptyAttachmentPayloadStore implements DirectAttachmentPayloadStore {
   @override
-  Future<void> write(String namespace, String id, Uint8List bytes) async {}
+  Future<void> adopt(
+    String namespace,
+    String id,
+    DirectAttachmentPayloadSource source,
+  ) => throw StateError('Text-only test cannot queue an attachment.');
 
   @override
   Future<bool> exists(String namespace, String id) async => false;
@@ -1542,8 +1546,9 @@ class _EmptyAttachmentPayloadStore implements DirectAttachmentPayloadStore {
     String namespace,
     String id,
     Reference reference,
-    SettableMetadata metadata,
-  ) => throw StateError('Text-only test cannot upload an attachment.');
+    SettableMetadata metadata, {
+    void Function(double progress)? onProgress,
+  }) => throw StateError('Text-only test cannot upload an attachment.');
 
   @override
   Future<void> delete(String namespace, String id) async {}

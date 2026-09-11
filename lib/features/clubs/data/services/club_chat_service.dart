@@ -354,6 +354,7 @@ class ClubChatService {
 
     await messageRef.update({
       'content': '',
+      if (current.data()?.containsKey('gif') ?? false) 'gif': null,
       'isDeleted': true,
       'editedAt': FieldValue.serverTimestamp(),
       'deletedBy': user.uid,

@@ -28,6 +28,7 @@ import 'package:yovoice/features/moments/data/services/moment_service.dart';
 import 'package:yovoice/features/moments/presentation/screens/moments_screen.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moments_feed_view.dart';
 import 'package:yovoice/shared/identity/public_identity_repository.dart';
+import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 
 /// One fixed reading of "now" for the whole file, so every fixture's
 /// `createdAt`/`expiresAt` relation to the clock is stable for the life
@@ -541,13 +542,15 @@ void main() {
   group('discovery states render', () {
     late PublicIdentityRepository originalIdentity;
     late _CountingFeedService feed;
+    late MockFirebaseAuth auth;
 
     setUp(() {
+      auth = MockFirebaseAuth(signedIn: true, mockUser: MockUser(uid: 'me'));
       // Identity badges resolve through the shared singleton; point it at
       // a scripted fetcher so no Firebase app is needed.
       originalIdentity = PublicIdentityRepository.instance;
       PublicIdentityRepository.instance = PublicIdentityRepository(
-        auth: MockFirebaseAuth(signedIn: true, mockUser: MockUser(uid: 'me')),
+        auth: auth,
         fetchOverride: (uids) async => <String, dynamic>{
           for (final uid in uids)
             uid: {'role': 'user', 'vip': false, 'uid': uid},
@@ -556,7 +559,7 @@ void main() {
       );
       feed = _CountingFeedService(
         firestore: FakeFirebaseFirestore(),
-        auth: MockFirebaseAuth(signedIn: true, mockUser: MockUser(uid: 'me')),
+        auth: auth,
       );
     });
 
@@ -570,16 +573,19 @@ void main() {
         'one — the single test that would have caught both prior defects', (
       tester,
     ) async {
+      final discovery = _ThrowingDiscovery();
       await tester.pumpWidget(
         host(
           MomentsScreen(
+            auth: auth,
             feedService: feed,
-            discoveryService: _ThrowingDiscovery(),
+            discoveryService: discovery,
           ),
         ),
       );
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 50));
+      expect(discovery.loadCalls, 1);
 
       expect(
         find.byKey(const ValueKey('moments-discovery-error')),
@@ -591,30 +597,47 @@ void main() {
         reason: 'a failed load must never read as "nobody has posted"',
       );
       expect(find.text('Moments could not load'), findsOneWidget);
+      await tester.tap(
+        find.descendant(
+          of: find.byKey(const ValueKey('moments-discovery-error')),
+          matching: find.widgetWithText(FilledButton, 'Try again'),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(discovery.loadCalls, 2);
+      expect(
+        find.byKey(const ValueKey('moments-discovery-empty')),
+        findsNothing,
+      );
     });
 
     testWidgets('an EMPTY corpus renders the empty state, and it is NOT the '
         'loading state', (tester) async {
+      final discovery = _StaticDiscovery(
+        const [],
+        delay: const Duration(milliseconds: 30),
+      );
       await tester.pumpWidget(
         host(
           MomentsScreen(
+            auth: auth,
             feedService: feed,
-            discoveryService: _StaticDiscovery(
-              const [],
-              delay: const Duration(milliseconds: 30),
-            ),
+            discoveryService: discovery,
           ),
         ),
       );
 
       // Before the load resolves: the skeleton.
       await tester.pump();
+      expect(discovery.loadCalls, 1);
       expect(
         find.byKey(const ValueKey('moments-discovery-loading')),
         findsOneWidget,
       );
 
       await tester.pump(const Duration(milliseconds: 50));
+      expect(discovery.loadCalls, 1);
       expect(
         find.byKey(const ValueKey('moments-discovery-empty')),
         findsOneWidget,
@@ -632,20 +655,22 @@ void main() {
     testWidgets('an all-unplayable corpus does NOT claim nobody has posted', (
       tester,
     ) async {
+      final discovery = _StaticDiscovery(
+        const [],
+        fetchedCount: 4,
+        drops: const {
+          'x1': MomentDropReason.unplayable,
+          'x2': MomentDropReason.unplayable,
+          'x3': MomentDropReason.unplayable,
+          'x4': MomentDropReason.unplayable,
+        },
+      );
       await tester.pumpWidget(
         host(
           MomentsScreen(
+            auth: auth,
             feedService: feed,
-            discoveryService: _StaticDiscovery(
-              const [],
-              fetchedCount: 4,
-              drops: const {
-                'x1': MomentDropReason.unplayable,
-                'x2': MomentDropReason.unplayable,
-                'x3': MomentDropReason.unplayable,
-                'x4': MomentDropReason.unplayable,
-              },
-            ),
+            discoveryService: discovery,
           ),
         ),
       );
@@ -653,8 +678,17 @@ void main() {
       await tester.pump(const Duration(milliseconds: 50));
 
       expect(find.text('Nothing playable right now'), findsOneWidget);
+      expect(discovery.loadCalls, 1);
+      expect(
+        find.byKey(const ValueKey('moments-discovery-error')),
+        findsNothing,
+      );
       expect(find.text('No Voice Moments yet'), findsNothing);
       expect(find.textContaining('4 published Moments'), findsOneWidget);
+      await tester.tap(find.widgetWithText(FilledButton, 'Try again'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(discovery.loadCalls, 2);
     });
 
     testWidgets('an all-EXPIRED corpus is the third distinct empty state: '
@@ -662,18 +696,20 @@ void main() {
         'availability doing its job, with the recorder offered', (
       tester,
     ) async {
+      final discovery = _StaticDiscovery(
+        const [],
+        fetchedCount: 2,
+        drops: const {
+          'x1': MomentDropReason.expired,
+          'x2': MomentDropReason.expired,
+        },
+      );
       await tester.pumpWidget(
         host(
           MomentsScreen(
+            auth: auth,
             feedService: feed,
-            discoveryService: _StaticDiscovery(
-              const [],
-              fetchedCount: 2,
-              drops: const {
-                'x1': MomentDropReason.expired,
-                'x2': MomentDropReason.expired,
-              },
-            ),
+            discoveryService: discovery,
           ),
         ),
       );
@@ -681,6 +717,11 @@ void main() {
       await tester.pump(const Duration(milliseconds: 50));
 
       expect(find.text('Nothing live right now'), findsOneWidget);
+      expect(discovery.loadCalls, 1);
+      expect(
+        find.byKey(const ValueKey('moments-discovery-error')),
+        findsNothing,
+      );
       expect(find.text('No Voice Moments yet'), findsNothing);
       expect(find.text('Nothing playable right now'), findsNothing);
       // ADAPTED with the availability amendment: the copy names the end
@@ -702,18 +743,21 @@ void main() {
       await tester.binding.setSurfaceSize(const Size(390, 844));
       addTearDown(() => tester.binding.setSurfaceSize(null));
 
+      final discovery = _StaticDiscovery(
+        const [],
+        delay: const Duration(milliseconds: 30),
+      );
       await tester.pumpWidget(
         host(
           MomentsScreen(
+            auth: auth,
             feedService: feed,
-            discoveryService: _StaticDiscovery(
-              const [],
-              delay: const Duration(milliseconds: 30),
-            ),
+            discoveryService: discovery,
           ),
         ),
       );
       await tester.pump();
+      expect(discovery.loadCalls, 1);
       expect(
         find.byKey(const ValueKey('moments-discovery-loading')),
         findsOneWidget,
@@ -723,7 +767,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 50));
     });
 
-    testWidgets('a populated feed shows the story strip, one row per '
+    testWidgets('a populated feed shows one card and chain entry per '
         'Moment with its real counts, and the creation entry — and '
         'fabricates nothing for a zero counter', (tester) async {
       await tester.binding.setSurfaceSize(const Size(390, 844));
@@ -732,6 +776,7 @@ void main() {
       await tester.pumpWidget(
         host(
           MomentsScreen(
+            auth: auth,
             feedService: feed,
             discoveryService: _StaticDiscovery([
               _moment('one', author: 'a', likes: 3, comments: 0),
@@ -743,10 +788,18 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 50));
 
-      // The strip: one circle per author chain.
-      expect(find.byKey(const ValueKey('moments-chain-a')), findsOneWidget);
-      expect(find.byKey(const ValueKey('moments-chain-b')), findsOneWidget);
-      // The list: one row per Moment, each with a real play control.
+      // The approved single feed keeps chains on each recording's avatar,
+      // without a second strip or featured copy of the same content.
+      expect(find.byKey(const ValueKey('moments-chain-a')), findsNothing);
+      expect(find.byKey(const ValueKey('moments-chain-b')), findsNothing);
+      expect(
+        find.byKey(const ValueKey('moment-row-chain-one')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('moment-row-chain-two')),
+        findsOneWidget,
+      );
       expect(find.byKey(const ValueKey('moment-row-one')), findsOneWidget);
       expect(find.byKey(const ValueKey('moment-row-two')), findsOneWidget);
       expect(find.byKey(const ValueKey('moment-row-play-one')), findsOneWidget);
@@ -754,12 +807,21 @@ void main() {
       expect(
         find.descendant(
           of: find.byKey(const ValueKey('moment-row-one')),
-          matching: find.text('3'),
+          matching: find.text('Likes: 3'),
         ),
         findsOneWidget,
       );
-      // …and no fabricated "0" anywhere for the zero counters.
-      expect(find.text('0'), findsNothing);
+      // …and no fabricated numeric engagement for zero counters. The
+      // elapsed transport value is separate, real playback information.
+      expect(find.text('Likes: 0'), findsNothing);
+      expect(find.text('Comments: 0'), findsNothing);
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('moment-row-two')),
+          matching: find.text('Like'),
+        ),
+        findsOneWidget,
+      );
       // The creation entry the recorder tile used to own lives in the
       // header now, and reload is a visible control.
       expect(find.byKey(const ValueKey('moments-create-cta')), findsOneWidget);
@@ -772,14 +834,17 @@ void main() {
       expect(find.textContaining('Expires in'), findsWidgets);
     });
 
-    testWidgets('the featured section is a GRID of compact tiles above the '
-        'recent list, and every featured Moment is also a row', (tester) async {
+    testWidgets('the approved single list keeps every recording reachable '
+        'once with its transport and menu, without featured duplicates', (
+      tester,
+    ) async {
       await tester.binding.setSurfaceSize(const Size(390, 844));
       addTearDown(() => tester.binding.setSurfaceSize(null));
 
       await tester.pumpWidget(
         host(
           MomentsScreen(
+            auth: auth,
             feedService: feed,
             discoveryService: _StaticDiscovery([
               _moment('a', author: 'a', likes: 40),
@@ -793,24 +858,14 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 50));
 
-      Rect tile(String id) =>
-          tester.getRect(find.byKey(ValueKey('moment-featured-$id')));
-
-      // Two columns on a phone: 'a' and 'b' share a row, 'c' starts the
-      // next one. A horizontal rail put all four on one line and showed
-      // about one and a half of them.
-      expect(tile('a').top, tile('b').top);
-      expect(tile('a').left, lessThan(tile('b').left));
-      expect(tile('c').top, greaterThan(tile('a').bottom - 1));
-
-      // Compact: a featured tile is a fraction of the width and nowhere
-      // near the 210 pt cover slab it replaced.
-      expect(tile('a').width, lessThan(200));
-      expect(tile('a').height, lessThan(150));
-
-      // Nothing is hidden by the grid: each featured Moment still has its
-      // row, with its own transport and overflow. The list is lazy, so
-      // the far rows are scrolled to rather than assumed built.
+      final a = tester.getRect(find.byKey(const ValueKey('moment-row-a')));
+      final b = tester.getRect(find.byKey(const ValueKey('moment-row-b')));
+      expect(a.left, b.left);
+      expect(a.width, b.width);
+      expect(a.bottom, lessThanOrEqualTo(b.top));
+      expect(a.width, 390 - 32);
+      // The list is lazy: far recordings must still be reachable, not
+      // assumed mounted and not duplicated in a decorative grid.
       final scrollable = find
           .descendant(
             of: find.byKey(const ValueKey('moments-feed-scroll')),
@@ -818,6 +873,7 @@ void main() {
           )
           .first;
       for (final id in ['a', 'b', 'c', 'd']) {
+        expect(find.byKey(ValueKey('moment-featured-$id')), findsNothing);
         await tester.scrollUntilVisible(
           find.byKey(ValueKey('moment-row-$id')),
           200,
@@ -826,20 +882,32 @@ void main() {
         expect(find.byKey(ValueKey('moment-row-$id')), findsOneWidget);
         expect(find.byKey(ValueKey('moment-row-play-$id')), findsOneWidget);
         expect(find.byKey(ValueKey('moment-row-menu-$id')), findsOneWidget);
+        final play = find.byKey(ValueKey('moment-row-play-$id'));
+        await tester.ensureVisible(play);
+        await tester.pump();
+        expect(play.hitTestable(), findsOneWidget);
+        expect(tester.getSize(play).shortestSide, greaterThanOrEqualTo(44));
       }
+      // The final lazy mount queues the fixture's one-millisecond identity
+      // batch. Let it complete while its repository and widgets still exist,
+      // then remove the feed before the group restores the shared repository.
+      await tester.pump(const Duration(milliseconds: 1));
+      await tester.pump();
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets('a recent row is a tight row, not a card: it fits well '
-        'inside a phone screen and repeats without a bordered slab', (
-      tester,
-    ) async {
+    testWidgets('a recording card has its caption, exact duration and '
+        '44 pt transport inside the readable phone measure', (tester) async {
       await tester.binding.setSurfaceSize(const Size(390, 844));
       addTearDown(() => tester.binding.setSurfaceSize(null));
 
       await tester.pumpWidget(
         host(
           MomentsScreen(
+            auth: auth,
             feedService: feed,
             discoveryService: _StaticDiscovery([
               _moment('one', author: 'a', likes: 3),
@@ -852,17 +920,38 @@ void main() {
       await tester.pump(const Duration(milliseconds: 50));
 
       final row = tester.getRect(find.byKey(const ValueKey('moment-row-one')));
+      expect(row.width, 390 - 32);
+      expect(row.left, 16);
+      final card = find.byKey(const ValueKey('moment-row-one'));
       expect(
-        row.height,
-        lessThan(90),
-        reason: 'the card-per-Moment slab was roughly 100 pt tall',
+        find.descendant(of: card, matching: find.text('caption one')),
+        findsOneWidget,
       );
-      // The leading transport is a real 44 pt target inside that height.
+      expect(
+        find.descendant(of: card, matching: find.text('0:12')),
+        findsOneWidget,
+      );
+      final progress = tester.widget<Slider>(
+        find.byKey(const ValueKey('moment-row-progress-one')),
+      );
+      expect(progress.max, 12000);
+      expect(progress.value, 0);
+      expect(
+        progress.onChanged,
+        isNull,
+        reason: 'Arriving does not start playback.',
+      );
       final play = tester.getRect(
         find.byKey(const ValueKey('moment-row-play-one')),
       );
       expect(play.width, greaterThanOrEqualTo(44));
       expect(play.height, greaterThanOrEqualTo(44));
+      expect(row.contains(play.topLeft), isTrue);
+      expect(row.contains(play.bottomRight), isTrue);
+      expect(
+        find.byKey(const ValueKey('moment-row-play-one')).hitTestable(),
+        findsOneWidget,
+      );
       expect(tester.takeException(), isNull);
     });
 
@@ -871,21 +960,33 @@ void main() {
     ) async {
       final firstMoment = _moment('page-one', author: 'first');
       final secondMoment = _moment('page-two', author: 'second');
+      var nextPageCalls = 0;
       final discovery = _StaticDiscovery(
         <VoiceMoment>[firstMoment],
-        nextPage: () async => MomentDiscoveryFeed(
-          moments: <VoiceMoment>[firstMoment, secondMoment],
-          fetchedCount: 2,
-          drops: const <String, MomentDropReason>{},
-          seed: 1,
-          poolExhausted: false,
-        ),
+        nextPage: () async {
+          nextPageCalls += 1;
+          return MomentDiscoveryFeed(
+            moments: <VoiceMoment>[firstMoment, secondMoment],
+            fetchedCount: 2,
+            drops: const <String, MomentDropReason>{},
+            seed: 1,
+            poolExhausted: false,
+          );
+        },
       );
       await tester.pumpWidget(
-        host(MomentsScreen(feedService: feed, discoveryService: discovery)),
+        host(
+          MomentsScreen(
+            auth: auth,
+            feedService: feed,
+            discoveryService: discovery,
+          ),
+        ),
       );
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 50));
+      expect(discovery.loadCalls, 1);
+      expect(nextPageCalls, 0);
 
       final loadMore = find.byKey(const ValueKey('moments-load-more'));
       await tester.scrollUntilVisible(
@@ -903,7 +1004,23 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 50));
 
+      expect(discovery.loadCalls, 1);
+      expect(nextPageCalls, 1);
+      await tester.scrollUntilVisible(
+        find.byKey(const ValueKey('moment-row-page-two')),
+        240,
+        scrollable: find
+            .descendant(
+              of: find.byKey(const ValueKey('moments-feed-scroll')),
+              matching: find.byType(Scrollable),
+            )
+            .first,
+      );
       expect(find.byKey(const ValueKey('moment-row-page-two')), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('moment-featured-page-two')),
+        findsNothing,
+      );
       expect(loadMore, findsNothing);
     });
 
@@ -916,6 +1033,7 @@ void main() {
       await tester.pumpWidget(
         host(
           MomentsScreen(
+            auth: auth,
             isVisible: visible,
             feedService: feed,
             discoveryService: discovery,
@@ -988,6 +1106,7 @@ void main() {
         await tester.pumpWidget(
           host(
             MomentsScreen(
+              auth: auth,
               feedService: feed,
               discoveryService: _StaticDiscovery([
                 _moment('long', author: 'a', likes: 12),
@@ -1002,20 +1121,27 @@ void main() {
         expect(tester.takeException(), isNull);
         // The transport is pinned: the play control is reachable at every
         // width regardless of caption length.
-        expect(find.byIcon(Icons.play_arrow_rounded), findsWidgets);
-        // The wide layout is a real desktop composition, not a stretched
-        // phone: the detail panel appears at 1100+ and only there.
-        if (size.width >= 1100) {
-          expect(
-            find.byKey(const ValueKey('moments-detail-panel')),
-            findsOneWidget,
-          );
-        } else {
-          expect(
-            find.byKey(const ValueKey('moments-detail-panel')),
-            findsNothing,
-          );
-        }
+        final play = find.byKey(const ValueKey('moment-row-play-long'));
+        await tester.ensureVisible(play);
+        await tester.pump();
+        expect(play.hitTestable(), findsOneWidget);
+        expect(tester.getSize(play).shortestSide, greaterThanOrEqualTo(44));
+        final list = tester.getRect(
+          find.byKey(const ValueKey('moments-feed-scroll')),
+        );
+        final expectedWidth = size.width < ResponsiveContentWidth.list.maxWidth
+            ? size.width
+            : ResponsiveContentWidth.list.maxWidth;
+        expect(list.width, expectedWidth);
+        expect(list.left, (size.width - expectedWidth) / 2);
+        expect(
+          find.byKey(const ValueKey('moments-detail-panel')),
+          findsNothing,
+        );
+        expect(
+          find.byKey(const ValueKey('moment-featured-long')),
+          findsNothing,
+        );
       });
     }
   });
@@ -1026,22 +1152,32 @@ void main() {
       await tester.binding.setSurfaceSize(const Size(390, 844));
       addTearDown(() => tester.binding.setSurfaceSize(null));
 
+      final auth = MockFirebaseAuth(
+        signedIn: true,
+        mockUser: MockUser(uid: 'me'),
+      );
+      final feed = _CountingFeedService(
+        firestore: FakeFirebaseFirestore(),
+        auth: auth,
+      );
+      final discovery = _StaticDiscovery(const []);
       await tester.pumpWidget(
         MaterialApp(
           home: MomentsScreen(
-            feedService: _CountingFeedService(
-              firestore: FakeFirebaseFirestore(),
-              auth: MockFirebaseAuth(
-                signedIn: true,
-                mockUser: MockUser(uid: 'me'),
-              ),
-            ),
-            discoveryService: _StaticDiscovery(const []),
+            auth: auth,
+            feedService: feed,
+            discoveryService: discovery,
           ),
         ),
       );
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 50));
+      expect(discovery.loadCalls, 1);
+      expect(feed.socialWatchCalls, 1);
+      expect(
+        find.byKey(const ValueKey('moments-discovery-error')),
+        findsNothing,
+      );
 
       // ADAPTED to the stories redesign: Following is a filter chip on
       // the one feed now, not a second tab with its own section
@@ -1057,6 +1193,8 @@ void main() {
       for (var i = 0; i < 4; i++) {
         await tester.pump(const Duration(milliseconds: 50));
       }
+      expect(feed.socialWatchCalls, 1);
+      expect(discovery.loadCalls, 1);
 
       expect(
         find.byKey(const ValueKey('moments-following-empty')),
@@ -1222,6 +1360,8 @@ void main() {
 
 /// Always fails, the way a missing composite index fails in production.
 class _ThrowingDiscovery implements MomentDiscoveryService {
+  int loadCalls = 0;
+
   @override
   Stream<Map<String, MomentEngagement>> watchEngagement({
     int poolSize = MomentDiscoveryService.defaultPoolSize,
@@ -1234,6 +1374,7 @@ class _ThrowingDiscovery implements MomentDiscoveryService {
     int poolSize = MomentDiscoveryService.defaultPoolSize,
     int? seed,
   }) async {
+    loadCalls += 1;
     throw StateError('pool query failed');
   }
 
@@ -1327,10 +1468,13 @@ class _CountingFeedService extends HomeFeedService {
 
   final List<String> setCalls = <String>[];
   final List<bool> desiredStates = <bool>[];
+  int socialWatchCalls = 0;
 
   @override
-  Stream<List<VoiceMoment>> watchSocialMoments({int limit = 40}) =>
-      Stream<List<VoiceMoment>>.value(const <VoiceMoment>[]);
+  Stream<List<VoiceMoment>> watchSocialMoments({int limit = 40}) {
+    socialWatchCalls += 1;
+    return Stream<List<VoiceMoment>>.value(const <VoiceMoment>[]);
+  }
 
   @override
   Stream<bool> watchLiked(String momentId) => Stream<bool>.value(false);

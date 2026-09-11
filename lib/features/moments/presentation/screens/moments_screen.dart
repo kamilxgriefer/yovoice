@@ -22,6 +22,7 @@ import 'package:yovoice/features/reels/data/services/reel_service.dart';
 import 'package:yovoice/features/reels/presentation/screens/reel_composer_screen.dart';
 import 'package:yovoice/features/reels/presentation/screens/reels_feed_screen.dart';
 import 'package:yovoice/features/reels/presentation/widgets/reel_card.dart';
+import 'package:yovoice/features/reels/presentation/widgets/reel_engagement_bar.dart';
 import 'package:yovoice/shared/widgets/inputs/yo_segmented_pill.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/navigation/yo_moments_icon.dart';
@@ -305,67 +306,170 @@ class _MomentsScreenState extends State<MomentsScreen> with RouteAware {
       body: YoPageBackground(
         section: YoPageSection.moments,
         child: SafeArea(
-          child: Column(
-            children: [
-              ResponsiveContentFrame(
-                width: ResponsiveContentWidth.feed,
-                fillHeight: false,
-                child: _MomentsHeader(
-                  // The shell owns the chrome when this is a root tab; a
-                  // pushed route keeps a real Back button.
-                  showBack: !widget.isRootTab && Navigator.of(context).canPop(),
-                  selectedFormat: _format,
-                  onFormatSelected: _selectFormat,
-                  onCreate: () => unawaited(_showCreateChooser()),
-                ),
-              ),
-              Expanded(
-                child: IndexedStack(
-                  key: const ValueKey<String>('yo-moments-format-stack'),
-                  index: _format.index,
-                  children: <Widget>[
-                    if (_voiceHasBeenOpened)
-                      MomentsFeedView(
-                        key: const ValueKey('moments-feed'),
-                        initialFilter: _initialFilter,
-                        discoveryService: widget.discoveryService,
-                        feedService: widget.feedService,
-                        momentService: widget.momentService,
-                        viewsService: widget.viewsService,
-                        contentReportService: widget.contentReportService,
-                        auth: widget.auth,
-                        isVisible: _voiceVisible,
-                        onOpenDetail: widget.onOpenDetail,
-                        playerFactory: widget.playerFactory,
-                        expiryClock: widget.expiryClock,
-                        expiryTimerFactory: widget.expiryTimerFactory,
-                        onRecord: () => unawaited(_createMoment()),
-                      )
-                    else
-                      const SizedBox.shrink(
-                        key: ValueKey<String>('yo-moments-voice-lazy'),
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final immersiveReels = constraints.maxWidth < 600;
+              final showBack =
+                  !widget.isRootTab && Navigator.of(context).canPop();
+              return Column(
+                children: [
+                  Offstage(
+                    offstage:
+                        immersiveReels && _format == YoMomentsFormat.reels,
+                    child: ResponsiveContentFrame(
+                      width: ResponsiveContentWidth.feed,
+                      fillHeight: false,
+                      child: _MomentsHeader(
+                        // The shell owns the chrome when this is a root tab; a
+                        // pushed route keeps a real Back button.
+                        showBack: showBack,
+                        selectedFormat: _format,
+                        onFormatSelected: _selectFormat,
+                        onCreate: () => unawaited(_showCreateChooser()),
                       ),
-                    if (_reelsHasBeenOpened)
-                      ReelsFeedScreen(
-                        key: ValueKey<String>(
-                          'yo-moments-reels-$_reelsRevision',
-                        ),
-                        embedded: true,
-                        service: widget.reelService,
-                        videoBuilder: widget.reelVideoBuilder,
-                        isVisible: _reelsVisible,
-                        onCreate: _openReelComposer,
-                      )
-                    else
-                      const SizedBox.shrink(
-                        key: ValueKey<String>('yo-moments-reels-lazy'),
-                      ),
-                  ],
-                ),
-              ),
-            ],
+                    ),
+                  ),
+                  Expanded(
+                    key: const ValueKey('yo-moments-retained-content'),
+                    child: IndexedStack(
+                      key: const ValueKey<String>('yo-moments-format-stack'),
+                      index: _format.index,
+                      children: <Widget>[
+                        if (_voiceHasBeenOpened)
+                          MomentsFeedView(
+                            key: const ValueKey('moments-feed'),
+                            initialFilter: _initialFilter,
+                            discoveryService: widget.discoveryService,
+                            feedService: widget.feedService,
+                            momentService: widget.momentService,
+                            viewsService: widget.viewsService,
+                            contentReportService: widget.contentReportService,
+                            auth: widget.auth,
+                            isVisible: _voiceVisible,
+                            onOpenDetail: widget.onOpenDetail,
+                            playerFactory: widget.playerFactory,
+                            expiryClock: widget.expiryClock,
+                            expiryTimerFactory: widget.expiryTimerFactory,
+                            onRecord: () => unawaited(_createMoment()),
+                          )
+                        else
+                          const SizedBox.shrink(
+                            key: ValueKey<String>('yo-moments-voice-lazy'),
+                          ),
+                        if (_reelsHasBeenOpened)
+                          ReelsFeedScreen(
+                            key: ValueKey<String>(
+                              'yo-moments-reels-$_reelsRevision',
+                            ),
+                            embedded: true,
+                            immersive: immersiveReels,
+                            immersiveHeader: _ImmersiveMomentsHeader(
+                              showBack: showBack,
+                              onFormatSelected: _selectFormat,
+                              onCreate: () => unawaited(_showCreateChooser()),
+                            ),
+                            service: widget.reelService,
+                            videoBuilder: widget.reelVideoBuilder,
+                            isVisible: _reelsVisible,
+                            onCreate: _openReelComposer,
+                          )
+                        else
+                          const SizedBox.shrink(
+                            key: ValueKey<String>('yo-moments-reels-lazy'),
+                          ),
+                      ],
+                    ),
+                  ),
+                ],
+              );
+            },
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// Compact format navigation over footage, without consuming the video stage.
+/// The selected feed stays in its original IndexedStack slot when this appears.
+class _ImmersiveMomentsHeader extends StatelessWidget {
+  const _ImmersiveMomentsHeader({
+    required this.showBack,
+    required this.onFormatSelected,
+    required this.onCreate,
+  });
+
+  final bool showBack;
+  final ValueChanged<YoMomentsFormat> onFormatSelected;
+  final VoidCallback onCreate;
+
+  @override
+  Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
+    return Padding(
+      padding: const EdgeInsetsDirectional.fromSTEB(12, 4, 12, 0),
+      child: Row(
+        children: [
+          if (showBack)
+            ReelOverlayPlateButton(
+              icon: Icons.arrow_back_rounded,
+              semanticLabel: MaterialLocalizations.of(
+                context,
+              ).backButtonTooltip,
+              onTap: () => Navigator.of(context).maybePop(),
+            ),
+          Expanded(
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                key: const ValueKey('yo-moments-format-tabs'),
+                children: [
+                  for (final format in YoMomentsFormat.values)
+                    Semantics(
+                      selected: format == YoMomentsFormat.reels,
+                      child: TextButton(
+                        onPressed: () => onFormatSelected(format),
+                        style: TextButton.styleFrom(
+                          foregroundColor: Colors.white,
+                          minimumSize: const Size(44, 48),
+                          padding: const EdgeInsets.symmetric(horizontal: 12),
+                          textStyle: Theme.of(context).textTheme.titleMedium
+                              ?.copyWith(
+                                fontSize: 17,
+                                fontWeight: format == YoMomentsFormat.reels
+                                    ? FontWeight.w800
+                                    : FontWeight.w500,
+                                shadows: reelOverlayTextShadows,
+                              ),
+                        ),
+                        child: Text(
+                          format == YoMomentsFormat.voice
+                              ? copy.contextualText(
+                                  'yoMoments.voiceFormat',
+                                  'Voice',
+                                  'Głos',
+                                )
+                              : 'Reels',
+                          style: TextStyle(
+                            decoration: format == YoMomentsFormat.reels
+                                ? TextDecoration.underline
+                                : TextDecoration.none,
+                            decorationColor: Colors.white,
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+          ReelOverlayPlateButton(
+            key: const ValueKey('moments-create-cta'),
+            icon: Icons.add_rounded,
+            semanticLabel: copy.text('CREATE', 'UTWÓRZ'),
+            onTap: onCreate,
+          ),
+        ],
       ),
     );
   }

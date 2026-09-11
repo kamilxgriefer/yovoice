@@ -208,6 +208,39 @@ void main() {
   // -----------------------------------------------------------------
 
   group('ClubChatService.deleteMessage write shape', () {
+    test(
+      'self-retracting a GIF clears the media snapshot and fallback',
+      () async {
+        await seedClub();
+        await seedMessage(
+          id: 'gif1',
+          senderId: memberUid,
+          content: 'GIF: Hello',
+        );
+        await db.doc('clubs/$clubId/channels/$channelId/messages/gif1').update({
+          'type': 'gif',
+          'gif': {
+            'provider': 'giphy',
+            'id': 'safeGif',
+            'title': 'Hello',
+            'url': 'https://media.giphy.com/media/safeGif/giphy.gif',
+            'width': 200,
+            'height': 200,
+          },
+        });
+        await serviceAs(memberUid).deleteMessage(
+          clubId: clubId,
+          channelId: channelId,
+          message: await loadMessage('gif1'),
+        );
+        final data = await readMessage('gif1');
+        expect(data['gif'], isNull);
+        expect(data['content'], '');
+        expect(data['isDeleted'], isTrue);
+        expect(data['senderId'], memberUid);
+      },
+    );
+
     test('a self-retraction sends the full removal shape — the same one a '
         'moderator sends, attribution included', () async {
       await seedClub();

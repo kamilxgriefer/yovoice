@@ -3,12 +3,14 @@ import 'package:flutter/material.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/presence/presence_service.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
+import 'package:yovoice/core/theme/app_spacing.dart';
 import 'package:yovoice/features/friends/data/models/friend_user.dart';
+import 'package:yovoice/features/home/presentation/widgets/shared/home_section_header.dart';
+import 'package:yovoice/features/home/presentation/widgets/shared/home_section_status.dart';
 import 'package:yovoice/features/profile/data/models/user_profile.dart';
 import 'package:yovoice/shared/widgets/profile/availability_picker.dart';
 import 'package:yovoice/shared/widgets/profile/people_status_ring.dart';
 import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
-import 'package:yovoice/shared/widgets/states/yo_error_state.dart';
 
 /// "Your people" — the signed-in account first, with its own availability
 /// ring, then every friend, online first, with the shared status ring.
@@ -36,7 +38,7 @@ class HomePeopleStrip extends StatelessWidget {
     this.onRetry,
     this.expandedLabels = false,
     this.avatarRadius = 26,
-    this.horizontalPadding = 12,
+    this.horizontalPadding = AppRhythm.title,
     super.key,
   });
 
@@ -63,6 +65,11 @@ class HomePeopleStrip extends StatelessWidget {
   /// full names ellipsise less.
   final bool expandedLabels;
   final double avatarRadius;
+
+  /// The page gutter. The strip is full-bleed: the heading takes this as
+  /// padding and the rail takes it INSIDE its scroll view, so the first
+  /// avatar's ink starts exactly at the gutter and the tiles scroll under
+  /// the frame edge instead of past it.
   final double horizontalPadding;
 
   double get _labelWidth => avatarRadius * (expandedLabels ? 3.2 : 2.4);
@@ -100,7 +107,6 @@ class HomePeopleStrip extends StatelessWidget {
     required bool hasFriendStream,
   }) {
     final copy = AppLocalizations.of(context);
-    final palette = context.appPalette;
     final people = [...(friends.data ?? const <FriendUser>[])]
       ..sort((a, b) {
         if (a.isOnline != b.isOnline) return a.isOnline ? -1 : 1;
@@ -118,107 +124,103 @@ class HomePeopleStrip extends StatelessWidget {
         friends.connectionState == ConnectionState.waiting;
     final empty = hasFriendStream && friends.hasData && people.isEmpty;
 
-    return Padding(
-      padding: const EdgeInsets.only(top: 6, bottom: 4),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(
-            padding: EdgeInsets.symmetric(horizontal: horizontalPadding + 6),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    copy.text('Your people', 'Twoi znajomi'),
-                    // Wraps rather than truncating, the way every other
-                    // mobile section heading does at enlarged text.
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: palette.textPrimary,
-                      fontSize: 16,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                ),
-                TextButton(
-                  key: const ValueKey('home-people-see-all'),
-                  onPressed: onSeeAll,
-                  style: TextButton.styleFrom(
-                    minimumSize: const Size(44, 44),
-                    padding: const EdgeInsets.symmetric(horizontal: 8),
-                  ),
-                  child: Text(copy.text('See all', 'Zobacz wszystkie')),
-                ),
-              ],
-            ),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // The SAME heading every other Home section draws — one type ramp,
+        // one label, one right edge, and the section rhythm (24 above,
+        // 16 below) owned in one place rather than by a bespoke row that
+        // sat 18 px inboard of every neighbour.
+        Padding(
+          padding: EdgeInsets.symmetric(horizontal: horizontalPadding),
+          child: HomeSectionHeader(
+            title: copy.text('Your people', 'Twoi znajomi'),
+            seeAllKey: const ValueKey('home-people-see-all'),
+            scale: expandedLabels
+                ? HomeSectionHeaderScale.expanded
+                : HomeSectionHeaderScale.compact,
+            onSeeAll: onSeeAll,
           ),
-          // Intrinsic height, not a guessed one: the tile is an avatar
-          // plus two text lines that both scale, and any fixed height
-          // clips the status label at 200 % text. Friends are bounded
-          // (tens), so building them all costs nothing.
-          SingleChildScrollView(
-            key: const ValueKey('home-people-strip'),
-            scrollDirection: Axis.horizontal,
-            clipBehavior: Clip.none,
-            padding: EdgeInsets.symmetric(horizontal: horizontalPadding),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                if (hasProfileStream)
-                  profile == null
-                      ? _PendingOwnTile(discSize: _discSize)
-                      : _ownTile(context, profile, copy),
-                if (loading)
-                  _LoadingSlot(discSize: _discSize)
-                else if (!failed)
-                  for (final friend in people)
-                    PeopleStatusAvatar(
-                      key: ValueKey('home-person-${friend.id}'),
-                      displayName: friend.displayName,
-                      userId: friend.id,
-                      photoUrl: friend.photoUrl,
-                      radius: avatarRadius,
-                      labelWidth: _labelWidth,
-                      status: PeopleStatus.fromPresence(
-                        isOnline: friend.isOnline,
-                        availability: friend.availability,
-                      ),
-                      onTap: () => showProfilePreview(
-                        context,
-                        userId: friend.id,
-                        displayName: friend.displayName,
-                        photoUrl: friend.photoUrl,
-                      ),
-                    ),
-                if (empty)
-                  _AddFriendsTile(
-                    discSize: _discSize,
+        ),
+        // Intrinsic height, not a guessed one: the tile is an avatar
+        // plus two text lines that both scale, and any fixed height
+        // clips the status label at 200 % text. Friends are bounded
+        // (tens), so building them all costs nothing.
+        SingleChildScrollView(
+          key: const ValueKey('home-people-strip'),
+          scrollDirection: Axis.horizontal,
+          // Full-bleed: the gutter is the scroll view's own padding, so the
+          // first avatar's ink starts exactly at the page margin and the
+          // rest scroll under the frame edge rather than painting past the
+          // layout (the rail used to reach x = 391.9 on a 390 px screen).
+          clipBehavior: Clip.hardEdge,
+          padding: EdgeInsets.symmetric(horizontal: horizontalPadding),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (hasProfileStream)
+                profile == null
+                    ? _PendingOwnTile(discSize: _discSize)
+                    : _ownTile(context, profile, copy),
+              if (loading) ...[
+                if (hasProfileStream) const SizedBox(width: AppRhythm.item),
+                _LoadingSlot(discSize: _discSize),
+              ] else if (!failed)
+                for (final friend in people) ...[
+                  if (friend != people.first || hasProfileStream)
+                    const SizedBox(width: AppRhythm.item),
+                  PeopleStatusAvatar(
+                    key: ValueKey('home-person-${friend.id}'),
+                    displayName: friend.displayName,
+                    userId: friend.id,
+                    photoUrl: friend.photoUrl,
+                    radius: avatarRadius,
                     labelWidth: _labelWidth,
-                    onTap: onSeeAll,
+                    tilePadding: EdgeInsets.zero,
+                    status: PeopleStatus.fromPresence(
+                      isOnline: friend.isOnline,
+                      availability: friend.availability,
+                    ),
+                    onTap: () => showProfilePreview(
+                      context,
+                      userId: friend.id,
+                      displayName: friend.displayName,
+                      photoUrl: friend.photoUrl,
+                    ),
                   ),
+                ],
+              if (empty) ...[
+                if (hasProfileStream) const SizedBox(width: AppRhythm.item),
+                _AddFriendsTile(
+                  discSize: _discSize,
+                  // A primary empty-state action is not a person-name
+                  // preview: keep its complete localized verb visible.
+                  labelWidth: MediaQuery.textScalerOf(context).scale(84),
+                  onTap: onSeeAll,
+                ),
               ],
+            ],
+          ),
+        ),
+        if (failed)
+          Padding(
+            padding: EdgeInsets.fromLTRB(
+              horizontalPadding,
+              AppRhythm.item,
+              horizontalPadding,
+              0,
+            ),
+            child: HomeSectionError(
+              key: const ValueKey('home-people-error'),
+              error: friends.error,
+              message: copy.text(
+                'Friends could not be loaded.',
+                'Nie udało się wczytać znajomych.',
+              ),
+              onRetry: onRetry,
             ),
           ),
-          if (failed)
-            Padding(
-              padding: EdgeInsets.fromLTRB(
-                horizontalPadding + 6,
-                6,
-                horizontalPadding + 6,
-                0,
-              ),
-              child: YoErrorState(
-                compact: true,
-                message: copy.text(
-                  'Friends could not be loaded.',
-                  'Nie udało się wczytać znajomych.',
-                ),
-                onRetry: onRetry,
-              ),
-            ),
-        ],
-      ),
+      ],
     );
   }
 
@@ -240,7 +242,11 @@ class HomePeopleStrip extends StatelessWidget {
       photoUrl: profile.photoUrl,
       mediaRevision: profile.profileUpdatedAt,
       radius: avatarRadius,
-      labelWidth: _labelWidth,
+      // The own tile's status line also carries the "change" caret, so its
+      // column is widened by exactly the caret's width: the words keep the
+      // room every other tile's words have, at any text scale.
+      labelWidth: _labelWidth + MediaQuery.textScalerOf(context).scale(12) + 2,
+      tilePadding: EdgeInsets.zero,
       status: PeopleStatus.fromOwnAvailability(profile.availability),
       statusLabel: label,
       // The visible name leads, then the chip's exact phrase: the tile
@@ -274,17 +280,14 @@ class _PendingOwnTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     return ExcludeSemantics(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-        child: Container(
-          key: const ValueKey('home-people-me-pending'),
-          width: discSize,
-          height: discSize,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            color: palette.surfaceRaised,
-            border: Border.all(color: palette.border, width: 1.5),
-          ),
+      child: Container(
+        key: const ValueKey('home-people-me-pending'),
+        width: discSize,
+        height: discSize,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: palette.surfaceRaised,
+          border: Border.all(color: palette.border, width: 1.5),
         ),
       ),
     );
@@ -300,18 +303,15 @@ class _LoadingSlot extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-      child: SizedBox(
-        key: const ValueKey('home-people-loading'),
-        width: discSize,
-        height: discSize,
-        child: const Center(
-          child: SizedBox(
-            width: 22,
-            height: 22,
-            child: CircularProgressIndicator(strokeWidth: 2),
-          ),
+    return SizedBox(
+      key: const ValueKey('home-people-loading'),
+      width: discSize,
+      height: discSize,
+      child: const Center(
+        child: SizedBox(
+          width: 22,
+          height: 22,
+          child: CircularProgressIndicator(strokeWidth: 2),
         ),
       ),
     );
@@ -345,42 +345,39 @@ class _AddFriendsTile extends StatelessWidget {
       child: PeopleTileInk(
         key: const ValueKey('home-people-add'),
         onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: discSize,
-                height: discSize,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: palette.surfaceRaised,
-                  border: Border.all(color: palette.borderStrong, width: 1.5),
-                ),
-                child: Icon(
-                  Icons.person_add_alt_1_rounded,
-                  size: 22,
-                  color: palette.interactiveForeground,
+        // No padding of its own: the rail owns the pitch, so this tile's
+        // layout box is its ink box like every other tile in the row.
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: discSize,
+              height: discSize,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: palette.surfaceRaised,
+                border: Border.all(color: palette.borderStrong, width: 1.5),
+              ),
+              child: Icon(
+                Icons.person_add_alt_1_rounded,
+                size: 22,
+                color: palette.interactiveForeground,
+              ),
+            ),
+            const SizedBox(height: AppRhythm.tight),
+            SizedBox(
+              width: labelWidth,
+              child: Text(
+                label,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: palette.textPrimary,
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w700,
                 ),
               ),
-              const SizedBox(height: 7),
-              SizedBox(
-                width: labelWidth,
-                child: Text(
-                  label,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    color: palette.textPrimary,
-                    fontSize: 12.5,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );

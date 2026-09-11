@@ -2,10 +2,16 @@ import 'translations_global.dart';
 import 'translations_global_extended.dart';
 import 'translations_global_extended_overrides.dart';
 import 'translations_home.dart';
+import 'translations_feed_surface_release.dart';
+import 'translations_voice_time_footer.dart';
 import 'translations_language_names.dart';
 import 'translations_mobile_navigation.dart';
 import 'translations_moments_creation.dart';
 import 'translations_reels.dart';
+import 'translations_reels_feed_integration.dart';
+import 'translations_reel_links.dart';
+import 'translations_gif_messages.dart';
+import 'translations_gif_composer.dart';
 import 'translations_auth_call_release.dart';
 import 'translations_chinese_traditional.dart';
 import 'translations_current_release.dart';
@@ -201,12 +207,19 @@ const appTranslationKeys = <String>{
   ...currentReleaseTranslationKeys,
   ...currentReleaseCompactTranslationKeys,
   ...currentReleaseChatMediaTranslationKeys,
+  ...currentReleaseAttachmentProgressTranslationKeys,
   ...authCallReleaseTranslationKeys,
   ...directCallRefusalTranslationKeys,
   ...reelsTranslationKeys,
+  ...reelsFeedIntegrationKeys,
+  ...reelLinksTranslationKeys,
+  ...gifMessageTranslationKeys,
+  ...gifComposerTranslationKeys,
   ...yoMomentsTranslationKeys,
   ...mobileNavigationTranslationKeys,
   ...homeTranslationKeys,
+  ...feedSurfaceReleaseTranslationKeys,
+  ...voiceTimeFooterTranslationKeys,
   ...momentsCreationTranslationKeys,
 };
 
@@ -224,12 +237,19 @@ final appTranslations = <String, Map<String, String>>{
       ...currentReleaseTranslations[entry.key]!,
       ...currentReleaseCompactTranslations[entry.key]!,
       ...currentReleaseChatMediaTranslations[entry.key]!,
+      ...currentReleaseAttachmentProgressTranslations[entry.key]!,
       ...authCallReleaseTranslations[entry.key]!,
       ...directCallRefusalTranslations[entry.key]!,
       ...reelsTranslations[entry.key]!,
+      ...reelsFeedIntegrationTranslations[entry.key]!,
+      ...reelLinksTranslations[entry.key]!,
+      ...gifMessageTranslations[entry.key]!,
+      ...gifComposerTranslations[entry.key]!,
       ...yoMomentsTranslations[entry.key]!,
       ...mobileNavigationTranslations[entry.key]!,
       ...homeTranslations[entry.key]!,
+      ...feedSurfaceReleaseTranslations[entry.key]!,
+      ...voiceTimeFooterTranslations[entry.key]!,
       ...momentsCreationTranslations[entry.key]!,
       ...localizedExtendedLanguageNames[entry.key]!,
     }),

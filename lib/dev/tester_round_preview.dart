@@ -496,7 +496,12 @@ class _KeyboardDemo extends StatelessWidget {
         ),
       ),
     ),
-    bottomNavigationBar: const YoKeyboardDoneBar(),
+    // The wrapper is the whole point of this demo: without it Scaffold
+    // leaves the bar at the bottom of the window, behind the keyboard,
+    // and this harness would claim a fix nobody can see (ADR-169).
+    bottomNavigationBar: const YoKeyboardSafeBottomBar(
+      child: YoKeyboardDoneBar(),
+    ),
   );
 }
 

@@ -402,7 +402,9 @@ void main() {
           );
           expect(tester.takeException(), isNull);
 
-          await tester.tap(find.byTooltip('Report Reel'));
+          await tester.tap(find.byKey(const ValueKey('reel-more-action')));
+          await tester.pumpAndSettle();
+          await tester.tap(find.text('Report Reel'));
           await tester.pumpAndSettle();
           expect(find.byType(YoModalSheetChrome), findsOneWidget);
           expect(

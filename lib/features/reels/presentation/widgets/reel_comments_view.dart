@@ -78,6 +78,7 @@ class ReelCommentsView extends StatefulWidget {
     this.commentLimit = ReelView.maxCommentLimit,
     this.autofocusComposer = false,
     this.gutter,
+    this.overlayBuilder,
     super.key,
   });
 
@@ -95,6 +96,10 @@ class ReelCommentsView extends StatefulWidget {
   /// The wide context panel sets it so the thread lines up with the header
   /// printed above it; the sheet lets the available width decide.
   final double? gutter;
+
+  /// A private destination may extend its lifetime boundary to the separate
+  /// report and confirmation routes. Existing hosts keep their default UI.
+  final ReelCommentOverlayBuilder? overlayBuilder;
 
   @override
   State<ReelCommentsView> createState() => _ReelCommentsViewState();
@@ -189,6 +194,10 @@ class _ReelCommentsViewState extends State<ReelCommentsView> {
   }
 
   bool _isCurrent(int generation) => mounted && generation == _generation;
+
+  Widget _overlay(BuildContext context, WidgetBuilder contentBuilder) =>
+      widget.overlayBuilder?.call(context, contentBuilder) ??
+      contentBuilder(context);
 
   Future<void> _load({required bool reset}) async {
     if (!reset && (_loadingMore || _nextCursor == null)) return;
@@ -307,30 +316,34 @@ class _ReelCommentsViewState extends State<ReelCommentsView> {
   }
 
   Future<void> _delete(ReelComment comment) async {
+    if (!mounted) return;
     if (_deleting.contains(comment.id) || comment.authorId != _viewerId) return;
     final generation = _generation;
     final copy = AppLocalizations.of(context);
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text(copy.text('Delete comment?', 'Usunąć komentarz?')),
-        content: Text(
-          copy.text(
-            'Your comment will be removed for everyone. This cannot be undone.',
-            'Twój komentarz zniknie dla wszystkich. Tej operacji nie można cofnąć.',
+      builder: (context) => _overlay(
+        context,
+        (context) => AlertDialog(
+          title: Text(copy.text('Delete comment?', 'Usunąć komentarz?')),
+          content: Text(
+            copy.text(
+              'Your comment will be removed for everyone. This cannot be undone.',
+              'Twój komentarz zniknie dla wszystkich. Tej operacji nie można cofnąć.',
+            ),
           ),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: Text(copy.text('Cancel', 'Anuluj')),
+            ),
+            FilledButton(
+              key: const ValueKey<String>('reel-comment-delete-confirm'),
+              onPressed: () => Navigator.of(context).pop(true),
+              child: Text(copy.text('Delete', 'Usuń')),
+            ),
+          ],
         ),
-        actions: <Widget>[
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: Text(copy.text('Cancel', 'Anuluj')),
-          ),
-          FilledButton(
-            key: const ValueKey<String>('reel-comment-delete-confirm'),
-            onPressed: () => Navigator.of(context).pop(true),
-            child: Text(copy.text('Delete', 'Usuń')),
-          ),
-        ],
       ),
     );
     if (confirmed != true || !_isCurrent(generation)) return;
@@ -369,6 +382,7 @@ class _ReelCommentsViewState extends State<ReelCommentsView> {
   /// and would hand anybody a one-tap way to make words they dislike vanish
   /// from their own view while the report sits unreviewed.
   Future<void> _report(ReelComment comment) async {
+    if (!mounted) return;
     if (_reporting.contains(comment.id) ||
         _removing.contains(comment.id) ||
         comment.authorId == _viewerId) {
@@ -387,6 +401,7 @@ class _ReelCommentsViewState extends State<ReelCommentsView> {
       commentText: comment.text,
       initialReason: previous?.request.reason,
       initialNote: previous?.request.note ?? '',
+      overlayBuilder: widget.overlayBuilder,
     );
     if (request == null || !_isCurrent(generation)) return;
     // The id is reused only for the identical attempt. A different reason or
@@ -456,6 +471,7 @@ class _ReelCommentsViewState extends State<ReelCommentsView> {
   /// here that acts on another person's content with no review, so the
   /// dialog is the whole due process it gets.
   Future<void> _remove(ReelComment comment) async {
+    if (!mounted) return;
     if (_removing.contains(comment.id) || _reporting.contains(comment.id)) {
       return;
     }
@@ -463,31 +479,34 @@ class _ReelCommentsViewState extends State<ReelCommentsView> {
     final copy = AppLocalizations.of(context);
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text(copy.text('Remove this comment?', 'Usunąć komentarz?')),
-        content: Text(
-          copy.template(
-            "{author}'s comment will be removed from your Reel for "
-                'everyone. This cannot be undone. To have it reviewed '
-                'instead, report it.',
-            'Komentarz od {author} zniknie z Twojego Reela dla wszystkich. '
-                'Tej operacji nie można cofnąć. Jeśli wolisz, aby ocenił go '
-                'nasz zespół, zgłoś go zamiast usuwać.',
-            values: <String, Object>{'author': comment.authorName},
+      builder: (context) => _overlay(
+        context,
+        (context) => AlertDialog(
+          title: Text(copy.text('Remove this comment?', 'Usunąć komentarz?')),
+          content: Text(
+            copy.template(
+              "{author}'s comment will be removed from your Reel for "
+                  'everyone. This cannot be undone. To have it reviewed '
+                  'instead, report it.',
+              'Komentarz od {author} zniknie z Twojego Reela dla wszystkich. '
+                  'Tej operacji nie można cofnąć. Jeśli wolisz, aby ocenił go '
+                  'nasz zespół, zgłoś go zamiast usuwać.',
+              values: <String, Object>{'author': comment.authorName},
+            ),
           ),
+          actions: <Widget>[
+            TextButton(
+              key: const ValueKey<String>('reel-comment-remove-cancel'),
+              onPressed: () => Navigator.of(context).pop(false),
+              child: Text(copy.text('Cancel', 'Anuluj')),
+            ),
+            FilledButton(
+              key: const ValueKey<String>('reel-comment-remove-confirm'),
+              onPressed: () => Navigator.of(context).pop(true),
+              child: Text(copy.text('Remove', 'Usuń')),
+            ),
+          ],
         ),
-        actions: <Widget>[
-          TextButton(
-            key: const ValueKey<String>('reel-comment-remove-cancel'),
-            onPressed: () => Navigator.of(context).pop(false),
-            child: Text(copy.text('Cancel', 'Anuluj')),
-          ),
-          FilledButton(
-            key: const ValueKey<String>('reel-comment-remove-confirm'),
-            onPressed: () => Navigator.of(context).pop(true),
-            child: Text(copy.text('Remove', 'Usuń')),
-          ),
-        ],
       ),
     );
     if (confirmed != true || !_isCurrent(generation)) return;

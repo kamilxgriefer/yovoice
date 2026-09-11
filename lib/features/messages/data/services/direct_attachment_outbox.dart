@@ -7,6 +7,7 @@ import 'package:crypto/crypto.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:yovoice/features/messages/data/models/message.dart';
+import 'package:yovoice/features/messages/data/services/direct_attachment_payload_source.dart';
 import 'package:yovoice/features/messages/data/services/direct_attachment_payload_store.dart';
 
 enum DirectAttachmentOutboxStatus { queued, retrying, failed }
@@ -82,7 +83,7 @@ class DirectAttachmentReservationRecord {
         (expiresAtMillis != null && expiresAtMillis is! int) ||
         (clientExpiresAtMillis != null && clientExpiresAtMillis is! int) ||
         types.isEmpty ||
-        types.first == MessageType.text) {
+        (types.first == MessageType.text || types.first == MessageType.gif)) {
       throw const FormatException('Invalid attachment reservation.');
     }
     return DirectAttachmentReservationRecord(
@@ -231,6 +232,7 @@ class DirectAttachmentOutboxEntry {
         conversationId.isEmpty ||
         types.isEmpty ||
         types.first == MessageType.text ||
+        types.first == MessageType.gif ||
         contentType is! String ||
         contentType.isEmpty ||
         (durationSeconds != null && durationSeconds is! int) ||
@@ -416,6 +418,10 @@ class DirectAttachmentOutbox {
     if (!saved) throw StateError('Pending media could not be saved safely.');
   }
 
+  /// Queues a payload whose bytes are already resident.
+  ///
+  /// Kept for the photo and video paths, where the composer legitimately holds
+  /// the bytes. It is [enqueueSource] with a resident source.
   Future<DirectAttachmentOutboxEntry> enqueue({
     required String fingerprint,
     required String conversationId,
@@ -425,72 +431,110 @@ class DirectAttachmentOutbox {
     required Uint8List bytes,
     required String reserveRequestId,
     required String finalizeRequestId,
-  }) => _serialize(() async {
-    await _ensureLoaded();
-    final existingIndex = _entries.indexWhere(
-      (entry) =>
-          entry.fingerprint == fingerprint &&
-          entry.conversationId == conversationId &&
-          entry.type == type,
-    );
-    if (existingIndex >= 0) {
-      final existing = _entries[existingIndex];
-      if (existing.contentType != contentType ||
-          existing.durationSeconds != durationSeconds ||
-          existing.byteLength != bytes.lengthInBytes) {
-        throw StateError('Pending media no longer matches its saved upload.');
+  }) => enqueueSource(
+    fingerprint: fingerprint,
+    conversationId: conversationId,
+    type: type,
+    contentType: contentType,
+    durationSeconds: durationSeconds,
+    source: DirectAttachmentPayloadSource.bytes(bytes),
+    reserveRequestId: reserveRequestId,
+    finalizeRequestId: finalizeRequestId,
+  );
+
+  /// Takes durable ownership of one attachment payload.
+  ///
+  /// [source] is streamed into app-private storage and released only once the
+  /// manifest naming it has been persisted. That ordering is the whole
+  /// contract: before it, the producer still holds the only guaranteed copy of
+  /// the recording; after it, this queue does, and the producer's copy is
+  /// dropped rather than left behind for the next account on the device.
+  Future<DirectAttachmentOutboxEntry> enqueueSource({
+    required String fingerprint,
+    required String conversationId,
+    required MessageType type,
+    required String contentType,
+    required int? durationSeconds,
+    required DirectAttachmentPayloadSource source,
+    required String reserveRequestId,
+    required String finalizeRequestId,
+  }) async {
+    final entry = await _serialize(() async {
+      await _ensureLoaded();
+      final existingIndex = _entries.indexWhere(
+        (entry) =>
+            entry.fingerprint == fingerprint &&
+            entry.conversationId == conversationId &&
+            entry.type == type,
+      );
+      if (existingIndex >= 0) {
+        final existing = _entries[existingIndex];
+        if (existing.contentType != contentType ||
+            existing.durationSeconds != durationSeconds ||
+            existing.byteLength != source.length) {
+          throw StateError('Pending media no longer matches its saved upload.');
+        }
+        final retried = existing.copyWith(
+          status: DirectAttachmentOutboxStatus.queued,
+          attempts: 0,
+          clearNextAttemptAt: true,
+          clearLastError: true,
+        );
+        _entries[existingIndex] = retried;
+        try {
+          await _persist();
+        } catch (_) {
+          _entries[existingIndex] = existing;
+          rethrow;
+        }
+        _notify();
+        return retried;
       }
-      final retried = existing.copyWith(
+
+      final totalBytes = _entries.fold<int>(
+        0,
+        (sum, entry) => sum + entry.byteLength,
+      );
+      if (_entries.length >= capacity ||
+          totalBytes + source.length > maxPayloadBytes) {
+        throw const DirectAttachmentOutboxFullException();
+      }
+      final entry = DirectAttachmentOutboxEntry(
+        id: _idFactory(),
+        fingerprint: fingerprint,
+        conversationId: conversationId,
+        type: type,
+        contentType: contentType,
+        durationSeconds: durationSeconds,
+        byteLength: source.length,
+        reserveRequestId: reserveRequestId,
+        finalizeRequestId: finalizeRequestId,
         status: DirectAttachmentOutboxStatus.queued,
         attempts: 0,
-        clearNextAttemptAt: true,
-        clearLastError: true,
+        createdAt: _clock(),
       );
-      _entries[existingIndex] = retried;
+      await payloadStore.adopt(accountNamespace, entry.id, source);
+      _entries.add(entry);
       try {
         await _persist();
+        _notify();
       } catch (_) {
-        _entries[existingIndex] = existing;
+        _entries.removeLast();
+        await payloadStore.delete(accountNamespace, entry.id);
         rethrow;
       }
-      _notify();
-      return retried;
-    }
-
-    final totalBytes = _entries.fold<int>(
-      0,
-      (sum, entry) => sum + entry.byteLength,
-    );
-    if (_entries.length >= capacity ||
-        totalBytes + bytes.lengthInBytes > maxPayloadBytes) {
-      throw const DirectAttachmentOutboxFullException();
-    }
-    final entry = DirectAttachmentOutboxEntry(
-      id: _idFactory(),
-      fingerprint: fingerprint,
-      conversationId: conversationId,
-      type: type,
-      contentType: contentType,
-      durationSeconds: durationSeconds,
-      byteLength: bytes.lengthInBytes,
-      reserveRequestId: reserveRequestId,
-      finalizeRequestId: finalizeRequestId,
-      status: DirectAttachmentOutboxStatus.queued,
-      attempts: 0,
-      createdAt: _clock(),
-    );
-    await payloadStore.write(accountNamespace, entry.id, bytes);
-    _entries.add(entry);
+      return entry;
+    });
+    // Only now. A release before the manifest is durable would delete the
+    // producer's copy of a recording this queue does not yet promise to send.
     try {
-      await _persist();
-      _notify();
+      await source.release();
     } catch (_) {
-      _entries.removeLast();
-      await payloadStore.delete(accountNamespace, entry.id);
-      rethrow;
+      // The durable copy is committed; a producer that cannot clean up its own
+      // temporary file must not fail an attachment that is already queued.
     }
     return entry;
-  });
+  }
 
   DirectAttachmentOutboxEntry? entry(String id) {
     final index = _entries.indexWhere((entry) => entry.id == id);

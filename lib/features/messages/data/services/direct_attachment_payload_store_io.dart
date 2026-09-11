@@ -1,8 +1,9 @@
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:path_provider/path_provider.dart';
+
+import 'package:yovoice/features/messages/data/services/direct_attachment_payload_source.dart';
 
 import 'direct_attachment_payload_store.dart';
 
@@ -34,17 +35,45 @@ class _IoDirectAttachmentPayloadStore implements DirectAttachmentPayloadStore {
     }
   }
 
+  /// Streams into a `.tmp` file that is flushed and renamed into place, so a
+  /// crash mid-copy can never leave a truncated payload that looks complete.
   @override
-  Future<void> write(
+  Future<void> adopt(
     String accountNamespace,
     String entryId,
-    Uint8List bytes,
+    DirectAttachmentPayloadSource source,
   ) async {
     await _recover(accountNamespace);
     final destination = await _file(accountNamespace, entryId);
     final temporary = File('${destination.path}.tmp');
     if (await temporary.exists()) await temporary.delete();
-    await temporary.writeAsBytes(bytes, flush: true);
+    final sink = temporary.openWrite();
+    var written = 0;
+    try {
+      await for (final chunk in source.openRead()) {
+        sink.add(chunk);
+        written += chunk.length;
+      }
+      await sink.flush();
+    } catch (_) {
+      try {
+        await sink.close();
+      } catch (_) {
+        // Closing a sink that already failed reports the same failure again.
+        // The half-written file below is what actually has to go.
+      }
+      if (await temporary.exists()) await temporary.delete();
+      rethrow;
+    }
+    await sink.close();
+    if (written != source.length) {
+      // The producer's file changed underneath the copy. Publishing a
+      // truncated recording is worse than refusing: the reservation already
+      // declared what this attachment is, and the server would reject the
+      // finalize anyway — after the person was told it had been sent.
+      if (await temporary.exists()) await temporary.delete();
+      throw StateError('The attachment changed while it was being saved.');
+    }
     if (await destination.exists()) await destination.delete();
     await temporary.rename(destination.path);
   }
@@ -73,13 +102,27 @@ class _IoDirectAttachmentPayloadStore implements DirectAttachmentPayloadStore {
     String accountNamespace,
     String entryId,
     Reference reference,
-    SettableMetadata metadata,
-  ) async {
+    SettableMetadata metadata, {
+    void Function(double progress)? onProgress,
+  }) async {
     final file = await _file(accountNamespace, entryId);
     if (!await file.exists()) {
       throw StateError('Pending attachment bytes are missing.');
     }
-    final snapshot = await reference.putFile(file, metadata);
+    final task = reference.putFile(file, metadata);
+    final report = onProgress;
+    final progress = report == null
+        ? null
+        : task.snapshotEvents.listen((snapshot) {
+            final total = snapshot.totalBytes;
+            if (total > 0) report(snapshot.bytesTransferred / total);
+          }, onError: (Object _) {});
+    final TaskSnapshot snapshot;
+    try {
+      snapshot = await task;
+    } finally {
+      await progress?.cancel();
+    }
     final generation = snapshot.metadata?.generation?.trim();
     if (generation != null && generation.isNotEmpty) return generation;
     return (await snapshot.ref.getMetadata()).generation ?? '';

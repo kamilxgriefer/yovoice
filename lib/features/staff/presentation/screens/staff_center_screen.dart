@@ -16,6 +16,7 @@ import 'package:yovoice/features/staff/presentation/sections/staff_operations_se
 import 'package:yovoice/features/staff/presentation/sections/staff_overview_section.dart';
 import 'package:yovoice/features/staff/presentation/sections/staff_section_shared.dart';
 import 'package:yovoice/features/staff/presentation/sections/staff_users_section.dart';
+import 'package:yovoice/shared/widgets/inputs/yo_keyboard_done_bar.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/theme/yo_immersive_dark_surface.dart';
 
@@ -326,6 +327,14 @@ class _StaffCenterScreenState extends State<StaffCenterScreen> {
                 ),
               ],
             ),
+      // Staff Center hosts its own search and the embedded Moderation
+      // Center, whose internal note is a multiline field. One bar above
+      // the keyboard covers every field this screen can show.
+      bottomNavigationBar: const YoKeyboardSafeBottomBar(
+        // Scaffold pins this slot to the bottom of the window, behind
+        // the keyboard; the wrapper lifts it onto the keyboard.
+        child: YoKeyboardDoneBar(),
+      ),
       body: ResponsiveContentFrame(
         width: ResponsiveContentWidth.workbench,
         child: _loading

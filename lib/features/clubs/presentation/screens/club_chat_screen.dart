@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
@@ -5,14 +7,20 @@ import 'package:flutter/semantics.dart';
 
 import 'package:yovoice/core/helpers/error_messages.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
+import 'package:yovoice/core/preferences/app_preferences.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 
 import 'package:yovoice/features/clubs/data/models/club_channel.dart';
 import 'package:yovoice/features/clubs/data/models/club_chat_authority.dart';
 import 'package:yovoice/features/clubs/data/models/club_message.dart';
 import 'package:yovoice/features/clubs/data/services/club_chat_service.dart';
+import 'package:yovoice/features/media/data/services/gif_catalog_service.dart';
+import 'package:yovoice/features/media/data/services/gif_message_controller.dart';
+import 'package:yovoice/features/media/data/services/gif_transport.dart';
+import 'package:yovoice/shared/widgets/inputs/yo_gif_send_status.dart';
+import 'package:yovoice/shared/widgets/media/yo_gif_view.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
-import 'package:yovoice/shared/widgets/inputs/yo_emoji_picker.dart';
+import 'package:yovoice/shared/widgets/inputs/yo_composer_panel.dart';
 import 'package:yovoice/shared/widgets/interactions/accessible_context_action.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
@@ -25,6 +33,8 @@ class ClubChatScreen extends StatefulWidget {
     this.firestore,
     this.auth,
     this.chatService,
+    this.gifService,
+    this.gifMessageInvoker,
     super.key,
   });
 
@@ -38,6 +48,8 @@ class ClubChatScreen extends StatefulWidget {
   final FirebaseFirestore? firestore;
   final FirebaseAuth? auth;
   final ClubChatService? chatService;
+  final GifCatalogService? gifService;
+  final GifMessageInvoker? gifMessageInvoker;
 
   @override
   State<ClubChatScreen> createState() => _ClubChatScreenState();
@@ -51,8 +63,23 @@ class _ClubChatScreenState extends State<ClubChatScreen> {
       widget.chatService ?? ClubChatService(firestore: _firestore, auth: _auth);
   final TextEditingController _controller = TextEditingController();
   final FocusNode _focusNode = FocusNode();
+  late final GifCatalogService _gifService =
+      widget.gifService ??
+      GifCatalogService(transport: FunctionsGifTransport());
+  late final GifMessageController _gifDelivery = GifMessageController(
+    callable: 'sendClubMessage',
+    target: {'clubId': widget.clubId, 'channelId': widget.channel.id},
+    currentUserId: () => _currentUserId,
+    invoke: widget.gifMessageInvoker,
+  );
   bool _sending = false;
-  bool _emojiPickerOpen = false;
+
+  /// Which composer panel is open, or `null` for none.
+  ///
+  /// One nullable enum replaces the old `bool _emojiPickerOpen`: with a single
+  /// mounted body inside [YoComposerPanel], two stacked panels are
+  /// structurally impossible rather than merely avoided.
+  YoComposerPanelTab? _composerPanel;
 
   /// Both streams are resolved ONCE, not per build. `build()` runs again
   /// on every keystroke-driven `_sending` flip, and a freshly constructed
@@ -78,22 +105,33 @@ class _ClubChatScreenState extends State<ClubChatScreen> {
 
   @override
   void dispose() {
+    _gifDelivery.dispose();
+    if (widget.gifService == null) _gifService.dispose();
     _controller.dispose();
     _focusNode.dispose();
     super.dispose();
   }
 
-  /// Swaps the system keyboard for the emoji picker and back, keeping focus
+  /// Swaps the system keyboard for the composer panel and back, keeping focus
   /// on the composer so the caret survives the swap.
-  void _toggleEmojiPicker() {
-    final opening = !_emojiPickerOpen;
-    setState(() => _emojiPickerOpen = opening);
+  void _toggleComposerPanel() {
+    final opening = _composerPanel == null;
+    setState(() {
+      // Opens on the tab last used anywhere in the app, so somebody who
+      // reaches for GIFs does not land on emoji every time.
+      _composerPanel = opening ? YoComposerPanelTabStore.instance.value : null;
+    });
     if (opening) {
       if (!_focusNode.hasFocus) _focusNode.requestFocus();
       yoHideSystemKeyboard();
     } else {
       _focusNode.requestFocus();
     }
+  }
+
+  void _selectComposerTab(YoComposerPanelTab tab) {
+    setState(() => _composerPanel = tab);
+    unawaited(YoComposerPanelTabStore.instance.remember(tab));
   }
 
   void _insertEmoji(String emoji) {
@@ -380,7 +418,7 @@ class _ClubChatScreenState extends State<ClubChatScreen> {
                       controller: _controller,
                       focusNode: _focusNode,
                       sending: _sending,
-                      emojiPickerOpen: _emojiPickerOpen,
+                      emojiPickerOpen: _composerPanel != null,
                       hint: _isAnnouncements
                           ? copy.text(
                               'Write an announcement…',
@@ -391,20 +429,33 @@ class _ClubChatScreenState extends State<ClubChatScreen> {
                               'Wiadomość na #${widget.channel.name}',
                             ),
                       onSend: _send,
-                      onToggleEmoji: _toggleEmojiPicker,
+                      onToggleEmoji: _toggleComposerPanel,
                     ),
+                  YoGifSendStatus(controller: _gifDelivery),
                   // Below the composer, never over it: the send button is laid
                   // out first, so no picker height can cover it.
-                  if (_emojiPickerOpen &&
+                  if (_composerPanel != null &&
                       authority.canSendToChannel(
                         announcement: _isAnnouncements,
                       ))
-                    YoEmojiPicker(
-                      onSelected: _insertEmoji,
+                    YoComposerPanel(
+                      tab: _composerPanel!,
+                      onTabChanged: _selectComposerTab,
+                      onEmojiSelected: _insertEmoji,
                       onBackspace: () {
                         yoDeleteBackAtCaret(_controller);
                         if (!_focusNode.hasFocus) _focusNode.requestFocus();
                       },
+                      gifService: _gifService
+                        ..locale = copy.locale.languageCode,
+                      gifDelivery: _gifDelivery,
+                      onGifSelected: (asset) =>
+                          unawaited(_gifDelivery.send(asset)),
+                      gifAutoLoad:
+                          AppPreferencesScope.maybeOf(
+                            context,
+                          )?.value.gifAutoLoadEnabled ??
+                          true,
                     ),
                 ],
               );
@@ -595,19 +646,29 @@ class _ClubMessageTile extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(height: 5),
-                    Text(
-                      _bodyText(copy),
-                      style: TextStyle(
-                        color: message.isDeleted
-                            ? palette.textTertiary
-                            : palette.textPrimary,
-                        fontSize: 14,
-                        height: 1.35,
-                        fontStyle: message.isDeleted
-                            ? FontStyle.italic
-                            : FontStyle.normal,
+                    if (!message.isDeleted && message.gif != null)
+                      YoGifView(
+                        asset: message.gif!,
+                        autoLoad:
+                            AppPreferencesScope.maybeOf(
+                              context,
+                            )?.value.gifAutoLoadEnabled ??
+                            true,
+                      )
+                    else
+                      Text(
+                        _bodyText(copy),
+                        style: TextStyle(
+                          color: message.isDeleted
+                              ? palette.textTertiary
+                              : palette.textPrimary,
+                          fontSize: 14,
+                          height: 1.35,
+                          fontStyle: message.isDeleted
+                              ? FontStyle.italic
+                              : FontStyle.normal,
+                        ),
                       ),
-                    ),
                   ],
                 ),
               ),

@@ -81,11 +81,12 @@ Map<String, dynamic> _doc(VoiceMoment moment) => <String, dynamic>{
 MomentService _privateMomentService({
   required MockFirebaseAuth auth,
   FakeFirebaseFirestore? firestore,
+  List<Map<String, Object?>>? mediaRequests,
 }) => MomentService(
   firestore: firestore ?? FakeFirebaseFirestore(),
   auth: auth,
   storage: MockFirebaseStorage(),
-  mediaAccessInvoker: fakeMomentMediaAccessInvoker(),
+  mediaAccessInvoker: fakeMomentMediaAccessInvoker(requests: mediaRequests),
 );
 
 List<Map<Object?, Object?>> _captureAnnouncements(WidgetTester tester) {
@@ -172,6 +173,7 @@ class _FakeAudioPlayer implements audio.AudioPlayer {
   int playCount = 0;
   int stopCount = 0;
   int disposeCount = 0;
+  bool isPlaying = false;
 
   @override
   Stream<Duration> get onPositionChanged => const Stream<Duration>.empty();
@@ -192,17 +194,23 @@ class _FakeAudioPlayer implements audio.AudioPlayer {
     audio.PlayerMode? mode,
   }) async {
     playCount += 1;
+    isPlaying = true;
   }
 
   @override
-  Future<void> pause() async {}
+  Future<void> pause() async {
+    isPlaying = false;
+  }
 
   @override
-  Future<void> resume() async {}
+  Future<void> resume() async {
+    isPlaying = true;
+  }
 
   @override
   Future<void> stop() async {
     stopCount += 1;
+    isPlaying = false;
   }
 
   @override
@@ -211,6 +219,7 @@ class _FakeAudioPlayer implements audio.AudioPlayer {
   @override
   Future<void> dispose() async {
     disposeCount += 1;
+    isPlaying = false;
   }
 
   @override
@@ -284,18 +293,22 @@ class _StaticDiscovery extends MomentDiscoveryService {
     : super(firestore: FakeFirebaseFirestore(), auth: auth);
 
   final List<VoiceMoment> moments;
+  int loads = 0;
 
   @override
   Future<MomentDiscoveryFeed> loadDiscoveryFeed({
     int poolSize = MomentDiscoveryService.defaultPoolSize,
     int? seed,
-  }) async => MomentDiscoveryFeed(
-    moments: moments,
-    fetchedCount: moments.length,
-    drops: const <String, MomentDropReason>{},
-    seed: seed ?? 1,
-    poolExhausted: false,
-  );
+  }) async {
+    loads += 1;
+    return MomentDiscoveryFeed(
+      moments: moments,
+      fetchedCount: moments.length,
+      drops: const <String, MomentDropReason>{},
+      seed: seed ?? 1,
+      poolExhausted: false,
+    );
+  }
 
   @override
   Stream<Map<String, MomentEngagement>> watchEngagement({
@@ -1391,21 +1404,27 @@ void main() {
     expect(player.disposeCount, 1);
   });
 
-  testWidgets('wide feed prunes an expired selected panel and stops its '
-      'player', (tester) async {
+  testWidgets('wide feed prunes its playing card at the exact deadline, '
+      'releases audio and recovers focus without another load', (tester) async {
     final semantics = tester.ensureSemantics();
     final announcements = _captureAnnouncements(tester);
     await tester.binding.setSurfaceSize(const Size(1200, 800));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     final clock = _FakeExpiryClock(_anchor);
     final player = _FakeAudioPlayer();
+    final mediaRequests = <Map<String, Object?>>[];
     final expiring = _moment(
       'panel',
       expiresAt: _anchor.add(const Duration(seconds: 10)),
     );
     final db = FakeFirebaseFirestore();
     await db.collection('voiceMoments').doc(expiring.id).set(_doc(expiring));
-    final moments = _privateMomentService(auth: auth, firestore: db);
+    final moments = _privateMomentService(
+      auth: auth,
+      firestore: db,
+      mediaRequests: mediaRequests,
+    );
+    final discovery = _StaticDiscovery([expiring], auth);
 
     await tester.pumpWidget(
       MaterialApp(
@@ -1413,7 +1432,7 @@ void main() {
           isRootTab: true,
           auth: auth,
           momentService: moments,
-          discoveryService: _StaticDiscovery([expiring], auth),
+          discoveryService: discovery,
           feedService: _QuietFeed(auth),
           playerFactory: () => player,
           expiryClock: () => clock.now,
@@ -1423,23 +1442,56 @@ void main() {
     );
     await tester.pump();
     await tester.pump();
-    expect(find.byKey(const ValueKey('moments-detail-panel')), findsOneWidget);
+    final row = find.byKey(const ValueKey('moment-row-panel'));
+    final play = find.byKey(const ValueKey('moment-row-play-panel'));
+    expect(row, findsOneWidget);
+    expect(find.byKey(const ValueKey('moments-detail-panel')), findsNothing);
+    expect(
+      discovery.loads,
+      1,
+      reason: 'this must reach the authenticated feed',
+    );
+    expect(mediaRequests, isEmpty);
+    expect(player.playCount, 0);
 
-    await tester.tap(find.byKey(const ValueKey('detail-play-toggle')));
+    await tester.ensureVisible(play);
+    await tester.tap(play);
     await tester.pump();
     expect(player.playCount, 1);
-    await tester.tap(find.byKey(const ValueKey('detail-comment-field')));
+    expect(player.isPlaying, isTrue);
+    expect(mediaRequests.map((request) => request['momentId']), ['panel']);
+    // Focus the actual inline transport being retired. The former automatic
+    // desktop composer no longer exists; comments keep their own expiry test.
+    final playbackFocus = Focus.of(
+      tester.element(
+        find.descendant(of: play, matching: find.byIcon(Icons.pause_rounded)),
+      ),
+    );
+    playbackFocus.requestFocus();
     await tester.pump();
-    expect(FocusManager.instance.primaryFocus, isNotNull);
+    expect(playbackFocus.hasFocus, isTrue);
+    final stopsBeforeExpiry = player.stopCount;
     clock.advance(const Duration(seconds: 9));
     await tester.pump();
-    expect(find.byKey(const ValueKey('moments-detail-panel')), findsOneWidget);
+    expect(row, findsOneWidget);
+    expect(player.isPlaying, isTrue);
+    expect(player.stopCount, stopsBeforeExpiry);
+    expect(player.disposeCount, 0);
+    expect(discovery.loads, 1);
 
     clock.advance(const Duration(seconds: 1));
     await tester.pump();
-    expect(find.byKey(const ValueKey('moments-detail-panel')), findsNothing);
-    expect(find.byKey(const ValueKey('moment-row-panel')), findsNothing);
-    expect(player.stopCount, 1);
+    await tester.pump();
+    expect(row, findsNothing);
+    expect(find.text('caption panel'), findsNothing);
+    // The shared transport stops before its first play, then fences and drains
+    // cleanup at expiry. Check this transition, not the old player's total.
+    expect(player.stopCount, greaterThan(stopsBeforeExpiry));
+    expect(player.isPlaying, isFalse);
+    expect(player.disposeCount, 1);
+    expect(player.playCount, 1);
+    expect(mediaRequests, hasLength(1));
+    expect(discovery.loads, 1);
     final refresh = tester.widget<IconButton>(
       find.byKey(const ValueKey('moments-discovery-refresh')),
     );

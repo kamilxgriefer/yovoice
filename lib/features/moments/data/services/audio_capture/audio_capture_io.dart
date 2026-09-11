@@ -99,6 +99,9 @@ class FileRecordedAudio extends RecordedAudio {
   Future<Uint8List> readBytes() => file.readAsBytes();
 
   @override
+  Stream<List<int>> openRead() => file.openRead();
+
+  @override
   Future<String> uploadTo(
     Reference reference,
     SettableMetadata metadata,

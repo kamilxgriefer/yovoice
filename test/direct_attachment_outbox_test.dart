@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:yovoice/features/messages/data/models/message.dart';
 import 'package:yovoice/features/messages/data/services/direct_attachment_outbox.dart';
+import 'package:yovoice/features/messages/data/services/direct_attachment_payload_source.dart';
 import 'package:yovoice/features/messages/data/services/direct_attachment_payload_store.dart';
 
 void main() {
@@ -344,8 +345,16 @@ class _MemoryPayloadStore implements DirectAttachmentPayloadStore {
   String _key(String namespace, String id) => '$namespace:$id';
 
   @override
-  Future<void> write(String namespace, String id, Uint8List bytes) async {
-    _payloads[_key(namespace, id)] = Uint8List.fromList(bytes);
+  Future<void> adopt(
+    String namespace,
+    String id,
+    DirectAttachmentPayloadSource source,
+  ) async {
+    final builder = BytesBuilder(copy: false);
+    await for (final chunk in source.openRead()) {
+      builder.add(chunk);
+    }
+    _payloads[_key(namespace, id)] = builder.takeBytes();
   }
 
   @override
@@ -371,8 +380,9 @@ class _MemoryPayloadStore implements DirectAttachmentPayloadStore {
     String namespace,
     String id,
     Reference reference,
-    SettableMetadata metadata,
-  ) => throw UnimplementedError();
+    SettableMetadata metadata, {
+    void Function(double progress)? onProgress,
+  }) => throw UnimplementedError();
 
   @override
   Future<void> delete(String namespace, String id) async {

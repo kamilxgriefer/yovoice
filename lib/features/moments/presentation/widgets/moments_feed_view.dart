@@ -4,12 +4,18 @@ import 'package:audioplayers/audioplayers.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 import 'package:yovoice/shared/widgets/backgrounds/yo_page_background.dart';
 import 'package:share_plus/share_plus.dart';
 
+import 'package:yovoice/core/helpers/error_messages.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
+import 'package:yovoice/core/navigation/app_route_observer.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
+import 'package:yovoice/core/theme/app_radius.dart';
+import 'package:yovoice/core/theme/app_spacing.dart';
+import 'package:yovoice/core/theme/app_typography.dart';
 import 'package:yovoice/features/home/data/services/home_feed_service.dart';
 import 'package:yovoice/features/moderation/data/services/content_report_service.dart';
 import 'package:yovoice/features/moderation/presentation/report_content_flow.dart';
@@ -36,9 +42,8 @@ import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
 /// Which slice of the Moments corpus the feed is showing.
 enum MomentsFilter {
-  /// The default composed page: story strip, featured cards (top
-  /// engagement via [MomentDiscoveryService.rankByEngagement]) and the
-  /// recent list — the engagement-ranked discovery pool.
+  /// The current discovery pool, newest first. Engagement ordering remains
+  /// an explicit filter, rather than a second copy of the same recordings.
   discover,
 
   /// Only the people this account follows (plus friends and itself) —
@@ -52,16 +57,9 @@ enum MomentsFilter {
   recent,
 }
 
-/// The width at which the right detail panel appears. Measured on the
-/// space this view receives (the desktop shell already took its rail), so
-/// the panel responds to the room it has, not to a device label.
-const double _detailWidth = 1100;
-const double _tabletWidth = 600;
-
-/// The modern Voice Moments feed: filter chips, a story strip of author
-/// chains with viewed/unviewed rings, featured cards, a recent list, and
-/// — on wide surfaces — a right detail panel with player, actions and the
-/// inline comment thread.
+/// One readable, lazy Voice Moments list with one shared audio transport.
+/// Author chains, details and full comment threads remain explicit actions;
+/// arriving on the feed never creates a player or starts audio.
 ///
 /// Every number rendered is a document's real counter, every timestamp
 /// label is derived from a real timestamp, and every Moment shown is
@@ -121,7 +119,8 @@ class MomentsFeedView extends StatefulWidget {
 
 enum _Phase { loading, error, ready }
 
-class _MomentsFeedViewState extends State<MomentsFeedView> {
+class _MomentsFeedViewState extends State<MomentsFeedView>
+    with WidgetsBindingObserver, RouteAware {
   late final MomentDiscoveryService _discovery;
   HomeFeedService? _feed;
   MomentService? _moments;
@@ -156,15 +155,41 @@ class _MomentsFeedViewState extends State<MomentsFeedView> {
   Set<String> _viewedIds = const <String>{};
   StreamSubscription<Set<String>>? _viewedSubscription;
 
-  /// Which Moment the wide detail panel shows; null falls back to the
-  /// first of the current list.
-  String? _selectedId;
+  FirebaseAuth? _auth;
+  bool _authFailed = false;
+  int _authSourceEpoch = 0;
+  StreamSubscription<User?>? _authSubscription;
+  String _viewerUid = '';
+  int _accountEpoch = 0;
+  int _loadEpoch = 0;
+  int _socialEpoch = 0;
+  ModalRoute<void>? _observedRoute;
+  bool _routeIsCurrent = true;
+  bool _foreground = true;
+  late bool _wasVisible;
+  bool _openingDestination = false;
+  final _likeOverrides = <String, ({bool liked, int count})>{};
+  final _pendingLikes = <String>{};
+  // Immutable IDs deleted successfully by this account on this surface.
+  // A read/page captured before its delete ACK may finish afterwards.
+  final _confirmedDeletedIds = <String>{};
 
-  // ---- detail-panel playback (wide layouts only) ----
+  // One source owns native audio. A superseded grant never enters this
+  // transport queue; a superseded native attempt completes cleanup before
+  // its successor may use the player.
   AudioPlayer? _player;
+  Future<void> _transportTail = Future<void>.value();
+  int _playEpoch = 0;
+  String? _loadedId;
+  Uri? _loadedUri;
+  bool _playbackBusy = false;
+  bool _transportBlocked = false;
+  final _playback = ValueNotifier<_FeedPlayback>(const _FeedPlayback());
+  final _cardContexts = <String, BuildContext>{};
   final List<StreamSubscription<dynamic>> _playerSubscriptions =
       <StreamSubscription<dynamic>>[];
   String? _playingId;
+  VoiceMoment? _playingMoment;
   bool _isPlaying = false;
   Duration _position = Duration.zero;
   Duration? _duration;
@@ -180,8 +205,10 @@ class _MomentsFeedViewState extends State<MomentsFeedView> {
   AppLocalizations get _copy => AppLocalizations.of(context);
 
   String get _uid {
+    if (_authFailed) return '';
     try {
-      return (widget.auth ?? FirebaseAuth.instance).currentUser?.uid ?? '';
+      return (_auth ?? widget.auth ?? FirebaseAuth.instance).currentUser?.uid ??
+          '';
     } catch (_) {
       return '';
     }
@@ -190,158 +217,329 @@ class _MomentsFeedViewState extends State<MomentsFeedView> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _foreground =
+        WidgetsBinding.instance.lifecycleState == null ||
+        WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed;
+    _wasVisible = _foreground && widget.isVisible?.value != false;
     _expiry = MomentExpiryScheduler(
       onDeadline: _expireAt,
       clock: widget.expiryClock,
       timerFactory: widget.expiryTimerFactory,
     );
-    _discovery = widget.discoveryService ?? MomentDiscoveryService();
-    // Each seam guarded separately: one service that cannot be
-    // constructed must not take the others down with it.
     try {
-      _feed = widget.feedService ?? HomeFeedService();
-      _subscribeSocial();
+      _auth = widget.auth ?? FirebaseAuth.instance;
+    } catch (_) {
+      _auth = null;
+    }
+    _viewerUid = _uid;
+    _discovery = widget.discoveryService ?? MomentDiscoveryService();
+    try {
+      _feed = widget.feedService ?? HomeFeedService(auth: _auth);
     } catch (_) {
       _feed = null;
     }
     try {
-      _moments = widget.momentService ?? MomentService();
-      _mineSubscription = _moments!.watchMyMoments().listen(
-        (moments) {
-          if (!mounted) return;
-          final now = _expiry.now();
-          // The exact timer can make the service emit a list with the dead
-          // item already removed. Expire the previous cache first, while its
-          // focused row and playback id are still identifiable.
-          _expireAt(now);
-          if (!mounted) return;
-          setState(() {
-            // A previously-seen own Moment that vanished from the stream
-            // was deleted — from this feed's own controls, the story
-            // viewer, or the detail screen. The Discover pool is a
-            // one-shot load, so without this prune a deleted own Moment
-            // would keep rendering until the next manual reload.
-            final surviving = moments.map((m) => m.id).toSet();
-            final removed = _mineData
-                .map((m) => m.id)
-                .where((id) => !surviving.contains(id))
-                .toSet();
-            _mineData = moments;
-            if (removed.isNotEmpty) _pruneFromPool(removed);
-          });
-          // Validate and schedule the incoming snapshot as well; this also
-          // protects against a stale backend emission at the boundary.
-          _expireAt(now);
-        },
-        onError: (Object _) {
-          // Own Moments are additive to the personal slice; when this
-          // stream fails the slice still renders from the social one.
-        },
-      );
+      _moments = widget.momentService ?? MomentService(auth: _auth);
     } catch (_) {
       _moments = null;
     }
     try {
-      _views = widget.viewsService ?? MomentViewsService();
-      _viewedSubscription = _views!.watchViewedMomentIds().listen(
-        (ids) {
-          if (mounted) setState(() => _viewedIds = ids);
-        },
-        onError: (Object _) {
-          // Unknown viewed-state renders as unviewed; strictly better
-          // than taking the strip down.
-        },
-      );
+      _views = widget.viewsService ?? MomentViewsService(auth: _auth);
     } catch (_) {
       _views = null;
     }
-    try {
-      _engagementSubscription = _discovery.watchEngagement().listen(
-        (counters) {
-          if (mounted) setState(() => _engagement = counters);
-        },
-        onError: (Object _) {
-          // Counts already on screen are real, just no longer live.
-        },
-      );
-    } catch (_) {
-      _engagementSubscription = null;
-    }
+    _subscribeAccountStreams();
+    _bindAuth();
     widget.isVisible?.addListener(_handleVisibility);
     unawaited(_load());
   }
 
-  void _subscribeSocial() {
-    unawaited(_socialSubscription?.cancel());
-    _socialSubscription = _feed!.watchSocialMoments().listen(
-      (moments) {
-        if (mounted) {
-          final now = _expiry.now();
-          // HomeFeedService's exact wake-up emits the already-pruned list.
-          // Process the previous cache before replacing it so a social-only
-          // focused row still participates in announcement/focus recovery.
-          _expireAt(now);
-          if (!mounted) return;
-          setState(() {
-            _socialData = moments;
-            _socialError = null;
-          });
-          _expireAt(now);
-        }
+  bool _accountIsCurrent(int epoch, String uid) =>
+      mounted && epoch == _accountEpoch && uid == _viewerUid && uid == _uid;
+
+  void _bindAuth() {
+    final source = ++_authSourceEpoch;
+    unawaited(_authSubscription?.cancel());
+    bool current() => mounted && source == _authSourceEpoch;
+    _authSubscription = _auth?.authStateChanges().listen(
+      (user) {
+        if (current()) _handleAccount(user?.uid);
       },
-      onError: (Object error) {
-        if (mounted) setState(() => _socialError = error);
+      onError: (Object _) {
+        if (current()) _handleAccount(null, failed: true);
+      },
+      onDone: () {
+        if (current()) _handleAccount(null, failed: true);
       },
     );
   }
 
-  /// The error-state retry for the Following filter: a fresh
-  /// subscription, because the old one is dead once it errored.
+  void _handleAccount(
+    String? observedUid, {
+    bool failed = false,
+    bool force = false,
+  }) {
+    final nextUid = observedUid ?? '';
+    if (!mounted ||
+        (!force && _viewerUid == nextUid && _authFailed == failed)) {
+      return;
+    }
+    // Consume every auth event, including an already queued A -> null -> A.
+    // Reading only currentUser here would collapse those into the final A.
+    _authFailed = failed;
+    _accountEpoch += 1;
+    _loadEpoch += 1;
+    _socialEpoch += 1;
+    _viewerUid = nextUid;
+    unawaited(_stopPanelPlayback(release: true));
+    setState(() {
+      _result = null;
+      _phase = _Phase.loading;
+      _error = null;
+      _loadMoreError = null;
+      _loadingMore = false;
+      _socialData = null;
+      _socialError = null;
+      _mineData = const [];
+      _viewedIds = const {};
+      _engagement = const {};
+      _likeOverrides.clear();
+      _pendingLikes.clear();
+      _confirmedDeletedIds.clear();
+      _openingDestination = false;
+    });
+    _expiry.schedule(const []);
+    _subscribeAccountStreams();
+    unawaited(_load());
+  }
+
+  void _subscribeAccountStreams() {
+    final epoch = _accountEpoch;
+    final uid = _viewerUid;
+    unawaited(_mineSubscription?.cancel());
+    unawaited(_viewedSubscription?.cancel());
+    unawaited(_engagementSubscription?.cancel());
+    if (uid.isEmpty) {
+      unawaited(_socialSubscription?.cancel());
+      _socialData = null;
+      _socialError = FirebaseAuthException(code: 'unauthenticated');
+      return;
+    }
+    _subscribeSocial();
+    try {
+      _mineSubscription = _moments?.watchMyMoments().listen(
+        (moments) {
+          if (!_accountIsCurrent(epoch, uid)) return;
+          final now = _expiry.now();
+          _expireAt(now);
+          if (!mounted) return;
+          setState(() {
+            final visible = moments
+                .where((moment) => !_confirmedDeletedIds.contains(moment.id))
+                .toList(growable: false);
+            final surviving = visible.map((moment) => moment.id).toSet();
+            final removed = _mineData
+                .where((moment) => !surviving.contains(moment.id))
+                .map((moment) => moment.id)
+                .toSet();
+            _mineData = visible;
+            if (removed.isNotEmpty) _pruneFromPool(removed);
+          });
+          _expireAt(now);
+          _stopIfProjectionChanged();
+        },
+        onError: (Object error) {
+          if (!_accountIsCurrent(epoch, uid)) return;
+          if (_voiceAccessWasDenied(error)) {
+            final removed = _mineData.map((moment) => moment.id).toSet();
+            setState(() {
+              _mineData = const [];
+              _pruneFromPool(removed);
+            });
+            unawaited(_stopPanelPlayback(release: true));
+          }
+        },
+      );
+    } catch (_) {
+      _mineSubscription = null;
+    }
+    try {
+      _viewedSubscription = _views?.watchViewedMomentIds().listen(
+        (ids) {
+          if (_accountIsCurrent(epoch, uid)) setState(() => _viewedIds = ids);
+        },
+        onError: (Object _) {
+          if (_accountIsCurrent(epoch, uid)) {
+            setState(() => _viewedIds = const {});
+          }
+        },
+      );
+    } catch (_) {
+      _viewedSubscription = null;
+    }
+    try {
+      _engagementSubscription = _discovery.watchEngagement().listen((counters) {
+        if (_accountIsCurrent(epoch, uid)) {
+          setState(() => _engagement = counters);
+        }
+      }, onError: (Object _) {});
+    } catch (_) {
+      _engagementSubscription = null;
+    }
+  }
+
+  void _subscribeSocial() {
+    final epoch = _accountEpoch;
+    final uid = _viewerUid;
+    final generation = ++_socialEpoch;
+    unawaited(_socialSubscription?.cancel());
+    if (uid.isEmpty) {
+      _socialError = FirebaseAuthException(code: 'unauthenticated');
+      return;
+    }
+    final feed = _feed;
+    if (feed == null) {
+      _socialError = StateError('unavailable');
+      return;
+    }
+    _socialSubscription = feed.watchSocialMoments().listen(
+      (moments) {
+        if (!_accountIsCurrent(epoch, uid) || generation != _socialEpoch) {
+          return;
+        }
+        final now = _expiry.now();
+        _expireAt(now);
+        setState(() {
+          _socialData = moments
+              .where((moment) => !_confirmedDeletedIds.contains(moment.id))
+              .toList(growable: false);
+          _socialError = null;
+        });
+        _expireAt(now);
+        _stopIfProjectionChanged();
+        if (_filter == MomentsFilter.following &&
+            _playingId != null &&
+            !_currentList().any((moment) => moment.id == _playingId)) {
+          unawaited(_stopPanelPlayback(release: true));
+        }
+      },
+      onError: (Object error) {
+        if (!_accountIsCurrent(epoch, uid) || generation != _socialEpoch) {
+          return;
+        }
+        setState(() {
+          _socialData = null;
+          _socialError = error;
+        });
+        if (_filter == MomentsFilter.following) {
+          unawaited(_stopPanelPlayback(release: true));
+          _announceReadError(error, 'social-$generation');
+        }
+      },
+    );
+  }
+
   void _retrySocial() {
+    if (!mounted) return;
     setState(() {
       _socialError = null;
-      _socialData = null;
+      // A normal refresh keeps keyed cards mounted until the replacement
+      // arrives. Denial has already cleared the cache in onError; retaining
+      // a valid snapshot here also preserves popup-return action ownership.
     });
-    final feed = _feed;
-    if (feed != null) {
-      _subscribeSocial();
+    _subscribeSocial();
+  }
+
+  @override
+  void didUpdateWidget(covariant MomentsFeedView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.isVisible != widget.isVisible) {
+      oldWidget.isVisible?.removeListener(_handleVisibility);
+      widget.isVisible?.addListener(_handleVisibility);
+    }
+    if (oldWidget.auth != widget.auth) {
+      try {
+        _auth = widget.auth ?? FirebaseAuth.instance;
+      } catch (_) {
+        _auth = null;
+      }
+      _handleAccount(_auth?.currentUser?.uid, force: true);
+      _bindAuth();
+    }
+    _handleVisibility();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final route = ModalRoute.of<void>(context);
+    if (!identical(route, _observedRoute)) {
+      appRouteObserver.unsubscribe(this);
+      _observedRoute = route;
+      if (route != null) appRouteObserver.subscribe(this, route);
+    }
+    _routeIsCurrent = route?.isCurrent ?? true;
+    _handleVisibility();
+  }
+
+  @override
+  void didPushNext() => _setRouteCurrent(false);
+  @override
+  void didPopNext() => _setRouteCurrent(true);
+  @override
+  void didPop() => _setRouteCurrent(false);
+
+  void _setRouteCurrent(bool value) {
+    _routeIsCurrent = value;
+    _handleVisibility();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    _foreground = state == AppLifecycleState.resumed;
+    _handleVisibility();
+  }
+
+  void _handleVisibility() {
+    if (!mounted) return;
+    final visible =
+        _foreground && _routeIsCurrent && widget.isVisible?.value != false;
+    if (visible == _wasVisible) return;
+    _wasVisible = visible;
+    if (!visible) {
+      unawaited(_stopPanelPlayback(release: true));
+    } else {
+      unawaited(_refreshAll());
     }
   }
 
   @override
   void dispose() {
+    _authSourceEpoch += 1;
+    _accountEpoch += 1;
+    _loadEpoch += 1;
+    _socialEpoch += 1;
     widget.isVisible?.removeListener(_handleVisibility);
+    WidgetsBinding.instance.removeObserver(this);
+    appRouteObserver.unsubscribe(this);
     _expiry.dispose();
+    unawaited(_authSubscription?.cancel());
     unawaited(_engagementSubscription?.cancel());
     unawaited(_viewedSubscription?.cancel());
     unawaited(_socialSubscription?.cancel());
     unawaited(_mineSubscription?.cancel());
-    for (final subscription in _playerSubscriptions) {
-      unawaited(subscription.cancel());
-    }
-    _player?.dispose();
+    unawaited(_stopPanelPlayback(release: true, notify: false));
+    _playback.dispose();
     _expiryRecoveryFocus.dispose();
     super.dispose();
   }
 
-  void _handleVisibility() {
-    if (widget.isVisible?.value == false) {
-      unawaited(_stopPanelPlayback());
-      return;
-    }
-    // Build 20 projections are intentionally bounded one-shot snapshots, not
-    // foreign Firestore listeners. Returning to this kept-alive destination is
-    // therefore an explicit safe refresh point.
-    unawaited(_refreshAll());
-  }
-
   Future<void> _load() async {
-    // A refresh over content that is already on screen (returning to the
-    // tab, coming back from the recorder after a publish) keeps that
-    // content visible and swaps the new page in when it arrives. Only the
-    // very first load — or a retry after an error — shows the full-screen
-    // loading state; blanking the feed on every return read as a frozen,
-    // torn screen and a second wait after "Voice Moment posted."
+    if (!mounted) return;
+    final generation = ++_loadEpoch;
+    final account = _accountEpoch;
+    final uid = _viewerUid;
     final hasContent = _result != null && _phase == _Phase.ready;
     setState(() {
       if (!hasContent) _phase = _Phase.loading;
@@ -349,27 +547,34 @@ class _MomentsFeedViewState extends State<MomentsFeedView> {
       _loadMoreError = null;
       _loadingMore = false;
     });
-    await _stopPanelPlayback();
+    unawaited(_stopPanelPlayback());
     try {
+      if (uid.isEmpty) throw FirebaseAuthException(code: 'unauthenticated');
       final result = await _discovery.loadDiscoveryFeed();
-      if (!mounted) return;
+      if (!_accountIsCurrent(account, uid) || generation != _loadEpoch) return;
       setState(() {
         _result = result;
+        _pruneFromPool(_confirmedDeletedIds);
         _phase = _Phase.ready;
+        _likeOverrides.removeWhere(
+          (id, value) => result.moments.any(
+            (moment) => moment.id == id && moment.callerLiked == value.liked,
+          ),
+        );
       });
       _expireAt(_expiry.now());
     } catch (error) {
-      if (!mounted) return;
-      if (hasContent) {
-        // Keep what the user already has; the stale page is still valid
-        // until its own expiry prunes it.
+      if (!_accountIsCurrent(account, uid) || generation != _loadEpoch) return;
+      if (hasContent && !_voiceAccessWasDenied(error)) {
         setState(() => _loadMoreError = error);
-        return;
+      } else {
+        setState(() {
+          _result = null;
+          _error = error;
+          _phase = _Phase.error;
+        });
       }
-      setState(() {
-        _error = error;
-        _phase = _Phase.error;
-      });
+      _announceReadError(error, 'load-$generation');
     }
   }
 
@@ -382,135 +587,442 @@ class _MomentsFeedViewState extends State<MomentsFeedView> {
     final current = _result;
     final loadMore = current?.loadMore;
     if (current == null || loadMore == null || _loadingMore) return;
+    final generation = _loadEpoch;
+    final account = _accountEpoch;
+    final uid = _viewerUid;
+    bool currentRequest() =>
+        _accountIsCurrent(account, uid) && generation == _loadEpoch;
     setState(() {
       _loadingMore = true;
       _loadMoreError = null;
     });
     try {
       final next = await loadMore();
-      if (!mounted) return;
-      setState(() => _result = next);
+      if (!currentRequest()) return;
+      setState(() {
+        _result = next;
+        _pruneFromPool(_confirmedDeletedIds);
+      });
       _expireAt(_expiry.now());
+      _stopIfProjectionChanged();
     } catch (error) {
-      if (!mounted) return;
-      setState(() => _loadMoreError = error);
+      if (!currentRequest()) return;
+      if (_voiceAccessWasDenied(error)) {
+        unawaited(_stopPanelPlayback(release: true));
+        setState(() {
+          _result = null;
+          _error = error;
+          _phase = _Phase.error;
+        });
+      } else {
+        setState(() => _loadMoreError = error);
+      }
+      _announceReadError(error, 'page-$generation');
     } finally {
-      if (mounted) setState(() => _loadingMore = false);
+      if (currentRequest()) setState(() => _loadingMore = false);
     }
+  }
+
+  void _announceReadError(Object error, String transition) {
+    if (widget.isVisible?.value == false) return;
+    final account = _accountEpoch;
+    final uid = _viewerUid;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_accountIsCurrent(account, uid) || !_surfaceAllowsPlayback) return;
+      final stillCurrent = transition.startsWith('social-')
+          ? _filter == MomentsFilter.following && identical(_socialError, error)
+          : _filter != MomentsFilter.following &&
+                (identical(_error, error) || identical(_loadMoreError, error));
+      if (!stillCurrent) return;
+      _expiryAnnouncer.announce(
+        context,
+        transition: '$transition-$account',
+        message: friendlyErrorMessage(error, copy: _copy),
+        assertiveness: Assertiveness.assertive,
+      );
+    });
   }
 
   // ------------------------------------------------------------- playback
 
-  AudioPlayer _ensurePlayer() {
-    final existing = _player;
-    if (existing != null) return existing;
-    final player = (widget.playerFactory ?? AudioPlayer.new)();
-    _player = player;
+  bool get _surfaceAllowsPlayback =>
+      mounted &&
+      _foreground &&
+      _routeIsCurrent &&
+      widget.isVisible?.value != false &&
+      momentExpirySurfaceIsVisible(context);
+
+  VoiceMoment? _currentSnapshot(VoiceMoment moment, {bool allowDraft = false}) {
+    if (_viewerUid.isEmpty || _viewerUid != _uid) return null;
+    for (final current in _currentList()) {
+      if (current.id != moment.id || current.authorId != moment.authorId) {
+        continue;
+      }
+      if (current.isDeleted ||
+          (!current.isActiveAt(_effectiveNow()) &&
+              !(allowDraft &&
+                  !current.isPublished &&
+                  current.authorId == _uid))) {
+        return null;
+      }
+      return _withLive(current);
+    }
+    return null;
+  }
+
+  bool _containsCurrentMoment(VoiceMoment moment, {bool allowDraft = false}) =>
+      _currentSnapshot(moment, allowDraft: allowDraft) != null;
+
+  bool _currentMediaMatches(VoiceMoment moment) {
+    final current = _currentSnapshot(moment);
+    return current != null &&
+        current.hasMediaReference &&
+        (!moment.hasAuthorizedMedia || current.hasAuthorizedMedia) &&
+        current.mediaGeneration == moment.mediaGeneration &&
+        current.audioUrl == moment.audioUrl;
+  }
+
+  void _stopIfProjectionChanged() {
+    final moment = _playingMoment;
+    if (moment != null && !_currentMediaMatches(moment)) {
+      unawaited(_stopPanelPlayback(release: true));
+    }
+  }
+
+  bool _playIsCurrent(
+    VoiceMoment moment,
+    int generation,
+    int account,
+    String uid,
+  ) =>
+      _accountIsCurrent(account, uid) &&
+      generation == _playEpoch &&
+      _playingId == moment.id &&
+      _surfaceAllowsPlayback &&
+      _currentMediaMatches(moment) &&
+      _cardIsVisible(moment.id);
+
+  bool _cardIsVisible(String id) {
+    final cardContext = _cardContexts[id];
+    if (cardContext == null || !cardContext.mounted) return false;
+    final card = cardContext.findRenderObject();
+    final scrollable = Scrollable.maybeOf(cardContext);
+    final viewport = scrollable?.context.findRenderObject();
+    if (card is! RenderBox ||
+        viewport is! RenderBox ||
+        !card.hasSize ||
+        !viewport.hasSize ||
+        !card.attached ||
+        !viewport.attached) {
+      return false;
+    }
+    return (card.localToGlobal(Offset.zero) & card.size).overlaps(
+      viewport.localToGlobal(Offset.zero) & viewport.size,
+    );
+  }
+
+  void _rememberCard(String id, BuildContext context) =>
+      _cardContexts[id] = context;
+
+  void _forgetCard(String id, BuildContext context) {
+    if (identical(_cardContexts[id], context)) _cardContexts.remove(id);
+    _checkVisiblePlaybackAfterFrame();
+  }
+
+  void _checkVisiblePlaybackAfterFrame() {
+    final generation = _playEpoch;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || generation != _playEpoch || _playingId == null) return;
+      if (!_cardIsVisible(_playingId!) || !_surfaceAllowsPlayback) {
+        unawaited(_stopPanelPlayback(release: true));
+      }
+    });
+  }
+
+  void _publishPlayback() {
+    if (!mounted) return;
+    _playback.value = _FeedPlayback(
+      id: _playingId,
+      playing: _isPlaying,
+      busy: _playbackBusy,
+      elapsed: _position,
+      duration: _duration,
+      error: _playbackError,
+    );
+  }
+
+  Future<void> _queueTransport(Future<void> Function() command) {
+    final operation = _transportTail.then((_) => command());
+    _transportTail = operation.catchError((Object _) {});
+    return operation;
+  }
+
+  Future<void> _interruptBeforeSwitch(AudioPlayer player) {
+    // Stop invalidates the plugin's desired state immediately, but its native
+    // effect can acknowledge later. Register that barrier NOW, not after a
+    // grant, so even C cannot pass a pending A -> B interruption.
+    final interrupted = () async {
+      try {
+        await player.stop();
+        return true;
+      } catch (_) {
+        return false;
+      }
+    }();
+    return _queueTransport(() async {
+      if (!await interrupted) {
+        _transportBlocked = true;
+        throw StateError('native-stop-unconfirmed');
+      }
+    });
+  }
+
+  AudioPlayer _ensurePlayer() =>
+      _player ??= (widget.playerFactory ?? AudioPlayer.new)();
+
+  void _bindPlayer(
+    AudioPlayer player,
+    VoiceMoment moment,
+    int generation,
+    int account,
+    String uid,
+  ) {
+    for (final subscription in _playerSubscriptions) {
+      unawaited(subscription.cancel());
+    }
+    _playerSubscriptions.clear();
+    bool current() =>
+        identical(_player, player) &&
+        _playIsCurrent(moment, generation, account, uid);
     _playerSubscriptions
       ..add(
         player.onPositionChanged.listen((position) {
-          if (!mounted) return;
-          setState(() {
-            _position = position;
-            _playbackError = null;
-          });
+          if (!current() || _playbackBusy) return;
+          _position = position.isNegative ? Duration.zero : position;
+          _publishPlayback();
         }),
       )
       ..add(
         player.onDurationChanged.listen((duration) {
-          if (!mounted) return;
-          setState(() => _duration = duration);
+          if (!current() || duration <= Duration.zero) return;
+          _duration = duration;
+          _publishPlayback();
         }),
       )
       ..add(
         player.onPlayerComplete.listen((_) {
-          if (!mounted) return;
-          setState(() {
-            _isPlaying = false;
-            _position = _duration ?? _position;
-          });
+          if (!current() || _playbackBusy) return;
+          _isPlaying = false;
+          _position = _duration ?? Duration(seconds: moment.durationSeconds);
+          _publishPlayback();
         }),
       );
-    return player;
   }
 
-  Future<void> _stopPanelPlayback() async {
+  Future<void> _stopPanelPlayback({bool release = false, bool notify = true}) {
+    _playEpoch += 1;
+    _playingId = null;
+    _playingMoment = null;
+    _isPlaying = false;
+    _playbackBusy = false;
+    _position = Duration.zero;
+    _duration = null;
+    _playbackError = null;
+    _loadedId = null;
+    _loadedUri = null;
+    if (notify) _publishPlayback();
     final player = _player;
-    if (player != null) {
+    if (player == null) return _transportTail;
+    // audioplayers invalidates desiredState synchronously in stop(). This
+    // prevents its pending setSource from resuming after the surface left.
+    final interrupted = player.stop().catchError((Object _) {});
+    return _queueTransport(() async {
       try {
-        await player.stop();
+        await interrupted;
+        // A previous queued release may already have disposed this instance.
+        // Never dispose twice or touch a newer transport owner.
+        if (!identical(_player, player)) return;
+        try {
+          await player.stop();
+        } finally {
+          if (release) {
+            for (final subscription in _playerSubscriptions) {
+              unawaited(subscription.cancel());
+            }
+            _playerSubscriptions.clear();
+            await player.dispose();
+            if (identical(_player, player)) _player = null;
+          }
+        }
       } catch (_) {
-        // Stopping a player that never started is not a fault.
+        // Set the fence inside the serialized command, before any queued
+        // successor can observe a completed tail with an uncertain owner.
+        _transportBlocked = true;
+        rethrow;
       }
-    }
-    if (!mounted) return;
-    setState(() {
-      _isPlaying = false;
-      _playingId = null;
-      _position = Duration.zero;
-      _duration = null;
+    }).catchError((Object _) {
+      // Retain the old instance on uncertain cleanup: no new player is
+      // allocated over an unresolved native owner.
+      _transportBlocked = true;
     });
   }
 
   Future<void> _togglePanelPlay(VoiceMoment moment) async {
-    final moments = _moments;
-    if (moments == null || !moment.hasMediaReference) return;
-    final player = _ensurePlayer();
-
-    if (_playingId == moment.id && _isPlaying) {
-      try {
-        await player.pause();
-      } catch (_) {
-        // Nothing to pause.
-      }
-      if (mounted) setState(() => _isPlaying = false);
+    final account = _accountEpoch;
+    final uid = _viewerUid;
+    if (!_surfaceAllowsPlayback ||
+        !_containsCurrentMoment(moment) ||
+        !_cardIsVisible(moment.id) ||
+        _moments == null ||
+        !moment.hasMediaReference) {
       return;
     }
-
-    final resuming = _playingId == moment.id && _position > Duration.zero;
-    setState(() {
-      _playbackError = null;
-      if (_playingId != moment.id) {
-        _position = Duration.zero;
-        _duration = null;
+    if (_transportBlocked) {
+      final recovery = _stopPanelPlayback(release: true);
+      // Our stop increments the generation synchronously. Retain that exact
+      // intent across its native ACK; auth/visibility changes or a newer tap
+      // must not let this retired handler adopt a fresh account or request.
+      final recoveryGeneration = _playEpoch;
+      await recovery;
+      if (!_accountIsCurrent(account, uid) ||
+          recoveryGeneration != _playEpoch ||
+          !_surfaceAllowsPlayback ||
+          !_currentMediaMatches(moment) ||
+          !_cardIsVisible(moment.id) ||
+          _player != null) {
+        return;
       }
-      _playingId = moment.id;
-      _isPlaying = true;
-    });
-
-    // Playback starting IS the viewed event, wherever it starts.
-    final views = _views;
-    if (!resuming && views != null) {
-      unawaited(views.markViewed(moment.id).catchError((Object _) {}));
+      _transportBlocked = false;
     }
-
+    if (_playingId == moment.id && _playbackBusy) return;
+    final generation = ++_playEpoch;
+    final pause = _playingId == moment.id && _isPlaying;
+    final total = _duration ?? Duration(seconds: moment.durationSeconds);
+    final resuming =
+        _loadedId == moment.id &&
+        _position > Duration.zero &&
+        (total <= Duration.zero || _position < total);
+    final resumeAt = resuming ? _position : Duration.zero;
+    _playingId = moment.id;
+    _playingMoment = moment;
+    _isPlaying = false;
+    _playbackBusy = !pause;
+    _playbackError = null;
+    if (!resuming) {
+      _position = Duration.zero;
+      _duration = null;
+    }
+    _publishPlayback();
+    bool current() => _playIsCurrent(moment, generation, account, uid);
     try {
-      if (resuming) {
-        await player.resume();
-      } else {
-        final uri = await moments.resolveMediaUri(momentId: moment.id);
-        if (!mounted || _playingId != moment.id) return;
-        await player.play(UrlSource(uri.toString()));
+      if (pause) {
+        await _queueTransport(() async {
+          if (!current()) return;
+          final player = _player;
+          if (player == null) return;
+          try {
+            await player.pause();
+          } catch (_) {
+            try {
+              await player.stop();
+            } catch (_) {
+              _transportBlocked = true;
+            }
+            rethrow;
+          }
+          if (current()) _bindPlayer(player, moment, generation, account, uid);
+        });
+        return;
       }
-    } catch (_) {
-      if (!mounted) return;
-      setState(() {
-        _isPlaying = false;
-        _playbackError = _copy.text(
-          'This Moment could not be played. Try again.',
-          'Nie udało się odtworzyć tego Momentu. Spróbuj ponownie.',
-        );
+
+      // Do not let the previous recording continue while the next grant waits.
+      // Grants are outside the queue; a slow A cannot delay B's authorization.
+      Future<void>? interrupted;
+      if (_loadedId != moment.id) {
+        final previous = _player;
+        if (previous != null) {
+          interrupted = _interruptBeforeSwitch(previous);
+        }
+      }
+      final uri = await _moments!.resolveMediaUri(momentId: moment.id);
+      if (!current()) return;
+      await interrupted;
+      if (!current()) return;
+      await _queueTransport(() async {
+        if (!current()) return;
+        if (_transportBlocked) throw StateError('transport-cleanup-pending');
+        final player = _ensurePlayer();
+        _bindPlayer(player, moment, generation, account, uid);
+        try {
+          if (resuming && _loadedId == moment.id && _loadedUri == uri) {
+            await player.resume();
+          } else {
+            await player.stop();
+            if (!current()) return;
+            await player.play(UrlSource(uri.toString()), position: resumeAt);
+          }
+          if (!current()) {
+            await player.stop();
+            return;
+          }
+          _loadedId = moment.id;
+          _loadedUri = uri;
+          _playbackBusy = false;
+          _isPlaying = true;
+          _publishPlayback();
+          // A successful CURRENT transport command is the seam's start signal,
+          // not a claim of physically audible audio on a device.
+          if (!resuming) {
+            unawaited(_views?.markViewed(moment.id).catchError((Object _) {}));
+          }
+        } catch (_) {
+          // This cleanup runs inside the queue, before any successor's play.
+          try {
+            await player.stop();
+          } catch (_) {
+            _transportBlocked = true;
+          }
+          rethrow;
+        }
       });
+    } catch (_) {
+      if (!mounted || !current()) return;
+      _playbackBusy = false;
+      _isPlaying = false;
+      _playbackError = _copy.text(
+        'This Moment could not be played. Try again.',
+        'Nie udało się odtworzyć tego Momentu. Spróbuj ponownie.',
+      );
+      _publishPlayback();
+      _expiryAnnouncer.announce(
+        context,
+        transition: 'play-$account-$generation',
+        message: _playbackError!,
+        assertiveness: Assertiveness.assertive,
+      );
     }
   }
 
   Future<void> _seekPanel(VoiceMoment moment, Duration target) async {
-    final player = _player;
-    if (player == null || _playingId != moment.id) return;
+    final generation = _playEpoch;
+    final account = _accountEpoch;
+    final uid = _viewerUid;
+    if (_playbackBusy || _loadedId != moment.id) return;
+    final total = _duration ?? Duration(seconds: moment.durationSeconds);
+    final bounded = Duration(
+      milliseconds: target.inMilliseconds.clamp(0, total.inMilliseconds),
+    );
     try {
-      await player.seek(target);
+      await _queueTransport(() async {
+        if (!_playIsCurrent(moment, generation, account, uid)) return;
+        await _player?.seek(bounded);
+        if (_playIsCurrent(moment, generation, account, uid)) {
+          _position = bounded;
+          _publishPlayback();
+        }
+      });
     } catch (_) {
-      // Seeking an unloaded source is a no-op, not a fault.
+      // A failed seek leaves the confirmed transport position intact.
     }
   }
 
@@ -518,122 +1030,201 @@ class _MomentsFeedViewState extends State<MomentsFeedView> {
 
   VoiceMoment _withLive(VoiceMoment moment) {
     final live = _engagement[moment.id];
-    if (live == null) return moment;
-    return moment.withCounts(
-      likeCount: live.likeCount,
-      commentCount: live.commentCount,
+    final local = _likeOverrides[moment.id];
+    return moment.copyWith(
+      callerLiked: local?.liked,
+      likeCount: local?.count ?? live?.likeCount,
+      commentCount: live?.commentCount,
     );
   }
 
-  /// What the story viewer reports after the author deletes a link of the
-  /// chain in place: the feed drops it immediately.
-  void _handleDeletedElsewhere(VoiceMoment moment) {
+  Future<void> _toggleLike(VoiceMoment moment) async {
+    final service = _feed;
+    if (service == null ||
+        !_containsCurrentMoment(moment) ||
+        !_surfaceAllowsPlayback ||
+        !_pendingLikes.add(moment.id)) {
+      return;
+    }
+    final account = _accountEpoch;
+    final uid = _viewerUid;
+    final previous = _likeOverrides[moment.id];
+    final liked = !moment.callerLiked;
+    setState(
+      () => _likeOverrides[moment.id] = (
+        liked: liked,
+        count: (moment.likeCount + (liked ? 1 : -1)).clamp(0, 1 << 31),
+      ),
+    );
+    try {
+      await service.setLike(moment.id, liked: liked);
+    } catch (_) {
+      if (!mounted ||
+          !_accountIsCurrent(account, uid) ||
+          !_containsCurrentMoment(moment)) {
+        return;
+      }
+      setState(() {
+        if (previous == null) {
+          _likeOverrides.remove(moment.id);
+        } else {
+          _likeOverrides[moment.id] = previous;
+        }
+      });
+      if (_surfaceAllowsPlayback) {
+        final message = _copy.text(
+          'Your like could not be saved. Try again.',
+          'Nie udało się zapisać polubienia. Spróbuj ponownie.',
+        );
+        ScaffoldMessenger.maybeOf(
+          context,
+        )?.showSnackBar(SnackBar(content: Text(message)));
+        _expiryAnnouncer.announce(
+          context,
+          transition: Object(),
+          message: message,
+          assertiveness: Assertiveness.assertive,
+        );
+      }
+    } finally {
+      if (_accountIsCurrent(account, uid)) {
+        setState(() => _pendingLikes.remove(moment.id));
+      }
+    }
+  }
+
+  Future<void> _openDestination(
+    VoiceMoment moment,
+    Future<void> Function(VoiceMoment current) open,
+  ) async {
+    if (_openingDestination ||
+        !_surfaceAllowsPlayback ||
+        !_containsCurrentMoment(moment)) {
+      return;
+    }
+    final account = _accountEpoch;
+    final uid = _viewerUid;
+    _openingDestination = true;
+    try {
+      await _stopPanelPlayback(release: true);
+      if (!_accountIsCurrent(account, uid) ||
+          !_containsCurrentMoment(moment) ||
+          !_surfaceAllowsPlayback ||
+          _player != null) {
+        return;
+      }
+      final snapshot = _currentSnapshot(moment);
+      if (snapshot == null) return;
+      await open(snapshot);
+    } finally {
+      if (_accountIsCurrent(account, uid)) _openingDestination = false;
+    }
+  }
+
+  /// Only a successful local delete (including the viewer's callback) is
+  /// monotonic. Ordinary stream removal or denial must remain reversible.
+  void _rememberConfirmedDeletion(VoiceMoment moment) {
     if (!mounted) return;
     setState(() {
+      _confirmedDeletedIds.add(moment.id);
       _pruneFromPool({moment.id});
       _mineData = _mineData
           .where((mine) => mine.id != moment.id)
           .toList(growable: false);
+      _socialData = _socialData
+          ?.where((social) => social.id != moment.id)
+          .toList(growable: false);
+      _likeOverrides.remove(moment.id);
+      _pendingLikes.remove(moment.id);
     });
     _scheduleExpiry();
   }
 
-  Future<void> _openChain(MomentChain chain) async {
-    await _stopPanelPlayback();
-    if (!mounted) return;
-    await showMomentStoryViewer(
-      context,
-      chain: chain,
-      initialIndex: chain.firstUnviewedIndex(_viewedIds),
-      feedService: _feed,
-      momentService: _moments,
-      viewsService: _views,
-      contentReportService: widget.contentReportService,
-      auth: widget.auth,
-      onOpenDetail: _openDetail,
-      onDeleted: _handleDeletedElsewhere,
-      playerFactory: widget.playerFactory,
-      expiryClock: widget.expiryClock,
-      expiryTimerFactory: widget.expiryTimerFactory,
-    );
+  Future<void> _openAuthorChain(VoiceMoment moment) async {
+    final account = _accountEpoch;
+    final uid = _viewerUid;
+    VoiceMoment? requestedDetail;
+    await _openDestination(moment, (current) async {
+      final chains = _chainsFor(
+        _currentList()
+            .where((item) => item.isActiveAt(_effectiveNow()))
+            .toList(),
+      );
+      final found = chains.where((chain) => chain.authorId == current.authorId);
+      if (found.isEmpty) return;
+      final chain = found.first;
+      await showMomentStoryViewer(
+        context,
+        chain: chain,
+        initialIndex: chain.firstUnviewedIndex(_viewedIds),
+        feedService: _feed,
+        momentService: _moments,
+        viewsService: _views,
+        contentReportService: widget.contentReportService,
+        auth: widget.auth,
+        // The viewer closes first. Wait for the enclosing navigation flight
+        // to finish before handing the current projection to another route.
+        onOpenDetail: (detail) => requestedDetail = detail,
+        onDeleted: (deleted) {
+          if (_accountIsCurrent(account, uid)) {
+            _rememberConfirmedDeletion(deleted);
+          }
+        },
+        playerFactory: widget.playerFactory,
+        expiryClock: widget.expiryClock,
+        expiryTimerFactory: widget.expiryTimerFactory,
+      );
+    });
+    final detail = requestedDetail;
+    if (detail != null && _accountIsCurrent(account, uid)) _openDetail(detail);
   }
 
-  /// A row tap on a NARROW surface: the full existing card in the sheet —
-  /// playback, like, comment, report and the offline download, none of it
-  /// reimplemented.
-  Future<void> _openSheet(VoiceMoment moment) async {
-    final uid = _uid;
-    await showMomentSheet(
+  Future<void> _openSheet(VoiceMoment moment) => _openDestination(
+    moment,
+    (moment) => showMomentSheet(
       context,
       moment: moment,
-      isOwn: uid.isNotEmpty && moment.authorId == uid,
-      canReport: uid.isNotEmpty && moment.authorId != uid,
+      isOwn: moment.authorId == _uid,
+      canReport: moment.authorId != _uid,
       feedService: _feed,
       momentService: _moments,
       contentReportService: widget.contentReportService,
       playerFactory: widget.playerFactory,
       expiryClock: widget.expiryClock,
       expiryTimerFactory: widget.expiryTimerFactory,
-    );
-  }
+    ),
+  );
 
-  void _select(VoiceMoment moment, {required bool wide, bool play = false}) {
-    if (!wide) {
-      if (play) {
-        // The play affordance on a narrow row opens the author's chain in
-        // the story viewer, positioned at this Moment, and really plays.
-        final chains = _chainsFor(_currentList());
-        final chain = chains
-            .where((c) => c.authorId == moment.authorId)
-            .toList(growable: false);
-        if (chain.isNotEmpty) {
-          final index = chain.first.moments.indexWhere(
-            (m) => m.id == moment.id,
-          );
-          unawaited(
-            showMomentStoryViewer(
-              context,
-              chain: chain.first,
-              initialIndex: index < 0 ? 0 : index,
-              feedService: _feed,
+  Future<void> _openComments(VoiceMoment moment) =>
+      _openDestination(moment, (moment) async {
+        await Navigator.of(context).push<void>(
+          MaterialPageRoute<void>(
+            builder: (_) => MomentCommentsScreen(
+              moment: moment,
               momentService: _moments,
-              viewsService: _views,
-              contentReportService: widget.contentReportService,
               auth: widget.auth,
-              onOpenDetail: _openDetail,
-              onDeleted: _handleDeletedElsewhere,
-              playerFactory: widget.playerFactory,
+              contentReportService: widget.contentReportService,
               expiryClock: widget.expiryClock,
               expiryTimerFactory: widget.expiryTimerFactory,
             ),
-          );
-          return;
-        }
-      }
-      unawaited(_openSheet(moment));
-      return;
-    }
-    setState(() => _selectedId = moment.id);
-    if (play) {
-      unawaited(_togglePanelPlay(moment));
-    }
-  }
+          ),
+        );
+      });
 
-  Future<void> _openComments(VoiceMoment moment) async {
-    await Navigator.of(context).push<void>(
-      MaterialPageRoute<void>(
-        builder: (_) => MomentCommentsScreen(
-          moment: moment,
-          momentService: _moments,
-          contentReportService: widget.contentReportService,
-          expiryClock: widget.expiryClock,
-          expiryTimerFactory: widget.expiryTimerFactory,
-        ),
-      ),
-    );
-  }
+  Future<void> _openProfile(VoiceMoment moment) => _openDestination(
+    moment,
+    (moment) => showProfilePreview(
+      context,
+      userId: moment.authorId,
+      displayName: moment.authorName,
+      photoUrl: moment.authorPhotoUrl,
+    ),
+  );
 
-  Future<void> _report(VoiceMoment moment) async {
+  Future<void> _report(VoiceMoment moment) => _openDestination(moment, (
+    moment,
+  ) async {
+    if (moment.authorId == _uid) return;
     final copy = _copy;
     await reportContent(
       context: context,
@@ -651,7 +1242,10 @@ class _MomentsFeedViewState extends State<MomentsFeedView> {
             '${moment.authorName} nie dowie się, kto je wysłał.',
       ),
     );
-  }
+  });
+
+  Future<void> _share(VoiceMoment moment) =>
+      _openDestination(moment, (moment) => _shareVoiceMoment(moment, _copy));
 
   /// Removes [ids] from the one-shot discovery pool so a deleted Moment
   /// disappears immediately instead of surviving until the next reload.
@@ -659,27 +1253,34 @@ class _MomentsFeedViewState extends State<MomentsFeedView> {
   /// when the last Moment goes.
   void _pruneFromPool(Set<String> ids) {
     final result = _result;
-    if (result == null) return;
-    final before = result.moments.length;
+    if (result == null || ids.isEmpty) return;
+    final removed = {
+      for (final moment in result.moments)
+        if (ids.contains(moment.id)) moment.id,
+      for (final id in result.drops.keys)
+        if (ids.contains(id)) id,
+    };
+    if (removed.isEmpty) return;
     final kept = result.moments
         .where((moment) => !ids.contains(moment.id))
         .toList(growable: false);
-    if (kept.length == before) return;
     _result = MomentDiscoveryFeed(
       moments: kept,
-      fetchedCount: (result.fetchedCount - (before - kept.length)).clamp(
+      fetchedCount: (result.fetchedCount - removed.length).clamp(
         0,
         result.fetchedCount,
       ),
-      drops: result.drops,
+      drops: {
+        for (final entry in result.drops.entries)
+          if (!ids.contains(entry.key)) entry.key: entry.value,
+      },
       seed: result.seed,
       poolExhausted: result.poolExhausted,
       nextCursor: result.nextCursor,
       loadMore: result.loadMore,
     );
-    if (_selectedId != null && ids.contains(_selectedId)) _selectedId = null;
     if (_playingId != null && ids.contains(_playingId)) {
-      unawaited(_stopPanelPlayback());
+      unawaited(_stopPanelPlayback(release: true));
     }
   }
 
@@ -687,28 +1288,29 @@ class _MomentsFeedViewState extends State<MomentsFeedView> {
   /// bottom navigation visible with Moments active; the fallback plain
   /// route carries its own Back control.
   void _openDetail(VoiceMoment moment) {
-    unawaited(_stopPanelPlayback());
-    final open = widget.onOpenDetail;
-    if (open != null) {
-      open(moment);
-      return;
-    }
     unawaited(
-      Navigator.of(context).push<void>(
-        MaterialPageRoute<void>(
-          builder: (_) => MomentDetailScreen(
-            moment: moment,
-            momentService: _moments,
-            feedService: _feed,
-            viewsService: _views,
-            contentReportService: widget.contentReportService,
-            auth: widget.auth,
-            playerFactory: widget.playerFactory,
-            expiryClock: widget.expiryClock,
-            expiryTimerFactory: widget.expiryTimerFactory,
+      _openDestination(moment, (moment) async {
+        final open = widget.onOpenDetail;
+        if (open != null) {
+          open(moment);
+          return;
+        }
+        await Navigator.of(context).push<void>(
+          MaterialPageRoute<void>(
+            builder: (_) => MomentDetailScreen(
+              moment: moment,
+              momentService: _moments,
+              feedService: _feed,
+              viewsService: _views,
+              contentReportService: widget.contentReportService,
+              auth: widget.auth,
+              playerFactory: widget.playerFactory,
+              expiryClock: widget.expiryClock,
+              expiryTimerFactory: widget.expiryTimerFactory,
+            ),
           ),
-        ),
-      ),
+        );
+      }),
     );
   }
 
@@ -718,7 +1320,16 @@ class _MomentsFeedViewState extends State<MomentsFeedView> {
   /// failure.
   Future<void> _confirmDelete(VoiceMoment moment) async {
     final service = _moments;
-    if (service == null) return;
+    if (service == null ||
+        !_surfaceAllowsPlayback ||
+        !_containsCurrentMoment(moment, allowDraft: true) ||
+        moment.authorId != _uid) {
+      return;
+    }
+    final account = _accountEpoch;
+    final uid = _viewerUid;
+    await _stopPanelPlayback(release: true);
+    if (!mounted || !_accountIsCurrent(account, uid)) return;
     final messenger = ScaffoldMessenger.maybeOf(context);
     final confirmed = await showDialog<bool>(
       context: context,
@@ -758,11 +1369,17 @@ class _MomentsFeedViewState extends State<MomentsFeedView> {
         );
       },
     );
-    if (confirmed != true || !mounted) return;
+    if (confirmed != true ||
+        !_accountIsCurrent(account, uid) ||
+        !_containsCurrentMoment(moment, allowDraft: true) ||
+        moment.authorId != _uid) {
+      return;
+    }
 
     try {
       await service.deleteMoment(moment);
     } catch (_) {
+      if (!_accountIsCurrent(account, uid)) return;
       messenger
         ?..hideCurrentSnackBar()
         ..showSnackBar(
@@ -778,14 +1395,8 @@ class _MomentsFeedViewState extends State<MomentsFeedView> {
         );
       return;
     }
-    if (!mounted) return;
-    setState(() {
-      _pruneFromPool({moment.id});
-      _mineData = _mineData
-          .where((mine) => mine.id != moment.id)
-          .toList(growable: false);
-    });
-    _scheduleExpiry();
+    if (!_accountIsCurrent(account, uid)) return;
+    _rememberConfirmedDeletion(moment);
     messenger
       ?..hideCurrentSnackBar()
       ..showSnackBar(
@@ -863,10 +1474,7 @@ class _MomentsFeedViewState extends State<MomentsFeedView> {
       final recoverFocus = momentExpiryFocusIsWithin(context, previousFocus);
       final stopPlaying = _playingId != null && removedIds.contains(_playingId);
       if (stopPlaying) {
-        final player = _player;
-        if (player != null) {
-          unawaited(player.stop().catchError((Object _) {}));
-        }
+        unawaited(_stopPanelPlayback(release: true));
       }
       setState(() {
         if (result != null && expiredPool.isNotEmpty) {
@@ -888,15 +1496,7 @@ class _MomentsFeedViewState extends State<MomentsFeedView> {
         }
         _mineData = nextMine;
         if (social != null) _socialData = nextSocial;
-        if (_selectedId != null && removedIds.contains(_selectedId)) {
-          _selectedId = null;
-        }
-        if (stopPlaying) {
-          _isPlaying = false;
-          _playingId = null;
-          _position = Duration.zero;
-          _duration = null;
-        }
+        _likeOverrides.removeWhere((id, _) => removedIds.contains(id));
       });
       if (widget.isVisible?.value != false) {
         final count = removedIds.length;
@@ -943,7 +1543,11 @@ class _MomentsFeedViewState extends State<MomentsFeedView> {
   List<VoiceMoment> _currentList() {
     final now = _effectiveNow();
     final pool = (_result?.moments ?? const <VoiceMoment>[])
-        .where((moment) => moment.isActiveAt(now))
+        .where(
+          (moment) =>
+              !_confirmedDeletedIds.contains(moment.id) &&
+              moment.isActiveAt(now),
+        )
         .toList(growable: false);
     return switch (_filter) {
       MomentsFilter.discover => _byCreatedDesc(pool),
@@ -956,14 +1560,32 @@ class _MomentsFeedViewState extends State<MomentsFeedView> {
       MomentsFilter.mostEngaged => MomentDiscoveryService.rankByEngagement(
         pool,
       ),
-      // Following renders from the cached personal slice; this path is
-      // only used for chain lookups after it has rendered.
-      MomentsFilter.following => _byCreatedDesc(
-        (_socialData ?? const <VoiceMoment>[])
-            .where((moment) => moment.isActiveAt(now))
-            .toList(growable: false),
-      ),
+      MomentsFilter.following => _followingList(now),
     };
+  }
+
+  List<VoiceMoment> _followingList(DateTime now) {
+    final mine = _mineData
+        .where(
+          (moment) =>
+              !_confirmedDeletedIds.contains(moment.id) &&
+              moment.authorId == _uid &&
+              (moment.isActiveAt(now) ||
+                  (!moment.isPublished &&
+                      !moment.isDeleted &&
+                      moment.status != 'expired')),
+        )
+        .toList();
+    final seen = mine.map((moment) => moment.id).toSet();
+    return [
+      ...mine,
+      for (final moment in _socialData ?? const <VoiceMoment>[])
+        if (!_confirmedDeletedIds.contains(moment.id) &&
+            moment.authorId != _uid &&
+            moment.isActiveAt(now) &&
+            seen.add(moment.id))
+          moment,
+    ];
   }
 
   List<MomentChain> _chainsFor(List<VoiceMoment> moments) =>
@@ -974,7 +1596,6 @@ class _MomentsFeedViewState extends State<MomentsFeedView> {
     unawaited(_stopPanelPlayback());
     setState(() {
       _filter = filter;
-      _selectedId = null;
     });
   }
 
@@ -984,36 +1605,38 @@ class _MomentsFeedViewState extends State<MomentsFeedView> {
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        final width = constraints.maxWidth;
-        final wide = width >= _detailWidth;
-        final compact = width < _tabletWidth;
-
+        final side = ResponsiveContentFrame.adaptivePagePadding(
+          constraints.maxWidth,
+        ).left;
         return YoPageBackground(
           section: YoPageSection.moments,
           key: const ValueKey('moments-feed-view'),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              _FilterChips(
-                filter: _filter,
-                onFilter: _setFilter,
-                onRefresh: _refreshAll,
-                compact: compact,
-                recoveryFocusNode: _expiryRecoveryFocus,
-              ),
-              Expanded(
-                child: _filter == MomentsFilter.following
-                    ? _buildFollowing(wide: wide, compact: compact)
-                    : _buildPool(wide: wide, compact: compact),
-              ),
-            ],
+          child: ResponsiveContentFrame(
+            width: ResponsiveContentWidth.list,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _FilterChips(
+                  filter: _filter,
+                  onFilter: _setFilter,
+                  onRefresh: _refreshAll,
+                  side: side,
+                  recoveryFocusNode: _expiryRecoveryFocus,
+                ),
+                Expanded(
+                  child: _filter == MomentsFilter.following
+                      ? _buildFollowing(side)
+                      : _buildPool(side),
+                ),
+              ],
+            ),
           ),
         );
       },
     );
   }
 
-  Widget _buildPool({required bool wide, required bool compact}) {
+  Widget _buildPool(double side) {
     switch (_phase) {
       case _Phase.loading:
         return const _LoadingState();
@@ -1024,6 +1647,23 @@ class _MomentsFeedViewState extends State<MomentsFeedView> {
     }
 
     final result = _result!;
+    // A filtered server page can be empty while its opaque cursor still has
+    // work. Do not call that an empty corpus or strand its load-more action.
+    if (result.moments.isEmpty && result.canLoadMore) {
+      return _buildList(
+        const [],
+        side: side,
+        footer: _PoolFooter(
+          total: 0,
+          moreExists: true,
+          canLoadMore: true,
+          loading: _loadingMore,
+          hasError: _loadMoreError != null,
+          error: _loadMoreError,
+          onLoadMore: _loadMore,
+        ),
+      );
+    }
     if (result.corpusIsEmpty) {
       return _EmptyState(
         icon: Icons.mic_none_rounded,
@@ -1096,91 +1736,32 @@ class _MomentsFeedViewState extends State<MomentsFeedView> {
     // (ADR-095: numbers move, layout does not).
     final ordered = _currentList();
     final list = ordered.map(_withLive).toList(growable: false);
-    final chains = _chainsFor(list);
-    final featured = _filter == MomentsFilter.discover
-        ? MomentDiscoveryService.rankByEngagement(
-            ordered,
-          ).take(4).map(_withLive).toList(growable: false)
-        : const <VoiceMoment>[];
-
-    final feed = _FeedColumn(
-      compact: compact,
-      wide: wide,
-      chains: chains,
-      viewedIds: _viewedIds,
-      featured: featured,
-      listTitle: switch (_filter) {
-        MomentsFilter.mostEngaged => _copy.text(
-          'Most engaged',
-          'Najpopularniejsze',
-        ),
-        _ => _copy.text('Recent Moments', 'Najnowsze Momenty'),
-      },
-      moments: list,
-      selectedId: wide ? (_selectedId ?? list.first.id) : null,
-      currentUserId: _uid,
-      playingId: _playingId,
-      isPlaying: _isPlaying,
+    return _buildList(
+      list,
+      side: side,
       footer: _PoolFooter(
         total: list.length,
         moreExists: result.poolExhausted,
         canLoadMore: result.canLoadMore,
         loading: _loadingMore,
         hasError: _loadMoreError != null,
-        onLoadMore: _loadMore,
+        error: _loadMoreError,
+        onLoadMore: _loadMoreError != null && !result.canLoadMore
+            ? _load
+            : _loadMore,
       ),
-      onOpenChain: (chain) => unawaited(_openChain(chain)),
-      onTapMoment: (moment) => _select(moment, wide: wide),
-      onPlayMoment: (moment) => _select(moment, wide: wide, play: true),
-      onOpenDetail: _openDetail,
-      onReport: (moment) => unawaited(_report(moment)),
-      onDelete: (moment) => unawaited(_confirmDelete(moment)),
-      // "View all" is a real destination: the same pool in pure
-      // engagement order — the Most engaged chip.
-      onViewAllFeatured: featured.isEmpty
-          ? null
-          : () => _setFilter(MomentsFilter.mostEngaged),
     );
-
-    if (!wide) return feed;
-    final selected = list.firstWhere(
-      (moment) => moment.id == (_selectedId ?? list.first.id),
-      orElse: () => list.first,
-    );
-    return _withDetail(feed, selected);
   }
 
-  Widget _buildFollowing({required bool wide, required bool compact}) {
+  Widget _buildFollowing(double side) {
     if (_socialError != null) {
       return _ErrorState(error: _socialError, onRetry: _retrySocial);
     }
-    // No feed service at all reads as an empty circle rather than an
-    // eternal skeleton; with one, the skeleton holds only until the
-    // first emission arrives.
-    if (_socialData == null && _feed != null) {
-      return const _LoadingState();
-    }
-    final social = _socialData ?? const <VoiceMoment>[];
-    final uid = _uid;
-
-    final now = _effectiveNow();
-    // Own Moments: everything still alive, plus drafts that are still
-    // uploading — losing sight of a stuck upload is how a broken
-    // pipeline hides.
-    final mine = <VoiceMoment>[
-      for (final moment in _mineData)
-        if (moment.isActiveAt(now) ||
-            (!moment.isPublished &&
-                !moment.isDeleted &&
-                moment.status != 'expired'))
-          moment,
-    ];
-    final theirs = social
-        .where((moment) => moment.authorId != uid)
-        .map(_withLive)
-        .toList(growable: false);
-
-    if (mine.isEmpty && theirs.isEmpty) {
+    if (_socialData == null && _feed != null) return const _LoadingState();
+    final list = _followingList(
+      _effectiveNow(),
+    ).map(_withLive).toList(growable: false);
+    if (list.isEmpty) {
       return _EmptyState(
         key: const ValueKey('moments-following-empty'),
         icon: Icons.graphic_eq_rounded,
@@ -1194,73 +1775,43 @@ class _MomentsFeedViewState extends State<MomentsFeedView> {
         onAction: widget.onRecord,
       );
     }
-
-    final list = <VoiceMoment>[...mine.map(_withLive), ...theirs];
-    final chains = _chainsFor(
-      list.where((m) => m.isActiveAt(now)).toList(growable: false),
-    );
-
-    final feed = _FeedColumn(
-      compact: compact,
-      wide: wide,
-      chains: chains,
-      viewedIds: _viewedIds,
-      featured: const <VoiceMoment>[],
-      listTitle: _copy.text('From your circle', 'Z Twojego kręgu'),
-      moments: list,
-      selectedId: wide && list.isNotEmpty
-          ? (_selectedId ?? list.first.id)
-          : null,
-      currentUserId: uid,
-      playingId: _playingId,
-      isPlaying: _isPlaying,
-      footer: null,
-      onOpenChain: (chain) => unawaited(_openChain(chain)),
-      onTapMoment: (moment) => _select(moment, wide: wide),
-      onPlayMoment: (moment) => _select(moment, wide: wide, play: true),
-      onOpenDetail: _openDetail,
-      onReport: (moment) => unawaited(_report(moment)),
-      onDelete: (moment) => unawaited(_confirmDelete(moment)),
-      onViewAllFeatured: null,
-    );
-
-    if (!wide || list.isEmpty) return feed;
-    final selected = list.firstWhere(
-      (moment) => moment.id == (_selectedId ?? list.first.id),
-      orElse: () => list.first,
-    );
-    return _withDetail(feed, selected);
+    return _buildList(list, side: side);
   }
 
-  Widget _withDetail(Widget feed, VoiceMoment selected) {
-    final uid = _uid;
-    final isOwn = uid.isNotEmpty && uid == selected.authorId;
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Expanded(child: feed),
-        SizedBox(
-          width: 360,
-          child: MomentDetailPanel(
-            key: const ValueKey('moments-detail-panel'),
-            moment: selected,
-            isPlaying: _playingId == selected.id && _isPlaying,
-            elapsed: _playingId == selected.id ? _position : Duration.zero,
-            duration: _playingId == selected.id ? _duration : null,
-            playbackError: _playingId == selected.id ? _playbackError : null,
-            feedService: _feed,
-            momentService: _moments,
-            currentUserId: uid,
-            canReport: uid.isNotEmpty && !isOwn,
-            isOwn: isOwn,
-            onTogglePlay: () => unawaited(_togglePanelPlay(selected)),
-            onSeek: (target) => unawaited(_seekPanel(selected, target)),
-            onReport: () => unawaited(_report(selected)),
-            onDelete: () => unawaited(_confirmDelete(selected)),
-            onOpenThread: () => unawaited(_openComments(selected)),
-          ),
-        ),
-      ],
+  Widget _buildList(
+    List<VoiceMoment> list, {
+    required double side,
+    Widget? footer,
+  }) {
+    return NotificationListener<ScrollNotification>(
+      onNotification: (_) {
+        _checkVisiblePlaybackAfterFrame();
+        return false;
+      },
+      child: _FeedColumn(
+        key: ValueKey('voice-feed-account-$_accountEpoch'),
+        moments: list,
+        side: side,
+        viewedIds: _viewedIds,
+        currentUserId: _uid,
+        playback: _playback,
+        pendingLikes: _pendingLikes,
+        canLike: _feed != null,
+        footer: footer,
+        onCardBuild: _rememberCard,
+        onCardDispose: _forgetCard,
+        onTapMoment: (moment) => unawaited(_openSheet(moment)),
+        onPlayMoment: (moment) => unawaited(_togglePanelPlay(moment)),
+        onSeek: (moment, target) => unawaited(_seekPanel(moment, target)),
+        onLike: (moment) => unawaited(_toggleLike(moment)),
+        onComments: (moment) => unawaited(_openComments(moment)),
+        onOpenChain: (moment) => unawaited(_openAuthorChain(moment)),
+        onOpenProfile: (moment) => unawaited(_openProfile(moment)),
+        onOpenDetail: _openDetail,
+        onShare: (moment) => unawaited(_share(moment)),
+        onReport: (moment) => unawaited(_report(moment)),
+        onDelete: (moment) => unawaited(_confirmDelete(moment)),
+      ),
     );
   }
 }
@@ -1272,14 +1823,14 @@ class _FilterChips extends StatelessWidget {
     required this.filter,
     required this.onFilter,
     required this.onRefresh,
-    required this.compact,
+    required this.side,
     required this.recoveryFocusNode,
   });
 
   final MomentsFilter filter;
   final ValueChanged<MomentsFilter> onFilter;
   final VoidCallback onRefresh;
-  final bool compact;
+  final double side;
   final FocusNode recoveryFocusNode;
 
   static const _icons = <MomentsFilter, IconData>{
@@ -1303,7 +1854,7 @@ class _FilterChips extends StatelessWidget {
       MomentsFilter.recent => copy.text('Recent', 'Najnowsze'),
     };
     return Padding(
-      padding: EdgeInsets.fromLTRB(compact ? 16 : 24, 2, compact ? 8 : 16, 8),
+      padding: EdgeInsets.fromLTRB(side, AppRhythm.tight, side, AppRhythm.item),
       child: Row(
         children: [
           Expanded(
@@ -1358,185 +1909,149 @@ class _FilterChip extends StatelessWidget {
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
     return Semantics(
-      button: true,
       selected: selected,
-      label: label,
-      child: Material(
-        color: selected ? colors.primary : palette.surfaceMuted,
-        // Full pills, matching the mockup's chip grammar.
-        borderRadius: BorderRadius.circular(999),
-        child: InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(999),
-          child: Container(
-            constraints: const BoxConstraints(minHeight: 44),
-            padding: const EdgeInsets.symmetric(horizontal: 14),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(
-                  icon,
-                  size: 17,
-                  color: selected ? colors.onPrimary : palette.textSecondary,
-                ),
-                const SizedBox(width: 7),
-                Text(
-                  label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: selected ? colors.onPrimary : palette.textSecondary,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ],
+      child: OutlinedButton.icon(
+        onPressed: onTap,
+        style: ButtonStyle(
+          backgroundColor: WidgetStatePropertyAll(
+            selected ? colors.primary : palette.surfaceMuted,
+          ),
+          foregroundColor: WidgetStatePropertyAll(
+            selected ? colors.onPrimary : palette.textSecondary,
+          ),
+          padding: const WidgetStatePropertyAll(
+            EdgeInsets.symmetric(horizontal: AppRhythm.title),
+          ),
+          shape: const WidgetStatePropertyAll(
+            RoundedRectangleBorder(borderRadius: AppRadius.pill),
+          ),
+          side: WidgetStateProperty.resolveWith(
+            (states) => BorderSide(
+              width: 3,
+              color: states.contains(WidgetState.focused)
+                  ? (selected ? colors.onPrimary : palette.focus)
+                  : Colors.transparent,
             ),
           ),
         ),
+        icon: Icon(icon, size: 18),
+        label: Text(label),
       ),
     );
   }
 }
 
-/// The scrolling feed column: strip, featured cards, section list.
-class _FeedColumn extends StatelessWidget {
-  const _FeedColumn({
-    required this.compact,
-    required this.wide,
-    required this.chains,
-    required this.viewedIds,
-    required this.featured,
-    required this.listTitle,
-    required this.moments,
-    required this.selectedId,
-    required this.currentUserId,
-    required this.playingId,
-    required this.isPlaying,
-    required this.footer,
-    required this.onOpenChain,
-    required this.onTapMoment,
-    required this.onPlayMoment,
-    required this.onOpenDetail,
-    required this.onReport,
-    required this.onDelete,
-    required this.onViewAllFeatured,
+/// Only mounted cards listen to the shared transport. Playback ticks never
+/// reorder the feed or recreate an audio player for an offscreen item.
+class _FeedPlayback {
+  const _FeedPlayback({
+    this.id,
+    this.playing = false,
+    this.busy = false,
+    this.elapsed = Duration.zero,
+    this.duration,
+    this.error,
   });
 
-  final bool compact;
-  final bool wide;
-  final List<MomentChain> chains;
-  final Set<String> viewedIds;
-  final List<VoiceMoment> featured;
-  final String listTitle;
-  final List<VoiceMoment> moments;
-  final String? selectedId;
-  final String currentUserId;
-
-  /// The wide detail panel's REAL transport state, so the row and tile of
-  /// the Moment actually playing show a pause glyph instead of pretending
-  /// nothing is running. Null on narrow surfaces, where playback lives in
-  /// the story viewer rather than on this page.
-  final String? playingId;
-  final bool isPlaying;
-  final Widget? footer;
-  final ValueChanged<MomentChain> onOpenChain;
-  final ValueChanged<VoiceMoment> onTapMoment;
-  final ValueChanged<VoiceMoment> onPlayMoment;
-  final ValueChanged<VoiceMoment> onOpenDetail;
-  final ValueChanged<VoiceMoment> onReport;
-  final ValueChanged<VoiceMoment> onDelete;
-  final VoidCallback? onViewAllFeatured;
-
-  @override
-  Widget build(BuildContext context) {
-    final side = compact ? 16.0 : 24.0;
-    final copy = AppLocalizations.of(context);
-    // Desktop is not a stretched phone: past the canonical feed measure the
-    // list stops growing and centres, so a 1440 window shows a readable
-    // column of rows instead of a caption with 700 pt of empty space beside
-    // it. The background stays full-bleed; only the content is framed.
-    return ResponsiveContentFrame(
-      width: ResponsiveContentWidth.feed,
-      child: ListView(
-        key: const ValueKey('moments-feed-scroll'),
-        padding: EdgeInsets.fromLTRB(side, 4, side, 32),
-        children: [
-          if (chains.isNotEmpty) ...[
-            MomentStoryStrip(
-              chains: chains,
-              viewedIds: viewedIds,
-              onOpenChain: onOpenChain,
-            ),
-            const SizedBox(height: 18),
-          ],
-          if (featured.isNotEmpty) ...[
-            _SectionTitle(
-              copy.text('Featured Moments', 'Polecane Momenty'),
-              trailing: onViewAllFeatured == null
-                  ? null
-                  : TextButton(
-                      key: const ValueKey('moments-featured-view-all'),
-                      onPressed: onViewAllFeatured,
-                      child: Text(
-                        copy.text('View all', 'Zobacz wszystkie'),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-            ),
-            MomentFeaturedGrid(
-              moments: featured,
-              viewedIds: viewedIds,
-              currentUserId: currentUserId,
-              playingId: playingId,
-              isPlaying: isPlaying,
-              onTap: onTapMoment,
-              onPlay: onPlayMoment,
-              onOpenDetail: onOpenDetail,
-              onReport: onReport,
-              onDelete: onDelete,
-            ),
-            const SizedBox(height: 20),
-          ],
-          _SectionTitle(listTitle),
-          for (var index = 0; index < moments.length; index++) ...[
-            if (index > 0) const _RowDivider(),
-            _MomentRow(
-              key: ValueKey('moment-row-${moments[index].id}'),
-              moment: moments[index],
-              selected: selectedId == moments[index].id,
-              seen: viewedIds.contains(moments[index].id),
-              playing: isPlaying && playingId == moments[index].id,
-              isOwn:
-                  currentUserId.isNotEmpty &&
-                  moments[index].authorId == currentUserId,
-              onTap: () => onTapMoment(moments[index]),
-              onPlay: () => onPlayMoment(moments[index]),
-              onOpenDetail: () => onOpenDetail(moments[index]),
-              onReport: () => onReport(moments[index]),
-              onDelete: () => onDelete(moments[index]),
-            ),
-          ],
-          if (footer != null) ...[const SizedBox(height: 14), footer!],
-        ],
-      ),
-    );
-  }
+  final String? id;
+  final bool playing;
+  final bool busy;
+  final Duration elapsed;
+  final Duration? duration;
+  final String? error;
 }
 
-/// The hairline between two list rows. The rows stopped being cards — a
-/// bordered card per Moment is what made the list read as a stack of
-/// blocks — so the separation is a line, inset past the leading control.
-class _RowDivider extends StatelessWidget {
-  const _RowDivider();
+class _FeedColumn extends StatelessWidget {
+  const _FeedColumn({
+    required this.moments,
+    required this.side,
+    required this.viewedIds,
+    required this.currentUserId,
+    required this.playback,
+    required this.pendingLikes,
+    required this.canLike,
+    required this.onCardBuild,
+    required this.onCardDispose,
+    required this.onTapMoment,
+    required this.onPlayMoment,
+    required this.onSeek,
+    required this.onLike,
+    required this.onComments,
+    required this.onOpenChain,
+    required this.onOpenProfile,
+    required this.onOpenDetail,
+    required this.onShare,
+    required this.onReport,
+    required this.onDelete,
+    this.footer,
+    super.key,
+  });
+
+  final List<VoiceMoment> moments;
+  final double side;
+  final Set<String> viewedIds;
+  final String currentUserId;
+  final ValueListenable<_FeedPlayback> playback;
+  final Set<String> pendingLikes;
+  final bool canLike;
+  final Widget? footer;
+  final void Function(String, BuildContext) onCardBuild;
+  final void Function(String, BuildContext) onCardDispose;
+  final ValueChanged<VoiceMoment> onTapMoment;
+  final ValueChanged<VoiceMoment> onPlayMoment;
+  final void Function(VoiceMoment, Duration) onSeek;
+  final ValueChanged<VoiceMoment> onLike;
+  final ValueChanged<VoiceMoment> onComments;
+  final ValueChanged<VoiceMoment> onOpenChain;
+  final ValueChanged<VoiceMoment> onOpenProfile;
+  final ValueChanged<VoiceMoment> onOpenDetail;
+  final ValueChanged<VoiceMoment> onShare;
+  final ValueChanged<VoiceMoment> onReport;
+  final ValueChanged<VoiceMoment> onDelete;
 
   @override
   Widget build(BuildContext context) {
-    final palette = context.appPalette;
-    return Padding(
-      padding: const EdgeInsets.only(left: 64, right: 8),
-      child: Divider(height: 1, thickness: 1, color: palette.border),
+    final indices = <Key, int>{
+      for (var index = 0; index < moments.length; index++)
+        ValueKey('moment-row-${moments[index].id}'): index,
+    };
+    return ListView.builder(
+      key: const ValueKey('moments-feed-scroll'),
+      padding: EdgeInsets.fromLTRB(side, AppRhythm.tight, side, AppRhythm.page),
+      itemCount: moments.length + (footer == null ? 0 : 1),
+      findChildIndexCallback: (key) => indices[key],
+      itemBuilder: (context, index) {
+        if (index == moments.length) {
+          return Padding(
+            padding: const EdgeInsets.only(top: AppRhythm.title),
+            child: footer,
+          );
+        }
+        final moment = moments[index];
+        return _MomentFeedCard(
+          key: ValueKey('moment-row-${moment.id}'),
+          moment: moment,
+          seen: viewedIds.contains(moment.id),
+          isOwn: currentUserId.isNotEmpty && moment.authorId == currentUserId,
+          canInteract: currentUserId.isNotEmpty,
+          canLike: canLike,
+          likePending: pendingLikes.contains(moment.id),
+          playback: playback,
+          onCardBuild: onCardBuild,
+          onCardDispose: onCardDispose,
+          onTap: () => onTapMoment(moment),
+          onPlay: () => onPlayMoment(moment),
+          onSeek: (position) => onSeek(moment, position),
+          onLike: () => onLike(moment),
+          onComments: () => onComments(moment),
+          onOpenChain: () => onOpenChain(moment),
+          onOpenProfile: () => onOpenProfile(moment),
+          onOpenDetail: () => onOpenDetail(moment),
+          onShare: () => onShare(moment),
+          onReport: () => onReport(moment),
+          onDelete: () => onDelete(moment),
+        );
+      },
     );
   }
 }
@@ -1596,332 +2111,437 @@ class MomentStoryStrip extends StatelessWidget {
   }
 }
 
-/// One tight list row: the author's seen-ringed avatar carrying the
-/// transport, the caption (tap it for the full detail page), the author,
-/// the real availability, the real duration, age and counters, and the
-/// overflow menu with Details plus Report on others' Moments or Delete on
-/// the caller's own.
-///
-/// Deliberately NOT a card. A bordered slab per Moment is what made a
-/// phone show two rows and call it a feed; rows are separated by a
-/// hairline now and the list reads as one surface. Below roughly 260 pt of
-/// text-scaled room the trailing facts move under the caption instead of
-/// squeezing a second column — the same row, laid out for the space it
-/// actually has.
-class _MomentRow extends StatelessWidget {
-  const _MomentRow({
+/// One complete, readable recording. The progress track is transport data;
+/// this model has no recorded waveform, so the card does not invent one.
+class _MomentFeedCard extends StatefulWidget {
+  const _MomentFeedCard({
     required this.moment,
-    required this.selected,
     required this.seen,
-    required this.playing,
     required this.isOwn,
+    required this.canInteract,
+    required this.canLike,
+    required this.likePending,
+    required this.playback,
+    required this.onCardBuild,
+    required this.onCardDispose,
     required this.onTap,
     required this.onPlay,
+    required this.onSeek,
+    required this.onLike,
+    required this.onComments,
+    required this.onOpenChain,
+    required this.onOpenProfile,
     required this.onOpenDetail,
+    required this.onShare,
     required this.onReport,
     required this.onDelete,
     super.key,
   });
 
   final VoiceMoment moment;
-  final bool selected;
-
-  /// True once this account's own `momentViews` doc exists for the
-  /// Moment. Same fact, same vocabulary as the story tiles.
   final bool seen;
-
-  /// The wide panel's real transport state for THIS Moment.
-  final bool playing;
   final bool isOwn;
+  final bool canInteract;
+  final bool canLike;
+  final bool likePending;
+  final ValueListenable<_FeedPlayback> playback;
+  final void Function(String, BuildContext) onCardBuild;
+  final void Function(String, BuildContext) onCardDispose;
   final VoidCallback onTap;
   final VoidCallback onPlay;
+  final ValueChanged<Duration> onSeek;
+  final VoidCallback onLike;
+  final VoidCallback onComments;
+  final VoidCallback onOpenChain;
+  final VoidCallback onOpenProfile;
   final VoidCallback onOpenDetail;
+  final VoidCallback onShare;
   final VoidCallback onReport;
   final VoidCallback onDelete;
 
-  bool get _uploading => !moment.isPublished;
+  @override
+  State<_MomentFeedCard> createState() => _MomentFeedCardState();
+}
+
+class _MomentFeedCardState extends State<_MomentFeedCard> {
+  void _afterMenu(VoidCallback action) {
+    // PopupMenu returns its selection before the route's inherited current
+    // state has rebuilt. Dispatch after that frame, retaining all destination
+    // guards. The account-keyed list disposes this card on every auth epoch.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) action();
+    });
+  }
+
+  @override
+  void dispose() {
+    widget.onCardDispose(widget.moment.id, context);
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final moment = widget.moment;
+    widget.onCardBuild(moment.id, context);
+    final copy = AppLocalizations.of(context);
+    final palette = context.appPalette;
+    final uploading = !moment.isPublished;
+    final enabled = widget.canInteract && !uploading;
+    final availability = uploading
+        ? copy.text('Uploading…', 'Przesyłanie…')
+        : widget.isOwn
+        ? momentAvailabilityLabel(moment.expiresAt, copy: copy)
+        : momentExpiryLabel(moment.expiresAt, copy: copy);
+    final age = momentRelativeAge(moment.createdAt, copy: copy);
+    final caption = moment.caption.trim().isEmpty
+        ? copy.text('Voice Moment', 'Voice Moment')
+        : moment.caption;
+
+    Widget avatar() => AccessibleTapRegion(
+      key: ValueKey('moment-row-chain-${moment.id}'),
+      circular: true,
+      onTap: enabled ? widget.onOpenChain : null,
+      semanticLabel:
+          '${copy.template('Open the story chain by {name}', 'Otwórz relację użytkownika {name}', values: {'name': moment.authorName})}, ${MomentSeenAvatar.stateLabel(context, seen: widget.seen)}',
+      child: MomentSeenAvatar(
+        seen: widget.seen,
+        diameter: 48,
+        userId: moment.authorId,
+        photoUrl: moment.authorPhotoUrl,
+        displayName: moment.authorName,
+      ),
+    );
+
+    Widget identity() => Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        AccessibleTapRegion(
+          key: ValueKey('moment-row-author-${moment.id}'),
+          onTap: enabled ? widget.onOpenProfile : null,
+          semanticLabel: moment.authorName,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Flexible(
+                child: Text(
+                  moment.authorName,
+                  style: AppTypography.titleMedium.copyWith(
+                    color: palette.textPrimary,
+                  ),
+                ),
+              ),
+              const SizedBox(width: AppRhythm.hairline),
+              UserIdentityBadges(
+                uid: moment.authorId,
+                variant: IdentityBadgeVariant.icon,
+              ),
+            ],
+          ),
+        ),
+        if (age.isNotEmpty && !uploading)
+          Text(
+            age,
+            style: AppTypography.bodySmall.copyWith(
+              color: palette.textSecondary,
+            ),
+          ),
+      ],
+    );
+
+    Widget menu() => MomentOverflowMenu(
+      moment: moment,
+      isOwn: widget.isOwn,
+      uploading: uploading,
+      keyPrefix: 'moment-row',
+      onOpenDetail: () => _afterMenu(widget.onOpenDetail),
+      onReport: () => _afterMenu(widget.onReport),
+      onDelete: () => _afterMenu(widget.onDelete),
+    );
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: AppRhythm.item),
+      child: Semantics(
+        container: true,
+        explicitChildNodes: true,
+        child: Material(
+          color: palette.surfaceRaised,
+          shape: RoundedRectangleBorder(
+            borderRadius: AppRadius.lg,
+            side: BorderSide(color: palette.border),
+          ),
+          child: InkWell(
+            onTap: widget.canInteract ? widget.onTap : null,
+            borderRadius: AppRadius.lg,
+            child: Padding(
+              padding: const EdgeInsets.all(AppRhythm.title),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  LayoutBuilder(
+                    builder: (context, constraints) {
+                      final scale =
+                          MediaQuery.textScalerOf(context).scale(16) / 16;
+                      if (constraints.maxWidth < 240 * scale) {
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(children: [avatar(), const Spacer(), menu()]),
+                            const SizedBox(height: AppRhythm.tight),
+                            identity(),
+                          ],
+                        );
+                      }
+                      return Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          avatar(),
+                          const SizedBox(width: AppRhythm.item),
+                          Expanded(child: identity()),
+                          menu(),
+                        ],
+                      );
+                    },
+                  ),
+                  const SizedBox(height: AppRhythm.tight),
+                  AccessibleTapRegion(
+                    key: ValueKey('moment-row-title-${moment.id}'),
+                    onTap: enabled ? widget.onOpenDetail : null,
+                    semanticLabel: copy.template(
+                      'Open details of the Moment by {name}',
+                      'Otwórz szczegóły Momentu użytkownika {name}',
+                      values: {'name': moment.authorName},
+                    ),
+                    child: Align(
+                      alignment: AlignmentDirectional.centerStart,
+                      child: Text(
+                        caption,
+                        maxLines: 4,
+                        overflow: TextOverflow.ellipsis,
+                        style: AppTypography.bodyLarge.copyWith(
+                          color: palette.textPrimary,
+                        ),
+                      ),
+                    ),
+                  ),
+                  if (availability != null) ...[
+                    const SizedBox(height: AppRhythm.tight),
+                    Text(
+                      availability,
+                      style: AppTypography.bodySmall.copyWith(
+                        color: moment.isPermanent || uploading
+                            ? palette.textSecondary
+                            : palette.warningForeground,
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: AppRhythm.item),
+                  ValueListenableBuilder<_FeedPlayback>(
+                    valueListenable: widget.playback,
+                    builder: (context, playback, _) {
+                      final active = playback.id == moment.id;
+                      return _VoiceMomentTransport(
+                        moment: moment,
+                        state: active ? playback : const _FeedPlayback(),
+                        active: active,
+                        enabled: enabled && moment.hasMediaReference,
+                        onPlay: widget.onPlay,
+                        onSeek: widget.onSeek,
+                      );
+                    },
+                  ),
+                  const SizedBox(height: AppRhythm.tight),
+                  Wrap(
+                    spacing: AppRhythm.tight,
+                    runSpacing: AppRhythm.hairline,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: [
+                      TextButton.icon(
+                        key: ValueKey('moment-row-like-${moment.id}'),
+                        onPressed:
+                            enabled && widget.canLike && !widget.likePending
+                            ? widget.onLike
+                            : null,
+                        style: TextButton.styleFrom(
+                          foregroundColor: moment.callerLiked
+                              ? palette.interactiveForeground
+                              : palette.textSecondary,
+                        ),
+                        icon: Icon(
+                          moment.callerLiked
+                              ? Icons.favorite_rounded
+                              : Icons.favorite_border_rounded,
+                          size: 20,
+                        ),
+                        label: Text(
+                          moment.likeCount > 0
+                              ? copy.template(
+                                  'Likes: {count}',
+                                  'Polubienia: {count}',
+                                  values: {'count': moment.likeCount},
+                                )
+                              : copy.text('Like', 'Lubię to'),
+                        ),
+                      ),
+                      TextButton.icon(
+                        key: ValueKey('moment-row-comments-${moment.id}'),
+                        onPressed: enabled ? widget.onComments : null,
+                        style: TextButton.styleFrom(
+                          foregroundColor: palette.textSecondary,
+                        ),
+                        icon: const Icon(Icons.mode_comment_outlined, size: 20),
+                        label: Text(
+                          moment.commentCount > 0
+                              ? copy.template(
+                                  'Comments: {count}',
+                                  'Komentarze: {count}',
+                                  values: {'count': moment.commentCount},
+                                )
+                              : copy.text('Comments', 'Komentarze'),
+                        ),
+                      ),
+                      TextButton.icon(
+                        key: ValueKey('moment-row-share-${moment.id}'),
+                        onPressed: enabled ? widget.onShare : null,
+                        style: TextButton.styleFrom(
+                          foregroundColor: palette.textSecondary,
+                        ),
+                        icon: const Icon(Icons.ios_share_rounded, size: 20),
+                        label: Text(copy.text('Share', 'Udostępnij')),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _VoiceMomentTransport extends StatelessWidget {
+  const _VoiceMomentTransport({
+    required this.moment,
+    required this.state,
+    required this.active,
+    required this.enabled,
+    required this.onPlay,
+    required this.onSeek,
+  });
+
+  final VoiceMoment moment;
+  final _FeedPlayback state;
+  final bool active;
+  final bool enabled;
+  final VoidCallback onPlay;
+  final ValueChanged<Duration> onSeek;
 
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
-    final colors = Theme.of(context).colorScheme;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
     final copy = AppLocalizations.of(context);
-    final age = momentRelativeAge(moment.createdAt, copy: copy);
-    // The author sees their Moment's real availability — including
-    // "Stays until deleted" for a permanent one. Everyone else sees a
-    // countdown only when a deadline actually exists.
-    final expiry = isOwn && moment.isPublished
-        ? momentAvailabilityLabel(moment.expiresAt, copy: copy)
-        : momentExpiryLabel(moment.expiresAt, copy: copy);
-    final permanent = moment.isPermanent;
-    final open = _uploading
-        ? copy.template(
-            'Open the Moment by {name}, still uploading',
-            'Otwórz Moment użytkownika {name}, nadal przesyłany',
-            values: {'name': moment.authorName},
-          )
-        : copy.template(
-            'Open the Moment by {name}',
-            'Otwórz Moment użytkownika {name}',
-            values: {'name': moment.authorName},
-          );
-
-    Widget duration() => Text(
-      moment.durationLabel,
-      maxLines: 1,
-      overflow: TextOverflow.ellipsis,
-      style: TextStyle(
-        color: palette.textTertiary,
-        fontSize: 11.5,
-        fontWeight: FontWeight.w600,
-      ),
+    final total = state.duration ?? Duration(seconds: moment.durationSeconds);
+    final maxMs = total.inMilliseconds;
+    final position = state.elapsed.inMilliseconds.clamp(
+      0,
+      maxMs > 0 ? maxMs : 0,
     );
-
-    Widget when() => Text(
-      age,
-      maxLines: 1,
-      overflow: TextOverflow.ellipsis,
-      style: TextStyle(color: palette.textTertiary, fontSize: 11.5),
-    );
-
-    final counts = <Widget>[
-      if (moment.likeCount > 0)
-        MomentCountChip(
-          count: moment.likeCount,
-          icon: Icons.favorite_rounded,
-          tint: AppColors.secondary,
-          semanticLabel: copy.template(
-            '{count} likes',
-            'Polubienia: {count}',
-            values: {'count': moment.likeCount},
-          ),
-        ),
-      if (moment.commentCount > 0)
-        MomentCountChip(
-          count: moment.commentCount,
-          icon: Icons.mode_comment_rounded,
-          tint: palette.textSecondary,
-          semanticLabel: copy.template(
-            '{count} comments',
-            'Komentarze: {count}',
-            values: {'count': moment.commentCount},
-          ),
-        ),
-    ];
-
-    final availability = _uploading
-        ? Text(
-            copy.text('Uploading…', 'Przesyłanie…'),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(color: palette.textTertiary, fontSize: 11.5),
-          )
-        : expiry == null
-        ? null
-        : Text(
-            expiry,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              // A permanent Moment's label is a calm fact, not a
-              // warning-coloured countdown.
-              color: permanent
-                  ? palette.textTertiary
-                  : palette.warningForeground,
-              fontSize: 11.5,
-              fontWeight: FontWeight.w700,
+    final label = state.playing
+        ? copy.text('Pause', 'Pauza')
+        : copy.text('Play', 'Odtwórz');
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Row(
+          children: [
+            IconButton.filled(
+              key: ValueKey('moment-row-play-${moment.id}'),
+              style: ButtonStyle(
+                backgroundColor: WidgetStateProperty.resolveWith(
+                  (states) => states.contains(WidgetState.disabled)
+                      ? palette.surfaceMuted
+                      : Theme.of(context).colorScheme.primary,
+                ),
+                foregroundColor: WidgetStatePropertyAll(
+                  Theme.of(context).colorScheme.onPrimary,
+                ),
+                side: WidgetStateProperty.resolveWith(
+                  (states) => BorderSide(
+                    width: 3,
+                    color: states.contains(WidgetState.focused)
+                        ? Theme.of(context).colorScheme.onPrimary
+                        : Colors.transparent,
+                  ),
+                ),
+              ),
+              onPressed: enabled && !state.busy ? onPlay : null,
+              tooltip: label,
+              icon: state.busy
+                  ? SizedBox.square(
+                      dimension: 22,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: palette.interactiveForeground,
+                      ),
+                    )
+                  : Icon(
+                      state.playing
+                          ? Icons.pause_rounded
+                          : Icons.play_arrow_rounded,
+                    ),
             ),
-          );
-
-    return Semantics(
-      button: true,
-      label: '$open, ${MomentSeenAvatar.stateLabel(context, seen: seen)}',
-      child: Material(
-        color: selected
-            ? colors.primary.withValues(alpha: isDark ? .16 : .1)
-            : Colors.transparent,
-        borderRadius: BorderRadius.circular(14),
-        child: InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(14),
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(6, 8, 2, 8),
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                final scale =
-                    MediaQuery.textScalerOf(context).scale(11.5) / 11.5;
-                // Not a device label: below this much room a second
-                // column of facts would leave the caption two words wide,
-                // so the facts wrap under it instead.
-                final stacked = constraints.maxWidth < 260 * scale;
-                return Row(
-                  // A stacked row's text block is several lines tall; the
-                  // transport reads as belonging to it from the top, not
-                  // floating in the middle of it.
-                  crossAxisAlignment: stacked
-                      ? CrossAxisAlignment.start
-                      : CrossAxisAlignment.center,
-                  children: [
-                    MomentAvatarPlayControl(
-                      controlKey: ValueKey('moment-row-play-${moment.id}'),
-                      moment: moment,
-                      seen: seen,
-                      playing: playing,
-                      enabled: !_uploading,
-                      onTap: onPlay,
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          // The caption is its own tap target: the row
-                          // body still opens the quick sheet or selects
-                          // the panel, the caption goes to the full
-                          // detail page.
-                          GestureDetector(
-                            key: ValueKey('moment-row-title-${moment.id}'),
-                            behavior: HitTestBehavior.opaque,
-                            onTap: _uploading ? null : onOpenDetail,
-                            child: Semantics(
-                              button: !_uploading,
-                              label: copy.template(
-                                'Open details of the Moment by {name}',
-                                'Otwórz szczegóły Momentu użytkownika {name}',
-                                values: {'name': moment.authorName},
-                              ),
-                              child: Text(
-                                moment.caption.trim().isEmpty
-                                    ? copy.text('Voice Moment', 'Voice Moment')
-                                    : moment.caption,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  // Heard is quieter, never unreadable —
-                                  // the story tiles' own rule.
-                                  color: seen
-                                      ? palette.textSecondary
-                                      : palette.textPrimary,
-                                  fontSize: 13.5,
-                                  fontWeight: seen
-                                      ? FontWeight.w600
-                                      : FontWeight.w700,
-                                ),
-                              ),
-                            ),
-                          ),
-                          const SizedBox(height: 2),
-                          Row(
-                            children: [
-                              Flexible(
-                                child: Text(
-                                  moment.authorName,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    color: palette.textSecondary,
-                                    fontSize: 11.5,
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: 4),
-                              UserIdentityBadges(
-                                uid: moment.authorId,
-                                variant: IdentityBadgeVariant.icon,
-                              ),
-                            ],
-                          ),
-                          // Availability owns a line. Sharing one with the
-                          // author name truncated the fact that matters
-                          // most — "Expires in 14h" rendered as
-                          // "Expires in" — and a countdown nobody can read
-                          // is worse than no countdown.
-                          if (availability != null) ...[
-                            const SizedBox(height: 2),
-                            availability,
-                          ],
-                          if (stacked) ...[
-                            const SizedBox(height: 4),
-                            Wrap(
-                              spacing: 10,
-                              runSpacing: 2,
-                              crossAxisAlignment: WrapCrossAlignment.center,
-                              children: [
-                                if (!_uploading && moment.durationSeconds > 0)
-                                  duration(),
-                                if (!_uploading && age.isNotEmpty) when(),
-                                ...counts,
-                              ],
-                            ),
-                          ],
-                        ],
-                      ),
-                    ),
-                    if (!stacked) ...[
-                      const SizedBox(width: 8),
-                      // Bounded: every sibling of the Expanded centre is
-                      // fixed-width, so an unconstrained "0:45 · 2h ago"
-                      // is wider than the slack a 320 pt phone has and the
-                      // column must squeeze rather than overflow.
-                      ConstrainedBox(
-                        constraints: const BoxConstraints(maxWidth: 116),
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          crossAxisAlignment: CrossAxisAlignment.end,
-                          children: [
-                            if (!_uploading) ...[
-                              Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  if (moment.durationSeconds > 0)
-                                    Flexible(child: duration()),
-                                  if (moment.durationSeconds > 0 &&
-                                      age.isNotEmpty)
-                                    Text(
-                                      ' · ',
-                                      style: TextStyle(
-                                        color: palette.textTertiary,
-                                        fontSize: 11.5,
-                                      ),
-                                    ),
-                                  if (age.isNotEmpty) Flexible(child: when()),
-                                ],
-                              ),
-                              if (counts.isNotEmpty) const SizedBox(height: 3),
-                            ],
-                            if (counts.isNotEmpty)
-                              Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  for (var i = 0; i < counts.length; i++) ...[
-                                    if (i > 0) const SizedBox(width: 10),
-                                    counts[i],
-                                  ],
-                                ],
-                              ),
-                          ],
-                        ),
-                      ),
-                    ],
-                    MomentOverflowMenu(
-                      moment: moment,
-                      isOwn: isOwn,
-                      uploading: _uploading,
-                      keyPrefix: 'moment-row',
-                      onOpenDetail: onOpenDetail,
-                      onReport: onReport,
-                      onDelete: onDelete,
-                    ),
-                  ],
-                );
-              },
+            const SizedBox(width: AppRhythm.tight),
+            Expanded(
+              child: Semantics(
+                label: copy.text('Voice Moment', 'Voice Moment'),
+                child: Slider(
+                  key: ValueKey('moment-row-progress-${moment.id}'),
+                  value: position.toDouble(),
+                  max: maxMs > 0 ? maxMs.toDouble() : 1,
+                  onChanged:
+                      enabled &&
+                          active &&
+                          !state.busy &&
+                          state.error == null &&
+                          maxMs > 0
+                      ? (value) => onSeek(Duration(milliseconds: value.round()))
+                      : null,
+                  semanticFormatterCallback: (value) => _clock(value ~/ 1000),
+                ),
+              ),
+            ),
+          ],
+        ),
+        Align(
+          alignment: AlignmentDirectional.centerEnd,
+          child: Text(
+            active
+                ? '${_clock(position ~/ 1000)} / ${_clock(total.inSeconds)}'
+                : _clock(total.inSeconds),
+            style: AppTypography.bodySmall.copyWith(
+              color: palette.textSecondary,
             ),
           ),
         ),
-      ),
+        if (state.error != null) ...[
+          const SizedBox(height: AppRhythm.tight),
+          Text(
+            state.error!,
+            style: AppTypography.bodyMedium.copyWith(
+              color: palette.dangerForeground,
+            ),
+          ),
+          TextButton.icon(
+            key: ValueKey('moment-row-play-retry-${moment.id}'),
+            onPressed: enabled && !state.busy ? onPlay : null,
+            icon: const Icon(Icons.refresh_rounded),
+            label: Text(copy.text('Try again', 'Spróbuj ponownie')),
+          ),
+        ],
+      ],
     );
   }
 }
@@ -1937,6 +2557,7 @@ class _PoolFooter extends StatelessWidget {
     required this.loading,
     required this.hasError,
     required this.onLoadMore,
+    this.error,
   });
 
   final int total;
@@ -1944,29 +2565,40 @@ class _PoolFooter extends StatelessWidget {
   final bool canLoadMore;
   final bool loading;
   final bool hasError;
+  final Object? error;
   final VoidCallback onLoadMore;
 
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     final copy = AppLocalizations.of(context);
-    final noun = total == 1 ? 'Moment' : 'Moments';
+    final summary = moreExists
+        ? (total == 1
+              ? copy.template(
+                  '{count} live Moment loaded.',
+                  'Wczytano aktywne Momenty: {count}.',
+                  values: {'count': total},
+                )
+              : copy.template(
+                  '{count} live Moments loaded.',
+                  'Wczytano aktywne Momenty: {count}.',
+                  values: {'count': total},
+                ))
+        : total == 1
+        ? copy.text(
+            'That is the only live Moment right now.',
+            'To jedyny aktywny Moment w tej chwili.',
+          )
+        : copy.template(
+            'That is all {count} live Moments right now.',
+            'To wszystkie aktywne Momenty w tej chwili: {count}.',
+            values: {'count': total},
+          );
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
         Text(
-          copy.text(
-            moreExists
-                ? '$total live $noun loaded.'
-                : (total == 1
-                      ? 'That is the only live Moment right now.'
-                      : 'That is all $total live Moments right now.'),
-            moreExists
-                ? 'Wczytano aktywne Momenty: $total.'
-                : (total == 1
-                      ? 'To jedyny aktywny Moment w tej chwili.'
-                      : 'To wszystkie aktywne Momenty w tej chwili: $total.'),
-          ),
+          summary,
           textAlign: TextAlign.center,
           style: TextStyle(
             color: palette.textTertiary,
@@ -1974,6 +2606,16 @@ class _PoolFooter extends StatelessWidget {
             height: 1.4,
           ),
         ),
+        if (hasError && error != null) ...[
+          const SizedBox(height: AppRhythm.tight),
+          Text(
+            friendlyErrorMessage(error!, copy: copy),
+            textAlign: TextAlign.center,
+            style: AppTypography.bodyMedium.copyWith(
+              color: palette.dangerForeground,
+            ),
+          ),
+        ],
         if (canLoadMore || loading || hasError) ...[
           const SizedBox(height: 10),
           OutlinedButton.icon(
@@ -1996,47 +2638,6 @@ class _PoolFooter extends StatelessWidget {
           ),
         ],
       ],
-    );
-  }
-}
-
-class _SectionTitle extends StatelessWidget {
-  const _SectionTitle(this.text, {this.trailing});
-
-  final String text;
-
-  /// An optional action on the heading row — "View all" on the featured
-  /// rail. Squeezes (ellipsis) before the title does at large text scales.
-  final Widget? trailing;
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = context.appPalette;
-    final title = Text(
-      text,
-      maxLines: 1,
-      overflow: TextOverflow.ellipsis,
-      style: TextStyle(
-        color: palette.textPrimary,
-        fontSize: 16,
-        fontWeight: FontWeight.w800,
-      ),
-    );
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
-      child: trailing == null
-          ? title
-          : Row(
-              children: [
-                Expanded(child: title),
-                // NOT Flexible: a loose flex child next to an Expanded
-                // SPLITS the free space, which parked "View all" in the
-                // middle of a desktop row. Inflexible, it takes its
-                // intrinsic width at the row's end and the title absorbs
-                // (and ellipsizes over) everything else.
-                trailing!,
-              ],
-            ),
     );
   }
 }
@@ -2130,21 +2731,7 @@ class _MomentDetailPanelState extends State<MomentDetailPanel> {
     }
   }
 
-  Future<void> _share() async {
-    // The same real link mechanism Home's feed already uses: the website
-    // resolves ?moment= on yovoice.app. Nothing new is invented here.
-    await SharePlus.instance.share(
-      ShareParams(
-        text: _copy.text(
-          'Listen to ${widget.moment.authorName} on YO Voice: '
-              'https://yovoice.app/?moment=${widget.moment.id}',
-          'Posłuchaj ${widget.moment.authorName} w YO Voice: '
-              'https://yovoice.app/?moment=${widget.moment.id}',
-        ),
-      ),
-    );
-  }
-
+  Future<void> _share() => _shareVoiceMoment(widget.moment, _copy);
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
@@ -2904,47 +3491,49 @@ class _LoadingState extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     final copy = AppLocalizations.of(context);
-    Widget bone(double width, double height, [double radius = 10]) => Container(
+    Widget bone(double width, double height) => Container(
       width: width,
       height: height,
       decoration: BoxDecoration(
         color: palette.surfaceMuted,
-        borderRadius: BorderRadius.circular(radius),
+        borderRadius: AppRadius.sm,
       ),
     );
-
     return Semantics(
       liveRegion: true,
       label: copy.text('Loading Moments', 'Wczytywanie Momentów'),
       child: ExcludeSemantics(
-        child: ListView(
+        child: ListView.builder(
           key: const ValueKey('moments-discovery-loading'),
-          padding: const EdgeInsets.fromLTRB(22, 8, 22, 22),
-          children: [
-            // The strip skeleton mirrors the real story strip's geometry: a
-            // horizontal list, not a Row. Five fixed 80-pt bones in a Row
-            // overflowed a 390-pt phone by 54 px (390 − 44 padding = 346 <
-            // 400); a non-scrollable horizontal list clips gracefully at any
-            // width instead.
-            SizedBox(
-              height: 92,
-              child: ListView.builder(
-                scrollDirection: Axis.horizontal,
-                physics: const NeverScrollableScrollPhysics(),
-                itemCount: 5,
-                itemBuilder: (context, index) => Padding(
-                  padding: const EdgeInsets.only(right: 14),
-                  child: bone(66, 66, 33),
-                ),
-              ),
+          padding: const EdgeInsets.all(AppRhythm.title),
+          itemCount: 3,
+          itemBuilder: (context, index) => Container(
+            margin: const EdgeInsets.only(bottom: AppRhythm.item),
+            padding: const EdgeInsets.all(AppRhythm.title),
+            decoration: BoxDecoration(
+              color: palette.surfaceRaised,
+              border: Border.all(color: palette.border),
+              borderRadius: AppRadius.lg,
             ),
-            const SizedBox(height: 18),
-            for (var i = 0; i < 4; i++)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 12),
-                child: bone(double.infinity, 74, 18),
-              ),
-          ],
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    bone(48, 48),
+                    const SizedBox(width: AppRhythm.item),
+                    Expanded(child: bone(double.infinity, 16)),
+                  ],
+                ),
+                const SizedBox(height: AppRhythm.title),
+                bone(double.infinity, 16),
+                const SizedBox(height: AppRhythm.tight),
+                bone(double.infinity, 16),
+                const SizedBox(height: AppRhythm.title),
+                bone(double.infinity, 44),
+              ],
+            ),
+          ),
         ),
       ),
     );
@@ -2960,51 +3549,46 @@ class _ErrorState extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
-    final colors = Theme.of(context).colorScheme;
     final copy = AppLocalizations.of(context);
     return Center(
       key: const ValueKey('moments-discovery-error'),
       child: SingleChildScrollView(
-        padding: const EdgeInsets.all(28),
+        padding: const EdgeInsets.all(AppRhythm.section),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.cloud_off_rounded, size: 34, color: colors.error),
-            const SizedBox(height: 14),
+            Icon(
+              Icons.cloud_off_rounded,
+              size: 32,
+              color: palette.dangerForeground,
+            ),
+            const SizedBox(height: AppRhythm.title),
             Text(
               copy.text(
                 'Moments could not load',
                 'Nie udało się wczytać Momentów',
               ),
               textAlign: TextAlign.center,
-              style: TextStyle(
+              style: AppTypography.titleLarge.copyWith(
                 color: palette.textPrimary,
-                fontSize: 18,
-                fontWeight: FontWeight.w800,
               ),
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: AppRhythm.tight),
             Text(
-              copy.text(
-                'Something went wrong reaching the Voice Moments feed.',
-                'Nie udało się połączyć z kanałem Voice Moments.',
+              friendlyErrorMessage(
+                error ?? StateError('unavailable'),
+                copy: copy,
+                fallback: copy.text(
+                  'Something went wrong reaching the Voice Moments feed.',
+                  'Nie udało się połączyć z kanałem Voice Moments.',
+                ),
               ),
               textAlign: TextAlign.center,
-              style: TextStyle(
+              style: AppTypography.bodyMedium.copyWith(
                 color: palette.textSecondary,
-                fontSize: 13.5,
-                height: 1.45,
               ),
             ),
-            if (kDebugMode && error != null) ...[
-              const SizedBox(height: 14),
-              SelectableText(
-                '$error',
-                textAlign: TextAlign.center,
-                style: TextStyle(color: palette.textTertiary, fontSize: 11.5),
-              ),
-            ],
-            const SizedBox(height: 20),
+            const SizedBox(height: AppRhythm.section),
             FilledButton(
               onPressed: onRetry,
               child: Text(copy.text('Try again', 'Spróbuj ponownie')),
@@ -3070,6 +3654,38 @@ class _EmptyState extends StatelessWidget {
       ),
     );
   }
+}
+
+bool _voiceAccessWasDenied(Object error) {
+  if (error is FirebaseException) {
+    return const {
+      'permission-denied',
+      'unauthenticated',
+      'not-found',
+    }.contains(error.code);
+  }
+  final code = error.toString().toLowerCase();
+  return code.contains('permission-denied') ||
+      code.contains('permission_denied') ||
+      code.contains('unauthenticated') ||
+      code.contains('not-found');
+}
+
+Future<void> _shareVoiceMoment(
+  VoiceMoment moment,
+  AppLocalizations copy,
+) async {
+  // Preserve the existing public-link mechanism. The destination performs
+  // its own current-identity and availability checks; no media URL is shared.
+  final link = Uri.https('yovoice.app', '/', {'moment': moment.id});
+  await SharePlus.instance.share(
+    ShareParams(
+      text: copy.text(
+        'Listen to ${moment.authorName} on YO Voice: $link',
+        'Posłuchaj ${moment.authorName} w YO Voice: $link',
+      ),
+    ),
+  );
 }
 
 String _clock(int seconds) {

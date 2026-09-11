@@ -6174,3 +6174,267 @@ const _currentReleaseTranslationValues = <String, List<String>>{
     "Huna idhini ya kufikia chumba hiki kwa sasa.",
   ],
 };
+
+/// Live delivery phases for a queued direct-message attachment.
+///
+/// Added after the coordinated Chats release pack was reviewed, so it keeps
+/// the compact map shape rather than extending the ordered list above. The
+/// percentage phrase reuses each locale's already reviewed "Sending…" term so
+/// the queued card cannot say one thing in the determinate state and another
+/// in the indeterminate one.
+const currentReleaseAttachmentProgressTranslationKeys = <String>{
+  "Waiting to send",
+  "Preparing…",
+  "Sending… {percent}%",
+  "Finishing…",
+};
+
+const currentReleaseAttachmentProgressTranslations =
+    <String, Map<String, String>>{
+      "de": <String, String>{
+        "Waiting to send": "Wartet auf Versand",
+        "Preparing…": "Wird vorbereitet…",
+        "Sending… {percent}%": "Wird gesendet… {percent}%",
+        "Finishing…": "Wird abgeschlossen…",
+      },
+      "es": <String, String>{
+        "Waiting to send": "Pendiente de envío",
+        "Preparing…": "Preparando…",
+        "Sending… {percent}%": "Enviando… {percent}%",
+        "Finishing…": "Finalizando…",
+      },
+      "pt": <String, String>{
+        "Waiting to send": "A aguardar envio",
+        "Preparing…": "A preparar…",
+        "Sending… {percent}%": "A enviar… {percent}%",
+        "Finishing…": "A concluir…",
+      },
+      "pt_BR": <String, String>{
+        "Waiting to send": "Aguardando envio",
+        "Preparing…": "Preparando…",
+        "Sending… {percent}%": "Enviando… {percent}%",
+        "Finishing…": "Concluindo…",
+      },
+      "fr": <String, String>{
+        "Waiting to send": "En attente d'envoi",
+        "Preparing…": "Préparation…",
+        "Sending… {percent}%": "Envoi… {percent}%",
+        "Finishing…": "Finalisation…",
+      },
+      "it": <String, String>{
+        "Waiting to send": "In attesa di invio",
+        "Preparing…": "Preparazione…",
+        "Sending… {percent}%": "Invio in corso… {percent}%",
+        "Finishing…": "Completamento…",
+      },
+      "uk": <String, String>{
+        "Waiting to send": "Очікує надсилання",
+        "Preparing…": "Підготовка…",
+        "Sending… {percent}%": "Надсилається… {percent}%",
+        "Finishing…": "Завершення…",
+      },
+      "ru": <String, String>{
+        "Waiting to send": "Ожидает отправки",
+        "Preparing…": "Подготовка…",
+        "Sending… {percent}%": "Отправка… {percent}%",
+        "Finishing…": "Завершение…",
+      },
+      "cs": <String, String>{
+        "Waiting to send": "Čeká na odeslání",
+        "Preparing…": "Příprava…",
+        "Sending… {percent}%": "Odesílání… {percent}%",
+        "Finishing…": "Dokončování…",
+      },
+      "sk": <String, String>{
+        "Waiting to send": "Čaká na odoslanie",
+        "Preparing…": "Príprava…",
+        "Sending… {percent}%": "Odosielanie… {percent}%",
+        "Finishing…": "Dokončovanie…",
+      },
+      "bg": <String, String>{
+        "Waiting to send": "Изчаква изпращане",
+        "Preparing…": "Подготовка…",
+        "Sending… {percent}%": "Изпращане… {percent}%",
+        "Finishing…": "Завършване…",
+      },
+      "nl": <String, String>{
+        "Waiting to send": "Wacht op verzending",
+        "Preparing…": "Voorbereiden…",
+        "Sending… {percent}%": "Bezig met verzenden… {percent}%",
+        "Finishing…": "Afronden…",
+      },
+      "ro": <String, String>{
+        "Waiting to send": "În așteptarea trimiterii",
+        "Preparing…": "Se pregătește…",
+        "Sending… {percent}%": "Se trimite… {percent}%",
+        "Finishing…": "Se finalizează…",
+      },
+      "tr": <String, String>{
+        "Waiting to send": "Gönderilmeyi bekliyor",
+        "Preparing…": "Hazırlanıyor…",
+        "Sending… {percent}%": "Gönderiliyor… {percent}%",
+        "Finishing…": "Tamamlanıyor…",
+      },
+      "el": <String, String>{
+        "Waiting to send": "Σε αναμονή αποστολής",
+        "Preparing…": "Προετοιμασία…",
+        "Sending… {percent}%": "Αποστολή σε εξέλιξη… {percent}%",
+        "Finishing…": "Ολοκλήρωση…",
+      },
+      "hu": <String, String>{
+        "Waiting to send": "Küldésre vár",
+        "Preparing…": "Előkészítés…",
+        "Sending… {percent}%": "Küldés… {percent}%",
+        "Finishing…": "Befejezés…",
+      },
+      "hr": <String, String>{
+        "Waiting to send": "Čeka slanje",
+        "Preparing…": "Priprema…",
+        "Sending… {percent}%": "Slanje… {percent}%",
+        "Finishing…": "Dovršavanje…",
+      },
+      "sr": <String, String>{
+        "Waiting to send": "Чека слање",
+        "Preparing…": "Припрема…",
+        "Sending… {percent}%": "Слање… {percent}%",
+        "Finishing…": "Довршавање…",
+      },
+      "sv": <String, String>{
+        "Waiting to send": "Väntar på att skickas",
+        "Preparing…": "Förbereder…",
+        "Sending… {percent}%": "Skickar… {percent}%",
+        "Finishing…": "Slutför…",
+      },
+      "da": <String, String>{
+        "Waiting to send": "Venter på at blive sendt",
+        "Preparing…": "Forbereder…",
+        "Sending… {percent}%": "Sender… {percent}%",
+        "Finishing…": "Afslutter…",
+      },
+      "nb": <String, String>{
+        "Waiting to send": "Venter på å bli sendt",
+        "Preparing…": "Forbereder…",
+        "Sending… {percent}%": "Sender… {percent}%",
+        "Finishing…": "Fullfører…",
+      },
+      "fi": <String, String>{
+        "Waiting to send": "Odottaa lähetystä",
+        "Preparing…": "Valmistellaan…",
+        "Sending… {percent}%": "Lähetetään… {percent}%",
+        "Finishing…": "Viimeistellään…",
+      },
+      "lt": <String, String>{
+        "Waiting to send": "Laukiama išsiuntimo",
+        "Preparing…": "Ruošiama…",
+        "Sending… {percent}%": "Siunčiama… {percent}%",
+        "Finishing…": "Baigiama…",
+      },
+      "lv": <String, String>{
+        "Waiting to send": "Gaida nosūtīšanu",
+        "Preparing…": "Sagatavo…",
+        "Sending… {percent}%": "Sūtu… {percent}%",
+        "Finishing…": "Pabeidz…",
+      },
+      "et": <String, String>{
+        "Waiting to send": "Ootab saatmist",
+        "Preparing…": "Ettevalmistamine…",
+        "Sending… {percent}%": "Saatmine… {percent}%",
+        "Finishing…": "Lõpetamine…",
+      },
+      "id": <String, String>{
+        "Waiting to send": "Menunggu untuk dikirim",
+        "Preparing…": "Menyiapkan…",
+        "Sending… {percent}%": "Mengirim… {percent}%",
+        "Finishing…": "Menyelesaikan…",
+      },
+      "vi": <String, String>{
+        "Waiting to send": "Đang chờ gửi",
+        "Preparing…": "Đang chuẩn bị…",
+        "Sending… {percent}%": "Đang gửi… {percent}%",
+        "Finishing…": "Đang hoàn tất…",
+      },
+      "zh_CN": <String, String>{
+        "Waiting to send": "等待发送",
+        "Preparing…": "正在准备…",
+        "Sending… {percent}%": "正在发送… {percent}%",
+        "Finishing…": "正在完成…",
+      },
+      "zh_TW": <String, String>{
+        "Waiting to send": "等待送出",
+        "Preparing…": "準備中…",
+        "Sending… {percent}%": "發送中… {percent}%",
+        "Finishing…": "完成中…",
+      },
+      "ja": <String, String>{
+        "Waiting to send": "送信待ち",
+        "Preparing…": "準備中…",
+        "Sending… {percent}%": "送信中… {percent}%",
+        "Finishing…": "完了処理中…",
+      },
+      "ko": <String, String>{
+        "Waiting to send": "전송 대기 중",
+        "Preparing…": "준비 중…",
+        "Sending… {percent}%": "전송 중… {percent}%",
+        "Finishing…": "마무리 중…",
+      },
+      "ar": <String, String>{
+        "Waiting to send": "في انتظار الإرسال",
+        "Preparing…": "جارٍ التحضير…",
+        "Sending… {percent}%": "جارٍ الإرسال… {percent}%",
+        "Finishing…": "جارٍ الإنهاء…",
+      },
+      "hi": <String, String>{
+        "Waiting to send": "भेजने की प्रतीक्षा में",
+        "Preparing…": "तैयार किया जा रहा है…",
+        "Sending… {percent}%": "भेजा जा रहा है… {percent}%",
+        "Finishing…": "पूरा किया जा रहा है…",
+      },
+      "bn": <String, String>{
+        "Waiting to send": "পাঠানোর অপেক্ষায়",
+        "Preparing…": "প্রস্তুত করা হচ্ছে…",
+        "Sending… {percent}%": "পাঠানো হচ্ছে… {percent}%",
+        "Finishing…": "সম্পন্ন করা হচ্ছে…",
+      },
+      "ur": <String, String>{
+        "Waiting to send": "بھیجنے کے انتظار میں",
+        "Preparing…": "تیاری جاری ہے…",
+        "Sending… {percent}%": "بھیجا جا رہا ہے… {percent}%",
+        "Finishing…": "مکمل کیا جا رہا ہے…",
+      },
+      "th": <String, String>{
+        "Waiting to send": "รอการส่ง",
+        "Preparing…": "กำลังเตรียม…",
+        "Sending… {percent}%": "กำลังส่ง… {percent}%",
+        "Finishing…": "กำลังดำเนินการให้เสร็จ…",
+      },
+      "ms": <String, String>{
+        "Waiting to send": "Menunggu untuk dihantar",
+        "Preparing…": "Sedang menyediakan…",
+        "Sending… {percent}%": "Sedang dihantar… {percent}%",
+        "Finishing…": "Sedang menyelesaikan…",
+      },
+      "fil": <String, String>{
+        "Waiting to send": "Naghihintay na maipadala",
+        "Preparing…": "Inihahanda…",
+        "Sending… {percent}%": "Ipinapadala… {percent}%",
+        "Finishing…": "Tinatapos…",
+      },
+      "he": <String, String>{
+        "Waiting to send": "ממתין לשליחה",
+        "Preparing…": "מכין…",
+        "Sending… {percent}%": "שולח… {percent}%",
+        "Finishing…": "מסיים…",
+      },
+      "fa": <String, String>{
+        "Waiting to send": "در انتظار ارسال",
+        "Preparing…": "در حال آماده‌سازی…",
+        "Sending… {percent}%": "در حال ارسال… {percent}%",
+        "Finishing…": "در حال تکمیل…",
+      },
+      "sw": <String, String>{
+        "Waiting to send": "Inasubiri kutumwa",
+        "Preparing…": "Inaandaa…",
+        "Sending… {percent}%": "Inatuma… {percent}%",
+        "Finishing…": "Inakamilisha…",
+      },
+    };

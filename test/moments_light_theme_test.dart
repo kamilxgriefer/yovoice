@@ -58,21 +58,25 @@ Map<String, dynamic> _momentDocument(VoiceMoment moment) => <String, dynamic>{
 };
 
 class _StaticDiscovery implements MomentDiscoveryService {
-  const _StaticDiscovery(this.moments);
+  _StaticDiscovery(this.moments);
 
   final List<VoiceMoment> moments;
+  int loadCalls = 0;
 
   @override
   Future<MomentDiscoveryFeed> loadDiscoveryFeed({
     int poolSize = MomentDiscoveryService.defaultPoolSize,
     int? seed,
-  }) async => MomentDiscoveryFeed(
-    moments: moments,
-    fetchedCount: moments.length,
-    drops: const <String, MomentDropReason>{},
-    seed: seed ?? 1,
-    poolExhausted: false,
-  );
+  }) async {
+    loadCalls += 1;
+    return MomentDiscoveryFeed(
+      moments: moments,
+      fetchedCount: moments.length,
+      drops: const <String, MomentDropReason>{},
+      seed: seed ?? 1,
+      poolExhausted: false,
+    );
+  }
 
   @override
   Stream<Map<String, MomentEngagement>> watchEngagement({
@@ -145,14 +149,20 @@ void main() {
     ) async {
       _useNarrowRetinaView(tester);
       final moment = _moment('feed-$label');
+      final auth = MockFirebaseAuth(
+        signedIn: true,
+        mockUser: MockUser(uid: 'viewer'),
+      );
+      final discovery = _StaticDiscovery([moment]);
 
       await tester.pumpWidget(
         _host(
           brightness: brightness,
           child: Scaffold(
             body: MomentsFeedView(
+              auth: auth,
               onRecord: () {},
-              discoveryService: _StaticDiscovery([moment]),
+              discoveryService: discovery,
             ),
           ),
         ),
@@ -161,6 +171,11 @@ void main() {
       for (var i = 0; i < 5; i++) {
         await tester.pump(const Duration(milliseconds: 50));
       }
+      expect(discovery.loadCalls, 1);
+      expect(
+        find.byKey(const ValueKey('moments-discovery-error')),
+        findsNothing,
+      );
 
       final feed = find.byKey(const ValueKey('moments-feed-view'));
       expect(tester.widget(feed), isA<YoPageBackground>());
@@ -175,10 +190,20 @@ void main() {
         find.byKey(const ValueKey('yo-atmosphere-moments')),
         findsOneWidget,
       );
+      final card = find.byKey(ValueKey('moment-row-${moment.id}'));
+      expect(card, findsOneWidget);
       expect(
         find.byKey(ValueKey('moment-featured-${moment.id}')),
-        findsOneWidget,
+        findsNothing,
       );
+      final material = tester.widget<Material>(
+        find.descendant(of: card, matching: find.byType(Material)).first,
+      );
+      expect(material.color, _palette(brightness).surfaceRaised);
+      final author = tester.widget<Text>(
+        find.descendant(of: card, matching: find.text(moment.authorName)),
+      );
+      expect(author.style?.color, _palette(brightness).textPrimary);
       expect(tester.takeException(), isNull);
     });
 

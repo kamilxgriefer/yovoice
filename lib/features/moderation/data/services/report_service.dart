@@ -26,6 +26,21 @@ enum ReportTargetType {
   /// `createContentReport`.
   voiceMomentComment,
 
+  /// A third-party GIF surfaced by the composer's GIF picker, reported
+  /// through `reportGifAsset` (ADR-172).
+  ///
+  /// Never a client write, for the same reason [reelComment] is not: the
+  /// report has to be proven against `gifAssets/{provider}_{id}`, which is
+  /// `allow read, write: if false` for every client including staff, and it
+  /// carries a `targetMediaUrl` the field allowlist in `firestore.rules` has
+  /// no room for. Passing this value to [ReportService.report] would be
+  /// refused by rules; the picker calls the callable instead.
+  ///
+  /// It is the one target type with NO reported account: a GIF belongs to
+  /// GIPHY, not to a YO Voice member, so `reportedUserId` is deliberately
+  /// empty and no sanction workflow may attach a uid to it.
+  gifAsset,
+
   /// An account, independent of any one message.
   user,
 }
@@ -198,6 +213,23 @@ class ReportService {
     String? contextPath,
   }) async {
     final user = _user;
+    // SERVER-ONLY TARGET TYPES NEVER REACH THE CLIENT WRITE PATH.
+    //
+    // `firestore.rules` proves a client-filed report against the target
+    // document, and can only do that for `globalMessage` and `user`. The rest
+    // are created by a callable on the Admin SDK. Without this guard the
+    // batch below is refused with `permission-denied`, which the catch at the
+    // end of this method reads — correctly, for the types it does handle — as
+    // "you already reported this". For a GIF that inference is simply false,
+    // so the reporter would be told their report exists when none was ever
+    // filed. Fail here instead, where the reason is knowable.
+    if (targetType == ReportTargetType.gifAsset ||
+        targetType == ReportTargetType.reelComment) {
+      throw ArgumentError(
+        'A ${targetType.name} report is filed by its own callable, not by a '
+        'client write.',
+      );
+    }
     if (reportedUserId == user.uid) {
       throw StateError('You cannot report yourself.');
     }

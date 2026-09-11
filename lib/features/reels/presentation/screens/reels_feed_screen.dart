@@ -15,6 +15,7 @@ import 'package:yovoice/features/reels/presentation/widgets/reel_card_skeleton.d
 import 'package:yovoice/features/reels/presentation/widgets/reel_comments_view.dart';
 import 'package:yovoice/features/reels/presentation/widgets/reel_engagement_bar.dart';
 import 'package:yovoice/features/reels/presentation/widgets/reel_playback_coordinator.dart';
+import 'package:yovoice/features/reels/presentation/widgets/reel_overlay_measure.dart';
 import 'package:yovoice/features/reels/presentation/widgets/reels_toolbar.dart';
 import 'package:yovoice/shared/widgets/backgrounds/yo_page_background.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
@@ -32,18 +33,25 @@ class ReelsFeedScreen extends StatefulWidget {
     this.service,
     this.videoBuilder,
     this.audioPlaybackFactory,
+    this.videoPlaybackFactory,
     this.onCreate,
     this.isVisible,
     this.now,
     this.expiryTimerFactory,
     this.onOpenAuthor,
     this.embedded = false,
+    this.immersive = false,
+    this.immersiveHeader,
     super.key,
   });
 
   final ReelService? service;
   final ReelVideoBuilder? videoBuilder;
   final ReelAudioPlaybackFactory? audioPlaybackFactory;
+
+  /// Supplies the video engine instead of the built-in decoder, so the
+  /// autoplay policy can be exercised without a platform decoder.
+  final ReelVideoPlaybackFactory? videoPlaybackFactory;
 
   /// Opens the composer and completes when it closes. The feed reloads after
   /// completion so a newly published Reel appears without reopening the tab.
@@ -62,6 +70,11 @@ class ReelsFeedScreen extends StatefulWidget {
   final void Function(Reel reel)? onOpenAuthor;
   final bool embedded;
 
+  /// Fill a narrow host's available viewport, while its bottom navigation
+  /// remains owned by the shell. Wide hosts retain the portrait review frame.
+  final bool immersive;
+  final Widget? immersiveHeader;
+
   @override
   State<ReelsFeedScreen> createState() => _ReelsFeedScreenState();
 }
@@ -78,6 +91,11 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
 
   late final ReelService _service = widget.service ?? ReelService();
   final PageController _pageController = PageController();
+
+  /// One sound preference for the whole feed, so it is turned on once instead
+  /// of on every Reel. It starts off because the first Reel starts itself, and
+  /// an ungestured start must not be audible.
+  final ValueNotifier<bool> _soundOn = ValueNotifier<bool>(false);
   List<Reel> _items = const <Reel>[];
   String? _cursor;
   Object? _error;
@@ -105,6 +123,9 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
   int _loadGeneration = 0;
   int _identityRevision = 0;
   bool _ownOnly = false;
+  bool _includeSeen = false;
+  bool _hasWatchedReels = false;
+  double _chromeHeight = 0;
 
   DateTime get _now => (widget.now ?? DateTime.now)().toUtc();
   ReelExpiryTimerFactory get _timerFactory =>
@@ -170,7 +191,11 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
 
   void _selectAudience(bool ownOnly) {
     if (_ownOnly == ownOnly) return;
-    setState(() => _ownOnly = ownOnly);
+    setState(() {
+      _ownOnly = ownOnly;
+      _includeSeen = false;
+      _hasWatchedReels = false;
+    });
     _load(reset: true);
   }
 
@@ -192,7 +217,15 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
   }
 
   void _handleHostVisibilityChanged() {
-    if (_isHostVisible) _revalidateAvailability();
+    if (_isHostVisible) {
+      _revalidateAvailability();
+      _prefetchNeighbor();
+    }
+  }
+
+  void _prefetchNeighbor() {
+    if (!_isHostVisible || _selected + 1 >= _items.length) return;
+    unawaited(_service.prefetchMediaUri(_items[_selected + 1].id));
   }
 
   @override
@@ -203,6 +236,7 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
     widget.isVisible?.removeListener(_handleHostVisibilityChanged);
     WidgetsBinding.instance.removeObserver(this);
     _pageController.dispose();
+    _soundOn.dispose();
     super.dispose();
   }
 
@@ -267,6 +301,7 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
         _selected = 0;
         _cursor = null;
         _hasMore = true;
+        _hasWatchedReels = false;
         _reporting.clear();
         _deleting.clear();
         _likePending.clear();
@@ -281,7 +316,12 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
       final loaded = <Reel>[];
       final seenCursors = <String>{};
       for (var request = 0; request < _maxEmptyPagesPerLoad; request++) {
-        final page = await _service.fetchFeed(cursor: requestCursor, limit: 10);
+        final page = await _service.fetchFeed(
+          cursor: requestCursor,
+          limit: 10,
+          scope: ownOnly ? ReelFeedScope.own : ReelFeedScope.discover,
+          includeSeen: !ownOnly && _includeSeen,
+        );
         if (!_isCurrentRequest(generation, viewer)) return;
         loaded.addAll(
           page.items.where((item) => !ownOnly || item.authorId == viewer),
@@ -292,6 +332,23 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
         if (!seenCursors.add(nextCursor)) {
           throw const FormatException('Reel feed cursor did not advance.');
         }
+      }
+      // A drained unseen feed is different from an empty catalogue. The
+      // existing response shape is frozen, so verify with the authorized
+      // includeSeen query before offering a replay action.
+      var hasWatched = false;
+      if (loaded.isEmpty &&
+          (reset || _items.isEmpty) &&
+          requestCursor == null &&
+          !ownOnly &&
+          !_includeSeen) {
+        final seen = await _service.fetchFeed(
+          limit: 1,
+          includeSeen: true,
+          warmLeadingMedia: false,
+        );
+        if (!_isCurrentRequest(generation, viewer)) return;
+        hasWatched = seen.items.isNotEmpty;
       }
       if (!mounted || !_isCurrentRequest(generation, viewer)) return;
       setState(() {
@@ -304,11 +361,13 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
         ];
         _cursor = requestCursor;
         _hasMore = requestCursor != null;
+        _hasWatchedReels = hasWatched;
         _error = loaded.isEmpty && requestCursor != null
             ? const _ReelFeedScanPaused()
             : null;
       });
       _revalidateAvailability();
+      _prefetchNeighbor();
     } catch (error) {
       if (_isCurrentRequest(generation, viewer)) setState(() => _error = error);
     } finally {
@@ -690,15 +749,31 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
                   'No Reels of your own yet',
                   'Nie masz jeszcze własnych Reels',
                 )
+              : _hasWatchedReels
+              ? copy.text('You’re all caught up', 'Wszystko obejrzane')
               : copy.text('No Reels yet', 'Nie ma jeszcze Reels'),
-          subtitle: copy.text(
-            'Published photos and short videos will appear here.',
-            'Opublikowane zdjęcia i krótkie filmy pojawią się tutaj.',
-          ),
-          actionLabel: widget.onCreate == null
+          subtitle: _hasWatchedReels
+              ? copy.text(
+                  'Watch Reels again or come back later.',
+                  'Obejrzyj Reels ponownie lub wróć później.',
+                )
+              : copy.text(
+                  'Published photos and short videos will appear here.',
+                  'Opublikowane zdjęcia i krótkie filmy pojawią się tutaj.',
+                ),
+          actionLabel: _hasWatchedReels
+              ? copy.text('Watch again', 'Obejrzyj ponownie')
+              : widget.onCreate == null
               ? null
               : copy.text('Create Reel', 'Utwórz Reel'),
-          onAction: _creating ? null : _create,
+          onAction: _hasWatchedReels
+              ? () {
+                  setState(() => _includeSeen = true);
+                  _load(reset: true);
+                }
+              : _creating
+              ? null
+              : _create,
         ),
       );
     }
@@ -731,11 +806,15 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
             isVisible: visible,
             padding: pagerPadding,
             cardRadius: metrics.cardRadius,
+            immersive: metrics.cardRadius == 0,
+            mediaTopInset: metrics.cardRadius == 0 ? _chromeHeight : 0,
             // Wide already carries the author and the caption in the docked
             // panel; burning them over the video a second time is noise.
             showIdentity: !wide,
             videoBuilder: widget.videoBuilder,
             audioPlaybackFactory: widget.audioPlaybackFactory,
+            videoPlaybackFactory: widget.videoPlaybackFactory,
+            soundOn: _soundOn,
             onReport: _report,
             onDelete: _delete,
             onOpenAuthor: widget.onOpenAuthor,
@@ -745,6 +824,7 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
             onComments: (reel) => _openComments(reel, wide: wide),
             onChanged: (index) {
               setState(() => _selected = index);
+              _prefetchNeighbor();
               if (index >= _items.length - 3) _load(reset: false);
             },
           ),
@@ -796,7 +876,11 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
         top: widget.embedded,
         child: LayoutBuilder(
           builder: (context, constraints) {
-            final metrics = _StageMetrics.of(constraints.maxWidth);
+            final immersive = widget.immersive && constraints.maxWidth < 600;
+            final metrics = _StageMetrics.of(
+              constraints.maxWidth,
+              immersive: immersive,
+            );
             // The layout, not a device label, decides where a thread can be
             // hosted: beside the feed when there is room for a panel, in a
             // sheet over it when there is not.
@@ -806,13 +890,16 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
               builder: (context, stage) =>
                   _buildStage(context, stage, metrics, wide: wide),
             );
-            Widget below = stage;
-            if (showPanel) {
-              final selected = _items[_selected.clamp(0, _items.length - 1)];
-              below = Row(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: <Widget>[
-                  Expanded(child: stage),
+            final selected = _items.isEmpty
+                ? null
+                : _items[_selected.clamp(0, _items.length - 1)];
+            // Keep the stage's ancestry stable across width changes. A key
+            // on ReelCard cannot retain its player if an ancestor is replaced.
+            final below = Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: <Widget>[
+                Expanded(child: stage),
+                if (showPanel && selected != null)
                   SizedBox(
                     width: _panelWidth,
                     child: _WideContextPanel(
@@ -828,24 +915,56 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
                       onOpenAuthor: widget.onOpenAuthor,
                     ),
                   ),
-                ],
-              );
-            }
-            // The same composition the Voice half uses: one chrome row across
-            // the whole destination, then the content and its docked panel
-            // beneath it. Switching format must not move the chrome.
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: <Widget>[
-                ReelsToolbar(
-                  gutter: metrics.toolbarGutter,
-                  ownOnly: _ownOnly,
-                  onAudienceSelected: _selectAudience,
-                  onRefresh: _loading ? null : () => _load(reset: true),
-                  showCreate: widget.onCreate != null,
-                  onCreate: _creating ? null : _create,
+              ],
+            );
+            return CustomMultiChildLayout(
+              delegate: _ReelsViewportLayout(
+                overlayChrome: immersive && _items.isNotEmpty,
+              ),
+              children: [
+                LayoutId(id: _ReelsViewportSlot.content, child: below),
+                LayoutId(
+                  id: _ReelsViewportSlot.chrome,
+                  child: ReelOverlayMeasure(
+                    key: const ValueKey('reels-chrome'),
+                    onSize: (size) {
+                      if (mounted && (size.height - _chromeHeight).abs() > .5) {
+                        setState(() => _chromeHeight = size.height);
+                      }
+                    },
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        gradient: immersive
+                            ? const LinearGradient(
+                                begin: Alignment.topCenter,
+                                end: Alignment.bottomCenter,
+                                colors: [Color(0xF0000000), Color(0xB8000000)],
+                              )
+                            : null,
+                      ),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (immersive && widget.immersiveHeader != null)
+                            widget.immersiveHeader!,
+                          ReelsToolbar(
+                            gutter: metrics.toolbarGutter,
+                            immersive: immersive,
+                            ownOnly: _ownOnly,
+                            onAudienceSelected: _selectAudience,
+                            onRefresh: _loading
+                                ? null
+                                : () => _load(reset: true),
+                            showCreate:
+                                widget.onCreate != null &&
+                                (!immersive || widget.immersiveHeader == null),
+                            onCreate: _creating ? null : _create,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
                 ),
-                Expanded(child: below),
               ],
             );
           },
@@ -880,6 +999,39 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
 const double _panelBreakpoint = 1100;
 const double _panelWidth = 400;
 
+enum _ReelsViewportSlot { content, chrome }
+
+/// Measure the real, localized chrome first. Empty/error content is placed
+/// below it; a populated immersive pager occupies the whole viewport beneath
+/// it. No guessed header height or post-frame resize is needed.
+class _ReelsViewportLayout extends MultiChildLayoutDelegate {
+  _ReelsViewportLayout({required this.overlayChrome});
+  final bool overlayChrome;
+
+  @override
+  void performLayout(Size size) {
+    final chrome = layoutChild(
+      _ReelsViewportSlot.chrome,
+      BoxConstraints(
+        maxWidth: size.width,
+        minWidth: size.width,
+        maxHeight: size.height,
+      ),
+    );
+    final top = overlayChrome ? 0.0 : chrome.height;
+    layoutChild(
+      _ReelsViewportSlot.content,
+      BoxConstraints.tight(Size(size.width, math.max(0, size.height - top))),
+    );
+    positionChild(_ReelsViewportSlot.content, Offset(0, top));
+    positionChild(_ReelsViewportSlot.chrome, Offset.zero);
+  }
+
+  @override
+  bool shouldRelayout(_ReelsViewportLayout oldDelegate) =>
+      oldDelegate.overlayChrome != overlayChrome;
+}
+
 /// Stage geometry for the width the feed was given.
 ///
 /// One card, three densities: the gutters and the corner grow with the room
@@ -895,7 +1047,16 @@ class _StageMetrics {
     required this.cardRadius,
   });
 
-  factory _StageMetrics.of(double width) {
+  factory _StageMetrics.of(double width, {bool immersive = false}) {
+    if (immersive) {
+      return const _StageMetrics(
+        toolbarGutter: 12,
+        gutter: 0,
+        padTop: 0,
+        padBottom: 0,
+        cardRadius: 0,
+      );
+    }
     if (width >= _panelBreakpoint) {
       return const _StageMetrics(
         // The chrome row matches the Voice half's filter row, so the two
@@ -948,11 +1109,15 @@ class _FeedPager extends StatelessWidget {
     required this.padding,
     required this.cardRadius,
     required this.showIdentity,
+    required this.immersive,
+    required this.mediaTopInset,
     this.onLike,
     this.onOpenAuthor,
     this.commentsOpenIndex,
     this.videoBuilder,
     this.audioPlaybackFactory,
+    this.videoPlaybackFactory,
+    this.soundOn,
   });
 
   /// The widest a Reel stage ever gets. Past this the 9:16 frame stops being
@@ -971,6 +1136,8 @@ class _FeedPager extends StatelessWidget {
   final EdgeInsets padding;
   final double cardRadius;
   final bool showIdentity;
+  final bool immersive;
+  final double mediaTopInset;
 
   /// Null when there is no viewer to like as.
   final Future<void> Function(Reel reel)? onLike;
@@ -983,6 +1150,10 @@ class _FeedPager extends StatelessWidget {
   final int? commentsOpenIndex;
   final ReelVideoBuilder? videoBuilder;
   final ReelAudioPlaybackFactory? audioPlaybackFactory;
+  final ReelVideoPlaybackFactory? videoPlaybackFactory;
+
+  /// Shared by every page so turning sound on carries to the next Reel.
+  final ValueNotifier<bool>? soundOn;
 
   @override
   Widget build(BuildContext context) {
@@ -998,15 +1169,22 @@ class _FeedPager extends StatelessWidget {
           padding: padding,
           child: Center(
             child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: maxCardWidth),
+              constraints: BoxConstraints(
+                maxWidth: immersive ? double.infinity : maxCardWidth,
+              ),
               child: ReelCard(
                 key: ValueKey<String>(reel.id),
                 reel: reel,
                 service: service,
-                isActive: isVisible && index == selectedIndex,
+                isActive: index == selectedIndex,
+                isHostVisible: isVisible,
                 videoBuilder: videoBuilder,
                 audioPlaybackFactory: audioPlaybackFactory,
+                videoPlaybackFactory: videoPlaybackFactory,
+                soundOn: soundOn,
                 borderRadius: cardRadius,
+                fillViewport: immersive,
+                mediaTopInset: mediaTopInset,
                 showIdentity: showIdentity,
                 onOpenAuthor: onOpenAuthor,
                 onReport: service.isCurrentUserAuthor(reel)
@@ -1497,15 +1675,20 @@ class _WideContextPanel extends StatelessWidget {
                                       Row(
                                         mainAxisSize: MainAxisSize.min,
                                         children: <Widget>[
-                                          Text(
-                                            copy.text('Comments', 'Komentarze'),
-                                            style: Theme.of(context)
-                                                .textTheme
-                                                .titleMedium
-                                                ?.copyWith(
-                                                  color: palette.textPrimary,
-                                                  fontWeight: FontWeight.w800,
-                                                ),
+                                          Flexible(
+                                            child: Text(
+                                              copy.text(
+                                                'Comments',
+                                                'Komentarze',
+                                              ),
+                                              style: Theme.of(context)
+                                                  .textTheme
+                                                  .titleMedium
+                                                  ?.copyWith(
+                                                    color: palette.textPrimary,
+                                                    fontWeight: FontWeight.w800,
+                                                  ),
+                                            ),
                                           ),
                                           const SizedBox(width: 8),
                                           Text(

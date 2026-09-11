@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
+import 'package:yovoice/core/theme/app_spacing.dart';
 import 'package:yovoice/features/messages/data/models/conversation.dart';
 import 'package:yovoice/features/profile/data/services/profile_media_service.dart';
 import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
@@ -91,7 +92,9 @@ class RecentChats extends StatelessWidget {
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        final gap = style == RecentChatsStyle.standard ? 10.0 : 12.0;
+        // One pitch for both presentations — the 10 vs 12 split was a
+        // difference nobody could see and every reader had to check.
+        const gap = AppRhythm.item;
 
         Widget card(Conversation conversation, double width) => SizedBox(
           width: width,
@@ -714,12 +717,17 @@ class _RecentChatsMessage extends StatelessWidget {
         borderRadius: BorderRadius.circular(20),
         border: Border.all(color: palette.border),
       ),
-      child: Builder(
-        builder: (context) {
-          // At enlarged text the action label alone is wider than the card
-          // on a 320 px phone, and a Row cannot shrink a button: the note
-          // and its action stack instead. Same rule as the quick actions.
-          final stacked = MediaQuery.textScalerOf(context).scale(1) >= 1.6;
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          // At enlarged text — or simply in a language whose label is
+          // longer than English's — the action alone is wider than what a
+          // 320 px card leaves beside the note, and a Row cannot shrink a
+          // button: the note and its action stack instead. Same rule as the
+          // quick actions, which also stack on width as well as on scale.
+          // ("Znajdź znajomych" overflowed a 320 px Polish Home by 33 px.)
+          final stacked =
+              constraints.maxWidth < 300 ||
+              MediaQuery.textScalerOf(context).scale(1) >= 1.6;
           final line = Row(
             children: [
               Icon(icon, color: colors.primary),

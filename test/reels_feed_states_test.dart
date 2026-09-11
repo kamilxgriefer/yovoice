@@ -147,7 +147,9 @@ void main() {
       await tester.tap(find.text('Try again'));
       await tester.pumpAndSettle();
 
-      expect(calls, 2);
+      // The successful empty retry also checks the authorized includeSeen
+      // page before deciding between an empty library and caught-up content.
+      expect(calls, 3);
       // The retry succeeded into an empty catalogue: the state that replaces
       // the failure is the truth about the catalogue, not another failure.
       expect(find.byType(YoErrorState), findsNothing);

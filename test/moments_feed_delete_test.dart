@@ -272,9 +272,8 @@ void main() {
     }
   }
 
-  /// Discover, where the featured grid sits above the recent list. The
-  /// featured tiles carry their own overflow menu, so the author's exit
-  /// exists on BOTH presentations of the same Moment.
+  /// Discover presents each Moment once in the approved lazy list. Its
+  /// row menu retains the author's exit without a duplicate featured tile.
   Future<void> pumpDiscover(
     WidgetTester tester, {
     required MomentService moments,
@@ -305,9 +304,9 @@ void main() {
     }
   }
 
-  group('featured grid overflow delete', () {
-    testWidgets('the author deletes from a FEATURED tile menu, and the '
-        'Moment leaves the grid and the list together', (tester) async {
+  group('single Discover card overflow delete', () {
+    testWidgets('the author deletes the single Discover card: no duplicate '
+        'featured tile, and the row and document both go', (tester) async {
       final mine = _moment('mine-1', likes: 9, age: const Duration(hours: 1));
       final moments = await seeded([
         mine,
@@ -315,25 +314,22 @@ void main() {
       ]);
       await pumpDiscover(tester, moments: moments, pool: [mine]);
 
-      // The featured presentation exists and is not the row.
+      // One recording has one presentation; its only card retains Delete.
       expect(
         find.byKey(const ValueKey('moment-featured-mine-1')),
-        findsOneWidget,
+        findsNothing,
       );
       expect(find.byKey(const ValueKey('moment-row-mine-1')), findsOneWidget);
+      expect(find.text('caption mine-1'), findsOneWidget);
 
-      await tester.tap(
-        find.byKey(const ValueKey('moment-featured-menu-mine-1')),
-      );
+      await tester.tap(find.byKey(const ValueKey('moment-row-menu-mine-1')));
       await tester.pumpAndSettle();
       expect(
-        find.byKey(const ValueKey('moment-featured-report-mine-1')),
+        find.byKey(const ValueKey('moment-row-report-mine-1')),
         findsNothing,
         reason: 'reporting your own Moment is not a real intent',
       );
-      await tester.tap(
-        find.byKey(const ValueKey('moment-featured-delete-mine-1')),
-      );
+      await tester.tap(find.byKey(const ValueKey('moment-row-delete-mine-1')));
       await tester.pumpAndSettle();
 
       expect(find.text('Delete this moment?'), findsOneWidget);
@@ -345,9 +341,11 @@ void main() {
         findsNothing,
       );
       expect(find.byKey(const ValueKey('moment-row-mine-1')), findsNothing);
+      final snapshot = await db.collection('voiceMoments').doc('mine-1').get();
+      expect(snapshot.exists, isFalse);
     });
 
-    testWidgets('a FEATURED tile of somebody else offers Report and Details, '
+    testWidgets('a Discover card of somebody else offers Report and Details, '
         'never Delete', (tester) async {
       final theirs = _moment(
         'theirs',
@@ -358,38 +356,32 @@ void main() {
       final moments = await seeded(const []);
       await pumpDiscover(tester, moments: moments, pool: [theirs]);
 
-      await tester.tap(
-        find.byKey(const ValueKey('moment-featured-menu-theirs')),
-      );
+      await tester.tap(find.byKey(const ValueKey('moment-row-menu-theirs')));
       await tester.pumpAndSettle();
 
       expect(
-        find.byKey(const ValueKey('moment-featured-delete-theirs')),
+        find.byKey(const ValueKey('moment-row-delete-theirs')),
         findsNothing,
       );
       expect(
-        find.byKey(const ValueKey('moment-featured-report-theirs')),
+        find.byKey(const ValueKey('moment-row-report-theirs')),
         findsOneWidget,
       );
       expect(
-        find.byKey(const ValueKey('moment-featured-details-theirs')),
+        find.byKey(const ValueKey('moment-row-details-theirs')),
         findsOneWidget,
       );
     });
 
-    testWidgets('the featured tile Details item opens the same detail page '
+    testWidgets('the Discover card Details item opens the same detail page '
         'the row title does', (tester) async {
       final theirs = _moment('theirs', author: 'friend', authorName: 'Ola');
       final moments = await seeded(const []);
       await pumpDiscover(tester, moments: moments, pool: [theirs]);
 
-      await tester.tap(
-        find.byKey(const ValueKey('moment-featured-menu-theirs')),
-      );
+      await tester.tap(find.byKey(const ValueKey('moment-row-menu-theirs')));
       await tester.pumpAndSettle();
-      await tester.tap(
-        find.byKey(const ValueKey('moment-featured-details-theirs')),
-      );
+      await tester.tap(find.byKey(const ValueKey('moment-row-details-theirs')));
       await tester.pumpAndSettle();
 
       expect(find.byType(MomentDetailScreen), findsOneWidget);
@@ -480,7 +472,7 @@ void main() {
       ]);
       await pumpFollowing(tester, moments: moments);
 
-      await tester.tap(find.byKey(const ValueKey('moments-chain-me')));
+      await tester.tap(find.byKey(const ValueKey('moment-row-chain-mine-1')));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 400));
 
@@ -510,7 +502,7 @@ void main() {
         social: [_moment('theirs', author: 'friend', authorName: 'Ola')],
       );
 
-      await tester.tap(find.byKey(const ValueKey('moments-chain-friend')));
+      await tester.tap(find.byKey(const ValueKey('moment-row-chain-theirs')));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 400));
 
