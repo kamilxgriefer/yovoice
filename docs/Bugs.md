@@ -18,6 +18,300 @@ about things that are broken, risky, or need verification.
 > before believing the code.
 > [ADR-082](Decisions.md#adr-082-a-feature-is-not-shipped-until-a-user-can-reach-it--reachability-is-part-of-done-and-a-green-suite-cannot-prove-it).
 
+## FIXED IN SOURCE — two defects the first Simulator run found (2026-09-11)
+
+The approved Home/Voice/Reels redesign had widget tests and rendered captures
+but had never been run on a device frame. The first iOS Simulator run (iPhone
+17 Pro, iOS 26.5, fixture-fed `lib/dev/redesign_preview.dart`, Polish, dark)
+showed two defects no widget test had caught, both now fixed:
+
+- **A status broke inside a word.** Home's people rail rendered "Nie
+  przeszkadzać" as "Nie przesz / kadzać": Flutter breaks a word wider than its
+  line, and "przeszkadzać" is wider than the 62 px label column. The column is
+  now at least as wide as the status's longest word, measured in the rendered
+  style and text scale (`lib/shared/widgets/profile/people_status_ring.dart`).
+  `test/people_status_word_wrap_test.dart` covers four statuses at 1x/1.3x/2x
+  text with and without the availability caret, and was proven to fail against
+  the old width. The default test font draws every glyph as a square, so the
+  test loads Inter — measuring text in the test font would have hidden this.
+- **Scrolled content collided with the clock.** Home pads itself below the
+  status bar instead of sitting in a `SafeArea`, so scrolled section headings
+  slid under the system glyphs. `StatusBarScrim`
+  (`lib/shared/widgets/layout/status_bar_scrim.dart`) paints a non-interactive
+  band in the page background over exactly the top inset, and nothing when
+  there is no inset. `test/status_bar_scrim_test.dart` covers both themes,
+  hit-testing and the no-inset case.
+
+Both were verified on the Simulator after the fix. The 290 Home, rhythm,
+status-ring and localization cases pass. Lesson: the redesign's captures were
+generated at fixed logical widths with the test font, which cannot show either
+defect; a device frame with the shipped font and a real status bar can.
+
+## FIXED IN SOURCE — Home error announcement competition (2026-09-11)
+
+Several failing Home sections created competing polite live regions. A shared
+visible-surface announcement scope now batches assertive errors, deduplicates
+active episodes and withdraws recovered/unmounted errors. Seven author
+regressions and independent QA cover the corrected behavior; the frozen Home
+scope passed 326/326 focused tests and final read-only review. Not deployed;
+physical VoiceOver/TalkBack remains a separate acceptance gate.
+
+## FIXED IN SOURCE — Voice playback ownership and stale discovery (2026-09-11)
+
+Two clean pre-fix regressions reproduced a viewed event before successful
+playback and a stale A media-grant failure replacing B's current playback
+state. The single-player/generation redesign now passes independent 132/132
+focused tests and final review. Later adversarial tests also closed recovery
+intent adopting a new account epoch and a late read resurrecting a confirmed
+deletion. Opaque continuation cursors and failed-delete behavior are preserved.
+The subsequent complete Flutter run passes 3686/3686 after explicitly reviewed
+old-layout fixture adaptations and bounded localization. These are controlled
+local transport/widget results, not deployed or real-device playback proof.
+
+## FIXED IN SOURCE — immersive Reel overlay collisions and translated controls (2026-09-11)
+
+Independent geometry tests reproduced opposite-edge authored links colliding
+at 1440 px/200% text. Removing unused top spacing and refining short-height
+layout closes the tested collision without dropping controls. Hidden source
+replacement cannot start playback, and stale link/private-sheet callbacks
+retire on account, expiry and host changes. The frozen Reels/Share slice passed
+76/76, with all twenty independent captures and four white-footage captures
+inspected. This does not establish actual provider or native sharing behavior.
+
+The final feed audit also found newly visible English fallback controls and
+numeric time/footer strings being used as dynamic lookup keys. Twenty-four
+stable keys across 41 additional catalogs now cover that bounded surface;
+existing relative-time keys are reused. Independent review passed 748/748,
+preserved EN/PL timing/count behavior and inspected twelve locale renders.
+This is not a claim that every older application string is translated or has
+received qualified native-language review.
+
+## FIXED IN HELD SOURCE — Servers review findings (2026-09-11)
+
+- Concurrent participant revocations could allow a fresh token after the
+  first ACK while another RemoveParticipant still ran. A durable single-owner
+  attempt, no timeout reclaim/retry and a confirmed cutoff close the race.
+- Ended/revoked historical recipients still reported pending recovery after
+  an authorized generation end. Validated terminal reconciliation is now a
+  read-only completed result, without touching the new session.
+- The offline mapping report treated partial V1 markers as legacy and failed
+  to report a bound-room host/server-owner conflict. Both now block mapping
+  instead of proposing a normal legacy conversion.
+- Final-page deletion happened before revocation receipts were durable. If
+  DeleteRoom succeeded remotely but its ACK was lost, retrying removals against
+  the absent room could remain pending indefinitely. Durable receipt/checkpoint
+  commits now precede one generation-bound DeleteRoom; terminal retry is
+  delete-only. At most twenty actual SDK calls/four concurrent removals run per
+  invocation, and failed batches await all started requests before release.
+
+The earlier findings were reproduced independently before correction. Session
+QA **83/83** and mapping QA **33/33** passed on Node22. The terminal defect had
+two explicit RED cases; the expanded runtime/bridge union now passes **128/128**
+and a new independent terminal set **11/11** twice. Final independent review
+accepted the held adapter, and the complete fresh Functions run passes
+**1772/1772** with unchanged hashes. These
+are unexported runtime/offline tooling changes, not deployed fixes for current
+tester calls. Integration and physical/provider acceptance remain open; see
+[the checkpoint](Sessions/2026-09-11-servers-runtime-and-mapping.md).
+
+## FIXED IN SOURCE — integration/review regressions in the Claude round (2026-09-10)
+
+The completed integration and independent reviews found and closed:
+
+- GIF search could remain loading after a one-character edit; repeated
+  near-bottom events duplicated paging requests; slow catalog startup and
+  tab remounts could desynchronize the visible query/results. Controlled
+  futures now cover cancellation, paging ownership and query restoration.
+- GIF preview retry intercepted picker selection/report gestures. Received
+  bubbles retain retry, while picker cells own their selection/report input.
+- Narrow moderation detail unmounted its search field while retaining a
+  hidden active filter. The parent now owns the controller; detail/back/clear
+  tests preserve visible text and actual filtering together.
+- At 200% text, Chat lost primary identity, moderation hid the focused note,
+  Club media cards overflowed, and Podcast dropdowns exceeded their width.
+  Strict real-widget captures verified the corrected visible bounds rather
+  than draining rendering exceptions and declaring a green harness.
+- GIF block/report/audit and canonical DM tombstone/audit were not atomic;
+  Club removal retained a media snapshot. Current transactions preserve
+  authorization, exact DM schema, conditional previews and durable audit.
+- Initial Reel seen-rule hardening exceeded Firestore's document-call budget,
+  then mishandled absent restriction resources. The final resource-null
+  checks fit nine worst-case calls; real allow/deny and expired-mute cases
+  pass in the emulator.
+
+Final evidence: Flutter 3289/3289, Functions 1580/1580, Rules 564/564,
+strict visual gate 142/142 and independent reviews with no actionable
+findings. **Not deployed or native-device-certified**; external gates remain
+in [the integration record](Sessions/2026-09-10-claude-integration.md).
+
+## FIXED — a host's "Your active rooms" disappeared from Home as soon as the board had more than one room (found and fixed 2026-09-09)
+
+Both Homes render the owned-rooms section from a `StreamBuilder` placed
+AFTER a variable-length block ("Rooms for you", 0 or 2 children on mobile,
+0 or 2 on desktop). The child carried no key, so `SliverChildListDelegate`
+matched it by index: the moment the live board grew, the section shifted
+position, its element was rebuilt from scratch, and the new `StreamBuilder`
+re-subscribed to `watchOwnedRooms()` — a broadcast stream that had already
+emitted. It never emitted again, so `hasData` stayed false forever and the
+section silently rendered `SizedBox.shrink()`. No error, no empty state: a
+host simply could not see or enter their own rooms from Home.
+
+Reproduced with three live rooms, one of them hosted by the signed-in
+account: the stream logged `[Morning Coffee]` while the heading count was 0.
+Existing coverage missed it because the fixture seeded the owned room as
+NOT live, which leaves the board at one room and the section at a stable
+index.
+
+Fixed by keying the child (`ValueKey('home-owned-rooms')`) on both platforms
+so its element survives the shift. Pinned by "a host keeps 'Your active
+rooms' when the board also fills 'Rooms for you'" in
+`test/mobile_home_test.dart`.
+
+## FIXED — the empty recent-chats note overflowed a 320 px Polish Home by 33 px (found and fixed 2026-09-09)
+
+`_RecentChatsMessage` stacked its action under the note only at a text scale
+of 1.6 or more. At ordinary scale on a 320 px phone, "Znajdź znajomych" plus
+the icon and the note is wider than the 254 px the card leaves, and a `Row`
+cannot shrink a button — so the row overflowed. English fitted, which is why
+it survived; the failure was locale-shaped, not scale-shaped.
+
+Fixed by stacking on WIDTH as well as scale (`< 300 px` of card interior),
+which is the rule `HomeQuickActions` already applied. Caught by
+`test/home_rhythm_test.dart`, which pumps Home in Polish at 320.
+
+## FIXED — the Reel overlay footer swallowed every tap in the lower 40 % of the frame (found and fixed 2026-09-09)
+
+`_OverlayFooter` wrapped its content in a `DecoratedBox` carrying the footer
+scrim gradient. `RenderDecoratedBox.hitTestSelf` returns
+`BoxDecoration.hitTest(...)`, which is **true over the whole box** for a
+rectangular shape — so the scrim, not the empty space it looks like,
+absorbed pointers across its entire area. Anywhere below roughly the 60 %
+line of a Reel, a tap reached nothing at all: not the playback surface, not
+the author row, nothing. The comment above the footer in `reel_card.dart`
+asserted the opposite ("The empty area of this layer takes no hits"), and the
+earlier hit-geometry measurement missed it because it measured the rectangles
+of the *controls*, which really do cover only ~12 % of the card.
+
+Found while writing autoplay coverage: `tester.tap` on the playback surface
+reported "derived an Offset that would not hit test on the specified widget"
+and the hit result ended at the footer's `RenderDecoratedBox`.
+
+Fixed by making the scrim a sibling behind the controls —
+`Stack[Positioned.fill(IgnorePointer(DecoratedBox)), Padding(content)]` —
+which is the same shape `_LegibilityScrim` already used. `Padding` and
+`Row`/`Column` do not hit-test themselves, so empty footer space now falls
+through to the playback surface. Covered by
+`test/reel_autoplay_test.dart` ("a tap still pauses, and autoplay does not
+fight it"), which taps the centre of the card.
+
+## OPEN — `users/{uid}/muted` is dead surface, so a muted author still fills the feed (found 2026-09-09)
+
+`firestore.rules` declares `users/{uid}/muted/{mutedId}` as "the personal
+mute list: hides that user's content for THIS account only", owner
+read/write. It has **zero readers and zero writers** anywhere in `lib/` or
+`functions/`. Nothing writes a mute, nothing consults one.
+
+Found while wiring feed ranking (ADR-167), which deliberately did **not**
+consume it: building an ordering on a list nothing writes would be
+fabricating a feature. So a "muted" author's Reels appear in the ranked feed
+exactly as anyone else's would. Pre-existing, but the ranking work makes the
+omission more visible — either wire the mute list up end to end, or delete
+the rule rather than leave a permission granting access to a collection with
+no purpose.
+
+## FIXED IN SOURCE — Reel feed ranking lacked its client integration (2026-09-10)
+
+**Resolved in source 2026-09-10, not deployed.** The screen now wires own-feed
+scope, genuine decoder-progress watches, cursor recovery and caught-up/replay
+states. The text below records the original defect, not current behavior.
+Current proof and remaining external gates are in
+[the integration record](Sessions/2026-09-10-claude-integration.md).
+
+The server side of ADR-167 is on `main` and tested; none of it is deployed,
+and three client pieces it depends on do not exist:
+
+- **Nothing writes `users/{uid}/reelViews`.** The seen ledger the ranker
+  reads is empty, so seen suppression and the `W_SEEN` penalty are inert.
+  The write must fire on a *genuine watch* — the card is active, has been
+  active ≥2000 ms, and for video playback advanced ≥1500 ms. Marking on
+  mount would be actively harmful: with autoplay, one fast scroll would mark
+  the whole corpus seen and empty the viewer's own Discover feed for six
+  hours. That threshold is load-bearing and needs its own widget test.
+- **Nothing sends `scope: "own"`.** Your Reels is still a client-side filter
+  over the global feed, which is why one toggle can fire four serial
+  `listReelsV2` calls.
+- **`ReelService.fetchFeed` does not clear the cursor on `invalid-argument`.**
+  Without that, a client holding a cursor the backend rejects retries the
+  same rejected value indefinitely, because `_load(reset: _cursor == null)`
+  keeps the bad value. This protects a whole class of failure, not just this
+  change, and it is not optional polish given the codec is a one-way door.
+
+## FIXED IN SOURCE — Reel inline grants lacked backend and player integration (2026-09-10)
+
+**Resolved in source 2026-09-10, not deployed.** Both halves are connected.
+Inline minting is capped at four attempts per list call and 1500 ms total,
+then fresh audience authorization is checked. Failure omits the hint, not
+the item; the existing dedicated media callable remains the fallback.
+The following description is the original discovery context.
+
+ADR-168 shipped the client half of the inline media grant: `Reel` accepts an
+optional `mediaGrant`, `ReelService` seeds its cache from it, and the
+`mediaGrants` request flag is probed safely against a backend that does not
+know it. Nothing about it is user-visible yet, because two halves are
+missing.
+
+- **`listReelsV2` neither accepts `mediaGrants` nor returns `mediaGrant`.**
+  The allow-list at `functions/reels/service.js` is
+  `["cursor", "limit", "scope", "includeSeen"]`. Until it also allows
+  `mediaGrants`, every process pays one extra `listReelsV2` on its first feed
+  load (the probe) and no grant is ever inlined. The refusal costs no rate
+  budget — `requireExactInput` throws before `consumeReadLimit` — but it is
+  a wasted round trip. **When that key is added, the mint must also assert
+  the CALLER's own `users/{uid}` and `restrictions/{uid}`**: `visibleFeedItem`
+  checks the *author's* account and restriction and both block directions,
+  not the viewer's, while `authorizeMediaAccess` does check the viewer's. A
+  grant minted off the feed's checks alone would hand media to a viewer whose
+  own account is disabled or restricted. Those two documents belong in the
+  first batch `getAll`, and the minted grants must consume the `mediaAccess`
+  budget, not the `list` one.
+- **No screen calls the new seams.** `ReelService.cachedMediaUri` (a
+  synchronous first-frame read), `prefetchMediaUri` (one neighbour) and
+  `resolveMediaUri(forceRefresh: true)` (recovery when a player fails on an
+  expired signature) all exist and are tested, and none of them is called
+  from `reel_card.dart`, `reels_feed_screen.dart` or `moments_screen.dart`.
+  Until they are, an expired grant mid-session still ends at
+  "This Reel is unavailable right now." with a manual Retry, and the first
+  card still waits a frame on a `FutureBuilder` whose future is already
+  complete.
+
+## OPEN — feed weights are unvalidated guesses and the seed is deliberately unlogged (2026-09-09)
+
+Two consciously accepted gaps in ADR-167, recorded so they are not
+rediscovered later as surprises.
+
+The five ranking weights have no offline evaluation behind them — this
+project has no evaluation data and none can be produced honestly — so "is
+this ordering good" is unanswerable until it ships. Mitigation is
+containment, not confidence: one frozen `FEED_RANKING` object, emitted in
+the new per-request log line, flippable by environment variable.
+
+Separately, the per-request log deliberately omits the session seed, the uid
+and every Reel id, because a (viewer, reel) pair is viewing history. The
+cost is that "why did I see this Reel first" cannot be reconstructed after
+the fact for a support request. That is a privacy trade taken on purpose.
+
+Also unverified: `users/{uid}/reelViews` is new personal data, and no
+account-deletion or data-export fanout over user subcollections exists
+anywhere in `functions/` (`deleteAccount` appears only as a sanction name in
+tests). The 90-day TTL bounds exposure but does not satisfy an erasure
+request, and the TTL itself is a manual `gcloud` step that is easy to forget
+on deploy. Like `momentViews` and the other owner-writable subcollections,
+`reelViews` now requires an active account and an existing, currently viewable
+published Reel, bounds each row's shape/retention, and pins its `viewedAt`.
+It is no longer an arbitrary-ID storage namespace. There is still no
+per-account frequency quota on best-effort seen writes; privacy/export and
+erasure obligations remain a separate unresolved lifecycle concern.
+
 ## OPEN — a Reel comment can be reported by nobody, and its author cannot remove one (2026-09-07)
 
 This is the ADR-082 pattern again, in the direction the box above warns
@@ -102,6 +396,41 @@ Still true afterwards: **reacting** with an arbitrary emoji remains
 impossible. `ALLOWED_DIRECT_REACTIONS` in the messaging Functions and the
 pinned five-key map in `firestore.rules` still bound the reaction sets, so
 widening those is a deploy and a moderation question, not a client change.
+
+## The keyboard Done bar was never visible on any screen (2026-09-09; fixed in source)
+
+Reported from a phone against the Voice Moment caption: Return only added a
+line break, there was no visible way to stop typing, and Publish had gone
+under the keyboard. ADR-149 had shipped `YoKeyboardDoneBar` for this and
+this file recorded it as fixed. Two separate defects sat underneath.
+
+1. On Record Voice Moment (and the Reel composer) the bar was placed inside
+   `Scaffold.body`. `Scaffold` strips the bottom view inset from that slot,
+   so the bar's only render gate — `viewInsets.bottom > 0` — was never true
+   and it rendered nothing at all.
+2. On every other screen the bar was in `bottomNavigationBar`, and
+   **`Scaffold` does not lift that slot above the keyboard**: it shrinks the
+   body and leaves the bottom chrome pinned to the bottom of the window. On
+   390x844 with a 336 px keyboard the bar sat at y 796–844 — behind the
+   keyboard, on Create room, Create club, Club settings, Room settings and
+   Edit profile alike. The widget test and the tester preview both passed
+   because they only checked that the bar was in the tree.
+
+Fixed by ADR-169: `YoKeyboardSafeBottomBar` lifts bottom chrome by the
+keyboard inset (same surface: y 460–508), the Done bar can carry the
+screen's primary action, the caption's Return confirms, and the regression
+tests now measure rendered rectangles against the top of the keyboard rather
+than asserting presence in the tree.
+
+**Still to check:** the Reel composer's in-body bar (`reel_composer_screen`)
+starts rendering as a side effect of the view-inset fallback. That path was
+locked to another workstream during this change, so it has had no visual
+check — and the composer's own primary action has not been reviewed against
+this rule. Two chat composers (`chat_screen.dart:2696`,
+`club_chat_screen.dart:757`) still declare `onSubmitted` with no
+`textInputAction`, so those callbacks are dead code; both screens dock a
+send button, so they are not keyboard traps, but the callbacks should either
+get `TextInputAction.send` or be deleted.
 
 ## Voice Discover rendered every entry as a full-width slab (2026-09-07; fixed in source)
 
@@ -191,8 +520,10 @@ halves are live while the client halves are not. Status per item:
   the owner.
 - **Draggable text/link overlays on the Reel canvas** — fixed in source
   (ADR-149): drag and pinch in the Text tool; sliders remain.
-- **No "Done" over multiline keyboards** — fixed in source: shared
-  `YoKeyboardDoneBar` on every creation/settings form (ADR-149).
+- **No "Done" over multiline keyboards** — the shared `YoKeyboardDoneBar`
+  landed on every creation/settings form (ADR-149), but it was **not
+  actually visible on any of them**; see the entry below for what was wrong
+  and what fixed it (ADR-169).
 - **"Delete friend" / "delete chat" missing** — Remove friend is now on the
   Friends list row (options button and long-press); chat rows offer
   Unarchive for archived threads. A true per-user "delete chat" still needs

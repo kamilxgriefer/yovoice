@@ -4,6 +4,111 @@ What deploys automatically, what's manual, and exactly how — for both
 deployables described in
 [ADR-014](Decisions.md#adr-014-two-deployables-one-firebase-project).
 
+## September 11 working tree — release still held
+
+The approved Home/Voice/Reels redesign and held Servers work are uncommitted
+local changes over `692aa93f`, not a newly uploaded build. Current local
+`pubspec.yaml` still reads `2.0.0+23`. Existing September8 Android AAB and iOS
+archive artifacts are build23 and do **not** contain this new work. Historical
+store observations below must not be treated as current availability checks.
+
+The complete local gates now pass: Flutter **3686/3686**, Functions
+**1772/1772**, clean whole-tree analysis and a successful isolated release Web
+build. Bounded feed localization also passed independent **748/748** and
+twelve inspected renders. Fresh native release artifacts, real-device
+acceptance and full Servers product/integration gates remain open.
+See [Testing](TESTING.md) and the
+[current session](Sessions/2026-09-11-servers-runtime-and-mapping.md).
+The attempted screen-control preflight encountered a locked Mac; no fresh
+simulator, TestFlight or Play Console state was read. Signing materials being
+present locally is not proof of a current store session or successful upload.
+
+The local iOS compile preflight subsequently passed in an isolated input copy,
+without codesigning, archiving or exporting. Its unsigned Runner.app retains
+2.0.0 (23) only for compile verification; it is not the next tester build.
+The original archive/AAB, dependency locks and native files were verified
+unchanged. No store-ready iOS artifact or device acceptance is implied.
+
+An isolated Android release APK compilation also passed, retaining 2.0.0 (23)
+for preflight only. Its existing signature and three ABIs were verified;
+the old AAB was not replaced. The automatic Crashlytics mapping-upload task
+was excluded from this local invocation. No Play Console action or device
+installation occurred. The temporary encrypted signing-key copy was removed;
+the original remained unchanged. These two native compile checks do not
+allocate the next build number or satisfy tester availability.
+
+The local website source keeps all five Servers types explicitly labelled as
+concepts in development; its updates notice does not announce a new mobile
+build or production migration. The bounded availability-copy review found no
+new false-readiness claim. It is not a published website update or approval to
+activate the unfinished modules. Before real room recording launches, its
+privacy copy must reflect the actual recording/retention/audience behavior.
+
+The later offline inventory follow-up passed a fresh complete1817/1817 backend
+gate, with no changes to existing runtime, Rules, Flutter/native or exports.
+This does not resolve the missing full Servers product, device acceptance,
+manual Mac unlock or owner's unanswered partial-release decision. Release
+remains HOLD; see the current Testing follow-up for separate evidence.
+
+**Export safety:** `ios/ExportOptionsUpload.plist` has `destination=upload`.
+Do not use it for a compile-only check, and do not retry an ambiguous export
+without first checking whether Apple already received the build. A new build
+number must be resolved against both stores before producing the actual
+release artifacts. No upload, tester-group change or email occurred here.
+
+## 2.0.0 (24) tester build — 2026-09-12, in progress
+
+The approved Home / Voice Moments / immersive Reels redesign, released to the
+existing tester audiences only. The owner approved this build on 2026-09-11 as
+a separate tester release of the verified fixes **with Servers hidden**; that
+approval does not cover production data migration, Servers activation, a
+backend deploy or a public store release, and none of those was performed.
+
+Runtime frozen at `001626e7` (`main`), `pubspec.yaml` `2.0.0+24`; the follow-up
+`0b75827c` fixes test infrastructure only and does not change the artifacts.
+The Servers feature is unreachable in this build: nothing outside
+`lib/features/servers` imports it, so no route, link or menu opens it.
+
+| Gate | Result |
+|---|---|
+| `flutter analyze --no-pub` | clean, whole tree |
+| `flutter test --no-pub` | 3716 / 3716, no skips |
+| iOS Simulator (iPhone 17 Pro, iOS 26.5) | Home, Voice Moments and Reels inspected against the approved handoff; two defects found and fixed (see Bugs.md) |
+| GitHub Actions on `001626e7` | CodeQL success, browser smoke success, Hosting workflow **failed** — three suites had hardcoded a Homebrew-only font path; fixed in `0b75827c` |
+
+**Artifacts, identity read from the artifacts and not from the config:**
+
+- **AAB** `app.yovoice`, parsed by Play as **App bundle 24 (2.0.0)**, API 24+,
+  target SDK 36; 121,036,372 B; SHA-256
+  `acf780dc10cc1c3abd050449a28183e2d9d4a3b9262e590387d3d35a4fa4f5a4`;
+  `jarsigner -verify` reports `jar verified`. Staged for the owner at
+  `~/Desktop/yovoice-2.0.0-24.aab`; the build 23 bundle is preserved beside it.
+- **iOS** `Runner.xcarchive` reports `app.yovoice`,
+  `CFBundleShortVersionString 2.0.0`, `CFBundleVersion 24`.
+
+**Android — published to the existing internal cohort at ~00:35 CEST.** The AAB
+went up through the Play Console's native macOS file picker driven by System
+Events, the same route as builds 21–23. The track page then reported
+"Aktywne — Najnowsza wersja: 24 (2.0.0)". Release notes were supplied in
+`en-US` (436 characters) and `pl-PL` (425), both inside Play's 500-character
+limit. The tester list was not modified, nothing was promoted, no track was
+created.
+
+**iOS — uploaded, processing at the time of writing.** `flutter build ipa` with
+`ios/ExportOptionsUpload.plist` (`destination = upload`) again printed the
+generic "run altool to upload" hint and left `build/ios/ipa` empty. That is the
+documented trap, not a failure: App Store Connect lists **2.0.0 (24) as
+Processing, created Sep 12, 2026 12:26 AM**, so the upload landed and no retry
+was attempted. Group assignment for `YO Voice Beta Testers` and the tester
+notification wait for processing to finish. Because 2.0.0 was already reviewed
+for build 23, a later build of the same version string should not need a fresh
+Beta App Review.
+
+**Not done in this round:** no Hosting, Functions, Rules, index or Storage
+deploy; no production data migration; no Servers activation; no public release;
+no tester email yet (it is sent only after availability is confirmed on both
+platforms).
+
 ## Summary
 
 | What | How | Trigger |
@@ -1891,6 +1996,52 @@ for anything touching `collectionGroup()` queries.
 firebase deploy --only firestore:rules,firestore:indexes --project yovoice-ec54a
 ```
 
+### Pending, not yet deployed: Reel feed ranking (ADR-167)
+
+These artifacts must be coordinated. This round is in the uncommitted working
+tree, not a verified production deployment; see ADR-173 and the integration
+session for current evidence.
+
+1. **Index.** One new composite index in `firestore.indexes.json`:
+   `reels: status ASC, authorId ASC, sortKey DESC`. It backs
+   `listReelsV2({ scope: "own" })`. Deploy it and wait until it reports
+   `READY` before any client sends `scope` — an unbuilt index fails the query
+   with `FAILED_PRECONDITION` and the Your Reels tab errors rather than
+   degrading.
+2. **Rules.** `users/{uid}/reelViews/{reelId}` — the owner-written seen
+   ledger. Emulator-tested in `firestore-tests/rules.test.js`.
+3. **TTL, a manual step the deploy does not perform.** The
+   `reelViews.expiresAt` `fieldOverrides` entry declares intent in the repo;
+   the managed TTL policy still has to be enabled and then read back:
+
+   ```bash
+   gcloud firestore fields ttls update expiresAt \
+     --collection-group=reelViews --enable-ttl --project=yovoice-ec54a
+   gcloud firestore fields describe expiresAt \
+     --collection-group=reelViews --project=yovoice-ec54a
+   ```
+
+   Without it, per-user viewing history accumulates forever. That is an
+   unbounded per-user collection *and* a GDPR liability, so treat this step
+   as part of the rules deploy, not as follow-up work.
+4. **Functions before the app.** The integrated client now confirms an
+   `invalid-argument` refusal with an unflagged request before selecting its
+   old-server fallback. This protects mixed rollout order but does not waive
+   the production index/TTL/read-back gate. Inline grants are optional and
+   old unflagged/v1 responses retain their existing shape.
+
+**Rollback is the ordering only, never the cursor codec.** Set
+`REEL_FEED_RANKING_ENABLED=false` on the Reel callables and redeploy
+Functions: ordering returns to pure recency, no client release, no schema
+change, no index drop (`functions/test/reels_feed_ranking_disabled.test.js`
+proves this path). Do **not** revert the cursor decoder — once clients hold
+`f1.` cursors, an older decoder rejects them and a client whose cursor is
+non-null retries the same rejected value indefinitely.
+
+Weights are overridable at deploy time without a code change via
+`REEL_FEED_RANKING` (a JSON object; unknown or malformed keys fall back to
+the frozen defaults rather than failing the feed).
+
 ### Before editing `fieldOverrides`, read the trap
 
 A `fieldOverrides` entry **replaces** Firestore's automatic single-field
@@ -3684,3 +3835,78 @@ coverage loss from returning.
 Functions are deployed first. Restrictive Firestore/Storage Rules remain held
 until the private-media IAM, signed-read, migration, zero-token inventory and
 compatible-client adoption gates in [SECURITY.md](SECURITY.md) are complete.
+
+## GIF rollout — everything the maintainer has to do (ADR-172)
+
+**Current state: `GIF_PROVIDER=none`.** `getGifCatalog` answers
+`{available:false, reason:"not_configured"}`, `searchGifs` and `reportGifAsset`
+are not registered at all, and every client renders the GIF tab disabled and
+labelled. Nothing below is urgent and nothing below is automatic.
+
+**Claude does not and must not perform step 1** — it is a developer-account
+signup with terms acceptance.
+
+1. **Create a GIPHY developer account** at `developers.giphy.com`, create an
+   app, copy the **API key**. Start on the beta key; request production
+   approval when volume justifies it — the design runs unchanged on either.
+   While you are there, read the current **rate limits** off the portal and
+   record them in [DEPENDENCIES.md](DEPENDENCIES.md); nothing in this repo
+   knows them, and `DEFAULT_HOURLY_PROVIDER_BUDGET` in
+   `functions/media/gif/rate_limit.js` is a conservative placeholder until you
+   do. Also check whether an analytics/pingback obligation applies to raw-API
+   integrations — if it does, it must be issued server-side from the proxy,
+   never from the device.
+2. **Store the key:**
+   `firebase functions:secrets:set GIPHY_API_KEY --project yovoice-ec54a`
+3. **Prove it works BEFORE enabling anything:**
+   `GIPHY_API_KEY=... node functions/scripts/gif_provider_smoke.js`
+   This is the gate on the whole design. It checks three things no test can
+   check without a key: that the key works, that `rating=g` is honoured on live
+   results, and — the critical one — that the pinned CDN URL template
+   `https://media.giphy.com/media/<id>/200h.gif` actually serves a 200 image.
+   Every send path derives that URL from the template
+   (`GIF_CDN_TEMPLATES` in `functions/media/gif/gif_ref.js`); if the template
+   does not hold, sends would be refused in production and nothing else would
+   have caught it. **If the script fails, do not proceed.**
+4. **Flip the provider in an explicitly authorized configuration change:**
+   `GIF_PROVIDER=none` to `GIF_PROVIDER=giphy`. This adds two exports
+   (`searchGifs`, `reportGifAsset`). Verify the enabled export/secret-binding
+   map as well as the existing provider-off cold-start gate; that gate clears
+   `GIF_PROVIDER` deliberately and must not be misread as enabled evidence.
+5. **Deploy `firestore.rules`, then the complete affected Functions set.**
+   Rules keep catalog/authority collections server-only and permit the new
+   author-removal tombstone. Admin SDK writes bypass Rules; the order protects
+   clients, not the Functions writer. Include all three message writers and
+   moderation paths, not only the catalog exports.
+6. **Create the Firestore TTL policy** on `gifQueryCache.expiresAt`
+   (Firestore console → TTL → Create policy). One manual step, not a scheduled
+   function. The read path already treats an expired document as a miss, so
+   correctness never depends on this — it only stops the collection growing.
+   **Do not** create a TTL policy on `gifAssets`: that collection is the
+   send-time authority and the moderation record, and expiring it would break
+   sending.
+7. **Publish a client containing ADR-173 integration after the gates pass.**
+   Those clients discover the enabled catalog on panel open. Old clients that
+   only contain the standalone picker do not gain a send path from config.
+
+**The send integration exists in source now (2026-09-10).** Direct, Room and
+Club composers use `GifMessageController` and existing server callables;
+clients submit `{provider,id}` only. Before activation, test actual send,
+receive, reply, retry, removal and blocked-asset refusal between two test
+accounts on both mobile platforms. Do not enter credentials into chat or
+commit them. A fake-provider or emulator pass is not a live-provider pass.
+
+**Kill switch, no deploy.** Set `appConfig/gif.enabled = false` (Admin SDK or
+the console — clients cannot read or write it). The feature goes
+disabled-and-labelled on the next catalog fetch, within 30 seconds of any
+instance's config cache expiring. Deeper rollback: `GIF_PROVIDER=none` and
+redeploy functions. Already-sent GIFs keep rendering either way, because they
+hotlink.
+
+**Watch after enabling.** `gif.search` log lines carry `cacheHit`,
+`providerLatencyMs`, `resultCount`, `degraded` and `deniedTerm`; `gif.provider_error`
+carries `status`. **Alert on `provider_unauthorized`** — that means the key was
+revoked and the feature is degrading silently. Watch the cache hit ratio
+(target >80%; below that a beta key is not viable), provider calls per hour
+against the portal's quota, the `resource-exhausted` rate, and the document
+count of `gifAssets`, which grows monotonically by design.
