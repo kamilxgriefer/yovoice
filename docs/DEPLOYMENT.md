@@ -104,10 +104,32 @@ notification wait for processing to finish. Because 2.0.0 was already reviewed
 for build 23, a later build of the same version string should not need a fresh
 Beta App Review.
 
+**Availability, confirmed 2026-09-12 ~00:45 CEST.** iOS build 24 moved to
+**Testing** for both `YO Voice Internal Testers` and `YO Voice Beta Testers`
+after the "What to Test" sheet was submitted with automatic tester notification
+left on; Apple required no separate Beta App Review for this later build of the
+already-reviewed 2.0.0 string. The strongest evidence is a real tester: App
+Store Connect's All Testers page shows a non-owner external tester with
+**"Installed 2.0.0 (24)"** dated Sep 12 on an iPhone 17 Pro. On Android the
+internal track reports **"Aktywne — Najnowsza wersja: 24 (2.0.0)"** with the
+15-account tester list unchanged. Neither platform was verified from a tester
+account of ours; Google Play does not notify internal testers by itself.
+
+**Tester email — composed, NOT sent.** The recipient set is the documented
+union of the Play internal list (15) and the TestFlight testers (10), 21 unique
+addresses, owner first as the delivery test. The message is short English with
+no links, from the Workspace mailbox `kamil@yovoice.app` as the alias
+`YoVoice <hello@yovoice.app>`, pre-filled through Gmail's `view=cm` parameters
+in Chrome "Profile 3". Sending could not be completed by automation: Cmd+Return
+twice and three Send-button position clicks all left the compose window open,
+and this session cannot see inside that window (Chrome exposes no web content
+to System Events, `screencapture` has no Screen Recording permission, and the
+browser extension cannot reach Profile 3). Further blind clicking in the
+owner's mailbox was refused deliberately. The composed message is waiting in
+Profile 3 for the owner to press Send; the 20-address wave has not started.
+
 **Not done in this round:** no Hosting, Functions, Rules, index or Storage
-deploy; no production data migration; no Servers activation; no public release;
-no tester email yet (it is sent only after availability is confirmed on both
-platforms).
+deploy; no production data migration; no Servers activation; no public release.
 
 ## Summary
 
