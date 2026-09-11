@@ -36,7 +36,7 @@ dependencies:
   # operating-system picker and is uploaded only after rights attestation.
   video_player: ^2.14.0
   file_selector: ^1.1.0
-  livekit_client: ^2.7.0
+  livekit_client: ^2.11.0
   permission_handler: ^12.0.1
   share_plus: ^12.0.2
   audioplayers: ^6.8.1
