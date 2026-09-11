@@ -10615,9 +10615,9 @@ no boolean is rejected as `invalid-worker-result` rather than assumed finished,
 and a job another lease holder settles mid-invocation is reported `busy`, not
 `completed`.
 
-**Reasoning.** A registration that is off by default keeps the export map, the
-cold-start module graph and installed clients exactly as they are, and turns
-enabling into one reviewed, reversible `.env` change plus a deploy — the shape
+**Reasoning.** A registration that is off by default keeps the export map and
+installed clients exactly as they are, and turns enabling into one reviewed,
+reversible `.env` change plus a deploy — the shape
 that already works for the Stripe and GIF exports (ADR-172/173). Reusing factory
 method names as export names makes a binding typo a deploy-time failure. A
 read-only dispatcher preserves the workers' own lease and idempotency semantics
@@ -10646,3 +10646,14 @@ exists. A gate value delivered through `functions/.env.<projectId>`,
 environment, so `test/cold_start_module_graph.test.js` now guards those files
 directly. Rollback: remove the line (or set `disabled`), redeploy expecting the
 deletion prompt, and delete the 18 names explicitly when they must actually go.
+
+A measured correction to an earlier draft of this entry: the gate keeps the
+*registration module and the V1 runtime* off the cold start, not every
+`functions/servers` module. Three of them load on every cold start by design,
+because legacy consumers import them directly — `servers/rtc_binding.js` from
+`livekit/sessions.js`, `staff/voice_enforcement.js`,
+`achievements/livekit_http.js` and `rooms/liveness_sweeper.js`,
+`servers/contract.js` from `rtc_binding.js`, and `servers/capacity.js` from
+`clubs/quota.js`. They are pure and small, the export map is unchanged, and the
+cold-start test pins export names, the warm set and the SDK counts rather than
+the absence of those three.
