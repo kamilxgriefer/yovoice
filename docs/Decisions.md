@@ -9924,3 +9924,725 @@ that throws before it returns a task, which the streamed path can do
 when the picked file is gone or resized between selection and upload.
 No Storage rules test exercises `putFile`, so metadata equivalence
 between the two transports is verified by source reading only.
+
+## ADR-167: The Reel feed ranks server-side, page-locally, with the session seed inside the cursor
+
+**Context.** `listReelsV2` returned pure `sortKey DESC` recency. With a
+small corpus that makes every open of the Reels tab identical, and it
+ignores every signal the backend already has. Two constraints bounded the
+answer hard. `firestore.rules` denies all client read and write on
+`reels/{reelId}` and both its subcollections, so ranking has exactly one
+possible home — inside the callable. And `ReelFeedPage.fromV2Wire`
+(`lib/features/reels/data/models/reel.dart`) validates the response key set
+exactly in both directions, so one extra top-level field would throw
+`FormatException` on every installed 2.0.0 build.
+
+**Decision.** Rank inside `listReelsV2` only, as a page-local reordering of
+the already-authorized result array, over five terms that use signals that
+genuinely exist: `publishedAt`, `likeCount`, `commentCount`, the real
+`users/{viewer}/following/{author}` and `users/{viewer}/friends/{author}`
+edges, and a new `users/{uid}/reelViews/{reelId}` seen ledger modelled on
+`momentViews`. A 64-bit session seed is minted per open and carried inside
+the cursor, whose value grammar widens to
+`f1.<mode>.<16 hex seed>.<sortKey>` while the response shape does not change
+by a byte. `scope: "own"` moves Your Reels from a client-side filter to a
+server query and is deliberately **not** ranked — strict reverse
+chronological, no jitter, no seen penalty, and none of the ranking reads.
+`listReels` (v1) stays byte-frozen on pure recency and the bare `sortKey`
+cursor.
+
+**Reasoning.** The page is the rank unit because the cursor sits on the last
+*consumed* entry: reordering the emitted array cannot produce a duplicate
+(nothing before the cursor is refetched) or a skip (nothing after it was
+consumed). Every alternative — a carry list, over-scan-and-park, global
+`rankScore` — puts items behind the cursor that were never emitted, which is
+precisely a skip. Ranking snapshots are kept in a `rankingSnapshots` map
+separate from `authorizationSnapshots`, and `visibleFeedItem` is untouched,
+so a reviewer can see by construction that a ranking read cannot reach an
+authorization decision. The cursor carries no authority and is therefore not
+signed: a forged position is already possible today and is harmless because
+authorization is recomputed per request from fresh documents, and a forged
+seed only reorders the forger's own page.
+
+**Consequences.** Ranking is page-local and cannot promote a Reel across a
+page boundary; that degrades to "shuffled recency" at roughly >500 published
+Reels or when p50 sessions page past three pages, which is the trigger for a
+materialised `rankScore` (added the conditional-`hasOwnProperty` way
+`likeCount`/`commentCount` were, or every already-published Reel throws
+`data-loss` against the exact-key allowlist). The five weights are guesses —
+there is no offline evaluation data in this project and none can be
+manufactured honestly — so they live in one frozen `FEED_RANKING` object,
+are emitted in a new per-request log line, and are flippable with
+`REEL_FEED_RANKING_ENABLED=false` without a client release. Discover now
+costs +1 document per candidate and +2 per distinct author; Your Reels and
+v1 pay none of it. `scope: "own"` needs a new composite index
+(`reels: status ASC, authorId ASC, sortKey DESC`) that must finish building
+before any client sends it, and `reelViews` needs a manual TTL policy on
+`expiresAt`. The cursor decoder is a one-way door: once clients hold `f1.`
+cursors, reverting the decoder makes them invalid, so a rollback reverts the
+ordering only. `users/{uid}/muted` is still dead surface with no reader or
+writer anywhere, so a muted author's Reels still appear — recorded in
+`docs/Bugs.md` rather than wired up here, because consulting a list nothing
+writes would be inventing a feature.
+
+**Divergence from the design, stated deliberately.** The design specified
+`request.resource.data.expiresAt == request.time + duration.value(90,'d')`
+for `reelViews`. That rule is unsatisfiable: a client has no expression for
+"server time plus 90 days" — `serverTimestamp()` is a sentinel with no
+arithmetic. The shipped rule pins `viewedAt == request.time` exactly and
+bounds `expiresAt` to a two-day window around 90 days, which tolerates real
+device clock skew while still making ten-year or already-past retention
+impossible. `expiresAt` is a retention bound only; the ranker reads
+`viewedAt`.
+
+## ADR-168: The Reel media grant rides the feed page, and the client probes the flag instead of trusting deploy order
+
+**Context.** Opening the Reels tab cost two serial callables before a single
+byte of video could be requested: `listReelsV2`, then
+`getReelMediaAccessV2` for the first card, each on a Cloud Run service that
+could be cold. The client made the second call only after the card had
+mounted, so the two round trips were strictly sequential with a widget build
+between them. Three client-side facts made this worse than the count
+suggests. `Reel.fromV2Wire` rejects **any** key it was not told about, so
+the backend cannot simply start returning a new field. `ReelService`'s grant
+cache is a `static` map that was cleared only on an identity change or a
+delete, so it grew for the lifetime of the process. And its reuse margin was
+a flat 15 s against a 90 s signature — a fortieth of the window if the
+signature is ever lengthened to cover a five-minute Reel.
+
+**Decision.** `listReelsV2` gains one optional **input** key, `mediaGrants:
+true`, and one optional **output** key per item, `mediaGrant: {url,
+expiresAtMillis, generation}`. This entry records the client half, which is
+what shipped here:
+
+- `Reel` accepts `mediaGrant` as an optional key and parses it
+  **tolerantly** — anything it cannot fully validate reads as `null`;
+- `ReelService.fetchFeed` seeds its uid-scoped signed-URL cache from those
+  grants, and warms the leading item of the *first* page when none arrived;
+- the request flag is **probed, not assumed**: an `invalid-argument` refusal
+  is verified by replaying the same request unflagged, and only a successful
+  replay latches the flag off for the process;
+- `cachedMediaUri` answers synchronously so a surface can start a decoder in
+  its first build; `prefetchMediaUri` warms one neighbour without throwing;
+  `resolveMediaUri(forceRefresh: true)` is the mid-session recovery path;
+- the cache is bounded to 64 entries, expired entries are dropped on write,
+  and the reuse margin is a tenth of each grant's own lifetime clamped to
+  15–60 s.
+
+**Reasoning.** The inline grant does not widen access. It is minted by the
+backend for the same authenticated principal that `getReelMediaAccessV2`
+would have handed it to milliseconds later, for a Reel the feed already
+decided that viewer may see, still V4-signed, still bound to one immutable
+object generation, still clamped to the content's own expiry — and the
+client binds it to the current uid and the existing `_grantEpoch`, so a
+sign-out or an account switch drops it exactly like a minted grant. What
+*would* widen access is the server minting one without re-checking the
+**caller's own** account and restriction (`visibleFeedItem` checks the
+author's, not the viewer's); that check is the backend half's obligation and
+is called out in `docs/Bugs.md`.
+
+Tolerant parsing is a deliberate inversion of this file's usual strictness:
+a grant is a latency optimisation, never an authorization input, so a
+malformed one must fall back to the dedicated callable rather than throw
+`FormatException` and blank a feed page. Probing the flag exists for the
+same reason — `requireExactInput` answers an unknown key with
+`invalid-argument`, and no deploy order can be enforced on an installed
+build, so the client verifies rather than assumes. The probe runs only while
+the answer is unknown; once a flagged call has succeeded, `invalid-argument`
+means something else (a rejected cursor) and is reported immediately, so a
+request that always fails cannot cost two round trips forever.
+
+**Consequences.** Measured against a fake transport
+(`tmp/perfprobe/reels_grant_roundtrip_probe.dart`, one tab open plus four
+swipes): with the backend half in place, callables drop from 6 to 4 and the
+first card's URL needs one round trip instead of two. Until the backend half
+ships, the client pays exactly one extra `listReelsV2` per process — and
+zero extra rate budget, because `requireExactInput` throws before
+`consumeReadLimit`. A longer grant TTL (the backend half) lengthens how long
+a leaked URL stays usable; it does not change who can obtain one, and the
+`Math.min(..., availability.expiresAtMs)` clamp must stay. Cache eviction
+can drop a grant that is still in use; the cost is a re-mint, never a wrong
+URL. The presentation call sites — seeding the first frame from the page,
+prefetching one neighbour, and re-resolving with `forceRefresh` when a
+player fails — are not wired yet and are recorded in `docs/Bugs.md`.
+
+## ADR-169: One keyboard contract for every text field, and bottom chrome that is actually above the keyboard
+
+**Context.** The maintainer reported the Voice Moment caption from a phone
+(2026-09-09): pressing Return only added a line break, there was no visible
+way to stop typing, and Publish had disappeared under the keyboard.
+"Writing should be straightforward, not a puzzle about how to hide the
+keyboard." [ADR-149](#adr-149-direct-manipulation-on-the-reel-canvas-a-shared-keyboard-done-bar-list-level-remove-friend--unarchive-and-a-shorter-mute-busy-window)
+had already shipped `YoKeyboardDoneBar` for exactly this, and Bugs.md
+recorded it as fixed. Two things were wrong with that.
+
+First, on Record Voice Moment (and the Reel composer) the bar sat inside
+`Scaffold.body`, whose bottom view inset `Scaffold` strips
+(`removeBottomInset: resizeToAvoidBottomInset`), so its only render gate —
+`MediaQuery.viewInsetsOf(context).bottom > 0` — was never true and the
+widget returned `SizedBox.shrink()`. Second, and worse, the placement that
+looked correct was not: **`Scaffold` does not lift `bottomNavigationBar`
+above the keyboard.** `_ScaffoldLayout` positions that slot at
+`size.height - height` and only shrinks the body, so every screen that
+"had" a Done bar — Create room, Create club, Club settings, Room settings,
+Edit profile — was drawing it behind the keyboard. Measured on 390x844 with
+a 336 px keyboard: y 796–844, fully covered. Widget tests and the tester
+preview passed because they only asserted the bar was in the tree.
+
+**Decision.**
+- One rule, written down in [UI.md](UI.md#finishing-a-text-field-while-the-keyboard-is-up):
+  every field offers a visible finish — R1 the return key completes it
+  (single-line fields and short captions declare `next`/`done`/`search`/
+  `send`), R2 the primary action is docked above the keyboard (adjacent send
+  button, app-bar action, pinned footer), or R3 the shared Done bar for
+  genuinely long-form fields. Multiline prose fields keep Return as a line
+  break and rely on R2/R3.
+- New `YoKeyboardSafeBottomBar` (same file as the Done bar) pads whatever a
+  screen puts in `bottomNavigationBar` by the keyboard inset. Every Done-bar
+  screen now uses it; the Scaffold then shrinks the body by the chrome's
+  full height, so nothing is hidden or overlapped. Same surface: y 460–508.
+- `YoKeyboardDoneBar` gains an optional `action` — the screen's primary
+  action docked opposite Done — and reads the larger of the inherited inset
+  and the `FlutterView`'s own, so a body placement still renders.
+- Record Voice Moment takes its layout decisions *outside* the Scaffold,
+  where the keyboard inset is real: the review footer stays pinned while the
+  stage keeps 460 px, and below that Publish rides on the keyboard bar
+  instead of falling into the scroll. The caption becomes
+  `keyboardType: text` + `textInputAction: done` (Return confirms), grows
+  2→5 lines instead of a fixed 3, and re-scrolls itself into view on any
+  metrics change. Its header title stops scaling at 1.6, where every layout
+  decision on that screen has already fallen back to one scroll path.
+- The broadcast settings sheet's Update button moves out of the scroll into
+  a pinned footer under the Done bar; Club settings gains an app-bar SAVE
+  next to its in-form button, matching Room settings and Edit profile.
+
+**Reasoning.** The alternative — putting every bar inside each screen's
+body Column — is equally correct but a much larger diff across seven
+screens, each with its own body shape. A padding wrapper is one concept, one
+import, and it leaves each screen's structure alone. The Done bar keeps the
+`FlutterView` fallback anyway, because the Reel composer still uses a body
+placement and body placements remain legitimate. Making Return confirm the
+caption trades typed line breaks for a way out; a 140-character caption is a
+label, not prose, and the maintainer asked for exactly that trade. Prose
+fields (bio, descriptions, guidelines, moderator notes) were deliberately
+left on newline.
+
+**Consequences.** Bottom chrome is now correct on every screen that has a
+Done bar, including screens whose bug nobody had noticed yet. The cost is a
+rule that is easy to break again — nothing in the framework stops a future
+`bottomNavigationBar:` from being written without the wrapper — so the
+regression proof is geometric: `test/keyboard_confirm_affordance_test.dart`
+measures the rendered rectangle of the bar and of each screen's primary
+action against the top of the keyboard, per screen, and
+`test/yo_keyboard_done_bar_test.dart` pins the body placement with a real
+view inset. Captions can no longer contain typed line breaks. The Reel
+composer's dead in-body bar starts rendering as a side effect of the
+`FlutterView` fallback; that path was locked during this change and is
+recorded in Bugs.md as needing its own visual check.
+
+## ADR-170: A Reel plays itself, silently, and one sound switch serves the whole feed
+
+**Context.** Nothing in the app ever started a Reel. `_desiredPlaying`
+became true in exactly one place — `ReelPlaybackCoordinator.toggle()` —
+reachable only from the full-canvas tap and the sound chip, and
+`setActive(true)` explicitly refused to resume ("Activating a neighbouring
+page never resumes it implicitly"). Opening the Reels tab therefore showed a
+still frame with a play glyph and waited. Measured before changing anything:
+opening the tab is `listReelsV2` → `getReelMediaAccessV2` → decoder, all
+serial, and *then* a paused video.
+
+**Decision.**
+
+- Autoplay is an opt-in constructor flag on the coordinator, and it is
+  **video-only**. A photo Reel's backing track is its content, not ambience;
+  starting one without being asked would play a stranger's chosen song over a
+  static picture. `ReelPlaybackCoordinator.draft` (the composer preview)
+  hard-codes it off.
+- Autoplay is armed in two places, both required: `attachVideo` (the earliest
+  moment `canToggle` can be true, and the only one that catches the first
+  card) and `setActive(true)` (every scroll to a new page).
+- **The first autoplay is silent.** Volume is held at zero on *both* engines
+  until the viewer asks for sound. A voice-first product that opens loud in a
+  quiet room does real harm to the person holding the phone, and on web an
+  ungestured unmuted start is refused by the browser outright rather than
+  merely being rude. Muting is a viewing preference, never a property of the
+  Reel: the published mix is restored on unmute without a restart.
+- The way back to sound is a dedicated switch on the frame — top trailing
+  corner, 48 px plate, present on every video Reel at every width. It is not
+  the canvas tap, because the canvas tap must keep meaning pause.
+- The sound preference belongs to the **feed**, not the card: one
+  `ValueNotifier<bool>` in `ReelsFeedScreen` is handed to every `ReelCard`, so
+  it is turned on once and the next Reel is already audible.
+- A hand-pause outranks autoplay (`_viewerPaused`), and is cleared when the
+  page is left — scrolling back to a Reel is a fresh visit and plays.
+- `setAutoplaySuspended(bool)` is the single lever for "something is in front
+  of this Reel": an open thread, any pushed route, the app in the background.
+  `ReelCard` derives it from `widget.commentsOpen`, `ModalRoute.of(context)
+  ?.isCurrent` and the lifecycle state. Route currency covers the comment
+  sheet, the profile preview, the report sheet and the delete dialog with one
+  signal instead of a callback per surface.
+- The Reel's `VideoPlayerController` is created with
+  `VideoPlayerOptions(mixWithOthers: true)`. AVAudioSession is process-global
+  on iOS and this codebase keeps it under LiveKit/recording control
+  (`lib/core/audio/ui_sound_service.dart`), so a Reel that starts by itself
+  must never be able to interrupt a live room or a recording.
+
+**Reasoning.** The alternative to muted-first is asking on first open, which
+is a modal in front of the content the person came for, or starting loud,
+which is the harm. The alternative to a dedicated switch is making the first
+canvas tap unmute — that silently redefines tap-to-pause, which the product
+already teaches. Suspension is expressed as one boolean rather than as
+`setActive(false)` because deactivation resets the timeline to the trim
+start: closing a comment thread should return you to the frame you left, not
+to the beginning.
+
+**Consequences.** `ReelVideoPlaybackFactory` joins `ReelAudioPlaybackFactory`
+as a host-supplied engine seam, which is what lets `test/reel_autoplay_test.dart`
+prove the timing policy without a platform decoder. Autoplay makes the
+per-Reel grant latency the first thing a viewer feels, so the grant work in
+ADR-166/ADR-168 is now load-bearing rather than merely nice. `ReelService`'s
+grant cache is `static`, so any future test that needs an *outstanding* or
+*failing* grant must use a Reel id no earlier test in the process has
+resolved.
+
+## ADR-171: Home's vertical rhythm is six named steps, and a page child's layout box is its ink box
+
+**Context.** Home's section gaps alternated — 40, 37.5, 20, 30.9 px between
+content and the next heading; 16, 21.5, 10, 21.5 between a heading and its
+content — while the source read as constants. Nothing in the code was wrong
+on its own line. The cause was that a widget's LAYOUT box was not its INK
+box, so three things injected air nobody reading the file could add up:
+`MobileSectionHeader` was 76 px tall with a "View all" and 53 px without
+(the same widget, two rhythms, because a 25 px title was centred in a 48 px
+`TextButton` row); the availability chip's 44 px hit band added 8 px under a
+28 px pill; and rail tiles carried 4 px of their own padding on top of the
+pitch the rail declared. Home also reserved a 128 px bottom inset for a dock
+that `MainShell` already keeps outside the body viewport, leaving 132 px of
+dead screen, and the people rail painted to x = 391.9 on a 390 px phone.
+
+**Decision.**
+
+1. `AppRhythm` (`lib/core/theme/app_spacing.dart`) names six vertical steps
+   — 4 / 8 / 12 / 16 / 24 / 32 — and what each separates. A vertical gap on
+   Home that is not one of the six is a bug. Only the horizontal gutter
+   varies with width.
+2. **A page child's layout box equals its ink box.** Spacing lives between
+   boxes, never inside a hit target. Where a control must reserve a 44 px
+   target around smaller ink, it SUBTRACTS that air from the gap it
+   declares.
+3. One `HomeSectionHeader` serves mobile Home, desktop Home and the people
+   strip. Its own render object lays it out as `24 + titleInk + 16`, places
+   the title at exactly y = 24, and centres the trailing action on the
+   title's ink — so the action reaches into the declared gaps instead of
+   growing the box. The box is therefore identical with and without the
+   button, at any text scale, in any locale, and whether or not the title
+   wraps. Whether the button rides the title's line or sits under it is a
+   WIDTH test made during layout — it stacks only when it would cost more
+   than a third of the row — not a text-scale heuristic: a phone at 200 %
+   stacks as it always has, while a slate or a desktop at the same scale
+   keeps the action beside its heading instead of a full row away from it.
+4. Horizontal rails are full-bleed: the gutter is the scroll view's own
+   padding, so the first tile's ink starts at the margin and the rest scroll
+   under the frame's edge, clipped, instead of painting past the layout.
+5. A section title is a promise about content. With no followed Moments
+   there is no "From people you follow" heading; its Record affordance
+   becomes a labelled full-width action beside the other real routes,
+   keeping the same key, focus node, semantics and callback. On both form
+   factors that means *under* "Create room" and "Friends": desktop composes
+   the whole overview inside `DesktopMomentsStrip.contentBuilder` so the one
+   resolved feed decides where the affordance goes, rather than leaving an
+   unlabelled control at the top of the social column aligned with a heading
+   it has no relation to.
+6. The Home header is an identity plate (greeting → name) plus ONE control
+   row of three controls — availability, notifications, profile — on a
+   single centre line. The row's height comes from the 46 px discs, so the
+   header does not change height when `watchCurrentProfile` emits.
+7. The "change availability" caret on the own people tile rides the tile's
+   status line, in the grammar `AvailabilityChip` already ships, instead of
+   an 18 px grey disc overlapping the status ring.
+
+**Reasoning.** A shared constant does not fix alternation if the widget that
+consumes it has a variable amount of internal air; the header had to own the
+geometry, which is why it is a render object rather than a `Padding`. A
+pure-widget arrangement cannot both centre a 44 px target on a 22 px title
+and keep the box at the title's height — an overflowing child is not
+hit-testable in Flutter, so the target would stop working. Measuring the
+title's real height during layout is also what makes the invariant hold when
+a heading wraps, which a text-scale heuristic cannot do. The caret moved off
+the avatar because it was grey on grey over the one element that carries the
+tile's meaning; it is a `Row` sibling rather than an inline `WidgetSpan`
+because an ellipsised line drops a span (the affordance would vanish exactly
+when the label is longest) and an inline widget's global transform is
+unresolvable at enlarged text.
+
+**Consequences.** The gutter is no longer the mobile `ListView`'s padding —
+every non-rail child is wrapped in `_Gutter`, and a child that forgets it
+goes edge to edge. `test/home_rhythm_test.dart` therefore measures EVERY
+sliver child's ink, not a sample, and asserts against the named steps rather
+than literals. `HomeRoomBanner` no longer carries its own bottom margin, so
+every caller spaces stacked banners with `AppRhythm.item`. Mobile Home now
+caps its column at the 880 px list measure above 600 px and lays "Rooms for
+you" out two-up there, so a tablet is not a stretched phone. Two latent
+defects surfaced while measuring and were fixed with it: the owned-rooms
+`StreamBuilder` lost its data whenever the board grew (an unkeyed list child
+that shifts index is rebuilt and re-subscribes to an already-emitted
+broadcast stream), and the empty recent-chats note overflowed a 320 px
+Polish Home by 33 px because it only stacked on text scale, never on width.
+Two more were caught by reading the rendered frames rather than the tests:
+desktop's Record pill sat at the top of the social column with no heading
+above it (fixed by (5)), and at 200 % text on a 320 px phone the pill's
+microphone was stranded ~100 px from its own wrapped label, because the
+label's box filled the pill and the words were centred inside *that* box —
+the label is start-aligned, so on one line the row still centres the whole
+lockup and on two the icon stays attached to the words.
+
+Numbers hold on real frames, not only in the widget tree:
+`test/.screenshots/home_rhythm_capture.dart` renders both platforms in both
+themes, both states, and — because a tall single-frame canvas cannot show
+the end of a scroll — one 390x844 phone with the dock, scrolled to
+`maxScrollExtent`, which measures 32 px between the last card and both the
+end of the scroll and the dock's top.
+
+## ADR-172: GIFs are a server-proxied, hotlinked, `g`-only surface, and the composer grows one panel with two tabs
+
+*(The cross-system design recommended ADR-167 for this. That number was taken
+by the Reel feed ranking entry, and 171 was then taken by the Home vertical
+rhythm entry, so it is 172. Anything citing "ADR-167, GIFs" or "ADR-171, GIFs"
+means this.)*
+
+**Context.** The composer had an emoji picker and nothing else. Adding GIFs
+means adding a third party to a consumer social product with a real moderation
+queue and plausible minor users, and means a search box whose results we do not
+author. Three constraints shaped every decision below, and two of them were
+discovered by reading the code rather than the brief:
+
+1. **GIPHY's terms require hotlinking and forbid rehosting.** We may proxy
+   metadata and search; we may not mirror the bytes. "Do not rehost" is a
+   licensing constraint first and a cost decision second.
+2. **Every message create in this project is already `allow create: if false`.**
+   Room, club, direct and global message writes all go through a Cloud Function.
+   The design assumed room and club messages were client writes and specified a
+   URL pin in `firestore.rules` to stop `gif.url` becoming an
+   arbitrary-remote-image tracking beacon. Against the actual rules that pin
+   would guard a rule that already denies everything.
+3. **Those three send paths live in `functions/messaging/**` and
+   `lib/features/messages/data/**`**, which are owned by concurrent work. So the
+   picker's *send* half could not land in this change.
+
+**Decision.**
+
+- **Provider: GIPHY, behind a one-file adapter** (`functions/media/gif/provider.js`).
+  Chosen for its editorially assigned per-asset `g` rating with a decade of
+  operational history, its non-English search relevance (the app is EN/PL), and
+  a counterparty whose API is a product line rather than a free-tier growth
+  channel. Swapping it is one adapter file plus one `GIF_PROVIDER` value.
+- **The key never reaches the client.** `defineSecret("GIPHY_API_KEY")` is bound
+  only to `searchGifs` and `reportGifAsset`. `getGifCatalog` binds no secret, so
+  it registers and answers honestly before the key exists — which is what lets a
+  client render a disabled, labelled tab instead of guessing.
+- **`rating=g` is pinned in the adapter**, is not a parameter of any callable,
+  and results are re-filtered on our side. Four layers: the pinned parameter, the
+  response re-filter, a short static query denylist checked before the provider
+  is called, and a local `gifAssets.blocked` list.
+- **The URL pin moved from rules to the server.** `resolveGifAsset()` in
+  `functions/media/gif/index.js` derives the CDN URL from one template, refuses a
+  blocked or non-`g` asset, and refuses an id outside a grammar that excludes
+  `/`, `?`, `#`, `@`, `%`, backslash, `.` and `..`. That is strictly stronger than
+  a rules `get()` and costs no per-request document-access budget — which also
+  retires the "measure the access-call ceiling on the emulator" risk the design
+  carried. `firestore.rules` gains only deny-all blocks for the new
+  server-owned collections, plus a comment saying where the pin lives and that it
+  must move into the message rule if creation is ever reopened to clients.
+- **The cache is shared across all accounts.** `gifQueryCache/{sha256(...)}`,
+  keyed by a digest rather than readable text so document ids are not a public
+  list of what people search for. TTL 10 min trending / 6 h search, read path
+  treats expiry as a miss so correctness never depends on the sweep, cleanup is a
+  native Firestore TTL policy. An hourly `gifProviderBudget` degrades to cached
+  trending with `degraded: true` rather than erroring.
+- **One `YoComposerPanel` with Emoji and GIF tabs** replaces the three
+  `bool _emojiPickerOpen` flags with one `YoComposerPanelTab?`. Exactly one body
+  is mounted — a `switch`, not an `IndexedStack` — so two stacked panels are
+  *unrepresentable* rather than merely avoided. `YoEmojiPicker` is unmodified and
+  becomes the Emoji tab's body through its existing `height` override.
+- **A GIF report blames nobody.** `targetType: 'gifAsset'`, `reportedUserId: ''`,
+  with the title and the pinned CDN URL snapshotted into the report because staff
+  cannot read `gifAssets` — the same reasoning as the `reelComment` snapshot.
+  Staff act through the existing `moderateReport`; there is no new staff endpoint.
+- **The Moderation Center had to learn the type, or the queue was write-only.**
+  The server filed `gifAsset` reports and `moderateReport` already blocked the
+  asset on `contentRemoved`, but `ReportTargetType` had no such value: the report
+  parsed with a null target, so it rendered untyped, showed "author identity was
+  not retained" for what is a deliberate absence, and — because `canRemove` tests
+  the target type — offered no block button at all. A moderator could see the
+  complaint and do nothing about it while the endpoint that acts on it sat there
+  working. So the enum gains `gifAsset`, `ModerationReport` parses the
+  `targetMediaUrl` the server stamps on, and the panel renders the picture (via
+  `YoGifView`, honouring the moderator's own auto-load preference — their IP goes
+  to GIPHY too), says plainly that no account is at fault, and offers **Block**
+  rather than **Remove**, because we never hosted the asset and cannot delete it.
+  Its confirmation states the limit out loud: already-sent GIFs stay visible.
+  `ReportService.report` now refuses `gifAsset` and `reelComment` up front rather
+  than letting a doomed client write return `permission-denied`, which that
+  method reads — correctly for the types it does handle — as "already reported".
+- **A GIF earns no chat-message achievement.** `functions/achievements/sources.js`
+  matches room and club messages with `hasExactKeys`, so an additive `gif` key
+  drops credit automatically. Consistent with the DM adapter (which already
+  requires `type === "text"`), removes a spam-farming vector, and needs no change
+  there. Pinned by a test so nobody "fixes" it.
+- **Shipped without a send path.** All three composers get the panel and a GIF
+  tab; the tab renders disabled and labelled "GIFs are coming here soon" because
+  no send path exists in this workflow's boundary. Enabling a surface is two
+  arguments (`gifService`, `onGifSelected`) once its callable accepts a GIF.
+
+**Reasoning.** The alternative to a server proxy is putting the API key in the
+client, where it is extractable and unrevocable per install, and letting the
+provider see every searcher's IP with a query attached. The alternative to
+hotlinking is a terms violation plus an unbounded Storage bill for third-party
+content. The alternative to a shared cache is a per-user one, which is exactly
+what would blow a beta key's quota. The alternative to a disabled tab is either
+hiding the feature (so nobody can tell it is coming) or shipping a picker that
+cannot send (which is the faked feature CLAUDE.md forbids); the labelled tab is
+the convention Settings, Awards and Creator Studio already use.
+
+**Consequences.**
+
+- **Every rendered GIF shows the viewer's IP and User-Agent to GIPHY, including
+  the recipient**, who never chose to interact with GIPHY. That is unavoidable
+  under a hotlink requirement. `AppPreferences.gifAutoLoadEnabled` (Settings →
+  "Load GIFs automatically") is the only control, and off means *no provider
+  contact at all* — not a smaller request. This must be in the app's privacy copy
+  and on the website before launch, not after.
+- **Blocking is not retroactive.** It stops future search results and future
+  sends; bubbles already sent keep hotlinking. The remedy for one message stays
+  `adminDeleteMessage` / `moderateClubMessage`. A capped `gifBlocklist/current`
+  document already makes a block effective on cached search pages within a
+  minute; extending it to render time is a deliberate later phase.
+- **`gifAssets` is never expired**, because it is the send-time authority. It
+  grows at roughly one document per unique asset surfaced. A future cleanup task
+  must replace that authority before deleting anything.
+- **`rating=g` depends on GIPHY's per-asset rating being right.** A mis-rated
+  asset passes all four layers on first appearance; the denylist and the
+  report-driven blocklist are reactive. There is no fully preventive version.
+- Rollback is `appConfig/gif.enabled = false` — instant, no deploy. Deeper:
+  `GIF_PROVIDER=none` and redeploy functions.
+
+## ADR-173: Complete the feature boundaries before treating standalone workflows as a release
+
+**Context (2026-09-10).** The inherited Claude round contained individually
+tested components, but the GIF picker had no send path, Reel inline grants
+had no server/player integration, and ranking had no genuine-watch/own-feed
+client. Screenshots and independent review also exposed gaps that passing
+unit tests did not reveal. The work is on `2.0.0+23` above `692aa93f`, not a
+newly published artifact.
+
+**Decision.**
+
+- Complete additive contracts through existing callables. GIF sends carry
+  `{provider,id}` only, resolve server-owned authority in the transaction,
+  retain text fallbacks for older readers, and preserve existing idempotency,
+  membership/block/rate checks. Received media obeys the auto-load preference.
+  In-session retry uses the same request ID; this is not a process-persistent
+  GIF outbox. Provider-off is an honest disabled state, not fake content.
+- Atomically block GIF authority, resolve the report and record the protected
+  audit. Atomic canonical GIF DM removal also maintains the latest preview
+  while preserving exact message schema; CDN bytes are not Storage uploads.
+  Current active profiles, distinct report attempt/day limits, digest report
+  IDs and bounded evidence protect the new safety route.
+- `listReelsV2(mediaGrants:true)` can return up to four primary-media hints
+  under a 1500 ms total budget, with fresh post-signing authorization. Expiry
+  is at most 90 seconds and no later than content expiry. Failed/late hints
+  are omitted without losing the page. Old unflagged/v1 response shapes stay
+  unchanged; the dedicated grant callable remains the fallback.
+- Connect the uid-scoped grant cache to active/neighbor cards and refresh.
+  Wire server-side own feed with confirmed old-server fallback and distinct
+  empty/caught-up/replay states. Genuine playback progress, not mounting or
+  prefetching, writes the best-effort seen preference. Rules require a real
+  viewable published Reel and current audience/account state, with bounded
+  retention and a nine-read worst case. Legacy no-sidecar Reels remain valid.
+- Preserve query/controller state across GIF tab and moderation detail
+  remounts, serialize paging, and discard stale completions without leaving
+  perpetual loading. Expand localized copy in the same round, not later.
+- Verify actual rendered layouts at narrow/medium/wide widths and 200% text.
+  Scope keyboard overflow fixes to flexible content, visible editors and
+  reachable actions; never certify a harness that silently drains errors.
+
+**Reasoning.** An individually correct component is not an accessible product
+path. Server-authoritative additive integration preserves older installs and
+privacy, while bounded optional optimizations improve the critical path
+without making feed availability depend on Storage timing. Independent
+adversarial/code/visual reviews found and closed concrete regressions before
+any deployment.
+
+**Consequences.** The current tree has integrated source and local evidence,
+not production delivery. Provider signup/secret, live smoke, enabled export
+map, own-feed index readiness, TTL policies and mixed-device acceptance are
+separate gates. GIFs remain hotlinked and blocking is nonretroactive; account
+erasure/export and ranking effectiveness are not silently claimed solved.
+Native audio-session/keyboard behavior and all-language human linguistic
+review cannot be inferred from widget/emulator tests. Current evidence is in
+[the integration session](Sessions/2026-09-10-claude-integration.md).
+
+## ADR-174: Uncertain participant revocation is not a reclaimable live-session lease
+
+**Context (2026-09-11).** Independent review of the new held Servers runtime
+reproduced two concurrent `RemoveParticipant` calls for the same identity.
+The first ACK allowed a new token while the second provider operation could
+still remove that newly admitted participant. Epoch validation after a remote
+operation cannot undo its effect. A later test also found historical cleanup
+remaining pending after whole-generation recovery completed.
+
+**Decision.** Persist one exact attempt owner plus epoch/binding before the
+provider call. This new adapter sends one attempt with SDK failover disabled.
+Timeout or deadline expiry leaves the result uncertain and admission closed;
+it is not permission to reclaim the attempt in the live generation. Only its
+owned positive ACK releases the reconnect cutoff. Authorized whole-generation
+end can recover availability under a new RTC room name; it does not grant
+ordinary members new end-session authority. After complete binding and receipt
+validation, canonical `ended + revoked` is a completed read-only no-op even if
+the retained historical attempt is uncertain.
+
+**Reasoning.** A local timeout says the caller stopped waiting, not that the
+provider stopped executing. Bounded duplication must not trade a delayed
+request for an undetectable fresh-session disconnect.
+
+**Consequences.** The uncertain case favors safety over immediate re-entry;
+the UI/worker integration must expose truthful recovery rather than spin or
+retry indefinitely. Independent Node22 emulator QA passed 83/83 and final
+review approved only the held factory slice. Actual provider/device behavior,
+global RTC consumers and access-change integration remain separate gates.
+This decision does not change legacy control or authorize activation/deploy.
+
+### Terminal-cleanup clarification — 2026-09-11
+
+Two further local reproductions showed why whole-generation recovery needs a
+separate durable phase: DeleteRoom ran while the final recipient was still
+`revoking`; losing its remote ACK then retried RemoveParticipant against an
+absent room. The new internal end worker commits every scanned page's positive
+cutoff receipts before writing an exact, generation-bound `terminalDelete`
+checkpoint. It revalidates that checkpoint and its owned lease before a single
+direct SDK DeleteRoom, then acknowledges completion in a separate transaction.
+
+Missing readiness resumes the validated scan; malformed readiness, a dangling
+or unsettled cursor, a changed revision/end operation or a nonempty final tail
+fails closed. The fingerprint binds scope, not cryptographic authority or
+arbitrary database-corruption detection. Server-only writers and the durable
+page history remain part of the trust boundary.
+
+This V1 adapter has no legacy roster fanout, no automatic retry and disabled
+SDK failover. Each invocation dispatches at most twenty SDK requests and four
+concurrent removals, awaiting all started requests even after one fails. Twenty
+removals defer DeleteRoom to a subsequent delete-only pass. A lost DeleteRoom
+ACK or final database commit retries only the same immutable old RTC name;
+terminal NOT_FOUND is idempotent, but participant NOT_FOUND is still not proof
+of token cutoff. This does not relax ADR-174's live-identity admission barrier.
+
+The two RED reproductions now pass. The complete runtime/bridge union passed
+128/128, and the new independent real-emulator/controlled-transport set passed
+11/11 twice with no adaptations or skips. Those focused gates do not establish
+live provider behavior, active exports, a complete Servers product or release
+readiness. The factories remain held and unexported.
+
+## ADR-175: Offline inventory page claims cannot authorize migration
+
+**Status:** Accepted for local implementation; no collector, apply or activation.
+
+**Context (2026-09-11).** The existing root/room mapper intentionally lacks
+related-record coverage. Before implementing a collector, operator-supplied
+pages need a deterministic integrity contract. Treating omitted pages as empty,
+hashing only counts, or calling a consistent supplied snapshot "complete" would
+hide omissions rather than make migration safer.
+
+**Decision.** Add a pure, unexported-from-production
+`inspectLegacyMigrationInventory` helper. Its version-one contract covers only
+Club `members/invites/channels` and room `roomMembers/participants/messages`.
+It compares supplied expected/observed root update timestamps, validates one
+claimed read time and contiguous cursor chains, and retains nanosecond precision.
+Missing or unfinished scope evidence and changed root versions remain unresolved;
+contradictory or malformed evidence receives one non-leaking validation error.
+No supplied role, content, URL or effective permission is accepted.
+
+The aggregate exposes counts and reason codes, not record IDs. Its digest binds
+all canonical supplied pages, IDs, versions and cursors, but is neither collector
+authentication nor anonymization. Root identity remains visible for local review.
+`fullInventoryComplete:false`, `applyReady:false` and `writeCount:0` are permanent
+in this helper. Input bounds are 1000 pages, 500 records per page and 10000
+records overall; supported record/cursor IDs are an explicitly narrower subset
+of Firestore IDs. Exact UTF-8 ordering avoids Unicode normalization and UTF-16
+ordering aliases. Unsupported inputs reject instead of being silently skipped.
+
+**Options and reasoning.** Extending the existing mapper to claim collection
+coverage would blur independent evidence stages. A production collector/apply
+tool would require snapshot, privacy, quota and rollback work not established by
+this parser. A separate pure helper is useful now without changing active paths,
+database schemas, Rules, existing mapping behavior or pending release gates.
+
+**Consequences.** Structurally consistent claims are not verified collection
+completeness, current freshness, semantic membership correctness or idle-state
+proof. Nested histories, media generations, mirrors, bans, follows, allocations,
+concurrent collection, transaction-time revalidation, resumable apply and rollback
+remain separate work. Independent QA and final read-only review passed the
+bounded 78-case inventory/mapping gate; see [Testing](TESTING.md). No production
+data, mutation authority, SDK connection, deployment or release is implied.
+
+## ADR-176: Servers V1 registers behind one exact environment gate, dispatches its outbox read-only, and still has no activation writer
+
+**Context (2026-09-11/12).** The reviewed Servers V1 factories — creation,
+channels, memberships, sessions, convergence, convergence runtime, session
+control — were held and unexported: `functions/index.js` imported none of them,
+so nothing could exercise them as endpoints, and the `serverControlOutbox` jobs
+they write had no durable consumer. The release check named "registration and
+durable dispatch" as a gate. At the same time every deployed client depends on
+today's export map, one `index.js` cold start serves every function, and
+[Servers.md](Servers.md) forbids activating a held server through anything but a
+reviewed path.
+
+**Decision.** `YOVOICE_SERVERS_V1` in `functions/.env` is the only switch.
+Exactly `enabled` makes `index.js` require `functions/servers/registration.js`,
+which registers the sixteen V1 callables of the "Callable contract" plus the
+`serverControlOutbox/{operationId}` created-trigger and its every-five-minutes
+retry schedule. Absent and `disabled` register nothing and load no registration
+module. Any other value — including a whitespace or case variant such as
+`enabled ` — throws at require time, so it fails both deploy discovery and the
+cold start; the helper deliberately does not trim. Callables run in
+`europe-west1`, scale to zero, keep only `{uid, token}` from Auth and pass the
+exact payload to the same-named factory method; factory `HttpsError`s reach the
+client unchanged and anything else becomes `internal` with the message withheld.
+The dispatcher never writes: it reads a job, routes it by `kind` to the reviewed
+worker, and stops on lease, backoff, completion, busy or stalled state,
+`recoveryRequired`, `contentCleanupPending`, page and wall-clock budgets. It
+completes a job only on an explicit boolean "no work remains"; a result carrying
+no boolean is rejected as `invalid-worker-result` rather than assumed finished,
+and a job another lease holder settles mid-invocation is reported `busy`, not
+`completed`.
+
+**Reasoning.** A registration that is off by default keeps the export map, the
+cold-start module graph and installed clients exactly as they are, and turns
+enabling into one reviewed, reversible `.env` change plus a deploy — the shape
+that already works for the Stripe and GIF exports (ADR-172/173). Reusing factory
+method names as export names makes a binding typo a deploy-time failure. A
+read-only dispatcher preserves the workers' own lease and idempotency semantics
+([ADR-174](#adr-174-uncertain-participant-revocation-is-not-a-reclaimable-live-session-lease))
+instead of adding a second state machine, and refusing to infer completion from a
+missing field keeps "never complete uncertain work" true at the integration layer.
+Activation is deliberately absent: it is the moment held anchors become
+discoverable and joinable by legacy queries and RTC consumers, so it needs
+staff-only authority, the global RTC adapters, Rules and indexes, and its own
+adversarial review before a single write path exists.
+
+**Consequences.** With the gate enabled, 18 endpoints deploy, all callables with
+`minInstances: 0`, so the warm set and its billing are unchanged. Absent and
+`disabled` are byte-for-byte the same cold start. **The gate is a deploy-discovery
+switch, not a runtime kill switch.** Removing the variable and redeploying does
+not delete the deployed functions: `firebase deploy --only functions` only
+*prompts* to delete what disappeared, so deletion needs that prompt confirmed,
+`--force`, or `firebase functions:delete` per name — and a non-interactive deploy
+aborts at the prompt, failing the whole functions release instead of rolling back.
+Until they are deleted the functions stay callable and their Eventarc trigger and
+Cloud Scheduler job keep firing, so anything needing an immediate stop needs a
+different mechanism. Registration activates nothing: every server created through
+these endpoints stays `serverActivationState: held`, because no activation writer
+exists. A gate value delivered through `functions/.env.<projectId>`,
+`.env.<alias>` or `.env.local` is invisible to the cold-start test's child
+environment, so `test/cold_start_module_graph.test.js` now guards those files
+directly. Rollback: remove the line (or set `disabled`), redeploy expecting the
+deletion prompt, and delete the 18 names explicitly when they must actually go.
