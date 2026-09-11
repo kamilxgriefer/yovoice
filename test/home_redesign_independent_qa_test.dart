@@ -32,6 +32,7 @@ import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
 import 'package:yovoice/features/staff/data/staff_capabilities.dart';
 import 'package:yovoice/shared/widgets/backgrounds/yo_page_background.dart';
+import 'support/material_icons_font.dart';
 
 const _capture = bool.fromEnvironment('QA_CAPTURE_HOME');
 const _uid = 'independent-home-viewer';
@@ -463,13 +464,7 @@ void main() {
     await (FontLoader(
       'Inter',
     )..addFont(rootBundle.load('assets/fonts/InterVariable.ttf'))).load();
-    final icons = File(
-      '/opt/homebrew/share/flutter/bin/cache/artifacts/material_fonts/MaterialIcons-Regular.otf',
-    );
-    await (FontLoader(
-          'MaterialIcons',
-        )..addFont(Future.value(ByteData.sublistView(icons.readAsBytesSync()))))
-        .load();
+    await loadMaterialIconsFont();
   });
   setUp(ProfileService.resetCurrentProfileCache);
   tearDown(ProfileService.resetCurrentProfileCache);

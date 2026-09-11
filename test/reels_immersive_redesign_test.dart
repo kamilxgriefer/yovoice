@@ -21,6 +21,7 @@ import 'package:yovoice/features/reels/data/services/reel_service.dart';
 import 'package:yovoice/features/reels/presentation/screens/reels_feed_screen.dart';
 import 'package:yovoice/features/reels/presentation/widgets/reel_card.dart';
 import 'package:yovoice/features/reels/presentation/widgets/reel_playback_coordinator.dart';
+import 'support/material_icons_font.dart';
 
 const _capture = bool.fromEnvironment('YO_CAPTURE_IMMERSIVE_REELS');
 const _caption =
@@ -245,16 +246,7 @@ void main() {
     await (FontLoader(
       'Inter',
     )..addFont(rootBundle.load('assets/fonts/InterVariable.ttf'))).load();
-    await (FontLoader('MaterialIcons')..addFont(
-          Future.value(
-            ByteData.sublistView(
-              File(
-                '/opt/homebrew/share/flutter/bin/cache/artifacts/material_fonts/MaterialIcons-Regular.otf',
-              ).readAsBytesSync(),
-            ),
-          ),
-        ))
-        .load();
+    await loadMaterialIconsFont();
   });
 
   testWidgets(

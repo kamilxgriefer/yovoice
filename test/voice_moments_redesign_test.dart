@@ -21,6 +21,7 @@ import 'package:yovoice/features/moments/data/services/moment_service.dart';
 import 'package:yovoice/features/moments/data/services/moment_views_service.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moments_feed_view.dart';
 import 'package:yovoice/shared/identity/public_identity_repository.dart';
+import 'support/material_icons_font.dart';
 
 final _now = DateTime.utc(2026, 9, 11, 14);
 const _capture = bool.fromEnvironment('YO_CAPTURE_VOICE_REDESIGN');
@@ -388,13 +389,7 @@ void main() {
     await (FontLoader(
       'Inter',
     )..addFont(rootBundle.load('assets/fonts/InterVariable.ttf'))).load();
-    final icons = File(
-      '/opt/homebrew/share/flutter/bin/cache/artifacts/material_fonts/MaterialIcons-Regular.otf',
-    );
-    await (FontLoader(
-          'MaterialIcons',
-        )..addFont(Future.value(ByteData.sublistView(icons.readAsBytesSync()))))
-        .load();
+    await loadMaterialIconsFont();
   });
   late PublicIdentityRepository previousIdentity;
 
