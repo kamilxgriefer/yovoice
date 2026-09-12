@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_motion.dart';
+import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_spacing.dart';
 import 'package:yovoice/shared/widgets/overlays/immersive_overlay_atoms.dart';
 
@@ -223,6 +224,8 @@ class ImmersiveSegmentedSwitch extends StatelessWidget {
     required this.selectedIndex,
     required this.onSelected,
     this.groupLabel,
+    this.onCanvas = false,
+    this.segmentMinWidth = 72,
     super.key,
   }) : assert(segments.length > 0, 'A segmented switch needs a segment.');
 
@@ -233,6 +236,22 @@ class ImmersiveSegmentedSwitch extends StatelessWidget {
   /// Names the whole control to assistive technology, so the two levels are
   /// distinguishable without sight.
   final String? groupLabel;
+
+  /// True when the switch sits on the page CANVAS instead of over media.
+  ///
+  /// Over media the control is theme-invariant (dark plate, white thumb,
+  /// shadowed copy) because the luminance beneath it is unknown. On the
+  /// canvas that luminance is the palette's own, so the same geometry is
+  /// restated in palette roles: `surfaceMuted` track with a hairline,
+  /// `colorScheme.primary` thumb, white on the thumb and `textSecondary`
+  /// beside it, no shadows. Default false keeps every existing host
+  /// byte-for-byte.
+  final bool onCanvas;
+
+  /// The narrowest a segment may be. Over media 72 keeps the two-item
+  /// switch inside a 320 px phone; the canvas host asks for the board's
+  /// wider segments.
+  final double segmentMinWidth;
 
   /// Track 48, thumb inset 4, so the thumb is 40 and every segment's tap
   /// target is the full 48 -- the inset belongs to the thumb, not the button.
@@ -248,6 +267,10 @@ class ImmersiveSegmentedSwitch extends StatelessWidget {
     final clamped = selectedIndex.clamp(0, count - 1);
     final thumbX = count == 1 ? 0.0 : -1 + 2 * clamped / (count - 1);
     final label = groupLabel;
+    final palette = onCanvas ? context.appPalette : null;
+    final thumbColor = onCanvas
+        ? Theme.of(context).colorScheme.primary
+        : Colors.white;
 
     Widget body = Stack(
       children: <Widget>[
@@ -262,10 +285,12 @@ class ImmersiveSegmentedSwitch extends StatelessWidget {
                 child: FractionallySizedBox(
                   widthFactor: 1 / count,
                   heightFactor: 1,
-                  child: const DecoratedBox(
+                  child: DecoratedBox(
                     decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.all(Radius.circular(999)),
+                      color: thumbColor,
+                      borderRadius: const BorderRadius.all(
+                        Radius.circular(999),
+                      ),
                     ),
                   ),
                 ),
@@ -292,6 +317,8 @@ class ImmersiveSegmentedSwitch extends StatelessWidget {
                   key: segments[index].key,
                   option: segments[index],
                   selected: index == clamped,
+                  onCanvas: onCanvas,
+                  minWidth: segmentMinWidth,
                   onTap: () => onSelected(index),
                 ),
               ),
@@ -311,10 +338,16 @@ class ImmersiveSegmentedSwitch extends StatelessWidget {
       child: ConstrainedBox(
         constraints: const BoxConstraints(minHeight: _trackHeight),
         child: DecoratedBox(
-          decoration: const BoxDecoration(
-            color: overlayPlateColor,
-            borderRadius: BorderRadius.all(Radius.circular(999)),
-          ),
+          decoration: palette == null
+              ? const BoxDecoration(
+                  color: overlayPlateColor,
+                  borderRadius: BorderRadius.all(Radius.circular(999)),
+                )
+              : BoxDecoration(
+                  color: palette.surfaceMuted,
+                  border: Border.all(color: palette.border),
+                  borderRadius: const BorderRadius.all(Radius.circular(999)),
+                ),
           child: IntrinsicWidth(child: body),
         ),
       ),
@@ -342,6 +375,14 @@ mixin _KeepsSelectionVisible<T extends StatefulWidget> on State<T> {
   /// Whether this particular child is the one that must stay visible.
   bool get isSelectedForScroll;
 
+  /// How the reveal moves. Over media it eases (Reduce Motion collapses it
+  /// to a jump). A canvas row jumps ALWAYS: a `Scrollable` ignores pointers
+  /// for as long as it is animating, so an eased reveal would swallow the
+  /// next tap on a neighbouring chip for 140 ms — on the canvas the row is
+  /// short and the jump is imperceptible, over media the scrim hides it.
+  Duration get revealDuration =>
+      AppMotion.resolve(context, AppMotion.quick);
+
   @override
   void initState() {
     super.initState();
@@ -363,8 +404,7 @@ mixin _KeepsSelectionVisible<T extends StatefulWidget> on State<T> {
       Scrollable.ensureVisible(
         context,
         alignment: 0.5,
-        // Resolve honours Reduce Motion, which collapses this to a jump.
-        duration: AppMotion.resolve(context, AppMotion.quick),
+        duration: revealDuration,
         curve: AppMotion.standardCurve,
       );
     });
@@ -376,12 +416,16 @@ class _SwitchSegment extends StatefulWidget {
     required this.option,
     required this.selected,
     required this.onTap,
+    this.onCanvas = false,
+    this.minWidth = 72,
     super.key,
   });
 
   final ImmersiveChromeOption option;
   final bool selected;
   final VoidCallback onTap;
+  final bool onCanvas;
+  final double minWidth;
 
   @override
   State<_SwitchSegment> createState() => _SwitchSegmentState();
@@ -403,9 +447,22 @@ class _SwitchSegmentState extends State<_SwitchSegment>
   @override
   Widget build(BuildContext context) {
     final selected = widget.selected;
-    // Dark brand ink on the white thumb (16.6:1); white beside it on the
-    // composited track (9.1:1 even over pure-white media).
-    final foreground = selected ? AppColors.contrastInk : Colors.white;
+    final onCanvas = widget.onCanvas;
+    final palette = onCanvas ? context.appPalette : null;
+    // Over media: dark brand ink on the white thumb (16.6:1); white beside
+    // it on the composited track (9.1:1 even over pure-white media). On the
+    // canvas: white on the primary thumb (5.85:1), textSecondary beside it.
+    final foreground = palette == null
+        ? (selected ? AppColors.contrastInk : Colors.white)
+        : (selected
+              ? Theme.of(context).colorScheme.onPrimary
+              : palette.textSecondary);
+    final focusRing = palette == null
+        // Two-tone by construction: the ring is dark on the white thumb and
+        // white on the dark track, so it is visible in both states over any
+        // media.
+        ? (selected ? AppColors.contrastInk : Colors.white)
+        : palette.focus;
     return Semantics(
       button: true,
       selected: selected,
@@ -432,9 +489,9 @@ class _SwitchSegmentState extends State<_SwitchSegment>
           child: Stack(
             children: <Widget>[
               ConstrainedBox(
-                constraints: const BoxConstraints(
+                constraints: BoxConstraints(
                   minHeight: ImmersiveSegmentedSwitch._trackHeight,
-                  minWidth: 72,
+                  minWidth: widget.minWidth,
                 ),
                 child: Padding(
                   padding: const EdgeInsets.symmetric(
@@ -456,8 +513,11 @@ class _SwitchSegmentState extends State<_SwitchSegment>
                             ? FontWeight.w800
                             : FontWeight.w600,
                         // White copy laid on media keeps its shadow stack;
-                        // ink on the solid thumb does not need one.
-                        shadows: selected ? null : overlayTextShadows,
+                        // ink on the solid thumb, and any canvas copy, does
+                        // not need one.
+                        shadows: selected || onCanvas
+                            ? null
+                            : overlayTextShadows,
                       ),
                     ),
                   ),
@@ -475,12 +535,7 @@ class _SwitchSegmentState extends State<_SwitchSegment>
                         Radius.circular(999),
                       ),
                       border: Border.all(
-                        // Two-tone by construction: the ring is dark on the
-                        // white thumb and white on the dark track, so it is
-                        // visible in both states over any media.
-                        color: _focused
-                            ? (selected ? AppColors.contrastInk : Colors.white)
-                            : Colors.transparent,
+                        color: _focused ? focusRing : Colors.transparent,
                         width: 2,
                       ),
                     ),
@@ -506,6 +561,8 @@ class ImmersiveFilterRow extends StatelessWidget {
     required this.selectedIndex,
     required this.onSelected,
     this.groupLabel,
+    this.onCanvas = false,
+    this.padding = EdgeInsets.zero,
     super.key,
   });
 
@@ -514,20 +571,33 @@ class ImmersiveFilterRow extends StatelessWidget {
   final ValueChanged<int> onSelected;
   final String? groupLabel;
 
+  /// On the page canvas the selected chip is a low-opacity PRIMARY wash with
+  /// a primary hairline and the unselected ones carry the palette hairline
+  /// (a chip's shape, so it is never mistaken for plain copy). Over media
+  /// (default) the existing white wash and plain text stay unchanged.
+  final bool onCanvas;
+
+  /// Scroll padding, so a full-bleed row can keep the page gutter as the
+  /// distance its first and last chip stop at.
+  final EdgeInsetsGeometry padding;
+
   @override
   Widget build(BuildContext context) {
     final label = groupLabel;
     final row = SingleChildScrollView(
       scrollDirection: Axis.horizontal,
+      padding: padding,
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: <Widget>[
           for (var index = 0; index < options.length; index++) ...<Widget>[
-            if (index > 0) const SizedBox(width: AppRhythm.hairline),
+            if (index > 0)
+              SizedBox(width: onCanvas ? AppRhythm.tight : AppRhythm.hairline),
             _FilterInk(
               key: options[index].key,
               option: options[index],
               selected: index == selectedIndex,
+              onCanvas: onCanvas,
               onTap: () => onSelected(index),
             ),
           ],
@@ -545,12 +615,14 @@ class _FilterInk extends StatefulWidget {
     required this.option,
     required this.selected,
     required this.onTap,
+    this.onCanvas = false,
     super.key,
   });
 
   final ImmersiveChromeOption option;
   final bool selected;
   final VoidCallback onTap;
+  final bool onCanvas;
 
   @override
   State<_FilterInk> createState() => _FilterInkState();
@@ -564,6 +636,10 @@ class _FilterInkState extends State<_FilterInk>
   bool get isSelectedForScroll => widget.selected;
 
   @override
+  Duration get revealDuration =>
+      widget.onCanvas ? Duration.zero : super.revealDuration;
+
+  @override
   void didUpdateWidget(covariant _FilterInk oldWidget) {
     super.didUpdateWidget(oldWidget);
     revealIfSelectionGained(oldWidget.selected);
@@ -572,6 +648,7 @@ class _FilterInkState extends State<_FilterInk>
   @override
   Widget build(BuildContext context) {
     final selected = widget.selected;
+    if (widget.onCanvas) return _buildOnCanvas(context, selected);
     return Semantics(
       button: true,
       selected: selected,
@@ -619,6 +696,70 @@ class _FilterInkState extends State<_FilterInk>
                     height: 1.2,
                     fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
                     shadows: overlayTextShadows,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// The canvas chip: the same 36-in-48 ink and the same semantics, in
+  /// palette roles. Selection is carried by the primary wash AND the
+  /// hairline AND the weight, never by colour alone.
+  Widget _buildOnCanvas(BuildContext context, bool selected) {
+    final palette = context.appPalette;
+    final primary = Theme.of(context).colorScheme.primary;
+    return Semantics(
+      button: true,
+      selected: selected,
+      label: widget.option.semanticLabel ?? widget.option.label,
+      onTap: widget.onTap,
+      enabled: true,
+      focusable: true,
+      focused: _focused,
+      excludeSemantics: true,
+      child: Material(
+        type: MaterialType.transparency,
+        child: InkWell(
+          onTap: selected ? () {} : widget.onTap,
+          customBorder: const StadiumBorder(),
+          onFocusChange: (focused) {
+            if (_focused != focused) setState(() => _focused = focused);
+          },
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minHeight: 48, minWidth: 48),
+            child: Center(
+              child: AnimatedContainer(
+                duration: AppMotion.resolve(context, AppMotion.quick),
+                constraints: const BoxConstraints(minHeight: 36),
+                padding: const EdgeInsets.symmetric(horizontal: AppRhythm.item),
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: selected
+                      ? primary.withValues(alpha: .16)
+                      : Colors.transparent,
+                  borderRadius: const BorderRadius.all(Radius.circular(999)),
+                  border: Border.all(
+                    color: _focused
+                        ? palette.focus
+                        : selected
+                        ? primary.withValues(alpha: .40)
+                        : palette.border,
+                    width: _focused ? 2 : 1,
+                  ),
+                ),
+                child: Text(
+                  widget.option.label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: selected ? palette.textPrimary : palette.textSecondary,
+                    fontSize: 13,
+                    height: 1.2,
+                    fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
                   ),
                 ),
               ),
