@@ -88,6 +88,118 @@ extension ServerLocalizedCopy on AppLocalizations {
   String get serverChannels => text('Channels', 'Kanały');
   String get serverInvite => text('Invite', 'Zaproś');
   String get serverComingSoon => text('Coming soon', 'Wkrótce');
+
+  // ---------------------------------------------------------------- creation
+
+  /// Group headings for the seeded channel preview. Derived from the channel
+  /// kind, because owner-defined categories have no callable and no Rules yet.
+  String serverChannelGroup(ServerChannelKind kind) => switch (kind) {
+    ServerChannelKind.voice ||
+    ServerChannelKind.stage ||
+    ServerChannelKind.meeting => text('VOICE', 'GŁOSOWE'),
+    ServerChannelKind.text ||
+    ServerChannelKind.announcements => text('TEXT', 'TEKSTOWE'),
+    // Rules sit with events and the shared tools in every reference panel,
+    // not with the conversation channels.
+    _ => text('ORGANISATION', 'ORGANIZACJA'),
+  };
+  String get serverSeededChannelsTitle =>
+      text('Channels we will create', 'Kanały, które utworzymy');
+  String get serverSeededChannelsBody => text(
+    'You can rename them, add your own and change their order once the server exists.',
+    'Gdy serwer powstanie, zmienisz ich nazwy, dodasz własne i ustawisz kolejność.',
+  );
+  String get serverChannelRestricted =>
+      text('Limited access', 'Ograniczony dostęp');
+  String get serverIconTitle => text('Server icon', 'Ikona serwera');
+  String get serverIconBody => text(
+    'To begin with, your server carries the first letter of its name — in the template colour.',
+    'Na początek serwer nosi pierwszą literę swojej nazwy — w kolorze szablonu.',
+  );
+  String get serverIconUpload => text('Add a picture', 'Dodaj obrazek');
+  String get serverCreating => text('Creating…', 'Tworzenie…');
+  String get serverCreateAction => text('Create server', 'Stwórz serwer');
+  String get serverTryAgain => text('Try again', 'Spróbuj ponownie');
+  String get serverResend => text('Send again', 'Wyślij ponownie');
+  String get serverCheckAgain => text('Check again', 'Sprawdź ponownie');
+  String get serverCreationUnavailableTitle => text(
+    'Creating servers is not available yet',
+    'Tworzenie serwerów nie jest jeszcze dostępne',
+  );
+  String get serverCreationUnavailableBody => text(
+    'Nothing was created. This part of YO Voice is still being prepared, so your server could not be saved. Everything you entered is kept here.',
+    'Nic nie zostało utworzone. Ta część YO Voice jest jeszcze przygotowywana, więc serwer nie mógł zostać zapisany. Wszystko, co wpisujesz, zostaje tutaj.',
+  );
+  String get serverCreationOfflineBody => text(
+    'We could not finish creating your server. Check your connection — sending it again is safe and will not create a second server.',
+    'Nie udało się dokończyć tworzenia serwera. Sprawdź połączenie — ponowne wysłanie jest bezpieczne i nie utworzy drugiego serwera.',
+  );
+  String get serverCreationCapacityBody => text(
+    'You have reached the limit of 20 active servers.',
+    'Masz już 20 aktywnych serwerów.',
+  );
+
+  /// `invalid-argument`: the payload was refused before any write, so the
+  /// form unlocks and a corrected submission is a new request.
+  String get serverCreationRejectedBody => text(
+    'The server was not created — something in the name or description was not accepted. Correct it and send again.',
+    'Serwer nie powstał — coś w nazwie lub opisie nie zostało przyjęte. Popraw i wyślij ponownie.',
+  );
+
+  /// `failed-precondition` on the family template: `FAMILY_SERVER_LIMIT` is
+  /// one per owner, so the true next step is the server that already exists.
+  String get serverCreationFamilyExistsBody => text(
+    'You already have a family server — there can be only one. Open it from Servers instead of creating a new one. Nothing was created.',
+    'Masz już serwer rodzinny — może być tylko jeden. Otwórz go z listy serwerów zamiast tworzyć nowy. Nic nie zostało utworzone.',
+  );
+
+  /// `failed-precondition` on any other template.
+  String get serverCreationPreconditionBody => text(
+    'This server cannot be created right now. Nothing was created — go back to Servers and check the ones you already have.',
+    'Ten serwer nie może teraz powstać. Nic nie zostało utworzone — wróć do serwerów i sprawdź te, które już masz.',
+  );
+
+  /// `permission-denied`: the account, not the payload, is what the backend
+  /// refused, so resending changes nothing.
+  String get serverCreationDeniedBody => text(
+    'This account cannot create servers right now. Nothing was created — check that you are signed in to the right account.',
+    'To konto nie może teraz tworzyć serwerów. Nic nie zostało utworzone — sprawdź, czy jesteś na właściwym koncie.',
+  );
+
+  /// `data-loss`: the backend found saved server data it cannot build on.
+  String get serverCreationLostBody => text(
+    'Nothing new was created. Go back to Servers — this needs fixing on our side, not another attempt from here.',
+    'Nic nowego nie powstało. Wróć do serwerów — to wymaga naprawy po naszej stronie, nie kolejnej próby stąd.',
+  );
+
+  /// Shown when the configuration step is re-entered while an earlier
+  /// submission for this owner and template is still unresolved.
+  String get serverCreationResumedBody => text(
+    'Your last attempt to create this server was not confirmed. Send it again — that is safe and will not create a second server.',
+    'Ostatnia próba utworzenia tego serwera nie została potwierdzona. Wyślij ponownie — to bezpieczne i nie utworzy drugiego serwera.',
+  );
+  String get serverCreationRetrySafe => text(
+    'Everything you type stays right here.',
+    'Wszystko, co wpisujesz, zostaje na miejscu.',
+  );
+
+  /// The free allowance, stated per template: `FREE_SERVER_LIMIT` is 20 for
+  /// four templates, while a family server is charged to `familyFreeV1` with
+  /// a limit of one per owner and never to the 20-server allowance.
+  String get serverCreationAllowanceBody => text(
+    'You can create up to 20 servers for free.',
+    'Możesz bezpłatnie utworzyć do 20 serwerów.',
+  );
+  String get serverCreationFamilyAllowanceBody => text(
+    'You can have one family server. It does not count towards your 20 free servers.',
+    'Serwer rodzinny może być tylko jeden. Nie wlicza się do 20 bezpłatnych serwerów.',
+  );
+  String get serverInviteIntroTitle =>
+      text('Your server is waiting for people', 'Serwer czeka na ludzi');
+  String get serverInviteIntroBody => text(
+    'A server starts with you. Invite the people who belong here.',
+    'Serwer zaczyna się od Ciebie. Zaproś osoby, które mają tu być.',
+  );
   String get serverNoChannels =>
       text('No channels yet', 'Nie ma jeszcze kanałów');
   String get serverNoChannelsBody => text(
@@ -98,11 +210,27 @@ extension ServerLocalizedCopy on AppLocalizations {
     'Your server and channels have been saved. Conversations and shared tools are being prepared.',
     'Serwer i kanały zostały zapisane. Rozmowy i wspólne narzędzia są przygotowywane.',
   );
-  String serverMembers(int count) => template(
-    'Members: {count}',
-    'Osoby na serwerze: {count}',
-    values: {'count': count},
-  );
+
+  /// "12 osób" — a count, not a label, as every mockup writes it.
+  ///
+  /// Polish needs three forms (1 osoba / 2–4 osoby / 5+ osób, with 12–14
+  /// and every x2–x4 above 20 following the usual exception), so the Polish
+  /// branch selects its own form the way `unreadConversations` does.
+  String serverMembers(int count) {
+    if (isPolish) {
+      if (count == 1) return '1 osoba';
+      final lastTwo = count % 100;
+      final last = count % 10;
+      if (last >= 2 && last <= 4 && (lastTwo < 12 || lastTwo > 14)) {
+        return '$count osoby';
+      }
+      return '$count osób';
+    }
+    return count == 1
+        ? template('{count} person', '{count} osoba', values: {'count': count})
+        : template('{count} people', '{count} osób', values: {'count': count});
+  }
+
   String channelEmptyTitle(ServerChannelKind kind) => switch (kind) {
     ServerChannelKind.voice || ServerChannelKind.meeting => text(
       'A place for your conversation',

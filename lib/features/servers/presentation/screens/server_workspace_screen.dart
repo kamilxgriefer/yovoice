@@ -30,6 +30,7 @@ class ServerWorkspaceScreen extends StatefulWidget {
     this.isRootTab = false,
     this.onInvite,
     this.channelBuilder,
+    this.justCreated = false,
     super.key,
   });
   final String serverId;
@@ -38,6 +39,11 @@ class ServerWorkspaceScreen extends StatefulWidget {
   final bool isRootTab;
   final ValueChanged<Server>? onInvite;
   final ServerChannelBuilder? channelBuilder;
+
+  /// Arrived here straight from creation, so the server has exactly one
+  /// member. Offers the invitation once, instead of leaving a new owner alone
+  /// in an empty space with no idea what to do next.
+  final bool justCreated;
 
   @override
   State<ServerWorkspaceScreen> createState() => _ServerWorkspaceScreenState();
@@ -164,6 +170,7 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
                   server: server,
                   onInvite: server.isHeld ? null : widget.onInvite,
                   onChannels: () => _openChannels(context, server, selected),
+                  justCreated: widget.justCreated,
                 ),
               ),
               if (selected != null)
@@ -211,6 +218,7 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
                     onChannels: twoPanels
                         ? null
                         : () => _openChannels(context, server, selected),
+                    justCreated: widget.justCreated,
                   ),
                 ),
               ),
@@ -327,10 +335,16 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
 }
 
 class _ServerHeader extends StatelessWidget {
-  const _ServerHeader({required this.server, this.onInvite, this.onChannels});
+  const _ServerHeader({
+    required this.server,
+    this.onInvite,
+    this.onChannels,
+    this.justCreated = false,
+  });
   final Server server;
   final ValueChanged<Server>? onInvite;
   final VoidCallback? onChannels;
+  final bool justCreated;
 
   @override
   Widget build(BuildContext context) {
@@ -429,17 +443,25 @@ class _ServerHeader extends StatelessWidget {
               ),
             ],
           );
-          if (constraints.maxWidth < 650) {
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [identity, const SizedBox(height: 12), actions],
-            );
-          }
-          return Row(
+          final lockup = constraints.maxWidth < 650
+              ? Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [identity, const SizedBox(height: 12), actions],
+                )
+              : Row(
+                  children: [
+                    Expanded(child: identity),
+                    const SizedBox(width: 16),
+                    Flexible(child: actions),
+                  ],
+                );
+          if (!justCreated) return lockup;
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Expanded(child: identity),
-              const SizedBox(width: 16),
-              Flexible(child: actions),
+              lockup,
+              const SizedBox(height: 16),
+              _InviteIntroduction(server: server, onInvite: onInvite),
             ],
           );
         },
@@ -737,6 +759,75 @@ class _EmptyModuleCard extends StatelessWidget {
       ],
     ),
   );
+}
+
+/// The one thing a server needs immediately after it exists: people.
+///
+/// The action follows the same authority as the header's own invite button.
+/// While the root is held there is no V1 invite writer at all — nothing can
+/// create `clubs/{serverId}/invites/{uid}` and Rules refuse the create — so
+/// the button is disabled and says so, rather than appearing to send
+/// something that never leaves.
+class _InviteIntroduction extends StatelessWidget {
+  const _InviteIntroduction({required this.server, this.onInvite});
+  final Server server;
+  final ValueChanged<Server>? onInvite;
+
+  @override
+  Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
+    final palette = context.appPalette;
+    final colors = ServerIdentity.of(
+      server.type,
+    ).resolve(Theme.of(context).brightness);
+    final enabled = onInvite != null;
+    return Container(
+      key: const ValueKey('server-invite-introduction'),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: palette.surface,
+        borderRadius: AppRadius.lg,
+        border: Border.all(color: colors.iconBorder),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            copy.serverInviteIntroTitle,
+            style: AppTypography.titleMedium.copyWith(
+              color: palette.textPrimary,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            copy.serverInviteIntroBody,
+            style: AppTypography.bodySmall.copyWith(
+              color: palette.textSecondary,
+            ),
+          ),
+          const SizedBox(height: 12),
+          Align(
+            alignment: AlignmentDirectional.centerStart,
+            child: FilledButton.icon(
+              key: const ValueKey('server-invite-introduction-action'),
+              onPressed: enabled ? () => onInvite!(server) : null,
+              style: FilledButton.styleFrom(
+                backgroundColor: colors.cta,
+                foregroundColor: colors.onCta,
+                minimumSize: const Size(48, 48),
+              ),
+              icon: const Icon(Icons.person_add_outlined, size: 18),
+              label: Text(
+                enabled
+                    ? copy.serverInvite
+                    : '${copy.serverInvite} · ${copy.serverComingSoon}',
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 IconData serverChannelIcon(ServerChannelKind kind) => switch (kind) {

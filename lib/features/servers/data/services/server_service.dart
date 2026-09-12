@@ -8,6 +8,8 @@ import 'package:firebase_auth/firebase_auth.dart';
 import '../models/server.dart';
 import '../models/server_channel.dart';
 import '../models/server_creation.dart';
+import '../models/server_type.dart';
+import 'server_creation_request_store.dart';
 
 abstract interface class ServerRepository {
   String get currentUserId;
@@ -16,6 +18,22 @@ abstract interface class ServerRepository {
   Stream<Server?> watchServer(String serverId);
   Stream<List<ServerChannel>> watchChannels(String serverId);
   Future<ServerCreationResult> createServer(ServerCreationRequest request);
+
+  /// The unresolved submission this owner still has open for [type], so a
+  /// configuration step that is re-entered resumes the identical request
+  /// instead of allocating a second identity. Null when nothing is pending.
+  Future<ServerCreationRequest?> pendingCreation(ServerType type);
+
+  /// Commits [request] as pending for its owner and template before the
+  /// callable runs. Returns the request that is actually pending: [request]
+  /// itself, or an earlier unresolved one for the same scope, which wins
+  /// because its id may already have created a server.
+  Future<ServerCreationRequest> rememberPendingCreation(
+    ServerCreationRequest request,
+  );
+
+  /// Clears the pending record once the backend has answered for that id.
+  Future<void> forgetPendingCreation(ServerCreationRequest request);
 }
 
 typedef ServerCallable =
@@ -32,15 +50,27 @@ class ServerService implements ServerRepository {
     FirebaseAuth? auth,
     FirebaseFunctions? functions,
     ServerCallable? call,
+    ServerCreationRequestStore? pendingStore,
+    DateTime Function()? now,
   }) : _firestoreOverride = firestore,
        _authOverride = auth,
        _functionsOverride = functions,
-       _callOverride = call;
+       _callOverride = call,
+       _pendingStore =
+           pendingStore ?? SharedPreferencesServerCreationRequestStore(),
+       _now = now ?? DateTime.now;
+
+  /// How long an unresolved creation stays resumable. Long enough to survive
+  /// a night offline; short enough that a record nobody ever resends does not
+  /// lock a template for good.
+  static const pendingCreationTtl = Duration(hours: 24);
 
   final FirebaseFirestore? _firestoreOverride;
   final FirebaseAuth? _authOverride;
   final FirebaseFunctions? _functionsOverride;
   final ServerCallable? _callOverride;
+  final ServerCreationRequestStore _pendingStore;
+  final DateTime Function() _now;
 
   FirebaseFirestore get _firestore =>
       _firestoreOverride ?? FirebaseFirestore.instance;
@@ -83,6 +113,32 @@ class ServerService implements ServerRepository {
         : await call('createServerV1', request.toCallableData());
     return ServerCreationResult.fromMap(data);
   }
+
+  @override
+  Future<ServerCreationRequest?> pendingCreation(ServerType type) =>
+      _pendingStore.load(
+        ownerId: currentUserId,
+        type: type,
+        now: _now(),
+        ttl: pendingCreationTtl,
+      );
+
+  @override
+  Future<ServerCreationRequest> rememberPendingCreation(
+    ServerCreationRequest request,
+  ) => _pendingStore.remember(
+    ownerId: currentUserId,
+    request: request,
+    now: _now(),
+  );
+
+  @override
+  Future<void> forgetPendingCreation(ServerCreationRequest request) =>
+      _pendingStore.forget(
+        ownerId: currentUserId,
+        type: request.serverType,
+        expectedRequestId: request.requestId,
+      );
 
   @override
   Stream<Server?> watchServer(String serverId) {
