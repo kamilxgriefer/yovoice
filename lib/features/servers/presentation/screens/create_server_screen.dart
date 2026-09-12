@@ -44,7 +44,17 @@ class _CreateServerScreenState extends State<CreateServerScreen> {
   final _descriptionFocus = FocusNode();
   final _privacyByType = <ServerType, ServerPrivacy?>{};
   ServerType? _type;
+
+  /// The language the server's seeded channel names are written in.
+  ///
+  /// It starts from the app's own locale rather than a hardcoded `English`:
+  /// a Polish surface previewing `general / memes / Lounge` — and creating a
+  /// server whose channels diverge from every board in the product — is a
+  /// wrong default, not a choice. [_languageChosen] records that the person
+  /// (or a resumed submission) has settled it, so a later locale rebuild
+  /// never overwrites their pick.
   String _language = 'English';
+  bool _languageChosen = false;
   ServerCreationRequest? _submission;
   Object? _error;
   bool _busy = false;
@@ -63,6 +73,17 @@ class _CreateServerScreenState extends State<CreateServerScreen> {
     super.initState();
     _repository = widget.repository ?? ServerService();
     _setType(widget.initialType);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_languageChosen) return;
+    // `server_template.dart` carries a Polish name for every seed, and
+    // `serverSeedsInPolish` is what decides which one is written.
+    _language = Localizations.localeOf(context).languageCode == 'pl'
+        ? 'Polish'
+        : 'English';
   }
 
   @override
@@ -123,6 +144,8 @@ class _CreateServerScreenState extends State<CreateServerScreen> {
     _description.text = request.description;
     _privacyByType[request.serverType] = request.privacy;
     _language = request.defaultLanguage;
+    // A resumed request already carries the language it will send.
+    _languageChosen = true;
   }
 
   Future<void> _forget(ServerCreationRequest request) async {
@@ -302,12 +325,13 @@ class _CreateServerScreenState extends State<CreateServerScreen> {
     final submitButton = FilledButton(
       key: const ValueKey('server-create-submit'),
       onPressed: canSubmit ? _submit : null,
-      style: FilledButton.styleFrom(
-        backgroundColor: identity.cta,
-        foregroundColor: identity.onCta,
-        minimumSize: const Size.fromHeight(52),
-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-      ),
+      style:
+          FilledButton.styleFrom(
+            backgroundColor: identity.cta,
+            foregroundColor: identity.onCta,
+            minimumSize: const Size.fromHeight(52),
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+          ).copyWith(side: serverFocusRing(identity.onCta)),
       child: _busy
           ? Row(
               mainAxisSize: MainAxisSize.min,
@@ -481,7 +505,10 @@ class _CreateServerScreenState extends State<CreateServerScreen> {
         ],
         onChanged: locked
             ? null
-            : (value) => setState(() => _language = value!),
+            : (value) => setState(() {
+                _language = value!;
+                _languageChosen = true;
+              }),
       ),
       if (!withAside) ...[
         const SizedBox(height: AppRhythm.section),

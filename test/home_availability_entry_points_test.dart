@@ -18,7 +18,7 @@ import 'package:yovoice/features/profile/data/models/profile_visibility.dart';
 import 'package:yovoice/features/profile/data/models/user_profile.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
 import 'package:yovoice/shared/widgets/profile/availability_picker.dart';
-import 'package:yovoice/shared/widgets/profile/people_status_ring.dart';
+import 'package:yovoice/features/home/presentation/widgets/shared/home_friend_tile.dart';
 
 import 'semantics_probe.dart';
 
@@ -553,9 +553,7 @@ void main() {
     // And the tile still shows the state that is actually stored.
     expect(
       tester
-          .widget<PeopleStatusAvatar>(
-            find.byKey(const ValueKey('home-people-me')),
-          )
+          .widget<HomeFriendTile>(find.byKey(const ValueKey('home-people-me')))
           .statusLabel,
       'Available',
     );

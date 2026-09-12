@@ -14,6 +14,7 @@ import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/auth/data/auth_service.dart';
 import 'package:yovoice/features/auth/presentation/screens/verify_email_screen.dart';
 import 'package:yovoice/features/auth/presentation/widgets/email_verification_banner.dart';
+import 'package:yovoice/features/clubs/data/models/club.dart';
 import 'package:yovoice/features/clubs/presentation/screens/club_overview_screen.dart';
 import 'package:yovoice/features/discover/presentation/screens/discover_screen.dart';
 import 'package:yovoice/features/messages/presentation/screens/chat_screen.dart';
@@ -256,6 +257,9 @@ class _MainShellState extends State<MainShell>
     with SingleTickerProviderStateMixin, RouteAware, WidgetsBindingObserver {
   final MessageService _messageService = MessageService.live;
   final RoomService _roomService = RoomService();
+
+  /// True while a pre-join screen is being pushed — see [_openRoom].
+  bool _roomEntryInFlight = false;
   final AuthService _authService = AuthService();
   final EntitlementService _entitlementService = EntitlementService();
   final MoreMenuTransitionGuard _moreMenuTransition = MoreMenuTransitionGuard();
@@ -362,6 +366,25 @@ class _MainShellState extends State<MainShell>
   /// screen subscribes to rather than a constructor argument.
   final ValueNotifier<bool> _momentsVisible = ValueNotifier<bool>(false);
   final ValueNotifier<bool> _homeVisible = ValueNotifier<bool>(true);
+
+  /// The Servers slot holds a live media session once someone joins a voice
+  /// channel, and it is retained exactly like every other slot — so moving
+  /// the rail or the dock to Home or Chats used to leave the microphone open,
+  /// the keep-alive service running and the conversation dock hidden with the
+  /// slot, with no indicator anywhere (the legacy rooms path has
+  /// `ActiveRoomMiniPlayer`; a server session has nothing). The screen ends
+  /// its conversation when this goes false.
+  ///
+  /// It has to be a listenable rather than a constructor argument for the
+  /// same reason Moments' is: the slot is built on first visit and cached
+  /// for the rest of the session, so it is never rebuilt with a new value.
+  /// And it has to come from here rather than from `TickerMode.of(context)`,
+  /// which the retained-slot transition already sets — `Overlay` builds every
+  /// entry below the topmost opaque one with `tickerEnabled: false`, so ANY
+  /// full-screen route pushed over the shell (a profile, Settings, a moment
+  /// detail) would read as "gone" and end a conversation the person never
+  /// left.
+  final ValueNotifier<bool> _serversVisible = ValueNotifier<bool>(false);
   final ScrollController _roomsScrollController = ScrollController();
 
   Widget _buildSlot(int index) {
@@ -400,6 +423,7 @@ class _MainShellState extends State<MainShell>
       destination,
       isRootTab: true,
       onReplayGuidedOnboarding: _replayGuidedOnboarding,
+      serversVisible: _serversVisible,
     );
   }
 
@@ -430,6 +454,18 @@ class _MainShellState extends State<MainShell>
     createRoomKey: _onboardingAnchors[GuidedOnboardingTarget.create],
     unreadNotificationCount: _unreadNotificationCount,
     onOpenRoom: (room) => unawaited(_openRoom(room)),
+    // The Serwery destination (content slot 13): "Zobacz wszystkie",
+    // "+ Stwórz serwer" and the places empty state all lead there, and the
+    // gate on creation lives inside that feature.
+    onOpenServers: () => _onDestinationSelected(_serversSlot),
+    onOpenClub: (club) => unawaited(
+      Navigator.of(context).push<void>(
+        MaterialPageRoute<void>(
+          builder: (_) => ClubOverviewScreen(clubId: club.id),
+        ),
+      ),
+    ),
+    onEnterClubLounge: (club) => unawaited(_openClubLounge(club)),
     onOpenDiscover: () =>
         unawaited(_openMoreDestination(MoreDestination.discover)),
     onOpenFindCreators: () =>
@@ -467,6 +503,7 @@ class _MainShellState extends State<MainShell>
   Widget _desktopHome({Widget? trailingContent}) => DesktopHome(
     isVisible: _homeVisible,
     currentUserId: _currentUserId,
+    unreadNotificationCount: _unreadNotificationCount,
     onOpenRoom: (room) => unawaited(_openRoom(room)),
     onSeeAllRooms: () => _onDestinationSelected(_discoverSlot),
     onFindCreators: () => _onDestinationSelected(_findCreatorsSlot),
@@ -486,6 +523,15 @@ class _MainShellState extends State<MainShell>
         ),
       ),
     ),
+    // The greeting card's bell and avatar are the SAME destinations the rail
+    // header's bell and the rail's profile card open — one handler each.
+    onOpenNotifications: () => _onDestinationSelected(_notificationsSlot),
+    onOpenProfile: () => unawaited(_openProfile()),
+    // The Serwery destination (content slot 13): "Zobacz wszystkie",
+    // "Stwórz serwer" and the places empty state all lead there, and the
+    // gate on creation lives inside that feature.
+    onOpenServers: () => _onDestinationSelected(_serversSlot),
+    onEnterClubLounge: (club) => unawaited(_openClubLounge(club)),
     onSeeAllChats: () => _onDestinationSelected(1),
     onOpenClubs: () => unawaited(_openMoreDestination(MoreDestination.clubs)),
     trailingContent: trailingContent,
@@ -511,10 +557,67 @@ class _MainShellState extends State<MainShell>
 
   /// Entering a room is the existing full-screen room flow (identical to
   /// every other entry point); Home's own navigation never pushes.
+  ///
+  /// Single-flight: Home's hero CTA is a full-width pill and a double tap
+  /// used to push two pre-join screens, so leaving the room once left the
+  /// reader on a second one. The guard is here rather than in the widget
+  /// because every Home entry point (hero, quick actions, owned rooms,
+  /// server rows) shares it.
   Future<void> _openRoom(VoiceRoom room) async {
-    await Navigator.of(context).push<void>(
-      MaterialPageRoute<void>(builder: (_) => RoomEntryScreen(room: room)),
-    );
+    if (_roomEntryInFlight) return;
+    _roomEntryInFlight = true;
+    try {
+      await Navigator.of(context).push<void>(
+        MaterialPageRoute<void>(builder: (_) => RoomEntryScreen(room: room)),
+      );
+    } finally {
+      _roomEntryInFlight = false;
+    }
+  }
+
+  /// Resolves a member's Club Lounge and opens the SAME pre-join screen.
+  ///
+  /// `prepareClubLounge` checks membership and nothing else: it starts no
+  /// voice session and writes no roster row, so tapping "Zajrzyj" on Home is
+  /// still only a request to look.
+  Future<void> _openClubLounge(Club club) async {
+    if (_roomEntryInFlight) return;
+    _roomEntryInFlight = true;
+    try {
+      final room = await _roomService.prepareClubLounge(
+        clubId: club.id,
+        clubName: club.name,
+        clubDescription: club.description,
+        language: club.defaultLanguage,
+        ownerId: club.ownerId,
+        ownerName: club.ownerName,
+        imageUrl: club.avatarUrl,
+      );
+      if (!mounted) return;
+      await Navigator.of(context).push<void>(
+        MaterialPageRoute<void>(builder: (_) => RoomEntryScreen(room: room)),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text(
+              intentionalOrFriendly(
+                error,
+                fallback: AppLocalizations.of(context).text(
+                  "Couldn't open this club room. Please try again.",
+                  'Nie udało się otworzyć pokoju klubu. Spróbuj ponownie.',
+                ),
+              ),
+            ),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+    } finally {
+      _roomEntryInFlight = false;
+    }
   }
 
   /// Maps a More destination to its desktop slot, or null when it has
@@ -924,6 +1027,7 @@ class _MainShellState extends State<MainShell>
     appRouteObserver.unsubscribe(this);
     _homeVisible.dispose();
     _momentsVisible.dispose();
+    _serversVisible.dispose();
     _roomsScrollController.dispose();
     _tabTransition.dispose();
     _conversationSubscription?.cancel();
@@ -1070,6 +1174,10 @@ class _MainShellState extends State<MainShell>
     });
     _momentsVisible.value = index == _momentsSlot;
     _homeVisible.value = index == 0;
+    // Leaving the Servers destination leaves the conversation. This is the
+    // only path that changes `_selectedIndex`, so no rail item, dock cell,
+    // More entry, mobile Back or responsive reset can move away without it.
+    _serversVisible.value = index == _serversSlot;
     if (MediaQuery.disableAnimationsOf(context)) {
       _tabTransition.value = 1;
     } else {
@@ -1452,6 +1560,18 @@ class _MainShellState extends State<MainShell>
     );
   }
 
+  /// Content slots accompanied by the shell's supplementary right rail.
+  ///
+  /// EMPTY on purpose. Slot 0 used to claim it for the Premium and Sponsored
+  /// cards; both were relocated to the destinations that own them (Premium is
+  /// a Settings tile opening the Premium screen, Sponsored is not a module an
+  /// ordinary Home carries), and Home now draws its own context column sized
+  /// against its own main column instead of a fixed 344 px shell rail.
+  ///
+  /// The mechanism below is kept whole rather than deleted: it is the shell's
+  /// rail, not Home's, and the next slot that needs one adds its index here.
+  static const Set<int> _slotsWithDesktopExtras = <int>{};
+
   Widget _buildDesktopHomeExtras({required bool inline}) {
     return _DesktopHomeExtras(
       inline: inline,
@@ -1514,14 +1634,22 @@ class _MainShellState extends State<MainShell>
                       width: ResponsiveContentWidth.workbench,
                       child: LayoutBuilder(
                         builder: (context, constraints) {
-                          final isHome = _selectedIndex == 0;
-                          // Two static cards do not earn a 344 px rail
-                          // until the main column keeps its two-column
-                          // overview (>= 850 px) beside it; below that the
-                          // cards fold inline under the feed.
+                          // Home owns its OWN context column now (places,
+                          // "Masz chwilę?", recent chats), sized against the
+                          // main column rather than fixed at 344 px. The
+                          // shell-level rail it used to host the Premium and
+                          // Sponsored cards in therefore has no Home tenant:
+                          // Premium is a Settings tile (and the Premium
+                          // screen it pushes), Sponsored is not a module an
+                          // ordinary Home carries. Neither class is deleted —
+                          // both are still built by the dev preview and by
+                          // their own widget tests.
+                          final hasExtras = _slotsWithDesktopExtras.contains(
+                            _selectedIndex,
+                          );
                           final useRightRail =
-                              isHome && constraints.maxWidth >= 1280;
-                          final extras = isHome
+                              hasExtras && constraints.maxWidth >= 1280;
+                          final extras = hasExtras
                               ? _buildDesktopHomeExtras(inline: !useRightRail)
                               : null;
 
@@ -1537,9 +1665,9 @@ class _MainShellState extends State<MainShell>
                                       : extras,
                                 ),
                               ),
-                              // The supplementary Home modules become part
-                              // of the main scroll when a fixed 344 px rail
-                              // would squeeze the feed below a useful width.
+                              // A supplementary module becomes part of the
+                              // main scroll when a fixed 344 px rail would
+                              // squeeze the feed below a useful width.
                               if (useRightRail)
                                 _DesktopRightColumn(child: extras!),
                             ],

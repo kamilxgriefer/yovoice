@@ -155,6 +155,24 @@ class ServerIdentityVisuals {
   final Color focus;
 }
 
+/// The keyboard focus ring for a control whose fill this slice overrides.
+///
+/// `docs/UI.md` (*Semantic colour ownership*) guarantees 3:1 for a filled
+/// control's focus boundary by painting it in the control's own `onPrimary` /
+/// `onError` foreground. That guarantee only holds while the fill IS the
+/// Material primary or error: every identity-filled control here replaces the
+/// fill and, with `side` unset, inherits a theme ring that was measured
+/// against a different colour (1.24:1 on the leave control, 1.57–2.74:1 on
+/// four of the five templates' primary actions). Handing the control its own
+/// on-colour restores the written rule, and returns `null` off focus so
+/// nothing is painted in any other state.
+WidgetStateProperty<BorderSide?> serverFocusRing(Color foreground) =>
+    WidgetStateProperty.resolveWith(
+      (states) => states.contains(WidgetState.focused)
+          ? BorderSide(color: foreground, width: 2)
+          : null,
+    );
+
 /// The selector is an explicitly approved responsive exception to page rhythm.
 abstract final class ServerSelectorMetrics {
   static const compactBreakpoint = 640.0;

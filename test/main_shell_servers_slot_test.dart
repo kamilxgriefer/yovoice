@@ -10,6 +10,7 @@ import 'package:yovoice/features/home/presentation/screens/main_shell.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/desktop_sidebar.dart';
 import 'package:yovoice/features/home/presentation/widgets/more_sheet.dart';
 import 'package:yovoice/features/home/presentation/widgets/navigation/yo_floating_navigation_dock.dart';
+import 'package:yovoice/features/servers/presentation/screens/servers_screen.dart';
 
 int _slotOf(MoreDestination destination) => MainShell.desktopSlots.entries
     .firstWhere((entry) => entry.value == destination)
@@ -147,6 +148,47 @@ void main() {
         expect(history.canGoBack, isTrue);
       },
     );
+
+    // The shell keeps its built slots alive in an `IndexedStack`, so slot 13
+    // stays mounted — with its Firestore listeners and, once someone has
+    // joined a voice channel, with an open microphone — while another
+    // destination is on screen. The screen ends its conversation when the
+    // shell tells it the slot went away, and this is the seam that carries
+    // that word across. The rest of the contract (the shell owning the
+    // notifier and flipping it on every destination change) is pinned in
+    // `server_shell_visibility_test.dart`, which can read the un-pumpable
+    // shell's source.
+    test('the slot builder hands the Servers destination a visibility '
+        'listenable, and a pushed route none', () {
+      final visible = ValueNotifier<bool>(false);
+      addTearDown(visible.dispose);
+      final slot = moreDestinationScreen(
+        MoreDestination.servers,
+        isRootTab: true,
+        serversVisible: visible,
+      );
+      expect(
+        slot,
+        isA<ServersScreen>(),
+        reason: 'Servers carries no premium gate, so the screen is handed '
+            'over directly',
+      );
+      expect(
+        (slot as ServersScreen).isVisible,
+        same(visible),
+        reason: 'without this a hidden slot keeps the microphone open behind '
+            'a dock nobody can see',
+      );
+      expect(slot.isRootTab, isTrue);
+
+      final pushed =
+          moreDestinationScreen(MoreDestination.servers) as ServersScreen;
+      expect(
+        pushed.isVisible,
+        isNull,
+        reason: 'a pushed route ends its conversation by being popped',
+      );
+    });
 
     test(
       'the rail lights Servers for slot 13 and More for Friends, Discover '

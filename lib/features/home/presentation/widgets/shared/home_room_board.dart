@@ -36,6 +36,8 @@ import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
 ///  3. rooms hosted by someone the user follows;
 ///  4. everything else recommended.
 ///
+/// A host who is a friend counts exactly like a followed host.
+///
 /// Ordering inside a tier is by recency, which the callers' queries
 /// already provide, so the result is stable between rebuilds — a feed
 /// that reshuffles under the reader is worse than one that is slightly
@@ -44,6 +46,7 @@ List<VoiceRoom> rankRoomsForHome({
   required List<VoiceRoom> live,
   required List<VoiceRoom> recommended,
   Set<String> followedHostIds = const <String>{},
+  Set<String> friendHostIds = const <String>{},
   int limit = 12,
 }) {
   final seen = <String>{};
@@ -51,7 +54,11 @@ List<VoiceRoom> rankRoomsForHome({
 
   void place(VoiceRoom room, {required bool isLive}) {
     if (!seen.add(room.id)) return; // never twice on one screen
-    final followed = followedHostIds.contains(room.hostId);
+    // A friend hosting is at least as strong a reason to surface a room as
+    // a followed creator hosting it; both land in the same top tier.
+    final followed =
+        followedHostIds.contains(room.hostId) ||
+        friendHostIds.contains(room.hostId);
     if (isLive && followed) {
       tiers[0].add(room);
     } else if (isLive) {
@@ -286,7 +293,7 @@ class HomeRoomBanner extends StatelessWidget {
                             mainAxisSize: MainAxisSize.min,
                             children: [
                               if (hasOwnerActions)
-                                _OwnedRoomMenu(
+                                HomeOwnedRoomMenu(
                                   // List reordering must never recycle a menu
                                   // state into another room's club authority.
                                   key: ValueKey('owned-room-menu-${room.id}'),
@@ -454,8 +461,8 @@ enum _OwnedRoomAction { settings, delete }
 /// `deleteClubSelf` teardown of the whole Club — or, for anyone who is not
 /// the club owner, no delete control at all, exactly as a non-host gets
 /// none for an ordinary room.
-class _OwnedRoomMenu extends StatefulWidget {
-  const _OwnedRoomMenu({
+class HomeOwnedRoomMenu extends StatefulWidget {
+  const HomeOwnedRoomMenu({
     super.key,
     required this.room,
     required this.onManage,
@@ -474,10 +481,10 @@ class _OwnedRoomMenu extends StatefulWidget {
   final ClubService? clubService;
 
   @override
-  State<_OwnedRoomMenu> createState() => _OwnedRoomMenuState();
+  State<HomeOwnedRoomMenu> createState() => _OwnedRoomMenuState();
 }
 
-class _OwnedRoomMenuState extends State<_OwnedRoomMenu> {
+class _OwnedRoomMenuState extends State<HomeOwnedRoomMenu> {
   /// Non-null only for club lounges whose club document can be watched.
   /// Cached here so rebuilds do not re-subscribe a fresh Firestore listener
   /// (and flicker the menu back to its loading shape) on every Home tick.
@@ -501,7 +508,7 @@ class _OwnedRoomMenuState extends State<_OwnedRoomMenu> {
   /// The construction sites also key this widget by room id, but the
   /// re-bind must not depend on every future call site remembering that.
   @override
-  void didUpdateWidget(_OwnedRoomMenu oldWidget) {
+  void didUpdateWidget(HomeOwnedRoomMenu oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.room.id != widget.room.id ||
         oldWidget.room.storedClubId != widget.room.storedClubId) {
@@ -1275,7 +1282,7 @@ class _OwnedRoomCard extends StatelessWidget {
                 child: Material(
                   color: Colors.black.withValues(alpha: .55),
                   shape: const CircleBorder(),
-                  child: _OwnedRoomMenu(
+                  child: HomeOwnedRoomMenu(
                     // Same reorder hazard as the banner site above.
                     key: ValueKey('owned-room-menu-${room.id}'),
                     room: room,
@@ -1409,7 +1416,8 @@ class _FacePile extends StatelessWidget {
               'Zobacz, kto jest w pokoju',
             ),
             child: InkWell(
-              onTap: () => _openRoster(context, room, service, compact),
+              onTap: () =>
+                  openHomeRoomRoster(context, room, service, compact: compact),
               customBorder: const StadiumBorder(),
               child: SizedBox(
                 height: radius * 2,
@@ -1449,12 +1457,12 @@ class _FacePile extends StatelessWidget {
 /// Opens the full roster: a sheet on a phone, a dialog on a pointer
 /// surface. The subscription behind it lives no longer than the surface
 /// showing it.
-void _openRoster(
+void openHomeRoomRoster(
   BuildContext context,
   VoiceRoom room,
-  RoomService service,
-  bool compact,
-) {
+  RoomService service, {
+  bool compact = true,
+}) {
   final palette = context.appPalette;
   final copy = AppLocalizations.of(context);
   if (compact) {

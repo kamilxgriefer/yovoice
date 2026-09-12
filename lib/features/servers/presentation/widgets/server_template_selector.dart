@@ -347,15 +347,22 @@ class _ServerTemplateCardState extends State<ServerTemplateCard> {
           minHeight: compact ? 110 : widget.minimumHeight,
         ),
         decoration: BoxDecoration(
-          color: palette.surfaceMuted,
           borderRadius: radius,
           border: Border.all(
             color: _hovered ? colors.foreground : palette.border,
           ),
+          // `background:#100D18` under
           // `linear-gradient(170deg, rgba(--rgb,.085), transparent 75%)`,
-          // stretched to `.16 / 90%` on hover. Fading to the card fill at
-          // zero alpha rather than to `Colors.transparent` avoids the black
-          // fringe a transparent-black stop would paint.
+          // stretched to `.16 / 90%` on hover.
+          //
+          // Both stops are OPAQUE, and that is the fix, not a detail:
+          // `BoxDecoration` paints a gradient as the background paint's
+          // *shader*, which overrides `color:` entirely. With the far stop at
+          // alpha 0 the card had no base fill at all below the fade — its
+          // interior measured `#080711`, the page colour, instead of
+          // `#100D18`, at every width and in both themes. Compositing the
+          // wash over the card fill here reproduces what the browser draws
+          // with a translucent gradient over an opaque background.
           gradient: LinearGradient(
             begin: const Alignment(-.17, -1),
             end: const Alignment(.17, 1),
@@ -366,8 +373,11 @@ class _ServerTemplateCardState extends State<ServerTemplateCard> {
                   : ServerSelectorMetrics.washFadeStop,
             ],
             colors: [
-              _hovered ? colors.selectedWash : colors.cardWash,
-              palette.surfaceMuted.withValues(alpha: 0),
+              Color.alphaBlend(
+                _hovered ? colors.selectedWash : colors.cardWash,
+                palette.surfaceMuted,
+              ),
+              palette.surfaceMuted,
             ],
           ),
         ),

@@ -25,6 +25,8 @@ import 'package:yovoice/features/rooms/data/services/room_service.dart';
 import 'package:yovoice/features/staff/data/staff_capabilities.dart';
 import 'package:yovoice/features/home/presentation/widgets/mobile/mobile_home_sections.dart';
 import 'package:yovoice/features/home/presentation/widgets/shared/home_overview_sections.dart';
+import 'package:yovoice/features/home/presentation/widgets/shared/home_friend_tile.dart';
+import 'package:yovoice/features/home/presentation/widgets/shared/home_here_now_hero.dart';
 import 'package:yovoice/features/home/presentation/widgets/shared/home_room_board.dart';
 import 'package:yovoice/shared/widgets/profile/availability_picker.dart';
 import 'package:yovoice/shared/widgets/profile/people_status_ring.dart';
@@ -355,11 +357,15 @@ void main() {
     );
 
     await tester.pumpWidget(host(buildHome()));
-    await tester.pump(const Duration(milliseconds: 150));
+    for (var i = 0; i < 6; i++) {
+      await tester.pump(const Duration(milliseconds: 60));
+    }
 
-    // Compact header: greeting + real name, and no emoji.
-    expect(find.text('Kamil'), findsOneWidget);
-    expect(find.textContaining('👋'), findsNothing);
+    // Compact header: one greeting carrying the account's own first name.
+    // The wave is decoration — drawn, never announced (see the semantics
+    // test below, which still refuses to let a control claim the greeting).
+    expect(find.textContaining('Hi, Kamil'), findsOneWidget);
+    expect(find.text('👋'), findsOneWidget);
     // The friends rail leads, with the signed-in account as its first tile.
     expect(find.text('Your people'), findsOneWidget);
     expect(find.byKey(const ValueKey('home-people-me')), findsOneWidget);
@@ -375,21 +381,25 @@ void main() {
     expect(find.byKey(const ValueKey('home-record-moment')), findsOneWidget);
     expect(find.text('Record a Voice Moment'), findsOneWidget);
     expect(find.byKey(const ValueKey('home-your-moment')), findsNothing);
-    expect(find.text('Live for you'), findsOneWidget);
+    expect(find.text('Here and now'), findsOneWidget);
     expect(find.text('Your active rooms'), findsOneWidget);
     expect(find.text('Your recent chats'), findsOneWidget);
 
     double y(String label) => tester.getTopLeft(find.text(label)).dy;
-    expect(y('You'), lessThan(y('Live for you')));
-    expect(y('Live for you'), lessThan(y('Record a Voice Moment')));
-    expect(y('Record a Voice Moment'), lessThan(y('Your recent chats')));
+    expect(y('You'), lessThan(y('Here and now')));
+    expect(y('Here and now'), lessThan(y('Got a minute?')));
+    expect(y('Got a minute?'), lessThan(y('Your recent chats')));
     expect(y('Your recent chats'), lessThan(y('Your active rooms')));
     expect(find.byKey(const ValueKey('home-featured-room')), findsOneWidget);
 
-    // The room appears ONCE, on one board — not in three sections.
-    expect(find.text('Evening Talks'), findsOneWidget);
-    // The banner's count chip: the room's own participantCount.
-    expect(find.text('8'), findsOneWidget);
+    // The room appears ONCE, and its name is the hero's eyebrow — the
+    // headline never inflects a user-typed name.
+    expect(find.textContaining('Evening Talks'), findsOneWidget);
+    // The summary is the REAL roster, read from the room's participants.
+    expect(find.text('Speaker is talking'), findsOneWidget);
+    // The one primary action, and it opens the pre-join screen.
+    expect(find.byKey(const ValueKey('home-hero-join')), findsOneWidget);
+    expect(find.text('Join the conversation'), findsOneWidget);
 
     // Retired compositions are gone.
     for (final removed in [
@@ -402,6 +412,9 @@ void main() {
       'Global conversations',
       'Top creators you follow',
       'Voice Trending',
+      // The followed-Moments rail and the room directory both left Home.
+      'Live for you',
+      'Rooms for you',
     ]) {
       expect(find.text(removed), findsNothing, reason: '$removed returned');
     }
@@ -437,14 +450,13 @@ void main() {
     );
     await tester.pump(const Duration(milliseconds: 150));
 
-    // One primary action per room, on one board. The phone banner
-    // shortens the label to fit beside the chips and the face pile.
-    await tester.tap(find.text('Join').first);
+    // ONE primary action on the page: the hero's join pill.
+    await tester.tap(find.byKey(const ValueKey('home-hero-join')));
     await tester.pump();
     expect(opened?.name, 'Evening Talks');
 
-    // A quiet rail contains no filler card or duplicate actions. Recording
-    // is the rail's trailing Record tile — the own story tile left Home.
+    // No filler card and no duplicate actions. Recording is the "Masz
+    // chwilę?" row card — the followed rail and its own story tile left Home.
     expect(find.text('Find creators'), findsNothing);
     expect(find.text('Record a Moment'), findsNothing);
     await tester.tap(find.byKey(const ValueKey('home-record-moment')));
@@ -538,7 +550,10 @@ void main() {
     await tester.pumpWidget(host(buildHome()));
     await tester.pump(const Duration(milliseconds: 150));
 
-    expect(find.textContaining('No rooms are live right now'), findsOneWidget);
+    expect(
+      find.textContaining('A good conversation starts here.'),
+      findsOneWidget,
+    );
     // The recommended list hides rather than showing filler rows.
     expect(find.text('Recommended now'), findsNothing);
     // An account hosting nothing gets no permanently empty owned-rooms
@@ -588,34 +603,33 @@ void main() {
     expect(requests, 2);
   });
 
-  testWidgets('Moments rail is followed authors with private media', (
-    tester,
-  ) async {
-    usePhone(tester, const Size(390, 1000));
-    await seedFriend('friend-only', 'Friend only');
+  testWidgets('the friends rail marks a FRIEND with a new Voice Moment, and '
+      'never a followed author or a document without media', (tester) async {
+    usePhone(tester, const Size(390, 1400));
+    await seedFriend('friend-voice', 'Friend voice');
     await seedMoment(
-      id: 'friend-moment',
-      authorId: 'friend-only',
-      authorName: 'Friend only',
-    );
-    await seedFollowing('followed', 'Followed voice');
-    await seedMoment(
-      id: 'followed-older',
-      authorId: 'followed',
-      authorName: 'Followed voice',
+      id: 'friend-older',
+      authorId: 'friend-voice',
+      authorName: 'Friend voice',
       age: const Duration(minutes: 10),
     );
     await seedMoment(
-      id: 'followed-newer',
+      id: 'friend-newer',
+      authorId: 'friend-voice',
+      authorName: 'Friend voice',
+    );
+    await seedFriend('friend-silent', 'Friend silent');
+    await seedMoment(
+      id: 'friend-silent-document',
+      authorId: 'friend-silent',
+      authorName: 'Friend silent',
+      withMedia: false,
+    );
+    await seedFollowing('followed', 'Followed voice');
+    await seedMoment(
+      id: 'followed-moment',
       authorId: 'followed',
       authorName: 'Followed voice',
-    );
-    await seedFollowing('silent', 'Silent profile');
-    await seedMoment(
-      id: 'silent-document',
-      authorId: 'silent',
-      authorName: 'Silent profile',
-      withMedia: false,
     );
 
     List<VoiceMoment>? openedChain;
@@ -626,29 +640,29 @@ void main() {
       await tester.pump(const Duration(milliseconds: 60));
     }
 
-    // The own story tile left Home; the rail ends in the Record tile.
+    // The followed rail and its own story tile left Home; creation survives
+    // as the "Got a minute?" card.
+    expect(find.byType(MobileMomentsStrip), findsNothing);
     expect(find.byKey(const ValueKey('home-your-moment')), findsNothing);
     expect(find.byKey(const ValueKey('home-record-moment')), findsOneWidget);
-    // Scoped to the Moments rail: a friend with no Moment is on Home in the
-    // "Your people" strip (that is the point of that strip), but must never
-    // appear as a Moment author here.
-    final rail = find.byType(MobileMomentsStrip);
-    expect(rail, findsOneWidget);
-    Finder inRail(String text) =>
-        find.descendant(of: rail, matching: find.text(text));
-    // One chain tile in the rail for that author, and only there: the
-    // duplicate "Your circle" recap left Home with the followed rail's
-    // demotion, so the name is on the screen exactly once.
-    expect(inRail('Followed voice'), findsOneWidget);
-    expect(find.text('Followed voice'), findsOneWidget);
-    expect(inRail('Friend only'), findsNothing);
-    expect(inRail('Silent profile'), findsNothing);
 
-    await tester.tap(find.byKey(const ValueKey('home-moment-followed-newer')));
+    // A followed author is NOT a friend: the following feed page is where
+    // the Moment came from, but only friendship may put a mark on a face.
+    expect(find.text('Followed voice'), findsNothing);
+    // A friend whose only document carries no media gets presence, not a
+    // Voice label — "no ring" is never a claim that nothing exists.
+    final silent = tester.widget<HomeFriendTile>(
+      find.byKey(const ValueKey('home-person-friend-silent')),
+    );
+    expect(silent.voice, isNull);
+    // The friend with playable media gets the mark and the real duration.
+    expect(find.text('Voice 0:08'), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('home-person-friend-voice')));
     await tester.pump();
     expect(openedChain?.map((moment) => moment.id), [
-      'followed-older',
-      'followed-newer',
+      'friend-older',
+      'friend-newer',
     ]);
     expect(openedChain, isNotNull);
     expect(openedChain!.every((moment) => moment.audioUrl == null), isTrue);
@@ -715,14 +729,14 @@ void main() {
     expect(records, 1);
   });
 
-  testWidgets('avatar-only Moments rail fits 320px at 200 percent text', (
+  testWidgets('the friends rail fits 320px at 200 percent text', (
     tester,
   ) async {
     usePhone(tester, const Size(320, 640));
-    await seedFollowing('followed-long', 'Aleksandra Bardzo Długie Nazwisko');
+    await seedFriend('friend-long', 'Aleksandra Bardzo Długie Nazwisko');
     await seedMoment(
-      id: 'followed-long-moment',
-      authorId: 'followed-long',
+      id: 'friend-long-moment',
+      authorId: 'friend-long',
       authorName: 'Aleksandra Bardzo Długie Nazwisko',
     );
     await tester.pumpWidget(
@@ -749,24 +763,17 @@ void main() {
       find.textContaining('No Moments from your circle yet'),
       findsNothing,
     );
-    // The rail is demoted below "Live for you", so on a 640 px phone at
-    // 200 % text it is genuinely off-screen: scroll to it rather than
-    // pretending the top of Home still carries it.
-    await tester.scrollUntilVisible(
-      find.byType(MobileMomentsStrip),
-      240,
-      scrollable: find.byType(Scrollable).first,
-    );
-    await tester.pump();
-    expect(find.text('Aleksandra Bardzo Długie Nazwisko'), findsOneWidget);
+    // The friend is in the rail at the top of Home, with the real duration
+    // of their newest unheard Voice Moment.
     expect(
-      find.bySemanticsLabel(
-        'Play Voice Moment from Aleksandra Bardzo Długie Nazwisko, '
-        'not heard yet',
-      ),
+      find.byKey(const ValueKey('home-person-friend-long')),
       findsOneWidget,
     );
-    expect(find.byKey(const ValueKey('home-record-moment')), findsOneWidget);
+    expect(find.text('Voice 0:08'), findsOneWidget);
+    expect(
+      find.bySemanticsLabel('Aleksandra Bardzo Długie Nazwisko'),
+      findsOneWidget,
+    );
     expect(tester.takeException(), isNull);
   });
 
@@ -783,7 +790,7 @@ void main() {
       expect(me, findsOneWidget);
       // The ring starts at the account's stored state: no availability
       // field yet parses as "available", not as a guess.
-      PeopleStatusAvatar tile() => tester.widget<PeopleStatusAvatar>(me);
+      HomeFriendTile tile() => tester.widget<HomeFriendTile>(me);
       expect(tile().status, PeopleStatus.online);
       expect(tile().statusLabel, 'Available');
 
@@ -804,8 +811,8 @@ void main() {
       expect(find.text('Do not disturb'), findsWidgets);
     });
 
-    testWidgets('the header chip sits under the name with a 44 px target and '
-        'opens the same picker', (tester) async {
+    testWidgets('the header carries no chip: the picker lives on the own '
+        'tile, with the same 44 px target and the same write', (tester) async {
       usePhone(tester, const Size(390, 1200));
       await db.collection('users').doc(uid).set({
         'uid': uid,
@@ -817,23 +824,26 @@ void main() {
       await tester.pumpWidget(host(buildHome(presenceService: presence)));
       await tester.pump(const Duration(milliseconds: 200));
 
-      // The key rides the visible 27 px pill; the 44 px target is the
-      // band the chip reserves around it, so measure the chip itself.
-      final chip = find.byType(AvailabilityChip);
-      expect(chip, findsOneWidget);
-      expect(find.byKey(const ValueKey('availability-chip')), findsOneWidget);
-      expect(tester.getSize(chip).height, greaterThanOrEqualTo(44));
-      // Under the name, above the friends rail.
-      final chipY = tester.getTopLeft(chip).dy;
-      expect(chipY, greaterThan(tester.getTopLeft(find.text('Kamil')).dy));
-      expect(chipY, lessThan(tester.getTopLeft(find.text('Your people')).dy));
-      // It reads the state as text, and it is the chosen one.
+      // The accepted reference draws bell + avatar only; the chip's action
+      // is NOT lost — it moved to the first tile of the friends rail, which
+      // is reachable without scrolling at every width.
+      expect(find.byType(AvailabilityChip), findsNothing);
+      final me = find.byKey(const ValueKey('home-people-me'));
+      expect(me, findsOneWidget);
+      expect(tester.getSize(me).width, greaterThanOrEqualTo(44));
+      expect(tester.getSize(me).height, greaterThanOrEqualTo(44));
+      // Under the greeting, at the top of the page.
       expect(
-        find.descendant(of: chip, matching: find.text('Be right back')),
+        tester.getTopLeft(me).dy,
+        greaterThan(tester.getTopLeft(find.textContaining('Hi, Kamil')).dy),
+      );
+      // It reads the chosen state as text.
+      expect(
+        find.descendant(of: me, matching: find.text('Be right back')),
         findsOneWidget,
       );
 
-      await tester.tap(chip);
+      await tester.tap(me);
       await tester.pumpAndSettle();
       expect(find.text('Your availability'), findsOneWidget);
       await tester.tap(
@@ -846,8 +856,8 @@ void main() {
       );
     });
 
-    testWidgets('the chip is its own semantics node: the greeting is never '
-        'swallowed into a button', (tester) async {
+    testWidgets('the availability action is its own semantics node: the '
+        'greeting is never swallowed into a button', (tester) async {
       usePhone(tester, const Size(390, 1200));
       await db.collection('users').doc(uid).set({
         'uid': uid,
@@ -859,26 +869,30 @@ void main() {
       await tester.pumpWidget(host(buildHome()));
       await tester.pump(const Duration(milliseconds: 200));
 
-      const phrase = 'Availability: Do not disturb. Change';
+      const phrase = 'You. Availability: Do not disturb. Change';
       final buttons = compiledButtonLabels(tester);
       expect(
         buttons.where((label) => label == phrase).length,
         1,
-        reason: 'the chip announces exactly the composed phrase, alone',
+        reason: 'the own tile announces exactly the composed phrase, alone',
       );
       // The regression this pins: the greeting Column's Text siblings used
-      // to merge into the chip's node, turning the whole greeting into one
-      // 358x112 button.
+      // to merge into a neighbouring control's node, turning the whole
+      // greeting into one 358x112 button.
       for (final label in buttons) {
         expect(
           label,
-          isNot(contains('Good ')),
+          isNot(contains('Hi, Kamil')),
           reason: 'no control may claim the greeting as its name: "$label"',
         );
       }
-      expect(announcedLabelOf(tester, find.byType(AvailabilityChip)), phrase);
-      // And the greeting is still announced — as static content.
-      expect(find.text('Kamil'), findsOneWidget);
+      expect(
+        announcedLabelOf(tester, find.byKey(const ValueKey('home-people-me'))),
+        phrase,
+      );
+      // And the greeting is still announced — as static content, without
+      // the decorative wave.
+      expect(find.bySemanticsLabel(RegExp('Hi, Kamil')), findsOneWidget);
       semantics.dispose();
     });
   });
@@ -909,8 +923,19 @@ void main() {
       );
       await tester.pump(const Duration(milliseconds: 250));
 
+      // At 200 % the hero above grows (the headline wraps rather than being
+      // cut), so this section can start below the lazy list's build window.
+      // Reaching it by scrolling is the assertion: it exists and reflows.
+      final section = find.text('Your active rooms');
+      if (section.evaluate().isEmpty) {
+        await tester.scrollUntilVisible(
+          section,
+          400,
+          scrollable: find.byType(Scrollable).first,
+        );
+      }
       expect(
-        find.text('Your active rooms'),
+        section,
         findsOneWidget,
         reason: 'the section must actually render at $width',
       );
@@ -918,7 +943,8 @@ void main() {
     }
   });
 
-  testWidgets('Rooms for you shows at most three more rooms', (tester) async {
+  testWidgets('the room directory is not on Home: six live rooms produce one '
+      'hero and no second board', (tester) async {
     usePhone(tester, const Size(390, 4000));
     for (var index = 0; index < 6; index++) {
       await seedRoom(
@@ -932,15 +958,18 @@ void main() {
     await tester.pumpWidget(host(buildHome()));
     await tester.pump(const Duration(milliseconds: 250));
 
-    expect(find.text('Rooms for you'), findsOneWidget);
-    // One featured banner plus three: Rooms/Discover owns the rest, so Home
-    // never becomes a second directory with a listener per banner.
-    expect(find.byType(HomeRoomBanner), findsNWidgets(4));
+    // Discovery belongs to the Odkrywaj destination; Home never becomes a
+    // second directory with a listener per banner. The other live rooms are
+    // still read — they are the hero's candidate list.
+    expect(find.text('Rooms for you'), findsNothing);
+    expect(find.byType(HomeRoomBanner), findsNothing);
+    expect(find.byKey(const ValueKey('home-featured-room')), findsOneWidget);
+    expect(find.byKey(const ValueKey('home-hero-join')), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('a host keeps "Your active rooms" when the board also fills '
-      '"Rooms for you"', (tester) async {
+  testWidgets('a host keeps "Your active rooms" when several live rooms '
+      'lengthen the sections above it', (tester) async {
     // The owned-rooms block sits after a variable-length section. Unkeyed,
     // its list child shifted index the moment the board grew, which
     // rebuilt it from scratch, re-subscribed to an already-emitted
@@ -960,14 +989,13 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
     }
 
-    expect(find.text('Rooms for you'), findsOneWidget);
     expect(find.text('Your active rooms'), findsOneWidget);
     expect(find.text('Could not load rooms'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
   testWidgets('a medium width is not a stretched phone: wider gutters and '
-      'the taller featured banner', (tester) async {
+      'the wide hero composition', (tester) async {
     // The mobile shell also serves tablets and a resized desktop window.
     // At 768 the body is not otherwise framed, so it takes UI.md's medium
     // gutter (24) and the featured room gets its non-compact banner —
@@ -990,7 +1018,7 @@ void main() {
       expect((list.padding! as EdgeInsets).left, 0);
       expect((list.padding! as EdgeInsets).right, 0);
       expect(
-        tester.getTopLeft(find.text('Live for you')).dx,
+        tester.getTopLeft(find.text('Here and now')).dx,
         gutter,
         reason: 'left gutter at $width',
       );
@@ -1000,11 +1028,10 @@ void main() {
         reason: 'right gutter at $width',
       );
 
-      final featured = tester.widget<HomeRoomBanner>(
+      final featured = tester.widget<HomeHereNowHero>(
         find.byKey(const ValueKey('home-featured-room')),
       );
-      expect(featured.compact, compact, reason: 'featured banner at $width');
-      expect(featured.featured, isTrue);
+      expect(featured.compact, compact, reason: 'featured hero at $width');
       expect(tester.takeException(), isNull);
     }
   });

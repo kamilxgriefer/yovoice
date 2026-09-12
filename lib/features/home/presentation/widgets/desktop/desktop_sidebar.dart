@@ -639,7 +639,9 @@ class _NavTileState extends State<_NavTile> {
                           color: iconColor,
                         ) ??
                         Icon(
-                          active ? widget.activeIcon ?? widget.icon : widget.icon,
+                          active
+                              ? widget.activeIcon ?? widget.icon
+                              : widget.icon,
                           size: 19,
                           color: iconColor,
                         ),

@@ -7,6 +7,7 @@ import 'dart:ui' as ui;
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
+import 'package:firebase_storage_mocks/firebase_storage_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
@@ -16,12 +17,14 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_theme.dart';
 import 'package:yovoice/features/friends/data/models/friend_user.dart';
+import 'package:yovoice/features/clubs/data/services/club_service.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/home/data/services/home_feed_service.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/desktop_home.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/desktop_moments_strip.dart';
 import 'package:yovoice/features/home/presentation/widgets/mobile/mobile_home.dart';
 import 'package:yovoice/features/home/presentation/widgets/navigation/yo_floating_navigation_dock.dart';
+import 'package:yovoice/features/home/presentation/widgets/shared/home_friend_tile.dart';
 import 'package:yovoice/features/home/presentation/widgets/shared/home_overview_sections.dart';
 import 'package:yovoice/features/home/presentation/widgets/shared/home_section_status.dart';
 import 'package:yovoice/features/messages/data/models/conversation.dart';
@@ -154,6 +157,11 @@ class _Fixture {
   late final feedService = _Feed(this);
   late final messageService = _Messages(this);
   late final profileService = ProfileService(firestore: db, auth: auth);
+  late final clubService = ClubService(
+    firestore: db,
+    auth: auth,
+    storage: MockFirebaseStorage(),
+  );
   final actions = <String>[];
   late VoiceRoom liveRoom;
   late VoiceRoom ownedRoom;
@@ -282,6 +290,7 @@ class _Fixture {
           profileService: profileService,
           feedService: feedService,
           messageService: messageService,
+          clubService: clubService,
           capabilityService: _Capabilities(),
           isVisible: visible,
         )
@@ -303,6 +312,7 @@ class _Fixture {
           onOpenConversation: (c) => actions.add('chat:${c.id}'),
           onSeeAllChats: () => actions.add('chats'),
           roomService: roomService,
+          clubService: clubService,
           friendService: friendService,
           followService: followService,
           profileService: profileService,
@@ -421,6 +431,20 @@ Future<void> _shoot(WidgetTester tester, GlobalKey key, String name) async {
   });
 }
 
+/// What "the followed Moment is on this screen" means.
+///
+/// The followed-Moments rail left BOTH Homes for the Momenty destination,
+/// which owns its own loading, empty and error states. What survives on Home
+/// — on the phone and on the desktop alike — is the fact that matters to a
+/// person opening the app: a FRIEND has an unheard Voice Moment, marked on
+/// their own face in the friends row. Same underlying page, one presentation
+/// on both form factors, so these contracts keep their meaning.
+bool _followedMomentShown(WidgetTester tester, {required bool desktop}) {
+  final tiles = find.byKey(const ValueKey('home-person-qa-friend'));
+  if (tiles.evaluate().isEmpty) return false;
+  return tester.widget<HomeFriendTile>(tiles).voice != null;
+}
+
 void main() {
   setUpAll(() async {
     if (!_capture) return;
@@ -451,11 +475,26 @@ void main() {
       f.moments.deny();
       f.chats.deny();
       await _settle(tester);
-      expect(find.byType(HomeSectionError), findsNWidgets(3));
+      // Rooms and chats always report; the Moments page is a decoration on
+      // Home (it only marks friend tiles), so its denial is silent on both
+      // form factors — never a stale badge, and never an error about a rail
+      // that is no longer on this screen. The rail's own error state went
+      // with it, to the Momenty destination.
+      expect(find.byType(HomeSectionError), findsNWidgets(2));
       expect(messages, hasLength(1));
       expect(messages.single['assertiveness'], Assertiveness.assertive.index);
-      const safeMessage = 'Nie masz uprawnień, aby to zrobić.';
-      expect(messages.single['message'], safeMessage);
+      // The polite channel announces what the cards say: each section's own
+      // sentence first, then the mapped cause. Both denials are now audible
+      // as separate facts — they used to collapse into ONE unattributable
+      // "Nie masz uprawnień, aby to zrobić." because every card printed the
+      // identical sentence.
+      const roomsMessage =
+          'Nie udało się wczytać pokojów na żywo. Sprawdź połączenie i '
+          'spróbuj ponownie. Nie masz uprawnień, aby to zrobić.';
+      const chatsMessage =
+          'Nie udało się wczytać ostatnich czatów. '
+          'Nie masz uprawnień, aby to zrobić.';
+      expect(messages.single['message'], '$roomsMessage\n$chatsMessage');
 
       // The real Home scope, including a desktop column reparent, retains
       // its active episode through localization-independent presentation.
@@ -474,7 +513,10 @@ void main() {
       f.rooms.deny();
       await _settle(tester);
       expect(messages, hasLength(2));
-      expect(messages.last['message'], safeMessage);
+      // Only the rooms read is denied this time, so only its sentence is
+      // announced — which is the whole point of keeping the section's own
+      // copy instead of replacing it with the bare cause.
+      expect(messages.last['message'], roomsMessage);
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox());
       await _settle(tester);
@@ -527,12 +569,11 @@ void main() {
         final before = f.listens;
         f.following.deny();
         await _settle(tester);
+        expect(_followedMomentShown(tester, desktop: desktop), isFalse);
+        expect(find.byKey(const ValueKey('home-moments-error')), findsNothing);
+        // The person is still on Home — a friend is not followed content.
         expect(
-          find.byKey(const ValueKey('home-moment-qa-moment')),
-          findsNothing,
-        );
-        expect(
-          find.byKey(const ValueKey('home-moments-error')),
+          find.byKey(const ValueKey('home-person-qa-friend')),
           findsOneWidget,
         );
         expect(
@@ -563,10 +604,7 @@ void main() {
       final error = find.byKey(const ValueKey('home-chats-error'));
       expect(error, findsOneWidget);
       expect(find.text('Masz chwilę na rozmowę?'), findsNothing);
-      expect(
-        find.byKey(const ValueKey('home-moment-qa-moment')),
-        findsOneWidget,
-      );
+      expect(_followedMomentShown(tester, desktop: desktop), isTrue);
       await tester.tap(
         find.descendant(of: error, matching: find.byType(OutlinedButton)),
       );
@@ -592,36 +630,24 @@ void main() {
         addTearDown(f.dispose);
         await tester.pumpWidget(_app(f.home(desktop: desktop), size));
         await _settle(tester);
-        expect(
-          find.byKey(const ValueKey('home-moment-qa-moment')),
-          findsOneWidget,
-        );
+        expect(_followedMomentShown(tester, desktop: desktop), isTrue);
         final chatReads = f.chats.listens;
         f.moments.deny();
         await _settle(tester);
-        expect(
-          find.byKey(const ValueKey('home-moment-qa-moment')),
-          findsNothing,
-        );
+        // A denied page never leaves a stale mark behind.
+        expect(_followedMomentShown(tester, desktop: desktop), isFalse);
         final error = find.byKey(const ValueKey('home-moments-error'));
-        expect(error, findsOneWidget);
+        expect(error, findsNothing);
         expect(
           find.byKey(const ValueKey('home-featured-room')),
           findsOneWidget,
         );
+        // The failure stays local: the chats subscription is untouched.
         expect(f.chats.listens, chatReads);
-        await tester.tap(
-          find.descendant(of: error, matching: find.byType(OutlinedButton)),
-        );
-        await _settle(tester);
-        expect(f.feedService.reads, 2);
-        expect(
-          find.byKey(const ValueKey('home-moment-qa-moment')),
-          findsNothing,
-        );
         f.moments.add([]);
         await _settle(tester);
         expect(error, findsNothing);
+        expect(_followedMomentShown(tester, desktop: desktop), isFalse);
         expect(
           find.byKey(const ValueKey('home-record-moment')),
           findsOneWidget,

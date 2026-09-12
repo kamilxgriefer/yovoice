@@ -49,9 +49,11 @@ class ServerTemplateChannel {
 ///
 /// A client preview that disagreed with this would promise `Salon` and seed
 /// `Lounge`, so the predicate is copied rather than approximated.
-bool serverSeedsInPolish(String defaultLanguage) =>
-    RegExp(r'^(pl([-_].*)?|polish|polski)$', caseSensitive: false, unicode: true)
-        .hasMatch(defaultLanguage);
+bool serverSeedsInPolish(String defaultLanguage) => RegExp(
+  r'^(pl([-_].*)?|polish|polski)$',
+  caseSensitive: false,
+  unicode: true,
+).hasMatch(defaultLanguage);
 
 /// Every template's seeded channels, in the order the server writes them.
 ///

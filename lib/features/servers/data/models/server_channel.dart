@@ -33,6 +33,36 @@ enum ServerChannelAccess { members, restricted }
 
 enum ServerMediaMode { audio, video, meeting }
 
+/// The server-owned liveness projection on the channel document (ADR-177):
+/// `{schemaVersion, isLive, startedAt}`. A live projection always carries
+/// the instant it started; there is deliberately no participant count, so
+/// "live since HH:MM" is renderable and "N people talking" is not.
+class ServerChannelLiveness {
+  const ServerChannelLiveness({this.isLive = false, this.startedAt});
+
+  /// The honest default for a legacy row or a document written before the
+  /// projection existed.
+  static const idle = ServerChannelLiveness();
+
+  final bool isLive;
+  final DateTime? startedAt;
+
+  factory ServerChannelLiveness.fromMap(Object? value) {
+    if (value is! Map) return idle;
+    final startedAt = value['startedAt'];
+    final started = switch (startedAt) {
+      Timestamp timestamp => timestamp.toDate(),
+      DateTime date => date,
+      _ => null,
+    };
+    // A projection that says live without its start instant cannot be
+    // represented server-side; read it as idle rather than inventing one.
+    return value['isLive'] == true && started != null
+        ? ServerChannelLiveness(isLive: true, startedAt: started)
+        : idle;
+  }
+}
+
 class ServerChannel {
   const ServerChannel({
     required this.id,
@@ -49,6 +79,7 @@ class ServerChannel {
     this.mediaMode,
     this.schemaVersion,
     this.status = 'active',
+    this.liveness = ServerChannelLiveness.idle,
   });
 
   final String id;
@@ -65,6 +96,7 @@ class ServerChannel {
   final ServerMediaMode? mediaMode;
   final int? schemaVersion;
   final String status;
+  final ServerChannelLiveness liveness;
 
   bool get isLegacy => schemaVersion == null;
 
@@ -147,6 +179,9 @@ class ServerChannel {
       mediaMode: mode,
       schemaVersion: legacy ? null : 1,
       status: serverString(data['status']) ?? (legacy ? 'active' : 'unknown'),
+      liveness: kind.isMedia
+          ? ServerChannelLiveness.fromMap(data['liveness'])
+          : ServerChannelLiveness.idle,
     );
   }
 }

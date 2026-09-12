@@ -241,9 +241,7 @@ class _YoFloatingNavigationDockState extends State<YoFloatingNavigationDock>
           safe.right,
     );
     final labelWidth = math.max(1.0, width / 5 - _labelInset * 2);
-    final style = Theme.of(
-      context,
-    ).textTheme.bodyMedium!.merge(_labelStyle);
+    final style = Theme.of(context).textTheme.bodyMedium!.merge(_labelStyle);
     bool exceedsCompactLabel(String label) {
       final painter = TextPainter(
         text: TextSpan(text: label, style: style),
@@ -298,9 +296,7 @@ class _YoFloatingNavigationDockState extends State<YoFloatingNavigationDock>
         key: const ValueKey('yo-dock-surface'),
         decoration: BoxDecoration(
           color: palette.navigationSurface,
-          border: Border(
-            top: YoFloatingNavigationDock.outlineSideFor(palette),
-          ),
+          border: Border(top: YoFloatingNavigationDock.outlineSideFor(palette)),
         ),
         child: SafeArea(
           key: const ValueKey('yo-floating-navigation-safe-area'),
@@ -339,9 +335,7 @@ class _YoFloatingNavigationDockState extends State<YoFloatingNavigationDock>
                         behavior: HitTestBehavior.translucent,
                         onHorizontalDragStart: (details) {
                           if (_acceptedSlot == null) return;
-                          final center = centerFor(
-                            _position.value.clamp(0, 4),
-                          );
+                          final center = centerFor(_position.value.clamp(0, 4));
                           if ((details.localPosition.dx - center).abs() >
                               indicatorWidth / 2 + 12) {
                             return;
@@ -379,8 +373,7 @@ class _YoFloatingNavigationDockState extends State<YoFloatingNavigationDock>
                                         centerFor(position) -
                                         indicatorWidth / 2,
                                     top:
-                                        (YoFloatingNavigationDock
-                                                .visualHeight -
+                                        (YoFloatingNavigationDock.visualHeight -
                                             YoFloatingNavigationDock
                                                 .activeIndicatorHeight) /
                                         2,
@@ -421,8 +414,7 @@ class _YoFloatingNavigationDockState extends State<YoFloatingNavigationDock>
                                         lift: _acceptedSlot == null
                                             ? 0
                                             : (1 -
-                                                      (position - slot)
-                                                              .abs() /
+                                                      (position - slot).abs() /
                                                           .62)
                                                   .clamp(0.0, 1.0),
                                         labelVisible: !expanded,
@@ -448,11 +440,10 @@ class _YoFloatingNavigationDockState extends State<YoFloatingNavigationDock>
                                               'yo-meniscus-accessible-label',
                                             ),
                                             textAlign: TextAlign.center,
-                                            style: _expandedLabelStyle
-                                                .copyWith(
-                                                  color: palette
-                                                      .interactiveForeground,
-                                                ),
+                                            style: _expandedLabelStyle.copyWith(
+                                              color:
+                                                  palette.interactiveForeground,
+                                            ),
                                           ),
                                         ),
                                       ),

@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
@@ -5,8 +7,11 @@ import 'package:yovoice/core/presence/presence_service.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_spacing.dart';
 import 'package:yovoice/features/friends/data/models/friend_user.dart';
+import 'package:yovoice/features/home/presentation/widgets/shared/home_add_affordance.dart';
+import 'package:yovoice/features/home/presentation/widgets/shared/home_friend_tile.dart';
 import 'package:yovoice/features/home/presentation/widgets/shared/home_section_header.dart';
 import 'package:yovoice/features/home/presentation/widgets/shared/home_section_status.dart';
+import 'package:yovoice/features/moments/data/models/voice_moment.dart';
 import 'package:yovoice/features/profile/data/models/user_profile.dart';
 import 'package:yovoice/shared/widgets/profile/availability_picker.dart';
 import 'package:yovoice/shared/widgets/profile/people_status_ring.dart';
@@ -36,6 +41,9 @@ class HomePeopleStrip extends StatelessWidget {
     this.profile,
     this.presenceService,
     this.onRetry,
+    this.friendsSnapshot,
+    this.voiceByFriendId = const <String, HomeFriendVoice>{},
+    this.onOpenVoice,
     this.expandedLabels = false,
     this.avatarRadius = 26,
     this.horizontalPadding = AppRhythm.title,
@@ -61,6 +69,21 @@ class HomePeopleStrip extends StatelessWidget {
   /// is process-shared, so the parent's `setState` is cheap.
   final VoidCallback? onRetry;
 
+  /// An already-resolved friends read from the surrounding surface. Non-null
+  /// stops this strip from opening a listener of its own — Home resolves the
+  /// list once because the "Tu i teraz" hero needs the same ids, and one
+  /// screen must never subscribe to the same query twice.
+  final AsyncSnapshot<List<FriendUser>>? friendsSnapshot;
+
+  /// Unheard Voice Moment chains, keyed by friend id, resolved by the parent
+  /// from the page it already loaded. An entry here is the ONLY reason a tile
+  /// draws a ring or a badge; an empty map renders presence only, which is
+  /// exactly what a failed Moments read must look like.
+  final Map<String, HomeFriendVoice> voiceByFriendId;
+
+  /// Opens one friend's chain in the existing story viewer.
+  final ValueChanged<List<VoiceMoment>>? onOpenVoice;
+
   /// Desktop widens the name column (`radius * 3.2` instead of `2.4`) so
   /// full names ellipsise less.
   final bool expandedLabels;
@@ -68,34 +91,53 @@ class HomePeopleStrip extends StatelessWidget {
 
   /// The page gutter. The strip is full-bleed: the heading takes this as
   /// padding and the rail takes it INSIDE its scroll view, so the first
-  /// avatar's ink starts exactly at the gutter and the tiles scroll under
-  /// the frame edge instead of past it.
+  /// tile's COLUMN starts exactly at the gutter and the tiles scroll under
+  /// the frame edge instead of past it. Every tile centres its disc in an
+  /// identical column, so every disc — the own tile included — carries the
+  /// same small inset; the own tile used to add the caret's width to its
+  /// column alone and sat 9 px further in than its neighbours.
   final double horizontalPadding;
 
-  double get _labelWidth => avatarRadius * (expandedLabels ? 3.2 : 2.4);
+  /// The name/status column. It scales with the reader's text preference the
+  /// way the two "add" and own-tile columns already did — a fixed 67 px broke
+  /// "Dostępny" mid-word at 200 %.
+  double _labelWidth(BuildContext context) => MediaQuery.textScalerOf(
+    context,
+  ).scale(avatarRadius * (expandedLabels ? 3.2 : 2.4));
 
-  /// Outer disc: avatar + 2 px inner padding + 1.5 px ring on each side.
-  double get _discSize => avatarRadius * 2 + 7;
+  /// Outer disc: avatar + a 2 px gap + the 2 px ring slot on each side —
+  /// the same box [HomeFriendTile] lays out whether or not a ring is painted,
+  /// so the rail's pitch never changes when a Voice Moment arrives.
+  double get _discSize => avatarRadius * 2 + 8;
 
   @override
   Widget build(BuildContext context) {
     final friendStream = friends;
     final profileStream = profile;
-    if (friendStream == null && profileStream == null) {
+    final resolved = friendsSnapshot;
+    if (friendStream == null && profileStream == null && resolved == null) {
       return const SizedBox.shrink();
     }
     return StreamBuilder<UserProfile>(
       stream: profileStream,
-      builder: (context, profileSnapshot) => StreamBuilder<List<FriendUser>>(
-        stream: friendStream,
-        builder: (context, friendSnapshot) => _buildStrip(
-          context,
-          profile: profileSnapshot.data,
-          hasProfileStream: profileStream != null,
-          friends: friendSnapshot,
-          hasFriendStream: friendStream != null,
-        ),
-      ),
+      builder: (context, profileSnapshot) => resolved != null
+          ? _buildStrip(
+              context,
+              profile: profileSnapshot.data,
+              hasProfileStream: profileStream != null,
+              friends: resolved,
+              hasFriendStream: true,
+            )
+          : StreamBuilder<List<FriendUser>>(
+              stream: friendStream,
+              builder: (context, friendSnapshot) => _buildStrip(
+                context,
+                profile: profileSnapshot.data,
+                hasProfileStream: profileStream != null,
+                friends: friendSnapshot,
+                hasFriendStream: friendStream != null,
+              ),
+            ),
     );
   }
 
@@ -122,7 +164,6 @@ class HomePeopleStrip extends StatelessWidget {
         !failed &&
         !friends.hasData &&
         friends.connectionState == ConnectionState.waiting;
-    final empty = hasFriendStream && friends.hasData && people.isEmpty;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -134,8 +175,9 @@ class HomePeopleStrip extends StatelessWidget {
         Padding(
           padding: EdgeInsets.symmetric(horizontal: horizontalPadding),
           child: HomeSectionHeader(
-            title: copy.text('Your people', 'Twoi znajomi'),
+            title: copy.homeYourPeople,
             seeAllKey: const ValueKey('home-people-see-all'),
+            seeAllLabel: copy.homeSeeAllPeople,
             scale: expandedLabels
                 ? HomeSectionHeaderScale.expanded
                 : HomeSectionHeaderScale.compact,
@@ -150,9 +192,9 @@ class HomePeopleStrip extends StatelessWidget {
           key: const ValueKey('home-people-strip'),
           scrollDirection: Axis.horizontal,
           // Full-bleed: the gutter is the scroll view's own padding, so the
-          // first avatar's ink starts exactly at the page margin and the
-          // rest scroll under the frame edge rather than painting past the
-          // layout (the rail used to reach x = 391.9 on a 390 px screen).
+          // first tile starts at the page margin and the rest scroll under
+          // the frame edge rather than painting past the layout (the rail
+          // used to reach x = 391.9 on a 390 px screen).
           clipBehavior: Clip.hardEdge,
           padding: EdgeInsets.symmetric(horizontal: horizontalPadding),
           child: Row(
@@ -169,19 +211,21 @@ class HomePeopleStrip extends StatelessWidget {
                 for (final friend in people) ...[
                   if (friend != people.first || hasProfileStream)
                     const SizedBox(width: AppRhythm.item),
-                  PeopleStatusAvatar(
+                  HomeFriendTile(
                     key: ValueKey('home-person-${friend.id}'),
                     displayName: friend.displayName,
                     userId: friend.id,
                     photoUrl: friend.photoUrl,
-                    radius: avatarRadius,
-                    labelWidth: _labelWidth,
-                    tilePadding: EdgeInsets.zero,
+                    mediaRevision: friend.profileUpdatedAt,
+                    avatarRadius: avatarRadius,
+                    labelWidth: _labelWidth(context),
                     status: PeopleStatus.fromPresence(
                       isOnline: friend.isOnline,
                       availability: friend.availability,
                     ),
-                    onTap: () => showProfilePreview(
+                    voice: voiceByFriendId[friend.id],
+                    onOpenVoice: onOpenVoice,
+                    onOpenProfile: () => showProfilePreview(
                       context,
                       userId: friend.id,
                       displayName: friend.displayName,
@@ -189,16 +233,21 @@ class HomePeopleStrip extends StatelessWidget {
                     ),
                   ),
                 ],
-              if (empty) ...[
-                if (hasProfileStream) const SizedBox(width: AppRhythm.item),
-                _AddFriendsTile(
-                  discSize: _discSize,
-                  // A primary empty-state action is not a person-name
-                  // preview: keep its complete localized verb visible.
-                  labelWidth: MediaQuery.textScalerOf(context).scale(84),
-                  onTap: onSeeAll,
-                ),
-              ],
+              // ALWAYS last — not only when the list is empty, and not only
+              // when the read succeeded: growing the circle is a standing
+              // action, and a failed friends read is precisely the state in
+              // which the reader is most likely to want it. The error card
+              // below the rail explains the failure; it does not have to
+              // cost the reader an unrelated door.
+              if (hasProfileStream || people.isNotEmpty || loading || failed)
+                const SizedBox(width: AppRhythm.item),
+              _AddFriendsTile(
+                discSize: _discSize,
+                // A primary action is not a person-name preview: keep its
+                // complete localized verb visible.
+                labelWidth: MediaQuery.textScalerOf(context).scale(84),
+                onTap: onSeeAll,
+              ),
             ],
           ),
         ),
@@ -235,20 +284,34 @@ class HomePeopleStrip extends StatelessWidget {
       'Dostępność: {status}. Zmień',
       values: <String, Object>{'status': label},
     );
-    return PeopleStatusAvatar(
+    // Deliberately NOT `PeopleStatusAvatar`: its RING means presence, and two
+    // discs along this rail a ring means "new Voice Moment" (the join
+    // identity). One rail may not carry one mark with two meanings — in Pearl
+    // the two colours are near neighbours — so the own tile uses the rail's
+    // own tile with presence as the dot plus the word, and leaves the ring
+    // slot laid out but neutral.
+    return HomeFriendTile(
       key: const ValueKey('home-people-me'),
       displayName: copy.homeYou,
       userId: profile.uid,
       photoUrl: profile.photoUrl,
       mediaRevision: profile.profileUpdatedAt,
-      radius: avatarRadius,
-      // The own tile's status line also carries the "change" caret, so its
-      // column is widened by exactly the caret's width: the words keep the
-      // room every other tile's words have, at any text scale.
-      labelWidth: _labelWidth + MediaQuery.textScalerOf(context).scale(12) + 2,
-      tilePadding: EdgeInsets.zero,
+      avatarRadius: avatarRadius,
+      // The caret rides the status line, so the column only widens when the
+      // chosen availability actually needs the room ("Nie przeszkadzać"):
+      // for every ordinary label the own tile's column is its siblings', and
+      // the first disc stops sitting 9 px inboard of the page margin.
+      labelWidth: math.max(
+        _labelWidth(context),
+        HomeFriendTile.statusColumnMinimumWidth(
+          context,
+          label,
+          showCaret: true,
+        ),
+      ),
       status: PeopleStatus.fromOwnAvailability(profile.availability),
       statusLabel: label,
+      showChangeCaret: true,
       // The visible name leads, then the chip's exact phrase: the tile
       // prints "You" under the avatar, so the accessible name has to contain
       // it (WCAG 2.5.3 Label in Name — "tap You" must work), and a reader
@@ -256,10 +319,9 @@ class HomePeopleStrip extends StatelessWidget {
       // the status. The action wording stays byte-identical to
       // AvailabilityChip's, in every locale.
       semanticLabel: '${copy.homeYou}. $action',
-      showChangeBadge: true,
       // No optimistic state: `watchCurrentProfile` replays the merged write
       // from the local cache, and the picker already reports a failure.
-      onTap: () => showAvailabilityPicker(
+      onOpenProfile: () => showAvailabilityPicker(
         context,
         current: profile.availability,
         presenceService: presenceService,
@@ -335,7 +397,7 @@ class _AddFriendsTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     final copy = AppLocalizations.of(context);
-    final label = copy.text('Add friends', 'Dodaj znajomych');
+    final label = copy.homeAddFriends;
     return Semantics(
       container: true,
       excludeSemantics: true,
@@ -350,16 +412,13 @@ class _AddFriendsTile extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Container(
-              width: discSize,
-              height: discSize,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: palette.surfaceRaised,
-                border: Border.all(color: palette.borderStrong, width: 1.5),
-              ),
+            // Dashed, with a "+": the one mark on Home that says "this is a
+            // slot you can fill". A solid ring reads as a disabled avatar.
+            HomeDashedOutline(
+              size: discSize,
+              color: palette.borderStrong,
               child: Icon(
-                Icons.person_add_alt_1_rounded,
+                Icons.add_rounded,
                 size: 22,
                 color: palette.interactiveForeground,
               ),

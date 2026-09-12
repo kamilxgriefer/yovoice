@@ -642,6 +642,9 @@ void main() {
       ),
     );
     await settle(tester);
+    // The accepted reference draws bell + avatar only; the availability
+    // action lives on the friends rail's own tile, the More sheet and the
+    // desktop profile card, so it is never lost.
     expect(find.byType(AvailabilityChip), findsNothing);
     final coldTop = tester.getTopLeft(find.byType(HomePeopleStrip)).dy;
 
@@ -652,25 +655,26 @@ void main() {
       app(mobileHome(), size: size, textScale: 1, locale: const Locale('en')),
     );
     await settle(tester);
-    expect(find.byType(AvailabilityChip), findsOneWidget);
+    expect(find.byType(AvailabilityChip), findsNothing);
     // A6: the discs set the control row's height, so the header is exactly
-    // as tall before the chip arrives as after it. It used to grow ~50 px
+    // as tall before the profile arrives as after it. It used to grow ~50 px
     // the moment `watchCurrentProfile` emitted, jolting the whole page.
     expect(tester.getTopLeft(find.byType(HomePeopleStrip)).dy, coldTop);
 
-    // A5: one centre line, three real targets.
-    final chip = tester.getRect(find.byType(AvailabilityChip));
+    // A5: one centre line, two real targets.
     final bell = tester.getRect(find.byTooltip('Notifications'));
     final avatar = tester.getRect(find.byTooltip('Profile'));
-    expect(chip.center.dy, closeTo(bell.center.dy, 0.5));
     expect(bell.center.dy, closeTo(avatar.center.dy, 0.5));
-    for (final target in [chip, bell, avatar]) {
+    for (final target in [bell, avatar]) {
       expect(target.height, greaterThanOrEqualTo(AppSizing.minimumTouchTarget));
       expect(target.width, greaterThanOrEqualTo(AppSizing.minimumTouchTarget));
     }
-    // Reading order: greeting, name, availability, notifications, profile.
-    expect(tester.getTopLeft(find.text('Kamil')).dy, lessThan(chip.top));
-    expect(chip.left, lessThan(bell.left));
+    // Reading order: greeting, notifications, profile — and the greeting is
+    // never squeezed by the controls.
+    expect(
+      tester.getTopLeft(find.textContaining('Hi, Kamil')).dy,
+      lessThan(bell.bottom),
+    );
     expect(bell.left, lessThan(avatar.left));
   });
 
@@ -685,21 +689,17 @@ void main() {
     );
     await settle(tester);
 
-    // A8.
+    // A8: the followed-Moments rail moved to the Momenty destination; the
+    // creation route it carried survives as one labelled row card.
     expect(find.text('From people you follow'), findsNothing);
     final record = find.byKey(const ValueKey('home-record-moment'));
     expect(record, findsOneWidget);
     final size1 = tester.getSize(record);
     expect(size1.height, greaterThanOrEqualTo(AppSizing.minimumTouchTarget));
     expect(size1.width, greaterThanOrEqualTo(AppSizing.minimumTouchTarget));
-    expect(find.byType(MobileMomentsStrip), findsOneWidget);
-    // It sits with the other real routes, not under a heading of its own.
-    expect(
-      tester.getTopLeft(record).dy,
-      greaterThan(
-        tester.getTopLeft(find.byKey(const ValueKey('home-quick-friends'))).dy,
-      ),
-    );
+    expect(find.byType(MobileMomentsStrip), findsNothing);
+    expect(find.text('Got a minute?'), findsOneWidget);
+    expect(find.text('Record a Voice Moment'), findsOneWidget);
   });
 
   // ---------------------------------------------------------- the desktop
@@ -725,9 +725,24 @@ void main() {
     );
     await settle(tester);
 
+    // The page's own ramp is the expanded one. The 300 px context column is
+    // a deliberate exception — a 19 px heading with a "See all" beside it
+    // wraps to two lines in a 300 px column, so it runs the compact ramp of
+    // the cards it sits among. Both halves are asserted here so the two
+    // ramps stay a decision rather than a drift.
+    final secondary = find.byKey(const ValueKey('home-secondary-column'));
+    expect(secondary, findsOneWidget);
+    final contextHeaders = find
+        .descendant(of: secondary, matching: find.byType(HomeSectionHeader))
+        .evaluate()
+        .toSet();
     final headers = find.byType(HomeSectionHeader).evaluate().toList();
     expect(headers, isNotEmpty);
-    for (final header in headers) {
+    final pageHeaders = headers
+        .where((header) => !contextHeaders.contains(header))
+        .toList();
+    expect(pageHeaders, isNotEmpty);
+    for (final header in pageHeaders) {
       final widget = header.widget as HomeSectionHeader;
       expect(
         widget.scale,
@@ -739,6 +754,14 @@ void main() {
       final ink = _inkBounds(header)!;
       expect(ink.top - rect.top, closeTo(AppRhythm.section, 0.5));
       expect(rect.bottom - ink.bottom, closeTo(AppRhythm.title, 0.5));
+    }
+    expect(contextHeaders, isNotEmpty);
+    for (final header in contextHeaders) {
+      expect(
+        (header.widget as HomeSectionHeader).scale,
+        HomeSectionHeaderScale.compact,
+        reason: 'the 300 px context column runs the compact ramp',
+      );
     }
 
     final list = tester.widget<ListView>(find.byType(ListView).first);
@@ -816,15 +839,15 @@ List<_Child> _sliverChildren(WidgetTester tester) {
   RenderBox? child = sliver.firstChild;
   while (child != null) {
     final element = _elementFor(tester, child);
+    final ink = element == null ? null : _inkBounds(element);
     children.add(
       _Child(
         render: child,
-        ink: element == null ? null : _inkBounds(element),
+        ink: ink,
         label: element == null ? '?' : _describe(element),
         isRail: element != null && _subtreeHasAny(element, _railTypes),
         startsWithHeading: element != null && _opensWithHeading(element, child),
-        endsWithHeading:
-            element != null && _subtreeHasAny(element, [HomeSectionHeader]),
+        endsWithHeading: element != null && _closesWithHeading(element, ink),
       ),
     );
     child = sliver.childAfter(child);
@@ -871,6 +894,35 @@ bool _subtreeHasAny(Element root, List<Type> types) {
 
   visit(root);
   return hit;
+}
+
+/// True when the LAST thing this child paints is its section heading — the
+/// child is a bare heading, so the gap under it is measured from the
+/// heading's ink (which already reserves the title step) rather than from the
+/// box.
+///
+/// Geometric on purpose. "The subtree contains a HomeSectionHeader" is not
+/// the same question: the people strip contains its own heading AND a rail of
+/// tiles under it, and measuring THAT child's following gap from the heading
+/// would compare the next section against the wrong edge.
+bool _closesWithHeading(Element root, Rect? childInk) {
+  if (childInk == null) return false;
+  Element? header;
+  void visit(Element element) {
+    if (header != null) return;
+    if (element.widget is HomeSectionHeader) {
+      header = element;
+      return;
+    }
+    element.visitChildren(visit);
+  }
+
+  visit(root);
+  final found = header;
+  if (found == null) return false;
+  final headerInk = _inkBounds(found);
+  if (headerInk == null) return false;
+  return (headerInk.bottom - childInk.bottom).abs() < 0.5;
 }
 
 /// True when the first thing this child paints is a section heading — the

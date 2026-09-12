@@ -7,6 +7,7 @@ import 'dart:ui' as ui;
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
+import 'package:firebase_storage_mocks/firebase_storage_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
@@ -16,10 +17,12 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_theme.dart';
 import 'package:yovoice/features/friends/data/models/friend_user.dart';
+import 'package:yovoice/features/clubs/data/services/club_service.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/home/data/services/home_feed_service.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/desktop_home.dart';
 import 'package:yovoice/features/home/presentation/widgets/mobile/mobile_home.dart';
+import 'package:yovoice/features/home/presentation/widgets/shared/home_friend_tile.dart';
 import 'package:yovoice/features/home/presentation/widgets/navigation/yo_floating_navigation_dock.dart';
 import 'package:yovoice/features/home/presentation/widgets/shared/home_section_status.dart';
 import 'package:yovoice/features/messages/data/models/conversation.dart';
@@ -39,6 +42,23 @@ const _uid = 'independent-home-viewer';
 const _friendId = 'independent-home-friend';
 const _name = 'Alexandra Nowakowska-Kowalska';
 const _roomTitle = 'Porozmawiajmy o nadchodzącym weekendzie';
+
+/// The one primary "go into the conversation" control.
+///
+/// Both Homes now carry it on the "Tu i teraz" hero: one card, one primary
+/// action, one pre-join boundary, whatever the width.
+Finder _joinControl({required bool desktop}) => _key('home-hero-join');
+
+/// "The followed Moment is marked on this screen".
+///
+/// The followed rail left both Homes for the Momenty destination. What
+/// remains is the mark on a FRIEND's own face — the same page, gated by real
+/// friendship, on both form factors.
+bool _followedMark(WidgetTester tester, {required bool desktop}) {
+  final tile = _key('home-person-$_friendId');
+  if (tile.evaluate().isEmpty) return false;
+  return tester.widget<HomeFriendTile>(tile).voice != null;
+}
 
 /// A cold subscription with a cached initial response and observable ownership.
 /// Each call to listenFresh returns a distinct stream, like a retry request.
@@ -147,6 +167,11 @@ class _QaCapabilities extends StaffCapabilityService {
 class _HomeFixture {
   final db = FakeFirebaseFirestore();
   final auth = MockFirebaseAuth(signedIn: true, mockUser: MockUser(uid: _uid));
+  late final clubService = ClubService(
+    firestore: db,
+    auth: auth,
+    storage: MockFirebaseStorage(),
+  );
   final rooms = _Probe<List<VoiceRoom>>();
   final owned = _Probe<List<VoiceRoom>>();
   final friends = _Probe<List<FriendUser>>();
@@ -309,6 +334,7 @@ class _HomeFixture {
           onOpenConversation: (item) => actions.add('chat:${item.id}'),
           onSeeAllChats: () => actions.add('chats'),
           roomService: roomService,
+          clubService: clubService,
           friendService: friendService,
           followService: followService,
           profileService: profileService,
@@ -481,10 +507,12 @@ void main() {
           isEmpty,
           reason: 'Merely rendering must not join audio.',
         );
-        await _tap(tester, _key('home-room-join').first);
+        await _tap(tester, _joinControl(desktop: desktop).first);
         await _tap(tester, _key('home-quick-create-room'));
         await _tap(tester, _key('home-quick-friends'));
-        await _tap(tester, _key('home-moment-qa-followed-moment'));
+        // The same chain, from the one surface that hosts it on both
+        // platforms: the friend's own tile.
+        await _tap(tester, _key('home-person-$_friendId'));
         await _tap(tester, _key('home-record-moment'));
         await _tap(tester, find.text('Independent callback sentinel'));
         expect(f.actions, [
@@ -510,15 +538,21 @@ void main() {
         final chatSubscriptions = f.chats.listens;
         oldFeed.fail();
         await _pump(tester);
-        expect(_key('home-moment-qa-followed-moment'), findsNothing);
+        expect(_followedMark(tester, desktop: desktop), isFalse);
         final newFeed = _Probe<List<VoiceMoment>>();
         f.feedPages.add(newFeed);
-        await _tap(tester, _retry('home-moments-error'));
+        // Neither Home has an error to retry any more (the page only marks
+        // friend tiles), so the refresh point on both is the one they
+        // already had — coming back to the tab.
+        f.visible.value = false;
+        await _pump(tester);
+        f.visible.value = true;
+        await _pump(tester);
         expect(f.feedService.reads, 2);
         expect(oldFeed.cancels, oldFeed.listens);
         oldFeed.emit([f.moment]); // A stale completed request is now unowned.
         await _pump(tester);
-        expect(_key('home-moment-qa-followed-moment'), findsNothing);
+        expect(_followedMark(tester, desktop: desktop), isFalse);
         expect(f.chats.listens, chatSubscriptions);
         expect(find.text('My retained room'), findsOneWidget);
         newFeed.emit([]);
@@ -542,7 +576,7 @@ void main() {
         f.rooms.fail();
         await _pump(tester);
         expect(_key('home-conversation-invitation'), findsNothing);
-        expect(_key('home-room-join'), findsNothing);
+        expect(_joinControl(desktop: desktop), findsNothing);
         expect(find.text('My retained room'), findsOneWidget);
         await _tap(tester, _retry('home-rooms-error'));
         expect(f.roomService.reads, 2);
@@ -569,11 +603,16 @@ void main() {
       await _pump(tester);
       expect(_key('home-moment-qa-followed-moment'), findsNothing);
       expect(_key('home-person-$_friendId'), findsNothing);
-      expect(_key('home-people-add'), findsNothing);
+      // "Dodaj znajomych" is a standing action: the error card below the
+      // rail explains the failed read without also taking the door away.
+      expect(_key('home-people-add'), findsOneWidget);
       expect(_key('home-people-error'), findsOneWidget);
-      expect(_key('home-moments-error'), findsOneWidget);
+      // The Moments page only marks friend tiles, so its denial is silent
+      // on both form factors — the rail's own error went to the Momenty
+      // destination with the rail.
+      expect(_key('home-moments-error'), findsNothing);
       expect(_key('home-people-me'), findsOneWidget);
-      expect(_key('home-room-join'), findsOneWidget);
+      expect(_joinControl(desktop: desktop), findsOneWidget);
       await _tap(tester, _key('home-quick-create-room'));
       expect(f.actions, ['create']);
       expect(tester.takeException(), isNull);
@@ -610,7 +649,10 @@ void main() {
           f.feedGeneration.fail();
           f.chats.fail();
           await _pump(tester);
-          expect(find.byType(HomeSectionError), findsNWidgets(3));
+          expect(
+            find.byType(HomeSectionError),
+            findsNWidgets(desktop ? 3 : 2),
+          );
           final liveNodes = <SemanticsNode>[];
           void visit(SemanticsNode node) {
             if (node.getSemanticsData().flagsCollection.isLiveRegion) {
@@ -662,7 +704,10 @@ void main() {
       final f = _HomeFixture();
       await f.initialize(longContent: true);
       await _mount(tester, f, false, size: const Size(320, 900), scale: 2);
-      expect(find.text(_name), findsOneWidget);
+      // The greeting takes the first token of the display name — never the
+      // whole string and never the email local part.
+      expect(find.textContaining('Hi, Alexandra'), findsOneWidget);
+      expect(find.text(_name), findsNothing);
       expect(find.text('99+'), findsOneWidget);
       await _tap(tester, find.byTooltip('Notifications, 103 unread'));
       await _tap(tester, find.byTooltip('Profile'));
@@ -711,9 +756,11 @@ void main() {
           await _screenshot(tester, captureKey, '$prefix-top');
           await _revealLazy(tester, _key('home-featured-room'));
           await _screenshot(tester, captureKey, '$prefix-featured');
-          await _revealLazy(tester, _key('home-room-join'));
+          await _revealLazy(tester, _joinControl(desktop: desktop));
           await _screenshot(tester, captureKey, '$prefix-join');
-          final joinBounds = tester.getRect(_key('home-room-join').first);
+          final joinBounds = tester.getRect(
+            _joinControl(desktop: desktop).first,
+          );
           final bodyBounds = tester.getRect(
             find.byType(desktop ? DesktopHome : MobileHome),
           );

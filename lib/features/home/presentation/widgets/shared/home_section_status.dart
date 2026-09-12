@@ -184,6 +184,13 @@ class _HomeSectionErrorContent extends StatefulWidget {
       _HomeSectionErrorContentState();
 }
 
+/// Sentinel handed to [friendlyErrorMessage] as its fallback so an error it
+/// does not recognise can be told apart from one it does. It is never shown.
+const String _unmappedError = '\u0000home-section-error-unmapped';
+
+/// Terminal punctuation, in the scripts this app ships in.
+final RegExp _sentenceEnd = RegExp(r'[.!?…:。！？]$');
+
 class _HomeSectionErrorContentState extends State<_HomeSectionErrorContent> {
   _HomeErrorAnnouncementScopeState? _channel;
 
@@ -197,13 +204,28 @@ class _HomeSectionErrorContentState extends State<_HomeSectionErrorContent> {
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     final copy = AppLocalizations.of(context);
-    final safeMessage = widget.error == null
-        ? widget.message
+    // WHICH section failed, and then why. Handing the raw error to
+    // `friendlyErrorMessage` alone replaced the caller's section sentence, so
+    // four simultaneous denials printed four identical "Nie masz uprawnień"
+    // cards and none of them said what had failed. The section sentence is
+    // caller-owned copy and always leads; the mapped cause is appended only
+    // when the error actually maps to one (the sentinel detects the helper's
+    // generic fallback) and only when the sentence does not already say it.
+    final mapped = widget.error == null
+        ? null
         : friendlyErrorMessage(
             widget.error!,
-            fallback: widget.message,
+            fallback: _unmappedError,
             copy: copy,
           );
+    final cause = mapped == _unmappedError ? null : mapped;
+    final lead = widget.message.trimRight();
+    final safeMessage = cause == null || lead.contains(cause)
+        ? widget.message
+        // Not every call site's sentence ends in a full stop ("Could not
+        // load rooms"), and two sentences run together read as one broken
+        // one.
+        : '$lead${_sentenceEnd.hasMatch(lead) ? ' ' : '. '}$cause';
     final channel = _HomeErrorChannel.maybeOf(context);
     if (_channel != channel) _channel?.remove(this);
     _channel = channel;

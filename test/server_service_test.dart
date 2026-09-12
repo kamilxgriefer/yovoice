@@ -10,7 +10,7 @@ void main() {
   test(
     'creation calls only the exact V1 endpoint with immutable payload',
     () async {
-      final calls = <Map<String, Object>>[];
+      final calls = <Map<String, Object?>>[];
       final service = ServerService(
         call: (name, data) async {
           expect(name, 'createServerV1');

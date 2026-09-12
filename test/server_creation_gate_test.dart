@@ -287,8 +287,37 @@ void main() {
         find.byKey(const ValueKey('server-seeded-channels')),
         findsOneWidget,
       );
-      // Default language is English, so the preview must promise the English
-      // names the server will actually seed.
+      // The default follows the app's own locale — this surface is Polish, so
+      // the preview must promise the POLISH names the server will actually
+      // seed. It used to default to English on a fully Polish screen, which
+      // previewed (and created) `general / memes / Lounge` under Polish group
+      // headings and diverged from every board in the product.
+      for (final seed in serverTemplateChannelsFor(type)) {
+        expect(
+          find.text(seed.polishName),
+          findsWidgets,
+          reason: '${type.name} / ${seed.seedKey}',
+        );
+      }
+      expect(tester.takeException(), isNull, reason: type.name);
+    }
+  });
+
+  testWidgets('an English surface previews the English seed names', (
+    tester,
+  ) async {
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    for (final type in ServerType.values) {
+      await pumpServers(
+        tester,
+        CreateServerScreen(
+          key: UniqueKey(),
+          repository: TestServerRepository(),
+          initialType: type,
+        ),
+        size: const Size(768, 1600),
+        locale: const Locale('en'),
+      );
       for (final seed in serverTemplateChannelsFor(type)) {
         expect(
           find.text(seed.englishName),
@@ -300,9 +329,8 @@ void main() {
     }
   });
 
-  testWidgets('choosing Polish repoints the preview at the Polish seed names', (
-    tester,
-  ) async {
+  testWidgets('choosing another language repoints the preview at its seed '
+      'names, and the choice survives a rebuild', (tester) async {
     addTearDown(() => tester.binding.setSurfaceSize(null));
     await pumpServers(
       tester,
@@ -312,18 +340,23 @@ void main() {
       ),
       size: const Size(768, 1600),
     );
-    expect(find.text('Calendar'), findsOneWidget);
-    expect(find.text('Kalendarz'), findsNothing);
+    // A Polish app starts on Polish.
+    expect(find.text('Kalendarz'), findsOneWidget);
+    expect(find.text('Calendar'), findsNothing);
 
     await tester.ensureVisible(find.byKey(const ValueKey('server-language')));
     await tester.tap(find.byKey(const ValueKey('server-language')));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Polski').last);
+    await tester.tap(find.text('Angielski').last);
     await tester.pumpAndSettle();
 
-    expect(find.text('Kalendarz'), findsOneWidget);
-    expect(find.text('Wspomnienia'), findsOneWidget);
-    expect(find.text('Calendar'), findsNothing);
+    expect(find.text('Calendar'), findsOneWidget);
+    expect(find.text('Memories'), findsOneWidget);
+    expect(find.text('Kalendarz'), findsNothing);
+
+    // The locale default must not overwrite a choice the person has made.
+    await tester.pump();
+    expect(find.text('Calendar'), findsOneWidget);
   });
 
   testWidgets('the two private company channels are shown as limited', (
@@ -338,8 +371,9 @@ void main() {
       ),
       size: const Size(768, 1600),
     );
+    // Polish surface, Polish seed names.
     expect(find.text('HR'), findsOneWidget);
-    expect(find.text('Management'), findsOneWidget);
+    expect(find.text('Zarząd'), findsOneWidget);
     expect(find.text('Ograniczony dostęp'), findsNWidgets(2));
   });
 
@@ -580,9 +614,13 @@ void main() {
       final action = find.byKey(
         const ValueKey('server-invite-introduction-action'),
       );
-      // No V1 invite writer exists yet, so the offer must be visibly inert.
+      // `createServerInviteV1` refuses a held root outright, so the offer
+      // is visibly inert and the card says why.
       expect(tester.widget<FilledButton>(action).onPressed, isNull);
-      expect(find.text('Zaproś · Wkrótce'), findsOneWidget);
+      expect(
+        find.text('Zaproszenia będą możliwe, gdy serwer będzie gotowy.'),
+        findsOneWidget,
+      );
       expect(invited, 0);
     });
 

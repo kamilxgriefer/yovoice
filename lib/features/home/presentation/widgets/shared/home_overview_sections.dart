@@ -143,14 +143,24 @@ class HomeQuickActions extends StatelessWidget {
 /// The two actions remain the same shell routes; displaying this card does
 /// not create a room, join audio, or request microphone permission.
 class HomeConversationInvitation extends StatelessWidget {
-  const HomeConversationInvitation({required this.actions, super.key});
+  const HomeConversationInvitation({
+    required this.actions,
+    this.onDiscover,
+    super.key,
+  });
 
   final Widget actions;
+
+  /// The room directory. Needed here because the dock no longer carries a
+  /// Rooms destination: without this link an account with nothing live and
+  /// no friends has no way from Home to the rooms other people are in.
+  final VoidCallback? onDiscover;
 
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     final copy = AppLocalizations.of(context);
+    final onDiscover = this.onDiscover;
     return DecoratedBox(
       key: const ValueKey('home-conversation-invitation'),
       decoration: BoxDecoration(
@@ -165,16 +175,41 @@ class HomeConversationInvitation extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(
-              copy.text(
-                'No rooms are live right now — start one and your community will hear it.',
-                'Teraz nie ma żadnych pokojów na żywo — utwórz pierwszy, a usłyszy go Twoja społeczność.',
+              copy.homeInvitationHeadline,
+              style: AppTypography.headlineMedium.copyWith(
+                color: palette.textPrimary,
+                fontWeight: FontWeight.w800,
+                height: 1.15,
               ),
+            ),
+            const SizedBox(height: AppRhythm.hairline),
+            Text(
+              copy.homeInvitationBody,
               style: AppTypography.bodyMedium.copyWith(
                 color: palette.textSecondary,
               ),
             ),
             const SizedBox(height: AppRhythm.title),
             actions,
+            if (onDiscover != null) ...[
+              const SizedBox(height: AppRhythm.tight),
+              Align(
+                alignment: AlignmentDirectional.centerStart,
+                child: TextButton(
+                  key: const ValueKey('home-invitation-discover'),
+                  onPressed: onDiscover,
+                  style: TextButton.styleFrom(
+                    minimumSize: const Size(
+                      AppSizing.minimumTouchTarget,
+                      AppSizing.minimumTouchTarget,
+                    ),
+                    visualDensity: VisualDensity.standard,
+                    foregroundColor: palette.interactiveForeground,
+                  ),
+                  child: Text(copy.homeDiscoverRooms),
+                ),
+              ),
+            ],
           ],
         ),
       ),

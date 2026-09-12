@@ -15,6 +15,7 @@ import 'package:yovoice/features/home/presentation/widgets/shared/home_people_st
 import 'package:yovoice/features/home/presentation/widgets/shared/home_section_status.dart';
 import 'package:yovoice/features/profile/data/models/profile_visibility.dart';
 import 'package:yovoice/features/profile/data/models/user_profile.dart';
+import 'package:yovoice/features/home/presentation/widgets/shared/home_friend_tile.dart';
 import 'package:yovoice/shared/widgets/profile/people_status_ring.dart';
 
 FriendUser _friend(
@@ -118,8 +119,11 @@ void main() {
     expect(find.text('Twoi znajomi'), findsNothing);
     expect(find.text('Your people'), findsOneWidget);
 
-    // No profile stream here, so the count is friends only.
-    expect(find.byType(PeopleStatusAvatar), findsNWidgets(5));
+    // No profile stream here, so the count is friends only. Friends are
+    // HomeFriendTile now: its ring means CONTENT, while PeopleStatusAvatar's
+    // ring keeps meaning STATUS for Friends, Chats and the profile preview.
+    expect(find.byType(HomeFriendTile), findsNWidgets(5));
+    expect(find.byType(PeopleStatusAvatar), findsNothing);
     // Online friends come first, then alphabetical: Ada and Marek (online)
     // precede Jan, Ola and Zofia, and each group is alphabetical.
     double x(String id) =>
@@ -175,7 +179,7 @@ void main() {
     );
     await tester.pump();
     PeopleStatus statusOf(String id) => tester
-        .widget<PeopleStatusAvatar>(find.byKey(ValueKey('home-person-$id')))
+        .widget<HomeFriendTile>(find.byKey(ValueKey('home-person-$id')))
         .status;
     expect(statusOf('busy'), PeopleStatus.busy);
     expect(statusOf('brb'), PeopleStatus.brb);
@@ -203,13 +207,13 @@ void main() {
         ),
       );
       await tester.pump();
-      final tile = tester.widget<PeopleStatusAvatar>(
+      final tile = tester.widget<HomeFriendTile>(
         find.byKey(const ValueKey('home-people-me')),
       );
       expect(tile.status, entry.value.$1, reason: entry.key.wire);
       expect(tile.statusLabel, entry.value.$2, reason: entry.key.wire);
       expect(find.text(entry.value.$2), findsOneWidget);
-      expect(tile.showChangeBadge, isTrue);
+      expect(tile.showChangeCaret, isTrue);
       // The visible "You" leads — WCAG 2.5.3 Label in Name, and the cue that
       // this tile is the account's own — then the header chip's exact phrase.
       expect(
@@ -311,7 +315,9 @@ void main() {
     await tester.pump();
     expect(find.byKey(const ValueKey('home-people-loading')), findsOneWidget);
     expect(find.byKey(const ValueKey('home-people-me')), findsOneWidget);
-    expect(find.byKey(const ValueKey('home-people-add')), findsNothing);
+    // Growing the circle is a standing action, so the add tile is present
+    // while the friends read is still in flight too.
+    expect(find.byKey(const ValueKey('home-people-add')), findsOneWidget);
     expect(find.byType(HomeSectionError), findsNothing);
 
     // Error: the friends read failed. The heading and the account stay; the
@@ -329,7 +335,10 @@ void main() {
     expect(find.byKey(const ValueKey('home-people-me')), findsOneWidget);
     expect(find.byType(HomeSectionError), findsOneWidget);
     expect(find.text('Friends could not be loaded.'), findsOneWidget);
-    expect(find.byKey(const ValueKey('home-people-add')), findsNothing);
+    // Growing the circle is a STANDING action: the error card below the
+    // rail explains the failure, and a failed friends read is exactly when
+    // the reader is most likely to want "Dodaj znajomych".
+    expect(find.byKey(const ValueKey('home-people-add')), findsOneWidget);
     expect(find.byKey(const ValueKey('home-people-loading')), findsNothing);
 
     await tester.tap(find.text('Try again'));

@@ -18,7 +18,7 @@ import 'package:yovoice/features/rooms/data/services/room_service.dart';
 /// FAILS rather than returning nothing.
 ///
 /// Both screens read `snapshot.data ?? const <VoiceRoom>[]` with no
-/// `hasError` branch and then printed "No rooms are live right now — start one and
+/// `hasError` branch and then printed the invitation copy over a denial
 /// your community will see it here." That is the same collapse that hid the
 /// Discover clubs rail, with an extra harm: it hands the reader an action
 /// ("start one") in the one situation where the app does not know whether
@@ -149,11 +149,14 @@ void main() {
     expect(
       find.descendant(
         of: error,
-        matching: find.text("You don't have permission to do that."),
+        matching: find.text(
+          'Live rooms could not be loaded. Check your connection and try '
+          "again. You don't have permission to do that.",
+        ),
       ),
       findsOneWidget,
     );
-    expect(find.textContaining('No rooms are live right now'), findsNothing);
+    expect(find.textContaining('A good conversation starts here.'), findsNothing);
     expect(
       find.descendant(
         of: error,
@@ -181,7 +184,7 @@ void main() {
     );
     await tester.pump(const Duration(milliseconds: 150));
 
-    expect(find.textContaining('No rooms are live right now'), findsOneWidget);
+    expect(find.textContaining('A good conversation starts here.'), findsOneWidget);
     expect(find.textContaining('could not be loaded'), findsNothing);
   });
 
@@ -202,11 +205,14 @@ void main() {
     expect(
       find.descendant(
         of: error,
-        matching: find.text("You don't have permission to do that."),
+        matching: find.text(
+          'Live rooms could not be loaded. Check your connection and try '
+          "again. You don't have permission to do that.",
+        ),
       ),
       findsOneWidget,
     );
-    expect(find.textContaining('No rooms are live right now'), findsNothing);
+    expect(find.textContaining('A good conversation starts here.'), findsNothing);
     expect(
       find.descendant(
         of: error,
@@ -234,7 +240,7 @@ void main() {
     );
     await tester.pump(const Duration(milliseconds: 150));
 
-    expect(find.textContaining('No rooms are live right now'), findsOneWidget);
+    expect(find.textContaining('A good conversation starts here.'), findsOneWidget);
     expect(find.textContaining('could not be loaded'), findsNothing);
   });
 
@@ -256,7 +262,7 @@ void main() {
 
     expect(rooms.subscriptions, 2);
     expect(error, findsNothing);
-    expect(find.textContaining('No rooms are live right now'), findsOneWidget);
+    expect(find.textContaining('A good conversation starts here.'), findsOneWidget);
     expect(find.textContaining('could not be loaded'), findsNothing);
   });
 
@@ -278,7 +284,7 @@ void main() {
 
     expect(rooms.subscriptions, 2);
     expect(error, findsNothing);
-    expect(find.textContaining('No rooms are live right now'), findsOneWidget);
+    expect(find.textContaining('A good conversation starts here.'), findsOneWidget);
     expect(find.textContaining('could not be loaded'), findsNothing);
   });
 }

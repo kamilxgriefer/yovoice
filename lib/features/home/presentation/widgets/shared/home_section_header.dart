@@ -42,6 +42,7 @@ class HomeSectionHeader extends StatelessWidget {
     this.live = false,
     this.onSeeAll,
     this.seeAllKey,
+    this.seeAllLabel,
     this.scale = HomeSectionHeaderScale.compact,
     super.key,
   });
@@ -59,6 +60,12 @@ class HomeSectionHeader extends StatelessWidget {
   /// Rides the "View all" button so an existing finder keeps resolving
   /// (`home-people-see-all`).
   final Key? seeAllKey;
+
+  /// The action's own words. Polish declines the object of "see all"
+  /// ("wszystkich" for people, "wszystkie" for places), so a single
+  /// hardcoded label is wrong on at least one Home section. Null keeps the
+  /// neutral default every other caller already uses.
+  final String? seeAllLabel;
 
   final HomeSectionHeaderScale scale;
 
@@ -105,19 +112,28 @@ class HomeSectionHeader extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         Flexible(
-          child: Text(
-            title,
-            // A heading wraps; it never ellipsises. Three lines is more
-            // than any Home heading needs at 200 % text on a 320 px phone.
-            maxLines: 3,
-            overflow: TextOverflow.visible,
-            style: TextStyle(
-              color: palette.textPrimary,
-              fontSize: _titleSize,
-              // Explicit, so the ink box is arithmetic rather than a font
-              // metric the rhythm cannot see.
-              height: _titleLineHeight,
-              fontWeight: FontWeight.w800,
+          // A section title must be a HEADING to assistive technology, not
+          // just large text: without this, VoiceOver's Headings rotor and
+          // TalkBack's heading navigation are empty on a long scrolling
+          // page, so the only way through Home is to swipe every element in
+          // turn. WCAG 1.3.1, Level A. discover_clubs_rail.dart:88 already
+          // does this; Home's shared header did not.
+          child: Semantics(
+            header: true,
+            child: Text(
+              title,
+              // A heading wraps; it never ellipsises. Three lines is more
+              // than any Home heading needs at 200 % text on a 320 px phone.
+              maxLines: 3,
+              overflow: TextOverflow.visible,
+              style: TextStyle(
+                color: palette.textPrimary,
+                fontSize: _titleSize,
+                // Explicit, so the ink box is arithmetic rather than a font
+                // metric the rhythm cannot see.
+                height: _titleLineHeight,
+                fontWeight: FontWeight.w800,
+              ),
             ),
           ),
         ),
@@ -182,7 +198,7 @@ class HomeSectionHeader extends StatelessWidget {
           // still wraps and never ellipsises.
           Flexible(
             child: Text(
-              copy.text('View all', 'Zobacz wszystkie'),
+              seeAllLabel ?? copy.text('View all', 'Zobacz wszystkie'),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(

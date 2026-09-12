@@ -1,4 +1,5 @@
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
@@ -148,17 +149,31 @@ Future<MoreDestination?> showMoreSheet(
 /// screens then hide their own back button, which would have nothing to
 /// pop (Awards uses a Material AppBar, whose leading button already
 /// appears only when `Navigator.canPop()`).
+/// [serversVisible] is the shell's answer to "is the retained content slot
+/// hosting this screen the one on screen?". It matters for exactly one
+/// destination: a joined server conversation lives inside the Servers slot,
+/// the desktop and mobile shells keep their built slots alive in an
+/// `IndexedStack`, and a hidden slot would otherwise keep the microphone open
+/// behind a dock nobody can see. Moments solves the same problem the same way
+/// (`MomentsScreen(isVisible:)`), but it is built directly by the shell; the
+/// servers destination is built here, so the listenable has to travel through
+/// this function. Null — every pushed route — keeps meaning "always visible",
+/// because a route ends its conversation by being popped.
 Widget moreDestinationScreen(
   MoreDestination destination, {
   bool isRootTab = false,
   Future<void> Function()? onReplayGuidedOnboarding,
+  ValueListenable<bool>? serversVisible,
 }) {
   final screen = switch (destination) {
     MoreDestination.friends => FriendsScreen(isRootTab: isRootTab),
     MoreDestination.discover => DiscoverScreen(isRootTab: isRootTab),
     // The one call site for the servers feature from Home. The screen owns
     // its own loading, error and empty states and the create gate.
-    MoreDestination.servers => ServersScreen(isRootTab: isRootTab),
+    MoreDestination.servers => ServersScreen(
+      isRootTab: isRootTab,
+      isVisible: serversVisible,
+    ),
     MoreDestination.findCreators => FindCreatorsScreen(isRootTab: isRootTab),
     MoreDestination.clubs => ClubsScreen(isRootTab: isRootTab),
     MoreDestination.moments => MomentsScreen(isRootTab: isRootTab),

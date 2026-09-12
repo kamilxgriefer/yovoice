@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
@@ -7,7 +8,10 @@ import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/states/yo_empty_state.dart';
 import 'package:yovoice/shared/widgets/states/yo_error_state.dart';
 
+import 'package:yovoice/features/clubs/data/services/club_chat_service.dart';
+
 import '../../data/models/server.dart';
+import '../../data/services/server_media_connector.dart';
 import '../../data/services/server_service.dart';
 import '../server_localized_copy.dart';
 import '../theme/server_identity.dart';
@@ -20,12 +24,31 @@ class ServersScreen extends StatefulWidget {
     this.isRootTab = false,
     this.onOpenServer,
     this.onCreateServer,
+    this.chatService,
+    this.connector,
+    this.isVisible,
     super.key,
   });
   final ServerRepository? repository;
   final bool isRootTab;
   final ValueChanged<Server>? onOpenServer;
   final VoidCallback? onCreateServer;
+
+  /// Whether the shell's content slot that hosts this screen is the one on
+  /// screen.
+  ///
+  /// The desktop shell keeps its built slots alive inside an `IndexedStack`,
+  /// so a hidden Servers slot stays mounted with every listener — and, once
+  /// someone has joined, with an open microphone behind no visible dock. The
+  /// Moments slot solves the same problem with the same shape
+  /// (`MomentsScreen(isVisible:)`); this is the Servers end of that contract,
+  /// and the workspace leaves its conversation when the slot goes away.
+  /// Null (a pushed route, a test, a phone) means always visible.
+  final ValueListenable<bool>? isVisible;
+
+  /// Test seams handed to the workspace this screen hosts or pushes.
+  final ClubChatService? chatService;
+  final ServerMediaConnector? connector;
 
   @override
   State<ServersScreen> createState() => _ServersScreenState();
@@ -34,6 +57,15 @@ class ServersScreen extends StatefulWidget {
 class _ServersScreenState extends State<ServersScreen> {
   late final ServerRepository _repository;
   late Stream<List<Server>> _servers;
+
+  /// The server hosted INLINE over the directory. From
+  /// [ServerWorkspaceScreen.tabletBreakpoint] up, opening a server replaces
+  /// the directory inside this same slot, so the shell's rail and dock never
+  /// move; a server opened on a phone-width surface is a pushed route with a
+  /// real app bar instead. Once hosted it stays hosted at every width — see
+  /// the comment in [build].
+  String? _inlineServerId;
+  double _width = 0;
 
   @override
   void initState() {
@@ -61,10 +93,18 @@ class _ServersScreenState extends State<ServersScreen> {
       callback(server);
       return;
     }
+    if (_width >= ServerWorkspaceScreen.tabletBreakpoint) {
+      setState(() => _inlineServerId = server.id);
+      return;
+    }
     Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (_) =>
-            ServerWorkspaceScreen(serverId: server.id, repository: _repository),
+        builder: (_) => ServerWorkspaceScreen(
+          serverId: server.id,
+          repository: _repository,
+          chatService: widget.chatService,
+          connector: widget.connector,
+        ),
       ),
     );
   }
@@ -77,90 +117,131 @@ class _ServersScreenState extends State<ServersScreen> {
       appBar: widget.isRootTab ? null : AppBar(title: Text(copy.serversTitle)),
       body: SafeArea(
         top: widget.isRootTab,
-        child: ResponsiveContentFrame(
-          width: ResponsiveContentWidth.dashboard,
-          alignment: ResponsiveContentAlignment.topLeft,
-          child: StreamBuilder<List<Server>>(
-            stream: _servers,
-            builder: (context, snapshot) {
-              if (snapshot.hasError) {
-                return SingleChildScrollView(
-                  child: YoErrorState(
-                    error: snapshot.error,
-                    onRetry: () =>
-                        setState(() => _servers = _repository.watchMyServers()),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            _width = constraints.maxWidth;
+            final inline = _inlineServerId;
+            // Once a server is open in this slot it STAYS open, at every
+            // width. The condition used to include `_width >= 768`, which
+            // made a narrowing window — a resize, browser zoom to 200 % on a
+            // 1440 px window, a tablet rotated to portrait — unmount the
+            // workspace, run its `dispose()` and end a live conversation
+            // mid-sentence, silently, while the surface fell back to the
+            // directory. A layout change must never end a media session, so
+            // below the breakpoint the same workspace simply renders its
+            // phone tier in place (with a way back, which the panel it does
+            // not draw there would otherwise have carried).
+            final hosting = inline != null;
+            // The directory stays mounted under the hosted workspace: its
+            // subscription and scroll position survive the visit, exactly as
+            // the shell retains its own content slots.
+            return Stack(
+              children: [
+                Offstage(
+                  offstage: hosting,
+                  child: TickerMode(
+                    enabled: !hosting,
+                    child: _directory(context, copy),
                   ),
-                );
-              }
-              if (snapshot.connectionState == ConnectionState.waiting) {
-                return Center(
-                  child: Semantics(
-                    label: copy.text('Loading servers', 'Wczytywanie serwerów'),
-                    child: const CircularProgressIndicator(),
-                  ),
-                );
-              }
-              final servers = snapshot.data ?? const <Server>[];
-              return LayoutBuilder(
-                builder: (context, constraints) => ListView(
-                  padding: ResponsiveContentFrame.adaptivePagePadding(
-                    constraints.maxWidth,
-                  ).add(const EdgeInsets.symmetric(vertical: 16)),
-                  children: [
-                    Wrap(
-                      alignment: WrapAlignment.spaceBetween,
-                      crossAxisAlignment: WrapCrossAlignment.center,
-                      spacing: 16,
-                      runSpacing: 12,
-                      children: [
-                        Text(
-                          copy.serversTitle,
-                          style: AppTypography.headlineLarge,
-                        ),
-                        FilledButton.icon(
-                          key: const ValueKey('servers-create'),
-                          onPressed: _create,
-                          style: FilledButton.styleFrom(
-                            minimumSize: const Size(48, 48),
-                          ),
-                          icon: const Icon(Icons.add_rounded),
-                          label: Text(
-                            copy.text('Create server', 'Stwórz serwer'),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 24),
-                    if (servers.isEmpty)
-                      YoEmptyState(
-                        icon: Icons.hub_outlined,
-                        title: copy.text(
-                          'Your place for shared conversations',
-                          'Twoje miejsce na wspólne rozmowy',
-                        ),
-                        subtitle: copy.text(
-                          'Create a server or accept an invitation to get started.',
-                          'Stwórz serwer lub przyjmij zaproszenie, aby zacząć.',
-                        ),
-                      ),
-                    for (final server in servers)
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 12),
-                        child: _ServerTile(
-                          server: server,
-                          onTap: () => _open(server),
-                        ),
-                      ),
-                    const SizedBox(height: 32),
-                  ],
                 ),
-              );
-            },
-          ),
+                if (hosting)
+                  ServerWorkspaceScreen(
+                    key: ValueKey('servers-inline-$inline'),
+                    serverId: inline,
+                    repository: _repository,
+                    isRootTab: true,
+                    chatService: widget.chatService,
+                    connector: widget.connector,
+                    isVisible: widget.isVisible,
+                    onBack: () => setState(() => _inlineServerId = null),
+                  ),
+              ],
+            );
+          },
         ),
       ),
     );
   }
+
+  Widget _directory(
+    BuildContext context,
+    AppLocalizations copy,
+  ) => ResponsiveContentFrame(
+    width: ResponsiveContentWidth.dashboard,
+    alignment: ResponsiveContentAlignment.topLeft,
+    child: StreamBuilder<List<Server>>(
+      stream: _servers,
+      builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          return SingleChildScrollView(
+            child: YoErrorState(
+              error: snapshot.error,
+              onRetry: () =>
+                  setState(() => _servers = _repository.watchMyServers()),
+            ),
+          );
+        }
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return Center(
+            child: Semantics(
+              label: copy.text('Loading servers', 'Wczytywanie serwerów'),
+              child: const CircularProgressIndicator(),
+            ),
+          );
+        }
+        final servers = snapshot.data ?? const <Server>[];
+        return LayoutBuilder(
+          builder: (context, constraints) => ListView(
+            padding: ResponsiveContentFrame.adaptivePagePadding(
+              constraints.maxWidth,
+            ).add(const EdgeInsets.symmetric(vertical: 16)),
+            children: [
+              Wrap(
+                alignment: WrapAlignment.spaceBetween,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                spacing: 16,
+                runSpacing: 12,
+                children: [
+                  Text(copy.serversTitle, style: AppTypography.headlineLarge),
+                  FilledButton.icon(
+                    key: const ValueKey('servers-create'),
+                    onPressed: _create,
+                    style: FilledButton.styleFrom(
+                      minimumSize: const Size(48, 48),
+                    ),
+                    icon: const Icon(Icons.add_rounded),
+                    label: Text(copy.text('Create server', 'Stwórz serwer')),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 24),
+              if (servers.isEmpty)
+                YoEmptyState(
+                  icon: Icons.hub_outlined,
+                  title: copy.text(
+                    'Your place for shared conversations',
+                    'Twoje miejsce na wspólne rozmowy',
+                  ),
+                  subtitle: copy.text(
+                    'Create a server or accept an invitation to get started.',
+                    'Stwórz serwer lub przyjmij zaproszenie, aby zacząć.',
+                  ),
+                ),
+              for (final server in servers)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: _ServerTile(
+                    server: server,
+                    onTap: () => _open(server),
+                  ),
+                ),
+              const SizedBox(height: 32),
+            ],
+          ),
+        );
+      },
+    ),
+  );
 }
 
 class _ServerTile extends StatelessWidget {

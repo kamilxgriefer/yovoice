@@ -18,6 +18,41 @@ about things that are broken, risky, or need verification.
 > before believing the code.
 > [ADR-082](Decisions.md#adr-082-a-feature-is-not-shipped-until-a-user-can-reach-it--reachability-is-part-of-done-and-a-green-suite-cannot-prove-it).
 
+## OPEN — two localization defects on Home found by a catalog audit (2026-09-12)
+
+Found by the Localization Specialist while verifying the Home "Tu i teraz"
+catalog. Both predate the Home redesign work, both are in committed code, and
+neither is caused by the new Home strings. Recorded here because Home is about
+to put each of them in front of a user.
+
+- **Bulgarian and Greek Home mix the polite and familiar registers on one
+  screen.** `home.*` addresses the user informally in bg, el, hr, lt, lv, sr and
+  uk (`На живо за теб`, `Ζωντανά για σένα`, `Tvoj krug`, `Tavo ratas`) while the
+  rest of those catalogs — Settings, auth, the language picker — addresses them
+  formally. That split is a product decision and is listed as such. The *defect*
+  is narrower: in bg and el one `home.*` string is on the wrong side of it, so
+  the same Home screen shows both registers.
+  `lib/core/localization/translations/translations_home.dart`,
+  key `home.fromPeopleYouFollow` (the followed-Moments rail heading):
+  bg `От хора, които следвате` and el `Από άτομα που ακολουθείτε` are polite
+  second-person plural, next to `Твоите хора` / `Οι δικοί σου` on the same
+  screen. The fix is one verb form each — bg `…които следваш`, el `…που
+  ακολουθείς` — and is held for a qualified native review rather than applied by
+  the agent that found it. Everything else in the 41-locale Home set was audited
+  key by key and is register-consistent with its own catalog.
+- **Durations render in ASCII digits while dates in the same view render in the
+  locale's digits.** `VoiceMoment.durationLabel`
+  (`lib/features/moments/data/models/voice_moment.dart:201-205`) builds `"1:05"`
+  from `int.toString()` unconditionally, whereas dates go through
+  `DateFormat.yMd(localeKey)`
+  (`lib/core/localization/app_localizations.dart:516`), which emits Arabic-Indic
+  digits for ar and fa. Any surface that shows both — the Home friend tile's
+  "Voice {m:ss}" next to a relative time, the Moments strip, the Reel player —
+  shows two numeral systems side by side in ar, fa, and wherever else the locale
+  data asks for non-ASCII digits. Not a crash and not a data problem; it reads as
+  unfinished localization. The screen-reader path is already correct: Home speaks
+  the duration through `AppLocalizations.secondsCount(n)`, never "0:45".
+
 ## FIXED IN SOURCE — two defects the first Simulator run found (2026-09-11)
 
 The approved Home/Voice/Reels redesign had widget tests and rendered captures
@@ -3736,3 +3771,122 @@ permission flags).
   correctness blocker. The complete final candidate is Flutter 2192/2192,
   analysis-clean and formatted across 615 Dart files with zero changes; it has
   not been deployed or physically accepted.
+
+## OPEN — two Home "Tu i teraz" defects found by independent QA (2026-09-12)
+
+Found by the Senior QA Automation Engineer reviewing the Home redesign
+independently of the four implementation slices. Both are in uncommitted
+source, both have a red regression test in the tree that goes green when the
+fix lands, and neither is a security or data issue. Evidence and exact
+commands: `/Users/kamil/Documents/GitHub/yovoice-evidence/2026-09-12/home-qa.md`.
+
+- **A failed live-rooms read takes the create-room pill off the phone Home.**
+  `lib/features/home/presentation/widgets/mobile/mobile_home.dart:707` renders
+  `HomeQuickActions` only when a featured room exists, so a `permission-denied`
+  or offline `watchLivePublicRooms()` — and the cold-start loading frame —
+  leaves "Stwórz pokój" and "Znajomi" off the screen entirely. The empty state
+  is unaffected (the invitation card embeds the actions). Three consequences:
+  the desktop composition already does the opposite and explains why
+  (`desktop_home.dart:687`, "a failed room read must not also cost the reader
+  the way to start a room of their own"), so the two Homes disagree about one
+  state; `home-quick-create-room` is the guided tour's mobile Create anchor
+  (`main_shell.dart:434`, `:878-887`), so that step falls back to a centred
+  tooltip pointing at a control that is not on screen; and the pre-redesign
+  Home did render them in both states (`if (!roomsEmpty)`). One-line fix:
+  mirror the desktop condition. Red test:
+  `test/home_independent_qa_states_test.dart`, "live rooms denied: the
+  create-room pill survives the denial".
+- **The phone tells a screen reader "0 osób" about a place the listener
+  belongs to.** `home_places_section.dart:484-490` always puts
+  `copy.peopleCount(club.memberCount)` in the place tile's spoken label, so a
+  club whose counter was never written announces zero members. The desktop
+  list refuses exactly this ("a count only where a count actually exists",
+  `home_places_card.dart:22-26`, `:134-137`). Fix: the same
+  `memberCount > 0` guard, dropping the clause when there is no count. Red
+  test: `test/home_independent_qa_states_test.dart`, "a place whose member
+  counter was never written says nothing about its size — on the phone too".
+
+Separately, and not a product defect: `test/home_rhythm_test.dart` ("desktop
+Home reports the same steps at the expanded scale") is RED in the working tree
+because the Wide slice gave the 300 px context column the compact heading ramp
+(`desktop_home.dart:771-773`) without updating that older blanket assertion.
+Two tests in the tree now contradict each other; the owner decides which
+behaviour is correct before the gate can be called clean.
+
+## FIXED — three servers-shell defects the round-2 release gate blocked on (2026-09-12)
+
+All three were found by the Principal Code and Release Reviewer's second pass
+over the servers shell and are fixed in the working tree, each with a test that
+was RED before the fix and is GREEN after it. Evidence, with the pre-fix
+failure output and real timings:
+`/Users/kamil/Documents/GitHub/yovoice-evidence/2026-09-12/servers-gate-closure.md`.
+
+- **A joined server conversation survived a rail or dock switch with the
+  microphone still open (P1, privacy/lifecycle — the gate's B3 / F-1).** The
+  client half shipped in the previous pass: `ServersScreen` and
+  `ServerWorkspaceScreen` take a `ValueListenable<bool> isVisible` and leave
+  the conversation when it goes false. The HOST half did not exist. The shell
+  keeps its built content slots alive inside an `IndexedStack`, so selecting
+  Home or Chats hid the Servers slot — and with it the conversation dock —
+  while the slot stayed mounted, the microphone stayed open, the Android
+  keep-alive service kept running, and nothing anywhere said a conversation
+  was live (the legacy rooms path has `ActiveRoomMiniPlayer`; a server session
+  has nothing). Fix: `main_shell.dart` now owns a `_serversVisible` notifier
+  beside `_momentsVisible`, sets it in `_onDestinationSelected` (the only
+  place `_selectedIndex` changes, so no rail item, dock cell, More entry,
+  mobile Back or responsive reset can bypass it), disposes it, and threads it
+  to the slot through a new `serversVisible:` argument on
+  `moreDestinationScreen`. `TickerMode.of(context)` was explicitly rejected as
+  the signal: `Overlay` builds every entry below the topmost opaque one with
+  `tickerEnabled: false`, so any full-screen route pushed over the shell — a
+  profile, Settings, a moment detail — would have ended a conversation the
+  person never left. Tests: `test/server_shell_visibility_test.dart` and the
+  new slot-seam case in `test/main_shell_servers_slot_test.dart`.
+- **An inline-hosted server workspace had no way out of its error, loading or
+  "server unavailable" states (P2 — the gate's F-2).** The panel's `Serwery`
+  control and the phone header's Back both live inside the workspace body,
+  which those three states replace; hosted inline over the directory there is
+  no app bar and no rail affordance that clears the screen's own
+  `_inlineServerId`, and switching the rail away and back rebuilt the same
+  retained state with the same server still open. A deleted server, a revoked
+  membership or a root read that errored or never answered therefore made the
+  directory unreachable for the rest of the app session. (Pre-existing above
+  768 px; the B2 fix removed the accidental escape that narrowing the window
+  used to provide.) Fix: `server_workspace_screen.dart` wraps every
+  pre-workspace state in a back row (`server-state-back`), drawn only when
+  `onBack` is present, so a pushed route still has exactly one Back.
+- **The podcast recording marker dropped its `Wkrótce` at 1100 x 200 % in both
+  themes (P3 — the gate's F-3).** It rendered as `Nagrywanie audycji ·` — a
+  dangling middle dot, no `Wkrótce`, not even an ellipsis — so the marker that
+  exists to say a feature is unavailable read as a live one. Mechanism:
+  `Chip` takes its label's intrinsic width and keeps a box sized for one line,
+  so the two-line label was laid out inside a one-line box and its second line
+  was painted outside it and clipped. Fix: the marker is now the slice's own
+  pill (a `Container` whose label wraps and is never truncated), keyed
+  `server-podcast-recording-pill`. Pinned by a test that checks the label's
+  rendered rectangle against the pill's at exactly 1100 x 200 %, in both
+  themes.
+
+Also hardened in the same pass, from the gate's F-5: a microphone or
+headphones press the provider refuses is no longer swallowed. Those two
+controls stay reachable through a reconnect on purpose, and the production
+link really does raise there — the rejected future escaped into the zone and
+the control reverted in silence, which is the "looks live, does nothing" shape
+the contract forbids. `ServerSessionController` now stores the failure
+(`privacyError`) the way it already stores `screenShareError`, and the
+conversation dock renders it in place of the phase line, inside its existing
+`liveRegion`, until the next press or leaving clears it.
+
+Still OPEN from the same gate, and NOT fixed here:
+
+- **B6, the device audio lifecycle, is code-complete but device-unverified.**
+  It needs two-device evidence or the owner's written acceptance as a named
+  limitation; it cannot be closed from a widget test.
+- **F-4, board 02's community phone at 320 x 568 / 1x**, where the `Wkrótce`
+  chip and `Udostępnij` are cut by the details pane's bottom edge. The
+  mechanism is now understood — `ServerScrollingDetails` fades only its last
+  14 %, which is shorter than a 48-px control, so the cut reads hard rather
+  than faded, and the pair is reachable by scrolling — but every candidate fix
+  either changes board 02's phone anatomy or changes how two boards look, and
+  neither can be judged without rendered frames. It stays the owner call the
+  gate already called it.

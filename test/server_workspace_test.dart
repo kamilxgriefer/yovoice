@@ -1,8 +1,11 @@
 import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
+import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:yovoice/features/clubs/data/services/club_chat_service.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/rooms/data/models/room_experience.dart';
 import 'package:yovoice/features/servers/data/models/server.dart';
@@ -52,6 +55,12 @@ List<ServerChannel> fixtureChannels(ServerType type) => [
     kind: ServerChannelKind.text,
   ),
 ];
+
+ClubChatService fakeChatService() => ClubChatService(
+  firestore: FakeFirebaseFirestore(),
+  auth: MockFirebaseAuth(signedIn: true, mockUser: MockUser(uid: 'owner')),
+  messageSendInvoker: (_) async => <Object?, Object?>{},
+);
 
 void main() {
   testWidgets('large directory names have full card width on a narrow screen', (
@@ -143,7 +152,7 @@ void main() {
   );
 
   testWidgets(
-    'all five workspace empty states fit phone, tablet and desktop including 200 percent',
+    'all five held workspaces fit phone, tablet and desktop including 200 percent',
     (tester) async {
       addTearDown(() => tester.binding.setSurfaceSize(null));
       for (final type in ServerType.values) {
@@ -159,25 +168,28 @@ void main() {
                 serverId: 's',
                 repository: repository,
                 isRootTab: true,
+                chatService: fakeChatService(),
               ),
               size: Size(width, 720),
               textScale: scale,
               light: scale == 2,
             );
-            if (width < 768) {
-              await tester.scrollUntilVisible(
-                find.text('Wkrótce'),
-                250,
-                scrollable: find.byType(Scrollable).first,
-              );
-            }
+            // A held root: the join surface is drawn but inert, and nothing
+            // pretends to be live or populated.
+            final join = find.byKey(const ValueKey('server-join'));
+            expect(join, findsOneWidget, reason: '$type $width $scale');
+            expect(tester.widget<FilledButton>(join).onPressed, isNull);
+            // Nothing claims liveness. The marker itself is what is
+            // asserted, not the words: "NA ŻYWO" is also the community
+            // template's channel-group heading (contract §4.2), which names
+            // a group of channels and says nothing about a session.
             expect(
-              find.text('Wkrótce'),
-              findsOneWidget,
+              find.byKey(const ValueKey('server-live-pill')),
+              findsNothing,
               reason: '$type $width $scale',
             );
-            expect(find.text('LIVE'), findsNothing);
             expect(find.text('Maja'), findsNothing);
+            expect(repository.calls, isEmpty);
             expect(
               tester.takeException(),
               isNull,
@@ -204,6 +216,7 @@ void main() {
         serverId: 's',
         repository: repository,
         onInvite: (_) => invites++,
+        chatService: fakeChatService(),
         channelBuilder: (_, _, _) {
           builds++;
           return const SizedBox();
@@ -211,8 +224,15 @@ void main() {
       ),
     );
     expect(builds, 0);
-    final button = find.widgetWithText(OutlinedButton, 'Zaproszenia · Wkrótce');
+    // The panel lives in the phone's sheet at this width.
+    await tester.tap(find.byKey(const ValueKey('server-open-channels')));
+    await tester.pumpAndSettle();
+    final button = find.byKey(const ValueKey('server-invite-action'));
     expect(tester.widget<OutlinedButton>(button).onPressed, isNull);
+    expect(
+      find.text('Zaproszenia będą możliwe, gdy serwer będzie gotowy.'),
+      findsOneWidget,
+    );
     expect(invites, 0);
   });
 
@@ -233,6 +253,9 @@ void main() {
             shown.add(channel.id);
             return Text(channel.id);
           },
+          // Desktop width puts the default text channel in the context
+          // panel beside the media scene, so the thread needs its seam.
+          chatService: fakeChatService(),
         ),
         size: const Size(1100, 720),
       );
