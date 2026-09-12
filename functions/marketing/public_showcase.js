@@ -18,6 +18,7 @@ const { getAuth } = require("firebase-admin/auth");
 const { Timestamp } = require("firebase-admin/firestore");
 
 const { db } = require("../utils/firestore");
+const { isVersionedServer } = require("../utils/server_access");
 const { normalizeProfileVisibility } = require("../profile/profile_visibility");
 
 const REGION = "europe-west1";
@@ -170,7 +171,8 @@ function derivePublicClub({ clubId, consent, club }) {
     return null;
   }
   if (club.type !== "community" || club.privacy !== "public" ||
-      club.status !== "active" || club.deletionInProgress === true) {
+      club.status !== "active" || club.deletionInProgress === true ||
+      isVersionedServer(club)) {
     return null;
   }
   const name = safeText(club.name, 80);

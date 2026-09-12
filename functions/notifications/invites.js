@@ -5,6 +5,7 @@ const { FieldValue, Timestamp } = require("firebase-admin/firestore");
 
 const { requireAuthentication } = require("../utils/auth");
 const { db, normalizeText } = require("../utils/firestore");
+const { assertLegacyClubData, isVersionedServer } = require("../utils/server_access");
 const {
   consumeRateLimit,
   rateLimitReference,
@@ -124,6 +125,7 @@ const sendClubInvite = onCall(
         throw new HttpsError("not-found", "The Club or selected account no longer exists.");
       }
       const clubData = club.data() ?? {};
+      assertLegacyClubData(clubData);
       const inviterData = inviter.data() ?? {};
       const inviteeData = invitee.data() ?? {};
       if (
@@ -223,6 +225,7 @@ const onClubInviteCreated = onDocumentCreated(
         const clubData = club.data() ?? {};
         const role = membership.data()?.role;
         if (
+          isVersionedServer(clubData) ||
           clubData.status !== "active" ||
           clubData.deletionInProgress === true ||
           membership.data()?.userId !== inviterId ||
@@ -281,6 +284,7 @@ const onClubMemberCreated = onDocumentCreated(
             db.doc(`clubs/${clubId}/invites/${memberId}`),
           );
         return canonicalClub.exists &&
+          !isVersionedServer(canonicalClub.data()) &&
           canonicalClub.data()?.status === "active" &&
           canonicalClub.data()?.deletionInProgress !== true &&
           canonicalMember.exists &&

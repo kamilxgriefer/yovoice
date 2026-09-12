@@ -4,6 +4,7 @@ const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { restrictionIsActive } = require("../notifications/canonical");
 const { requireAuthentication } = require("../utils/auth");
 const { db, normalizeText } = require("../utils/firestore");
+const { assertServerChannelAccessIfVersioned } = require("../utils/server_access");
 const {
   CLUB_ACTION_RATE_LIMITS,
   consumeClubActionAttempt,
@@ -125,6 +126,10 @@ const moderateClubMessage = onCall(
         );
       }
       const clubData = club.exists ? (club.data() ?? {}) : null;
+      await assertServerChannelAccessIfVersioned({
+        db, transaction, uid: auth.uid, serverId: clubId, channelId,
+        capability: "moderate", clubSnapshot: club,
+      });
       if (
         !clubData ||
         clubData.status !== "active" ||
@@ -191,6 +196,7 @@ const moderateClubMessage = onCall(
 
       transaction.update(messageRef, {
         content: "",
+        gif: FieldValue.delete(),
         isDeleted: true,
         editedAt: now,
         deletedBy: auth.uid,

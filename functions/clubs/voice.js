@@ -1,7 +1,13 @@
 const { FieldValue } = require("firebase-admin/firestore");
+const logger = require("firebase-functions/logger");
 
 const { db } = require("../utils/firestore");
 const { deleteActiveVoiceSessionsForRoom } = require("../livekit/sessions");
+const { isVersionedAnchor } = require("../servers/rtc_binding");
+
+// The closed-set reason logged when a per-room boundary skips a document
+// that is not this legacy path's room. One value, so the log is queryable.
+const VERSIONED_ANCHOR_SKIP_REASON = "versioned-anchor";
 
 async function deleteCollection(reference) {
   if (typeof db.recursiveDelete === "function") {
@@ -22,6 +28,21 @@ async function deleteCollection(reference) {
 async function revokeClubMemberVoice({ clubId, userId, control }) {
   const rooms = await db.collection("rooms").where("clubId", "==", clubId).get();
   for (const roomDocument of rooms.docs) {
+    // NOT THIS PATH'S ROOM, AND NOT ONE BYTE OF IT. A V1 anchor's roster, its
+    // participantCount, its session mirrors and its LiveKit room all belong to
+    // the session runtime: `revokeParticipant(anchorId)` addresses a room that
+    // does not exist (a silent alreadyAbsent that would leave this identity
+    // connected to the live `srv_` room), and the roster transaction below
+    // would mutate a live generation's state from a legacy Club path. Skipped
+    // before any read or write, the way the liveness sweeper skips it.
+    if (isVersionedAnchor(roomDocument.data())) {
+      logger.warn("club voice revocation skipped a versioned room anchor", {
+        reason: VERSIONED_ANCHOR_SKIP_REASON,
+        clubId,
+        roomId: roomDocument.id,
+      });
+      continue;
+    }
     const participantReference = roomDocument.ref
       .collection("participants")
       .doc(userId);

@@ -1,4 +1,5 @@
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
+const { assertLegacyClubData } = require("../utils/server_access");
 const { FieldValue } = require("firebase-admin/firestore");
 
 const { requireAuthentication } = require("../utils/auth");
@@ -79,6 +80,7 @@ const transferClubOwnershipSelf = onCall(
       throw new HttpsError("not-found", "The selected club was not found.");
     }
     const preflightClub = preflightSnapshot.data() ?? {};
+    assertLegacyClubData(preflightClub);
     if (preflightClub.ownerId !== auth.uid) {
       if (
         preflightClub.ownerId === newOwnerId &&
@@ -138,6 +140,7 @@ const transferClubOwnershipSelf = onCall(
         throw new HttpsError("not-found", "The selected club was not found.");
       }
       club = clubSnapshot.data() ?? {};
+      assertLegacyClubData(club);
 
       if (club.ownerId !== auth.uid) {
         if (

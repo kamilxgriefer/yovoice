@@ -26,6 +26,12 @@ const {
   timestampMillis,
   transactionGetAll,
 } = require("../integrity/guards");
+const {
+  gifMessageFallback,
+  isCanonicalMessageGif,
+  messageInput,
+  resolveMessageGif,
+} = require("./gif_message");
 
 const DEFAULT_LIMITS = Object.freeze({
   open: { maxEvents: 12, windowMs: 60_000 },
@@ -586,7 +592,7 @@ function validateConversation(snapshot, conversationId, actorId, pairGuard) {
   }
   if (typeof data.lastMessage !== "string" || data.lastMessage.length > 2000 ||
       (data.lastMessageId !== null && !SAFE_ID.test(data.lastMessageId)) ||
-      !["text", "voice", "image", "video"].includes(data.lastMessageType) ||
+      !["text", "voice", "image", "video", "gif"].includes(data.lastMessageType) ||
       (data.lastMessageSenderId !== "" &&
         !participants.includes(data.lastMessageSenderId)) ||
       timestampMillis(data.createdAt) === null ||
@@ -611,6 +617,7 @@ function validateMessage(snapshot, conversationId) {
     "conversationId",
     "durationSeconds",
     "editedAt",
+    ...(data.type === "gif" ? ["gif"] : []),
     "isDeleted",
     "mediaUrl",
     "reactions",
@@ -630,7 +637,7 @@ function validateMessage(snapshot, conversationId) {
       data.schemaVersion !== 2 || data.conversationId !== conversationId ||
       typeof data.senderId !== "string" ||
       !Number.isSafeInteger(data.sequence) || data.sequence < 1 ||
-      !["text", "voice", "image", "video"].includes(data.type) ||
+      !["text", "voice", "image", "video", "gif"].includes(data.type) ||
       typeof data.isDeleted !== "boolean" || !Array.isArray(data.readBy) ||
       !isPlainObject(data.reactions)) {
     fail("data-loss", "The direct message schema is not canonical.");
@@ -645,6 +652,12 @@ function validateMessage(snapshot, conversationId) {
           data.durationSeconds < 1 || data.durationSeconds > 300)) ||
       (data.type === "text" &&
         (data.mediaUrl !== null || data.durationSeconds !== null)) ||
+      (data.type === "gif" &&
+        (data.mediaUrl !== null || data.durationSeconds !== null ||
+          (data.isDeleted
+            ? data.gif !== null
+            : !isCanonicalMessageGif(data.gif) ||
+              data.content !== gifMessageFallback(data.gif)))) ||
       (data.type === "image" &&
         (data.content !== "" || typeof data.mediaUrl !== "string" ||
           !/^(gs:\/\/|https:\/\/)/u.test(data.mediaUrl) ||
@@ -704,6 +717,7 @@ function createDirectMessagingService({
   clock = () => Date.now(),
   readPageSize = 100,
   limits = DEFAULT_LIMITS,
+  gifProviderName = process.env.GIF_PROVIDER,
 }) {
   if (!db || !Timestamp?.fromMillis) {
     throw new TypeError("db and Timestamp are required.");
@@ -983,17 +997,17 @@ function createDirectMessagingService({
     const auth = requireActor(request);
     const data = requireExactInput(
       request.data,
-      ["conversationId", "replyToMessageId", "requestId", "text"],
-      ["conversationId", "requestId", "text"],
+      ["conversationId", "gif", "replyToMessageId", "requestId", "text"],
+      ["conversationId", "requestId"],
     );
     const conversationId = requireId(data.conversationId, "conversationId");
     const requestId = requireRequestId(data.requestId);
-    const text = normalizeText(data.text, 2000, "text");
+    const content = messageInput(data, 2000);
     const replyToMessageId = data.replyToMessageId === undefined ||
       data.replyToMessageId === null
       ? null
       : requireId(data.replyToMessageId, "replyToMessageId");
-    const input = { conversationId, replyToMessageId, text };
+    const input = { conversationId, replyToMessageId, ...content };
     const identity = operationIdentity("direct.send", auth.uid, requestId, input);
     const messageId = `m_${digest(
       "direct-message",
@@ -1073,8 +1087,6 @@ function createDirectMessagingService({
         actorFriendGuard,
         recipientFriendGuard,
       });
-      consume(transaction, rate, rateRef, "send", auth.uid, timing);
-
       if (existingMessage.exists) {
         fail("data-loss", "A message exists without its idempotency ledger.");
       }
@@ -1102,14 +1114,21 @@ function createDirectMessagingService({
         context.data.lastMessageSequence,
         "lastMessageSequence",
       );
+      const gif = await resolveMessageGif({
+        db, transaction, gif: content.gif, providerName: gifProviderName,
+      });
+      const text = gif ? gifMessageFallback(gif) : content.text;
+      const type = gif ? "gif" : "text";
+      consume(transaction, rate, rateRef, "send", auth.uid, timing);
 
       transaction.create(messageRef, {
         schemaVersion: 2,
         sequence,
         conversationId,
         senderId: auth.uid,
-        type: "text",
+        type,
         content: text,
+        ...(gif ? { gif } : {}),
         mediaUrl: null,
         durationSeconds: null,
         sentAt: timing.now,
@@ -1131,7 +1150,7 @@ function createDirectMessagingService({
         lastMessage: text,
         lastMessageId: messageId,
         lastMessageSequence: sequence,
-        lastMessageType: "text",
+        lastMessageType: type,
         lastMessageSenderId: auth.uid,
         updatedAt: timing.now,
         archivedBy: [],
@@ -1775,6 +1794,7 @@ function createDirectMessagingService({
           isDeleted: true,
           editedAt: timing.now,
           reactions: {},
+          ...(messageData.type === "gif" ? { gif: null } : {}),
         });
         if (context.data.lastMessageId === messageId) {
           transaction.update(conversationRef, {

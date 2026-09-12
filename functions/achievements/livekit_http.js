@@ -6,6 +6,12 @@ const { onRequest } = require("firebase-functions/v2/https");
 
 const { isValidOpaqueUid } = require("./identity");
 const {
+  RTC_BINDING_KINDS,
+  isServerRtcNamespace,
+  isVersionedAnchor,
+  resolveRtcBindingForLiveKitRoom,
+} = require("../servers/rtc_binding");
+const {
   AchievementOutboxValidationError,
   buildAchievementOutboxRecord,
   normalizeAchievementOutboxRecord,
@@ -39,6 +45,12 @@ const AWAITING_JOIN_TTL_MS = 24 * 60 * 60 * 1000;
 const SESSION_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 const SAFE_SEGMENT = /^[A-Za-z0-9_-]{1,128}$/u;
 const PARTICIPANT_ROLES = new Set(["host", "speaker", "listener"]);
+// A V1 channel session's participant row carries the session roles of the
+// reviewed server runtime, not the legacy speaker vocabulary.
+const SERVER_SESSION_ROLES = new Set(["host", "guest", "listener"]);
+// A `srv_` room name that does not prove out reciprocally is acknowledged
+// and dropped: no attribution to a guessed room, no retry storm from LiveKit.
+const SKIPPED_UNBOUND_RTC_NAME = "skipped:unbound-rtc-name";
 
 const livekitAchievementApiKey = defineSecret("LIVEKIT_API_KEY");
 const livekitAchievementApiSecret = defineSecret("LIVEKIT_API_SECRET");
@@ -48,6 +60,51 @@ class VoiceAchievementStoreError extends Error {
     super(message);
     this.name = "VoiceAchievementStoreError";
   }
+}
+
+/**
+ * Internal control-flow signal for a `srv_` name with no proven binding.
+ * `reason` is one of the closed-set resolver constants, never event data.
+ */
+class UnboundServerRtcNameError extends Error {
+  constructor(reason) {
+    super("The LiveKit room name is not bound to a server channel session.");
+    this.name = "UnboundServerRtcNameError";
+    this.reason = reason;
+  }
+}
+
+function skippedUnboundRtcName(eventType, reason, sessionId = null) {
+  logger.warn("livekit achievement webhook skipped an unbound server rtc name", {
+    eventType,
+    reason,
+  });
+  return { outcome: SKIPPED_UNBOUND_RTC_NAME, reason, sessionId };
+}
+
+function storedRtcBinding(binding) {
+  return Object.freeze({
+    kind: RTC_BINDING_KINDS.V1,
+    serverId: binding.serverId,
+    channelId: binding.channelId,
+    sessionId: binding.sessionId,
+  });
+}
+
+function validStoredRtcBinding(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value) &&
+    value.kind === RTC_BINDING_KINDS.V1 && Boolean(safeSegment(value.serverId)) &&
+    Boolean(safeSegment(value.channelId)) && Boolean(safeSegment(value.sessionId));
+}
+
+function participantBindsSession(participant, uid, binding) {
+  return participant.serverSchemaVersion === 1 &&
+    participant.serverId === binding.serverId &&
+    participant.channelId === binding.channelId &&
+    participant.roomId === binding.roomId &&
+    participant.sessionId === binding.sessionId &&
+    participant.userId === uid &&
+    SERVER_SESSION_ROLES.has(participant.role);
 }
 
 function safeSegment(value) {
@@ -144,9 +201,11 @@ function normalizePendingClose(raw, expectedSession = null) {
     throw new VoiceAchievementStoreError("Stored pending voice closure is malformed.");
   }
   const normalized = pendingCloseForStorage(raw);
+  // A V1 session's provider name is its `srv_` generation, not the anchor
+  // room id the session is attributed to; a legacy session's name is its id.
   if (expectedSession && (
     normalized.roomSid !== expectedSession.roomSid ||
-    normalized.roomName !== expectedSession.roomId ||
+    normalized.roomName !== (expectedSession.livekitRoomName ?? expectedSession.roomId) ||
     normalized.participantSid !== expectedSession.participantSid ||
     normalized.participantIdentity !== expectedSession.userId
   )) {
@@ -167,6 +226,13 @@ function normalizeOpenSession(raw, expectedId) {
       typeof raw.isHost !== "boolean") {
     throw new VoiceAchievementStoreError("Stored voice session is malformed.");
   }
+  // A legacy session stores neither field. A V1 session stores both, and
+  // they must agree with each other and with the anchor-based attribution.
+  const versioned = raw.livekitRoomName !== undefined || raw.rtcBinding !== undefined;
+  if (versioned && (!safeSegment(raw.livekitRoomName) ||
+      !isServerRtcNamespace(raw.livekitRoomName) || !validStoredRtcBinding(raw.rtcBinding))) {
+    throw new VoiceAchievementStoreError("Stored voice session is malformed.");
+  }
   return Object.freeze({
     roomId: raw.roomId,
     roomSid: raw.roomSid,
@@ -175,6 +241,9 @@ function normalizeOpenSession(raw, expectedId) {
     joinedAtMs: raw.joinedAtMs,
     isHost: raw.isHost,
     joinEventId: raw.joinEventId,
+    ...(versioned
+      ? { livekitRoomName: raw.livekitRoomName, rtcBinding: storedRtcBinding(raw.rtcBinding) }
+      : {}),
   });
 }
 
@@ -182,7 +251,8 @@ function sessionMatchesJoin(raw, session) {
   return raw?.roomId === session.roomId && raw?.roomSid === session.roomSid &&
     raw?.participantSid === session.participantSid &&
     raw?.userId === session.userId && raw?.joinedAtMs === session.joinedAtMs &&
-    raw?.isHost === session.isHost && raw?.joinEventId === session.joinEventId;
+    raw?.isHost === session.isHost && raw?.joinEventId === session.joinEventId &&
+    (raw?.livekitRoomName ?? null) === (session.livekitRoomName ?? null);
 }
 
 function intervalSeconds(intervals) {
@@ -210,15 +280,53 @@ class FirestoreVoiceAchievementStore {
     return this.db ?? require("../utils/firestore").db;
   }
 
+  /**
+   * Resolves a `srv_` room name to its server channel session. `live` demands
+   * a currently bound (`live`/`ending`) generation, which a join needs; a
+   * close only needs the structurally proven generation, the way the legacy
+   * close path needs the room to exist rather than to be live. Authority is
+   * never taken from the name: the resolver proves the reciprocal
+   * room -> channel -> channelSession binding or the event is skipped.
+   */
+  async _serverRtcBinding(transaction, roomName, { live }) {
+    const binding = await resolveRtcBindingForLiveKitRoom({
+      db: this.database(),
+      transaction,
+      livekitRoomName: roomName,
+    });
+    const generation = binding.retained;
+    if (!generation || (live && !binding.bound)) {
+      throw new UnboundServerRtcNameError(binding.reason ?? "session-not-live");
+    }
+    return Object.freeze({
+      roomId: generation.roomId,
+      serverId: generation.serverId,
+      channelId: generation.channelId,
+      sessionId: generation.sessionId,
+      livekitRoomName: generation.livekitRoomName,
+      startedById: generation.startedById,
+    });
+  }
+
   async _canonicalJoin(transaction, webhook) {
     const database = this.database();
-    const roomId = safeSegment(webhook.roomName);
-    if (!roomId || !isValidOpaqueUid(webhook.participantIdentity)) {
+    const roomName = safeSegment(webhook.roomName);
+    if (!roomName || !isValidOpaqueUid(webhook.participantIdentity)) {
       throw new VoiceAchievementStoreError("Webhook identity is not canonical.");
     }
+    const binding = isServerRtcNamespace(roomName)
+      ? await this._serverRtcBinding(transaction, roomName, { live: true })
+      : null;
+    const roomId = binding ? binding.roomId : roomName;
     const roomRef = database.collection("rooms").doc(roomId);
     const roomSnapshot = await transaction.get(roomRef);
     const room = snapshotData(roomSnapshot);
+    // A legacy-namespace name reaches legacy rooms only. A versioned anchor's
+    // media lives solely under its generation's `srv_` name, so a provider
+    // room that merely shares the anchor id carries no authority over it.
+    if (!binding && isVersionedAnchor(room)) {
+      throw new VoiceAchievementStoreError("A versioned room has no legacy media namespace.");
+    }
     if (!room || room.status !== "active" || room.isLive !== true ||
         room.deletionInProgress === true ||
         !["community", "temporary"].includes(room.roomType) ||
@@ -241,8 +349,14 @@ class FirestoreVoiceAchievementStore {
     const participant = snapshotData(participantSnapshot);
     const profile = snapshotData(userSnapshot);
     const restriction = snapshotData(restrictionSnapshot);
-    if (!participant || participant.userId !== uid || participant.banned === true ||
-        !PARTICIPANT_ROLES.has(participant.role) || !activeProfile(profile) ||
+    // A V1 participant row is bound to one generation; it must name the
+    // resolved session, not merely sit under the anchor room.
+    const participantAuthorized = Boolean(participant) && participant.banned !== true && (
+      binding
+        ? participantBindsSession(participant, uid, binding)
+        : participant.userId === uid && PARTICIPANT_ROLES.has(participant.role)
+    );
+    if (!participantAuthorized || !activeProfile(profile) ||
         restrictionActive(restriction, webhook.createdAtMs)) {
       throw new VoiceAchievementStoreError(
         "The participant no longer has canonical room authority.",
@@ -279,29 +393,61 @@ class FirestoreVoiceAchievementStore {
         "Private-room admission is not canonical.",
       );
     }
-    return voiceSessionFromJoin(webhook, { id: roomId, hostId: room.hostId });
+    if (!binding) {
+      return voiceSessionFromJoin(webhook, { id: roomId, hostId: room.hostId });
+    }
+    // The session is attributed to its anchor room exactly like a legacy
+    // event for that room; the provider name is retained so later closes
+    // for the same `srv_` generation bind to this join. The session host is
+    // the generation's starter, which is what the V1 participant role means.
+    const session = voiceSessionFromJoin(
+      { ...webhook, roomName: roomId },
+      { id: roomId, hostId: binding.startedById },
+    );
+    return Object.freeze({
+      ...session,
+      livekitRoomName: binding.livekitRoomName,
+      rtcBinding: storedRtcBinding(binding),
+    });
   }
 
   async _closeAuthority(transaction, session, occurredAtMs) {
     const database = this.database();
-    const [roomSnapshot, userSnapshot, restrictionSnapshot] =
+    const references = [
+      database.collection("rooms").doc(session.roomId),
+      database.collection("users").doc(session.userId),
+      database.collection("restrictions").doc(session.userId),
+    ];
+    // A V1 session's host is its generation's starter, so the retained
+    // channelSession, not the anchor's owner field, re-proves the host claim.
+    if (session.rtcBinding) {
+      references.push(database.collection("clubs").doc(session.rtcBinding.serverId)
+        .collection("channels").doc(session.rtcBinding.channelId)
+        .collection("channelSessions").doc(session.rtcBinding.sessionId));
+    }
+    const [roomSnapshot, userSnapshot, restrictionSnapshot, generationSnapshot] =
       typeof transaction.getAll === "function"
-        ? await transaction.getAll(
-            database.collection("rooms").doc(session.roomId),
-            database.collection("users").doc(session.userId),
-            database.collection("restrictions").doc(session.userId),
-          )
-        : await Promise.all([
-            transaction.get(database.collection("rooms").doc(session.roomId)),
-            transaction.get(database.collection("users").doc(session.userId)),
-            transaction.get(database.collection("restrictions").doc(session.userId)),
-          ]);
+        ? await transaction.getAll(...references)
+        : await Promise.all(references.map((reference) => transaction.get(reference)));
     const room = snapshotData(roomSnapshot);
     const profile = snapshotData(userSnapshot);
     const restriction = snapshotData(restrictionSnapshot);
-    return Boolean(room && activeProfile(profile) &&
-      isValidOpaqueUid(room.hostId) &&
-      (room.hostId === session.userId) === session.isHost &&
+    let hostAuthority;
+    if (session.rtcBinding) {
+      const generation = snapshotData(generationSnapshot);
+      hostAuthority = Boolean(generation) && generation.serverSchemaVersion === 1 &&
+        generation.serverId === session.rtcBinding.serverId &&
+        generation.channelId === session.rtcBinding.channelId &&
+        generation.roomId === session.roomId &&
+        generation.sessionId === session.rtcBinding.sessionId &&
+        generation.livekitRoomName === session.livekitRoomName &&
+        isValidOpaqueUid(generation.startedById) &&
+        (generation.startedById === session.userId) === session.isHost;
+    } else {
+      hostAuthority = Boolean(room) && isValidOpaqueUid(room.hostId) &&
+        (room.hostId === session.userId) === session.isHost;
+    }
+    return Boolean(room && activeProfile(profile) && hostAuthority &&
       !restrictionActive(restriction, occurredAtMs));
   }
 
@@ -416,7 +562,13 @@ class FirestoreVoiceAchievementStore {
     return database.runTransaction(async (transaction) => {
       const existingSnapshot = await transaction.get(reference);
       const existing = snapshotData(existingSnapshot);
-      const session = await this._canonicalJoin(transaction, webhook);
+      let session;
+      try {
+        session = await this._canonicalJoin(transaction, webhook);
+      } catch (error) {
+        if (!(error instanceof UnboundServerRtcNameError)) throw error;
+        return skippedUnboundRtcName(webhook.type, error.reason, sessionId);
+      }
       if (existing?.status === "open" || existing?.status === "closed") {
         if (!sessionMatchesJoin(existing, session)) {
           throw new VoiceAchievementStoreError("LiveKit session identity collision.");
@@ -428,6 +580,7 @@ class FirestoreVoiceAchievementStore {
         if (existing.schemaVersion !== VOICE_SESSION_SCHEMA_VERSION ||
             existing.sessionId !== sessionId || existing.status !== "awaitingJoin" ||
             existing.roomId !== session.roomId ||
+            (existing.livekitRoomName ?? null) !== (session.livekitRoomName ?? null) ||
             existing.roomSid !== session.roomSid ||
             existing.participantSid !== session.participantSid ||
             existing.userId !== session.userId) {
@@ -552,8 +705,20 @@ class FirestoreVoiceAchievementStore {
       // requiring `status`/`isLive`/membership here — the way the join path
       // rightly does — would reject the ordinary case. Two documents, one
       // round trip: this path must not become as expensive as the join path.
-      const closeRoomId = safeSegment(close.roomName);
-      if (!closeRoomId) return { outcome: "skipped:unknown-session", sessionId };
+      const closeRoomName = safeSegment(close.roomName);
+      if (!closeRoomName) return { outcome: "skipped:unknown-session", sessionId };
+      // A `srv_` name is attributed to its proven anchor, live or not: the
+      // generation has usually ended by the time its last close arrives.
+      let closeBinding = null;
+      if (isServerRtcNamespace(closeRoomName)) {
+        try {
+          closeBinding = await this._serverRtcBinding(transaction, closeRoomName, { live: false });
+        } catch (error) {
+          if (!(error instanceof UnboundServerRtcNameError)) throw error;
+          return skippedUnboundRtcName(close.type, error.reason, sessionId);
+        }
+      }
+      const closeRoomId = closeBinding ? closeBinding.roomId : closeRoomName;
       const [roomSnapshot, profileSnapshot] =
         typeof transaction.getAll === "function"
           ? await transaction.getAll(
@@ -566,7 +731,12 @@ class FirestoreVoiceAchievementStore {
                 database.collection("users").doc(close.participantIdentity),
               ),
             ]);
-      if (!snapshotData(roomSnapshot) || !snapshotData(profileSnapshot)) {
+      const closeRoom = snapshotData(roomSnapshot);
+      // A legacy-namespace close names a legacy room only; a versioned anchor
+      // that shares the id is not that room, so no awaiting-join row is kept
+      // for a join the legacy path would reject anyway.
+      if (!closeRoom || !snapshotData(profileSnapshot) ||
+          (!closeBinding && isVersionedAnchor(closeRoom))) {
         return { outcome: "skipped:unknown-session", sessionId };
       }
       const createdAt = new Date(close.createdAtMs);
@@ -575,6 +745,9 @@ class FirestoreVoiceAchievementStore {
         sessionId,
         status: "awaitingJoin",
         roomId: closeRoomId,
+        ...(closeBinding
+          ? { livekitRoomName: closeRoomName, rtcBinding: storedRtcBinding(closeBinding) }
+          : {}),
         roomSid: close.roomSid,
         participantSid: close.participantSid,
         userId: close.participantIdentity,
@@ -616,7 +789,10 @@ class FirestoreVoiceAchievementStore {
     const failures = [];
     for (const document of snapshot.docs) {
       const raw = document.data() ?? {};
-      if (raw.roomId !== webhook.roomName || raw.roomSid !== webhook.roomSid) {
+      // A V1 session finishes under its `srv_` generation name; a legacy
+      // session finishes under the room id it stores.
+      if ((raw.livekitRoomName ?? raw.roomId) !== webhook.roomName ||
+          raw.roomSid !== webhook.roomSid) {
         failures.push("not-canonical");
         continue;
       }
@@ -774,6 +950,7 @@ module.exports = {
   MAX_WEBHOOK_INSTANCES,
   REGION,
   SESSION_RETENTION_MS,
+  SKIPPED_UNBOUND_RTC_NAME,
   VOICE_DAY_SCHEMA_VERSION,
   VOICE_SESSION_SCHEMA_VERSION,
   VoiceAchievementStoreError,

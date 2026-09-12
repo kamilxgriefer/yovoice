@@ -286,6 +286,46 @@ function canonicalReelCommentReportTarget(report) {
   return { reelId, commentId, reportedUserId: report.reportedUserId };
 }
 
+// A GIF report is SELF-CONTAINED and server-written: `reportGifAsset` is the
+// only writer, and firestore.rules cannot produce this targetType from a
+// client at all. So every field is required and nothing is partially trusted.
+//
+// `reportedUserId` is REQUIRED TO BE EMPTY, which is the opposite of every
+// other branch here and is the point: no YO Voice account is responsible for a
+// third party's asset that our own `g`-filtered proxy surfaced. Accepting a
+// uid would quietly attach an innocent account to a sanction workflow.
+function canonicalGifAssetReportTarget(report) {
+  const { isPinnedGifUrl, parseGifTargetId } = require("../media/gif/gif_ref");
+  const { isValidReason, MAX_GIF_REPORT_EVIDENCE_LENGTH } = require("../media/gif/moderation");
+  const parsed = parseGifTargetId(report.targetId);
+  if (
+    report.schemaVersion !== 2 ||
+    !isValidOpaqueUid(report.reporterId) ||
+    timestampMillis(report.createdAt) === null ||
+    parsed === null ||
+    report.gifProvider !== parsed.provider ||
+    report.gifId !== parsed.id ||
+    report.reportedUserId !== "" ||
+    !isValidReason(report.reason) ||
+    typeof report.note !== "string" ||
+    report.note.length > 300 ||
+    // The evidence a moderator actually decided on. A report without it is
+    // not something anybody could have judged honestly, so it is a
+    // precondition rather than a nice-to-have — the same rule the Reel
+    // comment branch applies for the same reason.
+    typeof report.targetTextSnapshot !== "string" ||
+    report.targetTextSnapshot.length === 0 ||
+    report.targetTextSnapshot.length > MAX_GIF_REPORT_EVIDENCE_LENGTH ||
+    !isPinnedGifUrl(parsed.provider, parsed.id, report.targetMediaUrl)
+  ) {
+    throw new HttpsError(
+      "failed-precondition",
+      "The reported GIF reference is invalid.",
+    );
+  }
+  return { provider: parsed.provider, gifId: parsed.id };
+}
+
 function canonicalVoiceReportTarget(report) {
   const isMoment = report.targetType === "voiceMoment";
   const isComment = report.targetType === "voiceMomentComment";
@@ -461,6 +501,11 @@ const moderateReport = onCall(
       .collection("adminAuditLogs")
       .doc(moderationAuditId(reportId, requestId));
 
+    // Only the discovery index is best-effort. The durable asset block shares
+    // the report/audit transaction, so no terminal success can strand an
+    // unblocked asset after a failed write or a lost response.
+    let gifSuppressionId = null;
+
     const outcome = await db.runTransaction(async (transaction) => {
       const snapshot = await transaction.get(reportReference);
       if (!snapshot.exists) {
@@ -468,9 +513,14 @@ const moderateReport = onCall(
       }
       const report = snapshot.data();
 
-      // Idempotency: the same requestId replayed returns the result of
-      // the original call without touching anything.
+      // Idempotency: the same requestId returns the committed result without
+      // another durable mutation. GIF discovery may refresh its cache below.
       if (report.lastRequestId === requestId) {
+        if (report.targetType === "gifAsset" && report.contentRemoved === true) {
+          const target = canonicalGifAssetReportTarget(report);
+          const { gifAssetDocumentId } = require("../media/gif/gif_ref");
+          gifSuppressionId = gifAssetDocumentId(target.provider, target.gifId);
+        }
         return {
           status: report.status,
           replayed: true,
@@ -795,10 +845,35 @@ const moderateReport = onCall(
               }
             }
           }
+        } else if (report.targetType === "gifAsset") {
+          // A GIF is a THIRD PARTY'S ASSET we never hosted, so "remove the
+          // content" cannot mean deleting bytes. It means blocking the asset:
+          // `gifAssets.blocked = true` makes transactional message publication
+          // refuse it; the best-effort discovery index is refreshed afterward.
+          const target = canonicalGifAssetReportTarget(report);
+          const { createGifModeration } = require("../media/gif/moderation");
+          const { gifAssetDocumentId } = require("../media/gif/gif_ref");
+          const block = await createGifModeration({ db }).blockAsset({
+            ...target,
+            blockedBy: caller.uid,
+            transaction,
+          });
+          if (block.reason !== null) {
+            throw new HttpsError("failed-precondition", "The reported GIF is unavailable.");
+          }
+          gifSuppressionId = gifAssetDocumentId(target.provider, target.gifId);
+          // Reported as removed because from the reporter's and the
+          // moderator's point of view the outcome IS the removal: the asset
+          // cannot be newly published through this product. The known limit —
+          // bubbles already sent keep rendering, because they hotlink the CDN
+          // and clients do not consult a blocklist at render time — is
+          // documented in docs/SECURITY.md, and the remedy for one specific
+          // message stays adminDeleteMessage / moderateClubMessage.
+          contentRemoved = true;
         } else {
           throw new HttpsError(
             "failed-precondition",
-            "Only supported messages, Reels, Reel comments, or Voice Moments can be removed this way.",
+            "Only supported messages, Reels, Reel comments, Voice Moments, or GIFs can be removed this way.",
           );
         }
       }
@@ -866,6 +941,14 @@ const moderateReport = onCall(
         contentRemoved,
       };
     });
+
+    if (gifSuppressionId !== null) {
+      // A replay can repair an index refresh lost after the original commit.
+      // suppressAsset catches cache failures; the committed block is already
+      // authoritative for every new send regardless of this cache's health.
+      const { createGifCache } = require("../media/gif/cache");
+      await createGifCache({ db }).suppressAsset(gifSuppressionId);
+    }
 
     return {
       success: true,

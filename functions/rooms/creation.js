@@ -967,6 +967,8 @@ module.exports = {
   boundedLegacyRoomQuery,
   canonicalRoomId,
   createRoomCreationService,
+  isActiveOrdinaryRoom,
+  validatedGuardRoomIds,
   validatedStartInput,
   validatedCreationInput,
   voiceStartGuardReference,

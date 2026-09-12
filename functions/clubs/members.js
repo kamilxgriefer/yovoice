@@ -1,4 +1,7 @@
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
+const logger = require("firebase-functions/logger");
+const { assertLegacyClubData } = require("../utils/server_access");
+const { isVersionedAnchor } = require("../servers/rtc_binding");
 const { FieldPath, FieldValue } = require("firebase-admin/firestore");
 
 const { requireAuthentication } = require("../utils/auth");
@@ -12,6 +15,9 @@ const { activeVoiceSessionReference } = require("../livekit/sessions");
 const { consumeClubActionAttempt } = require("./quota");
 
 const REGION = "europe-west1";
+// The closed-set reason logged when a per-room boundary skips a document
+// that is not this legacy path's room. One value, so the log is queryable.
+const VERSIONED_ANCHOR_SKIP_REASON = "versioned-anchor";
 const ROLE_POWER = Object.freeze({
   owner: 60,
   coOwner: 50,
@@ -65,6 +71,20 @@ async function revokeMemberVoicePage({
   );
 
   for (const roomDocument of roomDocuments) {
+    // NOT THIS PATH'S ROOM, AND NOT ONE BYTE OF IT. The revoke would address a
+    // LiveKit room that does not exist for a V1 anchor (a silent
+    // alreadyAbsent), the mirror delete below is unfenced and
+    // non-transactional, and the roster transaction would mutate a live
+    // generation's state from a legacy Club path. All three belong to the V1
+    // teardown, so the anchor is skipped before any read or write.
+    if (isVersionedAnchor(roomDocument.data())) {
+      logger.warn("club member removal skipped a versioned room anchor", {
+        reason: VERSIONED_ANCHOR_SKIP_REASON,
+        clubId,
+        roomId: roomDocument.id,
+      });
+      continue;
+    }
     const participantReference = roomDocument.ref
       .collection("participants")
       .doc(memberId);
@@ -201,6 +221,7 @@ const removeClubMemberSelf = onCall(
       }
 
       const club = clubSnapshot.data() ?? {};
+      assertLegacyClubData(club);
       const actor = actorSnapshot.data() ?? {};
       const profile = actorProfile.data() ?? {};
       if (

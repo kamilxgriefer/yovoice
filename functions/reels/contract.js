@@ -78,6 +78,19 @@ const REEL_REPORT_REASON_SET = new Set(REEL_REPORT_REASONS);
 const GENERATION_PATTERN = /^[0-9]{1,30}$/u;
 const OVERLAY_ID_PATTERN = /^[A-Za-z0-9_-]{1,40}$/u;
 const SORT_KEY_PATTERN = /^[0-9]{13}_[A-Za-z0-9_-]{1,128}$/u;
+// The v2 feed cursor. `f1` = feed cursor v1; the mode is `d` (discover),
+// `s` (discover including already-seen) or `o` (own); then a 64-bit session
+// seed as 16 hex characters; then the position, which is byte-identical to a
+// `sortKey`. `f1.` cannot collide with the legacy bare-sortKey form, which
+// always starts with 13 digits. Max length 164.
+//
+// The cursor carries no authority and is therefore deliberately NOT signed:
+// a forged position is already possible today and is harmless because
+// authorization is recomputed per request from fresh documents, and a forged
+// seed only reorders the forger's own page. It needs validation, not
+// authentication.
+const FEED_CURSOR_PATTERN =
+  /^f1\.[dso]\.[0-9a-f]{16}\.[0-9]{13}_[A-Za-z0-9_-]{1,128}$/u;
 
 function exactObject(value, keys, label) {
   requireObject(value, label);
@@ -495,6 +508,20 @@ function validateSortKey(value) {
   return value;
 }
 
+// `validateSortKey` keeps its current meaning — reading a `sortKey` off a
+// document, and the v1 feed cursor, which stays a bare sortKey forever.
+// The v2 feed accepts both grammars: `f1.` for cursors it minted, and the
+// legacy bare form for a cursor still in flight across an app update. The
+// failure message is deliberately the same string in both cases, so widening
+// the grammar adds no new client-visible text.
+function validateFeedCursor(value) {
+  if (typeof value !== "string" ||
+      (!SORT_KEY_PATTERN.test(value) && !FEED_CURSOR_PATTERN.test(value))) {
+    fail("invalid-argument", "cursor is invalid.");
+  }
+  return value;
+}
+
 function validateReelReportReason(value) {
   if (typeof value !== "string" || !REEL_REPORT_REASON_SET.has(value)) {
     fail("invalid-argument", "reason is invalid.");
@@ -504,6 +531,7 @@ function validateReelReportReason(value) {
 
 module.exports = {
   AUDIO_TYPES,
+  FEED_CURSOR_PATTERN,
   FILTERS,
   GENERATION_PATTERN,
   MAX_AUDIO_BYTES,
@@ -524,6 +552,7 @@ module.exports = {
   sniffContentType,
   validateComposition,
   validateDraftPlan,
+  validateFeedCursor,
   validateGeneration,
   validateReelReportReason,
   validateSortKey,

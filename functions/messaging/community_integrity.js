@@ -6,7 +6,6 @@ const {
   digest,
   fail,
   ledgerData,
-  normalizeText,
   operationIdentity,
   rateLimitReference,
   requireActor,
@@ -16,6 +15,10 @@ const {
   timestampMillis,
   transactionGetAll,
 } = require("../integrity/guards");
+const { gifMessageFallback, messageInput, resolveMessageGif } = require("./gif_message");
+const {
+  assertLegacyRoomAccess, assertServerChannelAccessIfVersioned,
+} = require("../utils/server_access");
 
 const DEFAULT_COMMUNITY_LIMITS = Object.freeze({
   roomAttempt: Object.freeze({ maxEvents: 120, windowMs: 60_000 }),
@@ -93,6 +96,7 @@ function createCommunityMessagingService({
   Timestamp,
   clock = () => Date.now(),
   limits = DEFAULT_COMMUNITY_LIMITS,
+  gifProviderName = process.env.GIF_PROVIDER,
 } = {}) {
   if (!db || !Timestamp?.fromMillis) {
     throw new TypeError("db and Timestamp are required.");
@@ -156,13 +160,13 @@ function createCommunityMessagingService({
     const auth = requireActor(request);
     const data = requireExactInput(
       request.data,
-      ["requestId", "roomId", "text"],
-      ["requestId", "roomId", "text"],
+      ["gif", "requestId", "roomId", "text"],
+      ["requestId", "roomId"],
     );
     const roomId = requireId(data.roomId, "roomId");
     const requestId = requireRequestId(data.requestId);
-    const text = normalizeText(data.text, 500, "text");
-    const input = { roomId, text };
+    const content = messageInput(data, 500);
+    const input = { roomId, ...content };
     const identity = operationIdentity("room.message.send", auth.uid, requestId, input);
     const messageId = `rm_${digest(
       "room-message",
@@ -180,7 +184,10 @@ function createCommunityMessagingService({
       scope: "room.message.send.attempt",
       timing,
     });
-    if (preflightReplay) return preflightReplay;
+    if (preflightReplay) {
+      await assertLegacyRoomAccess({ db, roomId });
+      return preflightReplay;
+    }
 
     return db.runTransaction(async (transaction) => {
       const roomRef = db.doc(`rooms/${roomId}`);
@@ -218,6 +225,7 @@ function createCommunityMessagingService({
         messageRef,
       );
 
+      await assertLegacyRoomAccess({ db, transaction, roomId, room: roomSnapshot.data() });
       const replay = assertLedgerReplay(ledger, {
         kind: "room.message.send",
         uid: auth.uid,
@@ -300,6 +308,10 @@ function createCommunityMessagingService({
         }
       }
 
+      const gif = await resolveMessageGif({
+        db, transaction, gif: content.gif, providerName: gifProviderName,
+      });
+      const text = gif ? gifMessageFallback(gif) : content.text;
       consume(
         transaction,
         scopeRate,
@@ -316,6 +328,7 @@ function createCommunityMessagingService({
         text,
         createdAt: timing.now,
         reactions: {},
+        ...(gif ? { type: "gif", gif } : {}),
       });
       transaction.set(cooldownRef, {
         schemaVersion: 1,
@@ -342,14 +355,14 @@ function createCommunityMessagingService({
     const auth = requireActor(request);
     const data = requireExactInput(
       request.data,
-      ["channelId", "clubId", "requestId", "text"],
-      ["channelId", "clubId", "requestId", "text"],
+      ["channelId", "clubId", "gif", "requestId", "text"],
+      ["channelId", "clubId", "requestId"],
     );
     const clubId = requireId(data.clubId, "clubId");
     const channelId = requireId(data.channelId, "channelId");
     const requestId = requireRequestId(data.requestId);
-    const text = normalizeText(data.text, 2000, "text");
-    const input = { channelId, clubId, text };
+    const content = messageInput(data, 2000);
+    const input = { channelId, clubId, ...content };
     const identity = operationIdentity("club.message.send", auth.uid, requestId, input);
     const messageId = `cm_${digest(
       "club-message",
@@ -368,7 +381,15 @@ function createCommunityMessagingService({
       scope: "club.message.send.attempt",
       timing,
     });
-    if (preflightReplay) return preflightReplay;
+    if (preflightReplay) {
+      const serverAccess = await assertServerChannelAccessIfVersioned({
+        db, uid: auth.uid, serverId: clubId, channelId, capability: "write",
+      });
+      if (serverAccess && !["text", "announcements", "rules"].includes(serverAccess.channel.kind)) {
+        fail("permission-denied", "This server channel does not accept chat messages.");
+      }
+      return preflightReplay;
+    }
 
     return db.runTransaction(async (transaction) => {
       const clubRef = db.doc(`clubs/${clubId}`);
@@ -401,6 +422,13 @@ function createCommunityMessagingService({
         messageRef,
       );
 
+      const serverAccess = await assertServerChannelAccessIfVersioned({
+        db, transaction, uid: auth.uid, serverId: clubId, channelId,
+        capability: "write", clubSnapshot,
+      });
+      if (serverAccess && !["text", "announcements", "rules"].includes(serverAccess.channel.kind)) {
+        fail("permission-denied", "This server channel does not accept chat messages.");
+      }
       const replay = assertLedgerReplay(ledger, {
         kind: "club.message.send",
         uid: auth.uid,
@@ -433,6 +461,10 @@ function createCommunityMessagingService({
         fail("data-loss", "A Club message exists without its operation ledger.");
       }
 
+      const gif = await resolveMessageGif({
+        db, transaction, gif: content.gif, providerName: gifProviderName,
+      });
+      const text = gif ? gifMessageFallback(gif) : content.text;
       consume(
         transaction,
         scopeRate,
@@ -452,6 +484,7 @@ function createCommunityMessagingService({
         sentAt: timing.now,
         editedAt: null,
         isDeleted: false,
+        ...(gif ? { type: "gif", gif } : {}),
       });
       const result = { channelId, clubId, messageId };
       transaction.create(ledgerRef, ledgerData({

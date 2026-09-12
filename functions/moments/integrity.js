@@ -1,5 +1,7 @@
 const crypto = require("node:crypto");
-
+const {
+  assertLegacyRoomAccess, assertServerChannelAccessIfVersioned,
+} = require("../utils/server_access");
 const {
   SAFE_ID,
   activeProfile,
@@ -2936,7 +2938,10 @@ function createMomentIntegrityService({
       scope: "report",
       timing,
     });
-    if (attempt.replay) return attempt.replay;
+    if (attempt.replay) {
+      await assertServerReportReplay(target, auth.uid);
+      return attempt.replay;
+    }
 
     return db.runTransaction(async (transaction) => {
       const ledgerRef = ledgerReference(identity);
@@ -2967,7 +2972,10 @@ function createMomentIntegrityService({
         uid: auth.uid,
         inputHash: identity.inputHash,
       });
-      if (replay) return replay;
+      if (replay) {
+        await assertServerReportReplay(target, auth.uid, transaction);
+        return replay;
+      }
       const reportTiming = time();
       activeProfile(profile, "Your");
       const receiptData = reportReceipt === null || receiptRef === null
@@ -3106,6 +3114,16 @@ function createMomentIntegrityService({
   /// any kind. Voice Moments additionally re-use the same account,
   /// restriction, bilateral-block, audience and expiry boundary as the v2
   /// feed. Other message surfaces keep their own container semantics.
+  async function assertServerReportReplay(target, uid, transaction = null) {
+    if (target.targetType === "clubMessage") {
+      await assertServerChannelAccessIfVersioned({
+        db, transaction, uid, serverId: target.clubId, channelId: target.channelId,
+      });
+    } else if (target.targetType === "roomMessage") {
+      await assertLegacyRoomAccess({ db, transaction, roomId: target.roomId });
+    }
+  }
+
   async function assertReportTargetVisible(
     transaction,
     target,
@@ -3125,6 +3143,9 @@ function createMomentIntegrityService({
         await assertRoomMessageVisible(transaction, target.roomId, uid);
         return;
       case "clubMessage":
+        await assertServerChannelAccessIfVersioned({
+          db, transaction, uid, serverId: target.clubId, channelId: target.channelId,
+        });
         await assertClubMembership(
           transaction,
           target.clubId,
@@ -3199,6 +3220,7 @@ function createMomentIntegrityService({
     );
     if (!room.exists) fail("permission-denied", message);
     const data = room.data() ?? {};
+    await assertLegacyRoomAccess({ db, transaction, roomId, room: data });
     // A roomMembers row is authority on its own, matching the rules'
     // separate `|| isRoomMember(roomId)` branch: membership is joined
     // while a room is public and survives the host flipping it private.

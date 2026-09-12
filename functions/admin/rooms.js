@@ -33,6 +33,7 @@ const {
   deleteActiveVoiceSessionsForRoom,
 } = require("../livekit/sessions");
 const { cleanupRoomMedia } = require("../media/cleanup");
+const { assertLegacyRoomAccess } = require("../utils/server_access");
 
 const REGION = "europe-west1";
 const SPEAKING_ROLES = new Set(["host", "speaker"]);
@@ -427,6 +428,7 @@ const setRoomModerationStatus = onCall(
         );
       }
       const currentRoom = roomSnapshot.data() ?? {};
+      await assertLegacyRoomAccess({ db, transaction, roomId, room: currentRoom });
       if (currentRoom.status === "deleted") {
         throw new HttpsError(
           "failed-precondition",
@@ -504,6 +506,7 @@ const forceEndRoom = onCall(
     );
 
     const room = roomSnapshot.data() ?? {};
+    await assertLegacyRoomAccess({ db, roomId, room });
 
     // A moderator may end a public room only and must always supply the
     // reason promised by the capability matrix. Super moderation may end
@@ -600,6 +603,7 @@ const removeRoomParticipant = onCall(
     );
 
     const room = roomSnapshot.data() ?? {};
+    await assertLegacyRoomAccess({ db, roomId, room });
     const liveKitControl = resolveLiveKitControl();
 
     const participantReference = roomReference
@@ -617,6 +621,7 @@ const removeRoomParticipant = onCall(
           "The selected room was not found.",
         );
       }
+      await assertLegacyRoomAccess({ db, transaction, roomId, room: currentRoomSnapshot.data() });
       // Remove the per-user token discovery mirror in the same durable
       // transaction as the roster row. A remote failure can then be retried
       // without leaving future moderation dependent on a stale session index.
@@ -705,11 +710,12 @@ const setParticipantMute = onCall(
 
     const roomReference = db.collection("rooms").doc(roomId);
 
-    await getDocumentOrThrow(
+    const preflightRoom = await getDocumentOrThrow(
       roomReference,
       HttpsError,
       "The selected room was not found.",
     );
+    await assertLegacyRoomAccess({ db, roomId, room: preflightRoom.data() });
 
     const participantReference = roomReference
       .collection("participants")
@@ -741,6 +747,7 @@ const setParticipantMute = onCall(
         );
       }
 
+      await assertLegacyRoomAccess({ db, transaction, roomId, room: currentRoomSnapshot.data() });
       transaction.update(participantReference, {
         // `isMuted` belongs to the participant's own microphone toggle.
         // Staff moderation has a separate server-only bit so the client can
@@ -851,6 +858,7 @@ const adminDeleteRoom = onCall(
     );
 
     const room = roomSnapshot.data() ?? {};
+    await assertLegacyRoomAccess({ db, roomId, room });
     const liveKitControl = resolveLiveKitControl();
 
     // Persist a tombstone state first. If LiveKit is unavailable the room

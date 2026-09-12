@@ -49,6 +49,15 @@ const {
   validateReelLike,
 } = require("./engagement");
 const {
+  FEED_RANKING,
+  decodeFeedCursor,
+  encodeFeedCursor,
+  feedModeFor,
+  mintFeedSeed,
+  randomFeedSeed,
+  rankFeedItems,
+} = require("./ranking");
+const {
   DEFAULT_REEL_AVAILABILITY_HOURS,
   PERMANENT_AVAILABILITY,
   REEL_AVAILABILITY_SCHEMA_VERSION,
@@ -61,6 +70,12 @@ const {
 
 const RESERVATION_TTL_MS = 30 * 60 * 1000;
 const MEDIA_GRANT_TTL_MS = 90 * 1000;
+// Inline grants are a bounded first-frame optimization. Even a maximum-size
+// page signs only four primary assets, concurrently; at the list quota that
+// is at most 120 attempts per minute. Backing audio uses its existing grant
+// endpoint. A slow Storage/IAM request must not hold the feed for 120 seconds.
+const MAX_INLINE_REEL_MEDIA_GRANTS = 4;
+const INLINE_REEL_MEDIA_GRANT_BUDGET_MS = 1500;
 const MEDIA_DURATION_TOLERANCE_MS = 2 * 1000;
 const REEL_EXPIRY_EVIDENCE_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 const REEL_CLEANUP_LEASE_MS = 2 * 60 * 1000;
@@ -111,8 +126,14 @@ function createReelService({
   Timestamp,
   storage,
   clock = () => Date.now(),
+  // The per-open feed session seed. An injectable seam alongside `clock` so
+  // ranking tests are deterministic rather than flaky by construction.
+  randomSeed = randomFeedSeed,
   probeMedia = null,
   limits = DEFAULT_LIMITS,
+  // Structured observability for the feed. Null in tests so a unit run stays
+  // quiet; index.js passes the Cloud Functions logger in production.
+  log = null,
 } = {}) {
   if (
     !db?.doc ||
@@ -131,6 +152,9 @@ function createReelService({
   }
   if (probeMedia !== null && typeof probeMedia !== "function") {
     throw new TypeError("probeMedia must be a trusted server-side media probe.");
+  }
+  if (typeof randomSeed !== "function") {
+    throw new TypeError("randomSeed must return a feed session seed.");
   }
 
   function timing() {
@@ -1167,25 +1191,139 @@ function createReelService({
     }
   }
 
+  // Ranking snapshots live in their own map, deliberately separate from the
+  // authorization snapshots handed to `visibleFeedItem`. The separation is
+  // structural, not a convention: a reviewer can see from the call sites that
+  // no ranking read can reach an authorization decision.
+  function seenAtMillis(snapshot, nowMs) {
+    if (!snapshot?.exists) return null;
+    const value = snapshot.data() ?? {};
+    if (Object.keys(value).length !== 2 ||
+        !Object.hasOwn(value, "viewedAt") || !Object.hasOwn(value, "expiresAt")) {
+      return null;
+    }
+    const viewedAt = timestampMillis(value.viewedAt);
+    const expiresAt = timestampMillis(value.expiresAt);
+    const dayMs = 24 * 60 * 60 * 1000;
+    // Match the actual owner-write contract, including its device-clock
+    // allowance for TTL. Future, incomplete or corrupt rows cannot suppress
+    // a Reel indefinitely, even when their viewedAt alone is a timestamp.
+    if (!Number.isSafeInteger(viewedAt) || viewedAt < 0 || viewedAt > nowMs ||
+        !Number.isSafeInteger(expiresAt) || expiresAt <= nowMs ||
+        expiresAt <= viewedAt + 89 * dayMs || expiresAt > viewedAt + 91 * dayMs) {
+      return null;
+    }
+    return viewedAt;
+  }
+
+  // Real, server-written social-graph edges. Used ONLY as a score term — an
+  // absent edge ranks a Reel lower, it never withholds one.
+  function feedAffinity(rankingSnapshots, viewerId, authorId) {
+    if (rankingSnapshots.get(`users/${viewerId}/friends/${authorId}`)?.exists) {
+      return "friend";
+    }
+    if (rankingSnapshots.get(`users/${viewerId}/following/${authorId}`)?.exists) {
+      return "following";
+    }
+    return "none";
+  }
+
+  // Deliberately carries no seed, no uid and no Reel ids: a (viewer, reel)
+  // pair is viewing history. This trades individual "why did I see this?"
+  // reproducibility for privacy, consciously.
+  function logFeedRequest(fields) {
+    try {
+      log?.info?.("listReelsV2", fields);
+    } catch (_) {
+      // Observability must never be able to fail a feed request.
+    }
+  }
+
   async function listReelsInternal(request, { version }) {
     const auth = requireActor(request, { verified: false });
-    const data = requireExactInput(request.data, ["cursor", "limit"], ["limit"]);
+    // `requireExactInput` treats `allowed` as a superset and `required`
+    // separately, so the optional v2 keys are backward compatible with
+    // installed clients that omit them. v1 keeps its exact two-key contract.
+    const data = version === 1
+      ? requireExactInput(request.data, ["cursor", "limit"], ["limit"])
+      : requireExactInput(
+          request.data,
+          ["cursor", "limit", "scope", "includeSeen", "mediaGrants"],
+          ["limit"],
+        );
     const limit = requireSafeInteger(data.limit, "limit", {
       min: 1,
       max: MAX_REEL_PAGE_SIZE,
     });
-    const cursor = data.cursor === null || data.cursor === undefined
-      ? null
-      : validateSortKey(data.cursor);
+    let scope = "discover";
+    let includeSeen = false;
+    let mediaGrants = false;
+    if (version === 2) {
+      if (data.mediaGrants !== undefined) {
+        mediaGrants = requireBoolean(data.mediaGrants, "mediaGrants");
+      }
+      if (data.scope !== undefined && data.scope !== null) {
+        // Phase 1 accepts only these two. The server always queries
+        // `auth.uid`, never a caller-supplied author id, so "own" opens no
+        // enumeration surface. A profile-level "their Reels" view is a later,
+        // separate decision.
+        if (data.scope !== "discover" && data.scope !== "own") {
+          fail("invalid-argument", "scope is invalid.");
+        }
+        scope = data.scope;
+      }
+      if (data.includeSeen !== undefined && data.includeSeen !== null) {
+        includeSeen = requireBoolean(data.includeSeen, "includeSeen");
+      }
+      // Rejected rather than silently ignored: quietly dropping an input is
+      // exactly the ambiguity the exact-input guard exists to prevent.
+      if (includeSeen && scope === "own") {
+        fail("invalid-argument", "includeSeen is not supported for scope own.");
+      }
+    }
+    const mode = feedModeFor({ scope, includeSeen });
+    // Your Reels is deliberately NOT ranked: strict reverse-chronological and
+    // complete. You come here to find a specific Reel of your own, and
+    // surprise ordering is a defect on a library, not a feature. It also
+    // costs three fewer documents per candidate and two fewer per author.
+    const ranked =
+      version === 2 && scope === "discover" && FEED_RANKING.enabled === true;
+    let seed = null;
+    let seedMinted = false;
+    let cursor = null;
+    if (version === 1) {
+      cursor = data.cursor === null || data.cursor === undefined
+        ? null
+        : validateSortKey(data.cursor);
+    } else {
+      const decoded = decodeFeedCursor(
+        data.cursor === undefined ? null : data.cursor,
+        { mode, uid: auth.uid },
+      );
+      if (decoded === null) {
+        seed = mintFeedSeed(randomSeed);
+        seedMinted = true;
+      } else {
+        cursor = decoded.position;
+        seed = decoded.seed;
+      }
+    }
     await consumeReadLimit(auth.uid, "list");
+    const startedMs = version === 2 ? timing().nowMs : 0;
     const visibleItems = [];
     // Cache authorization snapshots only for this request. Positive access is
     // never reused across calls, so account, restriction and block changes
     // take effect on the next feed request while repeated authors cost four
     // reads once instead of four reads per batch.
     const authorizationSnapshots = new Map();
+    const mediaCandidates = new Map();
+    const rankingSnapshots = new Map();
     const loadedAuthorIds = new Set();
     let scanned = 0;
+    let candidates = 0;
+    let suppressedSeen = 0;
+    let batches = 0;
+    let docsRead = 0;
     let nextCursor = cursor;
     let exhausted = false;
     let authorizationBudgetReached = false;
@@ -1202,10 +1340,18 @@ function createReelService({
       // production index in firestore.indexes.json.
       let query = db
         .collection("reels")
-        .where("status", "==", "published")
-        .orderBy("sortKey", "desc");
+        .where("status", "==", "published");
+      // `own` narrows retrieval server-side instead of filtering a global
+      // page on the client. It needs the composite index
+      // (reels: status ASC, authorId ASC, sortKey DESC) declared in
+      // firestore.indexes.json. `visibleFeedItem` still runs identically,
+      // so hidden/expired/restricted handling is unchanged.
+      if (scope === "own") query = query.where("authorId", "==", auth.uid);
+      query = query.orderBy("sortKey", "desc");
       if (nextCursor !== null) query = query.startAfter(nextCursor);
       const snapshot = await query.limit(batchSize).get();
+      batches += 1;
+      docsRead += snapshot.size;
       if (snapshot.empty) {
         exhausted = true;
         break;
@@ -1267,16 +1413,47 @@ function createReelService({
         db.doc(`users/${auth.uid}/blocked/${authorId}`),
         db.doc(`users/${authorId}/blocked/${auth.uid}`),
       ]);
+      // Ranking inputs: the viewer's own seen ledger for each candidate, and
+      // the two real social-graph edges per distinct author. They join the
+      // batch that already loads availability and `callerLiked`, so this adds
+      // documents but no extra round trips. Fetched only when this request is
+      // actually ranked, which keeps v1 and `own` read counts unchanged.
+      const rankingReferences = !ranked
+        ? []
+        : [
+            ...processableEntries
+              .filter(({ candidate }) => candidate !== null)
+              .map(({ candidate }) =>
+                db.doc(`users/${auth.uid}/reelViews/${candidate.id}`)),
+            ...[...authorIds].flatMap((authorId) => [
+              db.doc(`users/${auth.uid}/following/${authorId}`),
+              db.doc(`users/${auth.uid}/friends/${authorId}`),
+            ]),
+          ];
       const references = [
         ...availabilityReferences,
         ...callerLikeReferences,
         ...authorizationReferences,
+        // The list budget already checks the viewer. A grant additionally
+        // checks current viewer state alongside the author, using this same
+        // batch, and rechecks both after signing before disclosing any URL.
+        ...(mediaGrants && !authorizationSnapshots.has(`users/${auth.uid}`) &&
+            !authorIds.has(auth.uid)
+          ? [db.doc(`users/${auth.uid}`), db.doc(`restrictions/${auth.uid}`)]
+          : []),
       ];
-      const snapshots = references.length === 0
+      const snapshots = references.length === 0 && rankingReferences.length === 0
         ? []
-        : await getAll(...references);
+        : await getAll(...references, ...rankingReferences);
+      docsRead += references.length + rankingReferences.length;
       references.forEach((reference, index) => {
         authorizationSnapshots.set(reference.path, snapshots[index]);
+      });
+      rankingReferences.forEach((reference, index) => {
+        rankingSnapshots.set(
+          reference.path,
+          snapshots[references.length + index],
+        );
       });
       authorIds.forEach((authorId) => loadedAuthorIds.add(authorId));
       let processed = 0;
@@ -1285,14 +1462,66 @@ function createReelService({
         processed += 1;
         nextCursor = entry.sortKey;
         if (entry.candidate !== null) {
+          candidates += 1;
+          const entryNowMs = timing().nowMs;
           const visible = await visibleFeedItem(
             entry.candidate,
             auth.uid,
             authorizationSnapshots,
-            timing().nowMs,
+            entryNowMs,
             { version },
           );
-          if (visible !== null) visibleItems.push(visible);
+          if (visible !== null) {
+            // Ranking never removes an entitled item, so every ranking read
+            // here is wrapped: a missing, unreadable or malformed snapshot
+            // contributes nothing and the item is still emitted.
+            let seenAtMs = null;
+            let affinity = "none";
+            if (ranked) {
+              try {
+                seenAtMs = seenAtMillis(
+                  rankingSnapshots.get(`users/${auth.uid}/reelViews/${entry.candidate.id}`),
+                  entryNowMs,
+                );
+                affinity = feedAffinity(
+                  rankingSnapshots,
+                  auth.uid,
+                  entry.candidate.authorId,
+                );
+              } catch (_) {
+                seenAtMs = null;
+                affinity = "none";
+              }
+            }
+            // The one deliberate viewer-preference filter. Structurally
+            // separate from `visibleFeedItem`, discover-only, and permitted
+            // to act only on a successfully read, valid, recent record. The
+            // cursor still advances past it, which is both safe and prevents
+            // repeated scans of content this viewer just watched.
+            const suppressed = ranked &&
+              !includeSeen &&
+              seenAtMs !== null &&
+              seenAtMs > entryNowMs - FEED_RANKING.SEEN_HIDE_MS;
+            if (suppressed) {
+              suppressedSeen += 1;
+            } else {
+              if (mediaGrants) {
+                mediaCandidates.set(entry.candidate.id, entry.candidate);
+              }
+              visibleItems.push({
+                ...visible,
+                rank: {
+                  id: entry.candidate.id,
+                  sortKey: entry.sortKey,
+                  publishedAtMs: visible.item.publishedAtMillis,
+                  likeCount: visible.item.likeCount,
+                  commentCount: visible.item.commentCount,
+                  affinity,
+                  seenAtMs,
+                },
+              });
+            }
+          }
         }
         if (
           visibleItems.length === limit ||
@@ -1312,17 +1541,77 @@ function createReelService({
     // a few milliseconds earlier. The cursor still advances past retired
     // content, which is both safe and prevents repeated scans of it.
     const responseTime = timing().nowMs;
-    const items = visibleItems
-      .filter(({ expiresAtMs }) =>
-        expiresAtMs === null || expiresAtMs > responseTime)
-      .map(({ item }) => item);
+    const surviving = visibleItems.filter(({ expiresAtMs }) =>
+      expiresAtMs === null || expiresAtMs > responseTime);
+    let items = surviving.map(({ item }) => item);
+    if (ranked && surviving.length > 1) {
+      try {
+        // Page-local reordering of the already-authorized array. The rank
+        // unit is the page precisely because the cursor sits on the last
+        // CONSUMED entry: reordering the output cannot create a duplicate
+        // (nothing before the cursor is refetched) or a skip (nothing after
+        // it was consumed). Any carry list or over-scan-and-park would.
+        items = rankFeedItems(
+          surviving.map(({ item, rank }) => ({ ...rank, item })),
+          { nowMs: responseTime, seed },
+        ).map(({ item }) => item);
+      } catch (_) {
+        // Ranking decides ORDER, never eligibility. A ranker that throws
+        // leaves the authorized page intact rather than emptying it.
+        items = surviving.map(({ item }) => item);
+      }
+    }
+    if (mediaGrants && items.length > 0) {
+      const inline = await inlineMediaGrants(
+        auth.uid,
+        items,
+        mediaCandidates,
+        authorizationSnapshots,
+      );
+      docsRead += inline.docsRead;
+      // Return-time filtering runs after optional Storage work as well. A
+      // failed/timed-out hint must never resurrect content whose deadline
+      // elapsed while this request was in flight.
+      const finalTime = timing().nowMs;
+      items = items
+        .filter((item) => item.availability.expiresAtMillis === null ||
+          item.availability.expiresAtMillis > finalTime)
+        .map((item) => {
+          const grant = inline.grants.get(item.id);
+          return grant && grant.expiresAtMillis > finalTime
+            ? { ...item, mediaGrant: grant }
+            : item;
+        });
+    }
+    const nextPosition = exhausted || nextCursor === cursor ? null : nextCursor;
+    if (version === 1) return { items, nextCursor: nextPosition };
     const result = {
       items,
-      nextCursor: exhausted || nextCursor === cursor ? null : nextCursor,
+      // The response SHAPE is byte-identical to what installed 2.0.0 builds
+      // parse (`_keys` is exact in both directions, so one extra top-level
+      // key would break every install). Only the cursor VALUE grammar
+      // widens, and nothing client-side parses it.
+      nextCursor: nextPosition === null
+        ? null
+        : encodeFeedCursor({ mode, seed, position: nextPosition }),
     };
-    return version === 1
-      ? result
-      : { schemaVersion: REEL_AVAILABILITY_SCHEMA_VERSION, ...result };
+    logFeedRequest({
+      elapsedMs: timing().nowMs - startedMs,
+      batches,
+      docsRead,
+      scanned,
+      candidates,
+      emitted: items.length,
+      suppressedSeen,
+      scanPaused: authorizationBudgetReached,
+      rankingVersion: FEED_RANKING.version,
+      ranked,
+      scope,
+      seedMinted,
+      mediaGrants,
+      inlineGrants: items.filter((item) => item.mediaGrant !== undefined).length,
+    });
+    return { schemaVersion: REEL_AVAILABILITY_SCHEMA_VERSION, ...result };
   }
 
   function listReels(request) {
@@ -1333,8 +1622,54 @@ function createReelService({
     return listReelsInternal(request, { version: 2 });
   }
 
+  function mediaAuthorizationReferences(uid, authorId) {
+    return [
+      db.doc(`users/${uid}`),
+      db.doc(`restrictions/${uid}`),
+      db.doc(`users/${authorId}`),
+      db.doc(`restrictions/${authorId}`),
+      db.doc(`users/${uid}/blocked/${authorId}`),
+      db.doc(`users/${authorId}/blocked/${uid}`),
+    ];
+  }
+
+  // Both media entry points use exactly this authority decision. Ranking
+  // snapshots never enter it; a feed projection is never media authority.
+  function mediaAccessFromSnapshots(uid, reel, asset, snapshots, nowMs) {
+    const availability = publishedAvailability(
+      snapshots.get(`reelAvailability/${reel.id}`), reel, nowMs,
+    );
+    activeProfile(snapshots.get(`users/${uid}`), "Your");
+    assertNotRestricted(snapshots.get(`restrictions/${uid}`), "Your", nowMs);
+    activeProfile(snapshots.get(`users/${reel.authorId}`), "The author");
+    assertNotRestricted(
+      snapshots.get(`restrictions/${reel.authorId}`), "The author", nowMs,
+    );
+    assertNotBlocked(
+      snapshots.get(`users/${uid}/blocked/${reel.authorId}`),
+      snapshots.get(`users/${reel.authorId}/blocked/${uid}`),
+    );
+    const descriptor = asset === "media" ? reel.media : reel.backingAudio;
+    if (descriptor === null) fail("not-found", "This Reel has no backing audio.");
+    return { authorId: reel.authorId, descriptor, checkedAtMs: nowMs, availability };
+  }
+
+  function assertUnchangedMediaAccess(access, finalAccess, expiresAtMillis) {
+    if (
+      finalAccess.checkedAtMs >= expiresAtMillis ||
+      finalAccess.authorId !== access.authorId ||
+      finalAccess.descriptor.storagePath !== access.descriptor.storagePath ||
+      finalAccess.descriptor.generation !== access.descriptor.generation ||
+      finalAccess.descriptor.contentType !== access.descriptor.contentType ||
+      finalAccess.descriptor.size !== access.descriptor.size ||
+      finalAccess.descriptor.durationMs !== access.descriptor.durationMs ||
+      !sameAvailability(finalAccess.availability, access.availability)
+    ) {
+      fail("aborted", "Reel media authorization changed. Try again.");
+    }
+  }
+
   async function authorizeMediaAccess(uid, reelId, asset) {
-    const time = timing();
     const [reelSnapshot, availabilitySnapshot] = await getAll(
       reelReference(reelId),
       availabilityReference(reelId),
@@ -1344,33 +1679,130 @@ function createReelService({
       fail("failed-precondition", "The Reel has expired.");
     }
     const reel = validatePublishedReel(reelSnapshot);
-    const availability = publishedAvailability(
-      availabilitySnapshot,
-      reel,
-      time.nowMs,
+    const references = mediaAuthorizationReferences(uid, reel.authorId);
+    const snapshots = await getAll(...references);
+    const snapshotMap = new Map([
+      [`reelAvailability/${reelId}`, availabilitySnapshot],
+      ...references.map((reference, index) => [reference.path, snapshots[index]]),
+    ]);
+    return mediaAccessFromSnapshots(uid, reel, asset, snapshotMap, timing().nowMs);
+  }
+
+  async function mintMediaGrant(reelId, asset, access, checkActive = () => {}) {
+    const [metadata, header] = await Promise.all([
+      storage.getMetadata(access.descriptor.storagePath),
+      storage.readHeader(access.descriptor.storagePath, 64),
+    ]);
+    checkActive();
+    const verified = validateStoredAsset(metadata, header, {
+      ownerId: access.authorId,
+      reelId,
+      assetKind: asset,
+      contentType: access.descriptor.contentType,
+      size: access.descriptor.size,
+      generation: access.descriptor.generation,
+    });
+    await storage.revokeDownloadTokens(access.descriptor.storagePath, metadata);
+    checkActive();
+    const grantTime = timing();
+    const expiresAtMillis = Math.min(
+      grantTime.nowMs + MEDIA_GRANT_TTL_MS,
+      access.availability.expiresAtMs ?? Number.MAX_SAFE_INTEGER,
     );
-    const [viewer, viewerRestriction, author, authorRestriction, viewerBlock, authorBlock] =
-      await getAll(
-        db.doc(`users/${uid}`),
-        db.doc(`restrictions/${uid}`),
-        db.doc(`users/${reel.authorId}`),
-        db.doc(`restrictions/${reel.authorId}`),
-        db.doc(`users/${uid}/blocked/${reel.authorId}`),
-        db.doc(`users/${reel.authorId}/blocked/${uid}`),
-      );
-    activeProfile(viewer, "Your");
-    assertNotRestricted(viewerRestriction, "Your", time.nowMs);
-    activeProfile(author, "The author");
-    assertNotRestricted(authorRestriction, "The author", time.nowMs);
-    assertNotBlocked(viewerBlock, authorBlock);
-    const descriptor = asset === "media" ? reel.media : reel.backingAudio;
-    if (descriptor === null) fail("not-found", "This Reel has no backing audio.");
-    return {
-      authorId: reel.authorId,
-      descriptor,
-      checkedAtMs: time.nowMs,
-      availability,
+    if (expiresAtMillis <= grantTime.nowMs) {
+      fail("failed-precondition", "The Reel has expired.");
+    }
+    const url = await storage.getSignedReadUrl(access.descriptor.storagePath, {
+      expiresAtMs: expiresAtMillis,
+      generation: verified.generation,
+    });
+    checkActive();
+    let parsed;
+    try {
+      parsed = new URL(url);
+    } catch (_) {
+      fail("failed-precondition", "The private Reel grant is unavailable.");
+    }
+    if (
+      parsed.protocol !== "https:" ||
+      parsed.hostname !== "storage.googleapis.com" ||
+      parsed.username ||
+      parsed.password ||
+      parsed.port
+    ) {
+      fail("failed-precondition", "The private Reel grant is unavailable.");
+    }
+    return { url, expiresAtMillis, generation: verified.generation };
+  }
+
+  async function inlineMediaGrants(uid, items, candidates, initialSnapshots) {
+    let active = true;
+    let timer;
+    let docsRead = 0;
+    const checkActive = () => {
+      if (!active) fail("deadline-exceeded", "Inline media budget elapsed.");
     };
+    const work = async () => {
+      const attempted = items.slice(0, MAX_INLINE_REEL_MEDIA_GRANTS);
+      const signed = (await Promise.all(attempted.map(async (item) => {
+        try {
+          const access = mediaAccessFromSnapshots(
+            uid, candidates.get(item.id), "media", initialSnapshots, timing().nowMs,
+          );
+          const grant = await mintMediaGrant(item.id, "media", access, checkActive);
+          return { item, access, grant };
+        } catch (_) {
+          // No private document, bearer URL, or exception text reaches the
+          // response/log. A missing hint falls back to the dedicated endpoint.
+          return null;
+        }
+      }))).filter((entry) => entry !== null);
+      checkActive();
+      if (signed.length === 0) return new Map();
+      // Fresh authorization after all signing completes, in ONE bounded read
+      // batch (<=26 refs), not two serial rounds per Reel. Every path derives
+      // from canonical candidates; no client author/path input is accepted.
+      const references = [...new Map(signed.flatMap(({ item, access }) => [
+        reelReference(item.id),
+        availabilityReference(item.id),
+        ...mediaAuthorizationReferences(uid, access.authorId),
+      ]).map((reference) => [reference.path, reference])).values()];
+      docsRead += references.length;
+      const snapshots = await getAll(...references);
+      checkActive();
+      const snapshotMap = new Map(references.map((reference, index) =>
+        [reference.path, snapshots[index]]));
+      const grants = new Map();
+      for (const { item, access, grant } of signed) {
+        try {
+          const reel = validatePublishedReel(snapshotMap.get(`reels/${item.id}`));
+          const finalAccess = mediaAccessFromSnapshots(
+            uid, reel, "media", snapshotMap, timing().nowMs,
+          );
+          assertUnchangedMediaAccess(access, finalAccess, grant.expiresAtMillis);
+          grants.set(item.id, grant);
+        } catch (_) {
+          // A revoke/moderation/expiry race can withhold a hint independently
+          // of its neighbours. The earlier feed projection grants no bytes.
+        }
+      }
+      return grants;
+    };
+    try {
+      const grants = await Promise.race([
+        work().catch(() => new Map()),
+        new Promise((resolve) => {
+          timer = setTimeout(() => {
+            active = false;
+            resolve(new Map());
+          }, INLINE_REEL_MEDIA_GRANT_BUDGET_MS);
+        }),
+      ]);
+      return { grants, docsRead };
+    } finally {
+      active = false;
+      clearTimeout(timer);
+    }
   }
 
   async function getReelMediaAccessInternal(request, { version }) {
@@ -1386,63 +1818,12 @@ function createReelService({
     }
     await consumeReadLimit(auth.uid, "mediaAccess");
     const access = await authorizeMediaAccess(auth.uid, reelId, data.asset);
-    const [metadata, header] = await Promise.all([
-      storage.getMetadata(access.descriptor.storagePath),
-      storage.readHeader(access.descriptor.storagePath, 64),
-    ]);
-    const verified = validateStoredAsset(metadata, header, {
-      ownerId: access.authorId,
-      reelId,
-      assetKind: data.asset,
-      contentType: access.descriptor.contentType,
-      size: access.descriptor.size,
-      generation: access.descriptor.generation,
-    });
-    await storage.revokeDownloadTokens(access.descriptor.storagePath, metadata);
-    const grantTime = timing();
-    const expiresAtMillis = Math.min(
-      grantTime.nowMs + MEDIA_GRANT_TTL_MS,
-      access.availability.expiresAtMs ?? Number.MAX_SAFE_INTEGER,
-    );
-    if (expiresAtMillis <= grantTime.nowMs) {
-      fail("failed-precondition", "The Reel has expired.");
-    }
-    const url = await storage.getSignedReadUrl(access.descriptor.storagePath, {
-      expiresAtMs: expiresAtMillis,
-      generation: verified.generation,
-    });
-    let parsed;
-    try {
-      parsed = new URL(url);
-    } catch (_) {
-      fail("failed-precondition", "The private Reel grant is unavailable.");
-    }
-    if (
-      parsed.protocol !== "https:" ||
-      parsed.hostname !== "storage.googleapis.com" ||
-      parsed.username ||
-      parsed.password
-    ) {
-      fail("failed-precondition", "The private Reel grant is unavailable.");
-    }
+    const grant = await mintMediaGrant(reelId, data.asset, access);
     const finalAccess = await authorizeMediaAccess(auth.uid, reelId, data.asset);
-    if (
-      finalAccess.checkedAtMs >= expiresAtMillis ||
-      finalAccess.authorId !== access.authorId ||
-      finalAccess.descriptor.storagePath !== access.descriptor.storagePath ||
-      finalAccess.descriptor.generation !== access.descriptor.generation ||
-      finalAccess.availability.schemaVersion !== access.availability.schemaVersion ||
-      finalAccess.availability.availabilityHours !==
-        access.availability.availabilityHours ||
-      finalAccess.availability.expiresAtMs !== access.availability.expiresAtMs
-    ) {
-      fail("aborted", "Reel media authorization changed. Try again.");
-    }
+    assertUnchangedMediaAccess(access, finalAccess, grant.expiresAtMillis);
     const result = {
       schemaVersion: REEL_SCHEMA_VERSION,
-      url,
-      expiresAtMillis,
-      generation: verified.generation,
+      ...grant,
     };
     return version === 1
       ? result
@@ -3880,6 +4261,8 @@ module.exports = {
   DEFAULT_LIMITS,
   MAX_REEL_AUTHORS_PER_REQUEST,
   MAX_REEL_SCAN_PER_REQUEST,
+  MAX_INLINE_REEL_MEDIA_GRANTS,
+  INLINE_REEL_MEDIA_GRANT_BUDGET_MS,
   MEDIA_GRANT_TTL_MS,
   REEL_CLEANUP_LEGACY_SWEEP_STATE_PATH,
   REEL_CLEANUP_BASE_BACKOFF_MS,

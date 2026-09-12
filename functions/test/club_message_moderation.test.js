@@ -111,6 +111,13 @@ after(reset);
 
 test("moderator redaction is target-independently rate-limited and audited", async () => {
   await seedMessage("message-1", MEMBER);
+  await db.doc(`clubs/${CLUB}/channels/${CHANNEL}/messages/message-1`).update({
+    type: "gif",
+    gif: {
+      provider: "giphy", id: "abc123", title: "private title",
+      url: "https://media.giphy.com/media/abc123/200h.gif", width: 200, height: 200,
+    },
+  });
   const result = await run(request(MODERATOR, "message-1"));
   assert.deepEqual(result, { outcome: "redacted", redacted: true });
 
@@ -118,6 +125,7 @@ test("moderator redaction is target-independently rate-limited and audited", asy
     .doc(`clubs/${CLUB}/channels/${CHANNEL}/messages/message-1`)
     .get();
   assert.equal(message.data().content, "");
+  assert.equal(message.data().gif, undefined);
   assert.equal(message.data().isDeleted, true);
   assert.equal(message.data().deletedBy, MODERATOR);
   assert.equal(message.data().deletedByRole, "moderator");

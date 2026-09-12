@@ -549,6 +549,22 @@ Object.assign(exports, createReelFunctions({
   ),
 }));
 
+// GIFs in the composer (ADR-167). `getGifCatalog` binds no secret and is
+// always registered, so a client can be told the feature is unavailable
+// instead of guessing; `searchGifs` and `reportGifAsset` bind GIPHY_API_KEY
+// and therefore register only when functions/.env names a real provider —
+// the same shape as the Stripe rollout above, and for the same reason:
+// defineSecret requires the secret to exist at deploy time, and deploy
+// discovery has to keep working before the key does.
+const { createGifFunctions } = require("./media/gif/catalog");
+Object.assign(exports, createGifFunctions({
+  // Clients attach App Check tokens already. Enforcement follows the staged
+  // project-wide rollout used by Reels and Stage B.
+  enforceAppCheck: strictBooleanEnvironment(
+    "YOVOICE_ENFORCE_GIF_APP_CHECK",
+  ),
+}));
+
 const stageBFunctions = createStageBFunctions({
   // Rollout switch: clients already attach App Check tokens, but production
   // enforcement must only flip after Android/iOS/Web attestation telemetry
@@ -578,6 +594,57 @@ exports.onAchievementUserSocialCountersChanged =
   onAchievementUserSocialCountersChanged;
 exports.reconcileAchievementsV1 = reconcileAchievementsV1;
 exports.receiveLiveKitAchievementWebhook = receiveLiveKitAchievementWebhook;
+
+/*
+|--------------------------------------------------------------------------
+| Servers V1 — registration and durable dispatch gate (ADR-176)
+|--------------------------------------------------------------------------
+| YOVOICE_SERVERS_V1 is absent from functions/.env today, so nothing in this
+| block runs: the registration module and the whole V1 runtime stay OFF the
+| cold-start module graph, and the export map stays exactly the one pinned by
+| test/cold_start_module_graph.test.js. Three functions/servers modules are on
+| that graph by design, and always were: servers/rtc_binding.js (required by
+| livekit/sessions.js, staff/voice_enforcement.js, achievements/livekit_http.js
+| and rooms/liveness_sweeper.js), servers/contract.js (from rtc_binding.js) and
+| servers/capacity.js (from clubs/quota.js). They register nothing, write
+| nothing and load no SDK; that exact set is asserted by
+| test/cold_start_module_graph.test.js, so an eager require of the runtime
+| fails there rather than shipping. `enabled` registers the sixteen V1
+| callables of docs/Servers.md "Callable contract" plus the serverControlOutbox
+| trigger and its bounded retry schedule (servers/registration.js). `disabled`
+| and absent are equivalent; any other value — including a case or whitespace
+| variant such as `enabled ` — fails deploy discovery and the cold start, so a
+| typo can never silently ship or silently hold the feature. The gate registers
+| endpoints only: every server created through them stays
+| `serverActivationState: held`, because no activation writer exists
+| (docs/Servers.md, "Sessions") — that is a separate reviewed slice, not a
+| value of this variable.
+*/
+
+function strictEnabledEnvironment(name) {
+  // Deliberately no trim and no case folding, unlike strictBooleanEnvironment
+  // above: this switch decides whether eighteen functions exist at all, so the
+  // value must be byte-for-byte `enabled`, `disabled`, empty or absent. A
+  // whitespace or case variant such as `enabled ` is a typo in functions/.env,
+  // never an authorization to ship the surface, and it fails deploy discovery
+  // and the cold start instead of silently loading.
+  const value = String(process.env[name] ?? "");
+  if (value === "" || value === "disabled") return false;
+  if (value === "enabled") return true;
+  throw new Error(`${name} must be exactly enabled or disabled.`);
+}
+
+if (strictEnabledEnvironment("YOVOICE_SERVERS_V1")) {
+  const { createServersV1Functions } = require("./servers/registration");
+  Object.assign(exports, createServersV1Functions({
+    // Staged App Check enforcement, same rollout convention as Reels, GIFs
+    // and Stage B. Read only inside the gate: the switch has no meaning while
+    // the endpoints are not registered, and an unset value stays false.
+    enforceAppCheck: strictBooleanEnvironment(
+      "YOVOICE_ENFORCE_SERVERS_APP_CHECK",
+    ),
+  }));
+}
 
 // Cold-start observability. Emitted once per instance start, only inside the
 // Cloud Run / Functions runtime (K_SERVICE and FUNCTION_TARGET are set there

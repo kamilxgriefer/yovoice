@@ -1,4 +1,5 @@
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
+const { assertLegacyClubData } = require("../utils/server_access");
 const { FieldValue } = require("firebase-admin/firestore");
 const { getStorage } = require("firebase-admin/storage");
 
@@ -135,6 +136,7 @@ const createCommunityClub = onCall(
 
       if (existingClub.exists) {
         const existing = existingClub.data() ?? {};
+        assertLegacyClubData(existing);
         if (
           existing.ownerId === auth.uid &&
           existing.type !== "family" &&
@@ -405,6 +407,7 @@ function createFinalizeClubMediaHandler({ firestore = db, bucket } = {}) {
       profileSnapshot,
     ) {
       const club = clubSnapshot.data() ?? {};
+      assertLegacyClubData(club);
       const member = memberSnapshot.data() ?? {};
       const profile = profileSnapshot.data() ?? {};
       if (

@@ -431,6 +431,24 @@
       ]
     },
     {
+      "collectionGroup": "reels",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "status",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "authorId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "sortKey",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
       "collectionGroup": "reelCleanupOutbox",
       "queryScope": "COLLECTION",
       "fields": [
@@ -483,6 +501,24 @@
         {
           "fieldPath": "updatedAt",
           "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "clubs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "ownerId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "entitlementPolicyId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "status",
+          "order": "ASCENDING"
         }
       ]
     }
@@ -575,6 +611,22 @@
       "fieldPath": "expiresAt",
       "ttl": true,
       "indexes": []
+    },
+    {
+      "collectionGroup": "reelViews",
+      "fieldPath": "expiresAt",
+      "ttl": true,
+      "indexes": []
+    },
+    {
+      "collectionGroup": "channelSessions",
+      "fieldPath": "livekitRoomName",
+      "indexes": [
+        {
+          "order": "ASCENDING",
+          "queryScope": "COLLECTION_GROUP"
+        }
+      ]
     }
   ]
 }

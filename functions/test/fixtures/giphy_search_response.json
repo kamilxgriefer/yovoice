@@ -1,0 +1,129 @@
+{
+  "comment": [
+    "A recorded-shape GIPHY /v1/gifs/search response, reduced to the fields",
+    "functions/media/gif/giphy_provider.js actually reads, plus the ones it",
+    "must survive being wrong. Every entry below exists to pin one behaviour:",
+    "  giphyGoodOne  - the ordinary case: fixed_height dimensions, a title",
+    "                  ending in the ' GIF' suffix the adapter trims.",
+    "  giphyGoodTwo  - no fixed_height_small, so the preview falls back through",
+    "                  fixed_height_downsampled.",
+    "  giphyRatedPg  - rating 'pg'. The adapter normalizes it; catalog.js drops",
+    "                  it. This is the fixture that proves layer 2 runs.",
+    "  giphyUnrated  - no rating field at all -> 'unrated' -> also dropped.",
+    "  giphyEvilUrl  - images.fixed_height.url points at an attacker host. The",
+    "                  asset's own url must STILL be the pinned media.giphy.com",
+    "                  template, because it is derived and never copied.",
+    "  giphyBadId    - an id containing a path separator; must be dropped",
+    "                  entirely rather than producing an escaping URL.",
+    "  giphyNoTitle  - empty title -> the 'GIF' fallback, never an empty label."
+  ],
+  "data": [
+    {
+      "id": "giphyGoodOne",
+      "title": "excited cat GIF",
+      "rating": "g",
+      "images": {
+        "fixed_height": {
+          "url": "https://media3.giphy.com/media/giphyGoodOne/200h.gif",
+          "width": "356",
+          "height": "200"
+        },
+        "fixed_height_small": {
+          "url": "https://media3.giphy.com/media/giphyGoodOne/100h.gif",
+          "width": "178",
+          "height": "100"
+        }
+      }
+    },
+    {
+      "id": "giphyGoodTwo",
+      "title": "wesoly pies GIF by YO",
+      "rating": "G",
+      "images": {
+        "fixed_height": {
+          "url": "https://media1.giphy.com/media/giphyGoodTwo/200h.gif",
+          "width": "200",
+          "height": "200"
+        },
+        "fixed_height_downsampled": {
+          "url": "https://media1.giphy.com/media/giphyGoodTwo/200h_d.gif",
+          "width": "200",
+          "height": "200"
+        }
+      }
+    },
+    {
+      "id": "giphyRatedPg",
+      "title": "borderline thing",
+      "rating": "pg",
+      "images": {
+        "fixed_height": {
+          "url": "https://media2.giphy.com/media/giphyRatedPg/200h.gif",
+          "width": "300",
+          "height": "200"
+        }
+      }
+    },
+    {
+      "id": "giphyUnrated",
+      "title": "no rating at all",
+      "images": {
+        "fixed_height": {
+          "url": "https://media2.giphy.com/media/giphyUnrated/200h.gif",
+          "width": "300",
+          "height": "200"
+        }
+      }
+    },
+    {
+      "id": "giphyEvilUrl",
+      "title": "looks fine",
+      "rating": "g",
+      "images": {
+        "fixed_height": {
+          "url": "https://evil.example.com/tracker.gif?uid=42",
+          "width": "300",
+          "height": "200"
+        },
+        "fixed_height_small": {
+          "url": "https://evil.example.com/beacon.gif",
+          "width": "150",
+          "height": "100"
+        }
+      }
+    },
+    {
+      "id": "giphy/BadId",
+      "title": "path traversal attempt",
+      "rating": "g",
+      "images": {
+        "fixed_height": {
+          "url": "https://media.giphy.com/media/x/200h.gif",
+          "width": "200",
+          "height": "200"
+        }
+      }
+    },
+    {
+      "id": "giphyNoTitle",
+      "title": "",
+      "rating": "g",
+      "images": {
+        "fixed_height": {
+          "url": "https://media4.giphy.com/media/giphyNoTitle/200h.gif",
+          "width": "200",
+          "height": "200"
+        }
+      }
+    }
+  ],
+  "pagination": {
+    "total_count": 118,
+    "count": 7,
+    "offset": 0
+  },
+  "meta": {
+    "status": 200,
+    "msg": "OK"
+  }
+}

@@ -109,7 +109,9 @@ function resolveMessageRef({ messageType, ids }) {
 /// conversation. A report naming the right message in a different
 /// conversation is refused — otherwise one legitimate report would become
 /// a key to any message id an admin cared to guess.
-async function requireMatchingReport({ reportId, conversationId, messageId }) {
+async function requireMatchingReport({
+  reportId, conversationId, messageId, transaction = null,
+}) {
   if (!reportId) {
     throw new HttpsError(
       "permission-denied",
@@ -117,10 +119,12 @@ async function requireMatchingReport({ reportId, conversationId, messageId }) {
     );
   }
 
-  const snapshot = await db
+  const reference = db
     .collection("reports")
-    .doc(safeId(reportId, "reportId"))
-    .get();
+    .doc(safeId(reportId, "reportId"));
+  const snapshot = transaction
+    ? await transaction.get(reference)
+    : await reference.get();
 
   if (!snapshot.exists) {
     throw new HttpsError("not-found", "That report does not exist.");
@@ -140,6 +144,72 @@ async function requireMatchingReport({ reportId, conversationId, messageId }) {
   }
 
   return report;
+}
+
+// Canonical GIF DMs cannot gain public moderation fields without invalidating
+// receipts and replies. Their only durable moderation attribution is the
+// protected audit, so it must commit with the exact-schema tombstone.
+async function redactCanonicalGifDirectMessage({
+  actor, ref, reportId, conversationId, messageId, reason,
+}) {
+  const { validateMessage } = require("../messaging/direct_integrity");
+  const conversationRef = db.doc(`conversations/${conversationId}`);
+  return db.runTransaction(async (transaction) => {
+    // The preflight report is not publication authority: it can be changed
+    // or removed while the request is in flight. Recheck it before reading
+    // the private target inside the transaction that performs the action.
+    await requireMatchingReport({ reportId, conversationId, messageId, transaction });
+    const [snapshot, conversation] = await transaction.getAll(ref, conversationRef);
+    let outcome = "missing";
+    let message = null;
+    if (snapshot.exists) {
+      message = validateMessage(snapshot, conversationId);
+      if (message.type !== "gif") {
+        throw new HttpsError("failed-precondition", "The reported message changed.");
+      }
+      outcome = message.isDeleted ? "alreadyRemoved" : "redacted";
+      if (!message.isDeleted) {
+        transaction.update(ref, {
+          content: "",
+          gif: null,
+          mediaUrl: null,
+          durationSeconds: null,
+          reactions: {},
+          isDeleted: true,
+          editedAt: FieldValue.serverTimestamp(),
+        });
+        if (conversation.exists && conversation.data().lastMessageId === messageId) {
+          // The transaction conflicts with concurrent sends, so a retry sees
+          // and preserves any newer preview instead of overwriting it.
+          transaction.update(conversationRef, {
+            lastMessage: "Message deleted",
+            updatedAt: FieldValue.serverTimestamp(),
+          });
+        }
+      }
+    }
+
+    // No content, GIF title/URL or client-supplied extra ids are copied into
+    // the broader staff-readable audit. GIF CDN links are not Storage objects.
+    await writeAuditLog({
+      action: "adminDeleteMessage",
+      caller: actor,
+      targetType: MESSAGE_TYPES.DIRECT,
+      targetId: messageId,
+      details: {
+        reason,
+        reportId,
+        conversationId,
+        messageId,
+        authorId: message?.senderId ?? null,
+        outcome,
+        attachmentsRemoved: 0,
+        attachmentsFailed: 0,
+      },
+      transaction,
+    });
+    return { outcome, redacted: outcome === "redacted" };
+  });
 }
 
 function canonicalObjectPath(encodedPath) {
@@ -340,6 +410,13 @@ const adminDeleteMessage = onCall(
 
     const message = snapshot.data() ?? {};
 
+    if (messageType === MESSAGE_TYPES.DIRECT &&
+        message.schemaVersion === 2 && message.type === "gif") {
+      return redactCanonicalGifDirectMessage({
+        actor, ref, reportId, conversationId, messageId, reason,
+      });
+    }
+
     if (message.isDeleted === true) {
       // Already redacted. Same idempotent answer, still audited.
       await writeAuditLog({
@@ -367,11 +444,13 @@ const adminDeleteMessage = onCall(
     // remains so replies pointing at it do not dangle.
     await ref.update({
       content: "",
+      ...(Object.hasOwn(message, "text") ? { text: "" } : {}),
       audioUrl: FieldValue.delete(),
       imageUrl: FieldValue.delete(),
-      mediaUrl: FieldValue.delete(),
       attachments: FieldValue.delete(),
       isDeleted: true,
+      gif: FieldValue.delete(),
+      mediaUrl: FieldValue.delete(),
       deletedBy: actor.uid,
       deletedByRole: "superAdmin",
       deletedAt: FieldValue.serverTimestamp(),

@@ -5,6 +5,7 @@ const { randomUUID } = require("node:crypto");
 
 const { requireAuthentication } = require("../utils/auth");
 const { db, normalizeText, roomIsActive } = require("../utils/firestore");
+const { assertLegacyRoomAccess } = require("../utils/server_access");
 const {
   consumeRateLimit,
   rateLimitReference,
@@ -372,6 +373,7 @@ async function requireHostRoom(transaction, roomReference, uid) {
     throw new HttpsError("not-found", "The room no longer exists.");
   }
   const room = snapshot.data() ?? {};
+  await assertLegacyRoomAccess({ db, transaction, roomId: roomReference.id, room });
   if (room.hostId !== uid) {
     throw new HttpsError(
       "permission-denied",
@@ -440,6 +442,7 @@ async function executeRemoveRoomParticipant(
         throw new HttpsError("not-found", "The room no longer exists.");
       }
       const room = roomSnapshot.data() ?? {};
+      await assertLegacyRoomAccess({ db, transaction, roomId, room });
       if (room.hostId !== auth.uid) {
         throw new HttpsError(
           "permission-denied",
@@ -643,6 +646,7 @@ async function executeLeaveRoom(request, roomControl = null) {
       };
     }
     const room = roomSnapshot.data() ?? {};
+    await assertLegacyRoomAccess({ db, transaction, roomId, room });
     if (
       room.hostId === auth.uid &&
       room.roomType === "temporary" &&
@@ -1236,6 +1240,7 @@ async function executeSetOwnParticipantMute(
       throw new HttpsError("not-found", "The room participant no longer exists.");
     }
     const room = roomSnapshot.data() ?? {};
+    await assertLegacyRoomAccess({ db, transaction, roomId, room });
     const participant = participantSnapshot.data() ?? {};
     if (!roomIsActive(room) || room.isLive !== true ||
         room.deletionInProgress === true || participant.userId !== auth.uid) {

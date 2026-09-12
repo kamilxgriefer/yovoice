@@ -23,6 +23,9 @@ async function writeAuditLog({
   // rather than append a duplicate. Pass a value derived from something
   // stable across retries (the CloudEvent id).
   entryId = null,
+  // Optional caller-owned transaction. The audit and the protected mutation
+  // then commit together; create keeps transactional evidence immutable.
+  transaction = null,
 }) {
   if (!caller?.uid) {
     throw new Error("Audit log requires a valid caller.");
@@ -62,6 +65,14 @@ async function writeAuditLog({
 
     createdAt: FieldValue.serverTimestamp(),
   };
+
+  if (transaction) {
+    const reference = entryId
+      ? db.collection("adminAuditLogs").doc(entryId)
+      : db.collection("adminAuditLogs").doc();
+    transaction.create(reference, auditEntry);
+    return { id: reference.id, ...auditEntry };
+  }
 
   if (entryId) {
     const reference = db.collection("adminAuditLogs").doc(entryId);

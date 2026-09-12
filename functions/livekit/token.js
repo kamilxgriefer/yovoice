@@ -7,6 +7,7 @@ const { Timestamp } = require("firebase-admin/firestore");
 const { requireAuthentication } = require("../utils/auth");
 
 const { db, normalizeText, roomIsActive } = require("../utils/firestore");
+const { assertLegacyRoomAccess } = require("../utils/server_access");
 const {
   assertLedgerReplay,
   consumeRateLimit,
@@ -221,6 +222,7 @@ async function authorizeRoomVoiceAccess(
     throw new HttpsError("not-found", "This room does not exist.");
   }
   const room = roomSnapshot.data() ?? {};
+  await assertLegacyRoomAccess({ db, transaction, roomId, room });
   if (!roomIsActive(room) || room.isLive !== true) {
     throw new HttpsError(
       "failed-precondition",
@@ -411,7 +413,10 @@ async function recordAuthorizedVoiceSession({
           nowMs,
         },
       );
-      if (replay) return { access: null, replay };
+      if (replay) {
+        await assertLegacyRoomAccess({ db, transaction, roomId });
+        return { access: null, replay };
+      }
     }
     const currentAccess = await authorizeRoomVoiceAccess(
       roomId,
@@ -516,7 +521,10 @@ async function createLiveKitTokenHandler(request, {
       identity: tokenIdentity,
       nowMs,
     });
-    if (preflightReplay) return preflightReplay;
+    if (preflightReplay) {
+      await assertLegacyRoomAccess({ db, roomId });
+      return preflightReplay;
+    }
 
     const access = await authorizeRoomVoiceAccess(roomId, authenticatedUser);
     const grant = deriveVoiceGrant(access, authenticatedUser);

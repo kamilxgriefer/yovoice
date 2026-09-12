@@ -691,4 +691,86 @@ describe("club self deletion", () => {
       `family_moments/${CLUB}/`,
     ]);
   });
+
+  // DEFENCE IN DEPTH, NOT A LIVE FIX. assertLegacyClubData refuses a
+  // versioned club before any of this runs, and a canonical V1 anchor's
+  // clubId equals its serverId — always a versioned root — so reaching this
+  // loop with a versioned anchor takes tampered data. What the guard buys is
+  // that the outcome is safe when it happens anyway: endRoom(anchorId) hits
+  // the wrong LiveKit namespace (a silent alreadyAbsent), and
+  // deleteVoiceSessionPage is unfenced — it would delete a live generation's
+  // mirror, or throw data-loss on a binding it does not recognise.
+  test("a versioned anchor bound to the club is skipped; the lounge is still torn down", async () => {
+    const control = fakeControl();
+    const bucket = fakeBucket();
+    const anchorRoom = `${P}v1-anchor`;
+    const srvName = `srv_${"a".repeat(40)}`;
+    const anchorReference = db.collection("rooms").doc(anchorRoom);
+    const anchorMirror = db
+      .collection("activeVoiceSessions")
+      .doc(MEMBER)
+      .collection("rooms")
+      .doc(anchorRoom);
+    await seedClub();
+    await seedLounge();
+    await seedLoungeParticipant(MEMBER);
+    await seedSession(MEMBER);
+    await anchorReference.set({
+      serverSchemaVersion: 1,
+      serverId: `${P}server`,
+      channelId: `${P}channel`,
+      clubId: CLUB,
+      hostId: OWNER,
+      status: "active",
+      isLive: true,
+      participantCount: 1,
+      livekitRoomName: srvName,
+      voiceSessionId: `${P}session`,
+    });
+    await anchorMirror.set({
+      serverSchemaVersion: 1,
+      serverId: `${P}server`,
+      channelId: `${P}channel`,
+      roomId: anchorRoom,
+      sessionId: `${P}session`,
+      userId: MEMBER,
+      participantIdentity: MEMBER,
+      livekitRoomName: srvName,
+      expiresAt: Timestamp.fromMillis(Date.now() + 300_000),
+    });
+    const anchorBefore = (await anchorReference.get()).data();
+    const mirrorBefore = (await anchorMirror.get()).data();
+
+    try {
+      const result = await executeDeleteClubSelf(
+        request(OWNER, { clubId: CLUB }),
+        control,
+        bucket,
+      );
+
+      assert.deepEqual(result, { success: true, clubId: CLUB });
+      // The legacy lounge is ended, swept, media-cleaned and deleted exactly
+      // as it is in the success test above.
+      assert.deepEqual(control.calls, [["endRoom", LOUNGE]]);
+      assert.deepEqual(bucket.prefixDeletes, [`room_images/${LOUNGE}/`]);
+      assert.equal(await clubGraphIsGone(), true);
+      assert.equal(
+        (
+          await db
+            .collection("activeVoiceSessions")
+            .doc(MEMBER)
+            .collection("rooms")
+            .doc(LOUNGE)
+            .get()
+        ).exists,
+        false,
+      );
+      // The anchor is not ended, not swept and not deleted.
+      assert.deepEqual((await anchorReference.get()).data(), anchorBefore);
+      assert.deepEqual((await anchorMirror.get()).data(), mirrorBefore);
+    } finally {
+      await db.recursiveDelete(anchorReference);
+      await db.recursiveDelete(db.collection("activeVoiceSessions").doc(MEMBER));
+    }
+  });
 });

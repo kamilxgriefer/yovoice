@@ -115,7 +115,7 @@ internal track reports **"Aktywne — Najnowsza wersja: 24 (2.0.0)"** with the
 15-account tester list unchanged. Neither platform was verified from a tester
 account of ours; Google Play does not notify internal testers by itself.
 
-**Tester email — composed, NOT sent.** The recipient set is the documented
+**Tester email — owner delivery test sent and confirmed; the wave is not started.** The recipient set is the documented
 union of the Play internal list (15) and the TestFlight testers (10), 21 unique
 addresses, owner first as the delivery test. The message is short English with
 no links, from the Workspace mailbox `kamil@yovoice.app` as the alias
@@ -125,8 +125,12 @@ twice and three Send-button position clicks all left the compose window open,
 and this session cannot see inside that window (Chrome exposes no web content
 to System Events, `screencapture` has no Screen Recording permission, and the
 browser extension cannot reach Profile 3). Further blind clicking in the
-owner's mailbox was refused deliberately. The composed message is waiting in
-Profile 3 for the owner to press Send; the 20-address wave has not started.
+owner's mailbox was refused deliberately, so the send was handed to the owner,
+who pressed Send himself and confirmed on 2026-09-12 that the message arrived.
+The channel therefore works when a human completes the keystroke. The
+20-address wave has NOT been sent and is on hold pending the owner's
+instruction; iOS testers were already notified automatically by TestFlight, so
+the wave matters mainly for the Android-only testers.
 
 **Not done in this round:** no Hosting, Functions, Rules, index or Storage
 deploy; no production data migration; no Servers activation; no public release.

@@ -1023,3 +1023,108 @@ describe("admin Club deletion lifecycle", () => {
     );
   });
 });
+
+// The per-room versioned-anchor boundary inside revokeMemberVoicePage
+// (principal-review.md P3-3, s3-reaudit.md F1). The loop acted on
+// `roomDocument.id`: against a versioned anchor the revoke addresses a
+// LiveKit room that does not exist (a silent alreadyAbsent that leaves the
+// member connected to the live `srv_` room) and the mirror delete was
+// unfenced and non-transactional. assertLegacyClubData refuses a versioned
+// club one level up and a canonical anchor's clubId is its own versioned
+// serverId, so the room below is deliberately TAMPERED data — the only shape
+// that reaches this loop.
+describe("clubs/members.js versioned-anchor boundary", () => {
+  test("removeClubMemberSelf skips a versioned anchor and still revokes the legacy room", async () => {
+    const clubId = `${P}anchor`;
+    const legacyRoomId = `${P}anchor-room-a-legacy`;
+    const anchorRoomId = `${P}anchor-room-b-versioned`;
+    const srvName = `srv_${"a".repeat(40)}`;
+    const anchorReference = db.collection("rooms").doc(anchorRoomId);
+    const anchorMirror = db.collection("activeVoiceSessions").doc(IDS.target)
+      .collection("rooms").doc(anchorRoomId);
+    await db.collection("clubs").doc(clubId).set({
+      ownerId: IDS.owner,
+      type: "community",
+      status: "active",
+      memberCount: 2,
+      onlineCount: 2,
+    });
+    await seedMember(clubId, IDS.owner, "owner");
+    await seedMember(clubId, IDS.target, "member");
+    await Promise.all([
+      db.collection("rooms").doc(legacyRoomId).set({
+        clubId,
+        participantCount: 1,
+      }),
+      db.collection("rooms").doc(legacyRoomId).collection("participants")
+        .doc(IDS.target).set({ userId: IDS.target }),
+      db.collection("activeVoiceSessions").doc(IDS.target)
+        .collection("rooms").doc(legacyRoomId).set({
+          userId: IDS.target,
+          roomId: legacyRoomId,
+          participantIdentity: IDS.target,
+          expiresAt: Timestamp.fromMillis(Date.now() + 300_000),
+        }),
+      // The anchor carries a roster row for the target too. The guard is at
+      // the top of the loop, so the roster transaction does not run either:
+      // no participant delete, no participantCount write, no revoke and no
+      // mirror delete touch a versioned anchor.
+      anchorReference.set({
+        serverSchemaVersion: 1,
+        serverId: `${P}anchor-server`,
+        channelId: `${P}anchor-channel`,
+        clubId,
+        isLive: true,
+        participantCount: 1,
+        livekitRoomName: srvName,
+        voiceSessionId: `${P}anchor-session`,
+      }),
+      anchorMirror.set({
+        serverSchemaVersion: 1,
+        serverId: `${P}anchor-server`,
+        channelId: `${P}anchor-channel`,
+        roomId: anchorRoomId,
+        sessionId: `${P}anchor-session`,
+        userId: IDS.target,
+        participantIdentity: IDS.target,
+        livekitRoomName: srvName,
+        expiresAt: Timestamp.fromMillis(Date.now() + 300_000),
+      }),
+      anchorReference.collection("participants").doc(IDS.target)
+        .set({ userId: IDS.target, role: "speaker" }),
+    ]);
+    const anchorBefore = (await anchorReference.get()).data();
+    const mirrorBefore = (await anchorMirror.get()).data();
+
+    const result = await runRemove(
+      callableRequest(IDS.owner, "user", { clubId, memberId: IDS.target }),
+    );
+
+    assert.equal(result.alreadyExisted, false);
+    // The legacy room is revoked and its mirror deleted, exactly as before.
+    assert.deepEqual(memberControlCalls, [[legacyRoomId, IDS.target]]);
+    assert.equal(
+      (await db.collection("activeVoiceSessions").doc(IDS.target)
+        .collection("rooms").doc(legacyRoomId).get()).exists,
+      false,
+    );
+    assert.equal(
+      (await db.collection("rooms").doc(legacyRoomId)
+        .collection("participants").doc(IDS.target).get()).exists,
+      false,
+    );
+    // The anchor gets no provider call and keeps its generation's mirror,
+    // its roster row and its participantCount: byte-identical throughout.
+    assert.deepEqual((await anchorReference.get()).data(), anchorBefore);
+    assert.deepEqual((await anchorMirror.get()).data(), mirrorBefore);
+    assert.equal(
+      (await anchorReference.collection("participants").doc(IDS.target).get()).exists,
+      true,
+      "the V1 generation's roster row is not touched by a legacy Club path",
+    );
+    // ...and the removal still completes, rather than stalling on a page it
+    // refused to act on.
+    const operation = await memberRemovalOperationReference(clubId, IDS.target).get();
+    assert.equal(operation.data().status, "completed");
+  });
+});

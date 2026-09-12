@@ -8,6 +8,7 @@ const {
   getProductionLiveKitControl,
 } = require("../livekit/control");
 const { deleteActiveVoiceSessionsForRoom } = require("../livekit/sessions");
+const { isVersionedAnchor } = require("../servers/rtc_binding");
 
 const REGION = "europe-west1";
 
@@ -65,18 +66,35 @@ const MAX_LIVE_ROOM_SCAN = 200;
  * conclusion `executeLeaveRoom` and `executeEndRoomVoice`'s `onlyIfEmpty`
  * branch reached, for the same reason.
  *
- * `updatedAt` IS A SOUND AGE ANCHOR, and that is provable rather than
- * hopeful. Nothing on the server ever writes `isLive: true` — grep the
- * codebase, every server write of that field is `false` — so the client is
- * its only writer, and BOTH client branches that may write it
- * (`roomVoiceStartAllowed()` and `hostRoomUpdateAllowed()`'s start branch in
- * firestore.rules) require `request.resource.data.updatedAt == request.time`
- * and `changed.hasOnly(['isLive', 'endedAt', 'updatedAt'])`. A live room
- * therefore always carries a server-stamped `updatedAt` set at the moment it
- * went live. Every later write to the document — a join, a leave, a host
- * rename — moves it FORWARD, which delays this sweep. The anchor can only
- * ever be too conservative, never too eager, which is the direction a
- * destructive repair must err in.
+ * VERSIONED ANCHORS ARE NEVER THIS SWEEP'S ROOMS. A V1 server channel's
+ * `rooms/{id}` document is a media anchor whose liveness belongs to a
+ * `channelSessions` generation: its LiveKit namespace is that generation's
+ * immutable `srv_` name, never the anchor id, and its teardown belongs to
+ * the V1 end worker and its outbox. `endRoom(anchorId)` would target the
+ * wrong namespace, and dropping the anchor's liveness or its mirrors would
+ * leave the live `srv_` room un-endable and un-enforceable. Every path
+ * below — the scan and the transactional re-check — therefore skips any
+ * document carrying `serverSchemaVersion` or `serverId` (the same
+ * versioned-boundary test `assertLegacyRoomAccess` applies, so a malformed
+ * marker is still versioned) and counts it in `skippedVersioned`.
+ *
+ * `updatedAt` IS A SOUND AGE ANCHOR FOR EVERY ROOM THIS SWEEP TOUCHES, and
+ * what makes it sound is the STAMP, not an absence of writers. Two legacy
+ * server paths do write `isLive: true`: `startRoomVoice`
+ * (functions/rooms/creation.js:925), a registered user callable, and
+ * `createRoom`'s `isLive: !communityMembership` at creation
+ * (functions/rooms/creation.js:332). BOTH set `updatedAt` in the SAME write
+ * (`rooms/creation.js:926` and `:354-355`), so a room that has just gone
+ * live is always dated from the moment it went live. The V1 session runtime
+ * (`startServerChannelSessionV1` in functions/servers/sessions.js) writes
+ * `isLive: true` only on versioned anchors, which are skipped as above.
+ * Every later write to the document — a join, a leave, a host rename — moves
+ * `updatedAt` FORWARD, which delays this sweep. The anchor can only ever be
+ * too conservative, never too eager, which is the direction a destructive
+ * repair must err in. THE STAMP IS THE INVARIANT: if either writer above
+ * ever stops setting `updatedAt`, `ageAnchor` falls back to `createdAt`
+ * (see it below) and the grace period silently collapses toward zero for
+ * every room started after creation.
  *
  * WHAT THIS DOES NOT FIX, stated plainly because the gap is easy to mistake
  * for covered. A client that CRASHES WHILE IN A ROOM leaves its participant
@@ -84,8 +102,9 @@ const MAX_LIVE_ROOM_SCAN = 200;
  * it stays live with a ghost on the stage. Repairing that needs per-
  * participant liveness the SFU is the only honest source of — LiveKit's
  * `participant_left` / `participant_connection_aborted` webhook, which
- * `functions/achievements/livekit_http.js` already implements and
- * `functions/index.js` still does not export. docs/DEPLOYMENT.md names that
+ * `functions/achievements/livekit_http.js` implements and
+ * `functions/index.js` exports as `receiveLiveKitAchievementWebhook`
+ * (functions/index.js:596). docs/DEPLOYMENT.md names that
  * same webhook as the real fix for the `voiceMinutes` and live-presence
  * gaps. This sweep is scoped to the empty-roster case on purpose; it is not
  * a substitute for that work.
@@ -138,9 +157,18 @@ async function sweepStrandedLiveRooms({
   let skippedYoung = 0;
   let skippedInactive = 0;
   let skippedUnanchored = 0;
+  let skippedVersioned = 0;
 
   for (const document of candidates) {
     const room = document.data() ?? {};
+
+    if (isVersionedAnchor(room)) {
+      // A V1 anchor: its liveness is a channelSession generation and its
+      // media a `srv_` name (see the header). Never dated, closed, ended or
+      // cleaned here, whatever its roster looks like.
+      skippedVersioned += 1;
+      continue;
+    }
 
     if (!roomIsActive(room) || room.deletionInProgress === true) {
       // Not this function's room to close. `executeDeleteRoom` and
@@ -169,6 +197,10 @@ async function sweepStrandedLiveRooms({
 
     try {
       const outcome = await closeIfStillStranded(document.ref, cutoffMillis);
+      if (outcome === "versioned") {
+        skippedVersioned += 1;
+        continue;
+      }
       if (outcome === "occupied") {
         skippedOccupied += 1;
         continue;
@@ -214,6 +246,7 @@ async function sweepStrandedLiveRooms({
     skippedYoung,
     skippedInactive,
     skippedUnanchored,
+    skippedVersioned,
     failed: failures.length,
     truncated,
   };
@@ -273,6 +306,9 @@ async function closeIfStillStranded(roomReference, cutoffMillis) {
     if (!snapshot.exists) return "changed";
 
     const room = snapshot.data() ?? {};
+    // The same versioned-anchor exclusion as the scan, re-applied to the
+    // transactional read so no path can write liveness onto a V1 anchor.
+    if (isVersionedAnchor(room)) return "versioned";
     if (
       room.isLive !== true ||
       !roomIsActive(room) ||

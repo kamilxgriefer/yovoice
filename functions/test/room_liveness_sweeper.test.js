@@ -5,6 +5,7 @@
 // or one that only just went live. Every test below is one of those two.
 
 const assert = require("node:assert/strict");
+const { randomUUID } = require("node:crypto");
 const { test, beforeEach, describe } = require("node:test");
 
 process.env.FIRESTORE_EMULATOR_HOST =
@@ -35,6 +36,11 @@ const {
   ageAnchor,
   sweepStrandedLiveRooms,
 } = require("../rooms/liveness_sweeper");
+// Loaded after the project id above, like the module under test: the V1
+// anchor in the versioned-skip regression is made live through the reviewed
+// session runtime rather than seeded by hand.
+const { createServerCreationService } = require("../servers/creation");
+const { createServerSessionService } = require("../servers/sessions");
 
 const db = getFirestore();
 const P = "rls-";
@@ -186,6 +192,98 @@ describe("stranded live room sweep", () => {
     assert.equal(outcome.skippedYoung, 1);
     assert.equal((await readRoom(roomId)).data().isLive, true);
     assert.deepEqual(control.calls, []);
+  });
+
+  // A REAL V1 ANCHOR, NOT A SEEDED IMITATION. `startServerChannelSessionV1`
+  // is the one server writer of `isLive: true`, and it writes exactly this
+  // shape: a live anchor whose roster is legitimately empty (the runtime
+  // creates no participant row) and whose media lives under a `srv_` name.
+  // The token gives the identity the server-only mirror an End Room would
+  // clear; its participant row is then removed, which is the state a lost
+  // cleanup ACK or a hostile client leaves behind.
+  async function startLiveV1Anchor() {
+    const owner = `${P}v1-owner-${randomUUID()}`;
+    const member = `${P}v1-member-${randomUUID()}`;
+    const clock = () => AGED.toMillis();
+    const dependencies = { db, Timestamp, clock };
+    const request = (uid, data) => ({ auth: { uid, token: { email_verified: true } }, data });
+    await Promise.all([
+      db.doc(`users/${owner}`).set({ displayName: "V1 owner", status: "active" }),
+      db.doc(`users/${member}`).set({ displayName: "V1 member", status: "active" }),
+    ]);
+    const root = await createServerCreationService(dependencies).createServerV1(request(owner, {
+      requestId: randomUUID(), serverType: "friends", templateVersion: 1,
+      name: "Sweeper V1 fixture", description: "", privacy: "inviteOnly", defaultLanguage: "English",
+    }));
+    const channel = (await db.collection(`clubs/${root.serverId}/channels`)
+      .where("kind", "==", "voice").get()).docs[0];
+    const roomId = channel.data().roomId;
+    await db.doc(`clubs/${root.serverId}`).update({ status: "active", serverActivationState: "active" });
+    await db.doc(`rooms/${roomId}`).update({ status: "active", serverActivationState: "active", hostId: owner });
+    await db.doc(`clubs/${root.serverId}/members/${member}`)
+      .set({ userId: member, role: "member", authorizationRevision: 1 });
+    const livekit = {
+      assertSupported() { return "wss://test-fixture.livekit.cloud"; },
+      async mintToken(value) {
+        const token = `test-only-token-${randomUUID()}`;
+        return { serverUrl: "wss://test-fixture.livekit.cloud", participantToken: token, token,
+          roomName: value.binding.livekitRoomName, participantIdentity: value.uid,
+          participantName: value.participantName, expiresAtMillis: clock() + 120_000,
+          permissions: { canPublish: value.grant.canPublish, canSubscribe: true, canPublishData: true },
+          permittedTrackSources: value.grant.permittedTrackSources,
+          serverId: value.binding.serverId, channelId: value.binding.channelId,
+          roomId: value.binding.roomId, sessionId: value.binding.sessionId, sessionRole: value.sessionRole };
+      },
+      async revokeParticipant() { throw new Error("the sweep must never reach a V1 provider call"); },
+      async endRoom() { throw new Error("the sweep must never reach a V1 provider call"); },
+    };
+    const service = createServerSessionService({ ...dependencies, livekit });
+    const target = { serverId: root.serverId, channelId: channel.id };
+    const { sessionId } = await service.startServerChannelSessionV1(
+      request(owner, { ...target, requestId: randomUUID() }),
+    );
+    await service.createServerChannelTokenV1(request(member, { ...target, sessionId, requestId: randomUUID() }));
+    await db.doc(`rooms/${roomId}/participants/${member}`).delete();
+    return { roomId, member, sessionId };
+  }
+
+  // THE V1 ANCHOR IS NOT THIS SWEEP'S ROOM. Its liveness is a channelSession
+  // generation and its LiveKit namespace that generation's `srv_` name, so
+  // `endRoom(anchorId)` would hit the wrong namespace and dropping `isLive`
+  // or its mirrors would leave a live room nobody can end or enforce.
+  test("a live V1 anchor with an empty roster past the grace period is untouched", async () => {
+    const legacyId = `${P}legacy-beside-v1`;
+    const control = fakeControl();
+    await seedStrandedRoom(legacyId);
+    const v1 = await startLiveV1Anchor();
+    const mirrorReference = db.collection("activeVoiceSessions").doc(v1.member)
+      .collection("rooms").doc(v1.roomId);
+    const anchorBefore = (await readRoom(v1.roomId)).data();
+    const mirrorBefore = (await mirrorReference.get()).data();
+    try {
+      assert.equal(anchorBefore.isLive, true);
+      assert.equal(anchorBefore.voiceSessionId, v1.sessionId);
+      assert.ok(ageAnchor(anchorBefore) <= NOW_MILLIS - GRACE_PERIOD_SECONDS * 1000,
+        "the anchor is older than the grace period");
+      assert.equal((await db.collection(`rooms/${v1.roomId}/participants`).limit(1).get()).empty, true,
+        "and its roster is empty, which is what the sweep keys on");
+      assert.equal(mirrorBefore.serverSchemaVersion, 1);
+
+      const outcome = await sweepStrandedLiveRooms({ roomControl: control, now });
+
+      assert.equal(outcome.scanned, 2);
+      assert.equal(outcome.skippedVersioned, 1);
+      assert.equal(outcome.failed, 0);
+      assert.equal(outcome.closed, 1);
+      assert.deepEqual(outcome.closedRoomIds, [legacyId], "the legacy stranded room is still closed");
+      assert.deepEqual(control.calls, [["endRoom", legacyId]], "no endRoom in the anchor's namespace");
+      assert.deepEqual((await readRoom(v1.roomId)).data(), anchorBefore, "no liveness write on the anchor");
+      assert.deepEqual((await mirrorReference.get()).data(), mirrorBefore,
+        "the live generation's mirror survives");
+      assert.equal((await readRoom(legacyId)).data().isLive, false);
+    } finally {
+      await db.recursiveDelete(db.collection("activeVoiceSessions").doc(v1.member));
+    }
   });
 
   test("a legacy room with no status field is swept, not skipped", async () => {

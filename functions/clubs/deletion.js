@@ -1,4 +1,7 @@
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
+const logger = require("firebase-functions/logger");
+const { assertLegacyClubData } = require("../utils/server_access");
+const { isVersionedAnchor } = require("../servers/rtc_binding");
 const { FieldValue } = require("firebase-admin/firestore");
 const { getStorage } = require("firebase-admin/storage");
 
@@ -26,6 +29,9 @@ const {
 } = require("./quota");
 
 const REGION = "europe-west1";
+// The closed-set reason logged when a per-room boundary skips a document
+// that is not this legacy path's room. One value, so the log is queryable.
+const VERSIONED_ANCHOR_SKIP_REASON = "versioned-anchor";
 const SAFE_DOCUMENT_ID = /^[A-Za-z0-9_-]{1,128}$/u;
 // Absent means active, matching roomIsActive()/firestore.rules defaulting:
 // legacy documents carry no `status` and are not moderated ones. Moderation
@@ -177,6 +183,7 @@ async function executeDeleteClubSelf(
       throw new HttpsError("not-found", "The selected Club no longer exists.");
     }
     club = clubSnapshot.data() ?? {};
+    assertLegacyClubData(club);
     if (club.ownerId !== auth.uid) {
       throw new HttpsError(
         "permission-denied",
@@ -205,6 +212,22 @@ async function executeDeleteClubSelf(
     const loungeReference = db.collection("rooms").doc(loungeRoomId);
     const loungeSnapshot = await transaction.get(loungeReference);
 
+    // A recovered legacy family carries a server-owned ownership reservation:
+    // servers/creation.js mints serverFamilyOwnerReservations/{uid} when
+    // createServerV1 adopts this graph. Deleting the club it points at must
+    // release it in THIS transaction, or the owner loses families for good —
+    // createServerV1 fails closed on a reservation whose server no longer
+    // exists, and familyClubCreateAllowed() in firestore.rules refuses the
+    // legacy bootstrap while any reservation exists. Read before the writes
+    // below; the Admin SDK refuses a read after a write.
+    const reservationReference = db
+      .collection("serverFamilyOwnerReservations")
+      .doc(auth.uid);
+    const reservationSnapshot =
+      club.type === "family"
+        ? await transaction.get(reservationReference)
+        : null;
+
     transaction.set(
       clubReference,
       {
@@ -225,7 +248,18 @@ async function executeDeleteClubSelf(
         updatedAt: FieldValue.serverTimestamp(),
       });
     }
-    if (club.type !== "family") {
+    if (club.type === "family") {
+      // Only a reservation bound to THIS club is released. One pointing at
+      // another family server — a transferred V1 family, say — is left
+      // untouched, and family clubs never count toward the community
+      // ownership quota the guards serialize.
+      if (
+        reservationSnapshot?.exists &&
+        reservationSnapshot.data()?.serverId === clubId
+      ) {
+        transaction.delete(reservationReference);
+      }
+    } else {
       touchOwnershipGuards(transaction, guardReferences);
     }
   });
@@ -246,6 +280,20 @@ async function executeDeleteClubSelf(
     .get();
   const roomDocuments = roomsSnapshot.docs.slice(0, limits.roomsPerRun);
   for (const roomDocument of roomDocuments) {
+    // NOT THIS PATH'S ROOM. `endRoom(anchorId)` addresses a LiveKit room that
+    // does not exist for a V1 anchor, and deleteVoiceSessionPage below is
+    // unfenced: it would delete a live generation's mirrors, or throw
+    // `data-loss` on a binding it does not recognise. assertLegacyClubData
+    // refuses a versioned club one level up; this holds the same boundary
+    // per room, the way the liveness sweeper does.
+    if (isVersionedAnchor(roomDocument.data())) {
+      logger.warn("club self-deletion skipped a versioned room anchor", {
+        reason: VERSIONED_ANCHOR_SKIP_REASON,
+        clubId,
+        roomId: roomDocument.id,
+      });
+      continue;
+    }
     await control.endRoom(roomDocument.id);
     if (
       !(await deleteVoiceSessionPage(

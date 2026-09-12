@@ -1,8 +1,11 @@
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
+const logger = require("firebase-functions/logger");
 const { FieldValue } = require("firebase-admin/firestore");
 const { getStorage } = require("firebase-admin/storage");
 
 const { ROOM_MANAGEMENT_ROLES } = require("../utils/roles");
+const { assertLegacyClubData } = require("../utils/server_access");
+const { isVersionedAnchor } = require("../servers/rtc_binding");
 
 const {
   requireVerifiedStaff,
@@ -43,6 +46,9 @@ const {
 } = require("../media/cleanup");
 
 const REGION = "europe-west1";
+// The closed-set reason logged when a per-room boundary skips a document
+// that is not this legacy path's room. One value, so the log is queryable.
+const VERSIONED_ANCHOR_SKIP_REASON = "versioned-anchor";
 let clubLiveKitControlForTests = null;
 let clubStorageBucketForTests = null;
 
@@ -307,9 +313,13 @@ const setClubModerationStatus = onCall(
     );
 
     const club = clubSnapshot.data() ?? {};
+    assertLegacyClubData(club);
 
-    await clubReference.set(
-      {
+    await db.runTransaction(async (transaction) => {
+      const current = await transaction.get(clubReference);
+      if (!current.exists) throw new HttpsError("not-found", "The selected club was not found.");
+      assertLegacyClubData(current.data());
+      transaction.set(clubReference, {
         status: suspended ? "suspended" : "active",
 
         moderationReason: suspended ? reason : null,
@@ -319,9 +329,8 @@ const setClubModerationStatus = onCall(
         moderatedAt: FieldValue.serverTimestamp(),
 
         updatedAt: FieldValue.serverTimestamp(),
-      },
-      { merge: true },
-    );
+      }, { merge: true });
+    });
 
     const roomsSnapshot = await db
       .collection("rooms")
@@ -332,6 +341,20 @@ const setClubModerationStatus = onCall(
       const batch = db.batch();
 
       for (const document of roomsSnapshot.docs) {
+        // NOT THIS PATH'S ROOM. A V1 anchor's liveness is a channelSession
+        // generation, never a club moderation verdict: writing `isLive: false`
+        // here would leave the live `srv_` room un-endable and
+        // un-enforceable, which is exactly what the liveness sweeper's guard
+        // exists to prevent. Moderating the versioned server root is the V1
+        // flow's job, and assertLegacyClubData above already refuses one.
+        if (isVersionedAnchor(document.data())) {
+          logger.warn("club moderation batch skipped a versioned room anchor", {
+            reason: VERSIONED_ANCHOR_SKIP_REASON,
+            clubId,
+            roomId: document.id,
+          });
+          continue;
+        }
         batch.set(
           document.ref,
           {
@@ -362,6 +385,21 @@ const setClubModerationStatus = onCall(
       const liveKitControl =
         clubLiveKitControlForTests ?? getProductionLiveKitControl();
       for (const roomDocument of roomsSnapshot.docs) {
+        // NOT THIS PATH'S ROOM. A V1 anchor's LiveKit namespace is its
+        // generation's immutable `srv_` name, never this document id, so
+        // `endRoom(anchorId)` reports alreadyAbsent while the live room keeps
+        // running, and the anchor's mirrors and roster belong to the V1
+        // teardown. assertLegacyClubData above already refuses a versioned
+        // club, so this is the same per-room boundary the liveness sweeper
+        // applies, held one level lower.
+        if (isVersionedAnchor(roomDocument.data())) {
+          logger.warn("club suspension skipped a versioned room anchor", {
+            reason: VERSIONED_ANCHOR_SKIP_REASON,
+            clubId,
+            roomId: roomDocument.id,
+          });
+          continue;
+        }
         await liveKitControl.endRoom(roomDocument.id);
         await deleteActiveVoiceSessionsForRoom(roomDocument.id);
         await deleteCollectionInBatches(
@@ -449,6 +487,7 @@ const removeClubMember = onCall(
         throw new HttpsError("not-found", "The selected club was not found.");
       }
       club = clubSnapshot.data() ?? {};
+      assertLegacyClubData(club);
       if (club.ownerId === userId) {
         throw new HttpsError(
           "failed-precondition",
@@ -554,6 +593,7 @@ const setClubMemberBan = onCall(
     );
 
     const club = clubSnapshot.data() ?? {};
+    assertLegacyClubData(club);
 
     if (club.ownerId === userId) {
       throw new HttpsError(
@@ -570,8 +610,16 @@ const setClubMemberBan = onCall(
       "The selected user is not a member of this club.",
     );
 
-    await memberReference.set(
-      {
+    await db.runTransaction(async (transaction) => {
+      const [currentClub, currentMember] = await transaction.getAll(clubReference, memberReference);
+      if (!currentClub.exists || !currentMember.exists) {
+        throw new HttpsError("not-found", "The selected Club membership was not found.");
+      }
+      assertLegacyClubData(currentClub.data());
+      if (currentClub.data()?.ownerId === userId) {
+        throw new HttpsError("failed-precondition", "The club owner cannot be banned from their own club.");
+      }
+      transaction.set(memberReference, {
         banned,
 
         banReason: banned ? reason || "Administrative action" : null,
@@ -581,9 +629,8 @@ const setClubMemberBan = onCall(
         bannedAt: banned ? FieldValue.serverTimestamp() : null,
 
         updatedAt: FieldValue.serverTimestamp(),
-      },
-      { merge: true },
-    );
+      }, { merge: true });
+    });
 
     if (banned) {
       await revokeClubMemberVoice({
@@ -659,6 +706,7 @@ const transferClubOwnership = onCall(
       "The selected club was not found.",
     );
     const preflightClub = preflightSnapshot.data() ?? {};
+    assertLegacyClubData(preflightClub);
     if (!preflightClub.ownerId) {
       throw new HttpsError(
         "failed-precondition",
@@ -724,6 +772,7 @@ const transferClubOwnership = onCall(
         throw new HttpsError("not-found", "The selected club was not found.");
       }
       club = clubSnapshot.data() ?? {};
+      assertLegacyClubData(club);
 
       if (club.ownerId === newOwnerId) {
         alreadyExisted = true;
@@ -963,6 +1012,7 @@ const adminDeleteClub = onCall(
       "The selected club was not found.",
     );
     const preflightClub = preflightSnapshot.data() ?? {};
+    assertLegacyClubData(preflightClub);
     let club;
 
     // Mark first and serialize with community ownership changes. Rules refuse
@@ -979,6 +1029,7 @@ const adminDeleteClub = onCall(
         throw new HttpsError("not-found", "The selected club was not found.");
       }
       club = latestSnapshot.data() ?? {};
+      assertLegacyClubData(club);
       if (club.ownerId !== preflightClub.ownerId) {
         throw new HttpsError(
           "aborted",
@@ -1015,6 +1066,17 @@ const adminDeleteClub = onCall(
     for (let offset = 0; offset < roomsSnapshot.docs.length; offset += 5) {
       await Promise.all(
         roomsSnapshot.docs.slice(offset, offset + 5).map(async (roomDocument) => {
+          // NOT THIS PATH'S ROOM — see setClubModerationStatus above. A
+          // versioned anchor is never ended, swept or recursively deleted by
+          // the legacy Club lifecycle; `return` is this loop's `continue`.
+          if (isVersionedAnchor(roomDocument.data())) {
+            logger.warn("club deletion skipped a versioned room anchor", {
+              reason: VERSIONED_ANCHOR_SKIP_REASON,
+              clubId,
+              roomId: roomDocument.id,
+            });
+            return;
+          }
           await liveKitControl.endRoom(roomDocument.id);
           await deleteActiveVoiceSessionsForRoom(roomDocument.id);
           requireMediaCleanup(

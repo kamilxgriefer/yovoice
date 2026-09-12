@@ -14,6 +14,7 @@ const {
   isActiveAccountProfile,
   paidPremiumIsActive,
 } = require("../utils/premium_access");
+const { readPremiumClubAllocations } = require("../servers/capacity");
 
 const MINUTE_MS = 60 * 1000;
 const HOUR_MS = 60 * MINUTE_MS;
@@ -196,24 +197,22 @@ async function requireCommunityClubCapacity(
     );
   }
 
-  // Read at most limit + 1 roots. A malformed legacy account with enough
-  // Family-shaped rows to obscure the community count fails closed rather
-  // than turning every creation/transfer attempt into an unbounded scan.
-  const ownedSnapshot = await transaction.get(
-    db
-      .collection("clubs")
-      .where("ownerId", "==", uid)
-      .limit(access.maxOwnedClubs + 1),
-  );
-  const ownedCommunityClubs = ownedSnapshot.docs.filter(
-    (document) => document.data().type !== "family",
-  ).length;
+  // Shared version-aware accounting: only allocations charged to the Premium
+  // allowance count, so a V1 free server, an adopted room or a family never
+  // consumes it. The legacy bounded read stays exact: a malformed legacy
+  // account with enough Family-shaped rows to obscure the community count
+  // still fails closed rather than turning every creation/transfer attempt
+  // into an unbounded scan.
   const limit = access.maxOwnedClubs;
+  const allocations = await readPremiumClubAllocations({
+    db,
+    transaction,
+    uid,
+    limit,
+  });
+  const ownedCommunityClubs = allocations.count;
 
-  if (
-    ownedCommunityClubs >= limit ||
-    (ownedSnapshot.size > limit && ownedCommunityClubs < limit)
-  ) {
+  if (!allocations.exhaustive || ownedCommunityClubs >= limit) {
     throw new HttpsError(
       "resource-exhausted",
       `Premium includes up to ${limit} owned Clubs.`,

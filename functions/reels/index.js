@@ -55,6 +55,10 @@ function createReelRuntime({
   storage = null,
   probeMedia = undefined,
   clock = () => Date.now(),
+  // The feed emits one structured line per listReelsV2 call. There was no
+  // feed observability at all before this; the line is what any future weight
+  // tuning will actually be based on.
+  log = logger,
   serviceOptions = {},
 } = {}) {
   const database = db ?? getFirestore();
@@ -71,6 +75,7 @@ function createReelRuntime({
     storage: objectStorage,
     probeMedia: resolvedProbe,
     clock,
+    log,
     ...serviceOptions,
   });
   return Object.freeze({

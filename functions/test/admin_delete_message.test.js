@@ -16,19 +16,20 @@
 //   npm test
 
 const assert = require("node:assert/strict");
-const { test, beforeEach, describe } = require("node:test");
+const { test, beforeEach, describe, after } = require("node:test");
 
 process.env.FIRESTORE_EMULATOR_HOST =
   process.env.FIRESTORE_EMULATOR_HOST ?? "127.0.0.1:8080";
 process.env.GCLOUD_PROJECT = process.env.GCLOUD_PROJECT ?? "yovoice-fn-test";
 
 const { getApps, initializeApp } = require("firebase-admin/app");
-const { getFirestore } = require("firebase-admin/firestore");
+const { getFirestore, Timestamp } = require("firebase-admin/firestore");
 
 if (getApps().length === 0) initializeApp();
 
 const { adminDeleteMessage, safeId } = require("../admin/messages");
 const { setProtectedOwnerUidForTests } = require("../utils/roles");
+const { validateMessage } = require("../messaging/direct_integrity");
 
 const db = getFirestore();
 const run = adminDeleteMessage.run ?? adminDeleteMessage;
@@ -153,6 +154,52 @@ const globalArgs = {
 };
 
 describe("authorization", () => {
+  const gif = { provider: "giphy", id: "safeGif", title: "Private hello",
+    url: "https://media.giphy.com/media/safeGif/200h.gif", width: 200, height: 200 };
+
+  test("room GIF removal clears both legacy text and the canonical snapshot", async (t) => {
+    const ref = db.doc("rooms/adm-del-room/messages/adm-del-room-gif");
+    t.after(() => ref.delete());
+    await ref.set({ senderId: AUTHOR, type: "gif", gif, text: "GIF: Private hello", isDeleted: false });
+    const result = await run(request(SUPER, "superAdmin", {
+      messageType: "roomMessage", reason: "abuse",
+      ids: { roomId: "adm-del-room", messageId: "adm-del-room-gif" },
+    }));
+    assert.equal(result.outcome, "redacted");
+    const value = (await ref.get()).data();
+    assert.equal(value.gif, undefined);
+    assert.equal(value.text, "");
+    assert.equal(value.senderId, AUTHOR);
+    assert.equal(value.isDeleted, true);
+    assert.doesNotMatch(JSON.stringify((await ownAuditEntries()).docs.map((d) => d.data())),
+      /Private hello|media\.giphy/u);
+  });
+
+  test("reported canonical GIF DM remains a valid tombstone for receipts and replies", async () => {
+    const ref = db.doc(`conversations/${CONVERSATION}/messages/adm-del-dm1`);
+    await ref.set({
+      schemaVersion: 2, conversationId: CONVERSATION, senderId: AUTHOR,
+      sequence: 1, type: "gif", content: "GIF: Private hello", gif,
+      mediaUrl: null, durationSeconds: null, sentAt: Timestamp.now(), editedAt: null,
+      isDeleted: false, readBy: [AUTHOR], reactions: {},
+      replyToContent: null, replyToMessageId: null, replyToSenderId: null,
+    });
+    validateMessage(await ref.get(), CONVERSATION);
+    const result = await run(request(SUPER, "superAdmin", {
+      messageType: "directMessage", reason: "abuse", reportId: "adm-del-r1",
+      ids: { conversationId: CONVERSATION, messageId: "adm-del-dm1" },
+    }));
+    assert.equal(result.outcome, "redacted");
+    const snapshot = await ref.get();
+    validateMessage(snapshot, CONVERSATION);
+    assert.equal(snapshot.data().gif, null);
+    assert.equal(snapshot.data().content, "");
+    assert.equal(snapshot.data().isDeleted, true);
+    assert.equal(snapshot.data().senderId, AUTHOR);
+    assert.doesNotMatch(JSON.stringify((await ownAuditEntries()).docs.map((d) => d.data())),
+      /Private hello|media\.giphy/u);
+  });
+
   test("a super admin can redact a public message", async () => {
     const result = await run(request(SUPER, "superAdmin", globalArgs));
     assert.equal(result.outcome, "redacted");
@@ -377,5 +424,181 @@ describe("idempotency and audit", () => {
     await run(request(SUPER, "superAdmin", globalArgs));
     const logs = await ownAuditEntries();
     assert.equal(logs.size, 2);
+  });
+});
+
+describe("canonical GIF DM atomic redaction", () => {
+  const messageId = "adm-del-dm1";
+  const ref = db.doc(`conversations/${CONVERSATION}/messages/${messageId}`);
+  const conversationRef = db.doc(`conversations/${CONVERSATION}`);
+  const reportRef = db.doc("reports/adm-del-r1");
+  const stamp = Timestamp.fromMillis(1_900_000_000_000);
+  const gif = {
+    provider: "giphy", id: "safeGif", title: "Private hello",
+    url: "https://media.giphy.com/media/safeGif/200h.gif", width: 200, height: 200,
+  };
+  const args = {
+    messageType: "directMessage", reason: "abuse", reportId: "adm-del-r1",
+    ids: { conversationId: CONVERSATION, messageId },
+  };
+  const remove = () => run(request(SUPER, "superAdmin", args));
+
+  beforeEach(async () => {
+    await ref.set({
+      schemaVersion: 2, conversationId: CONVERSATION, senderId: AUTHOR,
+      sequence: 1, type: "gif", content: "GIF: Private hello", gif,
+      mediaUrl: null, durationSeconds: null, sentAt: stamp, editedAt: null,
+      isDeleted: false, readBy: [AUTHOR], reactions: { smile: [AUTHOR] },
+      replyToContent: null, replyToMessageId: null, replyToSenderId: null,
+    });
+    await conversationRef.set({
+      lastMessageId: messageId, lastMessage: "GIF: Private hello",
+      lastMessageType: "gif", lastMessageSenderId: AUTHOR,
+      lastMessageSequence: 1, updatedAt: stamp,
+    });
+  });
+  after(() => conversationRef.delete());
+
+  function interceptTransactions(t, intercept) {
+    const original = db.runTransaction;
+    db.runTransaction = function (callback, options) {
+      return original.call(this, (transaction) => callback(new Proxy(transaction, {
+        get(target, property) {
+          const value = target[property];
+          if (property === "update" || property === "create") {
+            return (reference, ...values) => {
+              intercept(property, reference);
+              return value.call(target, reference, ...values);
+            };
+          }
+          return typeof value === "function" ? value.bind(target) : value;
+        },
+      })), options);
+    };
+    const restore = () => { db.runTransaction = original; };
+    t.after(restore);
+    return restore;
+  }
+
+  test("latest GIF tombstone, safe preview and protected attribution commit together", async () => {
+    const originalKeys = Object.keys((await ref.get()).data()).sort();
+    assert.deepEqual(await remove(), { outcome: "redacted", redacted: true });
+    const snapshot = await ref.get();
+    validateMessage(snapshot, CONVERSATION);
+    assert.deepEqual(Object.keys(snapshot.data()).sort(), originalKeys);
+    assert.equal(snapshot.data().gif, null);
+    assert.equal(snapshot.data().content, "");
+    assert.equal(snapshot.data().senderId, AUTHOR);
+    assert.equal(snapshot.data().deletedBy, undefined);
+    assert.deepEqual(snapshot.data().reactions, {});
+    const conversation = (await conversationRef.get()).data();
+    assert.equal(conversation.lastMessage, "Message deleted");
+    assert.equal(conversation.lastMessageId, messageId);
+    assert.equal(conversation.lastMessageSequence, 1);
+    const logs = (await ownAuditEntries()).docs.map((entry) => entry.data());
+    assert.equal(logs.length, 1);
+    assert.equal(logs[0].actorId, SUPER);
+    assert.equal(logs[0].actorRole, "superAdmin");
+    assert.equal(logs[0].details.outcome, "redacted");
+    assert.equal(logs[0].details.authorId, AUTHOR);
+    assert.equal(logs[0].details.reportId, "adm-del-r1");
+    assert.equal(logs[0].details.attachmentsRemoved, 0);
+    assert.equal(logs[0].details.attachmentsFailed, 0);
+    assert.doesNotMatch(JSON.stringify(logs), /Private hello|media\.giphy/u);
+  });
+
+  test("removing an older GIF preserves the complete newer conversation preview", async () => {
+    const newer = {
+      lastMessageId: "adm-del-newer", lastMessage: "Newer message",
+      lastMessageType: "text", lastMessageSenderId: PLAIN,
+      lastMessageSequence: 2, updatedAt: stamp,
+    };
+    await conversationRef.set(newer);
+    await remove();
+    assert.deepEqual((await conversationRef.get()).data(), newer);
+    validateMessage(await ref.get(), CONVERSATION);
+  });
+
+  for (const stage of ["message", "preview", "audit"]) {
+    test(`a failed ${stage} write rolls back all redaction state and permits a safe retry`, async (t) => {
+      const originalMessage = (await ref.get()).data();
+      const originalConversation = (await conversationRef.get()).data();
+      const restore = interceptTransactions(t, (method, reference) => {
+        if ((stage === "message" && method === "update" && reference.path === ref.path) ||
+            (stage === "preview" && method === "update" && reference.path === conversationRef.path) ||
+            (stage === "audit" && method === "create" && reference.path.startsWith("adminAuditLogs/"))) {
+          throw new Error(`injected-${stage}-failure`);
+        }
+      });
+      await assert.rejects(remove(), new RegExp(`injected-${stage}-failure`, "u"));
+      restore();
+      assert.deepEqual((await ref.get()).data(), originalMessage);
+      assert.deepEqual((await conversationRef.get()).data(), originalConversation);
+      assert.equal((await ownAuditEntries()).size, 0);
+      assert.equal((await remove()).outcome, "redacted");
+      assert.equal((await ownAuditEntries()).size, 1);
+      validateMessage(await ref.get(), CONVERSATION);
+    });
+  }
+
+  test("replay keeps the original attribution and does not rewrite the tombstone or preview", async () => {
+    await remove();
+    const originalAudit = (await ownAuditEntries()).docs[0];
+    const tombstone = (await ref.get()).data();
+    const preview = (await conversationRef.get()).data();
+    assert.deepEqual(await remove(), { outcome: "alreadyRemoved", redacted: false });
+    assert.deepEqual((await ref.get()).data(), tombstone);
+    assert.deepEqual((await conversationRef.get()).data(), preview);
+    assert.deepEqual((await originalAudit.ref.get()).data(), originalAudit.data());
+    const outcomes = (await ownAuditEntries()).docs.map((entry) => entry.data().details.outcome).sort();
+    assert.deepEqual(outcomes, ["alreadyRemoved", "redacted"]);
+  });
+
+  test("concurrent removals record exactly one actual removal with durable attribution", async () => {
+    const results = await Promise.all([remove(), remove()]);
+    assert.deepEqual(results.map((entry) => entry.outcome).sort(), ["alreadyRemoved", "redacted"]);
+    validateMessage(await ref.get(), CONVERSATION);
+    const logs = (await ownAuditEntries()).docs.map((entry) => entry.data());
+    assert.equal(logs.length, 2);
+    assert.equal(logs.filter((entry) => entry.details.outcome === "redacted").length, 1);
+    assert.ok(logs.every((entry) => entry.actorId === SUPER));
+    assert.doesNotMatch(JSON.stringify(logs), /Private hello|media\.giphy/u);
+  });
+
+  test("a report changed after preflight cannot authorize the transaction", async () => {
+    const original = db.runTransaction;
+    db.runTransaction = async function (callback, options) {
+      await reportRef.update({ targetConversationId: OTHER_CONVERSATION });
+      return original.call(this, callback, options);
+    };
+    try {
+      await assert.rejects(remove(), (error) => error.code === "permission-denied");
+    } finally {
+      db.runTransaction = original;
+    }
+    assert.equal((await ref.get()).data().isDeleted, false);
+    assert.equal((await conversationRef.get()).data().lastMessage, "GIF: Private hello");
+    assert.equal((await ownAuditEntries()).size, 0);
+  });
+
+  test("a target removed after preflight is re-read and not attributed to this action", async () => {
+    const original = db.runTransaction;
+    const alreadyRemoved = {
+      content: "", gif: null, isDeleted: true, reactions: {}, editedAt: stamp,
+    };
+    db.runTransaction = async function (callback, options) {
+      await ref.update(alreadyRemoved);
+      return original.call(this, callback, options);
+    };
+    try {
+      assert.deepEqual(await remove(), { outcome: "alreadyRemoved", redacted: false });
+    } finally {
+      db.runTransaction = original;
+    }
+    validateMessage(await ref.get(), CONVERSATION);
+    assert.equal((await ref.get()).data().editedAt.toMillis(), stamp.toMillis());
+    const logs = (await ownAuditEntries()).docs.map((entry) => entry.data());
+    assert.equal(logs.length, 1);
+    assert.equal(logs[0].details.outcome, "alreadyRemoved");
   });
 });

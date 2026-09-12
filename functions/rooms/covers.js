@@ -17,6 +17,7 @@ const {
   requireSafeInteger,
   transactionGetAll,
 } = require("../integrity/guards");
+const { assertLegacyRoomAccess } = require("../utils/server_access");
 
 const COVER_ACCESS_TTL_MS = 90_000;
 const MIN_COVER_BYTES = 128;
@@ -470,6 +471,7 @@ function createRoomCoverService({
       );
       activeProfile(caller, "Your");
       assertNotRestricted(callerRestriction, "Your", timing.nowMs);
+      await assertLegacyRoomAccess({ db, transaction, roomId, room: room.data() });
       const { data, cover } = validateRoom(room, roomId, {
         requireCover: true,
       });
@@ -613,6 +615,7 @@ function createRoomCoverService({
       );
       activeProfile(profile, "Your");
       assertNotRestricted(restriction, "Your", timing.nowMs);
+      await assertLegacyRoomAccess({ db, transaction, roomId, room: room.data() });
       const { data, cover } = validateRoom(room, roomId);
       if (data.hostId !== auth.uid) {
         fail("permission-denied", "Only the room host can update its cover.");
@@ -712,6 +715,7 @@ function createRoomCoverService({
       });
       activeProfile(profile, "Your");
       assertNotRestricted(restriction, "Your", timing.nowMs);
+      await assertLegacyRoomAccess({ db, transaction, roomId, room: room.data() });
       if (replay) return { ...replay, replayed: true };
       const { data: roomData } = validateRoom(room, roomId);
       if (roomData.hostId !== auth.uid) {
@@ -844,6 +848,7 @@ function createRoomCoverService({
       );
       activeProfile(profile, "Your");
       assertNotRestricted(restriction, "Your", timing.nowMs);
+      await assertLegacyRoomAccess({ db, transaction, roomId, room: room.data() });
       const { data, cover } = validateRoom(room, roomId);
       if (data.hostId !== auth.uid) {
         fail("permission-denied", "Only the room host can update its cover.");
@@ -895,7 +900,10 @@ function createRoomCoverService({
       limit: UPDATE_LIMIT,
       timing,
     });
-    if (preflight.replay) return preflight.replay;
+    if (preflight.replay) {
+      await assertLegacyRoomAccess({ db, roomId });
+      return preflight.replay;
+    }
     const state = await requireHostState({
       auth,
       roomId,
@@ -964,6 +972,7 @@ function createRoomCoverService({
         uid: auth.uid,
         inputHash: finalizeIdentity.inputHash,
       });
+      await assertLegacyRoomAccess({ db, transaction, roomId, room: room.data() });
       if (replay) return replay;
       assertCanonicalPreflight(admitted, {
         identity: finalizeIdentity,
