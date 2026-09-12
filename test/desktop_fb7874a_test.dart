@@ -176,13 +176,18 @@ void main() {
       });
     });
 
-    testWidgets('the banner exposes ONE face pile, and the count beside the '
-        'LIVE badge is the room\'s own', (tester) async {
+    testWidgets('the hero exposes ONE face pile, and what it says about the '
+        'room comes from the room\'s own participants', (tester) async {
       await seedRoom();
       await pumpHome(tester);
 
-      // 5 participants: host, moderator, speaker, 2 listeners.
-      expect(find.text('5'), findsOneWidget);
+      // 5 participants: host, moderator, speaker, 2 listeners. The card
+      // names the three who are SPEAKING — it never prints the room's
+      // `participantCount` as if it were a fact about who is talking.
+      expect(
+        find.textContaining('Hosty, Moddy and Speaky are talking'),
+        findsOneWidget,
+      );
       expect(find.byTooltip('See who is in the room'), findsOneWidget);
     }, timeout: const Timeout(Duration(seconds: 90)));
 
@@ -257,9 +262,12 @@ void main() {
         });
         await pumpHome(tester);
 
-        // The banner is there and honest about being empty...
-        expect(find.text('quiet room'), findsOneWidget);
-        expect(find.text('0'), findsOneWidget);
+        // The card is there and identifies the room (the eyebrow carries
+        // "{category} • {name}" in the nominative)...
+        expect(find.textContaining('quiet room'), findsOneWidget);
+        // ...says nothing about who is in it...
+        expect(find.textContaining('are talking'), findsNothing);
+        expect(find.textContaining('is listening'), findsNothing);
         // ...and offers no way into a roster that would be empty.
         expect(find.byTooltip('See who is in the room'), findsNothing);
       },
