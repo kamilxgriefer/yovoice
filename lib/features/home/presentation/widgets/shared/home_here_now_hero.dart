@@ -19,6 +19,7 @@ import 'package:yovoice/features/home/presentation/widgets/shared/home_static_wa
 import 'package:yovoice/features/rooms/data/models/room_participant.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
+import 'package:yovoice/features/discover/presentation/discover_localized_copy.dart';
 
 /// Where a live room came from. The hero prefers the places the account
 /// actually belongs to before anything public, so "Tu i teraz" is about the
@@ -307,8 +308,13 @@ String homeHeroEyebrow({
     parts.add(club.name.trim());
     parts.add(copy.text('Club room', 'Pokój klubu'));
   } else {
+    // `category` is a stored slug ('talk', 'gaming'). Discover already owns
+    // the display name for every one of them; showing the slug raw is how a
+    // lowercase "talk" reached the eyebrow on a real device.
     final category = room.category.trim();
-    if (category.isNotEmpty) parts.add(category);
+    if (category.isNotEmpty) {
+      parts.add(localizedDiscoverCategory(copy, category));
+    }
     final name = room.name.trim();
     if (name.isNotEmpty) parts.add(name);
   }

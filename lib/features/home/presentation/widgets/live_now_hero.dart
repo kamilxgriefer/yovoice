@@ -9,6 +9,7 @@ import 'package:yovoice/features/rooms/data/services/room_service.dart';
 import 'package:yovoice/features/rooms/presentation/widgets/room_card.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 import 'package:yovoice/shared/widgets/voice/voice_core.dart';
+import 'package:yovoice/features/discover/presentation/discover_localized_copy.dart';
 
 /// The Home mockup's LIVE NOW module: one featured live room presented
 /// as a place — Voice Core centerpiece, the real people around it, live
@@ -165,7 +166,10 @@ class _FeaturedRoom extends StatelessWidget {
                   border: Border.all(color: palette.border),
                 ),
                 child: Text(
-                  room.category,
+                  localizedDiscoverCategory(
+                    AppLocalizations.of(context),
+                    room.category,
+                  ),
                   style: TextStyle(
                     color: palette.textSecondary,
                     fontSize: 11.5,

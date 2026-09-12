@@ -16,6 +16,7 @@ import 'package:yovoice/features/home/presentation/widgets/desktop/desktop_home.
     show RoomVisual;
 import 'package:yovoice/features/home/presentation/widgets/shared/home_room_board.dart'
     show compactCount;
+import 'package:yovoice/features/discover/presentation/discover_localized_copy.dart';
 
 /// The desktop right column's top card: "Voice Trending" — two sections
 /// over REAL data, each labelled with what it actually contains.
@@ -479,7 +480,10 @@ class _RoomRow extends StatelessWidget {
     final palette = context.appPalette;
     final subtitle = room.description.trim().isNotEmpty
         ? room.description.trim()
-        : room.category;
+        : localizedDiscoverCategory(
+            AppLocalizations.of(context),
+            room.category,
+          );
 
     return InkWell(
       onTap: onTap,

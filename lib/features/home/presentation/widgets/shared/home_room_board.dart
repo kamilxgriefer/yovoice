@@ -18,6 +18,7 @@ import 'package:yovoice/features/staff/presentation/widgets/room_staff_menu.dart
 import 'package:yovoice/shared/widgets/buttons/yo_button.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
+import 'package:yovoice/features/discover/presentation/discover_localized_copy.dart';
 
 /// One deduplicated room list for Home, and the widgets that render it.
 ///
@@ -193,7 +194,9 @@ class HomeRoomBanner extends StatelessWidget {
         ownsRoom && (onManageOwnedRoom != null || onDeleteOwnedRoom != null);
     final hasStaffActions = staffCapabilities?.hasRoomModeration ?? false;
     final tags = <String>[
-      room.category.trim(),
+      // The stored value is a slug; Discover owns its display name.
+      if (room.category.trim().isNotEmpty)
+        localizedDiscoverCategory(copy, room.category),
       if (room.isBroadcast) copy.text('Broadcast', 'Transmisja'),
       room.language.trim(),
     ].where((tag) => tag.isNotEmpty).toList(growable: false);
