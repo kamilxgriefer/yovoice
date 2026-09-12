@@ -14,7 +14,7 @@ const { after, test } = require("node:test");
 
 const { HttpsError } = require("firebase-functions/v2/https");
 const {
-  DISPATCHER_EXPORTS, OUTBOX_COLLECTION, SERVER_CALLABLE_METHODS, SERVERS_V1_EXPORT_NAMES,
+  DISPATCHER_EXPORTS, OUTBOX_COLLECTION, SERVER_CALLABLE_METHODS, SERVERS_V1_EXPORT_NAMES, SWEEP_EXPORTS,
   authBoundRequest, createServersV1Functions, createServersV1Runtime, describeOutboxJob, isTransientFailure,
 } = require("../servers/registration");
 
@@ -115,13 +115,13 @@ test("QA gate: only exactly `enabled` registers; case, spelling, boolean spellin
   }
 });
 
-test("QA gate on: the export delta is exactly the sixteen documented callables plus the two dispatcher exports, and every pre-existing export is structurally unchanged", () => {
+test("QA gate on: the export delta is exactly the twenty-one documented callables plus the two dispatcher exports and the sweep, and every pre-existing export is structurally unchanged", () => {
   const off = coldStart({ YOVOICE_SERVERS_V1: undefined }).inspection;
   const on = coldStart({ YOVOICE_SERVERS_V1: "enabled" }).inspection;
   const documented = docsCallableNames();
-  assert.equal(documented.length, 16);
+  assert.equal(documented.length, 21);
   assert.deepEqual(CALLABLES, documented, "registration table must list the documented names in the documented order");
-  const expected = [...documented, ...DISPATCHER_EXPORTS].sort();
+  const expected = [...documented, ...DISPATCHER_EXPORTS, ...SWEEP_EXPORTS].sort();
   assert.deepEqual(on.exportNames.filter((name) => !off.exportNames.includes(name)), expected);
   assert.deepEqual(off.exportNames.filter((name) => !on.exportNames.includes(name)), []);
   for (const name of off.exportNames) assert.deepEqual(on.endpoints[name], off.endpoints[name], name);
@@ -190,6 +190,10 @@ function fakeRuntime({ methods = {}, workers = {}, documents = new Map(), reads 
     projection: { processServerControlOutboxPage: workers.projection ?? (async () => ({ propagationComplete: true })) },
     convergence: { processServerConvergencePage: workers.convergence ?? (async () => ({ cleanupPending: false })) },
     sessionControl: { processServerSessionEndPage: workers.sessionEnd ?? (async () => ({ cleanupPending: false })) },
+    staleness: { stageStaleServerChannelSessions: workers.staleness ?? (async () => ({
+      scanned: 0, truncated: false, skippedLegacy: 0, skippedUnbound: 0, skippedYoung: 0,
+      skippedOccupied: 0, providerUnavailable: 0, changed: 0, staged: [],
+    })) },
   };
 }
 
@@ -260,11 +264,11 @@ test("QA binding: every malformed or missing Auth context is `unauthenticated` b
   assert.equal(calls, 1);
 });
 
-test("QA binding: App Check enforcement and limited-use consumption flip together on the sixteen callables only, and only for a boolean true", () => {
+test("QA binding: App Check enforcement and limited-use consumption flip together on the twenty-one callables only, and only for a boolean true", () => {
   for (const [value, expected] of [[true, true], [false, false], [undefined, false], ["true", false], [1, false]]) {
     const { list } = build({ enforceAppCheck: value });
     const callables = list.filter((entry) => entry.kind === "callable");
-    assert.equal(callables.length, 16);
+    assert.equal(callables.length, 21);
     for (const entry of callables) {
       assert.equal(entry.options.enforceAppCheck, expected, `enforceAppCheck=${String(value)}`);
       assert.equal(entry.options.consumeAppCheckToken, expected, `enforceAppCheck=${String(value)}`);
@@ -275,11 +279,11 @@ test("QA binding: App Check enforcement and limited-use consumption flip togethe
   }
 });
 
-test("QA binding: the registered map is exactly the eighteen names with the documented options and secret bindings", () => {
+test("QA binding: the registered map is exactly the twenty-four names with the documented options and secret bindings", () => {
   const { functions, list } = build();
   assert.deepEqual(Object.keys(functions).sort(), [...SERVERS_V1_EXPORT_NAMES].sort());
   assert.ok(Object.isFrozen(functions));
-  assert.equal(list.length, 18);
+  assert.equal(list.length, 24);
   for (const entry of list) {
     assert.equal(entry.options.region, "europe-west1");
     assert.equal(typeof entry.handler, "function");
@@ -525,6 +529,7 @@ async function realFixture() {
     async mintToken() { throw new Error("QA: provider must not be reached"); },
     async revokeParticipant() { throw new Error("QA: provider must not be reached"); },
     async endRoom() { throw new Error("QA: provider must not be reached"); },
+    async roomOccupancy() { throw new Error("QA: provider must not be reached"); },
   };
   const runtime = createServersV1Runtime({ db, Timestamp, clock: () => nowMs, livekit });
   const { functions, log } = build({ runtime });

@@ -69,6 +69,21 @@ function serverChannelRefId(serverId, channelId) {
   return digest("server.channel.ref.v1", requireId(serverId), requireId(channelId));
 }
 
+// A V1 invitation lives for seven days. Long enough to be answered across a
+// weekend, short enough that a forgotten invitation cannot become a standing
+// admission capability; a manager re-issues one (new generation) after that.
+const SERVER_INVITE_TTL_MS = 7 * 24 * 60 * 60_000;
+
+/**
+ * The invitee's private discovery pointer for one server's invitation, the
+ * exact posture of `users/{uid}/serverChannelRefs`: server-authored, opaque
+ * ids only, owner-readable, never client-writable, never authority. One
+ * invitation exists per (server, invitee), so the server id is the key.
+ */
+function serverInviteRefPath(inviteeId, serverId) {
+  return `users/${requireUid(inviteeId, "inviteeId")}/serverInviteRefs/${requireId(serverId, "serverId")}`;
+}
+
 function canonicalLiveKitRoomName(serverId, channelId, sessionId) {
   return `srv_${digest("server.session.v1", requireId(serverId), requireId(channelId), requireId(sessionId)).slice(0, 40)}`;
 }
@@ -188,9 +203,9 @@ function revision(value, label = "revision") {
 
 module.exports = {
   CHANNEL_KINDS, CHANNEL_LIVENESS_VERSION, FREE_SERVER_LIMIT, MAX_ACCESS_SUBJECTS,
-  MAX_SERVER_CHANNELS, MEDIA_KINDS, ROLE_POWER, ROLES, SERVER_SCHEMA_VERSION,
+  MAX_SERVER_CHANNELS, MEDIA_KINDS, ROLE_POWER, ROLES, SERVER_INVITE_TTL_MS, SERVER_SCHEMA_VERSION,
   SERVER_TYPES, TEMPLATE_VERSION, accessPolicy, canonicalChannelId, canonicalChannelRoomId,
   canonicalLiveKitRoomName, canonicalServerId, categoryId, channelCreationInput,
   channelLiveness, creationInput, legacyChannelType, mediaConfiguration, requireEnum,
-  revision, serverChannelRefId, text, validatedPrivacy,
+  revision, serverChannelRefId, serverInviteRefPath, text, validatedPrivacy,
 };

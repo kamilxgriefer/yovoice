@@ -58,12 +58,13 @@ function inspectColdStart() {
   // reportGifAsset and must extend EXPORT_NAMES deliberately.
   delete env.GIF_PROVIDER;
   // And for Servers V1 (ADR-176): functions/.env has no YOVOICE_SERVERS_V1, so
-  // the map below has none of the sixteen V1 callables nor the two
-  // serverControlOutbox dispatcher exports. The registration module and the V1
-  // runtime stay off the cold-start graph; the three consumer-shared modules
-  // below are on it by design and are asserted by name. `enabled` adds exactly
-  // those eighteen names (test/servers_registration.test.js) and must extend
-  // EXPORT_NAMES deliberately.
+  // the map below has none of the twenty-one V1 callables, the two
+  // serverControlOutbox dispatcher exports nor the stale-generation sweep. The
+  // registration module and the V1 runtime stay off the cold-start graph; the
+  // three consumer-shared modules below are on it by design and are asserted
+  // by name. `enabled` adds exactly those twenty-four names
+  // (test/servers_registration.test.js) and must extend EXPORT_NAMES
+  // deliberately.
   delete env.YOVOICE_SERVERS_V1;
   // Never pretend to be the Cloud Run runtime: index.js emits its cold-start
   // log only there, and this child's stdout must stay pure JSON.
@@ -360,7 +361,7 @@ test("no functions/.env file activates the Servers V1 gate", () => {
   // the function environment (firebase-tools lib/functions/env.js). Every
   // other test in this file deletes YOVOICE_SERVERS_V1 from the child
   // environment, so none of them can see a value delivered that way: a single
-  // committed `.env.yovoice-ec54a` line would register the eighteen Servers V1
+  // committed `.env.yovoice-ec54a` line would register the twenty-four Servers V1
   // functions (ADR-176) on the next deploy while this file still passed. This
   // is the only check that reads the files themselves.
   const names = fs.readdirSync(FUNCTIONS_DIR)

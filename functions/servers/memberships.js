@@ -1,7 +1,9 @@
 const {
   activeProfile, fail, requireUid, timestampMillis, transactionGetAll,
 } = require("../integrity/guards");
-const { MAX_SERVER_CHANNELS, ROLE_POWER, ROLES, requireEnum, serverChannelRefId } = require("./contract");
+const {
+  MAX_SERVER_CHANNELS, ROLE_POWER, ROLES, requireEnum, serverChannelRefId, serverInviteRefPath,
+} = require("./contract");
 const {
   MODERATOR_ROLES, canonicalChannel, canonicalMember, canonicalServer, denied,
   readServerAccess, validRevision,
@@ -124,6 +126,9 @@ function createServerMembershipService(dependencies) {
       });
       if (respond && input.response === "decline") {
         transaction.update(invitation.inviteReference, { status: "declined", respondedAt: now, updatedAt: now });
+        // An answered invitation is no longer discoverable; the document
+        // itself stays so a decline receipt keeps binding to its generation.
+        transaction.delete(db.doc(serverInviteRefPath(auth.uid, input.serverId)));
         return { serverId: input.serverId, response: "decline", inviteGeneration: invitation.invite.generation };
       }
       const channels = await readGrantChannels(transaction, reference);
@@ -136,7 +141,10 @@ function createServerMembershipService(dependencies) {
       writeAuthorization(transaction, revisionReference, auth.uid, nextRevision, "member", now);
       transaction.set(db.doc(`users/${auth.uid}/clubs/${input.serverId}`), membershipMirror(input.serverId, server, member));
       refreshMemberGrants({ db, transaction, serverId: input.serverId, channels, member, now });
-      if (invitation) transaction.update(invitation.inviteReference, { status: "accepted", respondedAt: now, updatedAt: now });
+      if (invitation) {
+        transaction.update(invitation.inviteReference, { status: "accepted", respondedAt: now, updatedAt: now });
+        transaction.delete(db.doc(serverInviteRefPath(auth.uid, input.serverId)));
+      }
       transaction.update(reference, { memberCount: memberCount + 1, revision: server.revision + 1, updatedAt: now });
       membershipOutbox({ db, transaction, identity, serverId: input.serverId, uid: auth.uid, revision: nextRevision,
         kind: "memberJoined", bindings, now });

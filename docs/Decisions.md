@@ -10742,3 +10742,227 @@ real channel list — the same failure mode that kept Premium expiry silently
 broken. It is recorded as a third named activation precondition in
 [Servers.md](Servers.md); [ADR-176](#adr-176-servers-v1-registers-behind-one-exact-environment-gate-dispatches-its-outbox-read-only-and-still-has-no-activation-writer)
 named two, and that entry's count is superseded here rather than rewritten.
+
+## ADR-178: V1 invitations are written by `createServerInviteV1` and revoked by a status transition, refuse held servers entirely, and are discovered through a private pointer in the `serverChannelRefs` posture
+
+**Context (2026-09-12).** `respondToServerInviteV1` consumed
+`clubs/{serverId}/invites/{uid}` in the V1 shape `{serverSchemaVersion: 1,
+serverId, inviteeId, status, generation, expiresAt, inviterId,
+inviterAuthorizationRevision}` (`memberships.js pendingInvitation`), Firestore
+Rules keep client create/update of invites at `false`, and the legacy
+`sendClubInvite` refuses a versioned root. Nothing could create that document,
+so "Zaproś" in all five accepted mockups was undeliverable — gap G1 of the
+stage-1 contract. The invitee also had no legal way to discover a V1
+invitation except the pre-existing self-scoped `collectionGroup('invites')`
+rule, and the V1 root deliberately has no invitation exception on GET, so any
+"you have been invited to X" surface would have had nothing to show.
+
+**Decision.** Two callables in a new `functions/servers/invites.js`, under the
+existing operation-ledger and exact-input pattern: `createServerInviteV1
+{serverId, inviteeId, requestId}` and `revokeServerInviteV1 {serverId,
+inviteeId, requestId}`. Creation requires an inviter-capable role — exactly
+the set the consumer re-proves at acceptance (`owner`, `coOwner`, `admin`,
+`moderator`) — on an **active** server; an invitee who is an active account,
+a canonical friend of the inviter (both `friendshipGuards`), not blocked in
+either direction, not communication-muted and not already a member; and it
+charges a dedicated `server.v1.invite` budget (30/min, the legacy invite rate)
+before any target read. It writes the consumed shape plus `serverName`,
+`inviterName`, `createdAt`, `updatedAt`, with `expiresAt` seven days out and a
+generation of previous + 1 (a current, still-authorized pending invitation is
+returned as `alreadyExisted` rather than churned), and it writes the invitee's
+private pointer `users/{inviteeId}/serverInviteRefs/{serverId} = {serverId,
+generation, expiresAt}`. Revocation is a `pending → revoked` status transition
+bound to the current generation that removes the pointer; acceptance and
+decline remove it too. A held server refuses invitations entirely, owner
+included; revocation is allowed on a held server and under a communication
+restriction, because it only narrows. Every invitee-state refusal is one
+`permission-denied`.
+
+**Reasoning.** The consumer already fixed the schema, so the writer had to
+match it byte for byte rather than redesign it. Refusing while held follows
+from what held means: `admission` denies a preparing root, so an invitation
+issued while held could never be accepted, and it would leak the server's name
+to a third party before activation — the exact disclosure the held boundary
+exists to prevent; "owner may invite while held" would have been an
+undeliverable promise. Friendship through the canonical guards keeps the
+legacy anti-spam property (an invitation lands in someone's private tree) on
+the authority that actually exists, not on the client-writable mirror the
+legacy callable reads. A status transition instead of a delete keeps the
+revoked generation on record, which is what "a revoked or expired invite must
+not gain new life" needs to compare against. The pointer reuses the
+`serverChannelRefs` precedent instead of widening any query: opaque ids only,
+owner-readable, never client-writable, never authority — the client
+point-reads the invitation, whose rule rechecks the invitee. The invitation
+document is the "reviewed V1 projection/bridge with exact generation, expiry
+and current inviter authority" that [Servers.md](Servers.md) named as the
+only acceptable pre-join preview, and it carries nothing beyond a server
+name and an inviter name.
+
+**Consequences.** Eighteen documented callables; `SERVER_CALLABLE_METHODS`,
+the "Callable contract" table and the registration tests moved together (the
+independent QA test parses the table and asserts the registered order). One
+uniform denial means the client must pre-check friendship from its own friend
+list to offer guidance; that is a client obligation, not a backend gap. The
+snapshot names can go stale if the server is renamed while an invitation is
+pending — the same drift the legacy `clubName` snapshot has — and a re-issue
+refreshes them. Rules gained only the `serverInviteRefs` block; the `invites`
+rule itself is unchanged and its legacy-only delete stays closed for V1 on
+purpose. Nothing is deployed and `YOVOICE_SERVERS_V1` stays absent.
+
+## ADR-179: The voice-enforcement retry has a ceiling for `unbound-live-generation` only, terminal in `needsReconciliation`
+
+**Context (2026-09-12).** `staff/voice_enforcement.js` incremented
+`attemptCount` on every pass and nothing read it, while the trigger is
+`retry: true`. An anchor whose retained generation is `live` or `ending` but
+does not prove out (`hasUnboundLiveGeneration`) rethrows
+`unbound-live-generation`, so the platform redelivered the event until Eventarc
+gave up, each attempt paying `findParticipantRooms` — one `listRooms()` plus
+one `getParticipant` per room. Named as activation precondition 3 in
+[Servers.md](Servers.md) and in ADR-176.
+
+**Decision.** `MAX_UNBOUND_GENERATION_ATTEMPTS = 8`. When the failure code is
+exactly `unbound-live-generation` and this attempt's ordinal (the stored count
+plus one) reaches the ceiling, the pass writes `status: "needsReconciliation"`,
+`lastErrorCode: "unbound-live-generation"`, the incremented `attemptCount`,
+`processedAt`, the bounded binding audit, logs an ERROR carrying the event id,
+and **returns** `{completed: false, needsReconciliation: true, …}` instead of
+rethrowing. `needsReconciliation` joins `completed`, `invalid` and
+`superseded` as a terminal status a redelivery skips without a provider call.
+Every other failure class — a provider outage above all — keeps the existing
+`retry: true` semantics.
+
+**Reasoning.** An unbound live generation is a state of the Firestore graph,
+not a transient provider fault; no redelivery changes it, only an operator
+can. Eight is the codebase's provider-facing dead-letter budget
+(`reels/service.js REEL_CLEANUP_MAX_ATTEMPTS = 8`; `achievements/migration.js`
+terminalizes its bootstrap after `MAX_BOOTSTRAP_ATTEMPTS = 5`), and the
+canonical-count increment in `moments/integrity.js` is the precedent for
+counting attempts on the document itself. The ceiling is narrowed to that one
+code because a ceiling on an outage would leave a sanctioned identity
+connected; the sanction and the event id it names stay untouched either way,
+and every provider-reported room was already revoked on every attempt.
+
+**Consequences.** A stalled event now costs at most eight scans and then one
+ERROR line; precondition 3 is closed in source and stays listed until the
+Functions deploy that carries it is verified. An operator clears a
+`needsReconciliation` event by repairing the graph and resetting `status` to
+`pending` — the same recovery path `invalid` has. Covered by a new case in
+`test/servers_rtc_consumers.test.js`, which also proves the outage path is
+not ceilinged.
+
+## ADR-180: A V1 generation whose host vanished is bounded by a scheduled sweep that stages it for end through the existing end writer and worker, never by a second state machine
+
+**Context (2026-09-12).** The adversarial audit of ADR-177's projection named
+its P2: `liveness.isLive` means "a generation is open", and nothing closes a
+generation whose starter disconnected without `endServerChannelSessionV1` —
+the legacy `sweepStrandedLiveRoomsSchedule` skips versioned anchors by design.
+A LIVE badge could therefore persist forever on a room nobody is in, which is
+exactly the number-free-but-false signal [CLAUDE.md](../CLAUDE.md) forbids.
+
+**Decision.** `functions/servers/session_staleness.js` and a third V1 export,
+`sweepStaleServerChannelSessionsSchedule` (every 5 minutes, `maxInstances: 1`,
+LiveKit secrets bound). It scans the legacy sweep's bare `rooms.isLive == true`
+query, keeps only versioned anchors, and stages a generation for end **only**
+when both hold: every token it ever issued expired one grace period (one
+token TTL, 300 s) ago — `maxTokenExpiresAtMillis`, or `startedAt` when no
+token was ever issued — and the provider's `ListParticipants` on the
+generation's `srv_` room answers zero participants or NOT_FOUND
+(`roomOccupancy` on the V1 adapter, one RPC, no retry). The staging
+transaction re-proves the reciprocal graph with `readConvergenceBindings`,
+re-reads `maxTokenExpiresAtMillis`, and calls `stageConvergenceSessionEnd` —
+the same writer archive, delete and ownership transfer use — so the session
+turns `ending` under a `sessionEnd` outbox job the existing dispatcher drains,
+and the channel projection and room anchor are patched in the same
+transaction. A token minted between the occupancy reading and the commit
+moves the bound and the commit is refused as `changed`; a provider error or a
+malformed answer is treated as occupied.
+
+**Reasoning.** Token expiry alone is not emptiness — a LiveKit JWT is checked
+at connect time and an established connection outlives it — so ending on
+expiry would evict people; but expiry does prove nobody new can arrive, which
+is what makes a single occupancy reading safe to act on. Reusing the end
+writer and worker means the retirement of the projection, the recipient
+revocation ledger, the terminal DeleteRoom and every fence already reviewed
+under ADR-174/176/177 apply unchanged; the sweep adds a "when", not a "how".
+The bare single-field query avoids a new composite index and its deploy trap.
+The identity is deterministic per generation because staging is what takes a
+generation out of `live`, so it can happen at most once.
+
+**Consequences.** A stale badge lasts at most one token TTL plus one grace
+period plus one cadence (about 15 minutes) once the room is empty; an occupied
+room is never touched. The provider's empty-room semantics cannot be proven
+in the emulator, so they are recorded as activation precondition 4 in
+[Servers.md](Servers.md); the failure mode of a misreport is a badge left in
+place, never an eviction. Twenty-one V1 exports; the registration and QA
+suites pin the new schedule's options. Nothing is deployed and
+`YOVOICE_SERVERS_V1` stays absent.
+
+## ADR-181: Session participation is three callables over the participant document token issuance already writes, every authority change revokes the bearer through the existing convergence worker, and clients read only their own document and the raised-hand queue
+
+**Context (2026-09-12).** `participantForSession()` assigned a session role
+once, at first token issuance, from `startedById` and the channel's
+`experience`, and nothing could change it afterwards: no callable promoted a
+listener to a guest, raised a hand, or applied `hostMuted` / `serverMuted`.
+"Poproś o głos", "Zadaj pytanie", the podcast stage queue, community stage
+requests and any moderator mute therefore had no backend — gap G5 of the
+stage-1 contract, contract decision C.
+
+**Decision.** Three callables in `functions/servers/session_participation.js`
+— `setServerSessionParticipantRoleV1`, `setServerSessionHandV1`,
+`setServerSessionMuteV1` — under the existing operation-ledger + `requestId`
+replay pattern, all proving the same reciprocal server/channel/room/session
+binding token issuance proves (`readBoundSessionAccess`, `assertRoomBinding`,
+`assertSessionBinding`), so a call naming another channel's or another
+generation's session fails closed before any participant document is read.
+The document they act on is the one token issuance already writes,
+`rooms/{roomId}/participants/{uid}`; no new collection, no projection to keep
+in step. Standing comes from the server role model on the channel ACL only:
+the session host (`startedById`) and members holding the channel's `moderate`
+capability — never a platform staff claim. `host` is not assignable. The
+server hierarchy outranks the session hierarchy (`ROLE_POWER`): a host
+governs peers and below, a moderator governs members they strictly outrank —
+the `setServerMemberRoleV1` rule — and may act on themselves. The host's
+standing writes `hostMuted`, a moderator's writes `serverMuted`, and each
+clears only its own flag. Every role or mute change bumps the participant's
+`authorizationRevision` and creates a `sessionParticipantChanged` outbox job
+with one `recipient` target; that kind joins `CONVERGENCE_KINDS` and the
+runtime's `MEMBER_KINDS`, so the existing `reconcileServerSessionParticipant`
+re-derives the grant, sees a fingerprint the issued token no longer carries,
+revokes it with a positive provider cutoff and keeps the changed role. A hand
+is the participant's own write, is not in the fingerprint, and moves no
+revision. Two client reads, both under the channel ACL: one's own document
+of the live generation (point get), and the raised hands of the live
+generation for the host and moderate-capable roles, as a query that must
+carry all four equalities. The `participants` read rule becomes a
+`get`/`list` pair whose legacy arm is byte-identical and whose V1 arm is
+selected by a ternary, not an OR.
+
+**Reasoning.** Reusing the participant document keeps one writer set and one
+truth: the document that gates the token is the document the client reads.
+Reusing the recipient ledger and the convergence worker means a promotion
+revokes exactly as a demotion does — the ledger binds one fingerprint per
+identity per generation and `requireIssuableRecipient` refuses a fresh token
+while an active recipient carries a stale fingerprint — so the person
+re-mints under the new grant and reconnects; that is a deliberate UX cost in
+exchange for never leaving two grants live for one identity and never
+touching the provider from a callable. A promotion grants permission only:
+the token permits publishing and `isMuted` stays the person's own consent, as
+"Media and lifecycle safety" requires. The reads are deliberately narrow:
+listing token holders would be rendered as presence, which the project has
+no honest writer for (ADR-177), so the only cross-identity read is the queue
+of people who explicitly asked, and `isHandRaised == true` is one of the
+pinned equalities so a roster listing is impossible by construction. The
+four-equality query is served by single-field indexes, so no composite index
+joins the activation preconditions; an `orderBy` would.
+
+**Consequences.** Twenty-one callables, twenty-four V1 exports; the
+registration, QA and cold-start pins move together and the QA test still
+asserts the export delta equals exactly the documented table. New optional
+participant fields `handRaisedAt`, `lastModeratedById`, `lastModeratedAt`;
+new outbox kind `sessionParticipantChanged`; no rename, no removal. A muted
+or demoted person briefly disconnects and reconnects — the client must treat
+a `permission-denied` on a token replay and a `failed-precondition` on a
+fresh request as "re-request with a new `requestId` after the barrier", not
+as an error. The session's own `authorizationRevision` never moves for a
+participant change, so nobody else's token is disturbed. Nothing is deployed
+and `YOVOICE_SERVERS_V1` stays absent.

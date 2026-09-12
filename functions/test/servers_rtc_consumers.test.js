@@ -36,6 +36,9 @@ const {
 const {
   EVENT_COLLECTION,
   EVENT_TYPES,
+  MAX_UNBOUND_GENERATION_ATTEMPTS,
+  NEEDS_RECONCILIATION,
+  UNBOUND_LIVE_GENERATION,
   enqueueVoiceEnforcement,
   executeVoiceEnforcementEvent,
 } = require("../staff/voice_enforcement");
@@ -454,6 +457,73 @@ describe("staff voice enforcement", { timeout: 60_000 }, () => {
     assert.equal(repaired.completed, true);
     assert.deepEqual(revoked, [srvName, srvName]);
     assert.equal((await mirrorRef(target, f.roomId).get()).exists, false);
+  });
+
+  test("the unbound-live-generation retry has a ceiling: the last budgeted attempt writes needsReconciliation instead of rethrowing", async () => {
+    // F4 (ADR-179). The stalled state below is a property of the Firestore
+    // graph, not of the provider, so no redelivery can change it; without a
+    // ceiling the retry: true trigger would re-run findParticipantRooms (one
+    // listRooms plus one getParticipant per room) until Eventarc gave up.
+    const f = await fixture();
+    const { sessionId } = await f.start();
+    const target = await f.member();
+    await f.token(sessionId, target);
+    await db.doc(`rooms/${f.roomId}`).update({ isLive: false });
+    const event = await queueEnforcement(target);
+    const revoked = [];
+    const control = {
+      async findParticipantRooms() { return []; },
+      async revokeParticipant(roomName) { revoked.push(roomName); },
+    };
+    // One attempt below the ceiling is still an ordinary retry.
+    await event.ref.update({ attemptCount: MAX_UNBOUND_GENERATION_ATTEMPTS - 2 });
+    await assert.rejects(() => executeVoiceEnforcementEvent(event, control),
+      (error) => error.code === UNBOUND_LIVE_GENERATION);
+    let stored = (await event.ref.get()).data();
+    assert.equal(stored.status, "retrying");
+    assert.equal(stored.attemptCount, MAX_UNBOUND_GENERATION_ATTEMPTS - 1);
+    // The ceiling attempt is terminal: it resolves, it does not throw.
+    const terminal = await executeVoiceEnforcementEvent(event, control);
+    assert.equal(terminal.completed, false);
+    assert.equal(terminal.needsReconciliation, true);
+    assert.equal(terminal.attemptCount, MAX_UNBOUND_GENERATION_ATTEMPTS);
+    assert.equal(terminal.roomsSkipped, 1);
+    stored = (await event.ref.get()).data();
+    assert.equal(stored.status, NEEDS_RECONCILIATION);
+    assert.equal(stored.lastErrorCode, UNBOUND_LIVE_GENERATION);
+    assert.equal(stored.attemptCount, MAX_UNBOUND_GENERATION_ATTEMPTS);
+    assert.ok(stored.processedAt, "a terminal event is stamped like every other terminal state");
+    assert.deepEqual(stored.skippedBindings, [{ target: f.roomId, reason: RTC_BINDING_REASONS.LIVENESS_MISMATCH }]);
+    assert.deepEqual(revoked, [], "a Firestore-derived name is never guessed, not even on the terminal attempt");
+    // The sanction itself is untouched and still names this event.
+    assert.equal((await db.doc(`restrictions/${target}`).get()).data().voiceEnforcementEventId, event.id);
+    assert.equal((await mirrorRef(target, f.roomId).get()).exists, true);
+    // A redelivery of the terminal event is a read-only no-op.
+    let calls = 0;
+    const replay = await executeVoiceEnforcementEvent(event, {
+      async findParticipantRooms() { calls += 1; return []; },
+      async revokeParticipant() { calls += 1; },
+    });
+    assert.deepEqual(replay, { skipped: true, reason: NEEDS_RECONCILIATION });
+    assert.equal(calls, 0);
+
+    // Only that one code is ceilinged. A provider outage on the last budgeted
+    // attempt of a bound generation still rethrows, because an outage is
+    // transient and the sanctioned identity may still be connected.
+    const g = await fixture();
+    const live = await g.start();
+    const other = await g.member();
+    await g.token(live.sessionId, other);
+    const outage = await queueEnforcement(other);
+    await outage.ref.update({ attemptCount: MAX_UNBOUND_GENERATION_ATTEMPTS - 1 });
+    await assert.rejects(() => executeVoiceEnforcementEvent(outage, {
+      async findParticipantRooms() { return [g.rtcName(live.sessionId)]; },
+      async revokeParticipant() { throw Object.assign(new Error("controlled outage"), { code: "unavailable" }); },
+    }), /controlled outage/u);
+    const retrying = (await outage.ref.get()).data();
+    assert.equal(retrying.status, "retrying");
+    assert.equal(retrying.lastErrorCode, "unavailable");
+    assert.equal(retrying.attemptCount, MAX_UNBOUND_GENERATION_ATTEMPTS);
   });
 
   test("a resolver without a caller transaction reads through a read-only one", async () => {

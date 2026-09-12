@@ -1324,6 +1324,64 @@ service cloud.firestore {
       return !request.resource.data.keys().hasAny(['liveness']);
     }
 
+    // V1 session participation (ADR-181). `rooms/{anchor}/participants/{uid}`
+    // is written only by token issuance and the three participation callables
+    // (functions/servers/session_participation.js); it is AUTHORIZATION state
+    // — session role, raised hand, host/moderator mutes — never presence, and
+    // the anchor, the session and the roster stay closed. Exactly two client
+    // reads exist, both governed by the channel's own ACL:
+    //   - a participant point-reads their OWN document of the LIVE generation,
+    //     so a client learns its current role and whether it was muted;
+    //   - the session host and moderate-capable members (owner, coOwner,
+    //     admin, moderator — the server role model, never a platform claim)
+    //     list the RAISED HANDS of the live generation, and only those: every
+    //     clause below is a bare field access, so the query must carry all
+    //     four equalities or be denied (principle 10), and a roster listing
+    //     is impossible by construction because `isHandRaised == true` is one
+    //     of them. The four equalities are served by single-field indexes; an
+    //     added orderBy would need a composite index that is not committed.
+    function serverSessionAnchor(roomId) {
+      return get(/databases/$(database)/documents/rooms/$(roomId)).data;
+    }
+
+    function liveServerSessionAnchor(roomId, room, channel) {
+      return room.serverSchemaVersion == 1 && room.clubId == room.serverId &&
+          room.serverActivationState == 'active' && room.status == 'active' &&
+          room.visibility == 'private' && room.isLive == true &&
+          room.voiceSessionId is string && room.voiceSessionId.size() > 0 &&
+          channel.serverSchemaVersion == 1 && channel.serverId == room.serverId &&
+          channel.roomId == roomId && channel.activeSessionId == room.voiceSessionId;
+    }
+
+    function canReadOwnServerSessionParticipant(roomId, participantId) {
+      let room = serverSessionAnchor(roomId);
+      let channel = get(/databases/$(database)/documents/clubs/$(room.serverId)/channels/$(room.channelId)).data;
+      return isActiveAccount() && participantId == request.auth.uid &&
+          resource.data.userId == request.auth.uid &&
+          resource.data.serverSchemaVersion == 1 &&
+          resource.data.serverId == room.serverId &&
+          resource.data.channelId == room.channelId &&
+          resource.data.roomId == roomId &&
+          resource.data.sessionId == room.voiceSessionId &&
+          liveServerSessionAnchor(roomId, room, channel) &&
+          canReadServerChannel(room.serverId, room.channelId, channel, false);
+    }
+
+    function canListServerSessionHands(roomId) {
+      let room = serverSessionAnchor(roomId);
+      let channel = get(/databases/$(database)/documents/clubs/$(room.serverId)/channels/$(room.channelId)).data;
+      let member = get(/databases/$(database)/documents/clubs/$(room.serverId)/members/$(request.auth.uid)).data;
+      return isActiveAccount() &&
+          liveServerSessionAnchor(roomId, room, channel) &&
+          resource.data.serverId == room.serverId &&
+          resource.data.channelId == room.channelId &&
+          resource.data.sessionId == room.voiceSessionId &&
+          resource.data.isHandRaised == true &&
+          canReadServerChannel(room.serverId, room.channelId, channel, false) &&
+          (member.role in ['owner', 'coOwner', 'admin', 'moderator'] ||
+            get(/databases/$(database)/documents/clubs/$(room.serverId)/channels/$(room.channelId)/channelSessions/$(room.voiceSessionId)).data.startedById == request.auth.uid);
+    }
+
     function canReadClubChannel(clubId, channelId) {
       return isLegacyClub(clubId)
         ? isClubMember(clubId)
@@ -2534,6 +2592,18 @@ service cloud.firestore {
         allow write: if false;
       }
 
+      // The invitee's discovery pointer for a V1 server invitation, written
+      // by createServerInviteV1 and removed by revocation, acceptance and
+      // decline (ADR-178). Same posture as serverChannelRefs: opaque ids and
+      // the generation/expiry only, owner-readable, never client-writable,
+      // never authority. The invitation itself is point-read at
+      // clubs/{serverId}/invites/{uid}, whose rule rechecks the invitee; a
+      // stale or forged pointer opens nothing.
+      match /serverInviteRefs/{serverId} {
+        allow read: if isOwner(userId) && isActiveAccount();
+        allow write: if false;
+      }
+
       // Every notification is server-derived from an authoritative source
       // document or written inside its owning callable transaction. Clients
       // can acknowledge/delete their own rows, but can never create one —
@@ -3467,7 +3537,12 @@ service cloud.firestore {
               canManageClub(clubId)
             );
         // sendClubInvite owns canonical inviter/Club snapshots and checks
-        // both friendship mirrors, blocks, sanctions and account status.
+        // both friendship mirrors, blocks, sanctions and account status. On a
+        // versioned root the writers are createServerInviteV1 and
+        // revokeServerInviteV1 (ADR-178): generation, expiry, inviter
+        // authority revision and the status transitions are all server-owned,
+        // and revocation is a status transition, not a delete — so the
+        // legacy-only delete below stays closed for V1 on purpose.
         allow create: if false;
         allow update: if false;
         allow delete: if isLegacyClub(clubId) && isSignedIn() &&
@@ -3780,8 +3855,19 @@ service cloud.firestore {
       allow delete: if false;
 
       match /participants/{participantId} {
-        allow read: if isLegacyRoom(roomId) && (canAccessRoom(roomId) ||
-            (isSignedIn() && resource.data.userId == request.auth.uid));
+        // The legacy arm is unchanged. A V1 anchor selects the other arm of
+        // the ternary (not an OR: an error in the selector must deny, never
+        // be absorbed — principle 11), where a participant reads only their
+        // own live-generation document and the host or a moderator lists
+        // only the raised hands. See the ADR-181 helpers for the shape.
+        allow get: if isLegacyRoom(roomId)
+            ? (canAccessRoom(roomId) ||
+                (isSignedIn() && resource.data.userId == request.auth.uid))
+            : canReadOwnServerSessionParticipant(roomId, participantId);
+        allow list: if isLegacyRoom(roomId)
+            ? (canAccessRoom(roomId) ||
+                (isSignedIn() && resource.data.userId == request.auth.uid))
+            : canListServerSessionHands(roomId);
 
         // Self-service creation mirrors the product model: a Community room
         // is a Discord-like conversation where everyone joins as a speaker;

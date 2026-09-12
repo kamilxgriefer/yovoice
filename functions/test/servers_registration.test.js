@@ -21,7 +21,7 @@ const { after, test } = require("node:test");
 const { HttpsError } = require("firebase-functions/v2/https");
 const {
   DEFAULT_DISPATCH_LIMITS, DISPATCHER_EXPORTS, OUTBOX_COLLECTION, REGION,
-  SECRET_BOUND_CALLABLES, SERVER_CALLABLE_METHODS, SERVERS_V1_EXPORT_NAMES,
+  SECRET_BOUND_CALLABLES, SERVER_CALLABLE_METHODS, SERVERS_V1_EXPORT_NAMES, SWEEP_EXPORTS,
   authBoundRequest, createServersV1Dispatcher, createServersV1Functions,
   createServersV1Runtime, describeOutboxJob, isTransientFailure,
 } = require("../servers/registration");
@@ -33,6 +33,7 @@ const CALLABLE_NAMES = Object.keys(SERVER_CALLABLE_METHODS);
 const LIVEKIT_SECRETS = ["LIVEKIT_API_KEY", "LIVEKIT_API_SECRET"];
 const TRIGGER = "onServerControlOutboxCreated";
 const SCHEDULE = "processPendingServerControlOutboxSchedule";
+const SWEEP = "sweepStaleServerChannelSessionsSchedule";
 const NOW = 1_900_000_000_000;
 
 /*
@@ -102,10 +103,10 @@ function coldStart(gate) {
 // check) so that old callables can refuse V1 targets; those are pinned
 // separately below and are not this gate's doing.
 const REGISTRATION_MODULES = Object.freeze([
-  "registration.js", "creation.js", "channels.js", "memberships.js", "sessions.js", "operations.js",
+  "registration.js", "creation.js", "channels.js", "invites.js", "memberships.js", "sessions.js", "session_participation.js", "operations.js",
   "convergence.js", "convergence_runtime.js", "convergence_lifecycle.js", "session_control.js",
-  "session_livekit.js", "session_contract.js", "session_authority.js", "authority.js", "documents.js",
-  "templates.js",
+  "session_staleness.js", "session_livekit.js", "session_contract.js", "session_authority.js", "authority.js",
+  "documents.js", "templates.js",
 ]);
 const LEGACY_BOUNDARY_MODULES = Object.freeze(["capacity.js", "contract.js", "rtc_binding.js"]);
 
@@ -121,15 +122,16 @@ test("Registration: `disabled` is byte-for-byte the same cold start as absent", 
   assert.deepEqual(coldStart("disabled"), coldStart(undefined));
 });
 
-test("Registration: `enabled` adds exactly the sixteen callables and two dispatcher exports and nothing else", () => {
+test("Registration: `enabled` adds exactly the twenty-one callables, two dispatcher exports and the sweep, and nothing else", () => {
   const off = coldStart(undefined);
   const on = coldStart("enabled");
   assert.deepEqual(on.exportNames, [...off.exportNames, ...SERVERS_V1_EXPORT_NAMES].sort());
-  assert.equal(SERVERS_V1_EXPORT_NAMES.length, 18);
+  assert.equal(SERVERS_V1_EXPORT_NAMES.length, 24);
+  assert.equal(Object.keys(SERVER_CALLABLE_METHODS).length, 21);
   assert.ok(on.serversModules.includes("registration.js"));
   for (const factory of [
-    "creation.js", "channels.js", "memberships.js", "sessions.js", "convergence.js",
-    "convergence_runtime.js", "convergence_lifecycle.js", "session_control.js", "operations.js",
+    "creation.js", "channels.js", "invites.js", "memberships.js", "sessions.js", "session_participation.js", "convergence.js",
+    "convergence_runtime.js", "convergence_lifecycle.js", "session_control.js", "session_staleness.js", "operations.js",
   ]) assert.ok(on.serversModules.includes(factory), factory);
   // The LiveKit SDK stays a first-use require even with the gate on.
   assert.equal(on.livekitSdk, 0);
@@ -152,11 +154,17 @@ test("Registration: `enabled` adds exactly the sixteen callables and two dispatc
     region: [REGION], minInstances: null, secrets: LIVEKIT_SECRETS, callable: false,
     document: null, retry: null, schedule: "every 5 minutes", timeZone: "Etc/UTC",
   });
+  // The stale-generation sweep (ADR-180) reaches the provider, so it binds the
+  // same secrets as the other two workers and runs on the legacy sweep's cadence.
+  assert.deepEqual(on.endpoints[SWEEP], {
+    region: [REGION], minInstances: null, secrets: LIVEKIT_SECRETS, callable: false,
+    document: null, retry: null, schedule: "every 5 minutes", timeZone: "Etc/UTC",
+  });
 });
 
 test("Registration: any other gate value fails the cold start loudly", () => {
   // Whitespace and case variants are values too: nothing is trimmed or folded,
-  // so `enabled ` is a typo that must fail the load rather than ship eighteen
+  // so `enabled ` is a typo that must fail the load rather than ship twenty-four
   // functions (functions/index.js strictEnabledEnvironment).
   for (const gate of [
     "true", "Enabled", "yes", "1", "on",
@@ -227,6 +235,10 @@ function fakeRuntime({ calls = [], documents = new Map(), workers = {}, clock = 
     projection: { processServerControlOutboxPage: workers.projection ?? (async () => ({ propagationComplete: true })) },
     convergence: { processServerConvergencePage: workers.convergence ?? (async () => ({ cleanupPending: false })) },
     sessionControl: { processServerSessionEndPage: workers.sessionEnd ?? (async () => ({ cleanupPending: false })) },
+    staleness: { stageStaleServerChannelSessions: workers.staleness ?? (async () => ({
+      scanned: 0, truncated: false, skippedLegacy: 0, skippedUnbound: 0, skippedYoung: 0,
+      skippedOccupied: 0, providerUnavailable: 0, changed: 0, staged: [],
+    })) },
   };
 }
 
@@ -243,16 +255,17 @@ function convergenceJob(overrides = {}) {
 const request = (uid, data, extra = {}) => ({ auth: { uid, token: { email_verified: true } }, data, ...extra });
 const rejects = (promise, code) => assert.rejects(promise, (error) => error instanceof HttpsError && error.code === code);
 
-test("Registration: the export map is exactly eighteen names with the callable and worker options", () => {
+test("Registration: the export map is exactly twenty-four names with the callable and worker options", () => {
   const registrations = [];
   const functions = createServersV1Functions({
     runtime: fakeRuntime(), registrars: fakeRegistrars(registrations), log: recordingLog(),
   });
   assert.deepEqual(Object.keys(functions).sort(), [...SERVERS_V1_EXPORT_NAMES].sort());
   assert.deepEqual(DISPATCHER_EXPORTS, [TRIGGER, SCHEDULE]);
-  assert.equal(registrations.filter((item) => item.kind === "callable").length, 16);
+  assert.deepEqual(SWEEP_EXPORTS, [SWEEP]);
+  assert.equal(registrations.filter((item) => item.kind === "callable").length, 21);
   assert.equal(registrations.filter((item) => item.kind === "created").length, 1);
-  assert.equal(registrations.filter((item) => item.kind === "schedule").length, 1);
+  assert.equal(registrations.filter((item) => item.kind === "schedule").length, 2);
   for (const name of CALLABLE_NAMES) {
     const { options } = functions[name];
     assert.equal(options.region, REGION, name);
@@ -283,8 +296,43 @@ test("Registration: the export map is exactly eighteen names with the callable a
   assert.equal(schedule.maxInstances, 1);
   assert.equal(schedule.timeoutSeconds, 300);
   assert.deepEqual(schedule.secrets.map((secret) => secret.name), LIVEKIT_SECRETS);
+  const sweep = functions[SWEEP].options;
+  assert.equal(sweep.schedule, "every 5 minutes");
+  assert.equal(sweep.timeZone, "Etc/UTC");
+  assert.equal(sweep.region, REGION);
+  assert.equal(sweep.maxInstances, 1);
+  assert.equal(sweep.timeoutSeconds, 300);
+  assert.deepEqual(sweep.secrets.map((secret) => secret.name), LIVEKIT_SECRETS);
   // The time budget always leaves the worker deadline room for one more page.
   assert.ok(DEFAULT_DISPATCH_LIMITS.timeBudgetMs < trigger.timeoutSeconds * 1000 - 60_000);
+});
+
+test("Registration: the sweep schedule asks the staleness worker once and logs its counts, never the staged ids", async () => {
+  const log = recordingLog();
+  let invocations = 0;
+  const staged = [{ serverId: "clubs/private", channelId: "c", roomId: "r", sessionId: "s", endOperationId: "e" }];
+  const functions = createServersV1Functions({
+    runtime: fakeRuntime({ workers: { staleness: async () => { invocations += 1; return {
+      scanned: 3, truncated: false, skippedLegacy: 1, skippedUnbound: 0, skippedYoung: 1,
+      skippedOccupied: 0, providerUnavailable: 0, changed: 0, staged,
+    }; } } }),
+    registrars: fakeRegistrars([]), log,
+  });
+  const line = await functions[SWEEP].handler();
+  assert.equal(invocations, 1);
+  assert.equal(line.staged, 1);
+  assert.deepEqual(log.lines, [{ level: "info", message: "servers.stale_session_sweep", payload: line }]);
+  assert.equal(JSON.stringify(log.lines).includes("clubs/private"), false);
+  const warned = recordingLog();
+  const unavailable = createServersV1Functions({
+    runtime: fakeRuntime({ workers: { staleness: async () => ({
+      scanned: 1, truncated: false, skippedLegacy: 0, skippedUnbound: 0, skippedYoung: 0,
+      skippedOccupied: 0, providerUnavailable: 1, changed: 0, staged: [],
+    }) } }),
+    registrars: fakeRegistrars([]), log: warned,
+  });
+  await unavailable[SWEEP].handler();
+  assert.deepEqual(warned.lines.map((entry) => entry.level), ["warn"]);
 });
 
 test("Registration: the App Check switch flips enforcement and consumption together on every callable", () => {
@@ -368,6 +416,12 @@ test("Registration: a missing factory method or registrar fails at construction,
     () => createServersV1Functions({ runtime, registrars: fakeRegistrars([]), log: recordingLog() }),
     /Missing Servers V1 method sessions\.endServerChannelSessionV1\./u,
   );
+  const withoutSweep = fakeRuntime();
+  delete withoutSweep.staleness;
+  assert.throws(
+    () => createServersV1Functions({ runtime: withoutSweep, registrars: fakeRegistrars([]), log: recordingLog() }),
+    /Missing Servers V1 worker staleness\.stageStaleServerChannelSessions\./u,
+  );
   const { onSchedule, ...partial } = fakeRegistrars([]);
   assert.throws(
     () => createServersV1Functions({ runtime: fakeRuntime(), registrars: partial, log: recordingLog() }),
@@ -392,7 +446,7 @@ test("Registration: describeOutboxJob classifies leases, backoff, completion and
   assert.deepEqual(describeOutboxJob(convergenceJob({ bridgeLeaseId: "lease", bridgeLeaseExpiresAtMillis: now }), now), { route: "convergence", reason: "eligible" });
   assert.deepEqual(describeOutboxJob(convergenceJob({ retryAfterMillis: now + 1 }), now), { route: "convergence", reason: "backoff" });
   assert.deepEqual(describeOutboxJob(convergenceJob({ retryAfterMillis: now }), now), { route: "convergence", reason: "eligible" });
-  for (const kind of ["memberLeft", "memberRoleChanged", "channelAccess", "channelArchive", "channelDelete", "ownershipTransferred"]) {
+  for (const kind of ["memberLeft", "memberRoleChanged", "sessionParticipantChanged", "channelAccess", "channelArchive", "channelDelete", "ownershipTransferred"]) {
     assert.deepEqual(describeOutboxJob(convergenceJob({ kind }), now), { route: "convergence", reason: "eligible" }, kind);
   }
   const sessionEnd = { schemaVersion: 1, kind: "sessionEnd", status: "pending", cursor: null, leaseId: null, leaseExpiresAtMillis: 0 };
@@ -676,6 +730,7 @@ async function fixture() {
       return { alreadyAbsent: false, revokedBeforeMillis: (Math.floor(nowMs / 1000) + 1) * 1000 };
     },
     async endRoom(roomName) { calls.ended.push(roomName); return {}; },
+    async roomOccupancy() { return { present: false, participantCount: 0 }; },
   };
   const real = createServersV1Runtime({ db, Timestamp, clock, livekit });
   const workerCalls = [];

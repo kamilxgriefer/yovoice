@@ -7,11 +7,18 @@ const {
 const DEFAULT_SERVER_LIMITS = Object.freeze({
   attempts: Object.freeze({ maxEvents: 120, windowMs: 60_000 }),
   creation: Object.freeze({ maxEvents: 30, windowMs: 60 * 60_000 }),
+  // The same per-minute reach the legacy sendClubInvite budget allows
+  // (notifications/invites.js CLUB_INVITE_ATTEMPT_LIMITS.minute): an
+  // invitation lands in another person's private tree, so it is charged as
+  // outbound communication, not as an ordinary server mutation.
+  invites: Object.freeze({ maxEvents: 30, windowMs: 60_000 }),
 });
 
 function createServerOperations({ db, Timestamp, clock = Date.now, limits = DEFAULT_SERVER_LIMITS }) {
   if (!db?.runTransaction || !Timestamp?.fromMillis) throw new TypeError("db and Timestamp are required.");
-  async function execute(request, kind, input, work, { creation = false, verified = true, allowRestricted = false } = {}) {
+  async function execute(request, kind, input, work, {
+    creation = false, invite = false, verified = true, allowRestricted = false,
+  } = {}) {
     const auth = requireActor(request, { verified });
     const nowMs = clock();
     if (!Number.isSafeInteger(nowMs) || nowMs < 0) throw new TypeError("clock must return epoch milliseconds.");
@@ -23,6 +30,7 @@ function createServerOperations({ db, Timestamp, clock = Date.now, limits = DEFA
     const restrictionReference = db.doc(`restrictions/${auth.uid}`);
     const scopes = [{ scope: "server.v1.attempt", config: limits.attempts }];
     if (creation) scopes.push({ scope: "server.v1.create", config: limits.creation });
+    if (invite) scopes.push({ scope: "server.v1.invite", config: limits.invites });
     const rates = scopes.map((item) => ({ ...item, reference: rateLimitReference(db, item.scope, auth.uid) }));
 
     // This target-independent budget commits before authorization reads.

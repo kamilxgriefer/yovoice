@@ -36,6 +36,24 @@ const CANDIDATE_SOURCES = Object.freeze({
 // but did not bind, and the provider did not report it either, so the
 // revocation owed under that generation is still outstanding.
 const UNBOUND_LIVE_GENERATION = "unbound-live-generation";
+// The retry ceiling for THAT code only. An unbound live generation is a
+// state of the Firestore graph, not a transient provider fault: no number
+// of redeliveries changes it, and every attempt pays `findParticipantRooms`
+// — one listRooms() plus one getParticipant per room. Eight is the
+// codebase's provider-facing dead-letter budget (reels/service.js
+// REEL_CLEANUP_MAX_ATTEMPTS = 8; achievements/migration.js terminalizes its
+// bootstrap after MAX_BOOTSTRAP_ATTEMPTS = 5). The eighth attempt writes the
+// terminal `needsReconciliation` state and stops rethrowing; every other
+// failure class keeps the trigger's `retry: true` semantics, because a
+// provider outage must not leave a sanctioned identity connected.
+const MAX_UNBOUND_GENERATION_ATTEMPTS = 8;
+const NEEDS_RECONCILIATION = "needsReconciliation";
+const TERMINAL_STATUSES = Object.freeze(["completed", "invalid", "superseded", NEEDS_RECONCILIATION]);
+
+function priorAttemptCount(event) {
+  const value = event?.attemptCount;
+  return Number.isSafeInteger(value) && value >= 0 ? value : 0;
+}
 
 function validTargetUid(value) {
   const uid = normalizeText(value, 128);
@@ -233,7 +251,7 @@ async function executeVoiceEnforcementEvent(
   const current = await eventDocument.ref.get();
   if (!current.exists) return { skipped: true, reason: "deleted-event" };
   const event = current.data() ?? {};
-  if (["completed", "invalid", "superseded"].includes(event.status)) {
+  if (TERMINAL_STATUSES.includes(event.status)) {
     return { skipped: true, reason: event.status };
   }
 
@@ -442,11 +460,16 @@ async function executeVoiceEnforcementEvent(
     };
   } catch (error) {
     const errorCode = safeErrorCode(error);
+    // This attempt's ordinal, counted the way the document counts it: the
+    // increment below lands on top of the value read at the start.
+    const attempt = priorAttemptCount(event) + 1;
+    const terminal = errorCode === UNBOUND_LIVE_GENERATION && attempt >= MAX_UNBOUND_GENERATION_ATTEMPTS;
     try {
       await current.ref.set({
-        status: "retrying",
+        status: terminal ? NEEDS_RECONCILIATION : "retrying",
         attemptCount: FieldValue.increment(1),
         lastAttemptAt: FieldValue.serverTimestamp(),
+        ...(terminal ? { processedAt: FieldValue.serverTimestamp() } : {}),
         roomsDiscovered: discoveredRoomIds.size,
         roomsRevoked: revokedCount,
         ...auditedBindings(skippedBindings, unboundProviderRooms),
@@ -458,7 +481,7 @@ async function executeVoiceEnforcementEvent(
         errorCode: safeErrorCode(stateError),
       });
     }
-    logger.error("moderation voice enforcement will retry", {
+    const detail = {
       eventId: current.id,
       type: event.type,
       roomsDiscovered: discoveredRoomIds.size,
@@ -466,7 +489,30 @@ async function executeVoiceEnforcementEvent(
       roomsSkipped: skippedBindings.size,
       providerRoomsUnbound: unboundProviderRooms.size,
       errorCode,
-    });
+      attempt,
+    };
+    if (terminal) {
+      // Returning, not rethrowing: the platform must stop redelivering this
+      // event. Every provider-reported room was already revoked on this and
+      // every earlier attempt; what remains is an anchor whose generation
+      // the graph cannot prove, which only an operator can reconcile. The
+      // sanction itself is untouched and still current.
+      logger.error("moderation voice enforcement needs reconciliation", {
+        ...detail,
+        maxAttempts: MAX_UNBOUND_GENERATION_ATTEMPTS,
+        skippedBindings: boundedAudit(skippedBindings),
+      });
+      return {
+        completed: false,
+        needsReconciliation: true,
+        roomsDiscovered: discoveredRoomIds.size,
+        roomsRevoked: revokedCount,
+        roomsSkipped: skippedBindings.size,
+        providerRoomsUnbound: unboundProviderRooms.size,
+        attemptCount: attempt,
+      };
+    }
+    logger.error("moderation voice enforcement will retry", detail);
     throw error;
   }
 }
@@ -486,6 +532,9 @@ const onModerationVoiceEnforcementCreated = onDocumentCreated(
 module.exports = {
   EVENT_COLLECTION,
   EVENT_TYPES,
+  MAX_UNBOUND_GENERATION_ATTEMPTS,
+  NEEDS_RECONCILIATION,
+  UNBOUND_LIVE_GENERATION,
   canonicalActiveVoiceRoomIds,
   canonicalParticipantRoomIds,
   deleteActiveVoiceSessionMirror,

@@ -118,7 +118,29 @@ function createServerLiveKitAdapter({ apiKey, apiSecret, serverUrl, client = nul
       if (result.alreadyAbsent) fail("unavailable", "Media token revocation is not yet confirmed.");
       return { ...result, revokedBeforeMillis: (Math.floor(cutoffTime / 1000) + 1) * 1000 };
     },
-    endRoom });
+    endRoom,
+    /**
+     * Read-only occupancy of one V1 generation's provider room, for the
+     * stale-generation sweep (session_staleness.js). One ListParticipants
+     * RPC, no retry. LiveKit deletes a room itself once it has been empty
+     * for its `emptyTimeout`, so NOT_FOUND is a positive "nobody is here",
+     * not a failure. Any other error propagates: the sweep treats it as an
+     * unknown, and an unknown never ends a generation.
+     */
+    async roomOccupancy(binding) {
+      const keys = ["serverId", "channelId", "roomId", "sessionId", "livekitRoomName"];
+      requireExactInput(binding, keys, keys);
+      const expected = canonicalLiveKitRoomName(binding.serverId, binding.channelId, binding.sessionId);
+      if (binding.livekitRoomName !== expected) fail("failed-precondition", "The media generation does not match.");
+      const client = getClient();
+      try {
+        const participants = await client.listParticipants(expected);
+        return { present: true, participantCount: Array.isArray(participants) ? participants.length : 0 };
+      } catch (error) {
+        if (isNotFound(error)) return { present: false, participantCount: 0 };
+        throw error;
+      }
+    } });
 }
 
 module.exports = { cloudUrl, createServerLiveKitAdapter };

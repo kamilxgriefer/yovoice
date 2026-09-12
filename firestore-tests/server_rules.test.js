@@ -21,6 +21,8 @@ const BANNED = "server-banned";
 const HELD = "server-held";
 const ACTIVE = "server-active";
 const OTHER = "server-other";
+// A signed-in, active account with no relation to any fixture server.
+const STRANGER = "server-stranger";
 let passed = 0;
 let failed = 0;
 
@@ -460,6 +462,276 @@ async function main() {
       for (const moduleName of ["events", "questions", "episodes", "boards", "files", "listItems"]) {
         await assertFails(setDoc(doc(db(OWNER), `clubs/${ACTIVE}/channels/general/${moduleName}/one`), { title: "forged" }));
       }
+    });
+
+    // V1 invitations (ADR-178). The document respondToServerInviteV1 consumes
+    // is written only by createServerInviteV1 / revokeServerInviteV1; every
+    // client write is denied, and the invitee discovers it through a private
+    // pointer in the serverChannelRefs posture, never through a query the
+    // boundary forbids.
+    const v1Invite = (inviteeId, changes = {}) => ({
+      serverSchemaVersion: 1, serverId: ACTIVE, inviteeId, inviterId: OWNER, inviterAuthorizationRevision: 1,
+      status: "pending", generation: 1, expiresAt: new Date(Date.now() + 86_400_000),
+      serverName: "Private", inviterName: OWNER, createdAt: new Date(0), updatedAt: new Date(0), ...changes,
+    });
+    await check("a V1 invitation is server-owned: no client create, update or delete for manager, invitee or outsider, while a legacy manager still deletes a legacy invite", async () => {
+      await seed({ [`clubs/${ACTIVE}/invites/${OUTSIDER}`]: v1Invite(OUTSIDER),
+        [`users/${STRANGER}`]: { displayName: STRANGER, banned: false, disabled: false },
+        [`clubs/legacy-public/invites/${OUTSIDER}`]: { clubId: "legacy-public", inviteeId: OUTSIDER, inviterId: OWNER, status: "pending" } });
+      const invitePath = `clubs/${ACTIVE}/invites/${OUTSIDER}`;
+      for (const uid of [OWNER, ADMIN, MEMBER, OUTSIDER]) {
+        await assertFails(setDoc(doc(db(uid), `clubs/${ACTIVE}/invites/${STRANGER}`), v1Invite(STRANGER)));
+        await assertFails(setDoc(doc(db(uid), `clubs/${ACTIVE}/invites/forged-${uid}`), v1Invite(`forged-${uid}`)));
+        await assertFails(updateDoc(doc(db(uid), invitePath), { status: "accepted" }));
+        await assertFails(updateDoc(doc(db(uid), invitePath), { generation: 99 }));
+        await assertFails(updateDoc(doc(db(uid), invitePath), { expiresAt: new Date(Date.now() + 10 * 86_400_000) }));
+        await assertFails(updateDoc(doc(db(uid), invitePath), { inviterAuthorizationRevision: 2 }));
+        await assertFails(setDoc(doc(db(uid), invitePath), v1Invite(OUTSIDER, { status: "accepted" })));
+        await assertFails(deleteDoc(doc(db(uid), invitePath)));
+      }
+      // The invitee cannot accept by writing the roster row the callable owns.
+      await assertFails(setDoc(doc(db(OUTSIDER), `clubs/${ACTIVE}/members/${OUTSIDER}`), member(OUTSIDER)));
+      // Differential: isLegacyClub is the discriminator, so the same manager
+      // keeps the legacy delete on a legacy invite.
+      await assertSucceeds(deleteDoc(doc(db(OWNER), `clubs/legacy-public/invites/${OUTSIDER}`)));
+      await env.withSecurityRulesDisabled(async (ctx) => {
+        const stored = (await getDoc(doc(ctx.firestore(), invitePath))).data();
+        assert.equal(stored.status, "pending");
+        assert.equal(stored.generation, 1);
+        assert.equal(stored.inviterAuthorizationRevision, 1);
+      });
+    });
+    await check("the invitee and the server's managers read a V1 invitation; a plain member, another account and a banned invitee do not; it still opens no root or channel", async () => {
+      const invitePath = `clubs/${ACTIVE}/invites/${OUTSIDER}`;
+      assert.equal((await assertSucceeds(read(OUTSIDER, invitePath))).data().generation, 1);
+      await assertSucceeds(read(OWNER, invitePath));
+      await assertSucceeds(read(ADMIN, invitePath));
+      await assertFails(read(MEMBER, invitePath));
+      await assertFails(read(STRANGER, invitePath));
+      await seed({ [`clubs/${ACTIVE}/invites/${BANNED}`]: v1Invite(BANNED) });
+      await assertFails(read(BANNED, `clubs/${ACTIVE}/invites/${BANNED}`));
+      // The existing self-scoped collectionGroup discovery still works for
+      // the invitee alone; it cannot be repointed at anyone else's invites.
+      const own = await assertSucceeds(getDocs(query(collectionGroup(db(OUTSIDER), "invites"), where("inviteeId", "==", OUTSIDER))));
+      assert.ok(own.docs.some((item) => item.ref.path === invitePath));
+      await assertFails(getDocs(query(collectionGroup(db(OUTSIDER), "invites"), where("inviteeId", "==", BANNED))));
+      await assertFails(getDocs(query(collectionGroup(db(OUTSIDER), "invites"), where("serverId", "==", ACTIVE))));
+      // A pending invitation is not membership: no root, no directory, no
+      // channel, no message.
+      await assertFails(read(OUTSIDER, `clubs/${ACTIVE}`));
+      await assertFails(directory(OUTSIDER, ACTIVE));
+      await assertFails(read(OUTSIDER, `clubs/${ACTIVE}/channels/general`));
+      await assertFails(read(OUTSIDER, `clubs/${ACTIVE}/channels/general/messages/one`));
+      await seed({ [`clubs/${ACTIVE}/invites/${OUTSIDER}`]: null, [`clubs/${ACTIVE}/invites/${BANNED}`]: null });
+    });
+    await check("serverInviteRefs is owner-only discovery in the serverChannelRefs posture: opaque ids, never client-writable, never a collection group", async () => {
+      const pointer = { serverId: ACTIVE, generation: 1, expiresAt: new Date(Date.now() + 86_400_000) };
+      await seed({ [`users/${OUTSIDER}/serverInviteRefs/${ACTIVE}`]: pointer, [`users/${BANNED}/serverInviteRefs/${ACTIVE}`]: pointer });
+      const own = await assertSucceeds(read(OUTSIDER, `users/${OUTSIDER}/serverInviteRefs/${ACTIVE}`));
+      assert.deepEqual(Object.keys(own.data()).sort(), ["expiresAt", "generation", "serverId"]);
+      const listed = await assertSucceeds(getDocs(query(collection(db(OUTSIDER), `users/${OUTSIDER}/serverInviteRefs`), where("serverId", "==", ACTIVE))));
+      assert.deepEqual(listed.docs.map((item) => item.id), [ACTIVE]);
+      await assertSucceeds(getDocs(collection(db(OUTSIDER), `users/${OUTSIDER}/serverInviteRefs`)));
+      for (const uid of [OWNER, ADMIN, MEMBER, STRANGER]) {
+        await assertFails(read(uid, `users/${OUTSIDER}/serverInviteRefs/${ACTIVE}`));
+        await assertFails(getDocs(collection(db(uid), `users/${OUTSIDER}/serverInviteRefs`)));
+      }
+      await assertFails(read(BANNED, `users/${BANNED}/serverInviteRefs/${ACTIVE}`));
+      await assertFails(setDoc(doc(db(OUTSIDER), `users/${OUTSIDER}/serverInviteRefs/${OTHER}`), { serverId: OTHER, generation: 1, expiresAt: new Date(Date.now() + 86_400_000) }));
+      await assertFails(updateDoc(doc(db(OUTSIDER), `users/${OUTSIDER}/serverInviteRefs/${ACTIVE}`), { generation: 2 }));
+      await assertFails(deleteDoc(doc(db(OUTSIDER), `users/${OUTSIDER}/serverInviteRefs/${ACTIVE}`)));
+      await assertFails(getDocs(query(collectionGroup(db(OUTSIDER), "serverInviteRefs"), where("serverId", "==", ACTIVE))));
+      // A pointer is discovery, never authority: with no invitation behind it
+      // the root and channels stay closed exactly as before.
+      await assertFails(read(OUTSIDER, `clubs/${ACTIVE}`));
+      await assertFails(directory(OUTSIDER, ACTIVE));
+      await seed({ [`users/${OUTSIDER}/serverInviteRefs/${ACTIVE}`]: null, [`users/${BANNED}/serverInviteRefs/${ACTIVE}`]: null });
+    });
+
+    // V1 session participation (ADR-181). `rooms/{anchor}/participants/{uid}`
+    // is written by token issuance and the participation callables only; it is
+    // authorization state (session role, raised hand, host/moderator mutes),
+    // never presence. Two reads exist under the channel's own ACL: a person's
+    // own document of the live generation, and the raised-hand queue for the
+    // session host and moderate-capable roles. The anchor, the generation and
+    // the roster stay closed, and no client writes any of it.
+    const LISTENER = "server-listener";
+    const STALE = "server-stale";
+    const SALON = "salon";
+    const ANCHOR = "v1-live-anchor";
+    const GENERATION = "live-gen";
+    const participant = (uid, role, changes = {}) => ({
+      serverSchemaVersion: 1, serverId: ACTIVE, channelId: SALON, roomId: ANCHOR, sessionId: GENERATION,
+      userId: uid, role, authorizationRevision: 1, hostMuted: false, serverMuted: false, isMuted: true,
+      isHandRaised: false, handRaisedAt: null, displayName: uid, photoUrl: null,
+      tokenAuthorityFingerprint: "f".repeat(64), joinedAt: new Date(0), updatedAt: new Date(0), ...changes,
+    });
+    const salon = (changes = {}) => channel(ACTIVE, false, { kind: "voice", type: "voice", name: "Salon", position: 2,
+      roomId: ANCHOR, activeSessionId: GENERATION, experience: "community", mediaMode: "audio", liveness: live(), ...changes });
+    const anchor = (changes = {}) => ({
+      serverSchemaVersion: 1, serverId: ACTIVE, clubId: ACTIVE, channelId: SALON, serverActivationState: "active",
+      status: "active", visibility: "private", hostId: OWNER, serverOwnerId: OWNER, hostName: OWNER, name: "Salon",
+      roomKind: "serverChannel", roomType: "community", experience: "community", mediaMode: "audio",
+      isLive: true, voiceSessionId: GENERATION, livekitRoomName: "srv_live", participantCount: 0, ...changes,
+    });
+    const generation = (changes = {}) => ({
+      serverSchemaVersion: 1, serverId: ACTIVE, channelId: SALON, roomId: ANCHOR, sessionId: GENERATION,
+      livekitRoomName: "srv_live", experience: "community", mediaMode: "audio", sourcePolicyVersion: 1,
+      authorizationRevision: 1, status: "live", startedById: MEMBER, startedAt: new Date(0), endedAt: null,
+      maxTokenExpiresAtMillis: 0, ...changes,
+    });
+    // The exact client query: four bare equalities, no orderBy (an orderBy
+    // would need a composite index that is not committed).
+    const hands = (uid, changes = {}) => getDocs(query(collection(db(uid), `rooms/${ANCHOR}/participants`),
+      where("serverId", "==", changes.serverId ?? ACTIVE), where("channelId", "==", changes.channelId ?? SALON),
+      where("sessionId", "==", changes.sessionId ?? GENERATION), where("isHandRaised", "==", changes.raised ?? true)));
+    const own = (uid) => `rooms/${ANCHOR}/participants/${uid}`;
+    await seed({
+      [`users/${LISTENER}`]: { displayName: LISTENER, banned: false, disabled: false },
+      [`users/${STALE}`]: { displayName: STALE, banned: false, disabled: false },
+      [`users/${STRANGER}`]: { displayName: STRANGER, banned: false, disabled: false },
+      [`clubs/${ACTIVE}/members/${LISTENER}`]: member(LISTENER, "member"),
+      [`clubs/${ACTIVE}/members/${STALE}`]: member(STALE, "member"),
+      [`clubs/${ACTIVE}/channels/${SALON}`]: salon(),
+      [`clubs/${ACTIVE}/channels/${SALON}/channelSessions/${GENERATION}`]: generation(),
+      [`rooms/${ANCHOR}`]: anchor(),
+      [own(MEMBER)]: participant(MEMBER, "host"),
+      [own(ADMIN)]: participant(ADMIN, "guest"),
+      [own(LISTENER)]: participant(LISTENER, "listener", { isHandRaised: true, handRaisedAt: new Date(1) }),
+      [own(STALE)]: participant(STALE, "listener", { sessionId: "old-gen", isHandRaised: true, handRaisedAt: new Date(2) }),
+      [`rooms/legacy-public/participants/${OUTSIDER}`]: { userId: OUTSIDER, displayName: OUTSIDER, role: "listener",
+        isMuted: true, isSpeaker: false, isHandRaised: true, joinedAt: new Date(0), updatedAt: new Date(0) },
+    });
+    await check("a V1 participant reads only their own live-generation document; anchor, generation and roster stay closed", async () => {
+      const mine = await assertSucceeds(read(LISTENER, own(LISTENER)));
+      assert.equal(mine.data().role, "listener");
+      assert.equal(mine.data().isHandRaised, true);
+      await assertSucceeds(read(MEMBER, own(MEMBER)));
+      await assertSucceeds(read(ADMIN, own(ADMIN)));
+      // Nobody reads another person's document: not the host, not the owner,
+      // not an admin. The queue below is the only cross-identity read.
+      await assertFails(read(MEMBER, own(LISTENER)));
+      await assertFails(read(OWNER, own(LISTENER)));
+      await assertFails(read(ADMIN, own(MEMBER)));
+      // No document, a banned account, an outsider and a stale generation.
+      await assertFails(read(OWNER, own(OWNER)));
+      await assertFails(read(BANNED, own(BANNED)));
+      await assertFails(read(OUTSIDER, own(OUTSIDER)));
+      await assertFails(read(STRANGER, own(STRANGER)));
+      await assertFails(read(STALE, own(STALE)));
+      for (const uid of [OWNER, MEMBER, ADMIN, LISTENER]) {
+        await assertFails(read(uid, `rooms/${ANCHOR}`));
+        await assertFails(read(uid, `clubs/${ACTIVE}/channels/${SALON}/channelSessions/${GENERATION}`));
+        await assertFails(getDocs(collection(db(uid), `rooms/${ANCHOR}/participants`)));
+        await assertFails(getDocs(query(collection(db(uid), `rooms/${ANCHOR}/participants`), where("userId", "==", uid))));
+        await assertFails(getDocs(query(collection(db(uid), `rooms/${ANCHOR}/participants`), where("sessionId", "==", GENERATION))));
+      }
+      // The forged and held anchors from the earlier cases still open nothing.
+      await assertFails(read(MEMBER, `rooms/forged-public-v1/participants/${MEMBER}`));
+      await assertFails(read(MEMBER, `rooms/held-anchor/participants/${MEMBER}`));
+      // An ended generation closes the document even to its own subject: the
+      // read is bound to the anchor's live pointer, not to the document's own
+      // claim about its session.
+      await seed({ [`clubs/${ACTIVE}/channels/${SALON}`]: salon({ activeSessionId: null, liveness: idle() }),
+        [`rooms/${ANCHOR}`]: anchor({ isLive: false, voiceSessionId: null, livekitRoomName: null, serverSessionCleanupId: GENERATION }) });
+      await assertFails(read(LISTENER, own(LISTENER)));
+      await assertFails(read(MEMBER, own(MEMBER)));
+      await seed({ [`clubs/${ACTIVE}/channels/${SALON}`]: salon(), [`rooms/${ANCHOR}`]: anchor() });
+      // A held root closes it too, owner included.
+      await seed({ [`clubs/${ACTIVE}`]: server(ACTIVE, { held: true }) });
+      await assertFails(read(LISTENER, own(LISTENER)));
+      await assertFails(read(MEMBER, own(MEMBER)));
+      await seed({ [`clubs/${ACTIVE}`]: server(ACTIVE) });
+      // The legacy arm of the split rule is unchanged: a public legacy room's
+      // participants stay readable, point read and listing alike.
+      await assertSucceeds(read(OUTSIDER, `rooms/legacy-public/participants/${OUTSIDER}`));
+      await assertSucceeds(getDocs(collection(db(OUTSIDER), "rooms/legacy-public/participants")));
+      await assertSucceeds(getDocs(collection(db(STRANGER), "rooms/legacy-public/participants")));
+    });
+    await check("the host and moderate-capable roles list exactly the raised hands of the live generation, every equality pinned", async () => {
+      // The host is a plain member: the standing comes from startedById.
+      assert.deepEqual((await assertSucceeds(hands(MEMBER))).docs.map((item) => item.id), [LISTENER]);
+      // Moderate-capable roles list it whether or not they are in the session
+      // (the owner has no participant document): the authority is the server
+      // role, never a platform claim.
+      for (const uid of [OWNER, ADMIN]) {
+        assert.deepEqual((await assertSucceeds(hands(uid))).docs.map((item) => item.id), [LISTENER]);
+      }
+      // A participant, an outsider, a banned account, a stranger and a member
+      // whose document belongs to an older generation do not.
+      for (const uid of [LISTENER, OUTSIDER, BANNED, STRANGER, STALE]) await assertFails(hands(uid));
+      // Every equality is load-bearing: rules are not filters.
+      await assertFails(hands(MEMBER, { raised: false }));
+      await assertFails(getDocs(query(collection(db(MEMBER), `rooms/${ANCHOR}/participants`),
+        where("serverId", "==", ACTIVE), where("channelId", "==", SALON), where("sessionId", "==", GENERATION))));
+      await assertFails(getDocs(query(collection(db(OWNER), `rooms/${ANCHOR}/participants`), where("isHandRaised", "==", true))));
+      await assertFails(hands(MEMBER, { sessionId: "old-gen" }));
+      await assertFails(hands(OWNER, { sessionId: "old-gen" }));
+      await assertFails(hands(MEMBER, { channelId: "general" }));
+      await assertFails(hands(MEMBER, { serverId: OTHER }));
+      // No top-level wildcard exists for participants, so a collection-group
+      // query is denied regardless of its filters.
+      await assertFails(getDocs(query(collectionGroup(db(MEMBER), "participants"), where("serverId", "==", ACTIVE),
+        where("channelId", "==", SALON), where("sessionId", "==", GENERATION), where("isHandRaised", "==", true))));
+      await assertFails(getDocs(query(collectionGroup(db(OWNER), "participants"), where("isHandRaised", "==", true))));
+      // The host standing follows the generation's starter, not the document.
+      await seed({ [`clubs/${ACTIVE}/channels/${SALON}/channelSessions/${GENERATION}`]: generation({ startedById: OWNER }) });
+      await assertFails(hands(MEMBER));
+      await assertSucceeds(hands(OWNER));
+      await seed({ [`clubs/${ACTIVE}/channels/${SALON}/channelSessions/${GENERATION}`]: generation() });
+      // An ended generation has no queue.
+      await seed({ [`clubs/${ACTIVE}/channels/${SALON}`]: salon({ activeSessionId: null, liveness: idle() }),
+        [`rooms/${ANCHOR}`]: anchor({ isLive: false, voiceSessionId: null, livekitRoomName: null, serverSessionCleanupId: GENERATION }) });
+      for (const uid of [MEMBER, OWNER, ADMIN]) await assertFails(hands(uid));
+      await seed({ [`clubs/${ACTIVE}/channels/${SALON}`]: salon(), [`rooms/${ANCHOR}`]: anchor() });
+      // A restricted channel needs the current grant for both reads: an admin
+      // without one loses the queue and their own document.
+      await seed({
+        [`clubs/${ACTIVE}/channels/${SALON}`]: salon({ isPrivate: true, accessMode: "restricted",
+          accessPolicy: { accessMode: "restricted", roleIds: ["owner"], userIds: [MEMBER, LISTENER] } }),
+        [`clubs/${ACTIVE}/channels/${SALON}/accessGrants/${OWNER}`]: grant(ACTIVE, SALON, OWNER),
+        [`clubs/${ACTIVE}/channels/${SALON}/accessGrants/${MEMBER}`]: grant(ACTIVE, SALON, MEMBER),
+        [`clubs/${ACTIVE}/channels/${SALON}/accessGrants/${LISTENER}`]: grant(ACTIVE, SALON, LISTENER),
+      });
+      await assertFails(hands(ADMIN));
+      await assertFails(read(ADMIN, own(ADMIN)));
+      await assertSucceeds(hands(OWNER));
+      await assertSucceeds(hands(MEMBER));
+      await assertSucceeds(read(LISTENER, own(LISTENER)));
+      await seed({ [`clubs/${ACTIVE}/channels/${SALON}`]: salon(),
+        [`clubs/${ACTIVE}/channels/${SALON}/accessGrants/${OWNER}`]: null,
+        [`clubs/${ACTIVE}/channels/${SALON}/accessGrants/${MEMBER}`]: null,
+        [`clubs/${ACTIVE}/channels/${SALON}/accessGrants/${LISTENER}`]: null });
+    });
+    await check("no client writes a V1 participation document: hand, role, mutes and revision are callable-only", async () => {
+      for (const [uid, role] of [[LISTENER, "listener"], [MEMBER, "host"], [ADMIN, "guest"], [OWNER, "listener"]]) {
+        const reference = doc(db(uid), own(uid));
+        // The legacy self-service shape (mute/hand plus updatedAt) is what
+        // roomParticipantSelfUpdateAllowed admits on a legacy room; a V1
+        // anchor never reaches it because canAccessRoom() is legacy-gated.
+        await assertFails(updateDoc(reference, { isHandRaised: uid !== LISTENER, updatedAt: serverTimestamp() }));
+        await assertFails(updateDoc(reference, { isMuted: false, updatedAt: serverTimestamp() }));
+        await assertFails(updateDoc(reference, { role: "guest" }));
+        await assertFails(updateDoc(reference, { hostMuted: false, serverMuted: false }));
+        await assertFails(updateDoc(reference, { authorizationRevision: 99 }));
+        await assertFails(setDoc(reference, participant(uid, role)));
+        await assertFails(deleteDoc(reference));
+      }
+      // Neither the legacy self-join create shape nor a V1-shaped create
+      // lands under a V1 anchor, for a member or an outsider.
+      for (const uid of [OUTSIDER, OWNER]) {
+        await assertFails(setDoc(doc(db(uid), own(uid)), { userId: uid, displayName: uid, role: "listener",
+          isMuted: true, isSpeaker: false, isHandRaised: false, joinedAt: serverTimestamp(), updatedAt: serverTimestamp() }));
+      }
+      // A host cannot touch another person's document either.
+      await assertFails(updateDoc(doc(db(MEMBER), own(LISTENER)), { role: "guest" }));
+      await assertFails(updateDoc(doc(db(MEMBER), own(LISTENER)), { hostMuted: true }));
+      // Nothing above changed anything.
+      const after = (await assertSucceeds(read(LISTENER, own(LISTENER)))).data();
+      assert.equal(after.isHandRaised, true);
+      assert.equal(after.role, "listener");
+      assert.equal(after.authorizationRevision, 1);
+      assert.equal((await assertSucceeds(read(OWNER, own(OWNER)).catch(() => ({ exists: () => false })))).exists(), false);
     });
 
     await env.withSecurityRulesDisabled(async (ctx) => {

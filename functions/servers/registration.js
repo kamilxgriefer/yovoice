@@ -31,8 +31,11 @@ const { onSchedule } = require("firebase-functions/v2/scheduler");
 const { requireActor, requireId, requireSafeInteger } = require("../integrity/guards");
 const { createServerCreationService } = require("./creation");
 const { createServerChannelService } = require("./channels");
+const { createServerInviteService } = require("./invites");
 const { createServerMembershipService } = require("./memberships");
 const { createServerSessionService } = require("./sessions");
+const { createServerSessionParticipationService } = require("./session_participation");
+const { createServerSessionStalenessService } = require("./session_staleness");
 const { createServerConvergenceService } = require("./convergence");
 const { createServerConvergenceRuntimeService } = require("./convergence_runtime");
 const { createServerSessionControlService } = require("./session_control");
@@ -41,10 +44,12 @@ const { createServerLiveKitAdapter } = require("./session_livekit");
 const REGION = "europe-west1";
 const OUTBOX_COLLECTION = "serverControlOutbox";
 
-// The sixteen V1 callables of docs/Servers.md "Callable contract", in that
+// The twenty-one V1 callables of docs/Servers.md "Callable contract", in that
 // order, each bound to the reviewed factory that implements it. The export
 // name and the factory method name are deliberately identical, so a typo in
 // this table is a TypeError at deploy discovery, never a NOT_FOUND in a client.
+// test/servers_registration_independent_qa.test.js parses the documented
+// table and asserts this map lists exactly those names in that order.
 const SERVER_CALLABLE_METHODS = Object.freeze({
   createServerV1: "creation",
   updateServerV1: "channels",
@@ -55,6 +60,8 @@ const SERVER_CALLABLE_METHODS = Object.freeze({
   archiveServerChannelV1: "channels",
   deleteServerChannelV1: "channels",
   joinServerV1: "memberships",
+  createServerInviteV1: "invites",
+  revokeServerInviteV1: "invites",
   respondToServerInviteV1: "memberships",
   leaveServerV1: "memberships",
   setServerMemberRoleV1: "memberships",
@@ -62,13 +69,19 @@ const SERVER_CALLABLE_METHODS = Object.freeze({
   startServerChannelSessionV1: "sessions",
   createServerChannelTokenV1: "sessions",
   endServerChannelSessionV1: "sessions",
+  setServerSessionParticipantRoleV1: "participation",
+  setServerSessionHandV1: "participation",
+  setServerSessionMuteV1: "participation",
 });
 
 // Only the two callables that reach the media provider bind the LiveKit
 // secrets: token issuance signs a JWT, and a session end eagerly runs one
 // revocation page (sessions.js). `startServerChannelSessionV1` validates the
-// public LIVEKIT_URL only. Binding a secret to a function that never reads it
-// is what functions/media/gif/catalog.js deliberately avoids.
+// public LIVEKIT_URL only, and the three participation callables
+// (session_participation.js) never touch the provider themselves: a role or
+// mute change revokes through the outbox worker, which binds the secrets
+// below. Binding a secret to a function that never reads it is what
+// functions/media/gif/catalog.js deliberately avoids.
 const SECRET_BOUND_CALLABLES = Object.freeze([
   "createServerChannelTokenV1",
   "endServerChannelSessionV1",
@@ -79,16 +92,25 @@ const DISPATCHER_EXPORTS = Object.freeze([
   "processPendingServerControlOutboxSchedule",
 ]);
 
+// The stale-generation bound (session_staleness.js, ADR-180): not a
+// dispatcher, because it does not read the outbox — it WRITES to it, through
+// the same reviewed end writer every authorized lifecycle operation uses,
+// and the dispatcher above then drains what it staged.
+const SWEEP_EXPORTS = Object.freeze([
+  "sweepStaleServerChannelSessionsSchedule",
+]);
+
 const SERVERS_V1_EXPORT_NAMES = Object.freeze([
   ...Object.keys(SERVER_CALLABLE_METHODS),
   ...DISPATCHER_EXPORTS,
+  ...SWEEP_EXPORTS,
 ]);
 
 // Outbox job kinds and the reviewed worker that owns each of them. The three
 // workers validate their own job shape under their own transaction; this
 // table only decides which of them is asked.
 const CONVERGENCE_KINDS = Object.freeze([
-  "memberJoined", "memberLeft", "memberRoleChanged", "channelAccess",
+  "memberJoined", "memberLeft", "memberRoleChanged", "sessionParticipantChanged", "channelAccess",
   "channelArchive", "channelDelete", "ownershipTransferred",
 ]);
 const OUTBOX_KINDS = Object.freeze([...CONVERGENCE_KINDS, "sessionEnd", "serverMetadata"]);
@@ -169,11 +191,14 @@ function createServersV1Runtime({
     clock,
     creation: createServerCreationService(dependencies),
     channels: createServerChannelService(dependencies),
+    invites: createServerInviteService(dependencies),
     memberships: createServerMembershipService(dependencies),
     sessions: createServerSessionService(dependencies),
+    participation: createServerSessionParticipationService(dependencies),
     projection: createServerConvergenceService(dependencies),
     convergence: createServerConvergenceRuntimeService(dependencies),
     sessionControl: createServerSessionControlService(dependencies),
+    staleness: createServerSessionStalenessService(dependencies),
   });
 }
 
@@ -476,9 +501,10 @@ function createServersV1Dispatcher({
 }
 
 /**
- * Builds the complete Servers V1 export map: the sixteen callables plus the
- * outbox trigger and its bounded retry schedule. functions/index.js merges the
- * result into `exports` only behind `YOVOICE_SERVERS_V1=enabled`.
+ * Builds the complete Servers V1 export map: the twenty-one callables plus the
+ * outbox trigger, its bounded retry schedule and the stale-generation sweep.
+ * functions/index.js merges the result into `exports` only behind
+ * `YOVOICE_SERVERS_V1=enabled`.
  */
 function createServersV1Functions({
   runtime = null,
@@ -493,6 +519,9 @@ function createServersV1Functions({
     }
   }
   const resolved = runtime ?? createServersV1Runtime();
+  if (typeof resolved?.staleness?.stageStaleServerChannelSessions !== "function") {
+    throw new TypeError("Missing Servers V1 worker staleness.stageStaleServerChannelSessions.");
+  }
   const callableOptions = {
     region: REGION,
     memory: "256MiB",
@@ -544,6 +573,20 @@ function createServersV1Functions({
     { ...workerOptions, schedule: "every 5 minutes", timeZone: "Etc/UTC", maxInstances: 1 },
     dispatcher.processPendingServerControlOutbox,
   );
+  // Same cadence as the legacy sweepStrandedLiveRoomsSchedule: a stale
+  // generation stays visibly LIVE for at most one grace period plus one
+  // cadence. maxInstances: 1 keeps two runs from racing onto one generation
+  // (the staging transaction makes that correct anyway, but not free).
+  exportsMap.sweepStaleServerChannelSessionsSchedule = registrars.onSchedule(
+    { ...workerOptions, schedule: "every 5 minutes", timeZone: "Etc/UTC", maxInstances: 1 },
+    async () => {
+      const outcome = await resolved.staleness.stageStaleServerChannelSessions();
+      const line = { ...outcome, staged: outcome.staged.length };
+      if (outcome.truncated || outcome.providerUnavailable > 0) log.warn("servers.stale_session_sweep", line);
+      else log.info("servers.stale_session_sweep", line);
+      return line;
+    },
+  );
   return Object.freeze(exportsMap);
 }
 
@@ -557,6 +600,7 @@ module.exports = {
   SECRET_BOUND_CALLABLES,
   SERVER_CALLABLE_METHODS,
   SERVERS_V1_EXPORT_NAMES,
+  SWEEP_EXPORTS,
   authBoundRequest,
   createServersV1Dispatcher,
   createServersV1Functions,

@@ -609,9 +609,10 @@ exports.receiveLiveKitAchievementWebhook = receiveLiveKitAchievementWebhook;
 | servers/capacity.js (from clubs/quota.js). They register nothing, write
 | nothing and load no SDK; that exact set is asserted by
 | test/cold_start_module_graph.test.js, so an eager require of the runtime
-| fails there rather than shipping. `enabled` registers the sixteen V1
+| fails there rather than shipping. `enabled` registers the twenty-one V1
 | callables of docs/Servers.md "Callable contract" plus the serverControlOutbox
-| trigger and its bounded retry schedule (servers/registration.js). `disabled`
+| trigger, its bounded retry schedule and the stale-generation sweep
+| (servers/registration.js). `disabled`
 | and absent are equivalent; any other value — including a case or whitespace
 | variant such as `enabled ` — fails deploy discovery and the cold start, so a
 | typo can never silently ship or silently hold the feature. The gate registers
@@ -623,7 +624,7 @@ exports.receiveLiveKitAchievementWebhook = receiveLiveKitAchievementWebhook;
 
 function strictEnabledEnvironment(name) {
   // Deliberately no trim and no case folding, unlike strictBooleanEnvironment
-  // above: this switch decides whether eighteen functions exist at all, so the
+  // above: this switch decides whether twenty-four functions exist at all, so the
   // value must be byte-for-byte `enabled`, `disabled`, empty or absent. A
   // whitespace or case variant such as `enabled ` is a typo in functions/.env,
   // never an authorization to ship the surface, and it fails deploy discovery

@@ -243,8 +243,11 @@ fields and contains no private-channel previews.
 In the current held implementation, private V1 root GET requires current
 membership; there is no legacy invitation exception. A pending, declined,
 accepted, expired or malformed invitation must not open the current root.
-Any pre-join preview needs its own reviewed V1 projection/bridge with exact
-generation, expiry and current inviter authority; it is not implemented here.
+The only pre-join preview is the invitation document itself (ADR-178): it is
+server-written with exact generation, expiry and inviter authority revision,
+it carries the server name and the inviter's canonical display name and
+nothing else, and it is readable only by its invitee and the server's
+managers. It opens no root, channel, roster or message.
 
 For channels, store server-owned effective
 `channels/{cid}/accessGrants/{uid}` with capabilities, `aclRevision` and
@@ -303,6 +306,72 @@ number from token issuance. Archiving or deleting a channel, and the
 ownership-transfer convergence path, retire the projection in the same
 transaction that clears `activeSessionId`.
 
+`isLive` means "a generation is open", not "people are here", and a
+generation whose starter vanished without calling
+`endServerChannelSessionV1` is bounded by `sweepStaleServerChannelSessionsSchedule`
+(`functions/servers/session_staleness.js`, ADR-180), every five minutes like
+the legacy `sweepStrandedLiveRoomsSchedule` that deliberately skips versioned
+anchors. It stages such a generation for end through the **same** writer and
+worker every authorized end uses — `stageConvergenceSessionEnd` plus the
+`sessionEnd` outbox job the existing dispatcher drains — so there is no
+second state machine. It decides only *when*, from two facts that must both
+hold: every token the generation ever issued expired at least one grace
+period (one token TTL, 300 s) ago, measured by `maxTokenExpiresAtMillis` or
+by `startedAt` when no token was ever issued; and the provider reports the
+generation's `srv_` room absent or holding zero participants. Token expiry
+alone is deliberately not enough — a LiveKit JWT is checked at connect time
+and an established connection outlives it — but it does prove nobody new can
+arrive, which is what makes the occupancy reading safe to act on. The
+staging transaction re-proves the whole reciprocal graph and re-reads
+`maxTokenExpiresAtMillis`; a token minted after the occupancy reading moves
+the bound and the commit is refused as `changed`. A provider error is an
+unknown, and an unknown never ends a generation. The scan is the legacy
+sweep's bare `rooms.isLive == true` query on the automatic single-field
+index, so no new composite index is introduced.
+
+**Session participation (ADR-181).** `rooms/{roomId}/participants/{uid}`
+is the participant's authorization state for one generation — binding,
+`role` (`host | guest | listener`), `authorizationRevision`, `hostMuted`,
+`serverMuted`, `isMuted`, `isHandRaised`, `handRaisedAt`, `displayName`,
+`tokenAuthorityFingerprint`, `joinedAt` — written by token issuance and by
+the three participation callables only. `host` is bound to
+`channelSessions.startedById` and is never assignable; a host or a
+moderate-capable member (owner, coOwner, admin, moderator — the server role
+model on the channel ACL, never a platform staff claim) moves a participant
+between `listener` and `guest` and applies `hostMuted` (host standing) or
+`serverMuted` (moderator standing); each clears only its own flag, so a host
+cannot lift a moderator's mute. The server hierarchy outranks the session
+hierarchy: a host governs peers and everyone below their own server role, a
+moderator governs members they strictly outrank and may act on themselves.
+Every role or mute change bumps the participant's `authorizationRevision`,
+which the token authority fingerprint includes, so an already-issued
+receipt stops replaying at once and a `sessionParticipantChanged` outbox job
+(one `recipient` target for exactly that identity and generation) revokes
+the bearer through the existing convergence worker with a positive provider
+cutoff. That holds for a promotion as well as a demotion or a mute, because
+the recipient ledger binds one fingerprint per identity per generation; the
+person re-mints a token under the new grant and reconnects. A promotion
+grants permission only: the new token permits publishing, nothing unmutes a
+microphone, and `isMuted` stays the person's own capture consent. A hand is
+a request, not authority: it is the participant's own write, the fingerprint
+does not include it, no revision moves and no token is revoked; a promotion
+lowers it. The session's own `authorizationRevision` never moves for a
+participant change.
+
+Two client reads exist, both under the channel's own ACL (`firestore.rules`
+`canReadOwnServerSessionParticipant`, `canListServerSessionHands`): a
+participant point-reads their **own** document of the **live** generation
+(the anchor's `isLive`/`voiceSessionId` and the channel's `activeSessionId`
+must agree), and the session host or a moderate-capable member lists the
+**raised hands** of the live generation with the query pinning all four
+equalities — `serverId`, `channelId`, `sessionId`, `isHandRaised == true`.
+Nothing else: the roster is not listable (there is no honest presence
+writer, and a listing of token holders would be rendered as one), another
+person's document is never readable, `channelSessions` and the anchor stay
+closed, and no client writes any of it. The four equalities are served by
+single-field indexes; a client that adds an `orderBy` needs a composite
+index that is not committed (the G8 trap).
+
 For V1 sessions, derive the RTC name from all three identities, for example
 `srv_` plus the first 40 hex characters of SHA-256 over an unambiguous encoding
 of server ID, channel ID and session ID. A JWT for one generation cannot join
@@ -351,6 +420,8 @@ Never fall back to direct writes after a callable denies an action.
 | `archiveServerChannelV1` | `{serverId, channelId, requestId}`; ends affected media and retains authorized history |
 | `deleteServerChannelV1` | `{serverId, channelId, requestId}`; explicit destructive action, durable scoped cleanup |
 | `joinServerV1` | `{serverId, requestId}`; only canonical public admission or applicable invitation, never arbitrary role assignment |
+| `createServerInviteV1` | `{serverId, inviteeId, requestId}`; inviter-capable roles only, active server only, friends only, blocks and sanctions fail closed; writes the pending generation, its expiry and the invitee's private pointer; returns `{serverId, inviteeId, generation, status, expiresAtMillis, alreadyExisted}` |
+| `revokeServerInviteV1` | `{serverId, inviteeId, requestId}`; inviter-capable roles only; pending → revoked as a status transition bound to the current generation, removes the pointer; returns `{…, status, revoked}` |
 | `respondToServerInviteV1` | `{serverId, requestId, response: accept | decline}`; binds the invite to the caller, current status and generation |
 | `leaveServerV1` | `{serverId, requestId}`; member/mirror/count transition and all-channel access/media cleanup |
 | `setServerMemberRoleV1` | `{serverId, memberId, requestId, role}`; existing role hierarchy, revision and media consequences |
@@ -358,6 +429,9 @@ Never fall back to direct writes after a callable denies an action.
 | `startServerChannelSessionV1` | `{serverId, channelId, requestId}`; returns canonical `{roomId, sessionId}` after authorized start or compatible concurrent join |
 | `createServerChannelTokenV1` | `{serverId, channelId, sessionId, requestId}`; returns existing connection fields plus canonical binding and explicit permitted track sources |
 | `endServerChannelSessionV1` | `{serverId, channelId, sessionId, requestId}`; generation-bound end and durable RTC teardown |
+| `setServerSessionParticipantRoleV1` | `{serverId, channelId, sessionId, participantId, role: guest | listener, requestId}`; session host or moderate-capable role, server hierarchy outranks the session host, `host` is never assignable; bumps the participant's `authorizationRevision` and stages the bearer's revocation; a promotion grants permission only and lowers the raised hand; returns `{…, role, hostMuted, serverMuted, participantRevision, changed, cleanupPending}` |
+| `setServerSessionHandV1` | `{serverId, channelId, sessionId, raised, requestId}`; the participant's own write only, refused for the host and for anyone without a participant document; no revision moves and no token is revoked; returns `{…, raised, changed}` |
+| `setServerSessionMuteV1` | `{serverId, channelId, sessionId, participantId, muted, requestId}`; the host's standing writes `hostMuted`, a moderator's writes `serverMuted`, each clears only its own, self is refused; every change bumps `authorizationRevision` and stages the bearer's revocation; returns `{…, hostMuted, serverMuted, participantRevision, changed, cleanupPending}` |
 
 Creation derives stable server/channel identities from the operation and
 server-owned template. Retries recover the same graph even after a lost
@@ -415,6 +489,55 @@ Friends, family and company default to invite-only. Community and podcast
 require an explicit privacy choice; public access is not silently preselected.
 Invites have canonical target identity/generation, revocation and expiration
 semantics. Leaving a conversation and leaving its server are separate actions.
+
+### Invitations
+
+`createServerInviteV1` and `revokeServerInviteV1` (`functions/servers/invites.js`,
+ADR-178) are the only writers of `clubs/{serverId}/invites/{inviteeId}` on a
+versioned root; Firestore Rules keep every client create and update at
+`false`, the legacy delete stays legacy-only, and `sendClubInvite` refuses a
+versioned root. The document is exactly what `respondToServerInviteV1`
+already consumed before a writer existed:
+
+| Field | Authority |
+| --- | --- |
+| `serverSchemaVersion: 1`, `serverId`, `inviteeId` | Identity; the consumer denies any mismatch with the path |
+| `inviterId`, `inviterAuthorizationRevision` | The inviter and the exact membership revision they held; a later demotion, removal or ban makes the invitation dead on arrival |
+| `status` | `pending → accepted | declined | revoked`; only `pending` admits |
+| `generation` | Monotonic per (server, invitee); every re-issue advances it, so a receipt, a decline or a revocation bound to an older generation acts on nothing |
+| `expiresAt` | Seven days from issue (`SERVER_INVITE_TTL_MS`); an expired invitation admits nobody and is re-issued as a new generation |
+| `serverName`, `inviterName` | The reviewed pre-join preview: server-owned snapshots, no channel, roster, count or artwork |
+| `createdAt`, `updatedAt`, `respondedAt`, `revokedAt`, `revokedById` | Server timestamps; a re-issue replaces the whole document so an older generation's answer does not linger |
+
+Who may invite: the inviter roles the consumer re-proves at acceptance —
+`owner`, `coOwner`, `admin`, `moderator` — and nobody else, on an **active**
+server only. A held server refuses invitations entirely, including from its
+owner: `admission` denies a preparing root, so an invitation issued while held
+would be undeliverable, and it would disclose the server's name to a third
+party before activation, which the held boundary exists to prevent. The
+invitee must be an active account that is a canonical friend of the inviter
+(both `friendshipGuards`, never the client-writable mirror), not blocked in
+either direction, not communication-muted and not already a member. Every
+invitee-state refusal is one `permission-denied`, so the callable is not an
+oracle for another account's ban, sanction, block or friendship state. Each
+attempt also charges the actor-wide `server.v1.invite` budget (30 per minute,
+the legacy invite rate) before any target read.
+
+Discovery reuses the `serverChannelRefs` precedent rather than opening a
+query: `users/{inviteeId}/serverInviteRefs/{serverId}` holds
+`{serverId, generation, expiresAt}` only — no name, no inviter — is
+owner-readable, never client-writable, and is removed by revocation,
+acceptance and decline. It is discovery, never authority: the client
+point-reads the invitation, whose rule rechecks the invitee, and a stale or
+forged pointer opens nothing. The pre-existing self-scoped
+`collectionGroup('invites')` rule is untouched and still returns only the
+caller's own invitations.
+
+Revocation is a status transition, not a delete, so the revoked generation
+stays on record and a "revoked or expired invite must not gain new life"
+check has something to compare against; the next invitation to the same
+person is generation + 1. Revocation also works under a communication
+restriction and on a held server, because it only ever narrows.
 
 ## Five complete template experiences
 
@@ -865,6 +988,27 @@ preconditions rather than defects to hotfix.
    per room. On its own that is a bounded annoyance. Combined with precondition
    1 it turns a single stalled event into an unbounded loop of O(all rooms)
    provider calls with no dead-letter.
+   **Closed in source on 2026-09-12 (ADR-179), not yet deployed:** the eighth
+   `unbound-live-generation` attempt (`MAX_UNBOUND_GENERATION_ATTEMPTS`)
+   writes the terminal `status: "needsReconciliation"` with
+   `lastErrorCode: "unbound-live-generation"`, logs an ERROR naming the event
+   id, and returns instead of rethrowing; every other failure class keeps
+   retrying. The deployed Functions still carry the unbounded version until
+   the next Functions deploy, so the precondition stays listed until that
+   deploy is verified.
+4. **The provider's empty-room semantics must be verified against LiveKit
+   Cloud, not the emulator, before the stale-generation sweep is trusted.**
+   `sweepStaleServerChannelSessionsSchedule` (ADR-180) reads "nobody is here"
+   from `ListParticipants` returning zero participants or NOT_FOUND (LiveKit
+   deletes an empty room after its `emptyTimeout`). Every local suite proves
+   the sweep against a stub adapter. Before activation, observe against the
+   real project that an ended-and-empty `srv_` room answers NOT_FOUND or an
+   empty list, and that a room holding a participant whose JWT has expired
+   still lists that participant — the sweep must skip that room, and the
+   staleness tests encode exactly that expectation. Record what was observed.
+   Until then a misreport can only err on the side of leaving a stale badge
+   in place: a provider error or any non-integer answer is treated as
+   occupied, so the failure mode is honesty debt, never an evicted room.
 
 The final handoff must state what actually works for each template, where to
 open the app and visual comparisons, test categories/results, migration

@@ -9,7 +9,11 @@ const { validateEndJob } = require("./convergence_lifecycle");
 
 const LEASE_MS = 120_000;
 const RETRY_HINT_MS = 30_000;
-const MEMBER_KINDS = new Set(["memberJoined", "memberLeft", "memberRoleChanged"]);
+// One identity per job. `sessionParticipantChanged` (session_participation.js)
+// is the session-scoped member of this set: its single recipient target names
+// the generation whose participant document changed, and the same
+// per-identity reconcile re-derives the grant and revokes the old bearer.
+const MEMBER_KINDS = new Set(["memberJoined", "memberLeft", "memberRoleChanged", "sessionParticipantChanged"]);
 const END_KINDS = new Set(["channelArchive", "channelDelete", "ownershipTransferred"]);
 const PROJECTION_KINDS = new Set(["channelAccess", "ownershipTransferred"]);
 const grantComplete = (job) => ["completed", "superseded"].includes(job.grantStatus);
