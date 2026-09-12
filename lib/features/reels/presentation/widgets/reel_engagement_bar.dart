@@ -5,6 +5,7 @@ import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_motion.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
+import 'package:yovoice/shared/widgets/overlays/immersive_overlay_atoms.dart';
 
 /// Where an engagement bar is drawn, which decides its foreground and density.
 ///
@@ -15,32 +16,22 @@ import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
 /// has room to say the words.
 enum ReelEngagementBarVariant { rail, panel }
 
-/// The overlay plate every control on a Reel frame sits on. Black literals,
-/// not palette tokens: the plate must read the same over any footage in both
-/// appearances, and a white glyph on it clears 3:1 even on a pure-white frame.
-const Color reelOverlayPlateColor = Color(0xB8000000);
-const Color reelOverlayPlateHoverColor = Color(0xD6000000);
+/// These atoms moved to `shared/widgets/overlays/immersive_overlay_atoms.dart`
+/// because the immersive Voice/Reels chrome paints the same plates. The names
+/// below are kept verbatim so no Reels call site — or test that finds one by
+/// type — had to change.
+const Color reelOverlayPlateColor = overlayPlateColor;
+const Color reelOverlayPlateHoverColor = overlayPlateHoverColor;
+const List<Shadow> reelOverlayTextShadows = overlayTextShadows;
 
-/// Shadows behind every piece of white text laid directly on artwork.
-const List<Shadow> reelOverlayTextShadows = <Shadow>[
-  Shadow(color: Color(0x8C000000), blurRadius: 8),
-  Shadow(color: Color(0x59000000), blurRadius: 2),
-];
+typedef ReelOverlayPlateButton = OverlayPlateButton;
 
-/// 2400 → "2.4K".
+/// 2400 -> "2.4K". The exact number always stays in the semantic label.
 ///
-/// Deliberately local to Reels: Home owns an identical helper inside its own
-/// presentation layer, and importing one feature's widget file into another to
-/// share eight lines would couple the two features far more than it saves.
-/// The exact number always remains available in the semantic label.
-String reelCompactCount(int count) {
-  if (count < 1000) return '$count';
-  final thousands = count / 1000;
-  final text = thousands >= 10
-      ? thousands.round().toString()
-      : thousands.toStringAsFixed(1);
-  return '${text.endsWith('.0') ? text.substring(0, text.length - 2) : text}K';
-}
+/// This helper used to argue it was deliberately local to Reels. That
+/// reasoning expired the moment a second feed shared the rail, so it now
+/// delegates instead of keeping a second copy.
+String reelCompactCount(int count) => compactCount(count);
 
 /// The like and comment controls for one Reel.
 ///
@@ -225,58 +216,6 @@ class ReelEngagementBar extends StatelessWidget {
 /// that keeps two of them apart.
 const double _labelledRailItemWidth = 48 + 6 + 32 + 8;
 
-/// One 48 px overlay plate with a white glyph: the atom every control on a
-/// Reel frame is made of, so report/delete look exactly like like/comment.
-class ReelOverlayPlateButton extends StatefulWidget {
-  const ReelOverlayPlateButton({
-    required this.icon,
-    required this.semanticLabel,
-    required this.onTap,
-    this.tooltip,
-    this.glyphColor = Colors.white,
-    super.key,
-  });
-
-  final IconData icon;
-  final String semanticLabel;
-  final VoidCallback? onTap;
-  final String? tooltip;
-  final Color glyphColor;
-
-  @override
-  State<ReelOverlayPlateButton> createState() => _ReelOverlayPlateButtonState();
-}
-
-class _ReelOverlayPlateButtonState extends State<ReelOverlayPlateButton> {
-  bool _hovered = false;
-  bool _pressed = false;
-
-  @override
-  Widget build(BuildContext context) {
-    return _PressScale(
-      pressed: _pressed,
-      enabled: widget.onTap != null,
-      onPressedChanged: (value) => setState(() => _pressed = value),
-      child: AccessibleTapRegion(
-        onTap: widget.onTap,
-        semanticLabel: widget.semanticLabel,
-        tooltip: widget.tooltip ?? widget.semanticLabel,
-        borderRadius: 24,
-        minimumSize: const Size(48, 48),
-        focusContrastColor: Colors.black,
-        onHover: (value) => setState(() => _hovered = value),
-        child: _Plate(
-          icon: widget.icon,
-          color: widget.onTap == null
-              ? widget.glyphColor.withValues(alpha: .6)
-              : widget.glyphColor,
-          hovered: _hovered && widget.onTap != null,
-        ),
-      ),
-    );
-  }
-}
-
 class _RailAction extends StatefulWidget {
   const _RailAction({
     required this.actionKey,
@@ -386,14 +325,14 @@ class _RailActionState extends State<_RailAction>
     );
     final plate = ScaleTransition(
       scale: _scale,
-      child: _Plate(
+      child: OverlayPlate(
         icon: widget.icon,
         color: glyph,
         hovered: _hovered && enabled && !widget.busy,
         ring: widget.selected ? widget.selectedRing : null,
       ),
     );
-    return _PressScale(
+    return OverlayPressScale(
       pressed: _pressed,
       enabled: enabled && !widget.busy,
       onPressedChanged: (value) => setState(() => _pressed = value),
@@ -435,74 +374,6 @@ class _RailActionState extends State<_RailAction>
                 mainAxisSize: MainAxisSize.min,
                 children: <Widget>[plate, const SizedBox(height: 4), count],
               ),
-      ),
-    );
-  }
-}
-
-class _Plate extends StatelessWidget {
-  const _Plate({
-    required this.icon,
-    required this.color,
-    required this.hovered,
-    this.ring,
-  });
-
-  final IconData icon;
-  final Color color;
-  final bool hovered;
-
-  /// Drawn on the plate rather than around the whole control: a rail item is
-  /// a circle with a number under it, and a ring that enclosed both would run
-  /// straight through the number.
-  final Color? ring;
-
-  @override
-  Widget build(BuildContext context) {
-    final ringColor = ring;
-    return AnimatedContainer(
-      duration: AppMotion.resolve(context, AppMotion.quick),
-      width: 48,
-      height: 48,
-      decoration: BoxDecoration(
-        color: hovered ? reelOverlayPlateHoverColor : reelOverlayPlateColor,
-        shape: BoxShape.circle,
-        border: ringColor == null || ringColor.a == 0
-            ? null
-            : Border.all(color: ringColor, width: 2),
-      ),
-      alignment: Alignment.center,
-      child: Icon(icon, size: 24, color: color),
-    );
-  }
-}
-
-/// Pressed feedback without a second gesture arena: a raw pointer listener
-/// shrinks the control to .94 and lets the tap region keep the tap.
-class _PressScale extends StatelessWidget {
-  const _PressScale({
-    required this.pressed,
-    required this.enabled,
-    required this.onPressedChanged,
-    required this.child,
-  });
-
-  final bool pressed;
-  final bool enabled;
-  final ValueChanged<bool> onPressedChanged;
-  final Widget child;
-
-  @override
-  Widget build(BuildContext context) {
-    return Listener(
-      onPointerDown: enabled ? (_) => onPressedChanged(true) : null,
-      onPointerUp: (_) => onPressedChanged(false),
-      onPointerCancel: (_) => onPressedChanged(false),
-      child: AnimatedScale(
-        scale: pressed && enabled ? .94 : 1,
-        duration: AppMotion.resolve(context, AppMotion.quick),
-        curve: AppMotion.standardCurve,
-        child: child,
       ),
     );
   }

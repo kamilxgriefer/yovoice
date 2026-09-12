@@ -6,7 +6,11 @@ import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/shared/widgets/inputs/yo_segmented_pill.dart';
 
-/// The one row of chrome above the Reels stage.
+/// The one row of chrome above the Reels stage on a page canvas.
+///
+/// Immersive widths no longer use this widget: overlaid chrome is built by
+/// `ImmersiveFeedChrome`, which carries the format switch and the pool
+/// filters as two visually distinct levels. This branch is unchanged.
 ///
 /// Audience is a segmented pill in the app's own switch grammar; Create Reel
 /// is the tonal, format-specific action (the single filled-primary control on
@@ -24,7 +28,6 @@ class ReelsToolbar extends StatelessWidget {
     required this.gutter,
     required this.showCreate,
     this.onCreate,
-    this.immersive = false,
     super.key,
   });
 
@@ -44,7 +47,6 @@ class ReelsToolbar extends StatelessWidget {
   /// publish already in flight keeps the button and disables it.
   final bool showCreate;
   final VoidCallback? onCreate;
-  final bool immersive;
 
   static const double _rowHeight = 44;
   static const double _pillIconSize = 16;
@@ -79,76 +81,6 @@ class ReelsToolbar extends StatelessWidget {
     final ownLabel = copy.text('Your Reels', 'Twoje Reels');
     final createLabel = copy.text('Create Reel', 'Utwórz Reel');
     final refreshLabel = copy.text('Refresh', 'Odśwież');
-
-    if (immersive) {
-      return Padding(
-        padding: EdgeInsets.fromLTRB(gutter, 0, gutter, 4),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(
-              child: LayoutBuilder(
-                builder: (context, constraints) => Wrap(
-                  children: [
-                    for (final own in [false, true])
-                      Semantics(
-                        selected: ownOnly == own,
-                        child: TextButton(
-                          key: ValueKey(
-                            own ? 'reels-own-filter' : 'reels-discover-filter',
-                          ),
-                          onPressed: () => onAudienceSelected(own),
-                          style: TextButton.styleFrom(
-                            foregroundColor: Colors.white,
-                            minimumSize: const Size(44, 44),
-                            padding: const EdgeInsets.symmetric(horizontal: 12),
-                            textStyle: theme.textTheme.labelLarge?.copyWith(
-                              fontSize: 13,
-                              fontWeight: ownOnly == own
-                                  ? FontWeight.w800
-                                  : FontWeight.w500,
-                            ),
-                          ),
-                          child: Text(
-                            own ? ownLabel : discoverLabel,
-                            style: TextStyle(
-                              decoration: ownOnly == own
-                                  ? TextDecoration.underline
-                                  : null,
-                              decorationColor: Colors.white,
-                            ),
-                          ),
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-            ),
-            if (showCreate)
-              IconButton(
-                key: const ValueKey('reels-create-persistent'),
-                tooltip: createLabel,
-                color: Colors.white,
-                constraints: const BoxConstraints.tightFor(
-                  width: 44,
-                  height: 44,
-                ),
-                onPressed: onCreate,
-                icon: const Icon(Icons.add_rounded),
-              ),
-            IconButton(
-              key: const ValueKey('reels-refresh'),
-              tooltip: refreshLabel,
-              color: Colors.white,
-              disabledColor: Colors.white60,
-              constraints: const BoxConstraints.tightFor(width: 44, height: 44),
-              onPressed: onRefresh,
-              icon: const Icon(Icons.refresh_rounded, size: 22),
-            ),
-          ],
-        ),
-      );
-    }
 
     // Measured with the very style each control renders in — family, fallback
     // and letter spacing included. A fit decision taken against a different

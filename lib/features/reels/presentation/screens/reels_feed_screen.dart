@@ -19,6 +19,8 @@ import 'package:yovoice/features/reels/presentation/widgets/reel_overlay_measure
 import 'package:yovoice/features/reels/presentation/widgets/reels_toolbar.dart';
 import 'package:yovoice/shared/widgets/backgrounds/yo_page_background.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
+import 'package:yovoice/shared/widgets/overlays/immersive_feed_chrome.dart';
+import 'package:yovoice/shared/widgets/overlays/immersive_overlay_atoms.dart';
 import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
 import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
 import 'package:yovoice/shared/widgets/states/yo_empty_state.dart';
@@ -73,7 +75,10 @@ class ReelsFeedScreen extends StatefulWidget {
   /// Fill a narrow host's available viewport, while its bottom navigation
   /// remains owned by the shell. Wide hosts retain the portrait review frame.
   final bool immersive;
-  final Widget? immersiveHeader;
+  /// Row-1 pieces the HOST owns (the format switch, Back, Create). Named
+  /// slots rather than one opaque widget, so the chrome can place them on
+  /// its own measured row.
+  final ImmersiveFeedHeaderSlots? immersiveHeader;
 
   @override
   State<ReelsFeedScreen> createState() => _ReelsFeedScreenState();
@@ -865,6 +870,11 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
   @override
   Widget build(BuildContext context) {
     final copy = AppLocalizations.of(context);
+    final discoverLabel = copy.text('Discover', 'Odkrywaj');
+    final ownLabel = copy.text('Your Reels', 'Twoje Reels');
+    final createLabel = copy.text('Create Reel', 'Utwórz Reel');
+    final refreshLabel = copy.text('Refresh', 'Odśwież');
+    final filtersLabel = copy.text('Filters', 'Filtry');
     final palette = context.appPalette;
     final body = Material(
       key: const ValueKey<String>('reels-stage'),
@@ -932,37 +942,71 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
                         setState(() => _chromeHeight = size.height);
                       }
                     },
-                    child: DecoratedBox(
-                      decoration: BoxDecoration(
-                        gradient: immersive
-                            ? const LinearGradient(
-                                begin: Alignment.topCenter,
-                                end: Alignment.bottomCenter,
-                                colors: [Color(0xF0000000), Color(0xB8000000)],
-                              )
-                            : null,
-                      ),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          if (immersive && widget.immersiveHeader != null)
-                            widget.immersiveHeader!,
-                          ReelsToolbar(
+                    child: immersive
+                        ? ImmersiveFeedChrome(
                             gutter: metrics.toolbarGutter,
-                            immersive: immersive,
-                            ownOnly: _ownOnly,
-                            onAudienceSelected: _selectAudience,
-                            onRefresh: _loading
-                                ? null
-                                : () => _load(reset: true),
-                            showCreate:
-                                widget.onCreate != null &&
-                                (!immersive || widget.immersiveHeader == null),
-                            onCreate: _creating ? null : _create,
+                            formatSwitch: widget.immersiveHeader?.formatSwitch,
+                            leading: widget.immersiveHeader?.leading,
+                            // The host header owns CREATE when there is one;
+                            // a standalone immersive feed keeps its own, so
+                            // creation is never silently unreachable.
+                            trailing:
+                                widget.immersiveHeader?.trailing ??
+                                (widget.onCreate == null
+                                    ? null
+                                    : OverlayPlateButton(
+                                        key: const ValueKey(
+                                          'reels-create-persistent',
+                                        ),
+                                        icon: Icons.add_rounded,
+                                        semanticLabel: createLabel,
+                                        onTap: _creating ? null : _create,
+                                      )),
+                            filters: <ImmersiveChromeOption>[
+                              ImmersiveChromeOption(
+                                key: const ValueKey<String>(
+                                  'reels-discover-filter',
+                                ),
+                                label: discoverLabel,
+                              ),
+                              ImmersiveChromeOption(
+                                key: const ValueKey<String>(
+                                  'reels-own-filter',
+                                ),
+                                label: ownLabel,
+                              ),
+                            ],
+                            selectedFilterIndex: _ownOnly ? 1 : 0,
+                            onFilterSelected: (index) =>
+                                _selectAudience(index == 1),
+                            filterGroupLabel: filtersLabel,
+                            filterTrailing: OverlayPlateButton(
+                              key: const ValueKey('reels-refresh'),
+                              icon: Icons.refresh_rounded,
+                              semanticLabel: refreshLabel,
+                              onTap: _loading
+                                  ? null
+                                  : () => _load(reset: true),
+                            ),
+                          )
+                        : DecoratedBox(
+                            decoration: const BoxDecoration(),
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                ReelsToolbar(
+                                  gutter: metrics.toolbarGutter,
+                                  ownOnly: _ownOnly,
+                                  onAudienceSelected: _selectAudience,
+                                  onRefresh: _loading
+                                      ? null
+                                      : () => _load(reset: true),
+                                  showCreate: widget.onCreate != null,
+                                  onCreate: _creating ? null : _create,
+                                ),
+                              ],
+                            ),
                           ),
-                        ],
-                      ),
-                    ),
                   ),
                 ),
               ],

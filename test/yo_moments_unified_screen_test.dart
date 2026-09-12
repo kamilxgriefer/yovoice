@@ -5,6 +5,7 @@ import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter/rendering.dart' show RenderParagraph;
+import 'package:flutter/services.dart' show FontLoader, rootBundle;
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
@@ -18,6 +19,18 @@ import 'package:yovoice/features/reels/presentation/screens/reels_destination_sc
 import 'package:yovoice/features/reels/presentation/widgets/reel_card.dart';
 
 void main() {
+  // The default test font draws every glyph one em wide, which makes "Voice"
+  // and "Reels" about twice as wide as Inter draws them. Every width claim
+  // below is only meaningful in the font the app actually ships, and the
+  // 320 px / 200 % header case in particular was passing for the wrong reason
+  // with square glyphs: the switch overflowed into a scroll view and only its
+  // FIRST segment was ever on screen.
+  setUpAll(() async {
+    final loader = FontLoader('Inter')
+      ..addFont(rootBundle.load('assets/fonts/InterVariable.ttf'));
+    await loader.load();
+  });
+
   testWidgets('YO Moments unifies Voice and Reels and routes create choice', (
     tester,
   ) async {
@@ -317,6 +330,19 @@ void _expectTextFullyLaidOut(WidgetTester tester, Finder finder) {
     paragraph.didExceedMaxLines,
     isFalse,
     reason: 'the actual rendered paragraph must not clip or ellipsize',
+  );
+  // "Laid out" is not "visible": a paragraph can be complete and sit
+  // entirely outside the viewport, which is exactly how the selected format
+  // segment went missing at 320 px and 200 % while this helper still passed.
+  final view = tester.view;
+  final width = view.physicalSize.width / view.devicePixelRatio;
+  final rect = tester.getRect(finder);
+  expect(
+    rect.left >= -0.5 && rect.right <= width + 0.5,
+    isTrue,
+    reason:
+        'the paragraph must lie inside the ${width.toInt()} px viewport, '
+        'got ${rect.left}..${rect.right}',
   );
 }
 

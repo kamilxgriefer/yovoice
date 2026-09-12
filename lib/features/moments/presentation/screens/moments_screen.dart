@@ -22,7 +22,8 @@ import 'package:yovoice/features/reels/data/services/reel_service.dart';
 import 'package:yovoice/features/reels/presentation/screens/reel_composer_screen.dart';
 import 'package:yovoice/features/reels/presentation/screens/reels_feed_screen.dart';
 import 'package:yovoice/features/reels/presentation/widgets/reel_card.dart';
-import 'package:yovoice/features/reels/presentation/widgets/reel_engagement_bar.dart';
+import 'package:yovoice/shared/widgets/overlays/immersive_feed_chrome.dart';
+import 'package:yovoice/shared/widgets/overlays/immersive_overlay_atoms.dart';
 import 'package:yovoice/shared/widgets/inputs/yo_segmented_pill.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/navigation/yo_moments_icon.dart';
@@ -363,8 +364,10 @@ class _MomentsScreenState extends State<MomentsScreen> with RouteAware {
                             ),
                             embedded: true,
                             immersive: immersiveReels,
-                            immersiveHeader: _ImmersiveMomentsHeader(
+                            immersiveHeader: buildImmersiveMomentsHeader(
+                              context,
                               showBack: showBack,
+                              selectedFormat: _format,
                               onFormatSelected: _selectFormat,
                               onCreate: () => unawaited(_showCreateChooser()),
                             ),
@@ -391,88 +394,47 @@ class _MomentsScreenState extends State<MomentsScreen> with RouteAware {
 }
 
 /// Compact format navigation over footage, without consuming the video stage.
-/// The selected feed stays in its original IndexedStack slot when this appears.
-class _ImmersiveMomentsHeader extends StatelessWidget {
-  const _ImmersiveMomentsHeader({
-    required this.showBack,
-    required this.onFormatSelected,
-    required this.onCreate,
-  });
-
-  final bool showBack;
-  final ValueChanged<YoMomentsFormat> onFormatSelected;
-  final VoidCallback onCreate;
-
-  @override
-  Widget build(BuildContext context) {
-    final copy = AppLocalizations.of(context);
-    return Padding(
-      padding: const EdgeInsetsDirectional.fromSTEB(12, 4, 12, 0),
-      child: Row(
-        children: [
-          if (showBack)
-            ReelOverlayPlateButton(
-              icon: Icons.arrow_back_rounded,
-              semanticLabel: MaterialLocalizations.of(
-                context,
-              ).backButtonTooltip,
-              onTap: () => Navigator.of(context).maybePop(),
-            ),
-          Expanded(
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Row(
-                key: const ValueKey('yo-moments-format-tabs'),
-                children: [
-                  for (final format in YoMomentsFormat.values)
-                    Semantics(
-                      selected: format == YoMomentsFormat.reels,
-                      child: TextButton(
-                        onPressed: () => onFormatSelected(format),
-                        style: TextButton.styleFrom(
-                          foregroundColor: Colors.white,
-                          minimumSize: const Size(44, 48),
-                          padding: const EdgeInsets.symmetric(horizontal: 12),
-                          textStyle: Theme.of(context).textTheme.titleMedium
-                              ?.copyWith(
-                                fontSize: 17,
-                                fontWeight: format == YoMomentsFormat.reels
-                                    ? FontWeight.w800
-                                    : FontWeight.w500,
-                                shadows: reelOverlayTextShadows,
-                              ),
-                        ),
-                        child: Text(
-                          format == YoMomentsFormat.voice
-                              ? copy.contextualText(
-                                  'yoMoments.voiceFormat',
-                                  'Voice',
-                                  'Głos',
-                                )
-                              : 'Reels',
-                          style: TextStyle(
-                            decoration: format == YoMomentsFormat.reels
-                                ? TextDecoration.underline
-                                : TextDecoration.none,
-                            decorationColor: Colors.white,
-                          ),
-                        ),
-                      ),
-                    ),
-                ],
-              ),
-            ),
-          ),
-          ReelOverlayPlateButton(
-            key: const ValueKey('moments-create-cta'),
-            icon: Icons.add_rounded,
-            semanticLabel: copy.text('CREATE', 'UTWÓRZ'),
-            onTap: onCreate,
-          ),
-        ],
-      ),
-    );
-  }
+///
+/// The selected format used to be named by a text underline, four pixels above
+/// a second row of white words, which read as one indistinct block. It is now
+/// a contained switch — see [ImmersiveSegmentedSwitch] — and the pool filters
+/// below it are deliberately quieter, so the two levels cannot be parsed as
+/// one row of words.
+ImmersiveFeedHeaderSlots buildImmersiveMomentsHeader(
+  BuildContext context, {
+  required bool showBack,
+  required YoMomentsFormat selectedFormat,
+  required ValueChanged<YoMomentsFormat> onFormatSelected,
+  required VoidCallback onCreate,
+}) {
+  final copy = AppLocalizations.of(context);
+  return ImmersiveFeedHeaderSlots(
+    formatSwitch: ImmersiveSegmentedSwitch(
+      key: const ValueKey<String>('yo-moments-format-tabs'),
+      groupLabel: copy.text('Content format', 'Format treści'),
+      selectedIndex: selectedFormat.index,
+      onSelected: (index) => onFormatSelected(YoMomentsFormat.values[index]),
+      segments: <ImmersiveChromeOption>[
+        ImmersiveChromeOption(
+          label: copy.contextualText('yoMoments.voiceFormat', 'Voice', 'Głos'),
+        ),
+        const ImmersiveChromeOption(label: 'Reels'),
+      ],
+    ),
+    leading: showBack
+        ? OverlayPlateButton(
+            icon: Icons.arrow_back_rounded,
+            semanticLabel: MaterialLocalizations.of(context).backButtonTooltip,
+            onTap: () => Navigator.of(context).maybePop(),
+          )
+        : null,
+    trailing: OverlayPlateButton(
+      key: const ValueKey('moments-create-cta'),
+      icon: Icons.add_rounded,
+      semanticLabel: copy.text('CREATE', 'UTWÓRZ'),
+      onTap: onCreate,
+    ),
+  );
 }
 
 /// "Voice Moments — Real voices. Real moments." plus the create CTA.
