@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:yovoice/core/helpers/error_messages.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
+import 'package:yovoice/core/theme/app_motion.dart';
 import 'package:yovoice/core/theme/app_radius.dart';
 import 'package:yovoice/core/theme/app_spacing.dart';
 import 'package:yovoice/core/theme/app_typography.dart';
@@ -39,6 +40,12 @@ class CreateServerScreen extends StatefulWidget {
 class _CreateServerScreenState extends State<CreateServerScreen> {
   late final ServerRepository _repository;
   final _form = GlobalKey<FormState>();
+
+  /// Anchors whichever outcome the last submit produced — the refusal notice
+  /// or the error. Both render at the end of a scrolling form, so without
+  /// this the only visible answer to a tap is the button changing its own
+  /// label: the reason sits below the fold and nothing says to look for it.
+  final _outcome = GlobalKey(debugLabel: 'server-create-outcome');
   final _name = TextEditingController();
   final _description = TextEditingController();
   final _descriptionFocus = FocusNode();
@@ -240,7 +247,29 @@ class _CreateServerScreenState extends State<CreateServerScreen> {
         // fresh id — the old id is discarded, not reused with new contents.
         if (failure.isCorrectable) _submission = null;
       });
+      _revealOutcome();
     }
+  }
+
+  /// Brings the refusal or the error into view after the frame that built it.
+  ///
+  /// The outcome renders at the end of the form, so on a phone a submit that
+  /// fails changes only the action bar — the sentence explaining why is off
+  /// screen, and nothing suggests scrolling for it.
+  void _revealOutcome() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final anchor = _outcome.currentContext;
+      if (anchor == null) return;
+      // No scrollable ancestor on a viewport tall enough to show everything.
+      if (Scrollable.maybeOf(anchor) == null) return;
+      Scrollable.ensureVisible(
+        anchor,
+        alignment: 0.5,
+        duration: AppMotion.resolve(context, AppMotion.quick),
+        curve: Curves.easeOutCubic,
+      );
+    });
   }
 
   @override
@@ -325,13 +354,12 @@ class _CreateServerScreenState extends State<CreateServerScreen> {
     final submitButton = FilledButton(
       key: const ValueKey('server-create-submit'),
       onPressed: canSubmit ? _submit : null,
-      style:
-          FilledButton.styleFrom(
-            backgroundColor: identity.cta,
-            foregroundColor: identity.onCta,
-            minimumSize: const Size.fromHeight(52),
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-          ).copyWith(side: serverFocusRing(identity.onCta)),
+      style: FilledButton.styleFrom(
+        backgroundColor: identity.cta,
+        foregroundColor: identity.onCta,
+        minimumSize: const Size.fromHeight(52),
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+      ).copyWith(side: serverFocusRing(identity.onCta)),
       child: _busy
           ? Row(
               mainAxisSize: MainAxisSize.min,
@@ -542,21 +570,32 @@ class _CreateServerScreenState extends State<CreateServerScreen> {
       if (failure != null) ...[
         const SizedBox(height: AppRhythm.title),
         if (failure.isBackendMissing)
-          const _UnavailableNotice()
+          // The same live region the error path already had: a refusal is an
+          // answer to the tap, so it is announced rather than merely drawn.
+          Semantics(
+            liveRegion: true,
+            child: KeyedSubtree(
+              key: _outcome,
+              child: const _UnavailableNotice(),
+            ),
+          )
         else ...[
           Semantics(
             liveRegion: true,
-            child: Container(
-              key: const ValueKey('server-create-error'),
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: palette.dangerSurface,
-                borderRadius: AppRadius.md,
-              ),
-              child: Text(
-                _failureMessage(failure, error!, type, copy),
-                style: AppTypography.bodyMedium.copyWith(
-                  color: palette.dangerForeground,
+            child: KeyedSubtree(
+              key: _outcome,
+              child: Container(
+                key: const ValueKey('server-create-error'),
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: palette.dangerSurface,
+                  borderRadius: AppRadius.md,
+                ),
+                child: Text(
+                  _failureMessage(failure, error!, type, copy),
+                  style: AppTypography.bodyMedium.copyWith(
+                    color: palette.dangerForeground,
+                  ),
                 ),
               ),
             ),
