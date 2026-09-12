@@ -476,6 +476,18 @@ Future<void> _mount(
   await tester.pumpAndSettle();
 }
 
+/// Every name a screen reader would actually speak, in traversal order.
+/// A control drawn as a glyph only is accessible when its name appears here.
+Set<String> _spokenNames(WidgetTester tester) {
+  final names = <String>{};
+  for (final node in tester.semantics.simulatedAccessibilityTraversal()) {
+    final data = node.getSemanticsData();
+    if (data.label.isNotEmpty) names.add(data.label);
+    if (data.tooltip.isNotEmpty) names.add(data.tooltip);
+  }
+  return names;
+}
+
 Future<void> _shot(WidgetTester tester, GlobalKey key, String name) async {
   if (!_capture) return;
   await tester.runAsync(() async {
@@ -648,6 +660,10 @@ void main() {
           final service = _Moments();
           final player = _Audio();
           final boundary = GlobalKey();
+          // The card's share control is a glyph at this width, so this case
+          // reads the real semantics tree rather than the widget tree. The
+          // handle is released as soon as that reading is done.
+          final semantics = tester.ensureSemantics();
           await _mount(
             tester,
             MomentsFeedView(
@@ -690,7 +706,28 @@ void main() {
             find.text('Voice caption {count} stays unchanged.'),
             findsOneWidget,
           );
-          expect(find.text(expected['share']!), findsOneWidget);
+          // Board 06 hides the share LABEL when the card slot is under
+          // 400 (visual contract §3) and keeps the glyph, which is what a
+          // 390-wide phone gets. The control must still be reachable, still
+          // NAMED in this locale for assistive technology, and still a full
+          // 48-px target — an unnamed glyph would be a defect, not a design.
+          final share = find.byKey(
+            const ValueKey('moment-row-share-localized'),
+          );
+          expect(share, findsOneWidget);
+          expect(tester.widget<IconButton>(share).tooltip, expected['share']);
+          expect(find.byTooltip(expected['share']!), findsOneWidget);
+          expect(
+            _spokenNames(tester),
+            contains(expected['share']!),
+            reason:
+                'the glyph must reach assistive technology by its localized '
+                'name, not only the widget tree',
+          );
+          final shareSize = tester.getSize(share);
+          expect(shareSize.width, greaterThanOrEqualTo(48));
+          expect(shareSize.height, greaterThanOrEqualTo(48));
+          semantics.dispose();
           final play = find.byKey(const ValueKey('moment-row-play-localized'));
           expect(tester.widget<IconButton>(play).tooltip, expected['play']);
           expect(
@@ -762,9 +799,20 @@ void main() {
                 : count == 1
                 ? expected['only']!
                 : expected['all$count']!;
-            final scroll = find.descendant(
-              of: find.byKey(const ValueKey('moments-feed-scroll')),
-              matching: find.byType(Scrollable),
+            // Board 06 put the author capsule strip INSIDE the feed list as
+            // its first item, so the list now owns a nested horizontal
+            // scrollable. The feed's own vertical viewport is the outermost
+            // one, and the axis assertion below proves this finder names it
+            // rather than the strip.
+            final scroll = find
+                .descendant(
+                  of: find.byKey(const ValueKey('moments-feed-scroll')),
+                  matching: find.byType(Scrollable),
+                )
+                .first;
+            expect(
+              tester.widget<Scrollable>(scroll).axisDirection,
+              AxisDirection.down,
             );
             await tester.scrollUntilVisible(
               find.text(summary),
@@ -839,9 +887,17 @@ void main() {
           scale: 2,
         );
         final more = find.byKey(const ValueKey('moments-load-more'));
-        final scroll = find.descendant(
-          of: find.byKey(const ValueKey('moments-feed-scroll')),
-          matching: find.byType(Scrollable),
+        // The feed list's own vertical viewport — board 06 nested the author
+        // capsule strip's horizontal one inside it (see the footer cases).
+        final scroll = find
+            .descendant(
+              of: find.byKey(const ValueKey('moments-feed-scroll')),
+              matching: find.byType(Scrollable),
+            )
+            .first;
+        expect(
+          tester.widget<Scrollable>(scroll).axisDirection,
+          AxisDirection.down,
         );
         await tester.scrollUntilVisible(more, 450, scrollable: scroll);
         await tester.tap(more);
@@ -856,7 +912,12 @@ void main() {
           find.descendant(of: more, matching: find.text(expected['retry']!)),
           findsOneWidget,
         );
+        // The failed page grows the footer (summary + reason + Try again),
+        // and board 06's taller feed already pushed it past a 320x1000
+        // viewport at 200 % text, so the retry now genuinely has to be
+        // scrolled to — and the scroll must be laid out before it is tapped.
         await tester.ensureVisible(more);
+        await tester.pumpAndSettle();
         await tester.tap(more);
         await tester.pump();
         expect(discovery.requests, hasLength(2));

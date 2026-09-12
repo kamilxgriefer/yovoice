@@ -135,11 +135,16 @@ void main() {
     expect(tokens['dark']!.keys, unorderedEquals(tokens['light']!.keys));
     expect(
       tokens['dark'],
-      hasLength(26),
+      hasLength(27),
       reason:
           'Every AppPalette role must be declared in both schemes and covered '
           'by the raw-literal source guard.',
     );
+    // audioAccent is the 27th role. Dark declares it as the brand cyan by
+    // name so AppColors stays the single source of truth for the brand; the
+    // inventory resolves that reference to its literal, so the value is
+    // still covered by the guard below rather than escaping it.
+    expect(tokens['dark']!['audioAccent'], _brandColorLiterals()['accent']);
   });
 
   test('normal routes reject copied semantic and immersive surface values', () {
@@ -195,22 +200,60 @@ void main() {
   });
 }
 
+/// Every `static const Color` in [AppColors], by name, as an upper-case
+/// literal. A semantic role may point at one of these instead of repeating
+/// its hex; the inventory resolves the reference so the value still reaches
+/// the source guard.
+Map<String, String> _brandColorLiterals() {
+  final source = File('lib/core/theme/app_colors.dart').readAsStringSync();
+  final pattern = RegExp(
+    r'static const Color (\w+) = Color\((0x[0-9A-Fa-f]{8})\)',
+  );
+  return {
+    for (final match in pattern.allMatches(source))
+      match.group(1)!: match.group(2)!.toUpperCase(),
+  };
+}
+
 Map<String, Map<String, String>> _semanticTokensByScheme() {
   final source = File('lib/core/theme/app_palette.dart').readAsStringSync();
+  final brand = _brandColorLiterals();
   final result = <String, Map<String, String>>{};
   final schemePattern = RegExp(
     r'static const (dark|light) = AppPalette\((.*?)\n  \);',
     dotAll: true,
   );
-  final rolePattern = RegExp(r'(\w+):\s+Color\((0x[0-9A-Fa-f]{8})\)');
+  // A role is declared either as a raw literal or as a named brand colour
+  // (`audioAccent: AppColors.accent`). Both count as declared, and the named
+  // form is resolved to its own literal — an indirection must not open a
+  // hole in the raw-literal guard.
+  final rolePattern = RegExp(
+    r'(\w+):\s+(?:Color\((0x[0-9A-Fa-f]{8})\)|AppColors\.(\w+))',
+  );
 
   for (final schemeMatch in schemePattern.allMatches(source)) {
     final scheme = schemeMatch.group(1)!;
     final body = schemeMatch.group(2)!;
-    result[scheme] = {
-      for (final roleMatch in rolePattern.allMatches(body))
-        roleMatch.group(1)!: roleMatch.group(2)!.toUpperCase(),
-    };
+    final roles = <String, String>{};
+    for (final roleMatch in rolePattern.allMatches(body)) {
+      final role = roleMatch.group(1)!;
+      final literal = roleMatch.group(2);
+      if (literal != null) {
+        roles[role] = literal.toUpperCase();
+        continue;
+      }
+      final brandRole = roleMatch.group(3)!;
+      final resolved = brand[brandRole];
+      expect(
+        resolved,
+        isNotNull,
+        reason:
+            'AppColors.$brandRole is not a plain Color literal, so '
+            '$scheme.$role would escape the raw-literal source guard.',
+      );
+      roles[role] = resolved!;
+    }
+    result[scheme] = roles;
   }
   return result;
 }

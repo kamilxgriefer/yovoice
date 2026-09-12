@@ -99,14 +99,31 @@ void main() {
 
   group('desktop navigation placement', () {
     test('Moderation is a More destination, never a primary rail item', () {
-      // Moderation stays out of the rail. Moments joined it when it was
-      // promoted to primary navigation; that is the only change here.
+      // Moderation stays out of the rail. The five-destination foundation
+      // (77cbd6a6) promoted Servers alongside Moments and moved Friends,
+      // Discover and Find creators into Więcej — so the rail set shrank to
+      // two while those three stay reachable as More destinations, which
+      // the next case proves by resolving every one of them to a screen.
       expect(desktopRailDestinations, {
         MoreDestination.moments,
+        MoreDestination.servers,
+      });
+      for (final moved in const [
         MoreDestination.discover,
         MoreDestination.findCreators,
         MoreDestination.friends,
-      });
+      ]) {
+        expect(
+          desktopRailDestinations.contains(moved),
+          isFalse,
+          reason: '$moved now lives in Więcej, not the rail',
+        );
+        expect(
+          MoreDestination.values.contains(moved),
+          isTrue,
+          reason: '$moved must stay reachable',
+        );
+      }
       expect(
         desktopRailDestinations.contains(MoreDestination.moderation),
         isFalse,

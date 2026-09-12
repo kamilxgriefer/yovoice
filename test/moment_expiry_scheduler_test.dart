@@ -696,6 +696,13 @@ void main() {
     );
     await tester.pump();
 
+    // At 200 % text the expanded player is taller than the viewport, so the
+    // transport is scrolled to before it is used — the page scrolls, the
+    // control is never unreachable.
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('moment-detail-play')),
+    );
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('moment-detail-play')));
     await tester.pump();
     expect(player.playCount, 1);
@@ -718,9 +725,39 @@ void main() {
     await tester.pump();
     expect(find.byKey(const ValueKey('moment-detail-gone')), findsOneWidget);
     expect(player.stopCount, 1);
+    // Board 07 keeps the conversation readable after the recording is gone
+    // (comments outlive it) and states WHY nothing more can be added,
+    // instead of removing the composer without a word.
     expect(
-      find.byKey(const ValueKey('moment-detail-comment-field')),
-      findsNothing,
+      tester
+          .widget<TextField>(
+            find.byKey(const ValueKey('moment-detail-comment-field')),
+          )
+          .enabled,
+      isFalse,
+    );
+    expect(
+      find.byKey(const ValueKey('moment-detail-composer-closed')),
+      findsOneWidget,
+    );
+    // The field alone is not the capability: a regression that re-enabled the
+    // send button or the voice-reply microphone would let a person address a
+    // recording that no longer exists. Both must be inert too (review F2).
+    expect(
+      tester
+          .widget<IconButton>(
+            find.byKey(const ValueKey('moment-detail-comment-send')),
+          )
+          .onPressed,
+      isNull,
+    );
+    expect(
+      tester
+          .widget<IconButton>(
+            find.byKey(const ValueKey('moment-detail-composer-mic')),
+          )
+          .onPressed,
+      isNull,
     );
     final back = tester.widget<FilledButton>(
       find.byKey(const ValueKey('moment-detail-gone-back')),

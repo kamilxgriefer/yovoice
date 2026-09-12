@@ -104,8 +104,20 @@ void main() {
         );
         await tester.pump();
         expect(find.text('Private stale caption'), findsOneWidget);
-        // The detail page previews comments on one line with the
-        // author's name, so the body is a run inside a paragraph.
+        // Board 07 puts the conversation BELOW the expanded player, so the
+        // thread is reached by scrolling the page — exactly as a reader
+        // reaches it.
+        await tester.scrollUntilVisible(
+          find.textContaining('Private stale comment'),
+          200,
+          scrollable: find
+              .descendant(
+                of: find.byKey(const ValueKey('moment-detail-scroll')),
+                matching: find.byType(Scrollable),
+              )
+              .first,
+        );
+        await tester.pumpAndSettle();
         expect(find.textContaining('Private stale comment'), findsOneWidget);
 
         _resumeApp(tester);

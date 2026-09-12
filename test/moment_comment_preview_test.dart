@@ -414,7 +414,7 @@ void main() {
       }
     }
 
-    testWidgets('shows a capped preview and "see all" opens the full '
+    testWidgets('renders the real first page and "see all" opens the full '
         'thread', (tester) async {
       final s = services();
       final moment = _moment(comments: 9);
@@ -428,11 +428,26 @@ void main() {
         feed: s.feed,
       );
 
-      // The view returns the first page (7); the preview shows the last
-      // three of it and never the whole page.
-      expect(find.text('Comments (9)'), findsOneWidget);
+      // Board 07: the page renders the REAL first page the view callable
+      // returned (7 of 9) under the "Rozmowa" heading, with the document's
+      // own count beside it — no three-comment preview any more.
+      // The conversation sits below the expanded player, so the page
+      // scrolls to it exactly as a reader would.
+      await tester.scrollUntilVisible(
+        find.text('Conversation · 9'),
+        200,
+        scrollable: find
+            .descendant(
+              of: find.byKey(const ValueKey('moment-detail-scroll')),
+              matching: find.byType(Scrollable),
+            )
+            .first,
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Conversation · 9'), findsOneWidget);
+      expect(find.textContaining('Comment 0'), findsOneWidget);
       expect(find.textContaining('Comment 6'), findsOneWidget);
-      expect(find.textContaining('Comment 0'), findsNothing);
+      expect(find.textContaining('Comment 8'), findsNothing);
 
       final seeAll = find.byKey(
         const ValueKey('moment-comment-preview-see-all'),
@@ -457,8 +472,16 @@ void main() {
         find.byKey(const ValueKey('moment-comments-screen')),
         findsOneWidget,
       );
-      // Every comment lives there, with its pagination intact.
-      expect(find.text('Comment 0'), findsOneWidget);
+      // Every comment lives there, with its pagination intact. The page
+      // underneath now renders the same first page, so the assertion names
+      // the thread screen it is about.
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('moment-comments-screen')),
+          matching: find.text('Comment 0'),
+        ),
+        findsOneWidget,
+      );
       final loadMore = find.byKey(
         const ValueKey('moment-comments-page-load-more'),
       );
@@ -492,6 +515,17 @@ void main() {
         feed: s.feed,
       );
 
+      await tester.scrollUntilVisible(
+        find.byKey(const ValueKey('moment-comment-preview-empty')),
+        200,
+        scrollable: find
+            .descendant(
+              of: find.byKey(const ValueKey('moment-detail-scroll')),
+              matching: find.byType(Scrollable),
+            )
+            .first,
+      );
+      await tester.pumpAndSettle();
       expect(find.text('Be the first to comment'), findsOneWidget);
       await tester.tap(
         find.byKey(const ValueKey('moment-comment-preview-empty')),

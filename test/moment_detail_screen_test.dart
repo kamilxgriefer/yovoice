@@ -254,9 +254,22 @@ void main() {
         find.byKey(const ValueKey('moment-detail-delete-m1')),
         findsNothing,
       );
-      expect(find.text('Comments (1)'), findsOneWidget);
-      // The preview puts the author's name and the body on one line, so
-      // the body is a run inside that paragraph.
+      // Board 07 names the thread "Rozmowa" / "Conversation" and prints
+      // the Moment document's own count beside it. The expanded player is
+      // taller than the old panel, so the conversation is reached by
+      // scrolling the page.
+      await tester.scrollUntilVisible(
+        find.text('Conversation · 1'),
+        200,
+        scrollable: find
+            .descendant(
+              of: find.byKey(const ValueKey('moment-detail-scroll')),
+              matching: find.byType(Scrollable),
+            )
+            .first,
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Conversation · 1'), findsOneWidget);
       expect(
         find.textContaining('The night bus is where the truth lives.'),
         findsOneWidget,
@@ -313,6 +326,17 @@ void main() {
         await tester.pump(const Duration(milliseconds: 60));
       }
 
+      await tester.scrollUntilVisible(
+        find.textContaining('Real comment'),
+        200,
+        scrollable: find
+            .descendant(
+              of: find.byKey(const ValueKey('moment-detail-scroll')),
+              matching: find.byType(Scrollable),
+            )
+            .first,
+      );
+      await tester.pumpAndSettle();
       expect(find.textContaining('Real comment'), findsOneWidget);
       final stored = await s.db
           .collection('voiceMoments')
@@ -356,10 +380,24 @@ void main() {
         feed: s.feed,
       );
 
-      // The page previews the newest of the loaded page, never all of
-      // it, and hands the rest to the thread.
+      // Board 07 renders the REAL first page of the conversation (7), not
+      // a three-comment preview of it, and still hands the whole thread to
+      // the dedicated page through "See all". The thread sits below the
+      // expanded player, so the page scrolls to it.
+      await tester.scrollUntilVisible(
+        find.textContaining('Comment 0'),
+        200,
+        scrollable: find
+            .descendant(
+              of: find.byKey(const ValueKey('moment-detail-scroll')),
+              matching: find.byType(Scrollable),
+            )
+            .first,
+      );
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Comment 0'), findsOneWidget);
       expect(find.textContaining('Comment 6'), findsOneWidget);
-      expect(find.textContaining('Comment 0'), findsNothing);
+      expect(find.textContaining('Comment 8'), findsNothing);
 
       final seeAll = find.byKey(
         const ValueKey('moment-comment-preview-see-all'),
@@ -383,8 +421,17 @@ void main() {
         find.byKey(const ValueKey('moment-comments-screen')),
         findsOneWidget,
       );
-      expect(find.text('Comment 0'), findsOneWidget);
-      expect(find.text('Comment 8'), findsNothing);
+      // The page underneath now renders the same first page, so the
+      // assertions name the thread screen they are about.
+      final thread = find.byKey(const ValueKey('moment-comments-screen'));
+      expect(
+        find.descendant(of: thread, matching: find.text('Comment 0')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: thread, matching: find.text('Comment 8')),
+        findsNothing,
+      );
       final loadMore = find.byKey(
         const ValueKey('moment-comments-page-load-more'),
       );
@@ -415,7 +462,13 @@ void main() {
             .first,
       );
       await tester.pumpAndSettle();
-      expect(find.text('Comment 8'), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('moment-comments-screen')),
+          matching: find.text('Comment 8'),
+        ),
+        findsOneWidget,
+      );
       expect(loadMore, findsNothing);
     });
   });
@@ -569,6 +622,10 @@ void main() {
         feed: s.feed,
       );
 
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('moment-detail-delete-m1')),
+      );
+      await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('moment-detail-delete-m1')));
       await tester.pumpAndSettle();
 
@@ -599,6 +656,10 @@ void main() {
         feed: s.feed,
       );
 
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('moment-detail-delete-m1')),
+      );
+      await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('moment-detail-delete-m1')));
       await tester.pumpAndSettle();
       await tester.tap(
