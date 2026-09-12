@@ -158,6 +158,25 @@ function channelCreationInput(data) {
   });
 }
 
+const CHANNEL_LIVENESS_VERSION = 1;
+
+/**
+ * The client-visible projection of a private session generation onto the
+ * already-ACL-governed channel document: the grant that reveals the channel
+ * reveals its liveness, so `channelSessions` and the V1 room anchor stay
+ * closed. A live projection always carries the instant it started and an idle
+ * one never does, so "live at an unknown time" cannot be represented.
+ *
+ * There is deliberately NO participantCount. Token admission is not
+ * provider-connected presence (see createServerChannelTokenV1), so no honest
+ * writer for a count exists until a verified presence webhook does. Rendering
+ * "live, count unknown" is correct; deriving a count from token issuance is
+ * not, and this shape makes that impossible rather than merely discouraged.
+ */
+function channelLiveness(startedAt = null) {
+  return { schemaVersion: CHANNEL_LIVENESS_VERSION, isLive: startedAt !== null, startedAt };
+}
+
 function legacyChannelType(kind) {
   if (MEDIA_KINDS.includes(kind)) return "voice";
   return ["announcements", "rules"].includes(kind) ? "announcement" : "chat";
@@ -168,10 +187,10 @@ function revision(value, label = "revision") {
 }
 
 module.exports = {
-  CHANNEL_KINDS, FREE_SERVER_LIMIT, MAX_ACCESS_SUBJECTS, MAX_SERVER_CHANNELS,
-  MEDIA_KINDS, ROLE_POWER, ROLES, SERVER_SCHEMA_VERSION, SERVER_TYPES,
-  TEMPLATE_VERSION, accessPolicy, canonicalChannelId, canonicalChannelRoomId,
+  CHANNEL_KINDS, CHANNEL_LIVENESS_VERSION, FREE_SERVER_LIMIT, MAX_ACCESS_SUBJECTS,
+  MAX_SERVER_CHANNELS, MEDIA_KINDS, ROLE_POWER, ROLES, SERVER_SCHEMA_VERSION,
+  SERVER_TYPES, TEMPLATE_VERSION, accessPolicy, canonicalChannelId, canonicalChannelRoomId,
   canonicalLiveKitRoomName, canonicalServerId, categoryId, channelCreationInput,
-  creationInput, legacyChannelType, mediaConfiguration, requireEnum, revision,
-  serverChannelRefId, text, validatedPrivacy,
+  channelLiveness, creationInput, legacyChannelType, mediaConfiguration, requireEnum,
+  revision, serverChannelRefId, text, validatedPrivacy,
 };

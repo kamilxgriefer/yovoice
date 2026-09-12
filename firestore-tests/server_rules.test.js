@@ -53,8 +53,20 @@ function channel(serverId, restricted = false, changes = {}) {
     accessMode: restricted ? "restricted" : "members",
     accessPolicy: { accessMode: restricted ? "restricted" : "members",
       roleIds: restricted ? ["owner"] : [], userIds: restricted ? [MEMBER] : [] },
+    liveness: idle(),
     ...changes,
   };
+}
+
+// The server-owned liveness projection (ADR-A). No participantCount exists in
+// either state: token admission is not presence, so no honest writer for a
+// count exists yet and a client must render "live, count unknown".
+function idle() {
+  return { schemaVersion: 1, isLive: false, startedAt: null };
+}
+
+function live(startedAt = new Date(0)) {
+  return { schemaVersion: 1, isLive: true, startedAt };
 }
 
 function grant(serverId, channelId, uid = MEMBER, changes = {}) {
@@ -383,6 +395,66 @@ async function main() {
       await assertFails(setDoc(doc(db(OWNER), `clubs/${ACTIVE}/channels/forged`), channel(ACTIVE)));
       await assertFails(setDoc(doc(db(MEMBER), grantPath), grant(ACTIVE, "hr")));
       await assertFails(deleteDoc(doc(db(OWNER), `clubs/${ACTIVE}/channels/general`)));
+    });
+    await check("server-owned liveness is readable exactly where its channel is, and carries no count", async () => {
+      await seed({ [`clubs/${ACTIVE}/channels/general`]: channel(ACTIVE, false, { liveness: live() }) });
+      const listed = await assertSucceeds(directory(MEMBER, ACTIVE));
+      assert.deepEqual(listed.docs.map((item) => item.id), ["general"]);
+      assert.equal(listed.docs[0].data().liveness.isLive, true);
+      // Nothing may render a participant count, because nothing writes one.
+      assert.equal(Object.hasOwn(listed.docs[0].data().liveness, "participantCount"), false);
+      assert.equal((await assertSucceeds(read(MEMBER, `clubs/${ACTIVE}/channels/general`))).data().liveness.isLive, true);
+      // The ACL that governs the channel governs its liveness: no membership,
+      // no projection. A restricted channel still needs its current grant.
+      await assertFails(directory(OUTSIDER, ACTIVE));
+      await assertFails(read(OUTSIDER, `clubs/${ACTIVE}/channels/general`));
+      await seed({ [`clubs/${ACTIVE}/channels/hr`]: channel(ACTIVE, true, { liveness: live() }) });
+      await assertSucceeds(read(MEMBER, `clubs/${ACTIVE}/channels/hr`));
+      await assertFails(read(ADMIN, `clubs/${ACTIVE}/channels/hr`));
+    });
+    await check("a live projection opens neither the session it projects nor the anchor or roster", async () => {
+      await seed({ [`clubs/${ACTIVE}/channels/general/channelSessions/live-one`]: {
+        serverSchemaVersion: 1, serverId: ACTIVE, channelId: "general", sessionId: "live-one",
+        roomId: "forged-public-v1", livekitRoomName: "srv_live", status: "live",
+        startedById: OWNER, startedAt: new Date(0), endedAt: null,
+      } });
+      for (const uid of [OWNER, MEMBER, ADMIN, OUTSIDER]) {
+        await assertFails(read(uid, `clubs/${ACTIVE}/channels/general/channelSessions/live-one`));
+        await assertFails(getDocs(collection(db(uid), `clubs/${ACTIVE}/channels/general/channelSessions`)));
+        await assertFails(read(uid, "rooms/forged-public-v1"));
+      }
+      await assertFails(getDocs(query(collectionGroup(db(MEMBER), "channelSessions"), where("status", "==", "live"))));
+      await assertFails(read(MEMBER, `rooms/forged-public-v1/participants/${MEMBER}`));
+    });
+    await check("no client writes liveness, including a member holding manage rights on that channel", async () => {
+      for (const uid of [OWNER, ADMIN, MEMBER, OUTSIDER]) {
+        for (const cid of ["general", "hr"]) {
+          await assertFails(updateDoc(doc(db(uid), `clubs/${ACTIVE}/channels/${cid}`), { liveness: live() }));
+          await assertFails(updateDoc(doc(db(uid), `clubs/${ACTIVE}/channels/${cid}`), { "liveness.isLive": true }));
+          await assertFails(setDoc(doc(db(uid), `clubs/${ACTIVE}/channels/${cid}`), channel(ACTIVE, cid === "hr", { liveness: live() })));
+        }
+        await assertFails(setDoc(doc(db(uid), `clubs/${ACTIVE}/channels/forged-live`), channel(ACTIVE, false, { liveness: live() })));
+        await assertFails(updateDoc(doc(db(uid), `clubs/${ACTIVE}/channels/general`), { liveness: idle() }));
+      }
+      // The seeded server value is untouched by every refused write above.
+      assert.equal((await assertSucceeds(read(MEMBER, `clubs/${ACTIVE}/channels/general`))).data().liveness.isLive, true);
+    });
+    await check("a legacy manager keeps ordinary channel writes but cannot forge liveness on one", async () => {
+      await assertSucceeds(updateDoc(doc(db(OWNER), "clubs/legacy-public/channels/chat"), { name: "Renamed chat" }));
+      await assertSucceeds(setDoc(doc(db(OWNER), "clubs/legacy-public/channels/plain"), { name: "Plain", type: "chat", position: 8 }));
+      await assertFails(updateDoc(doc(db(OWNER), "clubs/legacy-public/channels/chat"), { liveness: live() }));
+      await assertFails(updateDoc(doc(db(OWNER), "clubs/legacy-public/channels/chat"), { liveness: idle() }));
+      await assertFails(setDoc(doc(db(OWNER), "clubs/legacy-public/channels/forged"), {
+        name: "Forged", type: "chat", position: 9, liveness: live(),
+      }));
+      // Deletion is unaffected: request.resource is null there, so the guard
+      // is on create/update only and a manager can still remove a channel.
+      await assertSucceeds(deleteDoc(doc(db(OWNER), "clubs/legacy-public/channels/plain")));
+      // Consequence, stated rather than hidden: a legacy channel that already
+      // carries the server-owned map is frozen to client writes, because the
+      // post-write document still contains it. Fail-closed is the right side.
+      await seed({ "clubs/legacy-public/channels/tainted": { name: "Tainted", type: "chat", position: 7, liveness: live() } });
+      await assertFails(updateDoc(doc(db(OWNER), "clubs/legacy-public/channels/tainted"), { name: "Renamed" }));
     });
     await check("unsupported channel modules remain denied, not generic client writable", async () => {
       for (const moduleName of ["events", "questions", "episodes", "boards", "files", "listItems"]) {

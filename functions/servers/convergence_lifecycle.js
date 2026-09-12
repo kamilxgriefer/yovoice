@@ -1,5 +1,5 @@
 const { digest, fail, requireId, requireUid, transactionGetAll } = require("../integrity/guards");
-const { MAX_SERVER_CHANNELS, MEDIA_KINDS, canonicalLiveKitRoomName } = require("./contract");
+const { MAX_SERVER_CHANNELS, MEDIA_KINDS, canonicalLiveKitRoomName, channelLiveness } = require("./contract");
 const { canonicalChannel } = require("./authority");
 const { assertSessionBinding } = require("./session_contract");
 
@@ -116,7 +116,7 @@ function stageConvergenceSessionEnd({ db, transaction, item, identity, now }) {
   } else if (session.status !== "ending") inconsistent();
   return { target: { ...binding, mode: "sessionEnd", endOperationId },
     roomPatch: { isLive: false, voiceSessionId: null, livekitRoomName: null, serverSessionCleanupId: session.sessionId },
-    channelPatch: { activeSessionId: null } };
+    channelPatch: { activeSessionId: null, liveness: channelLiveness() } };
 }
 
 module.exports = { capturedRecipientTargets, convergenceState, readConvergenceBindings,

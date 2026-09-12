@@ -1313,6 +1313,17 @@ service cloud.firestore {
           );
     }
 
+    // Liveness is a SERVER-OWNED projection of the private channelSessions
+    // generation onto the already-ACL-governed channel document. No client
+    // writes any part of it: not a V1 member, not a manager holding the
+    // `manage` capability on a channel they legitimately administer, and not a
+    // legacy club manager whose channel writes are otherwise an open field
+    // set. On an update `request.resource.data` is the POST-write document, so
+    // this also refuses a write that merely carries an existing map forward.
+    function noClientChannelLiveness() {
+      return !request.resource.data.keys().hasAny(['liveness']);
+    }
+
     function canReadClubChannel(clubId, channelId) {
       return isLegacyClub(clubId)
         ? isClubMember(clubId)
@@ -3478,8 +3489,18 @@ service cloud.firestore {
             : ((isClubMember(clubId) || heldServerOwner(clubId)) &&
                 resource.data.accessMode == 'members' && resource.data.status == 'active');
         allow create: if isLegacyClub(clubId) &&
-            (isClubOwnerAfter(clubId) || canManageClub(clubId));
-        allow update, delete: if isLegacyClub(clubId) && canManageClub(clubId);
+            (isClubOwnerAfter(clubId) || canManageClub(clubId)) &&
+            noClientChannelLiveness();
+        // A V1 channel has no client write path at all — isLegacyClub is false
+        // for a versioned root, so update and delete are denied outright and
+        // the liveness projection inherits that denial. The explicit guard is
+        // for the legacy branch, and it is what stops a manager forging a LIVE
+        // badge on a channel they are genuinely entitled to administer.
+        allow update: if isLegacyClub(clubId) && canManageClub(clubId) &&
+            noClientChannelLiveness();
+        // request.resource is null on a delete, so the liveness guard cannot be
+        // folded into this rule; deletion removes the projection with the doc.
+        allow delete: if isLegacyClub(clubId) && canManageClub(clubId);
 
         match /accessGrants/{userId} {
           allow read, write: if false;

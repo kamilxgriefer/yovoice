@@ -704,6 +704,20 @@ emulatorTest("touches only clubs, rooms and the six scopes with the declared pro
   assert.deepEqual(manifest.summary.records.byScope, { members: 1, invites: 1, channels: 1, roomMembers: 1, participants: 1, messages: 1 });
 });
 
+// The happy path must print no diagnostic OF ITS OWN. That is not the same as
+// an empty stderr: on a runner with no GCE metadata server (GitHub Actions),
+// the Google auth library inside the spawned CLI emits
+// "(node:PID) MetadataLookupWarning: ..." plus Node's "--trace-warnings" hint,
+// and this was the only empty-stderr assertion in the whole suite. Strip the
+// runtime's own warning lines and keep asserting that the collector is silent.
+function withoutNodeRuntimeWarnings(stderr) {
+  return String(stderr)
+    .split(/\r?\n/u)
+    .filter((line) => !/^\(node:\d+\) /u.test(line) && !/^\(Use `node --trace-warnings/u.test(line))
+    .join("\n")
+    .trim();
+}
+
 emulatorTest("CLI process refuses mismatched allow-project, non-local hosts, duplicate, unknown and out-of-range flags", async () => {
   const ns = namespace("cli");
   await seedDocs(ns.db, [["clubs/cli_club_7c3e", clubData({ name: SECRET_MARK })], [`clubs/cli_club_7c3e/members/${OWNER}`, { role: "owner" }],
@@ -764,7 +778,7 @@ emulatorTest("CLI process refuses mismatched allow-project, non-local hosts, dup
   const outDir = outFor("ok");
   const ok = runCli(["--out", outDir, "--allow-project", ns.projectId, "--page-size", "500", "--max-roots", "10000"], base);
   assert.equal(ok.status, 0, ok.stderr);
-  assert.equal(ok.stderr, "");
+  assert.equal(withoutNodeRuntimeWarnings(ok.stderr), "", ok.stderr);
   const text = fs.readFileSync(path.join(outDir, "manifest.json"), "utf8");
   const manifest = JSON.parse(text);
   assert.equal(serializeManifest(manifest), text, "manifest file must be the canonical serialization");

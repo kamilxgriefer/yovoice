@@ -3,7 +3,7 @@ const { FieldPath } = require("firebase-admin/firestore");
 const {
   digest, fail, requireId, requireSafeInteger, requireUid, timestampMillis, transactionGetAll,
 } = require("../integrity/guards");
-const { canonicalLiveKitRoomName } = require("./contract");
+const { canonicalLiveKitRoomName, channelLiveness } = require("./contract");
 const { assertSessionBinding, hasUnresolvedRevocationAttempt, tokenRecipientId, validateRecipient } = require("./session_contract");
 const { readSessionTokenAuthority } = require("./session_authority");
 
@@ -271,8 +271,9 @@ function createServerSessionControlService({ db, Timestamp, livekit, clock = Dat
       if (!prepared) return { cleanupPending: true, processed };
       await livekit.endRoom(plan.binding.livekitRoomName, { version: 1, endOperationId: operationId, ...plan.binding });
       return await db.runTransaction(async (transaction) => {
-        const [currentSnapshot, sessionSnapshot, room] = await transactionGetAll(transaction, reference,
-          plan.sessionRef, db.doc(`rooms/${plan.binding.roomId}`));
+        const [currentSnapshot, sessionSnapshot, room, channel] = await transactionGetAll(transaction, reference,
+          plan.sessionRef, db.doc(`rooms/${plan.binding.roomId}`),
+          db.doc(`clubs/${plan.binding.serverId}/channels/${plan.binding.channelId}`));
         const current = currentSnapshot.data(); const session = sessionSnapshot.data();
         if (current?.leaseId !== leaseId || current.leaseExpiresAtMillis <= clock()) return { cleanupPending: true, processed };
         assertEndGeneration(current, session, plan.binding, operationId, plan.authorizationRevision);
@@ -288,6 +289,18 @@ function createServerSessionControlService({ db, Timestamp, livekit, clock = Dat
             anchor.serverSessionCleanupId === plan.binding.sessionId &&
             anchor.isLive === false && anchor.voiceSessionId === null && anchor.livekitRoomName === null) {
           transaction.update(room.ref, { serverSessionCleanupId: null, participantCount: 0, updatedAt: now });
+        }
+        // Same fence as the anchor above, applied to the public projection: a
+        // late ACK may only retire a projection no generation still claims.
+        // Every authorized end already retires it in its own transaction, so
+        // this converges a channel stranded live by an interrupted writer and
+        // is a no-op on the ordinary path. A channel naming a newer session is
+        // never touched, so a stale pass cannot blank a genuinely live badge.
+        const projection = channel.exists ? channel.data() : null;
+        if (projection?.serverSchemaVersion === 1 && projection.serverId === plan.binding.serverId &&
+            projection.roomId === plan.binding.roomId && projection.activeSessionId === null &&
+            projection.liveness?.isLive === true) {
+          transaction.update(channel.ref, { liveness: channelLiveness(), updatedAt: now });
         }
         transaction.update(reference, { status: "completed",
           leaseId: null, leaseExpiresAtMillis: 0, lastErrorCode: null,

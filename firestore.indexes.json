@@ -521,6 +521,24 @@
           "order": "ASCENDING"
         }
       ]
+    },
+    {
+      "collectionGroup": "channels",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "accessMode",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "status",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "position",
+          "order": "ASCENDING"
+        }
+      ]
     }
   ],
   "fieldOverrides": [

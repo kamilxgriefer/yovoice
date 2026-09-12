@@ -3,7 +3,7 @@ const {
 } = require("../integrity/guards");
 const {
   MAX_SERVER_CHANNELS, accessPolicy, canonicalChannelId, categoryId,
-  channelCreationInput, revision, text, validatedPrivacy,
+  channelCreationInput, channelLiveness, revision, text, validatedPrivacy,
 } = require("./contract");
 const {
   canonicalChannel, canonicalMember, denied, grantMatches, policyAllowsMember, readChannelAccess,
@@ -256,8 +256,14 @@ function createServerChannelService(dependencies) {
       const ending = item ? stageConvergenceSessionEnd({ db, transaction, item, identity, now })
         : { target: null, roomPatch: {}, channelPatch: {} };
       const status = deleting ? "deleting" : "archived";
+      // An archived or deleting channel is never live. The projection is
+      // retired unconditionally here, exactly as the room below is set
+      // isLive: false regardless of what the ending patch carries, so a
+      // terminated channel cannot keep a LIVE badge from an earlier
+      // generation even if no session was staged for ending.
       transaction.update(access.channelReference, {
-        status, activeSessionId: null, aclRevision: access.channel.aclRevision + 1,
+        status, activeSessionId: null, liveness: channelLiveness(),
+        aclRevision: access.channel.aclRevision + 1,
         revision: access.channel.revision + 1, updatedAt: now,
       });
       writeChannelGrant({ db, transaction, serverId: input.serverId, channelId: input.channelId,

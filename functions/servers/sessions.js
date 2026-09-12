@@ -4,7 +4,7 @@ const {
   ledgerData, operationIdentity, rateLimitReference, requireActor, transactionGetAll,
 } = require("../integrity/guards");
 const { readChannelAccess, readBoundSessionAccess, denied } = require("./authority");
-const { canonicalLiveKitRoomName, MEDIA_KINDS } = require("./contract");
+const { canonicalLiveKitRoomName, channelLiveness, MEDIA_KINDS } = require("./contract");
 const { createServerOperations } = require("./operations");
 const {
   SESSION_TOKEN_ATTEMPT_LIMIT, SESSION_TOKEN_ATTEMPT_SCOPE, SESSION_TOKEN_TTL_SECONDS,
@@ -104,8 +104,11 @@ function createServerSessionService(dependencies) {
           startedById: auth.uid, startedAt: now, endedAt: null,
           status: "live", updatedAt: now, maxTokenExpiresAtMillis: 0,
         });
+        // The channel's own ACL governs this projection, so a member learns a
+        // channel is live without any read on the private session or anchor.
         transaction.update(access.channelReference, {
-          activeSessionId: sessionId, revision: access.channel.revision + 1, updatedAt: now,
+          activeSessionId: sessionId, liveness: channelLiveness(now),
+          revision: access.channel.revision + 1, updatedAt: now,
         });
         transaction.update(roomReference, {
           isLive: true, voiceSessionId: sessionId, livekitRoomName,
@@ -240,7 +243,7 @@ function createServerSessionService(dependencies) {
         transaction.update(sessionReference, { status: "ending", endedAt: now,
           endOperationId: identity.id, authorizationRevision: session.authorizationRevision + 1, updatedAt: now });
         transaction.update(access.channelReference, { activeSessionId: null,
-          revision: access.channel.revision + 1, updatedAt: now });
+          liveness: channelLiveness(), revision: access.channel.revision + 1, updatedAt: now });
         transaction.update(roomReference, { isLive: false, voiceSessionId: null,
           livekitRoomName: null, serverSessionCleanupId: input.sessionId, updatedAt: now });
         transaction.create(db.doc(`serverControlOutbox/${identity.id}`), {

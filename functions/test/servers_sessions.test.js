@@ -867,3 +867,61 @@ for (const lateOutcome of ["success", "failure"]) emulatorTest(`late terminal le
     assert.ok(f.calls.ended.every((name) => name === oldToken.roomName));
   } finally { release.resolve(); await Promise.allSettled([late]); }
 });
+
+// ADR-A: the client-visible liveness projection. These assert the honest
+// shape as much as the transitions — a count is never written, because token
+// admission is not provider-connected presence (gap G6).
+emulatorTest("start and end project liveness onto the channel, with a start instant and no participant count", async () => {
+  const f = await fixture();
+  const seeded = (await f.channel.ref.get()).data().liveness;
+  assert.deepEqual(Object.keys(seeded).sort(), ["isLive", "schemaVersion", "startedAt"]);
+  assert.deepEqual(seeded, { schemaVersion: 1, isLive: false, startedAt: null });
+  const { sessionId } = await f.start();
+  const started = (await f.channel.ref.get()).data();
+  const session = (await f.channel.ref.collection("channelSessions").doc(sessionId).get()).data();
+  assert.equal(started.liveness.isLive, true);
+  assert.equal(started.liveness.startedAt.toMillis(), session.startedAt.toMillis());
+  assert.equal(Object.hasOwn(started.liveness, "participantCount"), false);
+  // Admitting people changes no count, on the channel or on the anchor.
+  await f.token(sessionId, await f.member());
+  await f.token(sessionId, await f.member());
+  assert.deepEqual((await f.channel.ref.get()).data().liveness, started.liveness);
+  assert.equal((await db.doc(`rooms/${f.roomId}`).get()).data().participantCount, 0);
+  await f.end(sessionId);
+  assert.deepEqual((await f.channel.ref.get()).data().liveness, { schemaVersion: 1, isLive: false, startedAt: null });
+  assert.equal((await f.channel.ref.get()).data().activeSessionId, null);
+});
+
+emulatorTest("archiving or deleting a live channel retires its projection with the generation", async () => {
+  for (const archive of [true, false]) {
+    const f = await fixture();
+    await f.start();
+    assert.equal((await f.channel.ref.get()).data().liveness.isLive, true);
+    const data = { serverId: f.target.serverId, channelId: f.target.channelId, requestId: randomUUID() };
+    await (archive
+      ? f.channelService.archiveServerChannelV1(request(f.uid, data))
+      : f.channelService.deleteServerChannelV1(request(f.uid, data)));
+    const channel = (await f.channel.ref.get()).data();
+    assert.equal(channel.status, archive ? "archived" : "deleting");
+    assert.equal(channel.activeSessionId, null);
+    assert.deepEqual(channel.liveness, { schemaVersion: 1, isLive: false, startedAt: null });
+  }
+});
+
+emulatorTest("terminal cleanup retires a projection stranded live once no generation claims it", async () => {
+  const f = await fixture();
+  const { sessionId } = await f.start();
+  await f.token(sessionId);
+  f.onRevoke(() => ({ alreadyAbsent: true }));
+  const requestId = randomUUID();
+  assert.equal((await f.end(sessionId, f.uid, requestId)).cleanupPending, true);
+  // The authorized end already retired it; strand it the way an interrupted
+  // writer would, with no generation named by the channel any more.
+  assert.equal((await f.channel.ref.get()).data().liveness.isLive, false);
+  await f.channel.ref.update({ liveness: { schemaVersion: 1, isLive: true, startedAt: Timestamp.fromMillis(f.clock()) } });
+  f.onRevoke(null);
+  assert.equal((await f.end(sessionId, f.uid, requestId)).cleanupPending, false);
+  const channel = (await f.channel.ref.get()).data();
+  assert.equal(channel.activeSessionId, null);
+  assert.deepEqual(channel.liveness, { schemaVersion: 1, isLive: false, startedAt: null });
+});

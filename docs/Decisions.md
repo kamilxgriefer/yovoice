@@ -10657,3 +10657,88 @@ because legacy consumers import them directly — `servers/rtc_binding.js` from
 `clubs/quota.js`. They are pure and small, the export map is unchanged, and the
 cold-start test pins export names, the warm set and the SDK counts rather than
 the absence of those three.
+
+**Named activation preconditions, recorded 2026-09-12 and not yet discharged.**
+Two conditions are invisible to every suite that passes today, so neither can be
+closed by running tests. First, the `channelSessions.livekitRoomName`
+collection-group index is committed in `firestore.indexes.json` but its *deploy*
+is unverified; `resolveRtcBindingForLiveKitRoom` queries that collection group,
+and with no index the query throws `FAILED_PRECONDITION`. Revocation still
+happens, so the boundary stays fail-closed, but the enforcement event never
+reaches `completed`. Second, `staff/voice_enforcement.js` rethrows
+`unbound-live-generation` under a `retry: true` trigger with no ceiling and no
+dead-letter, and each attempt re-runs `findParticipantRooms`, which is one
+`listRooms()` plus one `getParticipant` per room. Together they turn one stalled
+event into an unbounded loop of O(all rooms) provider calls. Neither is reachable
+today, because V1 is unregistered and clients cannot write a versioned anchor,
+which is why both are recorded as preconditions on activation rather than
+hotfixed against a held feature. [Servers.md](Servers.md) carries the same two
+under "Named activation preconditions".
+
+## ADR-177: A V1 live session reaches clients only as a server-owned liveness projection on the channel, and it carries no participant count
+
+**Context (2026-09-12).** A V1 live session was invisible to every client.
+`firestore.rules` had no `channelSessions` entry at all, so those documents were
+denied outright, and `canAccessRoom()` requires `isLegacyRoomData(room)`, so the
+V1 `rooms/{roomId}` anchor and its `participants` subcollection are denied too.
+Yet all five accepted template mockups show liveness to people who have **not**
+joined — "4 osoby rozmawiają", "LIVE · 126 widzów", "84 słuchaczy", "Teraz
+rozmawiają 3 osoby". With no legal read path those scenes could only be built by
+fabricating numbers, which [CLAUDE.md](../CLAUDE.md) forbids outright. This is
+gap G2/G3 of the stage-1 contract and was named its single largest blocker.
+
+**Decision.** Extend the already-readable channel document
+(`clubs/{serverId}/channels/{channelId}`) with a server-owned
+`liveness {schemaVersion, isLive, startedAt}` map, written by the same
+transactions that already own the generation: `startServerChannelSessionV1` and
+`endServerChannelSessionV1` in `functions/servers/sessions.js`, and
+`stageConvergenceSessionEnd` in `convergence_lifecycle.js`, which is the shared
+writer behind channel archive, channel delete and ownership transfer. The
+terminal cleanup in `session_control.js` carries a guarded convergence repair
+that retires a projection only when no generation still claims the channel.
+`channelSessions` is **not** opened, and the V1 room anchor is **not** opened;
+both keep failing closed. No client writes any part of the map: a V1 channel has
+no client write path at all, and the legacy branch — whose channel writes are
+otherwise an open field set — gains an explicit `noClientChannelLiveness()`
+guard on create and update.
+
+**There is deliberately no `participantCount`.** The contract's shape named one,
+and it was omitted rather than faked. `createServerChannelTokenV1` says so
+itself: token admission is not provider-connected presence, so a count derived
+from token issuance would count people who were handed a JWT and never
+connected, and would never decrement when someone left. No honest writer exists
+until the verified presence webhook of the contract's decision C does (gap G6).
+The helper makes this structural rather than advisory: `channelLiveness()` takes
+only a start instant, so a live projection always carries when it started, an
+idle one never does, and there is no field a later caller could populate with a
+guess.
+
+**Reasoning.** The ACL that already governs the channel governs its liveness,
+which is the whole point of putting it there: no new collection, no new query
+shape, no new index, no second state machine, and the private session and anchor
+keep their existing fail-closed posture. Reusing the existing start/end
+transactions means the projection cannot drift from the generation it describes
+— it is written in the same atomic write that sets or clears `activeSessionId`.
+
+**Consequences.** One extra field per channel write; no extra read on the
+client's existing channel query. A surface may render "live since HH:MM" and
+must render "live, count unknown" — never a number — until the presence webhook
+lands; a fabricated count remains a correctness defect, not a cosmetic one. A
+legacy channel document that somehow already carries the map is frozen to client
+writes, because on an update `request.resource.data` is the post-write document
+and still contains it; fail-closed is the correct side of that trade and it is
+covered by a test. The projection is not validated by `canonicalChannel()` on
+purpose: a malformed map must not escalate into a denial of channel access,
+because that would turn a display defect into an outage.
+
+**The same slice closes gap G8, which is a deploy risk rather than a code risk.**
+The V1 all-member channel query is `accessMode ==` plus `status ==` ordered by
+`position`, and `firestore.indexes.json` contained **no `channels` entry at all**;
+it now carries the `channels(accessMode ASC, status ASC, position ASC)`
+COLLECTION-scope composite. A committed index is not a deployed index. The
+emulator creates indexes on demand, so this query passes every local suite and
+would fail only in production with `FAILED_PRECONDITION`, on the client's first
+real channel list — the same failure mode that kept Premium expiry silently
+broken. It is recorded as a third named activation precondition in
+[Servers.md](Servers.md); [ADR-176](#adr-176-servers-v1-registers-behind-one-exact-environment-gate-dispatches-its-outbox-read-only-and-still-has-no-activation-writer)
+named two, and that entry's count is superseded here rather than rewritten.

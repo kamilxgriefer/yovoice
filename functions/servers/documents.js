@@ -1,7 +1,7 @@
 const { fail } = require("../integrity/guards");
 const {
-  MEDIA_KINDS, accessPolicy, canonicalChannelRoomId, legacyChannelType,
-  serverChannelRefId,
+  MEDIA_KINDS, accessPolicy, canonicalChannelRoomId, channelLiveness,
+  legacyChannelType, serverChannelRefId,
 } = require("./contract");
 const { grantDocument, policyAllowsMember } = require("./authority");
 
@@ -42,7 +42,8 @@ function channelDocument({ serverId, channelId, input, uid, position, now, roomI
     categoryId: input.categoryId, status: "active",
     roomId: MEDIA_KINDS.includes(input.kind)
       ? (roomId ?? canonicalChannelRoomId(serverId, channelId)) : null,
-    activeSessionId: null, experience: input.experience, mediaMode: input.mediaMode,
+    activeSessionId: null, liveness: channelLiveness(),
+    experience: input.experience, mediaMode: input.mediaMode,
     aclRevision: 1, revision: 1,
     historySource: { kind: "channelMessages" },
     ...(input.seedKey ? { seedKey: input.seedKey } : {}),
