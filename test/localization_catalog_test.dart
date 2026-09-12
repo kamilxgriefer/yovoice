@@ -541,6 +541,7 @@ void main() {
       expect(yoMomentsTranslationKeys, const <String>[
         'yoMoments.voiceFormat',
         'yoMoments.fromCircle',
+        'yoMoments.contentFormat',
       ]);
       for (final localeKey in translatedLocaleKeys) {
         for (final key in yoMomentsTranslationKeys) {
@@ -595,6 +596,59 @@ void main() {
         ).contextualText('yoMoments.voiceFormat', 'Voice', 'Głos'),
         'Głos',
       );
+    });
+
+    test('immersive chrome group labels never fall back to English', () {
+      // Screen-reader-only container names for the Voice | Reels switch and
+      // the content-pool filter row. Both sit on current-release surfaces, so
+      // every selectable locale must carry an explicit catalog value.
+      for (final locale in AppLocalizations.supportedLocales) {
+        final copy = AppLocalizations(locale);
+        final tag = locale.toLanguageTag();
+        final contentFormat = copy.contextualText(
+          'yoMoments.contentFormat',
+          'Content format',
+          'Format treści',
+        );
+        final filters = copy.text('Filters', 'Filtry');
+        expect(contentFormat.trim(), isNotEmpty, reason: tag);
+        expect(filters.trim(), isNotEmpty, reason: tag);
+        if (locale.languageCode == 'en') {
+          expect(contentFormat, 'Content format');
+          expect(filters, 'Filters');
+        } else if (locale.languageCode == 'pl') {
+          expect(contentFormat, 'Format treści');
+          expect(filters, 'Filtry');
+        } else {
+          expect(
+            translatedPhrase(copy.localeKey, 'yoMoments.contentFormat'),
+            contentFormat,
+            reason: '$tag must explicitly translate the format group label.',
+          );
+          expect(contentFormat, isNot('Content format'), reason: tag);
+          // Dutch legitimately spells the plural "Filters", so the guarantee
+          // is an explicit catalog entry rather than a string that differs
+          // from English.
+          expect(
+            translatedPhrase(copy.localeKey, 'Filters'),
+            filters,
+            reason: '$tag must explicitly translate the filter group label.',
+          );
+        }
+      }
+
+      // The contextual key must not leak into plain phrase lookups.
+      const german = AppLocalizations(Locale('de'));
+      expect(german.text('Content format', 'Format treści'), 'Content format');
+      expect(
+        german.contextualText(
+          'yoMoments.contentFormat',
+          'Content format',
+          'Format treści',
+        ),
+        'Inhaltsformat',
+      );
+      expect(german.text('Filters', 'Filtry'), 'Filter');
     });
 
     test('canonical keys are stable templates, never interpolated values', () {

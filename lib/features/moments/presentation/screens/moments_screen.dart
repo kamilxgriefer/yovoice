@@ -411,7 +411,11 @@ ImmersiveFeedHeaderSlots buildImmersiveMomentsHeader(
   return ImmersiveFeedHeaderSlots(
     formatSwitch: ImmersiveSegmentedSwitch(
       key: const ValueKey<String>('yo-moments-format-tabs'),
-      groupLabel: copy.text('Content format', 'Format treści'),
+      groupLabel: copy.contextualText(
+        'yoMoments.contentFormat',
+        'Content format',
+        'Format treści',
+      ),
       selectedIndex: selectedFormat.index,
       onSelected: (index) => onFormatSelected(YoMomentsFormat.values[index]),
       segments: <ImmersiveChromeOption>[
