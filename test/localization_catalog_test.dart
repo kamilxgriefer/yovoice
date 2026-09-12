@@ -401,7 +401,7 @@ void main() {
       expect(labels(const AppLocalizations(Locale('pl'))), [
         'Na żywo dla Ciebie',
         'Twój krąg',
-        'Stwórz pokój',
+        'Utwórz pokój',
         'Zaproś i rozmawiaj',
         'Powiększ swój krąg',
         'Ty',

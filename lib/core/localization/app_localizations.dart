@@ -206,7 +206,10 @@ class AppLocalizations {
   String get homeYourCircle =>
       contextualText('home.yourCircle', 'Your circle', 'Twój krąg');
   String get homeCreateRoom =>
-      contextualText('home.createRoom', 'Create room', 'Stwórz pokój');
+      // "Utwórz pokój" is what every other room entry point in the app says
+      // — Discover, the desktop sidebar, the room board, Creator Studio — and
+      // what the sentence above this button says. One action, one verb.
+      contextualText('home.createRoom', 'Create room', 'Utwórz pokój');
   String get homeStartConversation => contextualText(
     'home.startConversation',
     'Invite and talk',
