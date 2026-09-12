@@ -5,7 +5,8 @@
   "scripts": {
     "test": "node rules.test.js",
     "test:storage": "node storage.test.js",
-    "test:family-media": "node family-media.test.js"
+    "test:family-media": "node family-media.test.js",
+    "test:servers": "node server_rules.test.js"
   },
   "dependencies": {
     "@firebase/rules-unit-testing": "^5.0.2",

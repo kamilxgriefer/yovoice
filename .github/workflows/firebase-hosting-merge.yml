@@ -127,6 +127,16 @@ jobs:
           ./firestore-tests/node_modules/.bin/firebase emulators:exec --only firestore,storage --project demo-yovoice \
             'npm --prefix firestore-tests run test:family-media'
 
+      # The V1 Servers boundary suite pins its own project id
+      # (demo-yovoice-server-acl) and its Storage rules read Firestore state, so
+      # the emulator has to start under that same project. Starting it under
+      # demo-yovoice makes every write fail with PERMISSION_DENIED and reads
+      # exactly like a rules regression — it is not one.
+      - name: Run Servers V1 rules tests
+        run: |
+          ./firestore-tests/node_modules/.bin/firebase emulators:exec --only firestore,storage --project demo-yovoice-server-acl \
+            'npm --prefix firestore-tests run test:servers'
+
       - name: Run Firebase Functions tests
         run: |
           ./firestore-tests/node_modules/.bin/firebase emulators:exec --only auth,firestore --project demo-yovoice \
