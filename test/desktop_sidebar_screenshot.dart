@@ -256,9 +256,11 @@ void main() {
     await _settle(tester);
     await _shoot(tester, 'sidebar-selected-chats-1440x900');
 
-    await tester.tap(find.text('Discover'));
+    // Discover left the rail for the More popover; Servers is the rail's
+    // second row now, so the second selected capture follows it.
+    await tester.tap(find.text('Servers'));
     await _settle(tester);
-    await _shoot(tester, 'sidebar-selected-discover-1440x900');
+    await _shoot(tester, 'sidebar-selected-servers-1440x900');
 
     await tester.tap(find.byTooltip('Notifications'));
     await _settle(tester);
@@ -319,7 +321,11 @@ void main() {
     );
     // Pinned header actions and profile card remain available; the secondary
     // create action compacts to an icon in the same row as Create Room.
-    expect(find.byTooltip('Home'), findsOneWidget);
+    // Home is the rail's FIRST ROW now ("Start"), not a header icon button.
+    expect(
+      find.byKey(const ValueKey('desktop-nav-focus-home')),
+      findsOneWidget,
+    );
     expect(find.byTooltip('Notifications'), findsOneWidget);
     expect(find.byTooltip('Create Voice Moment'), findsOneWidget);
     expect(find.text('More'), findsOneWidget);

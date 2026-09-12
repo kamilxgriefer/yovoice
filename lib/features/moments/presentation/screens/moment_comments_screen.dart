@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:audioplayers/audioplayers.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -17,13 +16,13 @@ import 'package:yovoice/features/moderation/presentation/report_content_flow.dar
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
 import 'package:yovoice/features/moments/data/services/moment_expiry_scheduler.dart';
 import 'package:yovoice/features/moments/data/services/moment_service.dart';
+import 'package:yovoice/features/moments/presentation/widgets/moment_conversation_thread.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_expiry_accessibility.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_expiry_boundary.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_mention_composer.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_mentions.dart';
-import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
+import 'package:yovoice/features/moments/presentation/widgets/reply_playback_arbiter.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
-import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
 enum _MomentCommentsRefreshTrigger {
   initial,
@@ -90,6 +89,10 @@ class _MomentCommentsScreenState extends State<MomentCommentsScreen>
   );
   final MomentExpiryAnnouncer _expiryAnnouncer = MomentExpiryAnnouncer();
   final FocusNode _composerFocus = FocusNode(debugLabel: 'Moment comment');
+
+  /// This page has no main recording of its own, but two voice replies must
+  /// still never overlap each other.
+  final ReplyPlaybackArbiter _arbiter = ReplyPlaybackArbiter();
   late final MentionFriendsSource _mentionFriends;
   bool _sending = false;
   List<MomentComment>? _comments;
@@ -237,6 +240,7 @@ class _MomentCommentsScreenState extends State<MomentCommentsScreen>
     _mentionFriends
       ..removeListener(_handleMentionFriends)
       ..dispose();
+    _arbiter.dispose();
     _controller.dispose();
     _composerFocus.dispose();
     _goneBackFocus.dispose();
@@ -323,6 +327,47 @@ class _MomentCommentsScreenState extends State<MomentCommentsScreen>
     }
   }
 
+  /// "Reply" under a comment. Threads are flat on the server, so this
+  /// prefills the composer with `@name ` rather than pretending a nested
+  /// reply exists.
+  void _prefillReply(MomentComment comment) {
+    final mention = '@${comment.authorName} ';
+    final current = _controller.text;
+    if (!current.startsWith(mention)) {
+      _controller.text = '$mention${current.trimLeft()}';
+    }
+    _controller.selection = TextSelection.collapsed(
+      offset: _controller.text.length,
+    );
+    _composerFocus.requestFocus();
+  }
+
+  /// Reports one comment.
+  ///
+  /// A voice reply is the one place in Moments where the abuse can be in
+  /// audio nobody has transcribed, so the report carries the exact comment
+  /// id — "report the person" would leave a moderator hunting through a
+  /// thread for which clip was meant.
+  Future<void> _reportComment(MomentComment comment) async {
+    final copy = AppLocalizations.of(context);
+    await reportContent(
+      context: context,
+      service: widget.contentReportService,
+      content: ReportedContent.voiceMomentComment(
+        momentId: _moment.id,
+        commentId: comment.id,
+        reportReceipt: comment.reportReceipt,
+      ),
+      title: copy.text('Report this comment', 'Zgłoś ten komentarz'),
+      subtitle: copy.text(
+        'Your report goes to the YO Voice moderation team with this '
+            'comment attached. ${comment.authorName} is not told who reported it.',
+        'Zgłoszenie wraz z komentarzem trafi do zespołu moderacji YO Voice. '
+            '${comment.authorName} nie dowie się, kto dokonał zgłoszenia.',
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final copy = AppLocalizations.of(context);
@@ -395,7 +440,7 @@ class _MomentCommentsScreenState extends State<MomentCommentsScreen>
                                         ? 1
                                         : 0),
                                 separatorBuilder: (_, __) =>
-                                    const SizedBox(height: 10),
+                                    const SizedBox.shrink(),
                                 itemBuilder: (context, index) {
                                   if (index == _comments!.length) {
                                     return Center(
@@ -430,16 +475,25 @@ class _MomentCommentsScreenState extends State<MomentCommentsScreen>
                                     );
                                   }
                                   final comment = _comments![index];
-                                  return _CommentCard(
+                                  final service = _momentService;
+                                  return MomentCommentRow(
                                     comment: comment,
                                     momentId: _moment.id,
                                     isOwn:
                                         comment.authorId.isNotEmpty &&
                                         comment.authorId == _currentUid,
-                                    momentService: _momentService,
-                                    contentReportService:
-                                        widget.contentReportService,
                                     mentions: _readDirectory(),
+                                    arbiter: _arbiter,
+                                    resolveReplyMedia: service == null
+                                        ? null
+                                        : (commentId) =>
+                                              service.resolveMediaUri(
+                                                momentId: _moment.id,
+                                                commentId: commentId,
+                                              ),
+                                    onReplyTo: _prefillReply,
+                                    onReport: (target) =>
+                                        unawaited(_reportComment(target)),
                                   );
                                 },
                               ),
@@ -532,243 +586,6 @@ class _MomentCommentsScreenState extends State<MomentCommentsScreen>
             ),
           ],
         ),
-      ),
-    );
-  }
-}
-
-class _CommentCard extends StatefulWidget {
-  const _CommentCard({
-    required this.comment,
-    required this.momentId,
-    required this.isOwn,
-    required this.momentService,
-    required this.mentions,
-    this.contentReportService,
-  });
-  final MomentComment comment;
-  final String momentId;
-  final bool isOwn;
-  final MomentService? momentService;
-  final ContentReportService? contentReportService;
-
-  /// Who an `@name` in this comment may resolve to for this viewer.
-  final MentionDirectory mentions;
-
-  @override
-  State<_CommentCard> createState() => _CommentCardState();
-}
-
-class _CommentCardState extends State<_CommentCard> {
-  AudioPlayer? _player;
-  bool _playing = false;
-
-  @override
-  void initState() {
-    super.initState();
-    if (!widget.comment.isVoice) return;
-    final player = AudioPlayer();
-    _player = player;
-    player.onPlayerComplete.listen((_) {
-      if (mounted) setState(() => _playing = false);
-    });
-  }
-
-  @override
-  void dispose() {
-    _player?.dispose();
-    super.dispose();
-  }
-
-  Future<void> _toggle() async {
-    final player = _player;
-    if (player == null) return;
-    try {
-      if (_playing) {
-        await player.pause();
-      } else {
-        final moments = widget.momentService;
-        if (moments == null) return;
-        final uri = await moments.resolveMediaUri(
-          momentId: widget.momentId,
-          commentId: widget.comment.id,
-        );
-        if (!mounted) return;
-        await player.play(UrlSource(uri.toString()));
-      }
-      if (mounted) setState(() => _playing = !_playing);
-    } catch (_) {
-      if (!mounted) return;
-      setState(() => _playing = false);
-      final copy = AppLocalizations.of(context);
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(
-          SnackBar(
-            behavior: SnackBarBehavior.floating,
-            content: Text(
-              copy.text(
-                'This voice reply is unavailable right now.',
-                'Ta odpowiedź głosowa jest teraz niedostępna.',
-              ),
-            ),
-          ),
-        );
-    }
-  }
-
-  /// Reports this comment.
-  ///
-  /// A voice reply is the one place in Moments where the abuse can be in
-  /// audio nobody has transcribed, so the report has to carry the exact
-  /// comment id — "report the person" would leave a moderator hunting
-  /// through a thread for which clip was meant.
-  Future<void> _report() async {
-    final copy = AppLocalizations.of(context);
-    await reportContent(
-      context: context,
-      service: widget.contentReportService,
-      content: ReportedContent.voiceMomentComment(
-        momentId: widget.momentId,
-        commentId: widget.comment.id,
-        reportReceipt: widget.comment.reportReceipt,
-      ),
-      title: copy.text('Report this comment', 'Zgłoś ten komentarz'),
-      subtitle: copy.text(
-        'Your report goes to the YO Voice moderation team with this '
-            'comment attached. ${widget.comment.authorName} is not told who reported it.',
-        'Zgłoszenie wraz z komentarzem trafi do zespołu moderacji YO Voice. '
-            '${widget.comment.authorName} nie dowie się, kto dokonał zgłoszenia.',
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final copy = AppLocalizations.of(context);
-    final comment = widget.comment;
-    final text = comment.text;
-    final duration = comment.durationSeconds;
-    final palette = context.appPalette;
-    final colors = Theme.of(context).colorScheme;
-    return Container(
-      key: ValueKey('moment-comment-card-${comment.id}'),
-      padding: const EdgeInsets.all(13),
-      decoration: BoxDecoration(
-        color: palette.surface,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: palette.border),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          UserAvatar(
-            radius: 20,
-            userId: comment.authorId,
-            photoUrl: comment.authorPhotoUrl,
-            displayName: comment.authorName,
-          ),
-          const SizedBox(width: 11),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Wrap(
-                  spacing: 6,
-                  crossAxisAlignment: WrapCrossAlignment.center,
-                  children: [
-                    Text(
-                      comment.authorName,
-                      style: TextStyle(
-                        color: palette.textPrimary,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                    if (comment.authorId.isNotEmpty)
-                      UserIdentityBadges(uid: comment.authorId),
-                  ],
-                ),
-                if (comment.isVoice) ...[
-                  const SizedBox(height: 8),
-                  InkWell(
-                    onTap: _toggle,
-                    borderRadius: BorderRadius.circular(14),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 10,
-                      ),
-                      decoration: BoxDecoration(
-                        color: colors.secondaryContainer,
-                        borderRadius: BorderRadius.circular(14),
-                      ),
-                      child: Row(
-                        children: [
-                          Icon(
-                            _playing
-                                ? Icons.pause_rounded
-                                : Icons.play_arrow_rounded,
-                            color: colors.onSecondaryContainer,
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              copy.text('Voice reply', 'Odpowiedź głosowa'),
-                              style: TextStyle(
-                                color: colors.onSecondaryContainer,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                          ),
-                          Text(
-                            '0:${duration.toString().padLeft(2, '0')}',
-                            style: TextStyle(
-                              color: colors.onSecondaryContainer.withValues(
-                                alpha: .75,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  if (text.isNotEmpty) ...[
-                    const SizedBox(height: 7),
-                    MentionText(
-                      text: text,
-                      directory: widget.mentions,
-                      style: TextStyle(color: palette.textSecondary),
-                    ),
-                  ],
-                ] else ...[
-                  const SizedBox(height: 4),
-                  MentionText(
-                    text: text,
-                    directory: widget.mentions,
-                    style: TextStyle(color: palette.textPrimary, height: 1.35),
-                  ),
-                ],
-              ],
-            ),
-          ),
-          // Fixed width beside an Expanded body, so it cannot be pushed
-          // off the card by a long comment or a large text scale. Hidden
-          // on your own comment for the same reason as elsewhere:
-          // self-reports are queue noise, not signal.
-          if (!widget.isOwn && widget.comment.id.isNotEmpty)
-            IconButton(
-              key: ValueKey('report-comment-${widget.comment.id}'),
-              constraints: const BoxConstraints.tightFor(width: 40, height: 40),
-              padding: EdgeInsets.zero,
-              tooltip: copy.text('Report this comment', 'Zgłoś ten komentarz'),
-              onPressed: _report,
-              icon: Icon(
-                Icons.flag_outlined,
-                size: 18,
-                color: palette.textSecondary,
-              ),
-            ),
-        ],
       ),
     );
   }

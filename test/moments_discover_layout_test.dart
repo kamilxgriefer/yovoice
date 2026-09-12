@@ -4,6 +4,8 @@
 // real caption, duration, inline transport and author-chain entry.
 // The old tile helper's pure contract remains independently covered.
 
+import 'dart:math' as math;
+
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -14,7 +16,7 @@ import 'package:yovoice/features/moments/data/services/moment_views_service.dart
 import 'package:yovoice/features/moments/presentation/widgets/moment_discover_tiles.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_story_tile.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moments_feed_view.dart';
-import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
+import 'package:yovoice/features/moments/presentation/widgets/yo_moments_chrome.dart';
 
 final DateTime _anchor = DateTime.now();
 
@@ -173,23 +175,30 @@ Finder _feedScrollable() => find
     )
     .first;
 
-double _listWidth(Size size) =>
-    size.width < ResponsiveContentWidth.list.maxWidth
-    ? size.width
-    : ResponsiveContentWidth.list.maxWidth;
+/// The 06 column contract (moments-contract-visual.md §2.1/§2.2, brief
+/// C33/C34): the main column measures 640 inside 16 (narrow) / 24 gutters;
+/// from 1100 the local filter panel (240) sits flush on the leading edge
+/// with a 24 gap, and the column is centred in what remains.
+double _gutter(Size size) => size.width < 600 ? 16 : 24;
 
-double _gutter(Size size) => size.width < 600
-    ? 16
-    : size.width < 1100
-    ? 24
-    : 32;
+double _panelInset(Size size) =>
+    size.width >= 1100 ? YoMomentsLayout.localPanelBaseWidth + 24 : 0;
+
+double _listWidth(Size size) => math.min(
+  size.width - _panelInset(size),
+  YoMomentsLayout.mainMaxWidth + 2 * _gutter(size),
+);
+
+double _listLeft(Size size) =>
+    _panelInset(size) +
+    (size.width - _panelInset(size) - _listWidth(size)) / 2;
 
 void _expectSingleColumn(WidgetTester tester, Size size) {
   final list = tester.getRect(
     find.byKey(const ValueKey('moments-feed-scroll')),
   );
   expect(list.width, _listWidth(size));
-  expect(list.left, (size.width - _listWidth(size)) / 2);
+  expect(list.left, _listLeft(size));
   final a = tester.getRect(find.byKey(const ValueKey('moment-row-a')));
   final b = tester.getRect(find.byKey(const ValueKey('moment-row-b')));
   expect(a.left, list.left + _gutter(size));
@@ -246,7 +255,7 @@ Future<void> _expectReadableCard(
     expect(rect.contains(target.topLeft), isTrue);
     expect(rect.contains(target.bottomRight), isTrue);
     expect(rect.width, _listWidth(size) - 2 * _gutter(size));
-    expect(rect.left, (size.width - _listWidth(size)) / 2 + _gutter(size));
+    expect(rect.left, _listLeft(size) + _gutter(size));
   }
   final play = tester.widget<IconButton>(
     find.byKey(ValueKey('moment-row-play-$id')),
@@ -309,7 +318,7 @@ void main() {
     });
 
     testWidgets(
-      '1440: the centered list stops at 880 pt without an automatic detail panel',
+      '1440: the column stops at 640 pt beside the local panel, without an automatic detail panel',
       (tester) async {
         const size = Size(1440, 900);
         await _pumpFeed(tester, size: size);

@@ -28,10 +28,21 @@ class _RoomsService extends RoomService {
 
 void main() {
   test('mobile roots retain content IDs and use the new visual order', () {
-    const visualOrder = [0, 3, 1, 5];
+    // Start · Serwery (slot 13) · Czaty · Momenty.
+    const visualOrder = [0, 13, 1, 5];
     expect(visualOrder.map(MainShell.mobileIndexFor), visualOrder);
     expect(visualOrder.map(MainShell.mobileNavigationOrder), [0, 1, 2, 3]);
     expect(MainShell.mobileIndexFor(2), 2, reason: 'Friends stays reachable');
+    expect(
+      MainShell.mobileIndexFor(3),
+      3,
+      reason: 'Discover stays a retained root, reached from More',
+    );
+    expect(
+      MainShell.mobileNavigationOrder(3),
+      4,
+      reason: 'Discover left the dock, so it sorts with More',
+    );
     for (final desktopOnly in [4, 6, 7, 8, 9, 10, 11, 12]) {
       expect(MainShell.mobileIndexFor(desktopOnly), 0);
     }

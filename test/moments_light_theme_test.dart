@@ -199,7 +199,9 @@ void main() {
       final material = tester.widget<Material>(
         find.descendant(of: card, matching: find.byType(Material)).first,
       );
-      expect(material.color, _palette(brightness).surfaceRaised);
+      // The 06 Voice card paints `surface` (the board's card tone, C30);
+      // `surfaceRaised` stays the mini-player disc and composer fill.
+      expect(material.color, _palette(brightness).surface);
       final author = tester.widget<Text>(
         find.descendant(of: card, matching: find.text(moment.authorName)),
       );

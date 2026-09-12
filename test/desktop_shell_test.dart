@@ -10,6 +10,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
+import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_theme.dart';
 import 'package:yovoice/features/home/data/services/home_feed_service.dart';
@@ -114,7 +115,7 @@ void main() {
       await tester.pump();
 
       final wordmarkBefore = tester.getTopLeft(find.text('YO Voice'));
-      final navBefore = tester.getTopLeft(find.text('YO Moments'));
+      final navBefore = tester.getTopLeft(find.text('Moments'));
 
       expect(
         find.descendant(
@@ -128,7 +129,7 @@ void main() {
       await tester.pump();
 
       expect(tester.getTopLeft(find.text('YO Voice')), wordmarkBefore);
-      expect(tester.getTopLeft(find.text('YO Moments')), navBefore);
+      expect(tester.getTopLeft(find.text('Moments')), navBefore);
     });
 
     testWidgets('the rail has no scrollable menu at any supported height', (
@@ -253,13 +254,11 @@ void main() {
       );
       final railRect = tester.getRect(find.byType(DesktopSidebar));
       for (final target in [
-        find.byTooltip('Home'),
         find.byTooltip('Notifications'),
-        find.text('YO Moments'),
-        find.text('Discover'),
-        find.text('Find creators'),
+        find.text('Home'),
+        find.text('Servers'),
         find.text('Chats'),
-        find.text('Friends'),
+        find.text('Moments'),
         find.text('Create Room'),
         find.byTooltip('Create Voice Moment'),
         find.text('More'),
@@ -291,7 +290,7 @@ void main() {
       expect(find.byKey(const ValueKey('sidebar-clock-map')), findsOneWidget);
     });
 
-    testWidgets('shows Home in the header and five primary menu rows', (
+    testWidgets('shows the bell in the header and five primary menu rows', (
       tester,
     ) async {
       useDesktopWindow(tester);
@@ -311,20 +310,13 @@ void main() {
       );
       await tester.pump();
 
-      for (final label in [
-        'YO Moments',
-        'Discover',
-        'Find creators',
-        'Chats',
-        'Friends',
-        'More',
-      ]) {
+      // Start · Serwery · Czaty · Momenty · Więcej — the accepted order.
+      for (final label in ['Home', 'Servers', 'Chats', 'Moments', 'More']) {
         expect(find.text(label), findsOneWidget, reason: '$label missing');
       }
-      // Home and Notifications are icon-only header destinations — neither
-      // is duplicated as a full-width menu row.
-      expect(find.text('Home'), findsNothing);
-      expect(find.byTooltip('Home'), findsOneWidget);
+      // Home is the FIRST ROW now, not a header icon; the bell stays the
+      // one icon-only header destination and is never a nav row.
+      expect(find.byTooltip('Home'), findsNothing);
       expect(
         find.text('Notifications'),
         findsNothing,
@@ -336,14 +328,22 @@ void main() {
         reason: 'the header bell is the one notifications entry point',
       );
       expect(
-        tester.getCenter(find.byTooltip('Home')).dy,
         tester.getCenter(find.byTooltip('Notifications')).dy,
+        lessThan(tester.getCenter(find.text('Home')).dy),
+        reason: 'the bell lives above the fixed menu',
       );
-      expect(
-        tester.getCenter(find.byTooltip('Notifications')).dy,
-        lessThan(tester.getCenter(find.text('YO Moments')).dy),
-        reason: 'both icon actions live above the fixed menu',
-      );
+      // The nav label is the destination word; the product heading
+      // "YO Moments" stays inside the destination, not on the rail.
+      expect(find.text('YO Moments'), findsNothing);
+      // Friends, Discover and Find creators moved into the More popover
+      // (kept, never deleted) — they are no longer rail rows.
+      for (final absent in ['Friends', 'Discover', 'Find creators']) {
+        expect(
+          find.text(absent),
+          findsNothing,
+          reason: '$absent lives in the More popover now',
+        );
+      }
       // The Create and More section labels frame their blocks.
       expect(find.text('CREATE'), findsOneWidget);
       expect(find.text('MORE'), findsOneWidget);
@@ -355,13 +355,16 @@ void main() {
         tester.getCenter(find.text('MORE')).dy,
         lessThan(tester.getCenter(find.text('More')).dy),
       );
-      // Moments sits DIRECTLY above Discover — the operator's ordering,
-      // and the rail is the only place the two coexist in one list.
-      expect(
-        tester.getCenter(find.text('YO Moments')).dy,
-        lessThan(tester.getCenter(find.text('Discover')).dy),
-        reason: 'Moments must sit directly above Discover on the rail',
-      );
+      // Row order, top to bottom: Home, Servers, Chats, Moments, then the
+      // CREATE section, then More.
+      const rows = ['Home', 'Servers', 'Chats', 'Moments', 'CREATE', 'More'];
+      for (var i = 0; i + 1 < rows.length; i++) {
+        expect(
+          tester.getCenter(find.text(rows[i])).dy,
+          lessThan(tester.getCenter(find.text(rows[i + 1])).dy),
+          reason: '${rows[i]} must sit above ${rows[i + 1]} on the rail',
+        );
+      }
       // Profile is the bottom card; these live in the More popover.
       for (final absent in ['Profile', 'Clubs', 'Creator Studio']) {
         expect(
@@ -383,38 +386,22 @@ void main() {
       expect(profileCard.dy, greaterThan(createMoment.dy));
     });
 
-    testWidgets('header destinations are 44px and expose selected semantics', (
-      tester,
-    ) async {
+    testWidgets('the bell and every row are 44px and expose selected '
+        'semantics', (tester) async {
       useDesktopWindow(tester);
       await tester.pumpWidget(host(rail()));
       await tester.pump();
 
-      final home = find.bySemanticsLabel('Home');
       final notifications = find.bySemanticsLabel('Notifications');
-      expect(home, findsOneWidget);
       expect(notifications, findsOneWidget);
-      expect(tester.getSize(find.byTooltip('Home')).width, 44);
-      expect(tester.getSize(find.byTooltip('Home')).height, 44);
       expect(tester.getSize(find.byTooltip('Notifications')).width, 44);
       expect(tester.getSize(find.byTooltip('Notifications')).height, 44);
       expect(
         tester
-            .getSemantics(home)
-            .getSemanticsData()
-            .hasAction(ui.SemanticsAction.tap),
-        isTrue,
-      );
-      expect(
-        tester
             .getSemantics(notifications)
             .getSemanticsData()
             .hasAction(ui.SemanticsAction.tap),
         isTrue,
-      );
-      expect(
-        tester.getSemantics(home).getSemanticsData().flagsCollection.isSelected,
-        ui.Tristate.isTrue,
       );
       expect(
         tester
@@ -424,17 +411,30 @@ void main() {
             .isSelected,
         ui.Tristate.isFalse,
       );
+      // Every nav row is a 44 px target (docs/UI.md minimum).
+      for (final item in ['home', 'servers', 'chats', 'moments', 'more']) {
+        expect(
+          tester.getSize(find.byKey(ValueKey('desktop-nav-focus-$item'))).height,
+          44,
+          reason: item,
+        );
+      }
+      // The wash is visual-only; the row's Semantics carries `selected` so
+      // a screen-reader user knows which destination is current.
+      bool rowSelected(String label) => tester
+          .widgetList<Semantics>(
+            find.ancestor(
+              of: find.text(label),
+              matching: find.byType(Semantics),
+            ),
+          )
+          .any((widget) => widget.properties.selected == true);
+      expect(rowSelected('Home'), isTrue);
+      expect(rowSelected('Servers'), isFalse);
 
       await tester.pumpWidget(host(rail(active: DesktopNavItem.notifications)));
       await tester.pump();
-      expect(
-        tester
-            .getSemantics(find.bySemanticsLabel('Home'))
-            .getSemanticsData()
-            .flagsCollection
-            .isSelected,
-        ui.Tristate.isFalse,
-      );
+      expect(rowSelected('Home'), isFalse);
       expect(
         tester
             .getSemantics(find.bySemanticsLabel('Notifications'))
@@ -443,6 +443,11 @@ void main() {
             .isSelected,
         ui.Tristate.isTrue,
       );
+
+      await tester.pumpWidget(host(rail(active: DesktopNavItem.servers)));
+      await tester.pump();
+      expect(rowSelected('Servers'), isTrue);
+      expect(rowSelected('Home'), isFalse);
     });
 
     testWidgets('interactive accents keep AA contrast in dark and light', (
@@ -469,8 +474,9 @@ void main() {
         await pumpTheme(theme);
         final palette = theme.extension<AppPalette>()!;
         final accent = palette.interactiveForeground;
+        // The selected row's wash: navigation violet at 28% over the rail.
         final activeBackground = Color.alphaBlend(
-          accent.withValues(alpha: .18),
+          AppColors.navigationPrimary.withValues(alpha: .28),
           palette.navigationSurface,
         );
         final momentBackground = palette.surfaceRaised;
@@ -483,6 +489,32 @@ void main() {
           _contrastRatio(accent, activeBackground),
           greaterThanOrEqualTo(3),
         );
+        // The active label is primary ink on the same wash (body-text AA);
+        // resting rows use the inactive glyph and secondary ink on the rail.
+        expect(
+          tester.widget<Text>(find.text('Home')).style?.color,
+          palette.textPrimary,
+        );
+        expect(
+          _contrastRatio(palette.textPrimary, activeBackground),
+          greaterThanOrEqualTo(4.5),
+        );
+        expect(
+          tester.widget<Icon>(find.byIcon(Icons.hub_outlined)).color,
+          palette.navigationInactive,
+        );
+        expect(
+          _contrastRatio(palette.navigationInactive, palette.navigationSurface),
+          greaterThanOrEqualTo(3),
+        );
+        expect(
+          tester.widget<Text>(find.text('Servers')).style?.color,
+          palette.textSecondary,
+        );
+        expect(
+          _contrastRatio(palette.textSecondary, palette.navigationSurface),
+          greaterThanOrEqualTo(4.5),
+        );
         expect(
           tester.widget<Text>(find.text('Create Voice Moment')).style?.color,
           accent,
@@ -492,7 +524,8 @@ void main() {
           greaterThanOrEqualTo(4.5),
         );
 
-        await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+        // One Tab: the bell is the rail's first focusable control now that
+        // Home is a row below it.
         await tester.sendKeyEvent(LogicalKeyboardKey.tab);
         await tester.pump();
         final focusedDecoration =
@@ -607,7 +640,7 @@ void main() {
       },
     );
 
-    testWidgets('keyboard focus reaches Home then Notifications in order', (
+    testWidgets('keyboard focus reaches the bell, then the Home row, in order', (
       tester,
     ) async {
       final tapped = <DesktopNavItem>[];
@@ -639,17 +672,20 @@ void main() {
 
       await tester.sendKeyEvent(LogicalKeyboardKey.tab);
       await tester.pump();
-      expect(focusIsInside(find.byTooltip('Home')), isTrue);
+      expect(focusIsInside(find.byTooltip('Notifications')), isTrue);
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);
       await tester.pump();
 
       await tester.sendKeyEvent(LogicalKeyboardKey.tab);
       await tester.pump();
-      expect(focusIsInside(find.byTooltip('Notifications')), isTrue);
+      final homeRow = find
+          .ancestor(of: find.text('Home'), matching: find.byType(InkWell))
+          .first;
+      expect(focusIsInside(homeRow), isTrue);
       await tester.sendKeyEvent(LogicalKeyboardKey.space);
       await tester.pump();
 
-      expect(tapped, [DesktopNavItem.home, DesktopNavItem.notifications]);
+      expect(tapped, [DesktopNavItem.notifications, DesktopNavItem.home]);
     });
 
     testWidgets('Create Voice Moment reports its own callback — the rail '
@@ -781,16 +817,7 @@ void main() {
       );
       await tester.pump();
 
-      await tester.tap(find.byTooltip('Home'));
-      await tester.pump();
-      for (final label in [
-        'YO Moments',
-        'Discover',
-        'Find creators',
-        'Chats',
-        'Friends',
-        'More',
-      ]) {
+      for (final label in ['Home', 'Servers', 'Chats', 'Moments', 'More']) {
         await tester.tap(find.text(label));
         await tester.pump();
       }
@@ -802,11 +829,9 @@ void main() {
 
       expect(tapped, [
         DesktopNavItem.home,
-        DesktopNavItem.moments,
-        DesktopNavItem.discover,
-        DesktopNavItem.findCreators,
+        DesktopNavItem.servers,
         DesktopNavItem.chats,
-        DesktopNavItem.friends,
+        DesktopNavItem.moments,
         DesktopNavItem.more,
         DesktopNavItem.notifications,
       ]);
@@ -840,7 +865,8 @@ void main() {
         ),
         findsNothing,
       );
-      expect(find.byTooltip('Home'), findsOneWidget);
+      expect(find.text('Home'), findsOneWidget);
+      expect(find.text('Servers'), findsOneWidget);
       expect(find.text('More'), findsOneWidget);
       expect(find.byTooltip('Create Voice Moment'), findsOneWidget);
       expect(find.byTooltip('Profile settings'), findsOneWidget);
@@ -872,13 +898,11 @@ void main() {
       );
       final railRect = tester.getRect(find.byType(DesktopSidebar));
       for (final target in [
-        find.byTooltip('Home'),
         find.byTooltip('Notifications'),
-        find.text('YO Moments'),
-        find.text('Discover'),
-        find.text('Find creators'),
+        find.text('Home'),
+        find.text('Servers'),
         find.text('Chats'),
-        find.text('Friends'),
+        find.text('Moments'),
         find.text('Create Room'),
         find.byTooltip('Create Voice Moment'),
         find.text('More'),
@@ -948,14 +972,13 @@ void main() {
       }
 
       final railRect = tester.getRect(find.byType(DesktopSidebar));
+      // Start · Serwery · Czaty · Momenty · Więcej, in Polish.
       for (final target in [
-        find.byTooltip('Główna'),
         find.byTooltip('Powiadomienia'),
-        find.text('YO Moments'),
-        find.text('Odkrywaj'),
-        find.text('Znajdź twórców'),
+        find.text('Start'),
+        find.text('Serwery'),
         find.text('Czaty'),
-        find.text('Znajomi'),
+        find.text('Momenty'),
         find.text('Utwórz pokój'),
         find.byTooltip('Nagraj Voice Moment'),
         find.text('Więcej'),
@@ -965,9 +988,12 @@ void main() {
         expect(target, findsOneWidget);
         expect(railRect.contains(tester.getCenter(target)), isTrue);
       }
+      expect(find.text('Główna'), findsNothing, reason: 'O11: the row says Start');
+      expect(find.text('Twoje Momenty'), findsNothing, reason: 'O11: Momenty');
       expect(tester.getSize(find.byType(DesktopSidebar)).width, 528);
       for (final primaryLabel in [
-        find.text('Znajdź twórców'),
+        find.text('Serwery'),
+        find.text('Momenty'),
         find.text('Utwórz pokój'),
       ]) {
         final paragraph = tester.renderObject<RenderParagraph>(primaryLabel);
@@ -1034,20 +1060,17 @@ void main() {
     });
 
     test(
-      'every destination is reachable: the rail owns Discover, creator '
-      'search and Friends, everything else is in More or the profile card',
+      'every destination is reachable: the rail owns Moments and Servers, '
+      'everything else is in More or the profile card',
       () {
         // The rail's own primary items (Home/Chats live in the shell's
-        // IndexedStack; Notifications pushes the bell feed).
+        // IndexedStack; Notifications is the header bell).
         const railOwned = desktopRailDestinations;
         expect(railOwned, {
-          // Moments was promoted to a primary rail item, directly above
-          // Discover. It must therefore be OUT of the More popover, or it
-          // would be listed twice.
+          // Moments and Servers are primary rail rows. They must therefore
+          // be OUT of the More popover, or they would be listed twice.
           MoreDestination.moments,
-          MoreDestination.discover,
-          MoreDestination.findCreators,
-          MoreDestination.friends,
+          MoreDestination.servers,
         });
 
         // Reached from the profile card at the bottom of the rail.
@@ -1059,6 +1082,11 @@ void main() {
         // Anything else MUST be listed in the desktop More popover, or it
         // would become unreachable at desktop width.
         const inMorePopover = {
+          // Foundation: these three left the rail for the popover — kept,
+          // never deleted — so the five-row rail stays five rows.
+          MoreDestination.friends,
+          MoreDestination.discover,
+          MoreDestination.findCreators,
           MoreDestination.clubs,
           MoreDestination.creatorStudio,
           MoreDestination.achievements,
@@ -1112,6 +1140,7 @@ void main() {
       // shell would be re-created and the rail would slide/reopen.
       const slotBacked = {
         DesktopNavItem.home,
+        DesktopNavItem.servers,
         DesktopNavItem.moments,
         DesktopNavItem.discover,
         DesktopNavItem.findCreators,
@@ -1140,13 +1169,7 @@ void main() {
       );
       await tester.pump();
 
-      for (final label in [
-        'YO Moments',
-        'Discover',
-        'Find creators',
-        'Chats',
-        'Friends',
-      ]) {
+      for (final label in ['Home', 'Servers', 'Chats', 'Moments']) {
         await tester.tap(find.text(label));
         await tester.pump();
         // The rail is never duplicated or rebuilt as a second shell.
@@ -1182,6 +1205,12 @@ void main() {
       // reached from the rail or pushed.
       const popoverItems = [
         MoreDestination.moments,
+        // Servers is a rail row like Moments; Friends, Discover and Find
+        // creators are popover entries since Foundation. Same rule for all.
+        MoreDestination.servers,
+        MoreDestination.friends,
+        MoreDestination.discover,
+        MoreDestination.findCreators,
         MoreDestination.clubs,
         MoreDestination.creatorStudio,
         MoreDestination.achievements,
@@ -1842,6 +1871,7 @@ class _FakeDesktopShellState extends State<_FakeDesktopShell> {
     'find-creators',
     'alerts',
     'moments',
+    'servers',
   ];
 
   DesktopNavItem get _active => switch (_index) {
@@ -1851,6 +1881,7 @@ class _FakeDesktopShellState extends State<_FakeDesktopShell> {
     4 => DesktopNavItem.findCreators,
     5 => DesktopNavItem.notifications,
     6 => DesktopNavItem.moments,
+    7 => DesktopNavItem.servers,
     _ => DesktopNavItem.home,
   };
 
@@ -1864,6 +1895,7 @@ class _FakeDesktopShellState extends State<_FakeDesktopShell> {
         DesktopNavItem.findCreators => 4,
         DesktopNavItem.notifications => 5,
         DesktopNavItem.moments => 6,
+        DesktopNavItem.servers => 7,
         DesktopNavItem.more => _index,
       };
     });

@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import 'app_colors.dart';
+
 /// Semantic YO Voice colours for surfaces that must work in both themes.
 ///
 /// [AppColors] remains the canonical brand/status palette. This extension
@@ -35,6 +37,7 @@ class AppPalette extends ThemeExtension<AppPalette> {
     required this.warningForeground,
     required this.infoSurface,
     required this.infoForeground,
+    required this.audioAccent,
   });
 
   final Color background;
@@ -64,6 +67,11 @@ class AppPalette extends ThemeExtension<AppPalette> {
   final Color infoSurface;
   final Color infoForeground;
 
+  /// The one voice-playback accent: join CTA, speaking rings, the Voice badge,
+  /// audio progress. Dark keeps the brand cyan; Pearl uses the deep teal the
+  /// theme's `tertiary` role already carried, defined once here.
+  final Color audioAccent;
+
   static const dark = AppPalette(
     background: Color(0xFF080711),
     backgroundTop: Color(0xFF130A22),
@@ -91,6 +99,7 @@ class AppPalette extends ThemeExtension<AppPalette> {
     warningForeground: Color(0xFFFFC94D),
     infoSurface: Color(0xFF102337),
     infoForeground: Color(0xFF6FC3FF),
+    audioAccent: AppColors.accent,
   );
 
   /// Pearl — warm white rather than clinical white, with ink copy and a
@@ -123,6 +132,7 @@ class AppPalette extends ThemeExtension<AppPalette> {
     warningForeground: Color(0xFF8C5A00),
     infoSurface: Color(0xFFE8F3FF),
     infoForeground: Color(0xFF006B91),
+    audioAccent: Color(0xFF007C83),
   );
 
   static AppPalette of(BuildContext context) {
@@ -130,6 +140,11 @@ class AppPalette extends ThemeExtension<AppPalette> {
     return theme.extension<AppPalette>() ??
         (theme.brightness == Brightness.dark ? dark : light);
   }
+
+  /// Audio progress fill (a bar) or, through `colors`, the sweep of a
+  /// progress ring: from the voice accent into the interactive lavender.
+  LinearGradient get audioProgressGradient =>
+      LinearGradient(colors: [audioAccent, interactiveForeground]);
 
   LinearGradient get backgroundGradient => LinearGradient(
     begin: Alignment.topCenter,
@@ -166,6 +181,7 @@ class AppPalette extends ThemeExtension<AppPalette> {
     Color? warningForeground,
     Color? infoSurface,
     Color? infoForeground,
+    Color? audioAccent,
   }) => AppPalette(
     background: background ?? this.background,
     backgroundTop: backgroundTop ?? this.backgroundTop,
@@ -193,6 +209,7 @@ class AppPalette extends ThemeExtension<AppPalette> {
     warningForeground: warningForeground ?? this.warningForeground,
     infoSurface: infoSurface ?? this.infoSurface,
     infoForeground: infoForeground ?? this.infoForeground,
+    audioAccent: audioAccent ?? this.audioAccent,
   );
 
   @override
@@ -253,6 +270,7 @@ class AppPalette extends ThemeExtension<AppPalette> {
       )!,
       infoSurface: Color.lerp(infoSurface, other.infoSurface, t)!,
       infoForeground: Color.lerp(infoForeground, other.infoForeground, t)!,
+      audioAccent: Color.lerp(audioAccent, other.audioAccent, t)!,
     );
   }
 }

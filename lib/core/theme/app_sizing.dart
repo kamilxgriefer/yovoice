@@ -8,4 +8,9 @@ class AppSizing {
   static const double minimumTouchTarget = 44;
   static const double standardControlHeight = 48;
   static const double primaryControlHeight = 58;
+
+  /// The round play/record control of an audio surface, and its compact
+  /// variant for narrow or dense layouts. Both exceed [minimumTouchTarget].
+  static const double audioControl = 72;
+  static const double audioControlCompact = 64;
 }

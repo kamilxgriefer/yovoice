@@ -1257,13 +1257,15 @@ void main() {
         // Mine lead the list; the circle's rows queue below them and are
         // reachable by scrolling the (lazy) feed.
         expect(find.byKey(const ValueKey('moment-row-mine-0')), findsOneWidget);
-        // The feed's own vertical scrollable, not horizontal format/filters.
+        // The feed LIST's own vertical scrollable — not the horizontal
+        // format/filter rows and not the local filter panel's scroll region
+        // that precedes the list in tree order from 1100 up.
         await tester.scrollUntilVisible(
           find.byKey(const ValueKey('moment-row-theirs-0')),
           200,
           scrollable: find
               .descendant(
-                of: find.byKey(const ValueKey('moments-feed')),
+                of: find.byKey(const ValueKey('moments-feed-scroll')),
                 matching: find.byWidgetPredicate(
                   (widget) =>
                       widget is Scrollable &&

@@ -27,8 +27,8 @@ import 'package:yovoice/features/moments/data/services/moment_discovery_service.
 import 'package:yovoice/features/moments/data/services/moment_service.dart';
 import 'package:yovoice/features/moments/presentation/screens/moments_screen.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moments_feed_view.dart';
+import 'package:yovoice/features/moments/presentation/widgets/yo_moments_chrome.dart';
 import 'package:yovoice/shared/identity/public_identity_repository.dart';
-import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 
 /// One fixed reading of "now" for the whole file, so every fixture's
 /// `createdAt`/`expiresAt` relation to the clock is stable for the life
@@ -1129,11 +1129,22 @@ void main() {
         final list = tester.getRect(
           find.byKey(const ValueKey('moments-feed-scroll')),
         );
-        final expectedWidth = size.width < ResponsiveContentWidth.list.maxWidth
-            ? size.width
-            : ResponsiveContentWidth.list.maxWidth;
+        // The 06 column contract (brief C33/C34): 640 inside 16 / 24
+        // gutters, centred in the slot that remains after the 240-px local
+        // filter panel and its 24 gap from 1100 up.
+        final gutter = size.width < 600 ? 16.0 : 24.0;
+        final panelInset = size.width >= 1100
+            ? YoMomentsLayout.localPanelBaseWidth + 24
+            : 0.0;
+        final expectedWidth = min(
+          size.width - panelInset,
+          YoMomentsLayout.mainMaxWidth + 2 * gutter,
+        );
         expect(list.width, expectedWidth);
-        expect(list.left, (size.width - expectedWidth) / 2);
+        expect(
+          list.left,
+          panelInset + (size.width - panelInset - expectedWidth) / 2,
+        );
         expect(
           find.byKey(const ValueKey('moments-detail-panel')),
           findsNothing,
@@ -1236,7 +1247,7 @@ void main() {
 
       // Compact dock labels stay available to assistive technologies even
       // though the visual treatment is intentionally icon-only.
-      for (final label in ['Home', 'Rooms', 'Chats', 'Your Moments', 'More']) {
+      for (final label in ['Home', 'Servers', 'Chats', 'Moments', 'More']) {
         expect(
           find.bySemanticsLabel(label),
           findsOneWidget,
@@ -1261,7 +1272,7 @@ void main() {
         (widget) => widget is Semantics && widget.properties.selected == true,
       );
       expect(lit, findsOneWidget);
-      expect(tester.widget<Semantics>(lit).properties.label, 'Your Moments');
+      expect(tester.widget<Semantics>(lit).properties.label, 'Moments');
 
       // Friends is primary tab 2 and mobile Home's "Your circle" selects
       // it. It owns no dock slot, so the bar must light NOTHING rather
@@ -1287,7 +1298,7 @@ void main() {
         dockHost(selectedIndex: 0, onSelect: (index) => selected = index),
       );
       await tester.pumpAndSettle();
-      await tester.tap(find.bySemanticsLabel('Your Moments'));
+      await tester.tap(find.bySemanticsLabel('Moments'));
       await tester.pumpAndSettle();
 
       expect(selected, momentsSlot);

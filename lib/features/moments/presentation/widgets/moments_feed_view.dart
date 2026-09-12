@@ -14,8 +14,10 @@ import 'package:yovoice/core/navigation/app_route_observer.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_radius.dart';
+import 'package:yovoice/core/theme/app_sizing.dart';
 import 'package:yovoice/core/theme/app_spacing.dart';
 import 'package:yovoice/core/theme/app_typography.dart';
+import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/home/data/services/home_feed_service.dart';
 import 'package:yovoice/features/moderation/data/services/content_report_service.dart';
 import 'package:yovoice/features/moderation/presentation/report_content_flow.dart';
@@ -27,16 +29,20 @@ import 'package:yovoice/features/moments/data/services/moment_service.dart';
 import 'package:yovoice/features/moments/data/services/moment_views_service.dart';
 import 'package:yovoice/features/moments/presentation/screens/moment_comments_screen.dart';
 import 'package:yovoice/features/moments/presentation/screens/moment_detail_screen.dart';
+import 'package:yovoice/features/moments/presentation/screens/record_voice_moment_screen.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_discover_tiles.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_expiry_accessibility.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_sheet.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_story_tile.dart';
+import 'package:yovoice/features/moments/presentation/widgets/moments_queue_list.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_story_viewer.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_time_labels.dart';
+import 'package:yovoice/features/moments/presentation/widgets/moments_follow_panel.dart';
+import 'package:yovoice/features/moments/presentation/widgets/yo_moments_chrome.dart';
+import 'package:yovoice/features/profile/data/services/follow_service.dart';
 import 'package:yovoice/shared/widgets/identity/official_role_badge.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
-import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
@@ -82,11 +88,40 @@ class MomentsFeedView extends StatefulWidget {
     this.playerFactory,
     this.expiryClock,
     this.expiryTimerFactory,
+    this.headerBuilder,
+    this.onCreate,
+    this.onOpenFindCreators,
+    this.friendService,
+    this.followService,
+    this.neighbourQueue,
     super.key,
   });
 
   final VoidCallback onRecord;
   final MomentsFilter initialFilter;
+
+  /// The YO Moments header (title + format switch) the host wants drawn at
+  /// the top of the main column, built for the layout THIS view resolves
+  /// from its slot so the header and the columns can never disagree.
+  final Widget Function(BuildContext context, YoMomentsLayout layout)?
+  headerBuilder;
+
+  /// The create chooser, for the local panel's "Utwórz" at ≥ 1100. Absent,
+  /// the panel draws no create action.
+  final VoidCallback? onCreate;
+
+  /// "Find people" on the Following empty state. Absent, no such action is
+  /// drawn — never a dead button.
+  final VoidCallback? onOpenFindCreators;
+
+  /// Injection seams for the calm panel's real pool (friends the viewer
+  /// does not follow yet); production passes nothing.
+  final FriendService? friendService;
+  final FollowService? followService;
+
+  /// Where this feed publishes the pool the expanded player may hand off
+  /// to. Production shares one instance; tests pass their own.
+  final MomentNeighbourQueue? neighbourQueue;
   final MomentDiscoveryService? discoveryService;
   final HomeFeedService? feedService;
   final MomentService? momentService;
@@ -170,6 +205,13 @@ class _MomentsFeedViewState extends State<MomentsFeedView>
   bool _openingDestination = false;
   final _likeOverrides = <String, ({bool liked, int count})>{};
   final _pendingLikes = <String>{};
+  // Reported by the calm panel; the third column exists only while true.
+  bool _calmPanelHasPeople = false;
+
+  // What the expanded player may hand off to. Published at the hand-off,
+  // refreshed while it is live, cleared with the account.
+  late final MomentNeighbourQueue _neighbourQueue =
+      widget.neighbourQueue ?? MomentNeighbourQueue.shared;
   // Immutable IDs deleted successfully by this account on this surface.
   // A read/page captured before its delete ACK may finish afterwards.
   final _confirmedDeletedIds = <String>{};
@@ -310,6 +352,9 @@ class _MomentsFeedViewState extends State<MomentsFeedView>
       _openingDestination = false;
     });
     _expiry.schedule(const []);
+    // A hand-off list belongs to the account that loaded it; the next
+    // account starts from nothing rather than from the previous pool.
+    _neighbourQueue.clear();
     _subscribeAccountStreams();
     unawaited(_load());
   }
@@ -532,6 +577,7 @@ class _MomentsFeedViewState extends State<MomentsFeedView>
     unawaited(_stopPanelPlayback(release: true, notify: false));
     _playback.dispose();
     _expiryRecoveryFocus.dispose();
+    if (_neighbourQueue.value.belongsTo(_viewerUid)) _neighbourQueue.clear();
     super.dispose();
   }
 
@@ -567,6 +613,19 @@ class _MomentsFeedViewState extends State<MomentsFeedView>
       if (!_accountIsCurrent(account, uid) || generation != _loadEpoch) return;
       if (hasContent && !_voiceAccessWasDenied(error)) {
         setState(() => _loadMoreError = error);
+        // A refresh failure never replaces content already shown: the cards
+        // stay, the footer keeps its retry, and the failure is announced
+        // once as a SnackBar.
+        if (mounted && _surfaceAllowsPlayback) {
+          ScaffoldMessenger.maybeOf(context)
+            ?..hideCurrentSnackBar()
+            ..showSnackBar(
+              SnackBar(
+                behavior: SnackBarBehavior.floating,
+                content: Text(friendlyErrorMessage(error, copy: _copy)),
+              ),
+            );
+        }
       } else {
         setState(() {
           _result = null;
@@ -1211,6 +1270,40 @@ class _MomentsFeedViewState extends State<MomentsFeedView>
         );
       });
 
+  /// "Odpowiedz głosem" on a card: the existing recorder in reply mode.
+  /// The feed player is released first (as for every destination) and the
+  /// microphone starts only on the recorder's own deliberate control. A
+  /// published reply (`true`) is acknowledged; the feed itself reloads on
+  /// the route's return (`didPopNext` → `_handleVisibility` → `_refreshAll`),
+  /// exactly as after every other pushed destination, so the live comment
+  /// count lands without a second load.
+  Future<void> _replyWithVoice(VoiceMoment moment) =>
+      _openDestination(moment, (current) async {
+        final created = await Navigator.of(context).push<bool>(
+          MaterialPageRoute<bool>(
+            builder: (_) => RecordVoiceMomentScreen(
+              replyToMomentId: current.id,
+              replyToAuthorName: current.authorName,
+              momentService: widget.momentService,
+            ),
+          ),
+        );
+        if (created != true || !mounted) return;
+        ScaffoldMessenger.maybeOf(context)
+          ?..hideCurrentSnackBar()
+          ..showSnackBar(
+            SnackBar(
+              behavior: SnackBarBehavior.floating,
+              content: Text(
+                _copy.text(
+                  'Voice reply published.',
+                  'Odpowiedź głosowa opublikowana.',
+                ),
+              ),
+            ),
+          );
+      });
+
   Future<void> _openProfile(VoiceMoment moment) => _openDestination(
     moment,
     (moment) => showProfilePreview(
@@ -1282,6 +1375,18 @@ class _MomentsFeedViewState extends State<MomentsFeedView>
     if (_playingId != null && ids.contains(_playingId)) {
       unawaited(_stopPanelPlayback(release: true));
     }
+    _republishNeighbours();
+  }
+
+  /// Keeps a LIVE hand-off list honest: a Moment that was deleted, expired
+  /// or dropped here must not stay offered on the expanded player. Silent
+  /// when nothing was ever handed off for this account.
+  void _republishNeighbours() {
+    if (!_neighbourQueue.value.belongsTo(_viewerUid)) return;
+    _neighbourQueue.publish(
+      viewerUid: _viewerUid,
+      moments: _currentList().map(_withLive).toList(growable: false),
+    );
   }
 
   /// Opens the full detail page for [moment]. The shell's route keeps the
@@ -1290,6 +1395,13 @@ class _MomentsFeedViewState extends State<MomentsFeedView>
   void _openDetail(VoiceMoment moment) {
     unawaited(
       _openDestination(moment, (moment) async {
+        // The expanded player's hand-off list: exactly the pool this feed
+        // has already loaded and filtered for THIS account. Nothing is
+        // fetched for it and no media grant is minted for it.
+        _neighbourQueue.publish(
+          viewerUid: _viewerUid,
+          moments: _currentList().map(_withLive).toList(growable: false),
+        );
         final open = widget.onOpenDetail;
         if (open != null) {
           open(moment);
@@ -1523,6 +1635,7 @@ class _MomentsFeedViewState extends State<MomentsFeedView>
           previousFocus: recoverFocus ? previousFocus : null,
         );
       }
+      _republishNeighbours();
     }
     _scheduleExpiry();
   }
@@ -1601,45 +1714,215 @@ class _MomentsFeedViewState extends State<MomentsFeedView>
 
   // ---------------------------------------------------------------- build
 
+  static const _filterIcons = <MomentsFilter, IconData>{
+    MomentsFilter.discover: Icons.explore_outlined,
+    MomentsFilter.following: Icons.people_outline_rounded,
+    MomentsFilter.mostEngaged: Icons.trending_up_rounded,
+    MomentsFilter.recent: Icons.schedule_rounded,
+  };
+
+  static String filterLabel(AppLocalizations copy, MomentsFilter value) =>
+      switch (value) {
+        MomentsFilter.discover => copy.text('Discover', 'Odkrywaj'),
+        MomentsFilter.following => copy.text('Following', 'Obserwowani'),
+        MomentsFilter.mostEngaged => copy.text(
+          'Most engaged',
+          'Najbardziej angażujące',
+        ),
+        MomentsFilter.recent => copy.text('Recent', 'Najnowsze'),
+      };
+
+  List<YoMomentsFilterOption> _filterOptions(AppLocalizations copy) =>
+      <YoMomentsFilterOption>[
+        for (final value in MomentsFilter.values)
+          YoMomentsFilterOption(
+            key: ValueKey('moments-filter-${value.name}'),
+            label: filterLabel(copy, value),
+            icon: _filterIcons[value]!,
+          ),
+      ];
+
+  /// Whether the column is still waiting for its first page: the capsule
+  /// strip and the calm panel stay ABSENT then (they would fake authors).
+  bool get _isLoadingFirstPage => _filter == MomentsFilter.following
+      ? _socialError == null && _socialData == null && _feed != null
+      : _phase == _Phase.loading;
+
+  void _setCalmPanel(bool hasPeople) {
+    if (!mounted || _calmPanelHasPeople == hasPeople) return;
+    setState(() => _calmPanelHasPeople = hasPeople);
+  }
+
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        final side = ResponsiveContentFrame.adaptivePagePadding(
+        final layout = YoMomentsLayout.of(
           constraints.maxWidth,
-        ).left;
+          textScale: MediaQuery.textScalerOf(context).scale(1),
+        );
+        final copy = _copy;
+        final options = _filterOptions(copy);
+        final groupLabel = copy.contextualText(
+          'yoMoments.voiceFilters',
+          'Voice Moment filters',
+          'Filtry Voice Momentów',
+        );
+        final header = widget.headerBuilder?.call(context, layout);
+        final body = _filter == MomentsFilter.following
+            ? _buildFollowing(layout)
+            : _buildPool(layout);
+
+        Widget mainColumn = Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            ?header,
+            if (!layout.showsLocalPanel)
+              Padding(
+                padding: const EdgeInsets.only(top: AppRhythm.tight),
+                child: YoMomentsFilterChips(
+                  options: options,
+                  selectedIndex: _filter.index,
+                  onSelected: (index) =>
+                      _setFilter(MomentsFilter.values[index]),
+                  groupLabel: groupLabel,
+                  gutter: layout.gutter,
+                  trailing: IconButton(
+                    key: const ValueKey('moments-discovery-refresh'),
+                    focusNode: _expiryRecoveryFocus,
+                    onPressed: _refreshAll,
+                    tooltip: copy.text('Reload Moments', 'Odśwież Momenty'),
+                    icon: Icon(
+                      Icons.refresh_rounded,
+                      color: context.appPalette.textSecondary,
+                    ),
+                  ),
+                ),
+              ),
+            Expanded(child: body),
+          ],
+        );
+        mainColumn = Align(
+          alignment: Alignment.topCenter,
+          child: ConstrainedBox(
+            constraints: BoxConstraints(maxWidth: layout.mainColumnOuterWidth),
+            child: mainColumn,
+          ),
+        );
+
+        Widget content = mainColumn;
+        if (layout.showsLocalPanel) {
+          final calmVisible =
+              layout.showsCalmPanel &&
+              _calmPanelHasPeople &&
+              !_isLoadingFirstPage;
+          content = Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              YoMomentsLocalPanel(
+                options: options,
+                selectedIndex: _filter.index,
+                onSelected: (index) => _setFilter(MomentsFilter.values[index]),
+                groupLabel: groupLabel,
+                width: layout.localPanelWidth,
+                onCreate: widget.onCreate,
+                // The same control as the phone's refresh (an IconButton
+                // with the same key, tooltip and focus-recovery node), given
+                // its label as a row so it reads like the panel's rows.
+                trailing: Align(
+                  alignment: AlignmentDirectional.centerStart,
+                  child: IconButton(
+                    key: const ValueKey('moments-discovery-refresh'),
+                    focusNode: _expiryRecoveryFocus,
+                    onPressed: _refreshAll,
+                    tooltip: copy.text('Reload Moments', 'Odśwież Momenty'),
+                    style: IconButton.styleFrom(
+                      foregroundColor: context.appPalette.textSecondary,
+                      minimumSize: const Size(
+                        AppSizing.minimumTouchTarget,
+                        AppSizing.standardControlHeight,
+                      ),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: AppRhythm.item,
+                      ),
+                      shape: const RoundedRectangleBorder(
+                        borderRadius: AppRadius.md,
+                      ),
+                    ),
+                    icon: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.refresh_rounded, size: 20),
+                        const SizedBox(width: AppRhythm.item),
+                        Flexible(
+                          // Spoken once, through the tooltip.
+                          child: ExcludeSemantics(
+                            child: Text(
+                              copy.text('Reload Moments', 'Odśwież Momenty'),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: AppTypography.titleSmall.copyWith(
+                                color: context.appPalette.textSecondary,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              SizedBox(width: layout.gutter),
+              Expanded(child: mainColumn),
+              if (layout.showsCalmPanel) ...[
+                // Mounted whenever the third column CAN exist, so the pool
+                // is known before the column is shown; it takes no width
+                // until the pool has someone in it.
+                Visibility(
+                  visible: calmVisible,
+                  maintainState: true,
+                  child: Padding(
+                    padding: EdgeInsetsDirectional.only(
+                      start: layout.gutter,
+                      end: layout.gutter,
+                    ),
+                    child: SizedBox(
+                      width: YoMomentsLayout.calmPanelWidth,
+                      child: SingleChildScrollView(
+                        padding: const EdgeInsets.only(
+                          top: AppRhythm.title,
+                          bottom: AppRhythm.page,
+                        ),
+                        child: MomentsFollowPanel(
+                          key: ValueKey('moments-follow-panel-$_viewerUid'),
+                          friendService: widget.friendService,
+                          followService: widget.followService,
+                          auth: widget.auth,
+                          onRecord: widget.onRecord,
+                          onPoolChanged: _setCalmPanel,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          );
+        }
+
         return YoPageBackground(
           section: YoPageSection.moments,
           key: const ValueKey('moments-feed-view'),
-          child: ResponsiveContentFrame(
-            width: ResponsiveContentWidth.list,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                _FilterChips(
-                  filter: _filter,
-                  onFilter: _setFilter,
-                  onRefresh: _refreshAll,
-                  side: side,
-                  recoveryFocusNode: _expiryRecoveryFocus,
-                ),
-                Expanded(
-                  child: _filter == MomentsFilter.following
-                      ? _buildFollowing(side)
-                      : _buildPool(side),
-                ),
-              ],
-            ),
-          ),
+          child: content,
         );
       },
     );
   }
 
-  Widget _buildPool(double side) {
+  Widget _buildPool(YoMomentsLayout layout) {
     switch (_phase) {
       case _Phase.loading:
-        return const _LoadingState();
+        return _LoadingState(gutter: layout.gutter, compact: layout.isNarrow);
       case _Phase.error:
         return _ErrorState(error: _error, onRetry: _load);
       case _Phase.ready:
@@ -1652,7 +1935,7 @@ class _MomentsFeedViewState extends State<MomentsFeedView>
     if (result.moments.isEmpty && result.canLoadMore) {
       return _buildList(
         const [],
-        side: side,
+        layout: layout,
         footer: _PoolFooter(
           total: 0,
           moreExists: true,
@@ -1738,7 +2021,7 @@ class _MomentsFeedViewState extends State<MomentsFeedView>
     final list = ordered.map(_withLive).toList(growable: false);
     return _buildList(
       list,
-      side: side,
+      layout: layout,
       footer: _PoolFooter(
         total: list.length,
         moreExists: result.poolExhausted,
@@ -1753,15 +2036,18 @@ class _MomentsFeedViewState extends State<MomentsFeedView>
     );
   }
 
-  Widget _buildFollowing(double side) {
+  Widget _buildFollowing(YoMomentsLayout layout) {
     if (_socialError != null) {
       return _ErrorState(error: _socialError, onRetry: _retrySocial);
     }
-    if (_socialData == null && _feed != null) return const _LoadingState();
+    if (_socialData == null && _feed != null) {
+      return _LoadingState(gutter: layout.gutter, compact: layout.isNarrow);
+    }
     final list = _followingList(
       _effectiveNow(),
     ).map(_withLive).toList(growable: false);
     if (list.isEmpty) {
+      final findPeople = widget.onOpenFindCreators;
       return _EmptyState(
         key: const ValueKey('moments-following-empty'),
         icon: Icons.graphic_eq_rounded,
@@ -1773,16 +2059,24 @@ class _MomentsFeedViewState extends State<MomentsFeedView>
         ),
         actionLabel: _copy.text('Record a Moment', 'Nagraj Moment'),
         onAction: widget.onRecord,
+        secondaryActionKey: const ValueKey('moments-following-find-people'),
+        secondaryActionLabel: findPeople == null
+            ? null
+            : _copy.text('Find people', 'Znajdź osoby'),
+        onSecondaryAction: findPeople,
       );
     }
-    return _buildList(list, side: side);
+    return _buildList(list, layout: layout);
   }
 
   Widget _buildList(
     List<VoiceMoment> list, {
-    required double side,
+    required YoMomentsLayout layout,
     Widget? footer,
   }) {
+    // The capsule strip lists EXACTLY the authors of the list being shown —
+    // loaded, active, unblocked, playable — and nothing else.
+    final chains = _chainsFor(list);
     return NotificationListener<ScrollNotification>(
       onNotification: (_) {
         _checkVisiblePlaybackAfterFrame();
@@ -1791,7 +2085,9 @@ class _MomentsFeedViewState extends State<MomentsFeedView>
       child: _FeedColumn(
         key: ValueKey('voice-feed-account-$_accountEpoch'),
         moments: list,
-        side: side,
+        chains: chains,
+        gutter: layout.gutter,
+        compact: layout.isNarrow,
         viewedIds: _viewedIds,
         currentUserId: _uid,
         playback: _playback,
@@ -1811,131 +2107,81 @@ class _MomentsFeedViewState extends State<MomentsFeedView>
         onShare: (moment) => unawaited(_share(moment)),
         onReport: (moment) => unawaited(_report(moment)),
         onDelete: (moment) => unawaited(_confirmDelete(moment)),
+        onReplyVoice: (moment) => unawaited(_replyWithVoice(moment)),
       ),
     );
   }
 }
 
-/// One selected chip, violet fill; the rest quiet. Horizontal scroll so a
-/// 2x text scale slides instead of overflowing.
-class _FilterChips extends StatelessWidget {
-  const _FilterChips({
-    required this.filter,
-    required this.onFilter,
-    required this.onRefresh,
-    required this.side,
-    required this.recoveryFocusNode,
-  });
-
-  final MomentsFilter filter;
-  final ValueChanged<MomentsFilter> onFilter;
-  final VoidCallback onRefresh;
-  final double side;
-  final FocusNode recoveryFocusNode;
-
-  static const _icons = <MomentsFilter, IconData>{
-    MomentsFilter.discover: Icons.explore_outlined,
-    MomentsFilter.following: Icons.people_outline_rounded,
-    MomentsFilter.mostEngaged: Icons.trending_up_rounded,
-    MomentsFilter.recent: Icons.schedule_rounded,
-  };
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = context.appPalette;
-    final copy = AppLocalizations.of(context);
-    String labelFor(MomentsFilter value) => switch (value) {
-      MomentsFilter.discover => copy.text('Discover', 'Odkrywaj'),
-      MomentsFilter.following => copy.text('Following', 'Obserwowani'),
-      MomentsFilter.mostEngaged => copy.text(
-        'Most engaged',
-        'Najpopularniejsze',
-      ),
-      MomentsFilter.recent => copy.text('Recent', 'Najnowsze'),
-    };
-    return Padding(
-      padding: EdgeInsets.fromLTRB(side, AppRhythm.tight, side, AppRhythm.item),
-      child: Row(
-        children: [
-          Expanded(
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Row(
-                children: [
-                  for (final entry in _icons.entries) ...[
-                    if (entry.key != MomentsFilter.discover)
-                      const SizedBox(width: 8),
-                    _FilterChip(
-                      key: ValueKey('moments-filter-${entry.key.name}'),
-                      label: labelFor(entry.key),
-                      icon: entry.value,
-                      selected: filter == entry.key,
-                      onTap: () => onFilter(entry.key),
-                    ),
-                  ],
-                ],
-              ),
-            ),
-          ),
-          IconButton(
-            key: const ValueKey('moments-discovery-refresh'),
-            focusNode: recoveryFocusNode,
-            onPressed: onRefresh,
-            tooltip: copy.text('Reload Moments', 'Odśwież Momenty'),
-            icon: Icon(Icons.refresh_rounded, color: palette.textSecondary),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _FilterChip extends StatelessWidget {
-  const _FilterChip({
-    required this.label,
-    required this.icon,
-    required this.selected,
-    required this.onTap,
+/// The horizontal strip of author capsules above the first card.
+///
+/// It lists exactly the authors of the loaded, active, unblocked, playable
+/// list (one chain per author, newest first — `buildMomentChains`); the
+/// unheard/heard fact comes from the caller's own `momentViews` set. Nothing
+/// is invented: no author outside the list, no order beyond the chains',
+/// no amplitude in the decorative motif.
+class MomentAuthorCapsuleStrip extends StatelessWidget {
+  const MomentAuthorCapsuleStrip({
+    required this.chains,
+    required this.viewedIds,
+    required this.onOpenChain,
+    required this.gutter,
     super.key,
   });
 
-  final String label;
-  final IconData icon;
-  final bool selected;
-  final VoidCallback onTap;
+  final List<MomentChain> chains;
+  final Set<String> viewedIds;
+  final ValueChanged<MomentChain> onOpenChain;
+
+  /// The page gutter, used as scroll padding so the strip is full-bleed
+  /// and its first capsule still starts on the column's edge.
+  final double gutter;
+
+  /// Below this slot width the motif is dropped so at least three capsules
+  /// stay visible.
+  static const double barsMinSlotWidth = 360;
 
   @override
   Widget build(BuildContext context) {
-    final palette = context.appPalette;
-    final colors = Theme.of(context).colorScheme;
-    return Semantics(
-      selected: selected,
-      child: OutlinedButton.icon(
-        onPressed: onTap,
-        style: ButtonStyle(
-          backgroundColor: WidgetStatePropertyAll(
-            selected ? colors.primary : palette.surfaceMuted,
-          ),
-          foregroundColor: WidgetStatePropertyAll(
-            selected ? colors.onPrimary : palette.textSecondary,
-          ),
-          padding: const WidgetStatePropertyAll(
-            EdgeInsets.symmetric(horizontal: AppRhythm.title),
-          ),
-          shape: const WidgetStatePropertyAll(
-            RoundedRectangleBorder(borderRadius: AppRadius.pill),
-          ),
-          side: WidgetStateProperty.resolveWith(
-            (states) => BorderSide(
-              width: 3,
-              color: states.contains(WidgetState.focused)
-                  ? (selected ? colors.onPrimary : palette.focus)
-                  : Colors.transparent,
-            ),
-          ),
-        ),
-        icon: Icon(icon, size: 18),
-        label: Text(label),
+    final copy = AppLocalizations.of(context);
+    return SizedBox(
+      height: MomentAuthorCapsule.height,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final showBars = constraints.maxWidth >= barsMinSlotWidth;
+          return ListView.separated(
+            key: const ValueKey('moments-author-capsules'),
+            scrollDirection: Axis.horizontal,
+            padding: EdgeInsets.symmetric(horizontal: gutter),
+            itemCount: chains.length,
+            separatorBuilder: (_, __) => const SizedBox(width: AppRhythm.item),
+            itemBuilder: (context, index) {
+              final chain = chains[index];
+              final seen = !chain.hasUnviewed(viewedIds);
+              return MomentAuthorCapsule(
+                key: ValueKey('moments-capsule-${chain.authorId}'),
+                name: chain.authorName,
+                seen: seen,
+                userId: chain.authorId,
+                photoUrl: chain.authorPhotoUrl,
+                displayName: chain.authorName,
+                showBars: showBars,
+                semanticLabel: chain.length > 1
+                    ? copy.template(
+                        'Open the story chain by {name}, {count} Moments',
+                        'Otwórz relację użytkownika {name}, Momenty: {count}',
+                        values: {'name': chain.authorName, 'count': chain.length},
+                      )
+                    : copy.template(
+                        'Open the story chain by {name}',
+                        'Otwórz relację użytkownika {name}',
+                        values: {'name': chain.authorName},
+                      ),
+                onTap: () => onOpenChain(chain),
+              );
+            },
+          );
+        },
       ),
     );
   }
@@ -1964,7 +2210,9 @@ class _FeedPlayback {
 class _FeedColumn extends StatelessWidget {
   const _FeedColumn({
     required this.moments,
-    required this.side,
+    required this.chains,
+    required this.gutter,
+    required this.compact,
     required this.viewedIds,
     required this.currentUserId,
     required this.playback,
@@ -1983,12 +2231,15 @@ class _FeedColumn extends StatelessWidget {
     required this.onShare,
     required this.onReport,
     required this.onDelete,
+    required this.onReplyVoice,
     this.footer,
     super.key,
   });
 
   final List<VoiceMoment> moments;
-  final double side;
+  final List<MomentChain> chains;
+  final double gutter;
+  final bool compact;
   final Set<String> viewedIds;
   final String currentUserId;
   final ValueListenable<_FeedPlayback> playback;
@@ -2008,48 +2259,73 @@ class _FeedColumn extends StatelessWidget {
   final ValueChanged<VoiceMoment> onShare;
   final ValueChanged<VoiceMoment> onReport;
   final ValueChanged<VoiceMoment> onDelete;
+  final ValueChanged<VoiceMoment> onReplyVoice;
 
   @override
   Widget build(BuildContext context) {
+    final hasStrip = chains.isNotEmpty;
+    final offset = hasStrip ? 1 : 0;
     final indices = <Key, int>{
+      if (hasStrip) const ValueKey('moments-author-capsules-item'): 0,
       for (var index = 0; index < moments.length; index++)
-        ValueKey('moment-row-${moments[index].id}'): index,
+        ValueKey('moment-row-${moments[index].id}'): index + offset,
     };
     return ListView.builder(
       key: const ValueKey('moments-feed-scroll'),
-      padding: EdgeInsets.fromLTRB(side, AppRhythm.tight, side, AppRhythm.page),
-      itemCount: moments.length + (footer == null ? 0 : 1),
+      // The cards carry the gutter themselves so the capsule strip can be
+      // full-bleed with the gutter as its scroll padding.
+      padding: const EdgeInsets.only(top: AppRhythm.title, bottom: AppRhythm.page),
+      itemCount: offset + moments.length + (footer == null ? 0 : 1),
       findChildIndexCallback: (key) => indices[key],
       itemBuilder: (context, index) {
-        if (index == moments.length) {
+        if (hasStrip && index == 0) {
           return Padding(
-            padding: const EdgeInsets.only(top: AppRhythm.title),
+            key: const ValueKey('moments-author-capsules-item'),
+            padding: const EdgeInsets.only(bottom: AppRhythm.title),
+            child: MomentAuthorCapsuleStrip(
+              chains: chains,
+              viewedIds: viewedIds,
+              gutter: gutter,
+              onOpenChain: (chain) => onOpenChain(chain.moments.last),
+            ),
+          );
+        }
+        final momentIndex = index - offset;
+        if (momentIndex == moments.length) {
+          return Padding(
+            padding: EdgeInsets.fromLTRB(gutter, AppRhythm.title, gutter, 0),
             child: footer,
           );
         }
-        final moment = moments[index];
-        return _MomentFeedCard(
-          key: ValueKey('moment-row-${moment.id}'),
-          moment: moment,
-          seen: viewedIds.contains(moment.id),
-          isOwn: currentUserId.isNotEmpty && moment.authorId == currentUserId,
-          canInteract: currentUserId.isNotEmpty,
-          canLike: canLike,
-          likePending: pendingLikes.contains(moment.id),
-          playback: playback,
-          onCardBuild: onCardBuild,
-          onCardDispose: onCardDispose,
-          onTap: () => onTapMoment(moment),
-          onPlay: () => onPlayMoment(moment),
-          onSeek: (position) => onSeek(moment, position),
-          onLike: () => onLike(moment),
-          onComments: () => onComments(moment),
-          onOpenChain: () => onOpenChain(moment),
-          onOpenProfile: () => onOpenProfile(moment),
-          onOpenDetail: () => onOpenDetail(moment),
-          onShare: () => onShare(moment),
-          onReport: () => onReport(moment),
-          onDelete: () => onDelete(moment),
+        final moment = moments[momentIndex];
+        return Padding(
+          padding: EdgeInsets.symmetric(horizontal: gutter),
+          child: _MomentFeedCard(
+            key: ValueKey('moment-row-${moment.id}'),
+            moment: moment,
+            seen: viewedIds.contains(moment.id),
+            isOwn:
+                currentUserId.isNotEmpty && moment.authorId == currentUserId,
+            canInteract: currentUserId.isNotEmpty,
+            canLike: canLike,
+            likePending: pendingLikes.contains(moment.id),
+            playback: playback,
+            compact: compact,
+            onCardBuild: onCardBuild,
+            onCardDispose: onCardDispose,
+            onTap: () => onTapMoment(moment),
+            onPlay: () => onPlayMoment(moment),
+            onSeek: (position) => onSeek(moment, position),
+            onLike: () => onLike(moment),
+            onComments: () => onComments(moment),
+            onOpenChain: () => onOpenChain(moment),
+            onOpenProfile: () => onOpenProfile(moment),
+            onOpenDetail: () => onOpenDetail(moment),
+            onShare: () => onShare(moment),
+            onReport: () => onReport(moment),
+            onDelete: () => onDelete(moment),
+            onReplyVoice: () => onReplyVoice(moment),
+          ),
         );
       },
     );
@@ -2111,8 +2387,13 @@ class MomentStoryStrip extends StatelessWidget {
   }
 }
 
-/// One complete, readable recording. The progress track is transport data;
-/// this model has no recorded waveform, so the card does not invent one.
+/// One complete, readable recording — the 06 Voice card.
+///
+/// Author, real age, the caption as ONE block, the transport (play +
+/// decorative waveform with the real fill + duration), real counters and
+/// the outlined "Odpowiedz głosem". The model has no cover, no title and
+/// no recorded waveform, so the card shows none of them: the caption is
+/// followed directly by the transport (the quiet no-cover variant).
 class _MomentFeedCard extends StatefulWidget {
   const _MomentFeedCard({
     required this.moment,
@@ -2122,6 +2403,7 @@ class _MomentFeedCard extends StatefulWidget {
     required this.canLike,
     required this.likePending,
     required this.playback,
+    required this.compact,
     required this.onCardBuild,
     required this.onCardDispose,
     required this.onTap,
@@ -2135,6 +2417,7 @@ class _MomentFeedCard extends StatefulWidget {
     required this.onShare,
     required this.onReport,
     required this.onDelete,
+    required this.onReplyVoice,
     super.key,
   });
 
@@ -2145,6 +2428,10 @@ class _MomentFeedCard extends StatefulWidget {
   final bool canLike;
   final bool likePending;
   final ValueListenable<_FeedPlayback> playback;
+
+  /// True below a 600 slot: avatar 48 and no format badge (the switch above
+  /// already names the format).
+  final bool compact;
   final void Function(String, BuildContext) onCardBuild;
   final void Function(String, BuildContext) onCardDispose;
   final VoidCallback onTap;
@@ -2158,12 +2445,15 @@ class _MomentFeedCard extends StatefulWidget {
   final VoidCallback onShare;
   final VoidCallback onReport;
   final VoidCallback onDelete;
+  final VoidCallback onReplyVoice;
 
   @override
   State<_MomentFeedCard> createState() => _MomentFeedCardState();
 }
 
 class _MomentFeedCardState extends State<_MomentFeedCard> {
+  bool _hovered = false;
+
   void _afterMenu(VoidCallback action) {
     // PopupMenu returns its selection before the route's inherited current
     // state has rebuilt. Dispatch after that frame, retaining all destination
@@ -2196,16 +2486,21 @@ class _MomentFeedCardState extends State<_MomentFeedCard> {
     final caption = moment.caption.trim().isEmpty
         ? copy.text('Voice Moment', 'Voice Moment')
         : moment.caption;
+    final avatarDiameter = widget.compact ? 48.0 : 56.0;
 
     Widget avatar() => AccessibleTapRegion(
       key: ValueKey('moment-row-chain-${moment.id}'),
       circular: true,
       onTap: enabled ? widget.onOpenChain : null,
+      minimumSize: const Size(
+        AppSizing.standardControlHeight,
+        AppSizing.standardControlHeight,
+      ),
       semanticLabel:
           '${copy.template('Open the story chain by {name}', 'Otwórz relację użytkownika {name}', values: {'name': moment.authorName})}, ${MomentSeenAvatar.stateLabel(context, seen: widget.seen)}',
       child: MomentSeenAvatar(
         seen: widget.seen,
-        diameter: 48,
+        diameter: avatarDiameter,
         userId: moment.authorId,
         photoUrl: moment.authorPhotoUrl,
         displayName: moment.authorName,
@@ -2220,12 +2515,18 @@ class _MomentFeedCardState extends State<_MomentFeedCard> {
           key: ValueKey('moment-row-author-${moment.id}'),
           onTap: enabled ? widget.onOpenProfile : null,
           semanticLabel: moment.authorName,
+          minimumSize: const Size(
+            AppSizing.minimumTouchTarget,
+            AppSizing.standardControlHeight,
+          ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
               Flexible(
                 child: Text(
                   moment.authorName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: AppTypography.titleMedium.copyWith(
                     color: palette.textPrimary,
                   ),
@@ -2249,11 +2550,15 @@ class _MomentFeedCardState extends State<_MomentFeedCard> {
       ],
     );
 
+    Widget badge() =>
+        YoMomentsFormatBadge(key: ValueKey('moment-row-badge-${moment.id}'));
+
     Widget menu() => MomentOverflowMenu(
       moment: moment,
       isOwn: widget.isOwn,
       uploading: uploading,
       keyPrefix: 'moment-row',
+      iconSize: 22,
       onOpenDetail: () => _afterMenu(widget.onOpenDetail),
       onReport: () => _afterMenu(widget.onReport),
       onDelete: () => _afterMenu(widget.onDelete),
@@ -2264,154 +2569,125 @@ class _MomentFeedCardState extends State<_MomentFeedCard> {
       child: Semantics(
         container: true,
         explicitChildNodes: true,
-        child: Material(
-          color: palette.surfaceRaised,
-          shape: RoundedRectangleBorder(
-            borderRadius: AppRadius.lg,
-            side: BorderSide(color: palette.border),
-          ),
-          child: InkWell(
-            onTap: widget.canInteract ? widget.onTap : null,
-            borderRadius: AppRadius.lg,
-            child: Padding(
-              padding: const EdgeInsets.all(AppRhythm.title),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  LayoutBuilder(
-                    builder: (context, constraints) {
-                      final scale =
-                          MediaQuery.textScalerOf(context).scale(16) / 16;
-                      if (constraints.maxWidth < 240 * scale) {
-                        return Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
+        child: MouseRegion(
+          onEnter: (_) => setState(() => _hovered = true),
+          onExit: (_) => setState(() => _hovered = false),
+          child: Material(
+            color: palette.surface,
+            shape: RoundedRectangleBorder(
+              borderRadius: AppRadius.lg,
+              side: BorderSide(
+                color: _hovered ? palette.borderStrong : palette.border,
+              ),
+            ),
+            clipBehavior: Clip.antiAlias,
+            child: InkWell(
+              onTap: widget.canInteract ? widget.onTap : null,
+              borderRadius: AppRadius.lg,
+              child: Padding(
+                padding: const EdgeInsets.all(AppRhythm.title),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    LayoutBuilder(
+                      builder: (context, constraints) {
+                        final scale =
+                            MediaQuery.textScalerOf(context).scale(16) / 16;
+                        if (constraints.maxWidth < 240 * scale) {
+                          return Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  avatar(),
+                                  const Spacer(),
+                                  if (!widget.compact) ...[
+                                    badge(),
+                                    const SizedBox(width: AppRhythm.hairline),
+                                  ],
+                                  menu(),
+                                ],
+                              ),
+                              const SizedBox(height: AppRhythm.tight),
+                              identity(),
+                            ],
+                          );
+                        }
+                        return Row(
+                          crossAxisAlignment: CrossAxisAlignment.center,
                           children: [
-                            Row(children: [avatar(), const Spacer(), menu()]),
-                            const SizedBox(height: AppRhythm.tight),
-                            identity(),
+                            avatar(),
+                            const SizedBox(width: AppRhythm.item),
+                            Expanded(child: identity()),
+                            if (!widget.compact) ...[
+                              const SizedBox(width: AppRhythm.tight),
+                              badge(),
+                              const SizedBox(width: AppRhythm.hairline),
+                            ],
+                            menu(),
                           ],
                         );
-                      }
-                      return Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          avatar(),
-                          const SizedBox(width: AppRhythm.item),
-                          Expanded(child: identity()),
-                          menu(),
-                        ],
-                      );
-                    },
-                  ),
-                  const SizedBox(height: AppRhythm.tight),
-                  AccessibleTapRegion(
-                    key: ValueKey('moment-row-title-${moment.id}'),
-                    onTap: enabled ? widget.onOpenDetail : null,
-                    semanticLabel: copy.template(
-                      'Open details of the Moment by {name}',
-                      'Otwórz szczegóły Momentu użytkownika {name}',
-                      values: {'name': moment.authorName},
+                      },
                     ),
-                    child: Align(
-                      alignment: AlignmentDirectional.centerStart,
-                      child: Text(
-                        caption,
-                        maxLines: 4,
-                        overflow: TextOverflow.ellipsis,
-                        style: AppTypography.bodyLarge.copyWith(
-                          color: palette.textPrimary,
+                    const SizedBox(height: AppRhythm.item),
+                    AccessibleTapRegion(
+                      key: ValueKey('moment-row-title-${moment.id}'),
+                      onTap: enabled ? widget.onOpenDetail : null,
+                      semanticLabel: copy.template(
+                        'Open details of the Moment by {name}',
+                        'Otwórz szczegóły Momentu użytkownika {name}',
+                        values: {'name': moment.authorName},
+                      ),
+                      child: Align(
+                        alignment: AlignmentDirectional.centerStart,
+                        child: Text(
+                          caption,
+                          maxLines: 3,
+                          overflow: TextOverflow.ellipsis,
+                          style: AppTypography.titleLarge.copyWith(
+                            color: palette.textPrimary,
+                          ),
                         ),
                       ),
                     ),
-                  ),
-                  if (availability != null) ...[
-                    const SizedBox(height: AppRhythm.tight),
-                    Text(
-                      availability,
-                      style: AppTypography.bodySmall.copyWith(
-                        color: moment.isPermanent || uploading
-                            ? palette.textSecondary
-                            : palette.warningForeground,
-                      ),
-                    ),
-                  ],
-                  const SizedBox(height: AppRhythm.item),
-                  ValueListenableBuilder<_FeedPlayback>(
-                    valueListenable: widget.playback,
-                    builder: (context, playback, _) {
-                      final active = playback.id == moment.id;
-                      return _VoiceMomentTransport(
-                        moment: moment,
-                        state: active ? playback : const _FeedPlayback(),
-                        active: active,
-                        enabled: enabled && moment.hasMediaReference,
-                        onPlay: widget.onPlay,
-                        onSeek: widget.onSeek,
-                      );
-                    },
-                  ),
-                  const SizedBox(height: AppRhythm.tight),
-                  Wrap(
-                    spacing: AppRhythm.tight,
-                    runSpacing: AppRhythm.hairline,
-                    crossAxisAlignment: WrapCrossAlignment.center,
-                    children: [
-                      TextButton.icon(
-                        key: ValueKey('moment-row-like-${moment.id}'),
-                        onPressed:
-                            enabled && widget.canLike && !widget.likePending
-                            ? widget.onLike
-                            : null,
-                        style: TextButton.styleFrom(
-                          foregroundColor: moment.callerLiked
-                              ? palette.interactiveForeground
-                              : palette.textSecondary,
+                    if (availability != null) ...[
+                      const SizedBox(height: AppRhythm.tight),
+                      Text(
+                        availability,
+                        style: AppTypography.bodySmall.copyWith(
+                          color: moment.isPermanent || uploading
+                              ? palette.textSecondary
+                              : palette.warningForeground,
                         ),
-                        icon: Icon(
-                          moment.callerLiked
-                              ? Icons.favorite_rounded
-                              : Icons.favorite_border_rounded,
-                          size: 20,
-                        ),
-                        label: Text(
-                          moment.likeCount > 0
-                              ? copy.template(
-                                  'Likes: {count}',
-                                  'Polubienia: {count}',
-                                  values: {'count': moment.likeCount},
-                                )
-                              : copy.text('Like', 'Lubię to'),
-                        ),
-                      ),
-                      TextButton.icon(
-                        key: ValueKey('moment-row-comments-${moment.id}'),
-                        onPressed: enabled ? widget.onComments : null,
-                        style: TextButton.styleFrom(
-                          foregroundColor: palette.textSecondary,
-                        ),
-                        icon: const Icon(Icons.mode_comment_outlined, size: 20),
-                        label: Text(
-                          moment.commentCount > 0
-                              ? copy.template(
-                                  'Comments: {count}',
-                                  'Komentarze: {count}',
-                                  values: {'count': moment.commentCount},
-                                )
-                              : copy.text('Comments', 'Komentarze'),
-                        ),
-                      ),
-                      TextButton.icon(
-                        key: ValueKey('moment-row-share-${moment.id}'),
-                        onPressed: enabled ? widget.onShare : null,
-                        style: TextButton.styleFrom(
-                          foregroundColor: palette.textSecondary,
-                        ),
-                        icon: const Icon(Icons.ios_share_rounded, size: 20),
-                        label: Text(copy.text('Share', 'Udostępnij')),
                       ),
                     ],
-                  ),
-                ],
+                    const SizedBox(height: AppRhythm.item),
+                    ValueListenableBuilder<_FeedPlayback>(
+                      valueListenable: widget.playback,
+                      builder: (context, playback, _) {
+                        final active = playback.id == moment.id;
+                        return _VoiceMomentTransport(
+                          moment: moment,
+                          state: active ? playback : const _FeedPlayback(),
+                          active: active,
+                          enabled: enabled && moment.hasMediaReference,
+                          onPlay: widget.onPlay,
+                          onSeek: widget.onSeek,
+                        );
+                      },
+                    ),
+                    const SizedBox(height: AppRhythm.item),
+                    _CardActions(
+                      moment: moment,
+                      enabled: enabled,
+                      canLike: widget.canLike && !widget.likePending,
+                      onLike: widget.onLike,
+                      onComments: widget.onComments,
+                      onShare: widget.onShare,
+                      onReplyVoice: widget.onReplyVoice,
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
@@ -2421,6 +2697,216 @@ class _MomentFeedCardState extends State<_MomentFeedCard> {
   }
 }
 
+/// ♡ · 💬 · Udostępnij · outlined "Odpowiedz głosem" — real counters only.
+///
+/// Below a 328-px content width (a slot under 360) the reply action drops
+/// to its own full-width row; otherwise the row wraps only when the four
+/// items genuinely exceed it. The share LABEL goes below 336 (a slot under
+/// 400) and the icon keeps its tooltip.
+class _CardActions extends StatelessWidget {
+  const _CardActions({
+    required this.moment,
+    required this.enabled,
+    required this.canLike,
+    required this.onLike,
+    required this.onComments,
+    required this.onShare,
+    required this.onReplyVoice,
+  });
+
+  final VoiceMoment moment;
+  final bool enabled;
+  final bool canLike;
+  final VoidCallback onLike;
+  final VoidCallback onComments;
+  final VoidCallback onShare;
+  final VoidCallback onReplyVoice;
+
+  static const double stackedBelow = 328;
+  static const double shareLabelBelow = 336;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final copy = AppLocalizations.of(context);
+    final id = moment.id;
+    ButtonStyle quiet() => TextButton.styleFrom(
+      foregroundColor: palette.textSecondary,
+      minimumSize: const Size(
+        AppSizing.standardControlHeight,
+        AppSizing.standardControlHeight,
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: AppRhythm.tight),
+      textStyle: AppTypography.labelLarge,
+    );
+    final like = TextButton.icon(
+      key: ValueKey('moment-row-like-$id'),
+      onPressed: enabled && canLike ? onLike : null,
+      style: quiet(),
+      icon: Icon(
+        moment.callerLiked
+            ? Icons.favorite_rounded
+            : Icons.favorite_border_rounded,
+        size: 24,
+        color: moment.callerLiked ? AppColors.secondary : null,
+      ),
+      label: Text(
+        moment.likeCount > 0
+            ? copy.template(
+                'Likes: {count}',
+                'Polubienia: {count}',
+                values: {'count': moment.likeCount},
+              )
+            : copy.text('Like', 'Lubię to'),
+      ),
+    );
+    final comments = TextButton.icon(
+      key: ValueKey('moment-row-comments-$id'),
+      onPressed: enabled ? onComments : null,
+      style: quiet(),
+      icon: const Icon(Icons.mode_comment_outlined, size: 24),
+      label: Text(
+        moment.commentCount > 0
+            ? copy.template(
+                'Comments: {count}',
+                'Komentarze: {count}',
+                values: {'count': moment.commentCount},
+              )
+            : copy.text('Comments', 'Komentarze'),
+      ),
+    );
+    final replyLabel = copy.text('Reply with voice', 'Odpowiedz głosem');
+    final reply = Tooltip(
+      message: copy.template(
+        'Reply with voice to {name}',
+        'Odpowiedz głosem: {name}',
+        values: {'name': moment.authorName},
+      ),
+      child: OutlinedButton.icon(
+        key: ValueKey('moment-row-reply-voice-$id'),
+        onPressed: enabled ? onReplyVoice : null,
+        style: OutlinedButton.styleFrom(
+          minimumSize: const Size(
+            AppSizing.minimumTouchTarget,
+            AppSizing.standardControlHeight,
+          ),
+          padding: const EdgeInsets.symmetric(horizontal: AppRhythm.title),
+          shape: const StadiumBorder(),
+          textStyle: AppTypography.labelLarge,
+        ),
+        icon: const Icon(Icons.mic_rounded, size: 18),
+        // Two lines at 200 % text on a 320 slot rather than an ellipsis:
+        // the button grows, the words stay whole.
+        label: Text(
+          replyLabel,
+          maxLines: 2,
+          softWrap: true,
+          textAlign: TextAlign.center,
+          overflow: TextOverflow.ellipsis,
+        ),
+      ),
+    );
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = constraints.maxWidth;
+        final shareLabelled = width >= shareLabelBelow;
+        final share = shareLabelled
+            ? TextButton.icon(
+                key: ValueKey('moment-row-share-$id'),
+                onPressed: enabled ? onShare : null,
+                style: quiet(),
+                icon: const Icon(Icons.ios_share_rounded, size: 24),
+                label: Text(copy.text('Share', 'Udostępnij')),
+              )
+            : IconButton(
+                key: ValueKey('moment-row-share-$id'),
+                onPressed: enabled ? onShare : null,
+                tooltip: copy.text('Share', 'Udostępnij'),
+                color: palette.textSecondary,
+                constraints: const BoxConstraints(
+                  minWidth: AppSizing.standardControlHeight,
+                  minHeight: AppSizing.standardControlHeight,
+                ),
+                icon: const Icon(Icons.ios_share_rounded, size: 24),
+              );
+        if (width < stackedBelow) {
+          // Stacked: the counters on their own line(s); share and the
+          // full-width reply share the last row, as the board's phone does.
+          // At an accessibility text size the reply takes the WHOLE width
+          // instead, so its longest word ("Odpowiedz" at 200 %) still fits
+          // on one line and the label wraps between words, never inside one.
+          final accessibility =
+              MediaQuery.textScalerOf(context).scale(1) >= 1.6;
+          if (accessibility) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Wrap(
+                  spacing: AppRhythm.tight,
+                  runSpacing: AppRhythm.hairline,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [like, comments, share],
+                ),
+                const SizedBox(height: AppRhythm.tight),
+                reply,
+              ],
+            );
+          }
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Wrap(
+                spacing: AppRhythm.tight,
+                runSpacing: AppRhythm.hairline,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [like, comments],
+              ),
+              const SizedBox(height: AppRhythm.tight),
+              Row(
+                children: [
+                  share,
+                  const SizedBox(width: AppRhythm.tight),
+                  Expanded(child: reply),
+                ],
+              ),
+            ],
+          );
+        }
+        // The reply stays at the trailing end of the row; the three quiet
+        // actions wrap among themselves in the width that remains. The
+        // reply is bounded to 60 % of the row so a long label (200 % text,
+        // a long locale) wraps to its second line instead of overflowing.
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            Expanded(
+              child: Wrap(
+                spacing: AppRhythm.tight,
+                runSpacing: AppRhythm.hairline,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [like, comments, share],
+              ),
+            ),
+            const SizedBox(width: AppRhythm.title),
+            ConstrainedBox(
+              constraints: BoxConstraints(maxWidth: width * .6),
+              child: reply,
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+/// Play disc 48 · decorative waveform with the REAL fill · reserved time.
+///
+/// One position source: the feed's playback notifier drives the waveform
+/// fill, the accessible seek control laid over it and the time label. The
+/// seek is a Material [Slider] painted transparent — the waveform is what
+/// the eye reads, the slider is what a finger, a keyboard and a screen
+/// reader get — so it keeps the platform's drag, arrow-key and value
+/// semantics without a second position.
 class _VoiceMomentTransport extends StatelessWidget {
   const _VoiceMomentTransport({
     required this.moment,
@@ -2438,9 +2924,17 @@ class _VoiceMomentTransport extends StatelessWidget {
   final VoidCallback onPlay;
   final ValueChanged<Duration> onSeek;
 
+  static const double discSize = AppSizing.standardControlHeight;
+  static const double waveformHeight = 32;
+
+  /// The width of "0:00 / 0:00" at 14-px tabular figures, reserved so the
+  /// label never jumps when playback starts.
+  static const double timeWidth = 88;
+
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     final copy = AppLocalizations.of(context);
     final total = state.duration ?? Duration(seconds: moment.durationSeconds);
     final maxMs = total.inMilliseconds;
@@ -2448,59 +2942,103 @@ class _VoiceMomentTransport extends StatelessWidget {
       0,
       maxMs > 0 ? maxMs : 0,
     );
+    final progress = maxMs > 0 ? position / maxMs : 0.0;
     final label = state.playing
         ? copy.text('Pause', 'Pauza')
         : copy.text('Play', 'Odtwórz');
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Row(
-          children: [
-            IconButton.filled(
-              key: ValueKey('moment-row-play-${moment.id}'),
-              style: ButtonStyle(
-                backgroundColor: WidgetStateProperty.resolveWith(
-                  (states) => states.contains(WidgetState.disabled)
-                      ? palette.surfaceMuted
-                      : Theme.of(context).colorScheme.primary,
+    final timeText = active
+        ? '${_clock(position ~/ 1000)} / ${_clock(total.inSeconds)}'
+        : _clock(total.inSeconds);
+    final textScale = MediaQuery.textScalerOf(context).scale(14) / 14;
+    final reserved = timeWidth * textScale;
+
+    final play = SizedBox.square(
+      dimension: discSize,
+      child: IconButton.filled(
+        key: ValueKey('moment-row-play-${moment.id}'),
+        style: ButtonStyle(
+          backgroundColor: WidgetStateProperty.resolveWith(
+            (states) => states.contains(WidgetState.disabled)
+                ? palette.surfaceMuted
+                : colors.primary,
+          ),
+          foregroundColor: WidgetStatePropertyAll(colors.onPrimary),
+          shape: const WidgetStatePropertyAll(CircleBorder()),
+          padding: const WidgetStatePropertyAll(EdgeInsets.zero),
+          minimumSize: const WidgetStatePropertyAll(Size.square(discSize)),
+          side: WidgetStateProperty.resolveWith(
+            (states) => BorderSide(
+              width: 2,
+              color: states.contains(WidgetState.focused)
+                  ? colors.onPrimary
+                  : Colors.transparent,
+            ),
+          ),
+        ),
+        onPressed: enabled && !state.busy ? onPlay : null,
+        tooltip: label,
+        icon: state.busy
+            ? SizedBox.square(
+                dimension: 20,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: colors.onPrimary,
                 ),
-                foregroundColor: WidgetStatePropertyAll(
-                  Theme.of(context).colorScheme.onPrimary,
-                ),
-                side: WidgetStateProperty.resolveWith(
-                  (states) => BorderSide(
-                    width: 3,
-                    color: states.contains(WidgetState.focused)
-                        ? Theme.of(context).colorScheme.onPrimary
-                        : Colors.transparent,
-                  ),
+              )
+            : Icon(
+                state.playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                size: 24,
+              ),
+      ),
+    );
+
+    final waveform = SizedBox(
+      height: discSize,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          Positioned.fill(
+            child: Center(
+              child: ExcludeSemantics(
+                child: StoryWaveform(
+                  progress: progress,
+                  height: waveformHeight,
+                  barWidth: 3,
+                  barGap: 3,
+                  barRadius: 1.5,
+                  playedGradient: palette.audioProgressGradient,
                 ),
               ),
-              onPressed: enabled && !state.busy ? onPlay : null,
-              tooltip: label,
-              icon: state.busy
-                  ? SizedBox.square(
-                      dimension: 22,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: palette.interactiveForeground,
-                      ),
-                    )
-                  : Icon(
-                      state.playing
-                          ? Icons.pause_rounded
-                          : Icons.play_arrow_rounded,
-                    ),
             ),
-            const SizedBox(width: AppRhythm.tight),
-            Expanded(
-              child: Semantics(
-                label: copy.text('Voice Moment', 'Voice Moment'),
+          ),
+          Positioned.fill(
+            child: Semantics(
+              label: copy.contextualText(
+                'yoMoments.playbackPosition',
+                'Playback position',
+                'Pozycja odtwarzania',
+              ),
+              child: SliderTheme(
+                data: SliderTheme.of(context).copyWith(
+                  trackHeight: waveformHeight,
+                  activeTrackColor: Colors.transparent,
+                  inactiveTrackColor: Colors.transparent,
+                  disabledActiveTrackColor: Colors.transparent,
+                  disabledInactiveTrackColor: Colors.transparent,
+                  secondaryActiveTrackColor: Colors.transparent,
+                  thumbColor: Colors.transparent,
+                  disabledThumbColor: Colors.transparent,
+                  overlayColor: Colors.transparent,
+                  thumbShape: SliderComponentShape.noThumb,
+                  overlayShape: SliderComponentShape.noOverlay,
+                  trackShape: const RectangularSliderTrackShape(),
+                  showValueIndicator: ShowValueIndicator.never,
+                ),
                 child: Slider(
                   key: ValueKey('moment-row-progress-${moment.id}'),
                   value: position.toDouble(),
                   max: maxMs > 0 ? maxMs.toDouble() : 1,
+                  padding: EdgeInsets.zero,
                   onChanged:
                       enabled &&
                           active &&
@@ -2513,24 +3051,68 @@ class _VoiceMomentTransport extends StatelessWidget {
                 ),
               ),
             ),
-          ],
-        ),
-        Align(
-          alignment: AlignmentDirectional.centerEnd,
-          child: Text(
-            active
-                ? '${_clock(position ~/ 1000)} / ${_clock(total.inSeconds)}'
-                : _clock(total.inSeconds),
-            style: AppTypography.bodySmall.copyWith(
-              color: palette.textSecondary,
-            ),
           ),
+        ],
+      ),
+    );
+
+    final time = SizedBox(
+      width: reserved,
+      child: Text(
+        timeText,
+        key: ValueKey('moment-row-time-${moment.id}'),
+        textAlign: TextAlign.end,
+        maxLines: 1,
+        style: AppTypography.bodyMedium.copyWith(
+          color: palette.textSecondary,
+          fontFeatures: const [FontFeature.tabularFigures()],
+        ),
+      ),
+    );
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        LayoutBuilder(
+          builder: (context, constraints) {
+            // At 200 % text the reserved label alone can eat the waveform;
+            // it then drops under the row rather than squeezing the bars.
+            final inline =
+                constraints.maxWidth - discSize - 2 * AppRhythm.item - reserved >=
+                64;
+            if (inline) {
+              return Row(
+                children: [
+                  play,
+                  const SizedBox(width: AppRhythm.item),
+                  Expanded(child: waveform),
+                  const SizedBox(width: AppRhythm.item),
+                  time,
+                ],
+              );
+            }
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  children: [
+                    play,
+                    const SizedBox(width: AppRhythm.item),
+                    Expanded(child: waveform),
+                  ],
+                ),
+                const SizedBox(height: AppRhythm.hairline),
+                Align(alignment: AlignmentDirectional.centerEnd, child: time),
+              ],
+            );
+          },
         ),
         if (state.error != null) ...[
           const SizedBox(height: AppRhythm.tight),
           Text(
             state.error!,
-            style: AppTypography.bodyMedium.copyWith(
+            style: AppTypography.bodySmall.copyWith(
               color: palette.dangerForeground,
             ),
           ),
@@ -3484,54 +4066,129 @@ class MomentCommentsInlineState extends State<MomentCommentsInline> {
   }
 }
 
-class _LoadingState extends StatelessWidget {
-  const _LoadingState();
+/// Three card silhouettes at the card's real geometry — header, two caption
+/// lines, transport — on the card surface. A gentle pulse, static under
+/// Reduce Motion. The capsule strip and the side panels are ABSENT here: a
+/// skeleton of authors would fake authors.
+class _LoadingState extends StatefulWidget {
+  const _LoadingState({required this.gutter, required this.compact});
+
+  final double gutter;
+  final bool compact;
+
+  @override
+  State<_LoadingState> createState() => _LoadingStateState();
+}
+
+class _LoadingStateState extends State<_LoadingState>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _pulse = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1200),
+  );
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (MediaQuery.disableAnimationsOf(context)) {
+      _pulse.stop();
+      _pulse.value = 1;
+    } else if (!_pulse.isAnimating) {
+      _pulse.repeat(reverse: true);
+    }
+  }
+
+  @override
+  void dispose() {
+    _pulse.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     final copy = AppLocalizations.of(context);
-    Widget bone(double width, double height) => Container(
-      width: width,
-      height: height,
-      decoration: BoxDecoration(
-        color: palette.surfaceMuted,
-        borderRadius: AppRadius.sm,
-      ),
-    );
+    final avatar = widget.compact ? 48.0 : 56.0;
+    Widget bone(double width, double height, {bool round = false}) =>
+        Container(
+          width: width,
+          height: height,
+          decoration: BoxDecoration(
+            color: palette.surfaceMuted,
+            shape: round ? BoxShape.circle : BoxShape.rectangle,
+            borderRadius: round ? null : AppRadius.sm,
+          ),
+        );
     return Semantics(
       liveRegion: true,
       label: copy.text('Loading Moments', 'Wczytywanie Momentów'),
       child: ExcludeSemantics(
-        child: ListView.builder(
-          key: const ValueKey('moments-discovery-loading'),
-          padding: const EdgeInsets.all(AppRhythm.title),
-          itemCount: 3,
-          itemBuilder: (context, index) => Container(
-            margin: const EdgeInsets.only(bottom: AppRhythm.item),
-            padding: const EdgeInsets.all(AppRhythm.title),
-            decoration: BoxDecoration(
-              color: palette.surfaceRaised,
-              border: Border.all(color: palette.border),
-              borderRadius: AppRadius.lg,
+        child: FadeTransition(
+          opacity: Tween<double>(begin: .55, end: 1).animate(_pulse),
+          child: ListView.builder(
+            key: const ValueKey('moments-discovery-loading'),
+            padding: EdgeInsets.fromLTRB(
+              widget.gutter,
+              AppRhythm.title,
+              widget.gutter,
+              AppRhythm.page,
             ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    bone(48, 48),
-                    const SizedBox(width: AppRhythm.item),
-                    Expanded(child: bone(double.infinity, 16)),
-                  ],
-                ),
-                const SizedBox(height: AppRhythm.title),
-                bone(double.infinity, 16),
-                const SizedBox(height: AppRhythm.tight),
-                bone(double.infinity, 16),
-                const SizedBox(height: AppRhythm.title),
-                bone(double.infinity, 44),
-              ],
+            itemCount: 3,
+            itemBuilder: (context, index) => Container(
+              margin: const EdgeInsets.only(bottom: AppRhythm.item),
+              padding: const EdgeInsets.all(AppRhythm.title),
+              decoration: BoxDecoration(
+                color: palette.surface,
+                border: Border.all(color: palette.border),
+                borderRadius: AppRadius.lg,
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      bone(avatar, avatar, round: true),
+                      const SizedBox(width: AppRhythm.item),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            bone(140, 14),
+                            const SizedBox(height: 6),
+                            bone(72, 10),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: AppRhythm.item),
+                  bone(double.infinity, 18),
+                  const SizedBox(height: AppRhythm.tight),
+                  FractionallySizedBox(
+                    widthFactor: .7,
+                    child: bone(double.infinity, 18),
+                  ),
+                  const SizedBox(height: AppRhythm.item),
+                  Row(
+                    children: [
+                      bone(
+                        _VoiceMomentTransport.discSize,
+                        _VoiceMomentTransport.discSize,
+                        round: true,
+                      ),
+                      const SizedBox(width: AppRhythm.item),
+                      Expanded(
+                        child: bone(
+                          double.infinity,
+                          _VoiceMomentTransport.waveformHeight,
+                        ),
+                      ),
+                      const SizedBox(width: AppRhythm.item),
+                      bone(56, 14),
+                    ],
+                  ),
+                ],
+              ),
             ),
           ),
         ),
@@ -3540,6 +4197,7 @@ class _LoadingState extends StatelessWidget {
   }
 }
 
+/// An inline card, never a red page: the existing copy, one retry.
 class _ErrorState extends StatelessWidget {
   const _ErrorState({required this.error, required this.onRetry});
 
@@ -3554,52 +4212,67 @@ class _ErrorState extends StatelessWidget {
       key: const ValueKey('moments-discovery-error'),
       child: SingleChildScrollView(
         padding: const EdgeInsets.all(AppRhythm.section),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              Icons.cloud_off_rounded,
-              size: 32,
-              color: palette.dangerForeground,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 480),
+          child: Material(
+            color: palette.surface,
+            shape: RoundedRectangleBorder(
+              borderRadius: AppRadius.lg,
+              side: BorderSide(color: palette.border),
             ),
-            const SizedBox(height: AppRhythm.title),
-            Text(
-              copy.text(
-                'Moments could not load',
-                'Nie udało się wczytać Momentów',
-              ),
-              textAlign: TextAlign.center,
-              style: AppTypography.titleLarge.copyWith(
-                color: palette.textPrimary,
+            child: Padding(
+              padding: const EdgeInsets.all(AppRhythm.section),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    Icons.cloud_off_rounded,
+                    size: 32,
+                    color: palette.textSecondary,
+                  ),
+                  const SizedBox(height: AppRhythm.title),
+                  Text(
+                    copy.text(
+                      'Moments could not load',
+                      'Nie udało się wczytać Momentów',
+                    ),
+                    textAlign: TextAlign.center,
+                    style: AppTypography.titleMedium.copyWith(
+                      color: palette.textPrimary,
+                    ),
+                  ),
+                  const SizedBox(height: AppRhythm.tight),
+                  Text(
+                    friendlyErrorMessage(
+                      error ?? StateError('unavailable'),
+                      copy: copy,
+                      fallback: copy.text(
+                        'Something went wrong reaching the Voice Moments feed.',
+                        'Nie udało się połączyć z kanałem Voice Moments.',
+                      ),
+                    ),
+                    textAlign: TextAlign.center,
+                    style: AppTypography.bodyMedium.copyWith(
+                      color: palette.textSecondary,
+                    ),
+                  ),
+                  const SizedBox(height: AppRhythm.section),
+                  FilledButton(
+                    onPressed: onRetry,
+                    child: Text(copy.text('Try again', 'Spróbuj ponownie')),
+                  ),
+                ],
               ),
             ),
-            const SizedBox(height: AppRhythm.tight),
-            Text(
-              friendlyErrorMessage(
-                error ?? StateError('unavailable'),
-                copy: copy,
-                fallback: copy.text(
-                  'Something went wrong reaching the Voice Moments feed.',
-                  'Nie udało się połączyć z kanałem Voice Moments.',
-                ),
-              ),
-              textAlign: TextAlign.center,
-              style: AppTypography.bodyMedium.copyWith(
-                color: palette.textSecondary,
-              ),
-            ),
-            const SizedBox(height: AppRhythm.section),
-            FilledButton(
-              onPressed: onRetry,
-              child: Text(copy.text('Try again', 'Spróbuj ponownie')),
-            ),
-          ],
+          ),
         ),
       ),
     );
   }
 }
 
+/// Per-pool empty copy, centred at a 320 measure, with the recorder offered
+/// and — where the host can open it — a second, real action.
 class _EmptyState extends StatelessWidget {
   const _EmptyState({
     required this.icon,
@@ -3607,6 +4280,9 @@ class _EmptyState extends StatelessWidget {
     required this.body,
     required this.actionLabel,
     required this.onAction,
+    this.secondaryActionKey,
+    this.secondaryActionLabel,
+    this.onSecondaryAction,
     super.key,
   });
 
@@ -3615,41 +4291,56 @@ class _EmptyState extends StatelessWidget {
   final String body;
   final String actionLabel;
   final VoidCallback onAction;
+  final Key? secondaryActionKey;
+  final String? secondaryActionLabel;
+  final VoidCallback? onSecondaryAction;
 
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
+    final secondaryLabel = secondaryActionLabel;
+    final secondary = onSecondaryAction;
     return Center(
       key: const ValueKey('moments-discovery-empty'),
       child: SingleChildScrollView(
-        padding: const EdgeInsets.all(28),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, size: 34, color: palette.textSecondary),
-            const SizedBox(height: 14),
-            Text(
-              title,
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: palette.textPrimary,
-                fontSize: 18,
-                fontWeight: FontWeight.w800,
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppRhythm.section,
+          vertical: AppRhythm.page,
+        ),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 320),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 32, color: palette.textSecondary),
+              const SizedBox(height: AppRhythm.title),
+              Text(
+                title,
+                textAlign: TextAlign.center,
+                style: AppTypography.titleMedium.copyWith(
+                  color: palette.textPrimary,
+                ),
               ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              body,
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: palette.textSecondary,
-                fontSize: 13.5,
-                height: 1.45,
+              const SizedBox(height: AppRhythm.tight),
+              Text(
+                body,
+                textAlign: TextAlign.center,
+                style: AppTypography.bodyMedium.copyWith(
+                  color: palette.textSecondary,
+                ),
               ),
-            ),
-            const SizedBox(height: 20),
-            FilledButton(onPressed: onAction, child: Text(actionLabel)),
-          ],
+              const SizedBox(height: AppRhythm.section),
+              FilledButton(onPressed: onAction, child: Text(actionLabel)),
+              if (secondaryLabel != null && secondary != null) ...[
+                const SizedBox(height: AppRhythm.tight),
+                OutlinedButton(
+                  key: secondaryActionKey,
+                  onPressed: secondary,
+                  child: Text(secondaryLabel),
+                ),
+              ],
+            ],
+          ),
         ),
       ),
     );

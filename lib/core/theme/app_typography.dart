@@ -137,6 +137,18 @@ class AppTypography {
     letterSpacing: 0.5,
   );
 
+  /// Small tracked eyebrow above a hero or a section (12 / w600, wide
+  /// tracking). Callers pass uppercase copy; the style transforms nothing, so
+  /// screen readers hear the words as written.
+  static const TextStyle eyebrow = TextStyle(
+    fontFamily: fontFamily,
+    fontFamilyFallback: fontFamilyFallback,
+    fontSize: 12,
+    height: 1.2,
+    fontWeight: FontWeight.w600,
+    letterSpacing: 1.2,
+  );
+
   static const TextTheme textTheme = TextTheme(
     displayLarge: displayLarge,
     displayMedium: displayMedium,

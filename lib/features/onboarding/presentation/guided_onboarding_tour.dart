@@ -92,9 +92,12 @@ class _GuidedOnboardingTourState extends State<GuidedOnboardingTour> {
                 'Create a Voice Moment or start a Voice Room here.',
                 'Tutaj szybko nagrasz Voice Moment lub utworzysz pokój głosowy.',
               )
+            // The sentence names the tab by the label the dock actually
+            // shows (O11: "Moments" / "Momenty"). Its 41 catalog values are
+            // already registered in translations_mobile_navigation.dart.
             : copy.text(
-                'Create a Voice Room here. Open Your Moments to record a Voice Moment.',
-                'Tutaj utworzysz pokój głosowy. Otwórz Twoje Momenty, aby nagrać Voice Moment.',
+                'Create a Voice Room here. Open Moments to record a Voice Moment.',
+                'Tutaj utworzysz pokój głosowy. Otwórz Momenty, aby nagrać Voice Moment.',
               ),
       ),
       _GuidedTourStep(

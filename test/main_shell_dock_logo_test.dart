@@ -1,4 +1,5 @@
-// Hosted detail routes retain the same five-destination Meniscus dock.
+// Hosted detail routes retain the same five-destination flat dock
+// (Start · Serwery · Czaty · Momenty · Więcej).
 // The former central logo/voice action is intentionally not a sixth action.
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -29,6 +30,11 @@ VoiceMoment _moment() {
 
 int get _momentsSlot => MainShell.desktopSlots.entries
     .firstWhere((entry) => entry.value == MoreDestination.moments)
+    .key;
+
+/// Content slot 13: the Servers destination behind dock cell 1.
+int get _serversSlot => MainShell.desktopSlots.entries
+    .firstWhere((entry) => entry.value == MoreDestination.servers)
     .key;
 Future<SemanticsHandle> _pumpHost(
   WidgetTester tester, {
@@ -94,8 +100,8 @@ class _HostedNavigationObserver extends NavigatorObserver {
 void main() {
   for (final destination in [
     (0, 0, 'Home'),
-    (3, 1, 'Rooms'),
-    (5, 3, 'Your Moments'),
+    (_serversSlot, 1, 'Servers'),
+    (5, 3, 'Moments'),
   ]) {
     testWidgets(
       'retapping selected ${destination.$3} exits hosted route exactly once',
@@ -187,7 +193,7 @@ void main() {
         findsNothing,
       );
       expect(find.bySemanticsLabel('Open voice actions'), findsNothing);
-      for (final label in ['Home', 'Rooms', 'Chats', 'Your Moments', 'More']) {
+      for (final label in ['Home', 'Servers', 'Chats', 'Moments', 'More']) {
         expect(find.bySemanticsLabel(label), findsOneWidget);
       }
       expect(voiceOpened, 0);
@@ -195,7 +201,7 @@ void main() {
       semantics.dispose();
     },
   );
-  testWidgets('Moments domain slot selects Your Moments in hosted dock', (
+  testWidgets('Moments domain slot selects Moments in hosted dock', (
     tester,
   ) async {
     final semantics = await _pumpHost(
@@ -203,7 +209,7 @@ void main() {
       body: const Text('BODY'),
       selectedIndex: _momentsSlot,
     );
-    expect(_isSelected(tester, 'Your Moments'), isTrue);
+    expect(_isSelected(tester, 'Moments'), isTrue);
     expect(_isSelected(tester, 'Home'), isFalse);
     semantics.dispose();
   });
@@ -218,9 +224,9 @@ void main() {
       expect(find.byKey(const ValueKey('moment-detail-back')), findsOneWidget);
       expect(find.text('The one thing nobody tells you.'), findsOneWidget);
       expect(find.byKey(const ValueKey('moment-detail-play')), findsOneWidget);
-      expect(find.text('Your Moments'), findsOneWidget);
+      expect(find.text('Moments'), findsOneWidget);
       expect(find.byKey(const ValueKey('dock-logo')), findsNothing);
-      expect(_isSelected(tester, 'Your Moments'), isTrue);
+      expect(_isSelected(tester, 'Moments'), isTrue);
       semantics.dispose();
     },
   );
@@ -239,9 +245,8 @@ void main() {
     expect(selected, 0);
     semantics.dispose();
   });
-  testWidgets('hosted Rooms button routes to stable Discover slot, not Chats', (
-    tester,
-  ) async {
+  testWidgets('hosted Servers cell routes to the stable Servers slot 13, '
+      'not Chats', (tester) async {
     int? selected;
     final semantics = await _pumpHost(
       tester,
@@ -251,7 +256,8 @@ void main() {
     );
     await tester.tap(find.byKey(const ValueKey('yo-destination-1')));
     await tester.pumpAndSettle();
-    expect(selected, 3);
+    expect(selected, _serversSlot);
+    expect(selected, 13);
     semantics.dispose();
   });
 }

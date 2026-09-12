@@ -122,7 +122,11 @@ void main() {
     final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
     await mouse.addPointer(location: Offset.zero);
     addTearDown(mouse.removePointer);
-    final target = tester.getCenter(find.text('YO Moments'));
+    // Anchored on the mark itself, not on a rail label. This case is about
+    // the mark's hover and press painting; pinning it to the destination's
+    // text made it break when the rail was renamed to Momenty / Moments,
+    // which says nothing about the icon.
+    final target = tester.getCenter(mark);
     await mouse.moveTo(target);
     await tester.pump(const Duration(milliseconds: 200));
     expect(painter().pressed, isFalse, reason: 'hover must not tilt the mark');

@@ -424,6 +424,270 @@ void main() {
     });
 
     test(
+      'Home "Tu i teraz" copy resolves in all 43 locales with reviewed EN/PL',
+      () {
+        List<String> labels(AppLocalizations copy) => [
+          copy.homeGreeting('Maja'),
+          copy.homeGreetingNoName,
+          copy.homeGreetingSubtitle,
+          copy.homeYourPeople,
+          copy.homeHereNow,
+          copy.homeInYourServers,
+          copy.homeYourPlaces,
+          copy.homeSeeAllPeople,
+          copy.homeSeeAll,
+          copy.homeAddFriends,
+          copy.homeJoinConversation,
+          copy.homeJoinBroadcast,
+          copy.homeTakeALook,
+          copy.homeVoiceConversation,
+          copy.homeCreateServer,
+          copy.homeGotAMinute,
+          copy.homeRecordVoiceMoment,
+          copy.homeInvitationHeadline,
+          copy.homeInvitationBody,
+          copy.homeDiscoverRooms,
+        ];
+
+        final english = labels(const AppLocalizations(Locale('en')));
+        expect(english, [
+          'Hi, Maja',
+          'Hi!',
+          'Good to see you again!',
+          'Your people',
+          'Here and now',
+          'In your servers',
+          'Your places',
+          'See all',
+          'See all',
+          'Add friends',
+          'Join the conversation',
+          'Join the broadcast',
+          'Take a look',
+          'Voice conversation',
+          'Create server',
+          'Got a minute?',
+          'Record a Voice Moment',
+          'A good conversation starts here.',
+          "It's quiet right now. Create a room or check on your friends.",
+          'Discover rooms',
+        ]);
+        expect(labels(const AppLocalizations(Locale('pl'))), [
+          'Cześć, Maja',
+          'Cześć!',
+          'Dobrze Cię znowu widzieć!',
+          'Twoi znajomi',
+          'Tu i teraz',
+          'W Twoich serwerach',
+          'Twoje miejsca',
+          'Zobacz wszystkich',
+          'Zobacz wszystkie',
+          'Dodaj znajomych',
+          'Dołącz do rozmowy',
+          'Dołącz do transmisji',
+          'Zajrzyj',
+          'Rozmowa głosowa',
+          'Stwórz serwer',
+          'Masz chwilę?',
+          'Nagraj Voice Moment',
+          'Tu zaczyna się dobra rozmowa.',
+          'Teraz jest cicho. Utwórz pokój albo zajrzyj do znajomych.',
+          'Odkrywaj pokoje',
+        ]);
+        for (final locale in AppLocalizations.supportedLocales) {
+          final copy = AppLocalizations(locale);
+          final values = labels(copy);
+          final tag = locale.toLanguageTag();
+          for (var index = 0; index < values.length; index++) {
+            expect(values[index].trim(), isNotEmpty, reason: '$tag #$index');
+            expect(values[index], isNot(contains('{')), reason: '$tag #$index');
+            if (locale.languageCode != 'en') {
+              expect(
+                values[index],
+                isNot(english[index]),
+                reason: '$tag must not fall back to English for #$index.',
+              );
+            }
+          }
+          // The greeting keeps the user-typed name verbatim; the product name
+          // survives every locale.
+          expect(copy.homeGreeting('Żółć Maja-Ola'), contains('Żółć Maja-Ola'));
+          expect(
+            copy.homeRecordVoiceMoment,
+            contains('Voice Moment'),
+            reason: tag,
+          );
+          // The two CTAs never collapse Community and Broadcast into one label.
+          expect(
+            copy.homeJoinConversation,
+            isNot(copy.homeJoinBroadcast),
+            reason: tag,
+          );
+        }
+      },
+    );
+
+    test('place and duration counters never fall back to English', () {
+      const counts = <int>[0, 1, 2, 3, 5, 11, 21, 22, 25, 101, 102];
+      final englishMember = RegExp(r'\bmembers?\b', caseSensitive: false);
+      final englishSecond = RegExp(r'\bseconds?\b', caseSensitive: false);
+      for (final language in selectableAppLanguages.where(
+        (language) =>
+            language != AppLanguagePreference.english &&
+            language != AppLanguagePreference.polish,
+      )) {
+        final copy = AppLocalizations(language.locale!);
+        for (final count in counts) {
+          final people = copy.peopleCount(count);
+          final seconds = copy.secondsCount(count);
+          for (final value in <String>[people, seconds]) {
+            expect(
+              value,
+              contains('$count'),
+              reason: '${language.localeKey} omitted count $count: $value',
+            );
+            expect(value, isNot(contains('{count}')));
+          }
+          expect(
+            people,
+            isNot(matches(englishMember)),
+            reason: '${language.localeKey} fell back to English: $people',
+          );
+          expect(
+            seconds,
+            isNot(matches(englishSecond)),
+            reason: '${language.localeKey} fell back to English: $seconds',
+          );
+        }
+      }
+
+      // Plural families with more than one form select distinct declensions.
+      for (final language in <AppLanguagePreference>[
+        AppLanguagePreference.russian,
+        AppLanguagePreference.ukrainian,
+        AppLanguagePreference.czech,
+        AppLanguagePreference.slovak,
+        AppLanguagePreference.croatian,
+        AppLanguagePreference.serbian,
+      ]) {
+        final copy = AppLocalizations(language.locale!);
+        expect(
+          <String>{
+            copy.peopleCount(1),
+            copy.peopleCount(2),
+            copy.peopleCount(5),
+          },
+          hasLength(3),
+          reason: '${language.localeKey} must decline three member forms.',
+        );
+        expect(
+          <String>{
+            copy.secondsCount(1),
+            copy.secondsCount(2),
+            copy.secondsCount(5),
+          },
+          hasLength(3),
+          reason: '${language.localeKey} must decline three second forms.',
+        );
+      }
+      // Lithuanian "few" spans 2–9, so 10 is the third form; Latvian "zero"
+      // covers 10–20 and the round tens.
+      const lithuanian = AppLocalizations(Locale('lt'));
+      expect(<String>{
+        lithuanian.peopleCount(1),
+        lithuanian.peopleCount(2),
+        lithuanian.peopleCount(10),
+      }, hasLength(3));
+      expect(<String>{
+        lithuanian.secondsCount(1),
+        lithuanian.secondsCount(2),
+        lithuanian.secondsCount(10),
+      }, hasLength(3));
+      const latvian = AppLocalizations(Locale('lv'));
+      expect(<String>{
+        latvian.peopleCount(1),
+        latvian.peopleCount(2),
+        latvian.peopleCount(10),
+      }, hasLength(3));
+      const romanian = AppLocalizations(Locale('ro'));
+      expect(<String>{
+        romanian.peopleCount(1),
+        romanian.peopleCount(2),
+        romanian.peopleCount(20),
+      }, hasLength(3));
+      const arabic = AppLocalizations(Locale('ar'));
+      expect(<String>{
+        arabic.peopleCount(1),
+        arabic.peopleCount(2),
+        arabic.peopleCount(3),
+        arabic.peopleCount(11),
+      }, hasLength(4));
+      const german = AppLocalizations(Locale('de'));
+      expect(german.peopleCount(1), '1 Mitglied');
+      expect(german.peopleCount(4), '4 Mitglieder');
+      expect(german.secondsCount(45), '45 Sekunden');
+    });
+
+    test('Więcej descriptions are catalogued in every translated locale', () {
+      const descriptions = <String>[
+        'Your circle',
+        'Find rooms',
+        'People to follow',
+      ];
+      final translatedLocaleKeys = selectableAppLanguages
+          .where(
+            (language) =>
+                language != AppLanguagePreference.english &&
+                language != AppLanguagePreference.polish,
+          )
+          .map((language) => language.localeKey);
+      expect(appTranslationKeys, containsAll(descriptions));
+      for (final localeKey in translatedLocaleKeys) {
+        for (final key in descriptions) {
+          final value = translatedPhrase(localeKey, key);
+          expect(value, isNotNull, reason: '$localeKey: $key');
+          expect(value!.trim(), isNotEmpty, reason: '$localeKey: $key');
+          expect(value, isNot(key), reason: '$localeKey: no English fallback');
+        }
+      }
+      // The sheet and the desktop popover read the same phrases.
+      const german = AppLocalizations(Locale('de'));
+      expect(german.text('Your circle', 'Twój krąg'), 'Dein Kreis');
+      expect(german.text('Find rooms', 'Znajdź pokoje'), 'Räume finden');
+      expect(
+        german.text('People to follow', 'Osoby warte obserwowania'),
+        'Leute, denen du folgen kannst',
+      );
+      expect(
+        const AppLocalizations(Locale('pl')).text('Your circle', 'Twój krąg'),
+        'Twój krąg',
+      );
+    });
+
+    test('the create guidance names the compact Moments tab', () {
+      // This is the sentence the mobile onboarding tour renders now
+      // (guided_onboarding_tour.dart), after the O11 source flip.
+      const flipped =
+          'Create a Voice Room here. Open Moments to record a Voice Moment.';
+      const polish =
+          'Tutaj utworzysz pokój głosowy. Otwórz Momenty, aby nagrać Voice Moment.';
+      expect(appTranslationKeys, contains(flipped));
+      for (final locale in AppLocalizations.supportedLocales) {
+        final copy = AppLocalizations(locale);
+        final body = copy.text(flipped, polish);
+        expect(
+          body,
+          contains(copy.navigationYourMoments),
+          reason: '${locale.toLanguageTag()} must name the visible tab label.',
+        );
+        expect(body, contains('Voice Moment'));
+        if (locale.languageCode != 'en') {
+          expect(body, isNot(flipped), reason: locale.toLanguageTag());
+        }
+      }
+    });
+
+    test(
       'mobile navigation copy covers every translated locale explicitly',
       () {
         final translatedLocaleKeys = selectableAppLanguages
@@ -474,30 +738,43 @@ void main() {
     test(
       'mobile tab label is localized without changing the product brand',
       () {
+        // O11: the primary-navigation word is "Moments"/"Momenty"; the
+        // destination heading keeps the product name "YO Moments".
         expect(
           const AppLocalizations(Locale('en')).navigationYourMoments,
-          'Your Moments',
+          'Moments',
         );
         expect(
           const AppLocalizations(Locale('pl')).navigationYourMoments,
-          'Twoje Momenty',
+          'Momenty',
         );
         for (final locale in AppLocalizations.supportedLocales) {
           final copy = AppLocalizations(locale);
           expect(copy.navigationYourMoments.trim(), isNotEmpty);
           expect(copy.moments, 'YO Moments');
-          if (locale.languageCode != 'en') {
+          if (locale.languageCode == 'pl') {
+            expect(copy.navigationYourMoments, 'Momenty');
+          } else if (locale.languageCode != 'en') {
+            // French legitimately spells the compact noun "Moments", so the
+            // guarantee is an explicit catalog entry rather than a string
+            // that differs from English (the same rule as "Filters" below).
             expect(
+              translatedPhrase(copy.localeKey, 'navigation.yourMoments'),
               copy.navigationYourMoments,
-              isNot('Your Moments'),
-              reason: locale.toLanguageTag(),
+              reason:
+                  '${locale.toLanguageTag()} must explicitly translate the '
+                  'tab label.',
             );
           }
         }
       },
     );
 
-    test('mobile create guidance names the translated destination', () {
+    test('the retired create guidance still resolves in every locale', () {
+      // The possessive sentence no longer has a call site (O11 flipped it to
+      // "Open Moments"), but its 41 catalog values stay: an installed build
+      // mid-rollout, or any caller that still passes this source string,
+      // must never fall back to raw English.
       const source =
           'Create a Voice Room here. Open Your Moments to record a Voice Moment.';
       const polish =

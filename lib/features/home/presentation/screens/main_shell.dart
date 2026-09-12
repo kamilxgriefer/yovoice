@@ -169,20 +169,42 @@ class MainShell extends StatefulWidget {
   static const double desktopBreakpoint = 1100;
 
   /// Stable content identities are independent of the mobile dock's visual
-  /// order: Home, Rooms, Chats, Moments. Friends remains a retained hidden
-  /// slot reached from Home and More; desktop-only destinations return Home
-  /// when a viewport switches to the mobile shell.
+  /// order: Home, Servers (slot 13), Chats, Moments. Friends (2) and Discover
+  /// (3) remain retained hidden slots reached from Home and More;
+  /// desktop-only destinations return Home when a viewport switches to the
+  /// mobile shell.
   @visibleForTesting
   static int mobileIndexFor(int index) =>
-      const {0, 1, 2, 3, 5}.contains(index) ? index : 0;
+      const {0, 1, 2, 3, 5, 13}.contains(index) ? index : 0;
 
+  /// The dock's visual order: Start · Serwery · Czaty · Momenty · Więcej.
+  /// Everything without a dock slot (Friends, Discover, hosted destinations)
+  /// sorts with More, so a transition from it reads as coming from the end.
   @visibleForTesting
   static int mobileNavigationOrder(int index) => switch (index) {
     0 => 0,
-    3 => 1,
+    13 => 1,
     1 => 2,
     5 => 3,
     _ => 4,
+  };
+
+  /// Which rail row reads as active for a content slot. The five rail rows
+  /// own their slots (Home 0, Servers 13, Chats 1, Moments 5) and the bell
+  /// owns the notifications feed; Friends (2), Discover (3) and every slot
+  /// reached through the More popover keep More lit, because the rail has
+  /// no row for them.
+  @visibleForTesting
+  static DesktopNavItem desktopNavItemForSlot(int index) => switch (index) {
+    1 => DesktopNavItem.chats,
+    _MainShellState._serversSlot => DesktopNavItem.servers,
+    _MainShellState._notificationsSlot => DesktopNavItem.notifications,
+    // Before the `>= 5` arm: switch-expression arms are ordered, and
+    // `>= 5` would otherwise swallow the Moments slot.
+    _MainShellState._momentsSlot => DesktopNavItem.moments,
+    2 || _MainShellState._discoverSlot => DesktopNavItem.more,
+    >= 5 => DesktopNavItem.more,
+    _ => DesktopNavItem.home,
   };
 
   /// One layout predicate for rendering AND navigation. A wide viewport can
@@ -221,6 +243,9 @@ class MainShell extends StatefulWidget {
     10: MoreDestination.moderation,
     11: MoreDestination.staffCenter,
     12: MoreDestination.findCreators,
+    // Servers: dock slot 1 and the rail's second row. Appended rather than
+    // inserted so no existing slot renumbers (ADR-047 contiguity holds).
+    13: MoreDestination.servers,
   };
 
   @override
@@ -294,8 +319,8 @@ class _MainShellState extends State<MainShell>
   StreamSubscription<SubscriptionEntitlements>? _entitlementSubscription;
 
   // Keep stable content identities when the mobile visual order changes.
-  // Friends remains retained at slot 2, while Rooms promotes Discover's
-  // existing slot 3 instead of renumbering desktop destinations.
+  // Friends remains retained at slot 2; Discover keeps slot 3 as a retained
+  // root reached from More; Servers owns slot 13 (dock slot 1).
   static const List<Widget> _screens = [
     HomeScreen(),
     MessagesScreen(),
@@ -312,6 +337,7 @@ class _MainShellState extends State<MainShell>
   static const int _discoverSlot = 3;
   static const int _notificationsSlot = 4;
   static const int _findCreatorsSlot = 12;
+  static const int _serversSlot = 13;
 
   /// DESKTOP content slots beyond the three shared dock tabs. Every
   /// desktop destination — rail items AND everything chosen from the
@@ -322,7 +348,7 @@ class _MainShellState extends State<MainShell>
 
   /// The notifications FEED (the bell) is its own screen rather than a
   /// MoreDestination — Alerts (preferences) is the one in the popover.
-  static const int _slotCount = 13;
+  static const int _slotCount = 14;
 
   /// Slots are built on FIRST visit and then kept alive, so switching
   /// back is instant and scroll position survives — without mounting
@@ -345,16 +371,15 @@ class _MainShellState extends State<MainShell>
           final mobile = !MainShell.usesDesktopLayout(
             MediaQuery.sizeOf(context),
           );
+          // Discover keeps its Create CTA when opened from More on a phone.
+          // The guided tour's Create anchor now lives on Home's create pill
+          // (mobile) and the rail's CREATE section (desktop); this retained
+          // slot may be mounted beside Home, so it must not hold the key.
           return DiscoverScreen(
             isRootTab: true,
             asRoomsDestination: mobile,
             scrollController: _roomsScrollController,
             onCreateRoom: mobile ? () => unawaited(_openCreateRoom()) : null,
-            // A cached Rooms slot also survives on desktop. Only the active
-            // layout owns this key; the desktop rail owns Create there.
-            createRoomKey: mobile
-                ? _onboardingAnchors[GuidedOnboardingTarget.create]
-                : null,
           );
         },
       );
@@ -401,6 +426,8 @@ class _MainShellState extends State<MainShell>
   /// renders inside slot 0.
   Widget get _mobileHome => MobileHome(
     isVisible: _homeVisible,
+    // The mobile tour's Create spotlight: Home's own create pill.
+    createRoomKey: _onboardingAnchors[GuidedOnboardingTarget.create],
     unreadNotificationCount: _unreadNotificationCount,
     onOpenRoom: (room) => unawaited(_openRoom(room)),
     onOpenDiscover: () =>
@@ -747,10 +774,11 @@ class _MainShellState extends State<MainShell>
 
   Future<void> _prepareGuidedOnboardingLayout(bool desktop) async {
     if (!mounted || !_onboardingOpen) return;
-    // The mobile Create spotlight follows the real Rooms CTA, not the
-    // removed centre-logo action. Desktop introduces its rail from Home.
-    // Preparing either layout invokes no creation, entry or media permission.
-    final tourIndex = desktop ? 0 : _discoverSlot;
+    // Both layouts tour from Home: the mobile Create spotlight is Home's own
+    // create pill (`home-quick-create-room`), the desktop one is the rail's
+    // CREATE section. Preparing either layout invokes no creation, entry or
+    // media permission.
+    const tourIndex = 0;
     if (_selectedIndex != tourIndex) {
       _mobileHistory.resetTo(tourIndex);
       _onDestinationSelected(tourIndex, recordHistory: false);
@@ -761,11 +789,19 @@ class _MainShellState extends State<MainShell>
         desktop != MainShell.usesDesktopLayout(MediaQuery.sizeOf(context))) {
       return;
     }
-    if (!desktop && _roomsScrollController.hasClients) {
-      // The Rooms slot is retained, including its scroll. Replay must reveal
-      // the real CTA even after the user has browsed far down the live list.
-      _roomsScrollController.jumpTo(0);
-      await WidgetsBinding.instance.endOfFrame;
+    if (!desktop) {
+      // Home is retained, including its scroll. Replay must reveal the real
+      // pill even after the user has browsed far down the page.
+      final anchor =
+          _onboardingAnchors[GuidedOnboardingTarget.create]?.currentContext;
+      if (anchor != null && anchor.mounted) {
+        await Scrollable.ensureVisible(
+          anchor,
+          alignment: .5,
+          duration: Duration.zero,
+        );
+        await WidgetsBinding.instance.endOfFrame;
+      }
     }
   }
 
@@ -1172,11 +1208,13 @@ class _MainShellState extends State<MainShell>
       return;
     }
 
-    // Rooms and Moments are true mobile roots, not duplicated pushed
-    // destinations. More and Home links select the same retained content as
-    // the dock, preserving search, scroll and audio-visibility ownership.
+    // Discover, Moments and Servers are true mobile roots, not duplicated
+    // pushed destinations. More and Home links select the same retained
+    // content as the dock, preserving search, scroll and audio-visibility
+    // ownership.
     if (destination == MoreDestination.discover ||
-        destination == MoreDestination.moments) {
+        destination == MoreDestination.moments ||
+        destination == MoreDestination.servers) {
       _onDestinationSelected(_slotForDestination(destination)!);
       return;
     }
@@ -1251,12 +1289,14 @@ class _MainShellState extends State<MainShell>
   /// open, so the desktop shell never looks "nowhere".
   static DesktopNavItem? _desktopItemFor(MoreDestination destination) {
     return switch (destination) {
-      MoreDestination.discover => DesktopNavItem.discover,
-      MoreDestination.findCreators => DesktopNavItem.findCreators,
-      MoreDestination.friends => DesktopNavItem.friends,
+      MoreDestination.servers => DesktopNavItem.servers,
       MoreDestination.moments ||
       MoreDestination.reels => DesktopNavItem.moments,
-      // Everything reached THROUGH the More popover keeps More lit.
+      // Everything reached THROUGH the More popover keeps More lit —
+      // including the three destinations that left the rail for it.
+      MoreDestination.discover ||
+      MoreDestination.findCreators ||
+      MoreDestination.friends ||
       MoreDestination.clubs ||
       MoreDestination.creatorStudio ||
       MoreDestination.achievements ||
@@ -1274,19 +1314,8 @@ class _MainShellState extends State<MainShell>
   // state and routes the dock uses; nothing below this line changes the
   // phone layout, which keeps the dock exactly as it was.
 
-  DesktopNavItem get _activeDesktopItem => switch (_selectedIndex) {
-    1 => DesktopNavItem.chats,
-    2 => DesktopNavItem.friends,
-    _discoverSlot => DesktopNavItem.discover,
-    _findCreatorsSlot => DesktopNavItem.findCreators,
-    _notificationsSlot => DesktopNavItem.notifications,
-    // Before the `>= 5` arm: switch-expression arms are ordered, and
-    // `>= 5` would otherwise swallow the Moments slot.
-    _momentsSlot => DesktopNavItem.moments,
-    // Slots reached through the popover keep More lit.
-    >= 5 => DesktopNavItem.more,
-    _ => DesktopNavItem.home,
-  };
+  DesktopNavItem get _activeDesktopItem =>
+      MainShell.desktopNavItemForSlot(_selectedIndex);
 
   Future<void> _onDesktopNavSelected(DesktopNavItem item) async {
     switch (item) {
@@ -1296,6 +1325,8 @@ class _MainShellState extends State<MainShell>
         _onDestinationSelected(1);
       case DesktopNavItem.friends:
         _onDestinationSelected(2);
+      case DesktopNavItem.servers:
+        _onDestinationSelected(_serversSlot);
       case DesktopNavItem.moments:
         _onDestinationSelected(_momentsSlot);
       case DesktopNavItem.discover:
@@ -1567,7 +1598,7 @@ class _MainShellState extends State<MainShell>
                 4: _onboardingAnchors[GuidedOnboardingTarget.more]!,
               },
               selectedTabIndex: _mobileIndex,
-              roomsTabIndex: _discoverSlot,
+              roomsTabIndex: _serversSlot,
               momentsTabIndex: _momentsSlot,
               unreadConversationCount: _unreadConversationCount,
               onDestinationSelected: _onDestinationSelected,
@@ -1812,7 +1843,7 @@ class _MoreDestinationHostState extends State<MoreDestinationHost> {
           const RoomMiniBar(),
           YoFloatingNavigationDock(
             selectedTabIndex: widget.selectedIndex,
-            roomsTabIndex: _MainShellState._discoverSlot,
+            roomsTabIndex: _MainShellState._serversSlot,
             momentsTabIndex: _MainShellState._momentsSlot,
             unreadConversationCount: unreadConversationCount,
             onDestinationSelected: (index) =>

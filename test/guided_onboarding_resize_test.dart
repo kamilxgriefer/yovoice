@@ -70,7 +70,7 @@ void main() {
       expect(find.text('Use your voice'), findsOneWidget);
       expect(
         find.text(
-          'Create a Voice Room here. Open Your Moments to record a Voice Moment.',
+          'Create a Voice Room here. Open Moments to record a Voice Moment.',
         ),
         findsOneWidget,
       );

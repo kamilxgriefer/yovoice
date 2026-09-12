@@ -135,7 +135,7 @@ void main() {
     expect(find.text('DESTINATION'), findsNothing);
   });
 
-  testWidgets('Rooms pops back first and uses the existing discovery slot', (
+  testWidgets('Servers pops back first and selects the Servers slot 13', (
     tester,
   ) async {
     final navigatorKey = GlobalKey<NavigatorState>();
@@ -150,10 +150,11 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('yo-destination-1')));
     await tester.pumpAndSettle();
 
-    final roomsSlot = MainShell.desktopSlots.entries
-        .firstWhere((entry) => entry.value == MoreDestination.discover)
+    final serversSlot = MainShell.desktopSlots.entries
+        .firstWhere((entry) => entry.value == MoreDestination.servers)
         .key;
-    expect(selected, roomsSlot);
+    expect(serversSlot, 13);
+    expect(selected, serversSlot);
     expect(find.text('SHELL'), findsOneWidget);
   });
 

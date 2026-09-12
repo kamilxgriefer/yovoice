@@ -199,7 +199,7 @@ class AppLocalizations {
     'Nie udało się zapisać ustawienia. Spróbuj ponownie.',
   );
 
-  String get home => text('Home', 'Główna');
+  String get home => text('Home', 'Start');
 
   String get homeLiveForYou =>
       contextualText('home.liveForYou', 'Live for you', 'Na żywo dla Ciebie');
@@ -226,14 +226,127 @@ class AppLocalizations {
     'Od osób, które obserwujesz',
   );
 
+  // Home "Tu i teraz" — pre-registered for the Mobile and Wide slices so the
+  // implementers consume keys only. Polish first; "Voice Moment" stays
+  // invariant; every key has an explicit entry in the 41 translated catalogs
+  // (translations_home.dart).
+
+  /// "Hi, {name}" — the Home greeting. [name] is the first whitespace token of
+  /// the display name and is substituted after localization (never the email
+  /// local part).
+  String homeGreeting(String name) =>
+      template('Hi, {name}', 'Cześć, {name}', values: {'name': name});
+
+  /// The greeting when the profile has no display name yet.
+  String get homeGreetingNoName => text('Hi!', 'Cześć!');
+
+  String get homeGreetingSubtitle => contextualText(
+    'home.greetingSubtitle',
+    'Good to see you again!',
+    'Dobrze Cię znowu widzieć!',
+  );
+
+  /// Section title of the friends rail.
+  String get homeYourPeople =>
+      contextualText('home.yourPeople', 'Your people', 'Twoi znajomi');
+
+  /// Section title of the featured-room hero.
+  String get homeHereNow =>
+      contextualText('home.hereNow', 'Here and now', 'Tu i teraz');
+
+  /// Section title of the live rows from the account's own places.
+  String get homeInYourServers => contextualText(
+    'home.inYourServers',
+    'In your servers',
+    'W Twoich serwerach',
+  );
+
+  /// Section title of the places rail.
+  String get homeYourPlaces =>
+      contextualText('home.yourPlaces', 'Your places', 'Twoje miejsca');
+
+  /// "See all" addressing people — Polish and several other locales decline
+  /// the animate form differently from [homeSeeAll].
+  String get homeSeeAllPeople =>
+      contextualText('home.seeAllPeople', 'See all', 'Zobacz wszystkich');
+
+  /// "See all" addressing places and servers.
+  String get homeSeeAll =>
+      contextualText('home.seeAll', 'See all', 'Zobacz wszystkie');
+
+  /// The dashed add tile at the end of the friends rail.
+  String get homeAddFriends =>
+      contextualText('home.addFriends', 'Add friends', 'Dodaj znajomych');
+
+  /// Hero CTA for a community room.
+  String get homeJoinConversation => contextualText(
+    'home.joinConversation',
+    'Join the conversation',
+    'Dołącz do rozmowy',
+  );
+
+  /// Hero CTA for a broadcast room — Community and Broadcast stay distinct.
+  String get homeJoinBroadcast => contextualText(
+    'home.joinBroadcast',
+    'Join the broadcast',
+    'Dołącz do transmisji',
+  );
+
+  /// The server-row pill that opens the pre-join screen of a live lounge.
+  String get homeTakeALook =>
+      contextualText('home.takeALook', 'Take a look', 'Zajrzyj');
+
+  /// Channel kind on a server row; broadcast rows reuse the existing tag.
+  String get homeVoiceConversation => contextualText(
+    'home.voiceConversation',
+    'Voice conversation',
+    'Rozmowa głosowa',
+  );
+
+  /// The places rail's last tile and the empty places card's action.
+  String get homeCreateServer =>
+      contextualText('home.createServer', 'Create server', 'Stwórz serwer');
+
+  /// Title of the "record a Voice Moment" row card.
+  String get homeGotAMinute =>
+      contextualText('home.gotAMinute', 'Got a minute?', 'Masz chwilę?');
+
+  /// Subtitle of the same card.
+  String get homeRecordVoiceMoment => contextualText(
+    'home.recordVoiceMoment',
+    'Record a Voice Moment',
+    'Nagraj Voice Moment',
+  );
+
+  /// Empty hero (nothing live): headline, body and the Discover link. The
+  /// actions reuse the existing [homeCreateRoom] and [friends] keys.
+  String get homeInvitationHeadline => contextualText(
+    'home.invitationHeadline',
+    'A good conversation starts here.',
+    'Tu zaczyna się dobra rozmowa.',
+  );
+  String get homeInvitationBody => contextualText(
+    'home.invitationBody',
+    "It's quiet right now. Create a room or check on your friends.",
+    'Teraz jest cicho. Utwórz pokój albo zajrzyj do znajomych.',
+  );
+  String get homeDiscoverRooms =>
+      contextualText('home.discoverRooms', 'Discover rooms', 'Odkrywaj pokoje');
+
   /// Mobile room-directory destination, distinct from desktop Discover.
   String get navigationRooms =>
       contextualText('navigation.rooms', 'Rooms', 'Pokoje');
 
-  /// Mobile navigation label; the shared destination heading keeps its
+  /// The Servers destination (dock slot 1, desktop rail row 2): the account's
+  /// own places. Lives in core localization because Home may not import the
+  /// servers feature's copy.
+  String get navigationServers =>
+      contextualText('navigation.servers', 'Servers', 'Serwery');
+
+  /// Primary navigation label; the shared destination heading keeps its
   /// separate, invariant YO Moments product name.
   String get navigationYourMoments =>
-      contextualText('navigation.yourMoments', 'Your Moments', 'Twoje Momenty');
+      contextualText('navigation.yourMoments', 'Moments', 'Momenty');
 
   /// Product destination name. Brand names stay invariant in every locale;
   /// "Voice Moment" and "Reel" remain the localized format names inside it.
@@ -284,6 +397,46 @@ class AppLocalizations {
       stem: '{count} unread message',
       englishOne: '{count} unread message',
       englishOther: '{count} unread messages',
+    );
+  }
+
+  /// "N people" for a place's member count, with Polish declension:
+  /// 1 osoba, 2–4 osoby (but 12–14 osób), otherwise osób.
+  String peopleCount(int count) {
+    if (isPolish) {
+      if (count == 1) return '1 osoba';
+      final lastTwo = count % 100;
+      final last = count % 10;
+      if (last >= 2 && last <= 4 && (lastTwo < 12 || lastTwo > 14)) {
+        return '$count osoby';
+      }
+      return '$count osób';
+    }
+    return _pluralized(
+      count: count,
+      stem: '{count} member',
+      englishOne: '{count} member',
+      englishOther: '{count} members',
+    );
+  }
+
+  /// A spoken duration for screen readers ("45 sekund"), never "0:45":
+  /// 1 sekunda, 2–4 sekundy (but 12–14 sekund), otherwise sekund.
+  String secondsCount(int count) {
+    if (isPolish) {
+      if (count == 1) return '1 sekunda';
+      final lastTwo = count % 100;
+      final last = count % 10;
+      if (last >= 2 && last <= 4 && (lastTwo < 12 || lastTwo > 14)) {
+        return '$count sekundy';
+      }
+      return '$count sekund';
+    }
+    return _pluralized(
+      count: count,
+      stem: '{count} second',
+      englishOne: '{count} second',
+      englishOther: '{count} seconds',
     );
   }
 

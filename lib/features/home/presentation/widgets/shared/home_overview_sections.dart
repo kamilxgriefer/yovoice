@@ -20,11 +20,17 @@ class HomeQuickActions extends StatelessWidget {
   const HomeQuickActions({
     required this.onCreateRoom,
     required this.onFriends,
+    this.createRoomKey,
     super.key,
   });
 
   final VoidCallback onCreateRoom;
   final VoidCallback onFriends;
+
+  /// The guided tour's mobile Create anchor. Attached to the create pill's
+  /// box (not its ink) so the spotlight frames the whole control; null when
+  /// no tour can run over this instance.
+  final GlobalKey? createRoomKey;
 
   @override
   Widget build(BuildContext context) {
@@ -59,7 +65,7 @@ class HomeQuickActions extends StatelessWidget {
             constraints.maxWidth < minimumActionWidth * 2 + AppRhythm.item;
         // Filled primary controls take their `onPrimary` foreground as the
         // 2 px keyboard boundary (UI.md); the neutral pill keeps `focus`.
-        final create = _FocusOutline(
+        final createPill = _FocusOutline(
           radius: 999,
           color: colors.onPrimary,
           child: Tooltip(
@@ -86,6 +92,9 @@ class HomeQuickActions extends StatelessWidget {
             ),
           ),
         );
+        final create = createRoomKey == null
+            ? createPill
+            : KeyedSubtree(key: createRoomKey, child: createPill);
         final friends = _FocusOutline(
           radius: 999,
           child: Tooltip(

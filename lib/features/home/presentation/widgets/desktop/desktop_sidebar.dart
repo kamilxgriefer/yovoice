@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/core/theme/app_motion.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
+import 'package:yovoice/core/theme/app_spacing.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/timezone_world_map_card.dart';
 import 'package:yovoice/features/profile/data/models/user_profile.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
@@ -27,12 +29,14 @@ typedef _DesktopNavIconBuilder =
 ///
 /// Layout contract (the operator's reference design):
 ///
-///  * TOP ROW, pinned: wordmark at the left, then HOME and the notification
-///    BELL as compact icon buttons. Those are the only desktop entry points
-///    to their destinations — neither is duplicated in the nav list below.
-///  * NAV: compact rows — Moments, Discover, Find creators, Chats, Friends.
-///    The selected row gets a subtle violet surface, a thin left accent bar
-///    and brighter icon/text.
+///  * TOP ROW, pinned: wordmark at the left, then the notification BELL as
+///    a compact icon button — the one desktop door to the notifications
+///    feed, never duplicated as a nav row.
+///  * NAV: five rows in the accepted order — Start (Home), Serwery
+///    (Servers), Czaty (Chats), Momenty (Moments) and, after the Create
+///    section, Więcej (More). Friends, Discover and Find creators moved
+///    into the More popover (kept, never deleted). The selected row gets a
+///    violet wash with a lavender icon and a bright label.
 ///  * CREATE: a section label, the gradient "Create Room" primary CTA,
 ///    and the quieter outlined "Create Voice Moment" under it.
 ///  * MORE: a section label plus a single More row, which the shell
@@ -46,7 +50,14 @@ typedef _DesktopNavIconBuilder =
 /// (tap = profile, gear = profile & account settings).
 enum DesktopNavItem {
   home,
+
+  /// The account's own places — the rail's second row, content slot 13.
+  servers,
   moments,
+
+  /// `discover`, `findCreators` and `friends` no longer render as rail rows;
+  /// they stay in the enum because the shell still maps their pushed
+  /// destinations (More stays lit) and hosts keep their identities.
   discover,
   findCreators,
   chats,
@@ -181,20 +192,11 @@ class DesktopSidebar extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Pinned header: identity left, then the two compact primary
-              // actions. Home moved here so the menu below never needs to
-              // trade visual stability for one more full-width row.
+              // Pinned header: identity left, the bell right. Home is the
+              // first nav row ("Start"), as on the accepted boards.
               Row(
                 children: [
                   const Expanded(child: _Wordmark()),
-                  _HeaderNavButton(
-                    activeIcon: Icons.home_rounded,
-                    inactiveIcon: Icons.home_outlined,
-                    active: active == DesktopNavItem.home,
-                    label: copy.home,
-                    onTap: () => onSelect(DesktopNavItem.home),
-                  ),
-                  const SizedBox(width: 2),
                   _HeaderNavButton(
                     activeIcon: Icons.notifications_rounded,
                     inactiveIcon: Icons.notifications_none_rounded,
@@ -214,9 +216,34 @@ class DesktopSidebar extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // Moments sits directly above Discover: the rail is
-                    // where the two coexist, and a discovery surface for
-                    // voice belongs ahead of a discovery surface for rooms.
+                    _NavTile(
+                      item: DesktopNavItem.home,
+                      icon: Icons.home_outlined,
+                      activeIcon: Icons.home_rounded,
+                      label: copy.home,
+                      active: active == DesktopNavItem.home,
+                      onTap: onSelect,
+                    ),
+                    _NavTile(
+                      item: DesktopNavItem.servers,
+                      icon: Icons.hub_outlined,
+                      activeIcon: Icons.hub_rounded,
+                      label: copy.navigationServers,
+                      active: active == DesktopNavItem.servers,
+                      onTap: onSelect,
+                    ),
+                    _tourItemAnchor(
+                      DesktopNavItem.chats,
+                      _NavTile(
+                        item: DesktopNavItem.chats,
+                        icon: Icons.chat_bubble_outline_rounded,
+                        activeIcon: Icons.chat_bubble_rounded,
+                        label: copy.chats,
+                        badge: unreadConversationCount,
+                        active: active == DesktopNavItem.chats,
+                        onTap: onSelect,
+                      ),
+                    ),
                     _tourItemAnchor(
                       DesktopNavItem.moments,
                       _NavTile(
@@ -237,42 +264,12 @@ class DesktopSidebar extends StatelessWidget {
                               color: color,
                               size: 20,
                             ),
-                        label: copy.moments,
+                        // The nav label, not the product heading: the
+                        // destination itself still says "YO Moments".
+                        label: copy.navigationYourMoments,
                         active: active == DesktopNavItem.moments,
                         onTap: onSelect,
                       ),
-                    ),
-                    _NavTile(
-                      item: DesktopNavItem.discover,
-                      icon: Icons.explore_outlined,
-                      label: copy.discover,
-                      active: active == DesktopNavItem.discover,
-                      onTap: onSelect,
-                    ),
-                    _NavTile(
-                      item: DesktopNavItem.findCreators,
-                      icon: Icons.person_search_outlined,
-                      label: copy.findCreators,
-                      active: active == DesktopNavItem.findCreators,
-                      onTap: onSelect,
-                    ),
-                    _tourItemAnchor(
-                      DesktopNavItem.chats,
-                      _NavTile(
-                        item: DesktopNavItem.chats,
-                        icon: Icons.chat_bubble_outline_rounded,
-                        label: copy.chats,
-                        badge: unreadConversationCount,
-                        active: active == DesktopNavItem.chats,
-                        onTap: onSelect,
-                      ),
-                    ),
-                    _NavTile(
-                      item: DesktopNavItem.friends,
-                      icon: Icons.people_alt_outlined,
-                      label: copy.friends,
-                      active: active == DesktopNavItem.friends,
-                      onTap: onSelect,
                     ),
                     SizedBox(height: useCompactCreateActions ? 8 : 12),
                     if (showSectionLabels)
@@ -537,6 +534,7 @@ class _NavTile extends StatefulWidget {
     required this.label,
     required this.active,
     required this.onTap,
+    this.activeIcon,
     this.badge = 0,
     this.trailingChevron = false,
     this.iconBuilder,
@@ -545,6 +543,9 @@ class _NavTile extends StatefulWidget {
 
   final DesktopNavItem item;
   final IconData icon;
+
+  /// Filled glyph for the selected row; falls back to [icon].
+  final IconData? activeIcon;
   final String label;
   final bool active;
   final int badge;
@@ -577,19 +578,24 @@ class _NavTileState extends State<_NavTile> {
   @override
   Widget build(BuildContext context) {
     final active = widget.active;
-    final colors = Theme.of(context).colorScheme;
     final palette = context.appPalette;
     final accent = DesktopSidebar._interactiveAccent(context);
+    // The accepted rail: a violet wash under the selected row, its glyph in
+    // the interactive lavender and its label in primary ink; the resting
+    // rows use the navigation-inactive glyph and secondary ink.
+    final iconColor = active ? accent : palette.navigationInactive;
+    final labelColor = active ? palette.textPrimary : palette.textSecondary;
+    final duration = AppMotion.resolve(context, AppMotion.quick);
     return Padding(
-      padding: const EdgeInsets.only(bottom: 3),
+      // Row pitch 52 (44 + `AppRhythm.tight`), the reference rail's pitch.
+      padding: const EdgeInsets.only(bottom: AppRhythm.tight),
       child: Material(
         color: Colors.transparent,
         borderRadius: BorderRadius.circular(10),
         child: Semantics(
           button: true,
-          // The wash and the 3px bar are visual-only; without this a
-          // screen-reader user tabbing the rail cannot tell which
-          // destination is current.
+          // The wash is visual-only; without this a screen-reader user
+          // tabbing the rail cannot tell which destination is current.
           selected: active,
           child: InkWell(
             focusNode: _focusNode,
@@ -600,7 +606,7 @@ class _NavTileState extends State<_NavTile> {
             onTap: () => widget.onTap(widget.item),
             child: AnimatedContainer(
               key: ValueKey('desktop-nav-focus-${widget.item.name}'),
-              duration: const Duration(milliseconds: 140),
+              duration: duration,
               // 44, the project's own minimum for interactive targets
               // (docs/UI.md) — the rail rows sat at 40.
               height: 44,
@@ -608,7 +614,7 @@ class _NavTileState extends State<_NavTile> {
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(10),
                 color: active
-                    ? colors.primaryContainer
+                    ? AppColors.navigationPrimary.withValues(alpha: .28)
                     : _hovered
                     ? palette.surfaceMuted
                     : Colors.transparent,
@@ -619,17 +625,9 @@ class _NavTileState extends State<_NavTile> {
               ),
               child: Row(
                 children: [
-                  // Thin left accent — always laid out so icons stay
-                  // aligned; painted only on the selected row.
-                  AnimatedContainer(
-                    duration: const Duration(milliseconds: 140),
-                    width: 3,
-                    height: 16,
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(2),
-                      color: active ? accent : Colors.transparent,
-                    ),
-                  ),
+                  // The former 3 px accent bar is no longer painted; its
+                  // lane stays laid out so glyphs keep their alignment.
+                  const SizedBox(width: 3, height: 16),
                   const SizedBox(width: 9),
                   SizedBox.square(
                     dimension: 20,
@@ -638,16 +636,12 @@ class _NavTileState extends State<_NavTile> {
                           context,
                           active: active,
                           pressed: _pressed,
-                          color: active
-                              ? colors.onPrimaryContainer
-                              : colors.onSurfaceVariant,
+                          color: iconColor,
                         ) ??
                         Icon(
-                          widget.icon,
+                          active ? widget.activeIcon ?? widget.icon : widget.icon,
                           size: 19,
-                          color: active
-                              ? colors.onPrimaryContainer
-                              : colors.onSurfaceVariant,
+                          color: iconColor,
                         ),
                   ),
                   const SizedBox(width: 11),
@@ -657,9 +651,7 @@ class _NavTileState extends State<_NavTile> {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
-                        color: active
-                            ? colors.onPrimaryContainer
-                            : colors.onSurfaceVariant,
+                        color: labelColor,
                         fontSize: 13.5,
                         fontWeight: active ? FontWeight.w800 : FontWeight.w600,
                       ),
@@ -670,7 +662,7 @@ class _NavTileState extends State<_NavTile> {
                     Icon(
                       Icons.chevron_right_rounded,
                       size: 17,
-                      color: colors.onSurfaceVariant.withValues(alpha: .8),
+                      color: palette.navigationInactive,
                     ),
                 ],
               ),

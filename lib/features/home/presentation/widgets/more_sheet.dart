@@ -17,6 +17,7 @@ import 'package:yovoice/features/premium/premium_gates.dart';
 import 'package:yovoice/features/premium/presentation/widgets/premium_feature_gate.dart';
 import 'package:yovoice/features/profile/presentation/screens/profile_screen.dart';
 import 'package:yovoice/features/reels/presentation/screens/reels_destination_screen.dart';
+import 'package:yovoice/features/servers/presentation/screens/servers_screen.dart';
 import 'package:yovoice/features/settings/presentation/screens/settings_screen.dart';
 import 'package:yovoice/features/staff/data/staff_capabilities.dart';
 import 'package:yovoice/features/staff/presentation/screens/staff_center_screen.dart';
@@ -31,6 +32,12 @@ import 'package:yovoice/features/profile/data/services/profile_service.dart';
 enum MoreDestination {
   friends,
   discover,
+
+  /// The account's own places (clubs and V1 servers) — a primary
+  /// destination on both form factors: dock slot 1 and the desktop rail's
+  /// second row. Owns content slot 13; the More sheet and popover do not
+  /// list it, exactly like Moments.
+  servers,
   findCreators,
   clubs,
   moments,
@@ -76,18 +83,20 @@ bool moreDestinationIsLocked(
 /// deliberately untouched.
 ///
 /// Everything NOT listed here is reachable from the desktop More
-/// popover (Clubs, Creator Studio, Awards, Alerts, Settings) or from the
-/// rail's profile card (Profile, and its gear → Settings).
+/// popover (Friends, Discover, Find creators, Clubs, Creator Studio,
+/// Awards, Alerts, Settings) or from the rail's profile card (Profile, and
+/// its gear → Settings).
 ///
-/// Moments joined this set when it was promoted to primary navigation.
-/// Note that `showDesktopMoreMenu`'s item list below is hand-written
-/// rather than filtered through this set, so anything added here must
-/// also be removed from there or it appears twice.
+/// The rail is Start · Serwery · Czaty · Momenty · Więcej: Moments joined
+/// this set when it was promoted to primary navigation and Servers when it
+/// took the second row; Friends, Discover and Find creators moved from the
+/// rail into the popover (kept, never deleted). Note that
+/// `showDesktopMoreMenu`'s item list below is hand-written rather than
+/// filtered through this set, so anything added here must also be removed
+/// from there or it appears twice.
 const Set<MoreDestination> desktopRailDestinations = {
   MoreDestination.moments,
-  MoreDestination.discover,
-  MoreDestination.findCreators,
-  MoreDestination.friends,
+  MoreDestination.servers,
 };
 
 Future<MoreDestination?> showMoreSheet(
@@ -147,6 +156,9 @@ Widget moreDestinationScreen(
   final screen = switch (destination) {
     MoreDestination.friends => FriendsScreen(isRootTab: isRootTab),
     MoreDestination.discover => DiscoverScreen(isRootTab: isRootTab),
+    // The one call site for the servers feature from Home. The screen owns
+    // its own loading, error and empty states and the create gate.
+    MoreDestination.servers => ServersScreen(isRootTab: isRootTab),
     MoreDestination.findCreators => FindCreatorsScreen(isRootTab: isRootTab),
     MoreDestination.clubs => ClubsScreen(isRootTab: isRootTab),
     MoreDestination.moments => MomentsScreen(isRootTab: isRootTab),
@@ -194,9 +206,29 @@ Future<MoreDestination?> showDesktopMoreMenu(
   final colors = Theme.of(context).colorScheme;
   final copy = AppLocalizations.of(context);
   final lockColor = palette.warningForeground;
-  // Moments is deliberately absent: it is a rail item now, and listing
-  // it here as well would show the same destination twice.
+  // Moments and Servers are deliberately absent: they are rail items, and
+  // listing them here as well would show the same destination twice.
+  // Friends, Discover and Find creators left the rail for this popover and
+  // keep the mobile sheet's exact labels.
   final items = <(MoreDestination, IconData, String, String)>[
+    (
+      MoreDestination.friends,
+      Icons.people_rounded,
+      copy.friends,
+      copy.text('Your circle', 'Twój krąg'),
+    ),
+    (
+      MoreDestination.discover,
+      Icons.explore_rounded,
+      copy.discover,
+      copy.text('Find rooms', 'Znajdź pokoje'),
+    ),
+    (
+      MoreDestination.findCreators,
+      Icons.person_search_rounded,
+      copy.findCreators,
+      copy.text('People to follow', 'Osoby warte obserwowania'),
+    ),
     (
       MoreDestination.clubs,
       Icons.groups_2_rounded,

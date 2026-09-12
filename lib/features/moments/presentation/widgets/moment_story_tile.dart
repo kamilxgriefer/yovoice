@@ -6,7 +6,9 @@ import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_gradients.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
+import 'package:yovoice/core/theme/app_radius.dart';
 import 'package:yovoice/core/theme/app_spacing.dart';
+import 'package:yovoice/core/theme/app_typography.dart';
 import 'package:yovoice/features/moments/data/services/moment_views_service.dart';
 import 'package:yovoice/shared/widgets/identity/official_role_badge.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
@@ -550,4 +552,183 @@ class _MomentViewedIdsState extends State<MomentViewedIds> {
   @override
   Widget build(BuildContext context) =>
       widget.builder(context, widget.viewedIds ?? _viewedIds);
+}
+
+/// One author capsule of the YO Moments overview strip: a small avatar, the
+/// author's name and a DECORATIVE sound motif, 48 tall inside a 14-radius
+/// pill.
+///
+/// The unheard/heard fact rides on the capsule's border — the same two ring
+/// stops [MomentStoryTile.ringColors] defines, so the strip and the story
+/// rails cannot drift apart: a 2 px brand gradient means this account has
+/// not heard everything in the chain; a 1 px quiet hairline means every
+/// link was heard. The five bars are decoration and nothing else: no
+/// per-Moment amplitude data exists, they are never cyan (cyan means audio
+/// PROGRESS in this destination) and they never animate, so they cannot
+/// suggest a listen in progress.
+class MomentAuthorCapsule extends StatelessWidget {
+  const MomentAuthorCapsule({
+    required this.name,
+    required this.seen,
+    required this.semanticLabel,
+    required this.onTap,
+    this.userId,
+    this.photoUrl,
+    this.displayName,
+    this.showBars = true,
+    super.key,
+  });
+
+  final String name;
+  final bool seen;
+  final String semanticLabel;
+  final VoidCallback onTap;
+  final String? userId;
+  final String? photoUrl;
+  final String? displayName;
+
+  /// Below a 360 slot the motif is dropped so at least three capsules stay
+  /// visible.
+  final bool showBars;
+
+  static const double height = 48;
+  static const double avatarDiameter = 32;
+  static const double nameMaxWidth = 96;
+  static const double unheardBorderWidth = 2;
+  static const double heardBorderWidth = 1;
+
+  /// The border container, so a widget test can read the painted stops.
+  @visibleForTesting
+  static const Key borderKey = ValueKey('moment-author-capsule-border');
+
+  /// The decorative motif, so a test can prove it is static and non-cyan.
+  @visibleForTesting
+  static const Key barsKey = ValueKey('moment-author-capsule-bars');
+
+  @override
+  Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
+    final palette = context.appPalette;
+    final state = seen
+        ? copy.text('already heard', 'odsłuchane')
+        : copy.text('not heard yet', 'nieodsłuchane');
+    final borderWidth = seen ? heardBorderWidth : unheardBorderWidth;
+    final stops = MomentStoryTile.ringColors(context, seen: seen);
+    return Semantics(
+      button: true,
+      label: '$semanticLabel, $state',
+      onTap: onTap,
+      excludeSemantics: true,
+      child: SizedBox(
+        height: height,
+        child: DecoratedBox(
+          key: borderKey,
+          decoration: BoxDecoration(
+            borderRadius: AppRadius.md,
+            gradient: LinearGradient(colors: stops),
+          ),
+          child: Padding(
+            padding: EdgeInsets.all(borderWidth),
+            child: Material(
+              color: palette.surface,
+              borderRadius: BorderRadius.circular(14 - borderWidth),
+              clipBehavior: Clip.antiAlias,
+              child: InkWell(
+                onTap: onTap,
+                child: Padding(
+                  padding: EdgeInsetsDirectional.fromSTEB(
+                    AppRhythm.tight - borderWidth,
+                    0,
+                    AppRhythm.item - borderWidth,
+                    0,
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Opacity(
+                        opacity: seen ? .62 : 1,
+                        child: MediaQuery(
+                          data: MediaQuery.of(
+                            context,
+                          ).copyWith(textScaler: TextScaler.noScaling),
+                          child: UserAvatar(
+                            radius: avatarDiameter / 2,
+                            userId: userId,
+                            photoUrl: photoUrl,
+                            displayName: displayName ?? name,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: AppRhythm.tight),
+                      ConstrainedBox(
+                        constraints: BoxConstraints(
+                          maxWidth: nameMaxWidth *
+                              MomentStoryTile.textScaleOf(context),
+                        ),
+                        child: Text(
+                          name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          textScaler: MediaQuery.textScalerOf(
+                            context,
+                          ).clamp(maxScaleFactor: 2),
+                          style: AppTypography.titleSmall.copyWith(
+                            color: seen
+                                ? palette.textSecondary
+                                : palette.textPrimary,
+                          ),
+                        ),
+                      ),
+                      if (showBars) ...[
+                        const SizedBox(width: AppRhythm.tight),
+                        const MomentCapsuleBars(key: barsKey),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Five static bars, `AppColors.primary` at .32 in both themes. Painted
+/// once; nothing here listens to a player.
+class MomentCapsuleBars extends StatelessWidget {
+  const MomentCapsuleBars({super.key});
+
+  static const double width = 24;
+  static const double height = 16;
+  static const List<double> amplitudes = <double>[.45, .8, .6, 1, .5];
+
+  /// The one colour the motif may use.
+  static Color color() => AppColors.primary.withValues(alpha: .32);
+
+  @override
+  Widget build(BuildContext context) {
+    return ExcludeSemantics(
+      child: SizedBox(
+        width: width,
+        height: height,
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            for (final amplitude in amplitudes)
+              Container(
+                width: 3,
+                height: height * amplitude,
+                decoration: BoxDecoration(
+                  color: color(),
+                  borderRadius: BorderRadius.circular(1.5),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
 }

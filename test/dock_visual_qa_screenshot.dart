@@ -167,7 +167,9 @@ void main() {
         final dockSize = tester.getSize(
           find.byKey(const ValueKey('yo-floating-navigation-dock')),
         );
-        expect(dockSize.width, closeTo(width - 28, .01));
+        // The reference bar is full-bleed: no floating side margin
+        // (`horizontalMargin` is 0), so the dock spans the whole width.
+        expect(dockSize.width, closeTo(width, .01));
         expect(dockSize.height, YoFloatingNavigationDock.visualHeight);
 
         final file = await _shoot(tester, captureKey: captureKey, name: label);
@@ -192,7 +194,7 @@ void main() {
       final dockSize = tester.getSize(
         find.byKey(const ValueKey('yo-floating-navigation-dock')),
       );
-      expect(dockSize.width, closeTo(292, .01));
+      expect(dockSize.width, closeTo(320, .01));
       expect(dockSize.height, YoFloatingNavigationDock.accessibleVisualHeight);
 
       final file = await _shoot(tester, captureKey: captureKey, name: label);

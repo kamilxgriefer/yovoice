@@ -9,6 +9,8 @@ import 'package:yovoice/shared/widgets/backgrounds/yo_page_background.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/navigation/app_route_observer.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
+import 'package:yovoice/features/creator/presentation/screens/find_creators_screen.dart';
+import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/home/data/services/home_feed_service.dart';
 import 'package:yovoice/features/moderation/data/services/content_report_service.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
@@ -18,13 +20,14 @@ import 'package:yovoice/features/moments/data/services/moment_service.dart';
 import 'package:yovoice/features/moments/data/services/moment_views_service.dart';
 import 'package:yovoice/features/moments/presentation/screens/record_voice_moment_screen.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moments_feed_view.dart';
+import 'package:yovoice/features/moments/presentation/widgets/yo_moments_chrome.dart';
+import 'package:yovoice/features/profile/data/services/follow_service.dart';
 import 'package:yovoice/features/reels/data/services/reel_service.dart';
 import 'package:yovoice/features/reels/presentation/screens/reel_composer_screen.dart';
 import 'package:yovoice/features/reels/presentation/screens/reels_feed_screen.dart';
 import 'package:yovoice/features/reels/presentation/widgets/reel_card.dart';
 import 'package:yovoice/shared/widgets/overlays/immersive_feed_chrome.dart';
 import 'package:yovoice/shared/widgets/overlays/immersive_overlay_atoms.dart';
-import 'package:yovoice/shared/widgets/inputs/yo_segmented_pill.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/navigation/yo_moments_icon.dart';
 import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
@@ -37,6 +40,11 @@ export 'package:yovoice/features/moments/presentation/widgets/moment_card.dart'
 export 'package:yovoice/features/moments/presentation/widgets/moments_feed_view.dart'
     show MomentsFilter;
 
+/// [YoMomentsFormat] now lives beside the chrome that names it; every
+/// existing importer of this screen keeps resolving it from here.
+export 'package:yovoice/features/moments/presentation/widgets/yo_moments_chrome.dart'
+    show YoMomentsFormat;
+
 /// The two historic halves of the destination, kept as an entry seam:
 /// callers that used to route to the Following tab still land on the
 /// Following filter of the feed.
@@ -48,11 +56,6 @@ enum MomentsTab {
   /// The personal slice: your own Moments plus friends and follows.
   following,
 }
-
-/// The two content formats that live inside the single YO Moments
-/// destination. Voice Moment remains the audio format name; YO Moments is the
-/// section that brings audio and Reels together.
-enum YoMomentsFormat { voice, reels }
 
 /// The Voice Moments destination — a stories-style audio feed.
 ///
@@ -83,12 +86,26 @@ class MomentsScreen extends StatefulWidget {
     this.reelVideoBuilder,
     this.initialFormat = YoMomentsFormat.voice,
     this.onCreateReel,
+    this.onOpenFindCreators,
+    this.friendService,
+    this.followService,
     super.key,
   });
 
   final MomentService? momentService;
   final HomeFeedService? feedService;
   final MomentDiscoveryService? discoveryService;
+
+  /// How the "Find people" action of the Following empty state opens the
+  /// Find creators destination. The shell may pass its own slot switch;
+  /// absent, the existing [FindCreatorsScreen] route is pushed with its
+  /// own Back control.
+  final VoidCallback? onOpenFindCreators;
+
+  /// Injection seams for the calm context panel's real pool (friends the
+  /// viewer does not follow yet); production passes nothing.
+  final FriendService? friendService;
+  final FollowService? followService;
 
   /// Injection seam for the caller's viewed-state; production passes
   /// nothing.
@@ -300,6 +317,34 @@ class _MomentsScreenState extends State<MomentsScreen> with RouteAware {
         MomentsTab.following => MomentsFilter.following,
       };
 
+  Future<void> _openFindCreators() async {
+    final override = widget.onOpenFindCreators;
+    if (override != null) {
+      override();
+      return;
+    }
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(builder: (_) => const FindCreatorsScreen()),
+    );
+  }
+
+  /// The shared header for the Voice column: title row, then the format
+  /// switch. The create `+` sits in the header only while no local panel
+  /// exists (below 1100); on desktop the panel's "Utwórz" owns creation.
+  Widget _voiceHeader(BuildContext context, YoMomentsLayout layout) {
+    final showBack = !widget.isRootTab && Navigator.of(context).canPop();
+    return YoMomentsHeader(
+      showBack: showBack,
+      selectedFormat: _format,
+      onFormatSelected: _selectFormat,
+      gutter: layout.gutter,
+      fullWidthSwitch: layout.isNarrow,
+      onCreate: layout.showsLocalPanel
+          ? null
+          : () => unawaited(_showCreateChooser()),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -309,27 +354,32 @@ class _MomentsScreenState extends State<MomentsScreen> with RouteAware {
         child: SafeArea(
           child: LayoutBuilder(
             builder: (context, constraints) {
-              final immersiveReels = constraints.maxWidth < 600;
+              final layout = YoMomentsLayout.of(
+                constraints.maxWidth,
+                textScale: MediaQuery.textScalerOf(context).scale(1),
+              );
+              final immersiveReels = layout.isNarrow;
               final showBack =
                   !widget.isRootTab && Navigator.of(context).canPop();
               return Column(
                 children: [
-                  Offstage(
-                    offstage:
-                        immersiveReels && _format == YoMomentsFormat.reels,
-                    child: ResponsiveContentFrame(
+                  // The Voice column draws the header inside its own main
+                  // column (beside the local panel on desktop); the Reels
+                  // stage still takes it from here until its own slice.
+                  if (_format == YoMomentsFormat.reels && !immersiveReels)
+                    ResponsiveContentFrame(
                       width: ResponsiveContentWidth.feed,
                       fillHeight: false,
-                      child: _MomentsHeader(
+                      child: YoMomentsHeader(
                         // The shell owns the chrome when this is a root tab; a
                         // pushed route keeps a real Back button.
                         showBack: showBack,
                         selectedFormat: _format,
                         onFormatSelected: _selectFormat,
+                        gutter: layout.gutter,
                         onCreate: () => unawaited(_showCreateChooser()),
                       ),
                     ),
-                  ),
                   Expanded(
                     key: const ValueKey('yo-moments-retained-content'),
                     child: IndexedStack(
@@ -345,6 +395,8 @@ class _MomentsScreenState extends State<MomentsScreen> with RouteAware {
                             momentService: widget.momentService,
                             viewsService: widget.viewsService,
                             contentReportService: widget.contentReportService,
+                            friendService: widget.friendService,
+                            followService: widget.followService,
                             auth: widget.auth,
                             isVisible: _voiceVisible,
                             onOpenDetail: widget.onOpenDetail,
@@ -352,6 +404,10 @@ class _MomentsScreenState extends State<MomentsScreen> with RouteAware {
                             expiryClock: widget.expiryClock,
                             expiryTimerFactory: widget.expiryTimerFactory,
                             onRecord: () => unawaited(_createMoment()),
+                            onCreate: () => unawaited(_showCreateChooser()),
+                            onOpenFindCreators: () =>
+                                unawaited(_openFindCreators()),
+                            headerBuilder: _voiceHeader,
                           )
                         else
                           const SizedBox.shrink(
@@ -439,201 +495,6 @@ ImmersiveFeedHeaderSlots buildImmersiveMomentsHeader(
       onTap: onCreate,
     ),
   );
-}
-
-/// "Voice Moments — Real voices. Real moments." plus the create CTA.
-///
-/// The CTA is ALWAYS enabled: the active-Moment cap (10 at once) is the
-/// server's rule, enforced by `reserveMomentDraft`, and the recorder
-/// surfaces its refusal honestly. A client that pre-guesses the cap goes
-/// stale the day the server changes it.
-class _MomentsHeader extends StatelessWidget {
-  const _MomentsHeader({
-    required this.showBack,
-    required this.selectedFormat,
-    required this.onFormatSelected,
-    required this.onCreate,
-  });
-
-  final bool showBack;
-  final YoMomentsFormat selectedFormat;
-  final ValueChanged<YoMomentsFormat> onFormatSelected;
-  final VoidCallback onCreate;
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = context.appPalette;
-    final copy = AppLocalizations.of(context);
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        // Compact is measured in TEXT-SCALED space, not raw pixels: at a
-        // 2x accessibility scale the full CTA label is ~560 pt wide and
-        // would squeeze the title into a per-character vertical wrap on
-        // a 768 pt tablet. The icon CTA keeps its 48 pt target either
-        // way.
-        final textScaler = MediaQuery.textScalerOf(context);
-        final scale = textScaler.scale(14).clamp(14.0, 28.0);
-        final compact = constraints.maxWidth < 600 * (scale / 14);
-        final accessibilityLayout =
-            textScaler.scale(1) >= 1.6 && constraints.maxWidth < 720;
-        final title = Semantics(
-          header: true,
-          child: Text(
-            copy.moments,
-            key: const ValueKey<String>('yo-moments-title'),
-            // At accessibility sizes the header owns its own row, so let the
-            // title take its natural height. A line cap would still truncate
-            // some font/locale combinations at 200% even without ellipsis.
-            maxLines: accessibilityLayout ? null : 1,
-            softWrap: accessibilityLayout,
-            overflow: accessibilityLayout
-                ? TextOverflow.visible
-                : TextOverflow.ellipsis,
-            textWidthBasis: TextWidthBasis.parent,
-            style: TextStyle(
-              color: palette.textPrimary,
-              fontSize: 26,
-              height: 1.04,
-              fontWeight: FontWeight.w900,
-            ),
-          ),
-        );
-        final backButton = IconButton(
-          onPressed: () => Navigator.of(context).pop(),
-          icon: const Icon(Icons.arrow_back_rounded),
-          color: palette.textPrimary,
-          tooltip: copy.text('Back', 'Wstecz'),
-        );
-        return Padding(
-          padding: EdgeInsets.fromLTRB(
-            compact ? 16 : 24,
-            14,
-            compact ? 16 : 24,
-            8,
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              if (accessibilityLayout) ...[
-                if (showBack)
-                  Align(
-                    alignment: AlignmentDirectional.centerStart,
-                    child: backButton,
-                  ),
-                SizedBox(width: double.infinity, child: title),
-                const SizedBox(height: 8),
-                Align(
-                  alignment: AlignmentDirectional.centerEnd,
-                  child: _CreateMomentButton(onTap: onCreate, compact: true),
-                ),
-              ] else
-                Row(
-                  children: [
-                    if (showBack)
-                      Padding(
-                        padding: const EdgeInsetsDirectional.only(end: 6),
-                        child: backButton,
-                      ),
-                    Expanded(child: title),
-                    const SizedBox(width: 10),
-                    _CreateMomentButton(onTap: onCreate, compact: compact),
-                  ],
-                ),
-              const SizedBox(height: 10),
-              // The rest of the app switches lists with pill chips (Reels
-              // Discover/Your Reels, Friends filters, Awards categories); a
-              // bordered Material SegmentedButton was the one control that
-              // read as a different design system.
-              _FormatSwitch(
-                selected: selectedFormat,
-                onSelected: onFormatSelected,
-                compact: compact,
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }
-}
-
-/// Voice / Reels, in the app's own pill language.
-///
-/// The same [YoSegmentedPill] the Reels toolbar uses for Discover / Your
-/// Reels, so the destination has one switch grammar rather than two.
-class _FormatSwitch extends StatelessWidget {
-  const _FormatSwitch({
-    required this.selected,
-    required this.onSelected,
-    required this.compact,
-  });
-
-  final YoMomentsFormat selected;
-  final ValueChanged<YoMomentsFormat> onSelected;
-  final bool compact;
-
-  @override
-  Widget build(BuildContext context) {
-    final copy = AppLocalizations.of(context);
-    return YoSegmentedPill(
-      key: const ValueKey<String>('yo-moments-format-tabs'),
-      width: compact ? double.infinity : 340,
-      trackPadding: 4,
-      segmentMinHeight: 40,
-      fontSize: 13.5,
-      segments: <YoSegmentedPillSegment>[
-        YoSegmentedPillSegment(
-          label: copy.contextualText('yoMoments.voiceFormat', 'Voice', 'Głos'),
-          icon: Icons.mic_rounded,
-        ),
-        YoSegmentedPillSegment(
-          label: copy.text('Reels', 'Reels'),
-          icon: Icons.smart_display_rounded,
-        ),
-      ],
-      selectedIndex: selected.index,
-      onSelected: (index) => onSelected(YoMomentsFormat.values[index]),
-    );
-  }
-}
-
-class _CreateMomentButton extends StatelessWidget {
-  const _CreateMomentButton({required this.onTap, this.compact = false});
-
-  final VoidCallback onTap;
-  final bool compact;
-
-  @override
-  Widget build(BuildContext context) {
-    final copy = AppLocalizations.of(context);
-    final colors = Theme.of(context).colorScheme;
-    if (compact) {
-      // On a phone the title block and a full label cannot share the row;
-      // the icon button keeps a 48 pt target.
-      return IconButton.filled(
-        key: const ValueKey('moments-create-cta'),
-        onPressed: onTap,
-        tooltip: copy.text('CREATE', 'UTWÓRZ'),
-        style: IconButton.styleFrom(backgroundColor: colors.primary),
-        icon: Icon(Icons.add_rounded, color: colors.onPrimary),
-      );
-    }
-    return FilledButton.icon(
-      key: const ValueKey('moments-create-cta'),
-      onPressed: onTap,
-      style: FilledButton.styleFrom(
-        backgroundColor: colors.primary,
-        foregroundColor: colors.onPrimary,
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-      ),
-      icon: Icon(Icons.add_rounded, size: 18, color: colors.onPrimary),
-      label: Text(
-        copy.text('CREATE', 'UTWÓRZ'),
-        style: TextStyle(color: colors.onPrimary, fontWeight: FontWeight.w800),
-      ),
-    );
-  }
 }
 
 enum _YoMomentsCreateChoice { voice, reel }

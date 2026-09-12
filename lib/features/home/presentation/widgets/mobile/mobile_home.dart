@@ -78,6 +78,7 @@ class MobileHome extends StatefulWidget {
     this.presenceService,
     this.currentUserId,
     this.isVisible,
+    this.createRoomKey,
     super.key,
   });
 
@@ -132,6 +133,11 @@ class MobileHome extends StatefulWidget {
 
   /// The signed-in uid. Optional so tests need no Firebase app.
   final String? currentUserId;
+
+  /// The guided tour's mobile Create anchor, forwarded to the quick-actions
+  /// create pill (`home-quick-create-room`). The shell owns the key; Home
+  /// only places it, so replaying the tour spotlights a real control.
+  final GlobalKey? createRoomKey;
 
   /// Home is retained in the shell. A rising edge requests a fresh v2
   /// projection because Voice Moment reads are intentionally one-shot rather
@@ -437,6 +443,7 @@ class _MobileHomeState extends State<MobileHome> {
                       !roomsUnavailable && !roomsLoading && board.isEmpty;
                   final quickActions = HomeQuickActions(
                     key: _quickActionsKey,
+                    createRoomKey: widget.createRoomKey,
                     onCreateRoom: widget.onCreateRoom,
                     onFriends: widget.onOpenFriends,
                   );

@@ -7,6 +7,8 @@ import 'translations_voice_time_footer.dart';
 import 'translations_language_names.dart';
 import 'translations_mobile_navigation.dart';
 import 'translations_moments_creation.dart';
+import 'translations_moments_listen.dart';
+import 'translations_moments_overview.dart';
 import 'translations_reels.dart';
 import 'translations_reels_feed_integration.dart';
 import 'translations_reel_links.dart';
@@ -221,6 +223,8 @@ const appTranslationKeys = <String>{
   ...feedSurfaceReleaseTranslationKeys,
   ...voiceTimeFooterTranslationKeys,
   ...momentsCreationTranslationKeys,
+  ...momentsOverviewTranslationKeys,
+  ...momentsListenTranslationKeys,
 };
 
 final appTranslations = <String, Map<String, String>>{
@@ -251,6 +255,8 @@ final appTranslations = <String, Map<String, String>>{
       ...feedSurfaceReleaseTranslations[entry.key]!,
       ...voiceTimeFooterTranslations[entry.key]!,
       ...momentsCreationTranslations[entry.key]!,
+      ...momentsOverviewTranslations[entry.key]!,
+      ...momentsListenTranslations[entry.key]!,
       ...localizedExtendedLanguageNames[entry.key]!,
     }),
 };

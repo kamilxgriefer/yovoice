@@ -9,6 +9,10 @@ import 'package:share_plus/share_plus.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/navigation/app_route_observer.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
+import 'package:yovoice/core/theme/app_radius.dart';
+import 'package:yovoice/core/theme/app_sizing.dart';
+import 'package:yovoice/core/theme/app_spacing.dart';
+import 'package:yovoice/core/theme/app_typography.dart';
 import 'package:yovoice/features/home/data/services/home_feed_service.dart';
 import 'package:yovoice/features/friends/data/models/friend_user.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
@@ -19,13 +23,20 @@ import 'package:yovoice/features/moments/data/services/moment_expiry_scheduler.d
 import 'package:yovoice/features/moments/data/services/moment_service.dart';
 import 'package:yovoice/features/moments/data/services/moment_views_service.dart';
 import 'package:yovoice/features/moments/presentation/screens/moment_comments_screen.dart';
-import 'package:yovoice/features/moments/presentation/widgets/moment_comment_preview.dart';
+import 'package:yovoice/features/moments/presentation/screens/record_voice_moment_screen.dart';
+import 'package:yovoice/features/moments/presentation/widgets/moment_conversation_thread.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_expiry_accessibility.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_mention_composer.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_mentions.dart';
+import 'package:yovoice/features/moments/presentation/widgets/moment_progress_ring.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_story_viewer.dart'
     show StoryWaveform;
 import 'package:yovoice/features/moments/presentation/widgets/moment_time_labels.dart';
+import 'package:yovoice/features/moments/presentation/widgets/moment_transport_controls.dart';
+import 'package:yovoice/features/moments/presentation/widgets/moments_queue_list.dart';
+import 'package:yovoice/features/moments/presentation/widgets/reply_playback_arbiter.dart';
+import 'package:yovoice/features/moments/presentation/widgets/yo_moments_chrome.dart'
+    show YoMomentsLayout, YoMomentsLayoutTier;
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
 import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
@@ -47,21 +58,28 @@ bool _momentDetailIsGoneError(Object error) =>
       'gone',
     }.contains(error.code);
 
-/// One Voice Moment, full page: author identity, the caption as the
-/// heading, a real player with a position-fed waveform, engagement,
-/// the likers' avatar row, and the comment thread with its composer.
+/// One Voice Moment, expanded: the author's avatar inside a listening-progress
+/// ring, the caption as the heading, one dominant transport (slider, ±15 s,
+/// play/pause), engagement, and the "Rozmowa" thread with its voice replies
+/// and composer.
 ///
-/// Every fact rendered is a document's fact. Moments carry no separate
-/// title and no tags, so the caption IS the heading and no tag chips
-/// exist; there is no play counter in the schema, so none is printed;
-/// the "Top reactions" avatars come from the same privacy-filtered v2
+/// Every fact rendered is a document's fact. Moments carry no separate title,
+/// no tags and no cover, so the caption IS the heading, no tag chips exist and
+/// the waveform-and-ring hero is the production design rather than a
+/// placeholder image; there is no play counter in the schema, so none is
+/// printed, and the ring means listening PROGRESS — never presence, never
+/// "live". The "Top reactions" avatars come from the same privacy-filtered v2
 /// projection as the Moment, best-effort.
 ///
-/// Pushed as a plain route it carries its own Back control; the shell
-/// hosts it inside the persistent bottom navigation (Moments active) on
-/// mobile. The author additionally sees the availability line — a real
-/// countdown, or "Stays until deleted" for a permanent Moment — and the
-/// Delete action.
+/// Pushed as a plain route it carries its own Back control; the shell hosts it
+/// inside the persistent bottom navigation (Moments active) on mobile. The
+/// author additionally sees the availability line — a real countdown, or
+/// "Stays until deleted" for a permanent Moment — and the Delete action.
+///
+/// Nothing here starts audio on its own: arriving allocates no player, the
+/// thread's replies wait for a tap, the microphone only ever starts inside
+/// [RecordVoiceMomentScreen], and reaching the end of a recording starts
+/// nothing else.
 class MomentDetailScreen extends StatefulWidget {
   const MomentDetailScreen({
     required this.moment,
@@ -72,6 +90,8 @@ class MomentDetailScreen extends StatefulWidget {
     this.auth,
     this.friendService,
     this.mentionFriendsStream,
+    this.neighbours,
+    this.neighbourQueue,
     this.playerFactory,
     this.expiryClock,
     this.expiryTimerFactory,
@@ -90,6 +110,12 @@ class MomentDetailScreen extends StatefulWidget {
   /// resolves the live [FriendService], failing quiet when it cannot.
   final FriendService? friendService;
   final Stream<List<FriendUser>>? mentionFriendsStream;
+
+  /// The already-loaded neighbours of this Moment, newest-first, for the
+  /// widest layout's hand-off list. Given explicitly they win; otherwise the
+  /// screen reads whatever the feed last published for THIS account.
+  final List<VoiceMoment>? neighbours;
+  final MomentNeighbourQueue? neighbourQueue;
 
   @visibleForTesting
   final AudioPlayer Function()? playerFactory;
@@ -128,6 +154,9 @@ class _MomentDetailScreenState extends State<MomentDetailScreen>
   /// The first page of the thread from the SAME view read that produced
   /// the Moment — never a second fetch just to show a preview.
   List<MomentComment>? _comments;
+  bool _commentsTruncated = false;
+  String? _nextCommentCursor;
+  bool _loadingMore = false;
   Object? _commentsError;
   ModalRoute<void>? _observedRoute;
   final Set<_MomentDetailRefreshTrigger> _canonicalRefreshesInFlight =
@@ -139,9 +168,25 @@ class _MomentDetailScreenState extends State<MomentDetailScreen>
       <StreamSubscription<dynamic>>[];
   bool _isPlaying = false;
   bool _everPlayed = false;
-  Duration _position = Duration.zero;
-  Duration? _duration;
+  bool _playbackBusy = false;
+  bool _openingNeighbour = false;
+
+  /// The ONE position this screen owns. The ring, the waveform, the slider
+  /// and the clock all read it, and a position tick repaints exactly those
+  /// four — it must never rebuild the route (the thread used to rebuild on
+  /// every tick, which is why this is a notifier and not `setState`).
+  final ValueNotifier<Duration> _position = ValueNotifier<Duration>(
+    Duration.zero,
+  );
+  final ValueNotifier<Duration?> _duration = ValueNotifier<Duration?>(null);
+  final ValueNotifier<double> _progress = ValueNotifier<double>(0);
   String? _playbackError;
+
+  late final ReplyPlaybackArbiter _arbiter = ReplyPlaybackArbiter(
+    onPauseMainPlayback: _pauseForReply,
+  );
+  late final MomentNeighbourQueue _neighbourQueue =
+      widget.neighbourQueue ?? MomentNeighbourQueue.shared;
 
   final TextEditingController _composer = TextEditingController();
   final FocusNode _composerFocus = FocusNode(debugLabel: 'Moment comment');
@@ -172,7 +217,7 @@ class _MomentDetailScreenState extends State<MomentDetailScreen>
       timerFactory: widget.expiryTimerFactory,
     );
     _expiredByDeadline = !_moment.isActiveAt(_effectiveNow());
-    if (!_expiredByDeadline) _expiry.schedule([_moment]);
+    if (!_expiredByDeadline) _rescheduleExpiry();
     // Each seam guarded separately, matching the other Moment surfaces:
     // one service that cannot be constructed must not take the others
     // down with it.
@@ -195,6 +240,7 @@ class _MomentDetailScreenState extends State<MomentDetailScreen>
       friendsStream: widget.mentionFriendsStream,
       friendService: widget.friendService,
     )..addListener(_handleMentionFriends);
+    _neighbourQueue.addListener(_handleNeighbours);
 
     final moments = _moments;
     if (moments != null) {
@@ -230,8 +276,9 @@ class _MomentDetailScreenState extends State<MomentDetailScreen>
     if (service == null) return;
     if (!_canonicalRefreshesInFlight.add(trigger)) return;
     final requestGeneration = ++_viewLoadGeneration;
+    final momentId = _moment.id;
     try {
-      final view = await service.loadMomentView(widget.moment.id);
+      final view = await service.loadMomentView(momentId);
       if (!mounted || requestGeneration != _viewLoadGeneration) return;
       final expired = !view.moment.isActiveAt(_effectiveNow());
       setState(() {
@@ -239,13 +286,17 @@ class _MomentDetailScreenState extends State<MomentDetailScreen>
         _moment = view.moment;
         _expiredByDeadline = expired;
         _comments = view.comments;
+        _commentsTruncated = view.commentsTruncated;
+        _nextCommentCursor = view.nextCommentCursor;
         _commentsError = null;
         _reactions = Future<List<MomentReactor>>.value(view.topReactions);
       });
-      _expiry.schedule(expired ? const <VoiceMoment>[] : [view.moment]);
       if (expired) {
+        _expiry.schedule(const <VoiceMoment>[]);
         _stopPlaybackForGone();
         _announceGone(previousFocus: null);
+      } else {
+        _rescheduleExpiry();
       }
     } catch (error) {
       if (!mounted || requestGeneration != _viewLoadGeneration) return;
@@ -259,6 +310,51 @@ class _MomentDetailScreenState extends State<MomentDetailScreen>
     }
   }
 
+  /// Appends the next page of the thread in place. The server pages the
+  /// conversation OLDEST first, so this cursor returns the more recent
+  /// replies — which is what the button's copy promises.
+  Future<void> _loadMoreComments() async {
+    final service = _moments;
+    final cursor = _nextCommentCursor;
+    if (service == null || cursor == null || _loadingMore) return;
+    setState(() => _loadingMore = true);
+    final generation = _viewLoadGeneration;
+    try {
+      final view = await service.loadMomentView(
+        _moment.id,
+        commentCursor: cursor,
+      );
+      if (!mounted || generation != _viewLoadGeneration) return;
+      final byId = <String, MomentComment>{
+        for (final comment in _comments ?? const <MomentComment>[])
+          comment.id: comment,
+        for (final comment in view.comments) comment.id: comment,
+      };
+      setState(() {
+        _comments = byId.values.toList(growable: false);
+        _commentsTruncated = view.commentsTruncated;
+        _nextCommentCursor = view.nextCommentCursor;
+        _loadingMore = false;
+      });
+    } catch (_) {
+      if (!mounted || generation != _viewLoadGeneration) return;
+      setState(() => _loadingMore = false);
+      ScaffoldMessenger.maybeOf(context)
+        ?..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            behavior: SnackBarBehavior.floating,
+            content: Text(
+              _copy.text(
+                'Could not load more replies. Try again.',
+                'Nie udało się wczytać kolejnych odpowiedzi. Spróbuj ponownie.',
+              ),
+            ),
+          ),
+        );
+    }
+  }
+
   void _clearProjectionAndShowGone() {
     final previousFocus = FocusManager.instance.primaryFocus;
     final recoverFocus = momentExpiryFocusIsWithin(context, previousFocus);
@@ -267,6 +363,8 @@ class _MomentDetailScreenState extends State<MomentDetailScreen>
     setState(() {
       _missing = true;
       _comments = null;
+      _commentsTruncated = false;
+      _nextCommentCursor = null;
       _commentsError = null;
       _reactions = null;
       _playbackError = null;
@@ -278,11 +376,20 @@ class _MomentDetailScreenState extends State<MomentDetailScreen>
     if (mounted) setState(() {});
   }
 
+  /// A new pool arrived from the feed (a refresh, a filter change, a
+  /// signed-in account change). The hand-off list is derived at paint time,
+  /// so simply rebuilding is enough — and rescheduling expiry keeps a
+  /// neighbour from outliving its own deadline in the list.
+  void _handleNeighbours() {
+    if (!mounted) return;
+    setState(() {});
+    if (!_gone) _rescheduleExpiry();
+  }
+
   /// The full thread, with its voice playback, reporting and pagination.
   ///
-  /// The inline preview deliberately stops at a few comments; this is
-  /// where every comment lives. Returning here re-reads the view through
-  /// [didPopNext], so a comment posted there shows up on this page.
+  /// Returning here re-reads the view through [didPopNext], so a comment
+  /// posted there shows up on this page.
   Future<void> _openAllComments() async {
     await Navigator.of(context).push<void>(
       MaterialPageRoute<void>(
@@ -305,6 +412,7 @@ class _MomentDetailScreenState extends State<MomentDetailScreen>
     _viewLoadGeneration += 1;
     WidgetsBinding.instance.removeObserver(this);
     appRouteObserver.unsubscribe(this);
+    _neighbourQueue.removeListener(_handleNeighbours);
     _mentionFriends
       ..removeListener(_handleMentionFriends)
       ..dispose();
@@ -313,6 +421,10 @@ class _MomentDetailScreenState extends State<MomentDetailScreen>
       unawaited(subscription.cancel());
     }
     _player?.dispose();
+    _arbiter.dispose();
+    _position.dispose();
+    _duration.dispose();
+    _progress.dispose();
     _composer.dispose();
     _composerFocus.dispose();
     _goneBackFocus.dispose();
@@ -327,6 +439,26 @@ class _MomentDetailScreenState extends State<MomentDetailScreen>
     return floor != null && floor.isAfter(now) ? floor : now;
   }
 
+  bool get _gone =>
+      (_missing && !_selfDeleted) ||
+      _expiredByDeadline ||
+      !_moment.isActiveAt(_effectiveNow());
+
+  void _rescheduleExpiry() =>
+      _expiry.schedule(<VoiceMoment>[_moment, ..._neighbourPool()]);
+
+  /// The recording's length: the player's confirmed duration once it is
+  /// known, the document's own `durationSeconds` before that.
+  Duration get _totalDuration =>
+      _duration.value ?? Duration(seconds: _moment.durationSeconds);
+
+  void _publishProgress() {
+    final total = _totalDuration.inMilliseconds;
+    _progress.value = total > 0
+        ? (_position.value.inMilliseconds / total).clamp(0.0, 1.0)
+        : 0.0;
+  }
+
   void _stopPlaybackForGone({bool notify = true}) {
     final player = _player;
     if (player != null) {
@@ -335,10 +467,12 @@ class _MomentDetailScreenState extends State<MomentDetailScreen>
     if (!mounted) return;
     void clearPlaybackState() {
       _isPlaying = false;
-      _position = Duration.zero;
-      _duration = null;
+      _playbackBusy = false;
     }
 
+    _position.value = Duration.zero;
+    _duration.value = null;
+    _publishProgress();
     if (notify) {
       setState(clearPlaybackState);
     } else {
@@ -352,7 +486,10 @@ class _MomentDetailScreenState extends State<MomentDetailScreen>
       _expiredThrough = deadline;
     }
     if (_moment.isActiveAt(_effectiveNow())) {
-      _expiry.schedule([_moment]);
+      // A neighbour in the hand-off list reached ITS deadline: it drops out
+      // of the list on this rebuild, and the rest keep their timers.
+      setState(() {});
+      _rescheduleExpiry();
       return;
     }
     final previousFocus = FocusManager.instance.primaryFocus;
@@ -366,16 +503,24 @@ class _MomentDetailScreenState extends State<MomentDetailScreen>
   void _announceGone({required FocusNode? previousFocus}) {
     _expiryAnnouncer.announce(
       context,
-      transition: 'detail-gone-${widget.moment.id}',
+      transition: 'detail-gone-${_moment.id}',
       message: _copy.text(
         'Voice Moment is no longer available.',
         'Ten Voice Moment nie jest już dostępny.',
       ),
     );
+    // The composer stays MOUNTED after the recording is gone — disabled,
+    // with the reason under it — so the node that held focus is still in
+    // the tree and would quietly keep it. Focus is moved off it explicitly
+    // and forced onto the one control that still does something.
+    if (previousFocus != null && previousFocus.hasFocus) {
+      previousFocus.unfocus();
+    }
     recoverMomentExpiryFocusAfterFrame(
       context: context,
       fallback: _goneBackFocus,
       previousFocus: previousFocus,
+      force: previousFocus != null,
     );
   }
 
@@ -388,24 +533,32 @@ class _MomentDetailScreenState extends State<MomentDetailScreen>
       ..add(
         player.onPositionChanged.listen((position) {
           if (!mounted) return;
-          setState(() {
-            _position = position;
-            _playbackError = null;
-          });
+          _position.value = position;
+          _publishProgress();
+          // Clearing an error is a state transition, not a tick: only then
+          // does the route rebuild.
+          if (_playbackError != null) {
+            setState(() => _playbackError = null);
+          }
         }),
       )
       ..add(
         player.onDurationChanged.listen((duration) {
           if (!mounted) return;
-          setState(() => _duration = duration);
+          _duration.value = duration;
+          _publishProgress();
         }),
       )
       ..add(
         player.onPlayerComplete.listen((_) {
           if (!mounted) return;
+          // The end of a recording ends playback and starts nothing else:
+          // no auto-advance, no neighbour, no queue.
+          _position.value = _duration.value ?? _position.value;
+          _publishProgress();
           setState(() {
             _isPlaying = false;
-            _position = _duration ?? _position;
+            _playbackBusy = false;
           });
         }),
       );
@@ -435,9 +588,14 @@ class _MomentDetailScreenState extends State<MomentDetailScreen>
       return;
     }
 
-    final resuming = _everPlayed && _position > Duration.zero;
+    // The main recording takes the floor: any voice reply that is sounding
+    // stops before this one starts.
+    _arbiter.mainPlaybackStarted();
+
+    final resuming = _everPlayed && _position.value > Duration.zero;
     setState(() {
       _isPlaying = true;
+      _playbackBusy = !resuming;
       _playbackError = null;
     });
 
@@ -456,10 +614,12 @@ class _MomentDetailScreenState extends State<MomentDetailScreen>
         if (!mounted || _missing) return;
         await player.play(UrlSource(uri.toString()));
       }
+      if (mounted) setState(() => _playbackBusy = false);
     } catch (_) {
       if (!mounted) return;
       setState(() {
         _isPlaying = false;
+        _playbackBusy = false;
         _playbackError = _copy.text(
           'This Moment could not be played. Try again.',
           'Nie udało się odtworzyć tego Momentu. Spróbuj ponownie.',
@@ -468,13 +628,115 @@ class _MomentDetailScreenState extends State<MomentDetailScreen>
     }
   }
 
+  /// Pauses the main recording so a voice reply can be heard. A deliberate
+  /// pause is never manufactured: this is a no-op unless audio is running.
+  void _pauseForReply() {
+    if (!_isPlaying) return;
+    final player = _player;
+    if (player != null) {
+      unawaited(player.pause().catchError((Object _) {}));
+    }
+    if (mounted) setState(() => _isPlaying = false);
+  }
+
+  /// Seeks the MAIN player only, clamped to the recording — the ±15 s
+  /// controls, the slider and the waveform all arrive here. A seek never
+  /// starts playback, and seeking to the end lets completion fire the way
+  /// it always does.
   Future<void> _seek(Duration target) async {
     final player = _player;
     if (player == null || !_everPlayed) return;
+    final total = _totalDuration.inMilliseconds;
+    final bounded = Duration(
+      milliseconds: total > 0 ? target.inMilliseconds.clamp(0, total) : 0,
+    );
     try {
-      await player.seek(target);
+      await player.seek(bounded);
+      if (!mounted) return;
+      _position.value = bounded;
+      _publishProgress();
     } catch (_) {
       // Seeking an unloaded source is a no-op, not a fault.
+    }
+  }
+
+  // ------------------------------------------------------------ neighbours
+
+  /// The loaded, active, authorised neighbours this viewer may hand off to.
+  List<VoiceMoment> _neighbourPool() {
+    final explicit = widget.neighbours;
+    final pool = explicit ??
+        (_neighbourQueue.value.belongsTo(_uid)
+            ? _neighbourQueue.value.moments
+            : const <VoiceMoment>[]);
+    if (pool.isEmpty) return const <VoiceMoment>[];
+    final now = _effectiveNow();
+    return pool
+        .where((moment) => moment.id != _moment.id && moment.isActiveAt(now))
+        .toList(growable: false);
+  }
+
+  /// What the hand-off list shows: the neighbours that come AFTER the open
+  /// Moment in the pool the feed loaded, capped by the list itself.
+  List<VoiceMoment> _upcomingNeighbours() {
+    final explicit = widget.neighbours;
+    final pool = explicit ??
+        (_neighbourQueue.value.belongsTo(_uid)
+            ? _neighbourQueue.value.moments
+            : const <VoiceMoment>[]);
+    if (pool.isEmpty) return const <VoiceMoment>[];
+    final now = _effectiveNow();
+    final index = pool.indexWhere((moment) => moment.id == _moment.id);
+    final ordered = index >= 0
+        ? <VoiceMoment>[...pool.skip(index + 1), ...pool.take(index)]
+        : pool;
+    return ordered
+        .where((moment) => moment.id != _moment.id && moment.isActiveAt(now))
+        .take(MomentsQueueList.maxItems)
+        .toList(growable: false);
+  }
+
+  /// The hand-off itself: this surface owns exactly one player, so the
+  /// recording is released BEFORE the next Moment opens, and the next
+  /// Moment waits for a deliberate play. Nothing auto-advances.
+  Future<void> _openNeighbour(VoiceMoment next) async {
+    if (_openingNeighbour || next.id == _moment.id) return;
+    _openingNeighbour = true;
+    try {
+      final player = _player;
+      if (player != null) {
+        try {
+          await player.stop();
+        } catch (_) {
+          // Nothing was playing.
+        }
+      }
+      if (!mounted) return;
+      _arbiter.mainPlaybackStarted();
+      _canonicalRefreshesInFlight.clear();
+      _viewLoadGeneration += 1;
+      _position.value = Duration.zero;
+      _duration.value = null;
+      _publishProgress();
+      setState(() {
+        _moment = next;
+        _missing = false;
+        _selfDeleted = false;
+        _expiredByDeadline = !next.isActiveAt(_effectiveNow());
+        _comments = null;
+        _commentsTruncated = false;
+        _nextCommentCursor = null;
+        _commentsError = null;
+        _reactions = null;
+        _isPlaying = false;
+        _everPlayed = false;
+        _playbackBusy = false;
+        _playbackError = null;
+      });
+      _rescheduleExpiry();
+      unawaited(_loadView(trigger: _MomentDetailRefreshTrigger.initial));
+    } finally {
+      _openingNeighbour = false;
     }
   }
 
@@ -511,6 +773,27 @@ class _MomentDetailScreenState extends State<MomentDetailScreen>
             'it.',
         'Zgłoszenie wraz z tym Momentem trafi do zespołu moderacji YO Voice. '
             '${_moment.authorName} nie dowie się, kto je wysłał.',
+      ),
+    );
+  }
+
+  Future<void> _reportComment(MomentComment comment) async {
+    final copy = _copy;
+    await reportContent(
+      context: context,
+      service: widget.contentReportService,
+      content: ReportedContent.voiceMomentComment(
+        momentId: _moment.id,
+        commentId: comment.id,
+        reportReceipt: comment.reportReceipt,
+      ),
+      title: copy.text('Report this comment', 'Zgłoś ten komentarz'),
+      subtitle: copy.text(
+        'Your report goes to the YO Voice moderation team with this '
+            'comment attached. ${comment.authorName} is not told who '
+            'reported it.',
+        'Zgłoszenie wraz z komentarzem trafi do zespołu moderacji YO Voice. '
+            '${comment.authorName} nie dowie się, kto je wysłał.',
       ),
     );
   }
@@ -636,84 +919,304 @@ class _MomentDetailScreenState extends State<MomentDetailScreen>
     }
   }
 
+  /// The voice reply. This opens the recorder; the MICROPHONE starts only
+  /// inside it, on its own control. The main recording pauses first, so the
+  /// viewer never records over what they are answering.
+  Future<void> _replyWithVoice() async {
+    _pauseForReply();
+    _arbiter.mainPlaybackStarted();
+    final created = await Navigator.of(context).push<bool>(
+      MaterialPageRoute<bool>(
+        builder: (_) => RecordVoiceMomentScreen(
+          replyToMomentId: _moment.id,
+          replyToAuthorName: _moment.authorName,
+          momentService: _moments,
+        ),
+      ),
+    );
+    if (created != true || !mounted) return;
+    ScaffoldMessenger.maybeOf(context)
+      ?..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          behavior: SnackBarBehavior.floating,
+          content: Text(
+            _copy.text(
+              'Voice reply published.',
+              'Odpowiedź głosowa opublikowana.',
+            ),
+          ),
+        ),
+      );
+    await _loadView(trigger: _MomentDetailRefreshTrigger.mutation);
+  }
+
+  /// "Reply" under a comment. The thread is flat on the server, so this
+  /// prefills the composer with `@name ` instead of pretending a nested
+  /// reply exists.
+  void _prefillReply(MomentComment comment) {
+    final mention = '@${comment.authorName} ';
+    final current = _composer.text;
+    if (!current.startsWith(mention)) {
+      _composer.text = '$mention${current.trimLeft()}';
+    }
+    _composer.selection = TextSelection.collapsed(
+      offset: _composer.text.length,
+    );
+    _composerFocus.requestFocus();
+  }
+
   // ---------------------------------------------------------------- build
 
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
-    final colors = Theme.of(context).colorScheme;
-    final gone =
-        (_missing && !_selfDeleted) ||
-        _expiredByDeadline ||
-        !_moment.isActiveAt(_effectiveNow());
+    final gone = _gone;
 
     return Scaffold(
       key: const ValueKey('moment-detail-screen'),
       backgroundColor: palette.background,
       body: SafeArea(
-        child: gone
-            ? _GoneState(
-                backFocus: _goneBackFocus,
-                onBack: () => Navigator.of(context).maybePop(),
-              )
-            : LayoutBuilder(
-                builder: (context, constraints) {
-                  // One readable column at every width: the page is a
-                  // mobile-first route, and on a wider window the content
-                  // holds a comfortable measure instead of stretching.
-                  final compact = constraints.maxWidth < 600;
-                  final side = compact ? 16.0 : 24.0;
-                  return Column(
-                    children: [
-                      _Header(
-                        onBack: () => Navigator.of(context).maybePop(),
-                        onShare: () => unawaited(_share()),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final textScale = MediaQuery.textScalerOf(context).scale(14) / 14;
+            final layout = YoMomentsLayout.of(
+              constraints.maxWidth,
+              textScale: textScale,
+            );
+            // A phone held sideways has the width of a tablet and the height
+            // of nothing: the hero then takes its side-by-side form so the
+            // transport stays above the fold.
+            final shortHeight = constraints.maxHeight < 560;
+            final compact = layout.isNarrow;
+            final threadPanel = layout.tier == YoMomentsLayoutTier.wide2 ||
+                layout.tier == YoMomentsLayoutTier.wide3;
+            final threadWidth = layout.slotWidth >= 1440 ? 400.0 : 360.0;
+
+            final body = gone
+                ? _goneCard()
+                : _playerCard(compact: compact, shortHeight: shortHeight);
+
+            if (!threadPanel) {
+              return Column(
+                children: [
+                  _Header(
+                    onBack: () => Navigator.of(context).maybePop(),
+                    onShare: () => unawaited(_share()),
+                  ),
+                  Expanded(
+                    child: Center(
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(
+                          maxWidth: YoMomentsLayout.mainMaxWidth,
+                        ),
+                        child: ListView(
+                          key: const ValueKey('moment-detail-scroll'),
+                          padding: EdgeInsets.fromLTRB(
+                            layout.gutter,
+                            AppRhythm.hairline,
+                            layout.gutter,
+                            AppRhythm.section,
+                          ),
+                          children: [
+                            body,
+                            const SizedBox(height: AppRhythm.section),
+                            _threadSection(),
+                          ],
+                        ),
                       ),
+                    ),
+                  ),
+                  _composerBar(),
+                ],
+              );
+            }
+
+            return Column(
+              children: [
+                _Header(
+                  onBack: () => Navigator.of(context).maybePop(),
+                  onShare: () => unawaited(_share()),
+                ),
+                Expanded(
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      if (layout.tier == YoMomentsLayoutTier.wide3) ...[
+                        SizedBox(
+                          width: layout.localPanelWidth,
+                          child: SingleChildScrollView(
+                            padding: EdgeInsets.only(
+                              left: layout.gutter,
+                              bottom: AppRhythm.page,
+                            ),
+                            child: MomentsQueueList(
+                              current: _moment,
+                              upcoming: _upcomingNeighbours(),
+                              progress: _progress,
+                              onOpen: (moment) =>
+                                  unawaited(_openNeighbour(moment)),
+                            ),
+                          ),
+                        ),
+                        SizedBox(width: layout.gutter),
+                      ],
                       Expanded(
                         child: Center(
                           child: ConstrainedBox(
-                            constraints: const BoxConstraints(maxWidth: 640),
+                            constraints: const BoxConstraints(
+                              maxWidth: YoMomentsLayout.mainMaxWidth,
+                            ),
                             child: ListView(
                               key: const ValueKey('moment-detail-scroll'),
-                              padding: EdgeInsets.fromLTRB(side, 4, side, 24),
-                              children: [
-                                _authorBlock(),
-                                const SizedBox(height: 14),
-                                _captionHeading(),
-                                const SizedBox(height: 16),
-                                _playerPanel(),
-                                if (_playbackError != null) ...[
-                                  const SizedBox(height: 8),
-                                  Text(
-                                    _playbackError!,
-                                    style: TextStyle(
-                                      color: colors.error,
-                                      fontSize: 12.5,
-                                    ),
-                                  ),
-                                ],
-                                const SizedBox(height: 14),
-                                _engagementRow(),
-                                _reactionsSection(),
-                                const SizedBox(height: 16),
-                                Divider(color: palette.border, height: 1),
-                                const SizedBox(height: 14),
-                                _commentsSection(),
-                              ],
+                              padding: EdgeInsets.fromLTRB(
+                                layout.gutter,
+                                AppRhythm.hairline,
+                                layout.gutter,
+                                AppRhythm.page,
+                              ),
+                              children: [body],
                             ),
                           ),
                         ),
                       ),
-                      _composerBar(),
+                      SizedBox(
+                        width: threadWidth,
+                        child: _threadPanel(),
+                      ),
                     ],
-                  );
-                },
-              ),
+                  ),
+                ),
+              ],
+            );
+          },
+        ),
       ),
     );
   }
 
-  Widget _authorBlock() {
+  /// The player card of board 07 — hero, waveform, transport, actions.
+  Widget _playerCard({required bool compact, required bool shortHeight}) {
+    final palette = context.appPalette;
+    return Container(
+      key: const ValueKey('moment-detail-player-card'),
+      decoration: BoxDecoration(
+        color: palette.surface,
+        borderRadius: AppRadius.lg,
+        border: Border.all(color: palette.border),
+      ),
+      padding: EdgeInsets.all(compact ? AppRhythm.title : AppRhythm.section),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _hero(sideBySide: !compact || shortHeight),
+          SizedBox(height: compact ? AppRhythm.title : AppRhythm.section),
+          _waveform(compact: compact),
+          const SizedBox(height: AppRhythm.tight),
+          ValueListenableBuilder<Duration>(
+            valueListenable: _position,
+            builder: (context, position, _) => ValueListenableBuilder<Duration?>(
+              valueListenable: _duration,
+              builder: (context, duration, __) => MomentTransportControls(
+                position: position,
+                total: duration ?? Duration(seconds: _moment.durationSeconds),
+                isPlaying: _isPlaying,
+                busy: _playbackBusy,
+                canSeek: _everPlayed,
+                compact: compact,
+                onTogglePlay: () => unawaited(_togglePlay()),
+                onSeek: (target) => unawaited(_seek(target)),
+              ),
+            ),
+          ),
+          if (_playbackError != null) ...[
+            const SizedBox(height: AppRhythm.tight),
+            Text(
+              _playbackError!,
+              key: const ValueKey('moment-detail-playback-error'),
+              style: AppTypography.bodySmall.copyWith(
+                color: palette.dangerForeground,
+              ),
+            ),
+          ],
+          const SizedBox(height: AppRhythm.title),
+          Divider(color: palette.border, height: 1),
+          const SizedBox(height: AppRhythm.title),
+          _actions(compact: compact),
+          _reactionsSection(),
+        ],
+      ),
+    );
+  }
+
+  /// Ring + avatar + eyebrow + caption + author. There is no cover: a Voice
+  /// Moment has no cover field, no stored image and no grant for one, and
+  /// the ring-and-waveform hero is the shipped design rather than a
+  /// placeholder pretending an image is missing.
+  Widget _hero({required bool sideBySide}) {
+    final palette = context.appPalette;
+    final copy = _copy;
+    final caption = _moment.caption.trim();
+    final ring = ValueListenableBuilder<double>(
+      valueListenable: _progress,
+      builder: (context, progress, _) => MomentListeningProgress(
+        progress: progress,
+        compact: !sideBySide,
+        avatar: UserAvatar(
+          radius: (sideBySide
+                  ? MomentProgressRing.expandedAvatar
+                  : MomentProgressRing.compactAvatar) /
+              2,
+          userId: _moment.authorId,
+          photoUrl: _moment.authorPhotoUrl,
+          displayName: _moment.authorName,
+        ),
+      ),
+    );
+
+    final text = Column(
+      crossAxisAlignment: sideBySide
+          ? CrossAxisAlignment.start
+          : CrossAxisAlignment.center,
+      children: [
+        Text(
+          copy.text('Voice Moment', 'Voice Moment').toUpperCase(),
+          key: const ValueKey('moment-detail-eyebrow'),
+          textAlign: sideBySide ? TextAlign.start : TextAlign.center,
+          style: AppTypography.eyebrow.copyWith(color: palette.textSecondary),
+        ),
+        const SizedBox(height: AppRhythm.tight),
+        Text(
+          caption.isEmpty ? copy.text('Voice Moment', 'Voice Moment') : caption,
+          key: const ValueKey('moment-detail-caption'),
+          textAlign: sideBySide ? TextAlign.start : TextAlign.center,
+          style: (sideBySide
+                  ? AppTypography.headlineLarge
+                  : AppTypography.headlineMedium)
+              .copyWith(color: palette.textPrimary),
+        ),
+        const SizedBox(height: AppRhythm.tight),
+        _authorLine(centred: !sideBySide),
+      ],
+    );
+
+    if (!sideBySide) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [ring, const SizedBox(height: AppRhythm.title), text],
+      );
+    }
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        ring,
+        const SizedBox(width: AppRhythm.section),
+        Expanded(child: text),
+      ],
+    );
+  }
+
+  Widget _authorLine({required bool centred}) {
     final moment = _moment;
     final palette = context.appPalette;
     final copy = _copy;
@@ -723,7 +1226,10 @@ class _MomentDetailScreenState extends State<MomentDetailScreen>
     final availability = _isOwn
         ? momentAvailabilityLabel(moment.expiresAt, copy: copy)
         : momentExpiryLabel(moment.expiresAt, copy: copy);
-    return Row(
+    return Column(
+      crossAxisAlignment: centred
+          ? CrossAxisAlignment.center
+          : CrossAxisAlignment.start,
       children: [
         AccessibleTapRegion(
           onTap: () => showProfilePreview(
@@ -740,182 +1246,140 @@ class _MomentDetailScreenState extends State<MomentDetailScreen>
             'Open ${moment.authorName}\'s profile',
             'Otwórz profil ${moment.authorName}',
           ),
-          circular: true,
-          child: UserAvatar(
-            radius: 23,
-            userId: moment.authorId,
-            photoUrl: moment.authorPhotoUrl,
-            displayName: moment.authorName,
-          ),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              Row(
-                children: [
-                  Flexible(
-                    child: Text(
-                      moment.authorName,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: palette.textPrimary,
-                        fontSize: 15.5,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
+              Flexible(
+                child: Text(
+                  moment.authorName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppTypography.titleMedium.copyWith(
+                    color: palette.textSecondary,
                   ),
-                  const SizedBox(width: 6),
-                  UserIdentityBadges(uid: moment.authorId),
-                ],
+                ),
               ),
-              const SizedBox(height: 2),
-              Wrap(
-                spacing: 8,
-                children: [
-                  if (age.isNotEmpty)
-                    Text(
-                      age,
-                      style: TextStyle(
-                        color: palette.textSecondary,
-                        fontSize: 12,
-                      ),
-                    ),
-                  if (availability != null)
-                    Text(
-                      availability,
-                      key: const ValueKey('moment-detail-availability'),
-                      style: TextStyle(
-                        // A permanent Moment's label is a calm fact, not
-                        // a warning-coloured countdown.
-                        color: moment.isPermanent
-                            ? palette.textTertiary
-                            : palette.warningForeground,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                ],
-              ),
+              const SizedBox(width: AppRhythm.hairline),
+              UserIdentityBadges(uid: moment.authorId),
             ],
           ),
+        ),
+        Wrap(
+          spacing: AppRhythm.tight,
+          alignment: centred ? WrapAlignment.center : WrapAlignment.start,
+          children: [
+            if (age.isNotEmpty)
+              Text(
+                age,
+                style: AppTypography.bodySmall.copyWith(
+                  color: palette.textTertiary,
+                ),
+              ),
+            if (availability != null)
+              Text(
+                availability,
+                key: const ValueKey('moment-detail-availability'),
+                style: AppTypography.bodySmall.copyWith(
+                  // A permanent Moment's label is a calm fact, not a
+                  // warning-coloured countdown.
+                  color: moment.isPermanent
+                      ? palette.textTertiary
+                      : palette.warningForeground,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+          ],
         ),
       ],
     );
   }
 
-  /// Moments carry a caption and nothing else — no separate title, no
-  /// tags — so the caption IS the page heading and no tag chips exist.
-  Widget _captionHeading() {
-    final caption = _moment.caption.trim();
-    return Text(
-      caption.isEmpty ? _copy.text('Voice Moment', 'Voice Moment') : caption,
-      maxLines: 6,
-      overflow: TextOverflow.ellipsis,
-      style: TextStyle(
-        color: context.appPalette.textPrimary,
-        fontSize: 20,
-        height: 1.35,
-        fontWeight: FontWeight.w800,
-      ),
-    );
-  }
-
-  Widget _playerPanel() {
-    final moment = _moment;
+  /// The silhouette, filled to the real position. Dragging across it seeks
+  /// (the accessible seek is the slider below it, which carries the value
+  /// and the keyboard steps).
+  Widget _waveform({required bool compact}) {
     final palette = context.appPalette;
-    final colors = Theme.of(context).colorScheme;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final copy = _copy;
-    final totalSeconds = _duration?.inSeconds ?? moment.durationSeconds;
-    final hasTotal = totalSeconds > 0;
-    final progress = hasTotal
-        ? (_position.inMilliseconds / (totalSeconds * 1000)).clamp(0.0, 1.0)
-        : 0.0;
-
-    return Container(
-      clipBehavior: Clip.antiAlias,
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(24),
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [
-            Color.lerp(palette.surface, colors.primary, isDark ? .5 : .14)!,
-            Color.lerp(palette.surface, colors.secondary, isDark ? .26 : .08)!,
-            palette.surface,
-          ],
-        ),
-        border: Border.all(color: colors.primary.withValues(alpha: .35)),
-      ),
-      padding: const EdgeInsets.fromLTRB(20, 22, 20, 18),
-      child: Column(
-        children: [
-          LayoutBuilder(
-            builder: (context, waveConstraints) {
-              final waveWidth = waveConstraints.maxWidth;
-              return GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTapDown: hasTotal && waveWidth > 0
-                    ? (details) {
-                        final fraction = (details.localPosition.dx / waveWidth)
-                            .clamp(0.0, 1.0);
-                        unawaited(
-                          _seek(
-                            Duration(
-                              milliseconds: (totalSeconds * 1000 * fraction)
-                                  .round(),
-                            ),
-                          ),
-                        );
-                      }
-                    : null,
-                child: StoryWaveform(progress: progress, height: 52),
-              );
-            },
-          ),
-          const SizedBox(height: 18),
-          Semantics(
-            button: true,
-            label: _isPlaying
-                ? copy.text('Pause this Moment', 'Wstrzymaj ten Moment')
-                : copy.text('Play this Moment', 'Odtwórz ten Moment'),
-            child: Material(
-              color: colors.primary,
-              shape: const CircleBorder(),
-              child: InkWell(
-                key: const ValueKey('moment-detail-play'),
-                customBorder: const CircleBorder(),
-                onTap: () => unawaited(_togglePlay()),
-                child: SizedBox(
-                  width: 62,
-                  height: 62,
-                  child: Icon(
-                    _isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
-                    color: colors.onPrimary,
-                    size: 34,
-                  ),
-                ),
+    return ValueListenableBuilder<double>(
+      valueListenable: _progress,
+      builder: (context, progress, _) => LayoutBuilder(
+        builder: (context, constraints) {
+          final width = constraints.maxWidth;
+          final total = _totalDuration.inMilliseconds;
+          return GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTapDown: total > 0 && width > 0
+                ? (details) {
+                    final fraction = (details.localPosition.dx / width).clamp(
+                      0.0,
+                      1.0,
+                    );
+                    unawaited(
+                      _seek(Duration(milliseconds: (total * fraction).round())),
+                    );
+                  }
+                : null,
+            child: ExcludeSemantics(
+              child: StoryWaveform(
+                progress: progress,
+                height: compact ? 56 : 64,
+                barWidth: 4,
+                barGap: 4,
+                barRadius: 2,
+                playedGradient: palette.audioProgressGradient,
               ),
             ),
-          ),
-          const SizedBox(height: 10),
-          Text(
-            hasTotal
-                ? '${_clock(_position.inSeconds)} / ${_clock(totalSeconds)}'
-                : '',
-            style: TextStyle(
-              color: palette.textPrimary,
-              fontSize: 12.5,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-        ],
+          );
+        },
       ),
     );
   }
+
+  Widget _actions({required bool compact}) {
+    final chips = _engagementRow();
+    final cta = _replyCta(compact: compact);
+    if (compact) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          chips,
+          const SizedBox(height: AppRhythm.item),
+          SizedBox(height: AppSizing.primaryControlHeight, child: cta),
+        ],
+      );
+    }
+    return Row(
+      children: [
+        Expanded(child: chips),
+        const SizedBox(width: AppRhythm.item),
+        ConstrainedBox(
+          constraints: const BoxConstraints(
+            minWidth: 200,
+            minHeight: AppSizing.standardControlHeight,
+          ),
+          child: cta,
+        ),
+      ],
+    );
+  }
+
+  Widget _replyCta({required bool compact}) => FilledButton.icon(
+    key: const ValueKey('moment-detail-reply-voice'),
+    onPressed: _gone ? null : () => unawaited(_replyWithVoice()),
+    icon: const Icon(Icons.mic_rounded, size: 18),
+    label: Text(
+      _copy.text('Reply with voice', 'Odpowiedz głosem'),
+      maxLines: 2,
+      textAlign: TextAlign.center,
+    ),
+    style: FilledButton.styleFrom(
+      minimumSize: Size(
+        0,
+        compact
+            ? AppSizing.primaryControlHeight
+            : AppSizing.standardControlHeight,
+      ),
+    ),
+  );
 
   Widget _engagementRow() {
     final moment = _moment;
@@ -923,8 +1387,8 @@ class _MomentDetailScreenState extends State<MomentDetailScreen>
     final canReport = _uid.isNotEmpty && !_isOwn;
     final copy = _copy;
     return Wrap(
-      spacing: 8,
-      runSpacing: 8,
+      spacing: AppRhythm.tight,
+      runSpacing: AppRhythm.tight,
       children: [
         if (feed == null)
           _ActionChip(
@@ -1062,19 +1526,17 @@ class _MomentDetailScreenState extends State<MomentDetailScreen>
         if (reactors.isEmpty) return const SizedBox.shrink();
         final remainder = likeCount - reactors.length;
         return Padding(
-          padding: const EdgeInsets.only(top: 16),
+          padding: const EdgeInsets.only(top: AppRhythm.title),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
                 copy.text('Top reactions', 'Najpopularniejsze reakcje'),
-                style: TextStyle(
+                style: AppTypography.titleSmall.copyWith(
                   color: palette.textPrimary,
-                  fontSize: 14,
-                  fontWeight: FontWeight.w800,
                 ),
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: AppRhythm.tight),
               Row(
                 key: const ValueKey('moment-detail-reactions'),
                 children: [
@@ -1103,16 +1565,15 @@ class _MomentDetailScreenState extends State<MomentDetailScreen>
                       padding: const EdgeInsets.symmetric(horizontal: 8),
                       alignment: Alignment.center,
                       decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(999),
+                        borderRadius: AppRadius.pill,
                         color: palette.surfaceRaised,
                         border: Border.all(color: palette.border),
                       ),
                       child: Text(
                         '+$remainder',
                         maxLines: 1,
-                        style: TextStyle(
+                        style: AppTypography.labelSmall.copyWith(
                           color: palette.textSecondary,
-                          fontSize: 10,
                           fontWeight: FontWeight.w800,
                         ),
                       ),
@@ -1126,71 +1587,158 @@ class _MomentDetailScreenState extends State<MomentDetailScreen>
     );
   }
 
-  Widget _commentsSection() {
+  /// The wide layout's docked "Rozmowa": its own scroll with the composer
+  /// pinned under it.
+  Widget _threadPanel() {
+    final palette = context.appPalette;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: palette.surface,
+        border: Border(left: BorderSide(color: palette.border)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Expanded(
+            child: SingleChildScrollView(
+              key: const ValueKey('moment-detail-thread-scroll'),
+              padding: const EdgeInsets.fromLTRB(
+                AppRhythm.section,
+                AppRhythm.section,
+                AppRhythm.section,
+                AppRhythm.item,
+              ),
+              child: _threadSection(),
+            ),
+          ),
+          _composerBar(),
+        ],
+      ),
+    );
+  }
+
+  Widget _threadSection() {
     final service = _moments;
     final palette = context.appPalette;
     final copy = _copy;
-    final commentsLabel = copy.text('Comments', 'Komentarze');
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          _moment.commentCount > 0
-              ? '$commentsLabel (${_moment.commentCount})'
-              : commentsLabel,
-          style: TextStyle(
-            color: palette.textPrimary,
-            fontSize: 14,
-            fontWeight: FontWeight.w800,
+    if (service == null) {
+      return Text(
+        copy.text(
+          'Comments are unavailable right now.',
+          'Komentarze są teraz niedostępne.',
+        ),
+        style: AppTypography.bodyMedium.copyWith(color: palette.textTertiary),
+      );
+    }
+    if (_commentsError != null && _comments == null) {
+      return Align(
+        alignment: AlignmentDirectional.centerStart,
+        child: TextButton.icon(
+          key: const ValueKey('moment-comments-retry'),
+          onPressed: () =>
+              unawaited(_loadView(trigger: _MomentDetailRefreshTrigger.retry)),
+          icon: const Icon(Icons.refresh_rounded),
+          label: Text(
+            copy.text(
+              'Could not load comments. Try again.',
+              'Nie udało się wczytać komentarzy. Spróbuj ponownie.',
+            ),
           ),
         ),
-        const SizedBox(height: 10),
-        if (service == null)
+      );
+    }
+    if (_comments == null) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: AppRhythm.title),
+        child: Center(
+          child: SizedBox.square(
+            dimension: 18,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+        ),
+      );
+    }
+    return MomentConversationThread(
+      momentId: _moment.id,
+      comments: _comments!,
+      commentCount: _moment.commentCount,
+      currentUserId: _uid,
+      mentions: _readDirectory(),
+      arbiter: _arbiter,
+      resolveReplyMedia: (commentId) =>
+          service.resolveMediaUri(momentId: _moment.id, commentId: commentId),
+      onReplyTo: _gone ? null : _prefillReply,
+      onReport: (comment) => unawaited(_reportComment(comment)),
+      onLoadMore: _commentsTruncated
+          ? () => unawaited(_loadMoreComments())
+          : null,
+      loadingMore: _loadingMore,
+      onCompose: _gone ? null : _composerFocus.requestFocus,
+      onOpenFullThread: () => unawaited(_openAllComments()),
+      playerFactory: widget.playerFactory,
+    );
+  }
+
+  /// The gone-state: expired, deleted, or never loaded. A real explanation
+  /// and a way back — the thread stays readable underneath it (comments
+  /// outlive the recording) and the composer states why it is closed.
+  Widget _goneCard() {
+    final palette = context.appPalette;
+    final copy = _copy;
+    return Container(
+      key: const ValueKey('moment-detail-gone'),
+      decoration: BoxDecoration(
+        color: palette.surface,
+        borderRadius: AppRadius.lg,
+        border: Border.all(color: palette.border),
+      ),
+      padding: const EdgeInsets.all(AppRhythm.section),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            copy.text('Voice Moment', 'Voice Moment').toUpperCase(),
+            style: AppTypography.eyebrow.copyWith(color: palette.textSecondary),
+          ),
+          const SizedBox(height: AppRhythm.item),
+          Icon(
+            Icons.timer_off_outlined,
+            size: 34,
+            color: palette.textSecondary,
+          ),
+          const SizedBox(height: AppRhythm.item),
           Text(
             copy.text(
-              'Comments are unavailable right now.',
-              'Komentarze są teraz niedostępne.',
+              'This Moment is no longer available',
+              'Ten Moment nie jest już dostępny',
             ),
-            style: TextStyle(color: palette.textTertiary, fontSize: 12.5),
-          )
-        else if (_commentsError != null && _comments == null)
-          TextButton.icon(
-            key: const ValueKey('moment-comments-retry'),
-            onPressed: () => unawaited(
-              _loadView(trigger: _MomentDetailRefreshTrigger.retry),
+            textAlign: TextAlign.center,
+            style: AppTypography.titleLarge.copyWith(
+              color: palette.textPrimary,
             ),
-            icon: const Icon(Icons.refresh_rounded),
-            label: Text(
-              copy.text(
-                'Could not load comments. Try again.',
-                'Nie udało się wczytać komentarzy. Spróbuj ponownie.',
-              ),
-            ),
-          )
-        else if (_comments == null)
-          const Padding(
-            padding: EdgeInsets.symmetric(vertical: 14),
-            child: Center(
-              child: SizedBox(
-                width: 18,
-                height: 18,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              ),
-            ),
-          )
-        else
-          MomentCommentPreview(
-            comments: _comments!,
-            totalCommentCount: _moment.commentCount,
-            momentAuthor: MentionCandidate(
-              userId: _moment.authorId,
-              displayName: _moment.authorName,
-            ),
-            friends: _mentionFriends.candidates,
-            onSeeAll: () => unawaited(_openAllComments()),
-            onCompose: _composerFocus.requestFocus,
           ),
-      ],
+          const SizedBox(height: AppRhythm.tight),
+          Text(
+            copy.text(
+              'It reached the end of its availability or was deleted by '
+                  'its author.',
+              'Minął czas jego dostępności lub autor go usunął.',
+            ),
+            textAlign: TextAlign.center,
+            style: AppTypography.bodyMedium.copyWith(
+              color: palette.textSecondary,
+              height: 1.45,
+            ),
+          ),
+          const SizedBox(height: AppRhythm.title),
+          FilledButton(
+            key: const ValueKey('moment-detail-gone-back'),
+            focusNode: _goneBackFocus,
+            onPressed: () => Navigator.of(context).maybePop(),
+            child: Text(copy.text('Back to Moments', 'Wróć do Momentów')),
+          ),
+        ],
+      ),
     );
   }
 
@@ -1198,6 +1746,7 @@ class _MomentDetailScreenState extends State<MomentDetailScreen>
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
     final copy = _copy;
+    final closed = _gone;
     return Container(
       padding: const EdgeInsets.fromLTRB(14, 8, 14, 10),
       decoration: BoxDecoration(
@@ -1210,50 +1759,94 @@ class _MomentDetailScreenState extends State<MomentDetailScreen>
       // text, and the `@` picker inherited that stretch.
       child: Center(
         child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 640),
-          // The `@` picker sits inside the composer column so it pushes
-          // the field down rather than covering the thread.
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.end,
+          constraints: const BoxConstraints(
+            maxWidth: YoMomentsLayout.mainMaxWidth,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Expanded(
-                child: MentionComposerField(
-                  fieldKey: const ValueKey('moment-detail-comment-field'),
-                  controller: _composer,
-                  focusNode: _composerFocus,
-                  directory: _composerMentionDirectory(),
-                  hintText: copy.text(
-                    'Write a comment...',
-                    'Napisz komentarz…',
+              if (closed)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: AppRhythm.tight),
+                  child: Text(
+                    copy.text(
+                      'You can no longer reply.',
+                      'Nie można już odpowiadać.',
+                    ),
+                    key: const ValueKey('moment-detail-composer-closed'),
+                    style: AppTypography.bodySmall.copyWith(
+                      color: palette.textTertiary,
+                    ),
                   ),
-                  enabled: _moments != null,
-                  onSubmitted: (_) => unawaited(_send()),
                 ),
-              ),
-              const SizedBox(width: 8),
-              Padding(
-                padding: const EdgeInsets.only(bottom: 2),
-                child: IconButton.filled(
-                  key: const ValueKey('moment-detail-comment-send'),
-                  tooltip: copy.text('Post comment', 'Dodaj komentarz'),
-                  onPressed: _sending || _moments == null
-                      ? null
-                      : () => unawaited(_send()),
-                  style: IconButton.styleFrom(
-                    backgroundColor: colors.primary,
-                    foregroundColor: colors.onPrimary,
+              // The `@` picker sits inside the composer column so it pushes
+              // the field down rather than covering the thread.
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Expanded(
+                    child: MentionComposerField(
+                      fieldKey: const ValueKey('moment-detail-comment-field'),
+                      controller: _composer,
+                      focusNode: _composerFocus,
+                      directory: _composerMentionDirectory(),
+                      hintText: copy.text(
+                        'Write a comment...',
+                        'Napisz komentarz…',
+                      ),
+                      enabled: _moments != null && !closed,
+                      onSubmitted: (_) => unawaited(_send()),
+                    ),
                   ),
-                  icon: _sending
-                      ? SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: colors.onPrimary,
-                          ),
-                        )
-                      : const Icon(Icons.send_rounded, size: 19),
-                ),
+                  const SizedBox(width: AppRhythm.tight),
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 2),
+                    child: IconButton.filled(
+                      key: const ValueKey('moment-detail-comment-send'),
+                      tooltip: copy.text('Post comment', 'Dodaj komentarz'),
+                      onPressed: _sending || _moments == null || closed
+                          ? null
+                          : () => unawaited(_send()),
+                      style: IconButton.styleFrom(
+                        backgroundColor: colors.primary,
+                        foregroundColor: colors.onPrimary,
+                      ),
+                      icon: _sending
+                          ? SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: colors.onPrimary,
+                              ),
+                            )
+                          : const Icon(Icons.send_rounded, size: 19),
+                    ),
+                  ),
+                  const SizedBox(width: AppRhythm.tight),
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 2),
+                    child: IconButton.filled(
+                      key: const ValueKey('moment-detail-composer-mic'),
+                      tooltip: copy.text(
+                        'Reply with voice',
+                        'Odpowiedz głosem',
+                      ),
+                      onPressed: closed
+                          ? null
+                          : () => unawaited(_replyWithVoice()),
+                      style: IconButton.styleFrom(
+                        backgroundColor: colors.primary,
+                        foregroundColor: colors.onPrimary,
+                        minimumSize: const Size.square(
+                          AppSizing.standardControlHeight,
+                        ),
+                      ),
+                      icon: const Icon(Icons.mic_rounded, size: 19),
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
@@ -1262,6 +1855,23 @@ class _MomentDetailScreenState extends State<MomentDetailScreen>
     );
   }
 
+  /// Everyone an `@name` in this thread may resolve to for this viewer: the
+  /// Moment's author, the thread's own participants, and the viewer's
+  /// friends.
+  MentionDirectory _readDirectory() => MentionDirectory(<MentionCandidate>[
+    MentionCandidate(
+      userId: _moment.authorId,
+      displayName: _moment.authorName,
+    ),
+    for (final comment in _comments ?? const <MomentComment>[])
+      if (comment.authorId.isNotEmpty && comment.authorName.trim().isNotEmpty)
+        MentionCandidate(
+          userId: comment.authorId,
+          displayName: comment.authorName,
+        ),
+    ..._mentionFriends.candidates,
+  ]);
+
   /// Who the composer may suggest: the caller's own friends only. The
   /// thread's participants resolve when a mention is *read* — suggesting
   /// a stranger who happened to comment is not the caller's list.
@@ -1269,8 +1879,10 @@ class _MomentDetailScreenState extends State<MomentDetailScreen>
       MentionDirectory(_mentionFriends.candidates);
 }
 
-/// Back and Share — the page's own chrome, present in both hosting modes
-/// (the shell keeps the bottom navigation, a plain push keeps only this).
+/// Back, the section name and Share — the page's own chrome, present in both
+/// hosting modes (the shell keeps the bottom navigation, a plain push keeps
+/// only this). The route is ONE Moment, so it is titled as one; it carries
+/// no format switch, because a pushed detail cannot switch format.
 class _Header extends StatelessWidget {
   const _Header({required this.onBack, required this.onShare});
 
@@ -1290,21 +1902,19 @@ class _Header extends StatelessWidget {
             onPressed: onBack,
             tooltip: copy.text('Back', 'Wstecz'),
             style: IconButton.styleFrom(
-              minimumSize: const Size(48, 48),
+              minimumSize: const Size.square(AppSizing.standardControlHeight),
               tapTargetSize: MaterialTapTargetSize.padded,
             ),
             icon: Icon(Icons.arrow_back_rounded, color: palette.textPrimary),
           ),
+          const SizedBox(width: AppRhythm.hairline),
           Expanded(
             child: Text(
-              'Moment',
-              textAlign: TextAlign.center,
+              copy.text('Voice Moment', 'Voice Moment'),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: TextStyle(
+              style: AppTypography.titleLarge.copyWith(
                 color: palette.textPrimary,
-                fontSize: 15,
-                fontWeight: FontWeight.w800,
               ),
             ),
           ),
@@ -1313,78 +1923,12 @@ class _Header extends StatelessWidget {
             onPressed: onShare,
             tooltip: copy.text('Share this Moment', 'Udostępnij ten Moment'),
             style: IconButton.styleFrom(
-              minimumSize: const Size(48, 48),
+              minimumSize: const Size.square(AppSizing.standardControlHeight),
               tapTargetSize: MaterialTapTargetSize.padded,
             ),
             icon: Icon(Icons.share_outlined, color: palette.textPrimary),
           ),
         ],
-      ),
-    );
-  }
-}
-
-/// The graceful gone-state: the Moment expired, was deleted, or never
-/// loaded. A real explanation and a way back — never a spinner that spins
-/// forever and never a stale page pretending the audio still exists.
-class _GoneState extends StatelessWidget {
-  const _GoneState({required this.backFocus, required this.onBack});
-
-  final FocusNode backFocus;
-  final VoidCallback onBack;
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = context.appPalette;
-    final copy = AppLocalizations.of(context);
-    return Center(
-      key: const ValueKey('moment-detail-gone'),
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.all(28),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              Icons.timer_off_outlined,
-              size: 34,
-              color: palette.textSecondary,
-            ),
-            const SizedBox(height: 14),
-            Text(
-              copy.text(
-                'This Moment is no longer available',
-                'Ten Moment nie jest już dostępny',
-              ),
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: palette.textPrimary,
-                fontSize: 18,
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              copy.text(
-                'It reached the end of its availability or was deleted by '
-                    'its author.',
-                'Minął czas jego dostępności lub autor go usunął.',
-              ),
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: palette.textSecondary,
-                fontSize: 13.5,
-                height: 1.45,
-              ),
-            ),
-            const SizedBox(height: 20),
-            FilledButton(
-              key: const ValueKey('moment-detail-gone-back'),
-              focusNode: backFocus,
-              onPressed: onBack,
-              child: Text(copy.text('Back to Moments', 'Wróć do Momentów')),
-            ),
-          ],
-        ),
       ),
     );
   }
@@ -1422,14 +1966,17 @@ class _ActionChip extends StatelessWidget {
       button: onTap != null,
       label: semanticLabel ?? label,
       child: Material(
-        color: destructive ? palette.dangerSurface : palette.surface,
-        borderRadius: BorderRadius.circular(14),
+        color: destructive ? palette.dangerSurface : palette.surfaceRaised,
+        borderRadius: AppRadius.md,
         child: InkWell(
           onTap: onTap,
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: AppRadius.md,
           child: Container(
-            constraints: const BoxConstraints(minHeight: 44, minWidth: 64),
-            padding: const EdgeInsets.symmetric(horizontal: 12),
+            constraints: const BoxConstraints(
+              minHeight: AppSizing.standardControlHeight,
+              minWidth: 64,
+            ),
+            padding: const EdgeInsets.symmetric(horizontal: AppRhythm.item),
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -1440,10 +1987,8 @@ class _ActionChip extends StatelessWidget {
                     label,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
+                    style: AppTypography.labelLarge.copyWith(
                       color: destructive ? colors.error : palette.textSecondary,
-                      fontSize: 12.5,
-                      fontWeight: FontWeight.w700,
                     ),
                   ),
                 ),
@@ -1454,9 +1999,4 @@ class _ActionChip extends StatelessWidget {
       ),
     );
   }
-}
-
-String _clock(int seconds) {
-  final safe = seconds < 0 ? 0 : seconds;
-  return '${safe ~/ 60}:${(safe % 60).toString().padLeft(2, '0')}';
 }

@@ -61,7 +61,7 @@ class AppTheme {
         ).copyWith(
           onPrimary: Colors.white,
           onSecondary: Colors.white,
-          tertiary: isDark ? AppColors.accent : const Color(0xFF007C83),
+          tertiary: palette.audioAccent,
           onTertiary: isDark ? const Color(0xFF002022) : Colors.white,
           onError: isDark ? const Color(0xFF310009) : Colors.white,
           errorContainer: palette.dangerSurface,

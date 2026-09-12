@@ -1,7 +1,9 @@
 /// Session-local history for retained mobile destinations, never Navigator
 /// routes. Going Home deliberately clears the trail; Back never records itself.
 class MobileDestinationHistory {
-  static const _allowed = {0, 3, 1, 5, 2};
+  /// Retained mobile roots: Home, Servers (slot 13), Chats, Moments, Friends
+  /// and Discover (slot 3 stays a Back entry when opened from More).
+  static const _allowed = {0, 13, 1, 5, 2, 3};
   final List<int> _entries = [0];
 
   bool get canGoBack => _entries.length > 1;

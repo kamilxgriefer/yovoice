@@ -1273,10 +1273,32 @@ class _StoryStage extends StatelessWidget {
 /// would be fabricated data — but the fill sweeping across it is real:
 /// it is the player's reported position.
 class StoryWaveform extends StatelessWidget {
-  const StoryWaveform({required this.progress, this.height = 44, super.key});
+  const StoryWaveform({
+    required this.progress,
+    this.height = 44,
+    this.playedGradient,
+    this.barWidth,
+    this.barGap = 3,
+    this.barRadius = 2,
+    super.key,
+  });
 
   final double progress;
   final double height;
+
+  /// When set, the played bars are painted with this gradient swept
+  /// left→right across the PLAYED width (the audio-progress gradient);
+  /// absent, the legacy solid `AppColors.secondary` fill is kept for the
+  /// story stage.
+  final LinearGradient? playedGradient;
+
+  /// When set, bars tile the available width at a fixed pitch
+  /// (`barWidth + barGap`) cycling through the 30-entry silhouette, painted
+  /// once per tick under a `RepaintBoundary`; absent, the legacy
+  /// thirty-flex-children layout is kept.
+  final double? barWidth;
+  final double barGap;
+  final double barRadius;
 
   static const bars = <double>[
     .3,
@@ -1311,8 +1333,32 @@ class StoryWaveform extends StatelessWidget {
     .4,
   ];
 
+  /// The unplayed silhouette colour in both themes.
+  static Color unplayedColor() => AppColors.primary.withValues(alpha: .32);
+
   @override
   Widget build(BuildContext context) {
+    final tiledBarWidth = barWidth;
+    if (tiledBarWidth != null) {
+      return RepaintBoundary(
+        child: SizedBox(
+          height: height,
+          width: double.infinity,
+          child: CustomPaint(
+            painter: _TiledWaveformPainter(
+              progress: progress.clamp(0.0, 1.0),
+              barWidth: tiledBarWidth,
+              barGap: barGap,
+              barRadius: barRadius,
+              playedGradient: playedGradient,
+              playedColor: AppColors.secondary,
+              unplayedColor: unplayedColor(),
+              textDirection: Directionality.of(context),
+            ),
+          ),
+        ),
+      );
+    }
     return SizedBox(
       height: height,
       child: Row(
@@ -1337,6 +1383,94 @@ class StoryWaveform extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Bars at a fixed pitch across the whole width, cycling the silhouette.
+/// The played run is one gradient sweep across the played width (in RTL it
+/// runs from the trailing edge); the rest is the quiet primary wash.
+class _TiledWaveformPainter extends CustomPainter {
+  const _TiledWaveformPainter({
+    required this.progress,
+    required this.barWidth,
+    required this.barGap,
+    required this.barRadius,
+    required this.playedGradient,
+    required this.playedColor,
+    required this.unplayedColor,
+    required this.textDirection,
+  });
+
+  final double progress;
+  final double barWidth;
+  final double barGap;
+  final double barRadius;
+  final LinearGradient? playedGradient;
+  final Color playedColor;
+  final Color unplayedColor;
+  final TextDirection textDirection;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final pitch = barWidth + barGap;
+    if (pitch <= 0 || size.width <= 0) return;
+    final count = (size.width / pitch).floor();
+    if (count <= 0) return;
+    // Centre the run so a leftover fraction of a pitch never leaves the
+    // silhouette visibly heavier on one side.
+    final runWidth = count * pitch - barGap;
+    final start = (size.width - runWidth) / 2;
+    final rtl = textDirection == TextDirection.rtl;
+    final playedWidth = runWidth * progress;
+    final playedRect = rtl
+        ? Rect.fromLTWH(start + runWidth - playedWidth, 0, playedWidth, size.height)
+        : Rect.fromLTWH(start, 0, playedWidth, size.height);
+    final playedPaint = Paint()
+      ..color = playedColor
+      ..style = PaintingStyle.fill;
+    final gradient = playedGradient;
+    if (gradient != null && playedWidth > 0) {
+      playedPaint.shader = LinearGradient(
+        begin: rtl ? Alignment.centerRight : Alignment.centerLeft,
+        end: rtl ? Alignment.centerLeft : Alignment.centerRight,
+        colors: gradient.colors,
+        stops: gradient.stops,
+      ).createShader(playedRect);
+    }
+    final unplayedPaint = Paint()
+      ..color = unplayedColor
+      ..style = PaintingStyle.fill;
+    final radius = Radius.circular(barRadius);
+    for (var i = 0; i < count; i++) {
+      final logical = rtl ? count - 1 - i : i;
+      final amplitude = StoryWaveform.bars[i % StoryWaveform.bars.length];
+      final barHeight = size.height * amplitude;
+      final left = start + i * pitch;
+      final rect = Rect.fromLTWH(
+        left,
+        (size.height - barHeight) / 2,
+        barWidth,
+        barHeight,
+      );
+      // A bar is "played" once its leading edge is behind the playhead, so
+      // the fill advances one bar at a time and never paints a half bar.
+      final played = (logical + 0.5) / count <= progress;
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(rect, radius),
+        played ? playedPaint : unplayedPaint,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(_TiledWaveformPainter oldDelegate) =>
+      oldDelegate.progress != progress ||
+      oldDelegate.barWidth != barWidth ||
+      oldDelegate.barGap != barGap ||
+      oldDelegate.barRadius != barRadius ||
+      oldDelegate.playedGradient != playedGradient ||
+      oldDelegate.playedColor != playedColor ||
+      oldDelegate.unplayedColor != unplayedColor ||
+      oldDelegate.textDirection != textDirection;
 }
 
 /// Like, comment, report on others' Moments, delete on the caller's own
