@@ -1867,6 +1867,266 @@ async function main() {
     await assertFails(deleteDoc(ref));
   });
 
+  // Reel "already watched" state at users/{uid}/reelViews/{reelId}, the seen
+  // signal listReelsV2 ranks on. Same owner-only shape as momentViews, plus a
+  // bounded `expiresAt` carrying the TTL policy. These cases run against the
+  // emulator rather than a fake because a rules change is only proven by the
+  // production-shaped read/write actually being allowed or denied (ADR-007).
+  const REEL_VIEW_TTL_MS = 90 * 24 * 60 * 60 * 1000;
+  const reelViewTtl = (offsetMs = 0) =>
+    Timestamp.fromMillis(Date.now() + REEL_VIEW_TTL_MS + offsetMs);
+  const reelViewAuthor = "reel-view-author";
+  async function seedViewableReel(id, rootOverrides = {}, availabilityOverrides = {}) {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      const db = ctx.firestore();
+      const publishedAt = Timestamp.fromMillis(Date.now() - 60_000);
+      await setDoc(doc(db, `users/${reelViewAuthor}`), { displayName: "Creator" });
+      await setDoc(doc(db, `reels/${id}`), {
+        status: "published", moderationStatus: "visible",
+        authorId: reelViewAuthor, publishedAt, ...rootOverrides,
+      });
+      await setDoc(doc(db, `reelAvailability/${id}`), {
+        schemaVersion: 2, status: "published", ownerId: reelViewAuthor, reelId: id,
+        availabilityHours: 24, createdAt: publishedAt, publishedAt, updatedAt: publishedAt,
+        expiresAt: Timestamp.fromMillis(publishedAt.toMillis() + 24 * 60 * 60 * 1000),
+        ...availabilityOverrides,
+      });
+    });
+  }
+  // Invalid-payload cases below use otherwise valid targets so they continue
+  // proving the shape/retention guard, not merely a missing-target denial.
+  for (const id of ["reel1", "skew-early", "skew-late", "forged-past",
+    "forged-future", "forever", "already-gone", "no-ttl", "null-ttl",
+    "extra-keys", "no-watch-time"]) {
+    await seedViewableReel(id);
+  }
+
+  await check("SECURITY: Reel view writes require an existing valid published target", async () => {
+    const write = (id) => setDoc(doc(host.firestore(), `users/host-uid/reelViews/${id}`), {
+      viewedAt: serverTimestamp(), expiresAt: reelViewTtl(),
+    });
+    await assertFails(write("nonexistent-reel"));
+    await seedViewableReel("not.a.safe.reel");
+    await assertFails(write("not.a.safe.reel"));
+    await seedViewableReel("unpublished-reel", { status: "draft" });
+    await assertFails(write("unpublished-reel"));
+    await seedViewableReel("hidden-reel", { moderationStatus: "hidden" });
+    await assertFails(write("hidden-reel"));
+    await seedViewableReel("expired-reel", {}, { expiresAt: Timestamp.fromMillis(1000) });
+    await assertFails(write("expired-reel"));
+    await seedViewableReel("misbound-reel", {}, { ownerId: "someone-else" });
+    await assertFails(write("misbound-reel"));
+  });
+
+  await check("SECURITY: Reel view writes reject inactive or missing viewers and authors", async () => {
+    await seedViewableReel("account-gated-reel");
+    const write = (uid) => setDoc(doc(testEnv.authenticatedContext(uid).firestore(),
+      `users/${uid}/reelViews/account-gated-reel`), {
+      viewedAt: serverTimestamp(), expiresAt: reelViewTtl(),
+    });
+    await assertFails(write("missing-reel-viewer"));
+    const states = [{ banned: true }, { disabled: true }, { deleted: true },
+      { status: "deleted" }, { authDeletedAt: Timestamp.now() }];
+    for (const state of states) {
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await setDoc(doc(ctx.firestore(), "users/inactive-reel-viewer"), state);
+        await setDoc(doc(ctx.firestore(), `users/${reelViewAuthor}`), {});
+      });
+      await assertFails(write("inactive-reel-viewer"));
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await setDoc(doc(ctx.firestore(), `users/${reelViewAuthor}`), state);
+      });
+      await assertFails(write("host-uid"));
+    }
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), `users/${reelViewAuthor}`), {});
+    });
+  });
+
+  await check("SECURITY: Reel view writes honor bilateral blocks and communication restrictions", async () => {
+    await seedViewableReel("audience-gated-reel");
+    const write = () => setDoc(doc(host.firestore(), "users/host-uid/reelViews/audience-gated-reel"), {
+      viewedAt: serverTimestamp(), expiresAt: reelViewTtl(),
+    });
+    for (const path of [`users/host-uid/blocked/${reelViewAuthor}`,
+      `users/${reelViewAuthor}/blocked/host-uid`,
+      "restrictions/host-uid", `restrictions/${reelViewAuthor}`]) {
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await setDoc(doc(ctx.firestore(), path), { type: "communicationMute", expiresAt: null });
+      });
+      await assertFails(write());
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await deleteDoc(doc(ctx.firestore(), path));
+      });
+    }
+    await assertSucceeds(write());
+    // Nonempty restriction documents must also fit the ten-access budget;
+    // expired mutes do not turn otherwise valid watches into permission errors.
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      for (const uid of ["host-uid", reelViewAuthor]) {
+        await setDoc(doc(ctx.firestore(), `restrictions/${uid}`), {
+          type: "communicationMute", expiresAt: Timestamp.fromMillis(1000),
+        });
+      }
+    });
+    await assertSucceeds(write());
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      for (const uid of ["host-uid", reelViewAuthor]) {
+        await deleteDoc(doc(ctx.firestore(), `restrictions/${uid}`));
+      }
+    });
+  });
+
+  await check("regression: legacy and permanent Reels retain bounded seen-history support", async () => {
+    await seedViewableReel("legacy-view-reel");
+    await seedViewableReel("permanent-view-reel");
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      const db = ctx.firestore();
+      await deleteDoc(doc(db, "reelAvailability/legacy-view-reel"));
+      const ref = doc(db, "reelAvailability/permanent-view-reel");
+      const { expiresAt, ...data } = (await getDoc(ref)).data();
+      await setDoc(ref, { ...data, availabilityHours: "permanent" });
+    });
+    for (const id of ["legacy-view-reel", "permanent-view-reel"]) {
+      await assertSucceeds(setDoc(doc(host.firestore(), `users/host-uid/reelViews/${id}`), {
+        viewedAt: serverTimestamp(), expiresAt: reelViewTtl(),
+      }));
+    }
+  });
+
+  await check("regression: the owner records a Reel view with server time and a bounded TTL", async () => {
+    const ref = doc(host.firestore(), "users/host-uid/reelViews/reel1");
+    await assertSucceeds(setDoc(ref, {
+      viewedAt: serverTimestamp(),
+      expiresAt: reelViewTtl(),
+    }));
+  });
+
+  await check("regression: re-watching updates the same Reel view row", async () => {
+    const ref = doc(host.firestore(), "users/host-uid/reelViews/reel1");
+    await assertSucceeds(updateDoc(ref, {
+      viewedAt: serverTimestamp(),
+      expiresAt: reelViewTtl(),
+    }));
+  });
+
+  await check("regression: a Reel view TTL may drift by hours without being refused", async () => {
+    const db = host.firestore();
+    await assertSucceeds(setDoc(doc(db, "users/host-uid/reelViews/skew-early"), {
+      viewedAt: serverTimestamp(),
+      expiresAt: reelViewTtl(-12 * 60 * 60 * 1000),
+    }));
+    await assertSucceeds(setDoc(doc(db, "users/host-uid/reelViews/skew-late"), {
+      viewedAt: serverTimestamp(),
+      expiresAt: reelViewTtl(12 * 60 * 60 * 1000),
+    }));
+  });
+
+  await check("regression: the owner can read and list their own Reel view history", async () => {
+    const db = host.firestore();
+    await assertSucceeds(getDoc(doc(db, "users/host-uid/reelViews/reel1")));
+    await assertSucceeds(getDocs(
+      query(collection(db, "users/host-uid/reelViews"), limit(100)),
+    ));
+  });
+
+  await check("SECURITY: an unbounded Reel view listing is refused", async () => {
+    const db = host.firestore();
+    await assertFails(getDocs(collection(db, "users/host-uid/reelViews")));
+    await assertFails(getDocs(
+      query(collection(db, "users/host-uid/reelViews"), limit(500)),
+    ));
+  });
+
+  await check("SECURITY: nobody can write a Reel view into someone else's history", async () => {
+    const ref = doc(attacker.firestore(), "users/host-uid/reelViews/reel1");
+    await assertFails(setDoc(ref, {
+      viewedAt: serverTimestamp(),
+      expiresAt: reelViewTtl(),
+    }));
+  });
+
+  await check("SECURITY: nobody can read someone else's Reel view history", async () => {
+    const db = attacker.firestore();
+    await assertFails(getDoc(doc(db, "users/host-uid/reelViews/reel1")));
+    await assertFails(getDocs(
+      query(collection(db, "users/host-uid/reelViews"), limit(100)),
+    ));
+  });
+
+  await check("SECURITY: a Reel view cannot forge its watch time", async () => {
+    const db = host.firestore();
+    // A forged stale watch is the interesting one: it would let a client
+    // opt itself out of six-hour seen suppression and re-serve the same Reel.
+    await assertFails(setDoc(doc(db, "users/host-uid/reelViews/forged-past"), {
+      viewedAt: Timestamp.fromMillis(1_000_000_000_000),
+      expiresAt: reelViewTtl(),
+    }));
+    await assertFails(setDoc(doc(db, "users/host-uid/reelViews/forged-future"), {
+      viewedAt: Timestamp.fromMillis(Date.now() + 365 * 24 * 60 * 60 * 1000),
+      expiresAt: reelViewTtl(),
+    }));
+  });
+
+  await check("SECURITY: a Reel view cannot escape or skip its retention bound", async () => {
+    const db = host.firestore();
+    // Ten-year retention: refused. Personal viewing history is not allowed to
+    // outlive the TTL policy the collection was designed around.
+    await assertFails(setDoc(doc(db, "users/host-uid/reelViews/forever"), {
+      viewedAt: serverTimestamp(),
+      expiresAt: Timestamp.fromMillis(Date.now() + 10 * 365 * 24 * 60 * 60 * 1000),
+    }));
+    // Already expired: refused, so a row cannot be written pre-dead.
+    await assertFails(setDoc(doc(db, "users/host-uid/reelViews/already-gone"), {
+      viewedAt: serverTimestamp(),
+      expiresAt: Timestamp.fromMillis(Date.now() - 1000),
+    }));
+    // Missing entirely: refused, so no row can dodge the TTL sweep.
+    await assertFails(setDoc(doc(db, "users/host-uid/reelViews/no-ttl"), {
+      viewedAt: serverTimestamp(),
+    }));
+    await assertFails(setDoc(doc(db, "users/host-uid/reelViews/null-ttl"), {
+      viewedAt: serverTimestamp(),
+      expiresAt: null,
+    }));
+  });
+
+  await check("SECURITY: a Reel view cannot grow into a client-writable analytics store", async () => {
+    const db = host.firestore();
+    await assertFails(setDoc(doc(db, "users/host-uid/reelViews/extra-keys"), {
+      viewedAt: serverTimestamp(),
+      expiresAt: reelViewTtl(),
+      watchMs: 9999,
+      rankScore: 1,
+    }));
+    await assertFails(setDoc(doc(db, "users/host-uid/reelViews/no-watch-time"), {
+      expiresAt: reelViewTtl(),
+    }));
+  });
+
+  await check("SECURITY: Reel views cannot be deleted to clear suppression", async () => {
+    const ref = doc(host.firestore(), "users/host-uid/reelViews/reel1");
+    await assertFails(deleteDoc(ref));
+  });
+
+  await check("SECURITY: the Reel documents ranking reads stay unreadable by clients", async () => {
+    // Ranking moved into listReelsV2; it must not have opened any client read
+    // path to the Reel roots, likes or availability sidecars it scores on.
+    const db = host.firestore();
+    await assertFails(getDoc(doc(db, "reels/reel1")));
+    await assertFails(getDoc(doc(db, "reelAvailability/reel1")));
+    await assertFails(getDoc(doc(db, "reels/reel1/likes/host-uid")));
+    await assertFails(getDocs(
+      query(collection(db, "reels"), where("status", "==", "published"),
+        orderBy("sortKey", "desc"), limit(10)),
+    ));
+    await assertFails(getDocs(
+      query(collection(db, "reels"), where("status", "==", "published"),
+        where("authorId", "==", "host-uid"), orderBy("sortKey", "desc"),
+        limit(10)),
+    ));
+  });
+
   // --- room messages visibility (#9) ---
   await testEnv.withSecurityRulesDisabled(async (ctx) => {
     await setDoc(doc(ctx.firestore(), "rooms/publicRoom"), {
@@ -2305,6 +2565,23 @@ async function main() {
     content: "",
     isDeleted: true,
     editedAt: serverTimestamp(),
+  });
+
+  await check("SECURITY CLUB CHAT: self-removing a GIF must clear its immutable media snapshot", async () => {
+    const gif = { provider: "giphy", id: "safeGif", title: "Hello",
+      url: "https://media.giphy.com/media/safeGif/giphy.gif", width: 200, height: 200 };
+    await seedClubMessage("gif-removal", { type: "gif", gif });
+    const ownRef = doc(clubChatAuthor.firestore(), `${CLUB_CHAT_MESSAGES}/gif-removal`);
+    await assertFails(updateDoc(ownRef, legacyRemoval()));
+    await assertFails(updateDoc(ownRef, { ...legacyRemoval(), gif: { ...gif, title: "Replacement" } }));
+    await assertFails(updateDoc(doc(clubChatPeer.firestore(), `${CLUB_CHAT_MESSAGES}/gif-removal`), {
+      ...legacyRemoval(), gif: null,
+    }));
+    await assertSucceeds(updateDoc(ownRef, { ...legacyRemoval(), gif: null }));
+    const deleted = (await getDoc(ownRef)).data();
+    assert.equal(deleted.gif, null);
+    assert.equal(deleted.content, "");
+    assert.equal(deleted.senderId, "ccm-author");
   });
 
   // --- DEFECT 3: create minted the tombstone the update rule forbids ---
@@ -14144,6 +14421,160 @@ async function main() {
       // moderateReport.
       await assertFails(
         deleteDoc(doc(moderator.firestore(), `reels/${RC_REEL}/comments/${RC_COMMENT}`)),
+      );
+    },
+  );
+
+  // ==================================================================
+  // GIFs IN THE COMPOSER (ADR-172)
+  // ==================================================================
+  //
+  // The whole GIF pipeline is server-owned: the proxy writes every one of
+  // these collections through the Admin SDK, and message creation on every
+  // surface is already `allow create: if false`. So what has to be proved
+  // here is that NO client — ordinary, staff, or the account whose own uid
+  // names the document — can read or write any of it, and that a client
+  // cannot forge the server-only `gifAsset` report type into the queue.
+
+  await check(
+    "GIF: every GIF collection is closed to ordinary clients, read and write",
+    async () => {
+      const db = attacker.firestore();
+      const paths = [
+        "gifAssets/giphy_abc123",
+        "gifQueryCache/0123456789abcdef",
+        "gifRateLimits/attacker-uid",
+        "gifProviderBudget/2026090912",
+        "gifBlocklist/current",
+        "appConfig/gif",
+      ];
+      for (const path of paths) {
+        await assertFails(getDoc(doc(db, path)));
+        await assertFails(setDoc(doc(db, path), { blocked: false }));
+        await assertFails(deleteDoc(doc(db, path)));
+      }
+    },
+  );
+
+  await check(
+    "GIF: an account cannot read or reset its OWN rate-limit document",
+    async () => {
+      // gifRateLimits is keyed by uid, so ownership is the obvious mistake
+      // to make here. A limit a client can read is a limit it can plan
+      // around, and one it can write is not a limit at all — same posture
+      // as billingRateLimits.
+      const db = attacker.firestore();
+      const own = doc(db, "gifRateLimits/attacker-uid");
+      await assertFails(getDoc(own));
+      await assertFails(setDoc(own, { tokens: 10, dayCount: 0 }));
+      await assertFails(updateDoc(own, { tokens: 10 }));
+    },
+  );
+
+  await check(
+    "GIF: staff cannot read gifAssets either, which is why reports carry evidence",
+    async () => {
+      // Staff read access was never granted, so a moderator deciding a GIF
+      // report has no path to the asset record. That is exactly why
+      // reportGifAsset copies the title and the pinned CDN URL into the
+      // report itself (functions/media/gif/moderation.js) — the same
+      // reasoning as the reelComment snapshot.
+      const db = moderator.firestore();
+      await assertFails(getDoc(doc(db, "gifAssets/giphy_abc123")));
+      await assertFails(
+        setDoc(doc(db, "gifAssets/giphy_abc123"), { blocked: true }),
+      );
+      await assertFails(getDoc(doc(db, "gifBlocklist/current")));
+    },
+  );
+
+  await check(
+    "GIF: a client cannot forge a gifAsset report into the moderation queue",
+    async () => {
+      // Only `globalMessage` and `user` have a branch in the reports create
+      // rule, and the field allowlist has no room for gifProvider, gifId,
+      // targetTextSnapshot or targetMediaUrl. Both refusals matter: without
+      // the first, anyone could open a report against an arbitrary asset id;
+      // without the second, a reporter could hand a moderator arbitrary text
+      // and an arbitrary image URL to look at.
+      const db = attacker.firestore();
+      const reportId = "attacker-uid_gifAsset_giphy:abc123";
+      await assertFails(
+        setDoc(doc(db, `reports/${reportId}`), {
+          reporterId: "attacker-uid",
+          targetType: "gifAsset",
+          targetId: "giphy:abc123",
+          reportedUserId: "",
+          contextPath: null,
+          reason: "sexual",
+          note: "",
+          status: "open",
+          createdAt: serverTimestamp(),
+        }),
+      );
+      await assertFails(
+        setDoc(doc(db, `reports/${reportId}`), {
+          reporterId: "attacker-uid",
+          targetType: "gifAsset",
+          targetId: "giphy:abc123",
+          reportedUserId: "",
+          contextPath: null,
+          reason: "sexual",
+          note: "",
+          status: "open",
+          createdAt: serverTimestamp(),
+          gifProvider: "giphy",
+          gifId: "abc123",
+          targetTextSnapshot: "giphy:abc123 - anything I like",
+          targetMediaUrl: "https://evil.example.com/beacon.gif",
+        }),
+      );
+    },
+  );
+
+  await check(
+    "GIF: no client write can put a gif map on a room or club message",
+    async () => {
+      // Creation on both surfaces is server-only, so this is not really a
+      // shape test — it is the proof that the URL pin does not need to live
+      // in rules at all. `resolveGifAsset()` derives the URL server-side and
+      // refuses a blocked or non-`g` asset; nothing reaches these paths from
+      // a client to be pinned. If creation is ever reopened, this case will
+      // start passing for the wrong reason, so the pin must move here in the
+      // same change.
+      const gif = {
+        provider: "giphy",
+        id: "abc123",
+        url: "https://media.giphy.com/media/abc123/200h.gif",
+      };
+      await assertFails(
+        setDoc(doc(host.firestore(), "rooms/room-1/messages/forged-gif"), {
+          senderId: "host-uid",
+          senderName: "Host",
+          senderPhotoUrl: null,
+          text: "look",
+          createdAt: serverTimestamp(),
+          reactions: {},
+          gif,
+        }),
+      );
+      await assertFails(
+        setDoc(
+          doc(
+            host.firestore(),
+            "clubs/club-1/channels/general/messages/forged-gif",
+          ),
+          {
+            senderId: "host-uid",
+            senderName: "Host",
+            senderPhotoUrl: null,
+            content: "look",
+            sentAt: serverTimestamp(),
+            editedAt: null,
+            isDeleted: false,
+            gif,
+          },
+        ),
       );
     },
   );

@@ -170,6 +170,7 @@ service firebase.storage {
       function canManageActiveRoom() {
         return isActiveUser(request.auth.uid) &&
             firestore.exists(roomPath()) &&
+            !firestore.get(roomPath()).data.keys().hasAny(['serverSchemaVersion', 'serverId']) &&
             firestore.get(roomPath()).data.hostId == request.auth.uid &&
             firestore.get(roomPath()).data.get('status', 'active') == 'active' &&
             firestore.get(roomPath()).data.get('deletionInProgress', false) != true;
@@ -268,6 +269,9 @@ service firebase.storage {
 
       function isOrdinaryClubMedia() {
         return firestore.exists(clubPath()) &&
+            !firestore.get(clubPath()).data.keys().hasAny([
+              'serverSchemaVersion', 'serverType', 'serverActivationState'
+            ]) &&
             firestore.get(clubPath()).data.get('type', 'community') != 'family';
       }
 
@@ -316,6 +320,9 @@ service firebase.storage {
         let membershipPath = /databases/(default)/documents/clubs/$(clubId)/members/$(request.auth.uid);
         return isSignedIn() &&
             firestore.exists(familyPath) &&
+            !firestore.get(familyPath).data.keys().hasAny([
+              'serverSchemaVersion', 'serverType', 'serverActivationState'
+            ]) &&
             firestore.get(familyPath).data.type == 'family' &&
             firestore.get(familyPath).data.get('status', 'active') == 'active' &&
             firestore.get(familyPath).data.get('deletionInProgress', false) != true &&

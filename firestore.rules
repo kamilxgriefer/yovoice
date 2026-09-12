@@ -598,6 +598,7 @@ service cloud.firestore {
         /databases/$(database)/documents/rooms/$(roomId)
       ).data;
       return isSignedIn() && roomExists(roomId) &&
+          isLegacyRoomData(room) &&
           (
             room.visibility == 'public' ||
             room.hostId == request.auth.uid ||
@@ -1214,6 +1215,112 @@ service cloud.firestore {
       );
     }
 
+    // Presence is intentional: unsupported/null versions must never fall
+    // through to the old Club authority. These helpers are for point reads
+    // and parent lookups only, NOT list filtering (ADR-083).
+    function isServerData(data) {
+      return data.keys().hasAny([
+        'serverSchemaVersion', 'serverType', 'serverActivationState'
+      ]);
+    }
+
+    function isLegacyClub(clubId) {
+      return !clubExists(clubId) || !isServerData(
+        get(/databases/$(database)/documents/clubs/$(clubId)).data
+      );
+    }
+
+    function isLegacyRoomData(room) {
+      let clubId = room.get('clubId', '');
+      return !room.keys().hasAny(['serverSchemaVersion', 'serverId']) &&
+          (!(clubId is string) || clubId.size() == 0 || isLegacyClub(clubId));
+    }
+
+    function isLegacyRoom(roomId) {
+      return isLegacyRoomData(
+        get(/databases/$(database)/documents/rooms/$(roomId)).data
+      );
+    }
+
+    function isLegacyRoomAfter(roomId) {
+      return isLegacyRoomData(
+        getAfter(/databases/$(database)/documents/rooms/$(roomId)).data
+      );
+    }
+
+    function validServerRoot(data) {
+      return data.serverSchemaVersion == 1 && data.templateVersion == 1 &&
+          data.serverType in ['friends', 'community', 'podcast', 'family', 'company'] &&
+          data.type == (data.serverType == 'family' ? 'family' : 'community') &&
+          data.revision is int && data.revision > 0 &&
+          data.get('deletionInProgress', false) != true;
+    }
+
+    function activeServerRoot(data) {
+      return validServerRoot(data) && data.status == 'active' &&
+          data.serverActivationState == 'active';
+    }
+
+    function validServerMember(member, server) {
+      let profile = get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+      return member.userId == request.auth.uid &&
+          profile.get('deleted', false) != true && profile.get('status', '') != 'deleted' &&
+          profile.get('authDeletedAt', null) == null &&
+          member.get('banned', false) != true &&
+          member.authorizationRevision is int && member.authorizationRevision > 0 &&
+          member.role in ['owner', 'coOwner', 'admin', 'moderator', 'member', 'guest'] &&
+          ((member.role == 'owner') == (server.ownerId == request.auth.uid));
+    }
+
+    function heldServerOwner(clubId) {
+      let server = get(/databases/$(database)/documents/clubs/$(clubId)).data;
+      let member = get(/databases/$(database)/documents/clubs/$(clubId)/members/$(request.auth.uid)).data;
+      return isActiveAccount() && validServerRoot(server) &&
+          server.status == 'preparing' && server.serverActivationState == 'held' &&
+          server.ownerId == request.auth.uid && validServerMember(member, server);
+    }
+
+    function serverChannelGrantAllows(clubId, channelId, channel, member) {
+      let grant = get(/databases/$(database)/documents/clubs/$(clubId)/channels/$(channelId)/accessGrants/$(request.auth.uid)).data;
+      return grant.schemaVersion == 1 && grant.userId == request.auth.uid &&
+          grant.serverId == clubId && grant.channelId == channelId &&
+          grant.aclRevision == channel.aclRevision &&
+          grant.membershipRevision == member.authorizationRevision &&
+          grant.capabilities.read == true &&
+          (member.role in channel.accessPolicy.roleIds ||
+            request.auth.uid in channel.accessPolicy.userIds);
+    }
+
+    function canReadServerChannel(clubId, channelId, channel, allowPreparation) {
+      let member = get(/databases/$(database)/documents/clubs/$(clubId)/members/$(request.auth.uid)).data;
+      return (isClubMember(clubId) || (allowPreparation && heldServerOwner(clubId))) &&
+          channel.serverSchemaVersion == 1 && channel.serverId == clubId &&
+          channel.status == 'active' && channel.revision is int && channel.revision > 0 &&
+          channel.aclRevision is int && channel.aclRevision > 0 &&
+          channel.kind in [
+            'text', 'voice', 'stage', 'events', 'announcements', 'rules',
+            'questions', 'episodes', 'calendar', 'memories', 'list',
+            'meeting', 'whiteboard', 'files'
+          ] &&
+          channel.accessPolicy.accessMode == channel.accessMode &&
+          channel.isPrivate == (channel.accessMode == 'restricted') &&
+          (
+            (channel.accessMode == 'members' &&
+              channel.accessPolicy.roleIds == [] && channel.accessPolicy.userIds == []) ||
+            (channel.accessMode == 'restricted' &&
+              'owner' in channel.accessPolicy.roleIds &&
+              serverChannelGrantAllows(clubId, channelId, channel, member))
+          );
+    }
+
+    function canReadClubChannel(clubId, channelId) {
+      return isLegacyClub(clubId)
+        ? isClubMember(clubId)
+        : canReadServerChannel(clubId, channelId,
+            get(/databases/$(database)/documents/clubs/$(clubId)/channels/$(channelId)).data,
+            false);
+    }
+
     function isClubMember(clubId) {
       let clubPath = /databases/$(database)/documents/clubs/$(clubId);
       let memberPath = /databases/$(database)/documents/clubs/$(clubId)/members/$(request.auth.uid);
@@ -1223,7 +1330,10 @@ service cloud.firestore {
           get(memberPath).data.userId == request.auth.uid &&
           get(memberPath).data.get('banned', false) != true &&
           get(clubPath).data.status == 'active' &&
-          get(clubPath).data.get('deletionInProgress', false) != true;
+          get(clubPath).data.get('deletionInProgress', false) != true &&
+          (!isServerData(get(clubPath).data) ||
+            (activeServerRoot(get(clubPath).data) &&
+              validServerMember(get(memberPath).data, get(clubPath).data)));
     }
 
     function isClubOwner(clubId) {
@@ -1404,7 +1514,15 @@ service cloud.firestore {
       let announcementChannelPath = /databases/$(database)/documents/clubs/$(clubId)/channels/$(data.announcementChannelId);
       let voiceChannelPath = /databases/$(database)/documents/clubs/$(clubId)/channels/$(data.defaultVoiceChannelId);
       let loungeRoomPath = /databases/$(database)/documents/rooms/$(data.loungeRoomId);
-      return data.keys().hasOnly([
+      // A transferred V1 Family keeps its original document id. The legacy
+      // family_{uid} id therefore no longer proves that this caller owns no
+      // other Family. Any server-owned reservation is a stop signal here;
+      // malformed/stale reservations require server reconciliation, never a
+      // second legacy graph. Existing clients with no reservation keep the
+      // exact seven-write bootstrap below.
+      return !exists(
+            /databases/$(database)/documents/serverFamilyOwnerReservations/$(request.auth.uid)
+          ) && data.keys().hasOnly([
             'name', 'description', 'ownerId', 'ownerName', 'avatarUrl',
             'bannerUrl', 'privacy', 'type', 'status', 'defaultLanguage',
             'memberCount', 'onlineCount', 'defaultChatChannelId',
@@ -1607,7 +1725,7 @@ service cloud.firestore {
     function clubMessageRemovalShapeAllowed() {
       return request.resource.data.diff(resource.data).affectedKeys()
             .hasOnly([
-              'content', 'isDeleted', 'editedAt', 'deletedBy', 'deletedAt'
+              'content', 'gif', 'isDeleted', 'editedAt', 'deletedBy', 'deletedAt'
             ]) &&
           // LIVE -> REMOVED only. A removal is terminal from a client's
           // side: it cannot be undone, re-stamped, or re-attributed by a
@@ -1616,6 +1734,9 @@ service cloud.firestore {
           resource.data.get('isDeleted', false) != true &&
           request.resource.data.get('isDeleted', false) == true &&
           request.resource.data.get('content', null) == '' &&
+          // A tombstone cannot retain a third-party image or its title.
+          // Text messages remain compatible when the field is absent.
+          request.resource.data.get('gif', null) == null &&
           // The existing client stamps `editedAt` on a removal, so it is
           // required rather than merely permitted — that keeps the write
           // the deployed app already sends legal, and leaves no accepted
@@ -2276,15 +2397,130 @@ service cloud.firestore {
         allow delete: if false;
       }
 
+      // Reel "already watched" state, modelled directly on momentViews above
+      // and used server-side by listReelsV2 as a RANKING input: a Reel seen
+      // in the last few hours is suppressed from Discover, and one seen
+      // earlier is ranked down. It is a viewer preference, never an
+      // authorization signal — eligibility is still decided entirely by the
+      // callable's account/restriction/block/availability checks, and a
+      // missing or malformed row simply carries no ranking weight.
+      //
+      // Owner-only in both directions: who watched whose Reel is viewing
+      // history. `allow get`/`list` exist for the owner's own data
+      // portability, matching momentViews; there is no client read path in
+      // the app, because the feed reads these rows with the Admin SDK.
+      //
+      // The one deliberate divergence from momentViews is `expiresAt`, which
+      // carries a Firestore TTL policy (see docs/DEPLOYMENT.md — it is a
+      // manual gcloud step). Viewing history that never expires is both a
+      // GDPR liability and an unbounded per-user collection, and the ranker
+      // only cares about the last two weeks.
+      //
+      // `viewedAt` is pinned to request.time exactly, the way momentViews is:
+      // "seen 2h ago" has to be the server's opinion, or a client could forge
+      // a stale watch to un-suppress its own feed. `expiresAt` CANNOT be
+      // pinned the same way — a client has no expression for "server time
+      // plus 90 days"; serverTimestamp() is a sentinel with no arithmetic. So
+      // it is bounded to a two-day window around the intended 90 days
+      // instead, which tolerates real device clock skew while still making a
+      // ten-year or already-past retention impossible to write. It is a
+      // retention bound, never a ranking input: the feed reads `viewedAt`.
+      //
+      // An actual, currently viewable published Reel is required. This is
+      // still only a preference signal, but it must not be an arbitrary
+      // 90-day storage namespace for fabricated IDs or suspended accounts.
+      // These checks mirror the feed audience, not profile visibility.
+      // Legacy published Reels without an availability sidecar remain valid.
+      function reelViewAccountActive(uid) {
+        // A get already distinguishes a missing profile (null data). Using
+        // exists+get for every profile/restriction exhausts the ten-call
+        // budget before availability can be checked, even for valid views.
+        let profile = get(/databases/$(database)/documents/users/$(uid));
+        let restriction = get(/databases/$(database)/documents/restrictions/$(uid));
+        return profile != null && profile.data is map &&
+            profile.data.get('banned', false) != true &&
+            profile.data.get('disabled', false) != true &&
+            profile.data.get('deleted', false) != true &&
+            profile.data.get('status', '') != 'deleted' &&
+            profile.data.get('authDeletedAt', null) == null &&
+            (restriction == null ||
+              restriction.data.get('type', '') != 'communicationMute' ||
+              (restriction.data.get('expiresAt', null) is timestamp &&
+                restriction.data.expiresAt <= request.time));
+      }
+
+      function reelViewAvailabilityAllowed(data, reel, reelId) {
+        return data.get('schemaVersion', 0) == 2 &&
+            data.get('status', '') == 'published' &&
+            data.get('ownerId', '') == reel.authorId &&
+            data.get('reelId', '') == reelId &&
+            data.get('publishedAt', null) == reel.publishedAt &&
+            (
+              (data.get('availabilityHours', null) == 'permanent' &&
+                !('expiresAt' in data)) ||
+              (data.get('availabilityHours', null) is int &&
+                data.availabilityHours >= 24 && data.availabilityHours <= 720 &&
+                data.get('createdAt', null) is timestamp &&
+                data.get('expiresAt', null) is timestamp &&
+                data.expiresAt == data.createdAt +
+                  duration.value(data.availabilityHours, 'h') &&
+                data.expiresAt > request.time)
+            );
+      }
+
+      function reelViewTargetAllowed(reelId) {
+        let reel = get(/databases/$(database)/documents/reels/$(reelId)).data;
+        return reel.get('status', '') == 'published' &&
+            reel.get('moderationStatus', '') == 'visible' &&
+            reel.get('authorId', null) is string &&
+            reelViewAccountActive(reel.authorId) &&
+            (reel.authorId == request.auth.uid ||
+              !isBlockedPair(request.auth.uid, reel.authorId)) &&
+            (
+              !exists(/databases/$(database)/documents/reelAvailability/$(reelId)) ||
+              reelViewAvailabilityAllowed(
+                get(/databases/$(database)/documents/reelAvailability/$(reelId)).data,
+                reel, reelId)
+            );
+      }
+
+      // No delete: the row is a suppression record with a TTL, not a
+      // client-managed store. Bounded reads stay available for portability.
+      match /reelViews/{reelId} {
+        allow get: if isOwner(userId);
+        allow list: if isOwner(userId) &&
+            request.query.limit != null && request.query.limit <= 100;
+        allow create, update: if isOwner(userId) &&
+            reelId.matches('^[A-Za-z0-9_-]{1,128}$') &&
+            reelViewAccountActive(userId) &&
+            reelViewTargetAllowed(reelId) &&
+            request.resource.data.keys().hasOnly(['viewedAt', 'expiresAt']) &&
+            request.resource.data.viewedAt == request.time &&
+            request.resource.data.expiresAt is timestamp &&
+            request.resource.data.expiresAt >
+                request.time + duration.value(89, 'd') &&
+            request.resource.data.expiresAt <=
+                request.time + duration.value(91, 'd');
+        allow delete: if false;
+      }
+
       match /clubs/{clubId} {
         allow read: if isOwner(userId);
         allow create, update: if
+            isLegacyClub(clubId) &&
             (isOwner(userId) || canManageClub(clubId)) &&
             userClubProjectionMatchesMembership(userId, clubId);
         // Membership removal is an Admin transaction now. Denying direct
         // deletion keeps the canonical member, root counters and this private
         // projection from being split across partially authorized writes.
         allow delete: if false;
+      }
+
+      // Private, server-authored opaque discovery handles, not authority.
+      // Names/previews and copied ACLs must not be stored in these rows.
+      match /serverChannelRefs/{referenceId} {
+        allow read: if isOwner(userId) && isActiveAccount();
+        allow write: if false;
       }
 
       // Every notification is server-derived from an authoritative source
@@ -2540,6 +2776,65 @@ service cloud.firestore {
       allow read, write: if false;
     }
     match /stripeCustomerCleanup/{cleanupId} {
+      allow read, write: if false;
+    }
+
+    // ------------------------------------------------------------------
+    // GIFs in the composer (ADR-172). Every collection here is written by
+    // the Admin SDK inside functions/media/gif/** and is closed to every
+    // client, staff included.
+    //
+    // WHY THERE IS NO `gif` FIELD ALLOWANCE IN ANY MESSAGE RULE.
+    // The cross-system design assumed room and club messages were client
+    // writes, and pinned the CDN URL here by string concatenation so a
+    // sender could not turn `gif.url` into an arbitrary-remote-image
+    // tracking beacon. That premise is stale against the code: room, club,
+    // direct and global message creation are ALL `allow create: if false`
+    // today, and every send goes through a Cloud Function. The pin
+    // therefore lives where the write actually happens —
+    // `resolveGifAsset()` in functions/media/gif/index.js derives the URL
+    // from the same template, refuses a blocked or non-`g` asset, and
+    // refuses an id that does not match the grammar — which is strictly
+    // stronger than a rules `get()` and costs no per-request document
+    // access budget. If message creation is ever reopened to clients, the
+    // pin must be added to that rule in the same change; the template is
+    // GIF_CDN_TEMPLATES in functions/media/gif/gif_ref.js.
+    //
+    // `gifAssets` is the send-time authority, the moderation record and
+    // the blocklist, all in one document per asset, and is deliberately
+    // never expired. Staff cannot read it, which is why a report carries
+    // its own evidence snapshot (functions/media/gif/moderation.js).
+    match /gifAssets/{assetId} {
+      allow read, write: if false;
+    }
+    // Shared across all accounts on purpose — that sharing is what keeps a
+    // beta API key viable — so its document ids are query digests rather
+    // than readable text: a readable id space would be a public list of
+    // what people are searching for. Swept by a native Firestore TTL policy
+    // on `expiresAt`; the read path treats an expired document as a miss
+    // regardless, so correctness never depends on that sweep.
+    match /gifQueryCache/{cacheKey} {
+      allow read, write: if false;
+    }
+    // Same posture as billingRateLimits above: a limit a client can read is
+    // a limit a client can plan around, and one it can write is not a limit.
+    match /gifRateLimits/{userId} {
+      allow read, write: if false;
+    }
+    match /gifProviderBudget/{hourKey} {
+      allow read, write: if false;
+    }
+    // The capped suppression index that makes a block effective on a page
+    // already sitting in the shared cache. `gifAssets.blocked` remains the
+    // durable truth; this is only its hot-path index.
+    match /gifBlocklist/{documentId} {
+      allow read, write: if false;
+    }
+    // Server-owned feature configuration, same shape as publicStats/live:
+    // setting `enabled: false` disables the GIF surface on the next catalog
+    // fetch with no deploy. Read by getGifCatalog through the Admin SDK, so
+    // clients never need access.
+    match /appConfig/{configId} {
       allow read, write: if false;
     }
 
@@ -2995,9 +3290,13 @@ service cloud.firestore {
               clubId == 'family_' + request.auth.uid &&
               !exists(/databases/$(database)/documents/clubs/$(clubId))
             ) ||
-            resource.data.get('type', 'community') != 'family' ||
-            isClubMember(clubId) ||
-            hasPendingClubInvite(clubId, request.auth.uid)
+            (isServerData(resource.data)
+              ? (heldServerOwner(clubId) ||
+                  (isActiveAccount() && activeServerRoot(resource.data) &&
+                    (resource.data.privacy == 'public' || isClubMember(clubId))))
+              : (resource.data.get('type', 'community') != 'family' ||
+                  isClubMember(clubId) ||
+                  hasPendingClubInvite(clubId, request.auth.uid)))
           );
 
       // LIST is separate from GET on purpose, and this is not a
@@ -3089,7 +3388,7 @@ service cloud.firestore {
       // counters, default channel ids and every other root field are server
       // authority. This also prevents a manager from forging quota-relevant
       // owner changes or arbitrary defaults.
-      allow update: if (
+      allow update: if !isServerData(resource.data) && (
             invitedClubJoinUpdateAllowed(clubId) ||
             (canEditClubMetadata(clubId) && clubMetadataUpdateAllowed())
           ) &&
@@ -3110,13 +3409,14 @@ service cloud.firestore {
         allow read: if isClubMember(clubId) ||
             (isSignedIn() && resource.data.userId == request.auth.uid);
         allow create: if isSignedIn() &&
+            isLegacyClub(clubId) &&
             request.auth.uid == memberId &&
             clubMemberCreateShapeAllowed(memberId) &&
             (
               invitedClubMemberCreateAllowed(clubId, memberId) ||
               ownerClubMemberCreateAllowed(clubId)
             );
-        allow update: if isClubMember(clubId) &&
+        allow update: if isLegacyClub(clubId) && isClubMember(clubId) &&
             request.resource.data.userId == resource.data.userId &&
             request.resource.data.joinedAt == resource.data.joinedAt &&
             (
@@ -3159,7 +3459,7 @@ service cloud.firestore {
         // both friendship mirrors, blocks, sanctions and account status.
         allow create: if false;
         allow update: if false;
-        allow delete: if isSignedIn() &&
+        allow delete: if isLegacyClub(clubId) && isSignedIn() &&
             (
               (isActiveAccount() && request.auth.uid == inviteeId) ||
               canManageClub(clubId)
@@ -3167,12 +3467,26 @@ service cloud.firestore {
       }
 
       match /channels/{channelId} {
-        allow read: if isClubMember(clubId);
-        allow create: if isClubOwnerAfter(clubId) || canManageClub(clubId);
-        allow update, delete: if canManageClub(clubId);
+        allow get: if isLegacyClub(clubId)
+            ? isClubMember(clubId)
+            : canReadServerChannel(clubId, channelId, resource.data, true);
+        // Rules are not filters. The V1 query must pin BOTH equalities;
+        // restricted channels are discovered through private opaque refs and
+        // point-read with the current grant, never an unfiltered collection.
+        allow list: if isLegacyClub(clubId)
+            ? isClubMember(clubId)
+            : ((isClubMember(clubId) || heldServerOwner(clubId)) &&
+                resource.data.accessMode == 'members' && resource.data.status == 'active');
+        allow create: if isLegacyClub(clubId) &&
+            (isClubOwnerAfter(clubId) || canManageClub(clubId));
+        allow update, delete: if isLegacyClub(clubId) && canManageClub(clubId);
+
+        match /accessGrants/{userId} {
+          allow read, write: if false;
+        }
 
         match /messages/{messageId} {
-          allow read: if isClubMember(clubId);
+          allow read: if canReadClubChannel(clubId, channelId);
           // Message creation is server-only. sendClubMessage performs
           // canonical membership/role/channel checks, dual rate limits and
           // idempotency in the same transaction as the message write.
@@ -3185,7 +3499,7 @@ service cloud.firestore {
           // touch, the field allowlist and every pinned value for
           // itself. See the block above canManageClub() for why this is
           // a rule at all, and for the owner-message boundary.
-          allow update: if clubMessageAuthorRemovalAllowed(clubId);
+          allow update: if isLegacyClub(clubId) && clubMessageAuthorRemovalAllowed(clubId);
           // Hard delete stays with the Admin SDK, so the record always
           // shows that something was removed rather than losing it.
           allow delete: if false;
@@ -3199,17 +3513,18 @@ service cloud.firestore {
       // membership — leaving, removal, a block, account deletion —
       // removes the member document and with it every read below.
       match /moments/{momentId} {
-        allow read: if isClubMember(clubId);
+        allow read: if isLegacyClub(clubId) && isClubMember(clubId);
         allow create: if isVerified() &&
+            isLegacyClub(clubId) &&
             canCommunicate() &&
             isClubMember(clubId) &&
             request.resource.data.authorId == request.auth.uid &&
             request.resource.data.clubId == clubId;
         // Authors may edit their own caption; nobody may reassign one.
-        allow update: if isClubMember(clubId) &&
+        allow update: if isLegacyClub(clubId) && isClubMember(clubId) &&
             resource.data.authorId == request.auth.uid &&
             request.resource.data.authorId == resource.data.authorId;
-        allow delete: if isClubMember(clubId) &&
+        allow delete: if isLegacyClub(clubId) && isClubMember(clubId) &&
             (
               resource.data.authorId == request.auth.uid ||
               canManageClub(clubId)
@@ -3222,8 +3537,9 @@ service cloud.firestore {
       // once written, so a check-in cannot be edited to say something the
       // person never said.
       match /checkIns/{checkInId} {
-        allow read: if isClubMember(clubId);
+        allow read: if isLegacyClub(clubId) && isClubMember(clubId);
         allow create: if isVerified() &&
+            isLegacyClub(clubId) &&
             isClubMember(clubId) &&
             request.resource.data.keys().hasAll([
               'userId', 'clubId', 'displayName', 'photoUrl', 'status',
@@ -3248,7 +3564,7 @@ service cloud.firestore {
             !('longitude' in request.resource.data) &&
             !('location' in request.resource.data);
         allow update: if false;
-        allow delete: if isClubMember(clubId) &&
+        allow delete: if isLegacyClub(clubId) && isClubMember(clubId) &&
             (
               resource.data.userId == request.auth.uid ||
               canManageClub(clubId)
@@ -3421,6 +3737,7 @@ service cloud.firestore {
       // unsafe. If you move it, prove the variant rather than trusting
       // either version of this paragraph.
       allow update: if isSignedIn() &&
+          isLegacyRoomData(resource.data) &&
           roomMetadataValid(request.resource.data) &&
           roomTypeFieldsScoped(request.resource.data) &&
           (
@@ -3442,8 +3759,8 @@ service cloud.firestore {
       allow delete: if false;
 
       match /participants/{participantId} {
-        allow read: if canAccessRoom(roomId) ||
-            (isSignedIn() && resource.data.userId == request.auth.uid);
+        allow read: if isLegacyRoom(roomId) && (canAccessRoom(roomId) ||
+            (isSignedIn() && resource.data.userId == request.auth.uid));
 
         // Self-service creation mirrors the product model: a Community room
         // is a Discord-like conversation where everyone joins as a speaker;
@@ -3455,6 +3772,7 @@ service cloud.firestore {
         // hostId yet — getAfter() resolves against the state once the whole
         // transaction/batch has applied, which is what we need here.
         allow create: if isSignedIn() &&
+            isLegacyRoomAfter(roomId) &&
             canCommunicate() &&
             !isRestrictedAccount(request.auth.uid) &&
             (
@@ -3577,6 +3895,7 @@ service cloud.firestore {
         // surface already holds; users/{uid} is `allow delete: if false`, so
         // requiring the document to exist cannot strand a real account.
         allow create: if isActiveAccount() &&
+            isLegacyRoomAfter(roomId) &&
             request.auth.uid == memberId &&
             (
               (
@@ -3627,6 +3946,7 @@ service cloud.firestore {
         // them), so the allowlist is the real write surface, not a guess.
         // Identity, role and join time are all fixed once the row exists.
         allow update: if isSignedIn() &&
+            isLegacyRoom(roomId) &&
             request.resource.data.userId == resource.data.userId &&
             request.resource.data.role == resource.data.role &&
             request.resource.data.get('joinedAt', null) ==
@@ -3677,6 +3997,7 @@ service cloud.firestore {
         // left without its owner; disposing of a whole room is still the
         // deleteRoomSelf callable's recursive job.
         allow delete: if isSignedIn() &&
+            isLegacyRoom(roomId) &&
             request.auth.uid == memberId &&
             resource.data.get('role', 'member') != 'owner';
       }
@@ -3688,6 +4009,7 @@ service cloud.firestore {
         // or host relationship — previously any signed-in user could read
         // any room's chat regardless of visibility.
         allow read: if isSignedIn() &&
+            isLegacyRoom(roomId) &&
             (
               roomExists(roomId) &&
               (
@@ -3724,6 +4046,7 @@ service cloud.firestore {
         // Legacy unknown keys may be removed by rewriting to a canonical map,
         // but they can never survive in or be added to the new value.
         allow update: if isActiveAccount() &&
+            isLegacyRoom(roomId) &&
             (
               (isRoomParticipant(roomId) && canAccessRoom(roomId)) ||
               isRoomMember(roomId) ||
@@ -3732,7 +4055,7 @@ service cloud.firestore {
             request.resource.data.diff(resource.data).affectedKeys()
                 .hasOnly(['reactions']) &&
             roomReactionUpdateAllowed();
-        allow delete: if isRoomHost(roomId);
+        allow delete: if isLegacyRoom(roomId) && isRoomHost(roomId);
       }
 
       // Legacy compatibility for already-installed clients that predate the
@@ -3741,12 +4064,14 @@ service cloud.firestore {
       // minimum supported app version can retire it safely.
       match /handRequests/{requesterId} {
         allow read: if isSignedIn() &&
+            isLegacyRoom(roomId) &&
             (
               isRoomHost(roomId) ||
               request.auth.uid == requesterId ||
               (isRoomParticipant(roomId) && canAccessRoom(roomId))
             );
         allow create: if isVerified() &&
+            isLegacyRoom(roomId) &&
             canCommunicate() &&
             !isRestrictedAccount(request.auth.uid) &&
             request.auth.uid == requesterId &&
@@ -3779,6 +4104,7 @@ service cloud.firestore {
             ).data.get('handRaisingEnabled', true) == true;
         allow update: if false;
         allow delete: if isSignedIn() &&
+            isLegacyRoom(roomId) &&
             (request.auth.uid == requesterId || isRoomHost(roomId));
       }
 
