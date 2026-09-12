@@ -13,7 +13,7 @@ import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 /// The clip box was a flat `SizedBox(height: 26)` though, so the same
 /// rectangle that trimmed the row horizontally also sliced every pill
 /// through the middle of its letters once the labels grew: at 200 % text
-/// only a sliver of `talk` and `English` painted, on phone and on desktop
+/// only a sliver of `Talk` and `English` painted, on phone and on desktop
 /// alike.
 ///
 /// These tests measure the label rather than eyeballing it: a chip's
@@ -21,6 +21,11 @@ import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 /// must sit inside the clip it is drawn into. The horizontal affordance is
 /// asserted too, so a future fix cannot "solve" the clipping by wrapping the
 /// row.
+///
+/// The chip shows the category's DISPLAY name: `category` holds the slug
+/// `talk` and the banner renders it through Discover's localizer, so the
+/// label under test is `Talk`. A slug the localizer does not know — the long
+/// facet below — still falls through to itself.
 void main() {
   const longFacet = 'International philosophy and debate';
   const room = VoiceRoom(
@@ -155,11 +160,11 @@ void main() {
         textScaler: const TextScaler.linear(2),
       );
 
-      expectLabelFullyPainted(tester, 'talk');
+      expectLabelFullyPainted(tester, 'Talk');
       expectLabelFullyPainted(tester, 'English');
 
       // The whole pill, border included, and not just the letters.
-      for (final label in <String>['talk', 'English']) {
+      for (final label in <String>['Talk', 'English']) {
         final clipRect = tester.getRect(tagClip(find.text(label)));
         final pill = tester.getRect(
           find
@@ -171,7 +176,7 @@ void main() {
       }
 
       // The clip grew with the text rather than staying at 26.
-      expect(tester.getSize(tagClip(find.text('talk'))).height, 52);
+      expect(tester.getSize(tagClip(find.text('Talk'))).height, 52);
 
       expect(tester.takeException(), isNull);
     });
@@ -192,8 +197,8 @@ void main() {
       // deliberately NOT asserted that the label fits under the test font:
       // `flutter test` substitutes a taller fallback face, so that check
       // would be measuring the harness rather than the app.
-      expect(tester.getSize(tagClip(find.text('talk'))).height, 26);
-      expect(find.text('talk'), findsOneWidget);
+      expect(tester.getSize(tagClip(find.text('Talk'))).height, 26);
+      expect(find.text('Talk'), findsOneWidget);
       expect(find.text('English'), findsOneWidget);
 
       expect(tester.takeException(), isNull);
