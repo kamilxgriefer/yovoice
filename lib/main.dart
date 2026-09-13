@@ -1,3 +1,4 @@
+import 'dart:async' show unawaited;
 import 'dart:ui' show PlatformDispatcher;
 
 import 'package:firebase_app_check/firebase_app_check.dart';
@@ -11,6 +12,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:yovoice/app/app.dart';
 import 'package:yovoice/core/preferences/app_preferences.dart';
+import 'package:yovoice/features/auth/presentation/widgets/startup_launch_copy.dart';
 import 'package:yovoice/features/notifications/data/services/push_notification_service.dart';
 import 'package:yovoice/firebase_options.dart';
 
@@ -29,6 +31,9 @@ Future<void> main() async {
   await _activateAppCheck();
   _registerBackgroundMessageHandler();
 
+  // Share the preferences read already needed below; never wait for decorative
+  // copy persistence or an animation before opening the app.
+  unawaited(StartupLaunchCopy.prepare());
   try {
     await AppPreferencesController.instance.load();
   } catch (error, stackTrace) {

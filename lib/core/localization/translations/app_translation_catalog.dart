@@ -22,6 +22,7 @@ import 'translations_chinese_traditional.dart';
 import 'translations_current_release.dart';
 import 'translations_direct_call_refusals.dart';
 import 'translations_slavic_nordic.dart';
+import 'translations_startup.dart';
 import 'translations_western.dart';
 import 'translations_yo_moments.dart';
 
@@ -224,6 +225,7 @@ const appTranslationKeys = <String>{
   ...momentsListenTranslationKeys,
   ...reelsStageTranslationKeys,
   ...reelsVoiceCommentTranslationKeys,
+  ...startupTranslationKeys,
   ...serverSurfaceTranslationKeys,
 };
 
@@ -276,6 +278,7 @@ final appTranslations = <String, Map<String, String>>{
         ...momentsListenTranslations[entry.key]!,
         ...reelsStageTranslations[entry.key]!,
         ...reelsVoiceCommentTranslations[entry.key]!,
+        ...startupTranslations[entry.key]!,
         ...serverSurfaceTranslations[entry.key]!,
         ...localizedExtendedLanguageNames[entry.key]!,
       }),
