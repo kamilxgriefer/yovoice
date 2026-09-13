@@ -183,14 +183,23 @@ class _MomentsFollowPanelState extends State<MomentsFollowPanel> {
     super.dispose();
   }
 
-  /// Friends minus following minus the viewer, in the friend stream's own
-  /// order, capped. Null while either half is still unknown.
+  /// Audience-enabled Creator friends minus following minus the viewer, in the
+  /// friend stream's own order, capped. Null while either half is unknown.
+  ///
+  /// [FriendUser.canExposeCreatorAudience] is the server-written public
+  /// decision. Missing legacy projections stay false, so this suggestion
+  /// surface never invents eligibility from Premium or account-type badges.
   List<FriendUser>? get _pool {
     final friends = _friends;
     final following = _followingIds;
     if (friends == null || following == null) return null;
     return friends
-        .where((friend) => friend.id != _uid && !following.contains(friend.id))
+        .where(
+          (friend) =>
+              friend.id != _uid &&
+              friend.canExposeCreatorAudience &&
+              !following.contains(friend.id),
+        )
         .take(widget.maxPeople)
         .toList(growable: false);
   }
@@ -382,6 +391,7 @@ class _PersonRow extends StatelessWidget {
       displayName: friend.displayName,
       viewerUid: viewerUid,
       followService: service,
+      canStartFollowing: true,
     );
     // At 200 % text the pill kept its full width and the name was squeezed
     // to "B…" with the handle at "@…" — a row whose only job is to name a
@@ -425,6 +435,7 @@ class MomentsFollowButton extends StatefulWidget {
     required this.displayName,
     required this.viewerUid,
     required this.followService,
+    this.canStartFollowing = false,
     this.compact = true,
     this.onMedia = false,
     super.key,
@@ -434,6 +445,13 @@ class MomentsFollowButton extends StatefulWidget {
   final String displayName;
   final String viewerUid;
   final FollowService followService;
+
+  /// The public, server-written Creator audience decision.
+  ///
+  /// False means a new Follow action stays absent. A reliable existing edge
+  /// may still expose Following/Unfollow so losing eligibility never traps the
+  /// viewer in an old relationship.
+  final bool canStartFollowing;
 
   /// Visible ink 36 tall inside the 48 target (the theme's padded tap
   /// target supplies the rest).
@@ -465,7 +483,7 @@ class _MomentsFollowButtonState extends State<MomentsFollowButton> {
   }
 
   Future<void> _toggle(bool following) async {
-    if (_busy) return;
+    if (_busy || (!following && !widget.canStartFollowing)) return;
     setState(() => _busy = true);
     final messenger = ScaffoldMessenger.maybeOf(context);
     final copy = AppLocalizations.of(context);
@@ -503,8 +521,11 @@ class _MomentsFollowButtonState extends State<MomentsFollowButton> {
     return StreamBuilder<bool>(
       stream: _stream,
       builder: (context, snapshot) {
-        final following = snapshot.data ?? false;
-        final known = snapshot.hasData;
+        final known = snapshot.hasData && !snapshot.hasError;
+        final following = known && snapshot.data == true;
+        if (!known || (!widget.canStartFollowing && !following)) {
+          return const SizedBox.shrink();
+        }
         final label = following
             ? copy.contextualText(
                 'yoMoments.followingState',

@@ -235,7 +235,12 @@ class StaticFriends extends FriendService {
       Stream.value(friends ?? const <FriendUser>[]);
 }
 
-FriendUser friend(String id, {String? name, String username = ''}) => FriendUser(
+FriendUser friend(
+  String id, {
+  String? name,
+  String username = '',
+  bool creatorAudienceVisible = true,
+}) => FriendUser(
   id: id,
   displayName: name ?? id,
   username: username,
@@ -243,6 +248,7 @@ FriendUser friend(String id, {String? name, String username = ''}) => FriendUser
   photoUrl: null,
   isOnline: false,
   lastSeen: null,
+  creatorAudienceVisible: creatorAudienceVisible,
 );
 
 class SilentPlayer implements audio.AudioPlayer {

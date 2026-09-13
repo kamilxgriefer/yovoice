@@ -80,7 +80,9 @@ Future<FocusNode> _openPreview(
   String statusMessage =
       'Recording a new episode https://open.spotify.com/episode/123',
   String accountType = 'creator',
+  bool? creatorAudienceVisible,
   bool isFriend = false,
+  bool isFollowing = false,
   int launchCount = 1,
 }) async {
   tester.view.physicalSize = size;
@@ -106,6 +108,8 @@ Future<FocusNode> _openPreview(
     'statusMessage': statusMessage,
     'accountType': accountType,
     'premiumIdentity': true,
+    'creatorAudienceVisible':
+        creatorAudienceVisible ?? accountType == 'creator',
     'isOnline': true,
     'followerCount': 1842,
   });
@@ -114,6 +118,14 @@ Future<FocusNode> _openPreview(
         .collection('users')
         .doc('me')
         .collection('friends')
+        .doc('creator')
+        .set({'uid': 'creator'});
+  }
+  if (isFollowing) {
+    await firestore
+        .collection('users')
+        .doc('me')
+        .collection('following')
         .doc('creator')
         .set({'uid': 'creator'});
   }
@@ -237,6 +249,41 @@ void _expectProfileFactChipContrast(
 }
 
 void main() {
+  testWidgets('eligible Creator projection exposes a new Follow action', (
+    tester,
+  ) async {
+    await _openPreview(tester, size: const Size(390, 844));
+
+    expect(find.text('Follow'), findsOneWidget);
+    expect(find.text('Following'), findsNothing);
+  });
+
+  testWidgets('personal profile exposes no Follow action', (tester) async {
+    await _openPreview(
+      tester,
+      size: const Size(390, 844),
+      accountType: 'personal',
+    );
+
+    expect(find.text('Follow'), findsNothing);
+    expect(find.text('Following'), findsNothing);
+  });
+
+  testWidgets(
+    'hidden audience keeps only a reliable existing Following state',
+    (tester) async {
+      await _openPreview(
+        tester,
+        size: const Size(390, 844),
+        creatorAudienceVisible: false,
+        isFollowing: true,
+      );
+
+      expect(find.text('Follow'), findsNothing);
+      expect(find.text('Following'), findsOneWidget);
+    },
+  );
+
   for (final variant in <({String name, ThemeData theme, AppPalette palette})>[
     (name: 'Dark', theme: AppTheme.darkTheme, palette: AppPalette.dark),
     (name: 'Pearl', theme: AppTheme.lightTheme, palette: AppPalette.light),

@@ -13,6 +13,7 @@ import 'package:yovoice/core/theme/app_radius.dart';
 import 'package:yovoice/core/theme/app_sizing.dart';
 import 'package:yovoice/core/theme/app_spacing.dart';
 import 'package:yovoice/core/theme/app_typography.dart';
+import 'package:yovoice/features/creator/data/services/creator_audience_service.dart';
 import 'package:yovoice/features/moments/presentation/widgets/reply_playback_arbiter.dart';
 import 'package:yovoice/features/moments/presentation/widgets/yo_moments_chrome.dart';
 import 'package:yovoice/features/profile/data/services/follow_service.dart';
@@ -52,6 +53,7 @@ class ReelsFeedScreen extends StatefulWidget {
     this.expiryTimerFactory,
     this.onOpenAuthor,
     this.followService,
+    this.creatorAudienceService,
     this.embedded = false,
     this.immersive = false,
     this.immersiveHeader,
@@ -87,6 +89,11 @@ class ReelsFeedScreen extends StatefulWidget {
   /// injects a double, and a host with no Firebase app gets no control at
   /// all rather than a button that cannot answer.
   final FollowService? followService;
+
+  /// Public, server-written Creator audience projection used by every Reel
+  /// card. Tests may inject a deterministic source; production resolves the
+  /// real publicProfiles stream once for the feed.
+  final CreatorAudienceService? creatorAudienceService;
   final bool embedded;
 
   /// Fill a narrow host's available viewport, while its bottom navigation
@@ -165,6 +172,11 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
   double _chromeHeight = 0;
   bool _followServiceResolved = false;
   FollowService? _followService;
+  late final CreatorAudienceService _defaultCreatorAudienceService =
+      CreatorAudienceService();
+
+  CreatorAudienceService get _creatorAudiences =>
+      widget.creatorAudienceService ?? _defaultCreatorAudienceService;
 
   /// The follow graph for every card in this feed, resolved once.
   ///
@@ -958,6 +970,7 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
             // and the docked panel is the conversation alone.
             showIdentity: true,
             followService: _follows,
+            creatorAudienceService: _creatorAudiences,
             videoBuilder: widget.videoBuilder,
             audioPlaybackFactory: widget.audioPlaybackFactory,
             videoPlaybackFactory: widget.videoPlaybackFactory,
@@ -1385,6 +1398,7 @@ class _FeedPager extends StatelessWidget {
     this.onLike,
     this.onOpenAuthor,
     this.followService,
+    this.creatorAudienceService,
     this.commentsOpenIndex,
     this.suspendPlaybackIndex,
     this.videoBuilder,
@@ -1420,6 +1434,7 @@ class _FeedPager extends StatelessWidget {
 
   /// Null where the follow graph is unavailable, which hides the control.
   final FollowService? followService;
+  final CreatorAudienceService? creatorAudienceService;
   final Set<String> likePending;
 
   /// The page whose thread the wide layout is already showing beside the
@@ -1472,6 +1487,7 @@ class _FeedPager extends StatelessWidget {
                 showIdentity: showIdentity,
                 onOpenAuthor: onOpenAuthor,
                 followService: followService,
+                creatorAudienceService: creatorAudienceService,
                 onReport: service.isCurrentUserAuthor(reel)
                     ? null
                     : () => onReport(reel),

@@ -9,6 +9,7 @@ import 'package:yovoice/shared/widgets/backgrounds/yo_page_background.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/navigation/app_route_observer.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
+import 'package:yovoice/features/creator/data/services/creator_audience_service.dart';
 import 'package:yovoice/features/creator/presentation/screens/find_creators_screen.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/home/data/services/home_feed_service.dart';
@@ -89,6 +90,7 @@ class MomentsScreen extends StatefulWidget {
     this.onOpenFindCreators,
     this.friendService,
     this.followService,
+    this.creatorAudienceService,
     super.key,
   });
 
@@ -106,6 +108,10 @@ class MomentsScreen extends StatefulWidget {
   /// viewer does not follow yet); production passes nothing.
   final FriendService? friendService;
   final FollowService? followService;
+
+  /// Public Creator audience source for Reel author actions. Production uses
+  /// the real projection; previews and widget tests may inject a local one.
+  final CreatorAudienceService? creatorAudienceService;
 
   /// Injection seam for the caller's viewed-state; production passes
   /// nothing.
@@ -436,6 +442,8 @@ class _MomentsScreenState extends State<MomentsScreen> with RouteAware {
                             // resolves the real service itself, and a host
                             // with no Firebase app gets no control at all.
                             followService: widget.followService,
+                            creatorAudienceService:
+                                widget.creatorAudienceService,
                             onCreate: _openReelComposer,
                           )
                         else

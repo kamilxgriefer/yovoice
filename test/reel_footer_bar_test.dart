@@ -180,6 +180,80 @@ void main() {
       expect(find.text('Follow'), findsNothing);
     });
 
+    testWidgets('an ineligible author exposes no new Follow action', (
+      tester,
+    ) async {
+      final follows = reelFollowService(viewerUid: 'viewer');
+      final players = FakeReelPlayers();
+      await pumpReelStage(
+        tester,
+        players: players,
+        size: const Size(900, 1000),
+        followService: follows.service,
+        creatorAudienceVisible: false,
+      );
+
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey<String>('reel-follow-creator_1')),
+          matching: find.byType(OutlinedButton),
+        ),
+        findsNothing,
+      );
+      expect(find.text('Follow'), findsNothing);
+    });
+
+    testWidgets('an audience projection error fails closed', (tester) async {
+      final follows = reelFollowService(viewerUid: 'viewer');
+      final players = FakeReelPlayers();
+      await pumpReelStage(
+        tester,
+        players: players,
+        size: const Size(900, 1000),
+        followService: follows.service,
+        creatorAudienceFails: true,
+      );
+
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey<String>('reel-follow-creator_1')),
+          matching: find.byType(OutlinedButton),
+        ),
+        findsNothing,
+      );
+      expect(find.text('Follow'), findsNothing);
+    });
+
+    testWidgets('an ineligible author keeps only reliable Following/Unfollow', (
+      tester,
+    ) async {
+      final follows = reelFollowService(
+        viewerUid: 'viewer',
+        following: const <String>{'creator_1'},
+      );
+      final players = FakeReelPlayers();
+      await pumpReelStage(
+        tester,
+        players: players,
+        size: const Size(900, 1000),
+        followService: follows.service,
+        creatorAudienceVisible: false,
+      );
+
+      final button = find.byKey(
+        const ValueKey<String>('reel-follow-creator_1'),
+      );
+      expect(button, findsOneWidget);
+      expect(find.text('Following'), findsOneWidget);
+      expect(find.text('Follow'), findsNothing);
+
+      await tester.tap(button);
+      await tester.pumpAndSettle();
+      expect(follows.mutations, [
+        {'targetUserId': 'creator_1', 'following': false},
+      ]);
+    });
+
     testWidgets('is absent on your own Reel', (tester) async {
       final follows = reelFollowService(viewerUid: 'creator_1');
       final players = FakeReelPlayers();

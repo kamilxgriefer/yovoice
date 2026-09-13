@@ -311,6 +311,7 @@ class _ProfilePreviewSheetState extends State<ProfilePreviewSheet> {
     lastSeen: null,
     profileUpdatedAt: profile.profileUpdatedAt,
     premiumIdentity: profile.premiumIdentity,
+    creatorAudienceVisible: profile.creatorAudienceVisible,
   );
 
   void _snack(Object error, String fallback) {
@@ -431,7 +432,9 @@ class _ProfilePreviewSheetState extends State<ProfilePreviewSheet> {
   }
 
   Future<void> _toggleFollow(bool isFollowing, UserProfile profile) async {
-    if (_busyFollow) return;
+    if (_busyFollow || (!isFollowing && !profile.canExposeCreatorAudience)) {
+      return;
+    }
     final failureMessage = AppLocalizations.of(context).text(
       "Couldn't update follow. Please try again.",
       'Nie udało się zmienić obserwowania. Spróbuj ponownie.',
@@ -788,48 +791,30 @@ class _Body extends StatelessWidget {
             style: TextStyle(color: palette.textSecondary, fontSize: 13),
           )
         else ...[
-          LayoutBuilder(
-            builder: (context, constraints) {
-              final stackActions =
-                  constraints.maxWidth < 330 ||
-                  MediaQuery.textScalerOf(context).scale(1) >= 1.5;
-              final message = _PrimaryButton(
-                icon: Icons.chat_bubble_rounded,
-                label: busyMessage
-                    ? copy.text('Opening…', 'Otwieranie…')
-                    : copy.text('Message', 'Wiadomość'),
-                busy: busyMessage,
-                onPressed: profile == null ? null : () => onMessage(profile!),
-              );
-
-              if (stackActions) {
-                return Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    message,
-                    const SizedBox(height: 8),
-                    _friendButton(context),
-                    if (followStream != null) ...[
-                      const SizedBox(height: 8),
-                      _followButton(),
-                    ],
-                  ],
+          if (followStream == null)
+            _actions(context, showFollowAction: false, isFollowing: false)
+          else
+            StreamBuilder<bool>(
+              stream: followStream,
+              builder: (context, snapshot) {
+                // An absent/erroring relationship read cannot vouch for an
+                // existing edge. Hide rather than briefly guessing "Follow".
+                if (!snapshot.hasData || snapshot.hasError) {
+                  return _actions(
+                    context,
+                    showFollowAction: false,
+                    isFollowing: false,
+                  );
+                }
+                final isFollowing = snapshot.data == true;
+                return _actions(
+                  context,
+                  showFollowAction:
+                      isFollowing || profile?.canExposeCreatorAudience == true,
+                  isFollowing: isFollowing,
                 );
-              }
-
-              return Row(
-                children: [
-                  Expanded(child: message),
-                  const SizedBox(width: 10),
-                  Expanded(child: _friendButton(context)),
-                  if (followStream != null) ...[
-                    const SizedBox(width: 10),
-                    Expanded(child: _followButton()),
-                  ],
-                ],
-              );
-            },
-          ),
+              },
+            ),
         ],
         const SizedBox(height: 10),
         Center(
@@ -845,6 +830,56 @@ class _Body extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+
+  Widget _actions(
+    BuildContext context, {
+    required bool showFollowAction,
+    required bool isFollowing,
+  }) {
+    final copy = AppLocalizations.of(context);
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final stackActions =
+            constraints.maxWidth < 330 ||
+            MediaQuery.textScalerOf(context).scale(1) >= 1.5;
+        final message = _PrimaryButton(
+          icon: Icons.chat_bubble_rounded,
+          label: busyMessage
+              ? copy.text('Opening…', 'Otwieranie…')
+              : copy.text('Message', 'Wiadomość'),
+          busy: busyMessage,
+          onPressed: profile == null ? null : () => onMessage(profile!),
+        );
+
+        if (stackActions) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              message,
+              const SizedBox(height: 8),
+              _friendButton(context),
+              if (showFollowAction) ...[
+                const SizedBox(height: 8),
+                _followButton(context, isFollowing),
+              ],
+            ],
+          );
+        }
+
+        return Row(
+          children: [
+            Expanded(child: message),
+            const SizedBox(width: 10),
+            Expanded(child: _friendButton(context)),
+            if (showFollowAction) ...[
+              const SizedBox(width: 10),
+              Expanded(child: _followButton(context, isFollowing)),
+            ],
+          ],
+        );
+      },
     );
   }
 
@@ -886,25 +921,17 @@ class _Body extends StatelessWidget {
     );
   }
 
-  Widget _followButton() {
-    return StreamBuilder<bool>(
-      stream: followStream,
-      builder: (context, snapshot) {
-        final copy = AppLocalizations.of(context);
-        final following = snapshot.data ?? false;
-        return _SecondaryButton(
-          icon: following
-              ? Icons.notifications_active_rounded
-              : Icons.rss_feed_rounded,
-          label: following
-              ? copy.text('Following', 'Obserwujesz')
-              : copy.text('Follow', 'Obserwuj'),
-          busy: busyFollow,
-          onPressed: profile == null || !snapshot.hasData
-              ? null
-              : () => onFollow(following, profile!),
-        );
-      },
+  Widget _followButton(BuildContext context, bool isFollowing) {
+    final copy = AppLocalizations.of(context);
+    return _SecondaryButton(
+      icon: isFollowing
+          ? Icons.notifications_active_rounded
+          : Icons.rss_feed_rounded,
+      label: isFollowing
+          ? copy.text('Following', 'Obserwujesz')
+          : copy.text('Follow', 'Obserwuj'),
+      busy: busyFollow,
+      onPressed: profile == null ? null : () => onFollow(isFollowing, profile!),
     );
   }
 }

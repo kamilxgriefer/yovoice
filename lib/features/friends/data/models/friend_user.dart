@@ -28,6 +28,7 @@ class FriendUser {
     this.availability,
     this.username = '',
     this.premiumIdentity = false,
+    this.creatorAudienceVisible = false,
     this.profileUpdatedAt,
     this.relationshipStatus,
   });
@@ -55,6 +56,15 @@ class FriendUser {
   /// straight off the user document. Never a locally computed flag —
   /// only Cloud Functions write it.
   final bool premiumIdentity;
+
+  /// Server-written public projection of the complete Creator audience gate.
+  ///
+  /// Missing and malformed legacy values stay false. Public UI must use this
+  /// projection instead of reconstructing Creator, Premium, age-verification
+  /// and opt-in eligibility from partial identity fields.
+  final bool creatorAudienceVisible;
+
+  bool get canExposeCreatorAudience => creatorAudienceVisible;
 
   String get initial {
     final normalizedName = displayName.trim();
@@ -114,6 +124,7 @@ class FriendUser {
       isOnline: false,
       lastSeen: null,
       premiumIdentity: data['premiumIdentity'] as bool? ?? false,
+      creatorAudienceVisible: data['creatorAudienceVisible'] == true,
       profileUpdatedAt: _dateTime(
         data['profileUpdatedAt'] ?? data['updatedAt'],
       ),
@@ -136,6 +147,7 @@ class FriendUser {
       isOnline: false,
       lastSeen: null,
       premiumIdentity: data['premiumIdentity'] as bool? ?? false,
+      creatorAudienceVisible: data['creatorAudienceVisible'] == true,
       profileUpdatedAt: _dateTime(
         data['profileUpdatedAtMillis'] ??
             data['profileUpdatedAt'] ??
@@ -172,6 +184,7 @@ class FriendUser {
     String? availability,
     bool clearAvailability = false,
     bool? premiumIdentity,
+    bool? creatorAudienceVisible,
     DateTime? profileUpdatedAt,
     bool clearProfileUpdatedAt = false,
     FriendRelationshipStatus? relationshipStatus,
@@ -189,6 +202,8 @@ class FriendUser {
           ? null
           : availability ?? this.availability,
       premiumIdentity: premiumIdentity ?? this.premiumIdentity,
+      creatorAudienceVisible:
+          creatorAudienceVisible ?? this.creatorAudienceVisible,
       profileUpdatedAt: clearProfileUpdatedAt
           ? null
           : profileUpdatedAt ?? this.profileUpdatedAt,

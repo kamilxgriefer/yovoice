@@ -12,6 +12,7 @@ import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_radius.dart';
 import 'package:yovoice/core/theme/app_spacing.dart';
 import 'package:yovoice/core/theme/app_typography.dart';
+import 'package:yovoice/features/creator/data/services/creator_audience_service.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moments_follow_panel.dart';
 import 'package:yovoice/features/profile/data/services/follow_service.dart';
 import 'package:yovoice/features/reels/data/models/reel.dart';
@@ -74,6 +75,7 @@ class ReelCard extends StatefulWidget {
     this.onShare,
     this.onOpenAuthor,
     this.followService,
+    this.creatorAudienceService,
     this.likePending = false,
     this.commentsOpen = false,
     this.showIdentity = true,
@@ -141,6 +143,11 @@ class ReelCard extends StatefulWidget {
   /// has no Firebase app — widget coverage — and the control is then absent
   /// rather than a button that cannot answer.
   final FollowService? followService;
+
+  /// Resolves the author's server-written public Creator audience projection.
+  /// Null, missing and error states fail closed for new follows; a reliable
+  /// existing follow edge may still expose Following/Unfollow.
+  final CreatorAudienceService? creatorAudienceService;
   final bool likePending;
 
   /// True while the wide layout already shows this Reel's thread beside it.
@@ -176,7 +183,18 @@ class _ReelCardState extends State<ReelCard> with WidgetsBindingObserver {
   /// to finish a sentence. The immersive stage keeps its detail sheet.
   bool _captionExpanded = false;
   final Set<ValueNotifier<bool>> _detailLifetimes = {};
+  Stream<CreatorAudienceProjection>? _creatorAudienceProjection;
   DateTime get _now => (widget.now ?? DateTime.now)();
+
+  void _bindCreatorAudience() {
+    try {
+      _creatorAudienceProjection = widget.creatorAudienceService
+          ?.watchPublicProjection(widget.reel.authorId);
+    } catch (_) {
+      // No Firebase app / unreadable projection: new Follow stays absent.
+      _creatorAudienceProjection = null;
+    }
+  }
 
   void _retireDetails() {
     for (final lifetime in _detailLifetimes) {
@@ -409,6 +427,7 @@ class _ReelCardState extends State<ReelCard> with WidgetsBindingObserver {
     if (widget.soundOn == null) _ownSoundOn = ValueNotifier<bool>(false);
     _soundOn.addListener(_onSoundPreferenceChanged);
     _playback.addListener(_onPlaybackChanged);
+    _bindCreatorAudience();
     if (!widget.isActive) {
       unawaited(_playback.setActive(false).catchError((Object _) {}));
     }
@@ -472,6 +491,13 @@ class _ReelCardState extends State<ReelCard> with WidgetsBindingObserver {
     }
     if (sourceChanged || oldWidget.isActive != widget.isActive) {
       _syncWatchTimer();
+    }
+    if (oldWidget.reel.authorId != widget.reel.authorId ||
+        !identical(
+          oldWidget.creatorAudienceService,
+          widget.creatorAudienceService,
+        )) {
+      _bindCreatorAudience();
     }
   }
 
@@ -675,6 +701,23 @@ class _ReelCardState extends State<ReelCard> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
+    final projection = _creatorAudienceProjection;
+    if (projection == null) {
+      return _buildSurface(context, canStartFollowing: false);
+    }
+    return StreamBuilder<CreatorAudienceProjection>(
+      stream: projection,
+      builder: (context, snapshot) => _buildSurface(
+        context,
+        canStartFollowing: !snapshot.hasError && snapshot.data?.visible == true,
+      ),
+    );
+  }
+
+  Widget _buildSurface(
+    BuildContext context, {
+    required bool canStartFollowing,
+  }) {
     final copy = AppLocalizations.of(context);
     return Semantics(
       container: true,
@@ -684,8 +727,8 @@ class _ReelCardState extends State<ReelCard> with WidgetsBindingObserver {
         values: <String, Object>{'author': widget.reel.authorName},
       ),
       child: widget.fillViewport
-          ? _buildImmersiveStage(context)
-          : _buildCardStage(context),
+          ? _buildImmersiveStage(context, canStartFollowing: canStartFollowing)
+          : _buildCardStage(context, canStartFollowing: canStartFollowing),
     );
   }
 
@@ -697,7 +740,11 @@ class _ReelCardState extends State<ReelCard> with WidgetsBindingObserver {
   /// frame and a footer bar at a legible size. Nothing is lost there — the
   /// author, the caption and the four actions are the same controls, laid
   /// over the media instead of under it.
-  Widget _buildImmersiveStage(BuildContext context, {bool asCard = false}) {
+  Widget _buildImmersiveStage(
+    BuildContext context, {
+    required bool canStartFollowing,
+    bool asCard = false,
+  }) {
     final palette = context.appPalette;
     final radius = widget.borderRadius;
     return LayoutBuilder(
@@ -757,6 +804,7 @@ class _ReelCardState extends State<ReelCard> with WidgetsBindingObserver {
                           position: _playback.position,
                           timeline: _playback.timelineDuration,
                           followService: widget.followService,
+                          canStartFollowing: canStartFollowing,
                           viewerUid: widget.service.currentUserId,
                           onAudio: _togglePlayback,
                           onOpenAuthor: _openAuthor,
@@ -811,7 +859,10 @@ class _ReelCardState extends State<ReelCard> with WidgetsBindingObserver {
         sideBySide: sideBySide,
       );
 
-  Widget _buildCardStage(BuildContext context) {
+  Widget _buildCardStage(
+    BuildContext context, {
+    required bool canStartFollowing,
+  }) {
     final palette = context.appPalette;
     final radius = widget.borderRadius;
     return LayoutBuilder(
@@ -840,7 +891,11 @@ class _ReelCardState extends State<ReelCard> with WidgetsBindingObserver {
         // composition instead. A 79 px wide Reel is not a smaller design, it
         // is a broken one.
         if (frameWidth < _minimumStackedFrameWidth) {
-          return _buildImmersiveStage(context, asCard: true);
+          return _buildImmersiveStage(
+            context,
+            canStartFollowing: canStartFollowing,
+            asCard: true,
+          );
         }
         return Center(
           child: SizedBox(
@@ -932,6 +987,7 @@ class _ReelCardState extends State<ReelCard> with WidgetsBindingObserver {
                       key: const ValueKey('reel-stage-footer'),
                       reel: widget.reel,
                       followService: widget.followService,
+                      canStartFollowing: canStartFollowing,
                       viewerUid: widget.service.currentUserId,
                       captionExpanded: _captionExpanded,
                       onToggleCaption: () =>
@@ -1198,6 +1254,7 @@ class ReelStageFooterBar extends StatelessWidget {
     required this.onMore,
     required this.likePending,
     required this.commentsOpen,
+    required this.canStartFollowing,
     this.followService,
     this.viewerUid,
     this.onLike,
@@ -1207,6 +1264,7 @@ class ReelStageFooterBar extends StatelessWidget {
 
   final Reel reel;
   final FollowService? followService;
+  final bool canStartFollowing;
   final String? viewerUid;
   final bool captionExpanded;
   final VoidCallback onToggleCaption;
@@ -1347,6 +1405,7 @@ class ReelStageFooterBar extends StatelessWidget {
             displayName: reel.authorName,
             viewerUid: viewer,
             followService: follows,
+            canStartFollowing: canStartFollowing,
           )
         : null;
     final identity = Column(
@@ -1847,6 +1906,7 @@ class _OverlayFooter extends StatelessWidget {
     required this.onCaption,
     required this.onMore,
     required this.onShare,
+    required this.canStartFollowing,
     this.followService,
     this.viewerUid,
     this.soundToggle,
@@ -1867,6 +1927,7 @@ class _OverlayFooter extends StatelessWidget {
   final ValueListenable<Duration> position;
   final Duration timeline;
   final FollowService? followService;
+  final bool canStartFollowing;
   final String? viewerUid;
   final bool likePending;
   final bool commentsOpen;
@@ -1965,6 +2026,7 @@ class _OverlayFooter extends StatelessWidget {
                   displayName: reel.authorName,
                   viewerUid: viewer,
                   followService: follows,
+                  canStartFollowing: canStartFollowing,
                   onMedia: true,
                 ),
             ],

@@ -50,6 +50,7 @@ import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_theme.dart';
 import 'package:yovoice/features/clubs/data/services/club_chat_service.dart';
 import 'package:yovoice/features/clubs/data/services/club_service.dart';
+import 'package:yovoice/features/creator/data/services/creator_audience_service.dart';
 import 'package:yovoice/features/friends/data/models/friend_user.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/home/data/services/home_feed_service.dart';
@@ -304,7 +305,34 @@ class _Friends extends FriendService {
 }
 
 class _Following extends FollowService {
-  _Following(this.fixture) : super(firestore: fixture.db, auth: fixture.auth);
+  _Following(this.fixture)
+    : super(
+        firestore: fixture.db,
+        auth: fixture.auth,
+        mutationInvoker: (data) async {
+          final targetUserId = data['targetUserId'];
+          final following = data['following'];
+          if (targetUserId is! String ||
+              targetUserId.trim().isEmpty ||
+              following is! bool) {
+            throw ArgumentError('Invalid preview follow mutation.');
+          }
+          final edge = fixture.db
+              .collection('users')
+              .doc(_me)
+              .collection('following')
+              .doc(targetUserId.trim());
+          if (following) {
+            await edge.set({
+              'uid': targetUserId.trim(),
+              'followedAt': Timestamp.now(),
+            });
+          } else {
+            await edge.delete();
+          }
+          return <String, dynamic>{'following': following};
+        },
+      );
   final _HomeFixture fixture;
   @override
   Stream<List<FollowUser>> watchFollowing(String userId) =>
@@ -416,6 +444,7 @@ class _HomeFixture {
   late final roomService = _Rooms(this);
   late final friendService = _Friends(this);
   late final followService = _Following(this);
+  late final creatorAudienceService = CreatorAudienceService(firestore: db);
   late final feedService = _HomeFeed(this);
   late final messageService = _Messages(this);
   late final profileService = ProfileService(firestore: db, auth: auth);
@@ -446,6 +475,17 @@ class _HomeFixture {
         'uid': person.id,
         'displayName': _name(person),
         'username': person.short.toLowerCase(),
+        'creatorAudienceVisible': true,
+      });
+    }
+    for (final author in const <(String, String)>[
+      ('author_1', 'Marek Nowak'),
+      ('author_2', 'Marta Zielińska-Kowalczyk'),
+    ]) {
+      await db.doc('publicProfiles/${author.$1}').set({
+        'uid': author.$1,
+        'displayName': author.$2,
+        'creatorAudienceVisible': true,
       });
     }
     final now = Timestamp.now();
@@ -628,6 +668,7 @@ class _HomeFixture {
                   isOnline: person.online,
                   lastSeen: null,
                   availability: person.availability,
+                  creatorAudienceVisible: true,
                 ),
             ]
           : const [],
@@ -1623,7 +1664,9 @@ class _ShellState extends State<_Shell> {
             discoveryService: f.voice.discovery,
             viewsService: f.voice.views,
             auth: f.voice.auth,
+            friendService: f.home.friendService,
             followService: f.home.followService,
+            creatorAudienceService: f.home.creatorAudienceService,
             playerFactory: f.voice.newPlayer,
             onOpenDetail: (moment) => _report('moment-detail:${moment.id}'),
             reelService: f.reels.service,

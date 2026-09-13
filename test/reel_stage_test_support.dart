@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:yovoice/core/theme/app_theme.dart';
+import 'package:yovoice/features/creator/data/services/creator_audience_service.dart';
 import 'package:yovoice/features/profile/data/services/follow_service.dart';
 import 'package:yovoice/features/reels/data/models/reel_composition.dart';
 import 'package:yovoice/features/reels/data/services/reel_service.dart';
@@ -334,6 +335,31 @@ FollowService stageFollowService({String viewerUid = 'viewer'}) =>
       mutationInvoker: (_) async => <String, dynamic>{},
     );
 
+class _StaticCreatorAudienceService extends CreatorAudienceService {
+  _StaticCreatorAudienceService({required this.visible, this.fail = false});
+
+  final bool visible;
+  final bool fail;
+
+  @override
+  Stream<CreatorAudienceProjection> watchPublicProjection(String userId) {
+    if (fail) {
+      return Stream<CreatorAudienceProjection>.error(
+        StateError('Audience projection unavailable'),
+      );
+    }
+    return Stream<CreatorAudienceProjection>.value(
+      visible
+          ? const CreatorAudienceProjection(
+              visible: true,
+              followerCount: 0,
+              followingCount: 0,
+            )
+          : const CreatorAudienceProjection.hidden(),
+    );
+  }
+}
+
 /// Pumps the embedded Reels feed at [size], the way YO Moments hosts it.
 Future<void> pumpReelStage(
   WidgetTester tester, {
@@ -347,6 +373,8 @@ Future<void> pumpReelStage(
   TextDirection textDirection = TextDirection.ltr,
   ReelService? service,
   FollowService? followService,
+  bool creatorAudienceVisible = true,
+  bool creatorAudienceFails = false,
   void Function(dynamic reel)? onOpenAuthor,
   Future<void> Function()? onCreate,
   ReelAudioPlaybackFactory? audioPlaybackFactory,
@@ -369,6 +397,10 @@ Future<void> pumpReelStage(
             immersive: immersive,
             service: service ?? reelStageService(count: count, photo: photo),
             followService: followService,
+            creatorAudienceService: _StaticCreatorAudienceService(
+              visible: creatorAudienceVisible,
+              fail: creatorAudienceFails,
+            ),
             onOpenAuthor: onOpenAuthor,
             onCreate: onCreate,
             audioPlaybackFactory:

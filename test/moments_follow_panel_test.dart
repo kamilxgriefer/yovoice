@@ -26,7 +26,14 @@ void main() {
     followedAt: DateTime.now(),
   );
 
-  Future<({FollowService follows, List<Map<String, dynamic>> calls, Completer<void> gate, List<bool> pool})>
+  Future<
+    ({
+      FollowService follows,
+      List<Map<String, dynamic>> calls,
+      Completer<void> gate,
+      List<bool> pool,
+    })
+  >
   pumpPanel(
     WidgetTester tester, {
     required List<FriendUser> friends,
@@ -85,8 +92,8 @@ void main() {
     return (follows: follows, calls: calls, gate: gate, pool: pool);
   }
 
-  testWidgets('pool = friends minus following minus the viewer, under the '
-      'honest heading', (tester) async {
+  testWidgets('pool = eligible Creator friends minus following and viewer, '
+      'under the honest heading', (tester) async {
     final harness = await pumpPanel(
       tester,
       friends: [
@@ -94,21 +101,72 @@ void main() {
         friend('bartek', name: 'Bartek'),
         friend(viewerUid, name: 'Me'),
         friend('zuzia', name: 'Zuzia'),
+        friend(
+          'personal',
+          name: 'Personal profile',
+          creatorAudienceVisible: false,
+        ),
       ],
       following: [followed('bartek')],
     );
     expect(find.byKey(const ValueKey('moments-follow-panel')), findsOneWidget);
     expect(find.text('Friends you do not follow yet'), findsOneWidget);
     expect(find.textContaining('ecommend'), findsNothing);
-    expect(find.byKey(const ValueKey('moments-follow-row-ola')), findsOneWidget);
-    expect(find.byKey(const ValueKey('moments-follow-row-zuzia')), findsOneWidget);
-    expect(find.byKey(const ValueKey('moments-follow-row-bartek')), findsNothing);
-    expect(find.byKey(const ValueKey('moments-follow-row-$viewerUid')), findsNothing);
+    expect(
+      find.byKey(const ValueKey('moments-follow-row-ola')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('moments-follow-row-zuzia')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('moments-follow-row-bartek')),
+      findsNothing,
+    );
+    expect(
+      find.byKey(const ValueKey('moments-follow-row-personal')),
+      findsNothing,
+    );
+    expect(
+      find.byKey(const ValueKey('moments-follow-row-$viewerUid')),
+      findsNothing,
+    );
     expect(find.text('@ola.codziennie'), findsOneWidget);
     expect(harness.pool, [true]);
-    expect(find.byKey(const ValueKey('moments-follow-panel-record')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('moments-follow-panel-record')),
+      findsOneWidget,
+    );
     expect(find.text('Add your moment'), findsOneWidget);
     expect(find.text('Record a Voice Moment'), findsOneWidget);
+  });
+
+  testWidgets('an ineligible or legacy friend never exposes a Follow CTA', (
+    tester,
+  ) async {
+    final harness = await pumpPanel(
+      tester,
+      friends: [
+        friend(
+          'personal',
+          name: 'Personal profile',
+          creatorAudienceVisible: false,
+        ),
+        const FriendUser(
+          id: 'legacy',
+          displayName: 'Legacy profile',
+          email: '',
+          photoUrl: null,
+          isOnline: false,
+          lastSeen: null,
+        ),
+      ],
+    );
+
+    expect(find.byKey(const ValueKey('moments-follow-panel')), findsNothing);
+    expect(find.text('Follow'), findsNothing);
+    expect(harness.pool, [false]);
   });
 
   testWidgets('Polish heading and CTA copy', (tester) async {
@@ -117,7 +175,10 @@ void main() {
       friends: [friend('ola', name: 'Ola')],
       locale: const Locale('pl'),
     );
-    expect(find.text('Znajomi, których jeszcze nie obserwujesz'), findsOneWidget);
+    expect(
+      find.text('Znajomi, których jeszcze nie obserwujesz'),
+      findsOneWidget,
+    );
     expect(find.text('Obserwuj'), findsOneWidget);
     expect(find.text('Dodaj swoją chwilę'), findsOneWidget);
     expect(find.text('Nagraj Voice Moment'), findsOneWidget);
@@ -131,14 +192,23 @@ void main() {
       following: [followed('bartek')],
     );
     expect(find.byKey(const ValueKey('moments-follow-panel')), findsNothing);
-    expect(find.byKey(const ValueKey('moments-follow-panel-record')), findsNothing);
-    expect(find.byKey(const ValueKey('moments-follow-panel-empty')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('moments-follow-panel-record')),
+      findsNothing,
+    );
+    expect(
+      find.byKey(const ValueKey('moments-follow-panel-empty')),
+      findsOneWidget,
+    );
     expect(harness.pool, [false]);
   });
 
   testWidgets('Obserwuj calls follow exactly once per tap, then reads back '
       'as following and unfollows on the next tap', (tester) async {
-    final harness = await pumpPanel(tester, friends: [friend('ola', name: 'Ola')]);
+    final harness = await pumpPanel(
+      tester,
+      friends: [friend('ola', name: 'Ola')],
+    );
     final button = find.byKey(const ValueKey('moments-follow-ola'));
     expect(button, findsOneWidget);
     expect(tester.getSize(button).height, greaterThanOrEqualTo(48));
@@ -189,8 +259,9 @@ void main() {
     }
   });
 
-  testWidgets('a friends stream error hides the panel rather than guessing',
-      (tester) async {
+  testWidgets('a friends stream error hides the panel rather than guessing', (
+    tester,
+  ) async {
     useSurface(tester, const Size(400, 900));
     final auth = authAs();
     final firestore = fakeFirestore();
