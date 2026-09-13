@@ -28,8 +28,8 @@ label and hub icon.
 - Home is server-first, retaining the friends activity strip and replacing the
   ordinary follower panel with the user's Servers, create-server entry and
   recent chats.
-- YO Moments presents Voice and Reels through one responsive visual system.
-  Voice replies are implemented for Voice Moment and Reel comment threads,
+- YO Moments presents Głos and Yeels through one responsive visual system.
+  Voice replies are implemented for Voice Moment and Yeel comment threads,
   including recording, playback arbitration, deletion and moderation paths.
 - Creator followers/following are limited to an eligible verified Creator with
   active Premium, verified age and explicit audience opt-in. Personal accounts
@@ -51,9 +51,27 @@ the evidence are in [TESTING.md](TESTING.md#server-first-cutover-source-gate--20
 
 No production activation is implied. `YOVOICE_SERVERS_V1` remains absent in
 production and no Servers V1 Functions, Rules or indexes were deployed here.
-Reels voice replies remain unavailable against the older production backend.
+Yeels voice replies remain unavailable against the older production backend.
 Flag activation, the ordered Firebase deployment, post-deploy smoke checks,
 two-device/provider validation and any tester build remain separate held gates.
+
+## Build 27 internal tester candidate — 2026-09-13
+
+**Status: integrated internal candidate; public and backend release held.** The
+candidate brings the desktop preview onto the current Home, slot-13 Servers,
+Chats, Friends and YO Moments components while preserving the Hub bar/dock. It
+also includes the Głos/Yeels selector, media-specific time labels, shared
+per-author Add friend state and retry, full-row unread state, archive lost-ack
+replay with busy UI, a 1.4-second minimum startup presentation, Prism Halo v5
+and 16 bundled YO Voice Originals.
+
+Double-tap-like/autoplay and custom-audio synchronization remain pending final
+validation. Servers V1 activation and the global GIF catalog remain gated and
+undeployed in production, and App Check retains its telemetry-first release
+concern. Distribution evidence belongs to
+[DEPLOYMENT.md](DEPLOYMENT.md#200-27-internal-tester-candidate--2026-09-13);
+the consolidated scope and open gates are in the
+[Build 27 session record](Sessions/2026-09-13-build-27-internal-tester-candidate.md).
 
 ## Build 26 internal tester availability — 2026-09-13
 
@@ -83,6 +101,46 @@ their separate production-deployment gates.
 > physical device and no production-traffic observation** except where a
 > simulator run is named explicitly. Session record:
 > [2026-09-07-build-22-engagement-and-tester-rounds](Sessions/2026-09-07-build-22-engagement-and-tester-rounds.md).
+
+- **GIFs in the composer — production-original catalog complete in source
+  2026-09-13 (ADR-172/173)** (**BUILD 27 CANDIDATE; BACKEND DEPLOYMENT STILL
+  PENDING**): three source-static Cloud Functions callables in `europe-west1`
+  with a credential-free catalog of 16 bundled YO Voice Originals, a dormant
+  GIPHY adapter, a fixture provider for the emulator, a shared query cache, a
+  per-account token bucket, an hourly provider budget, a four-layer `g`-only
+  content filter and a `reports`-backed asset report path; `firestore.rules`
+  closes the five new server-owned collections to every client. On the client,
+  one `YoComposerPanel` with Emoji and GIF tabs replaces the three
+  `bool _emojiPickerOpen` flags in direct chat, club chat and the in-room chat
+  sheet, so two stacked panels are structurally impossible. Settings gains
+  **Load GIFs automatically**, retained for a future remote-provider path; the
+  current originals render from the signed app bundle. The Moderation Center
+  now triages the `gifAsset` reports the server
+  files: the queue types them, the detail panel previews the reported asset
+  from the report's own evidence snapshot (staff cannot read `gifAssets`),
+  states that no account is at fault, and offers **Block GIF** through the
+  existing `moderateReport` callable — before this it could see the complaint
+  and do nothing about it.
+
+  **Integration update 2026-09-13.** `sendDirectMessage`, `sendRoomMessage`
+  and `sendClubMessage` accept only canonical `{provider,id}` references;
+  Flutter sends and displays them in direct, room, legacy club and Server text
+  chat. `functions/index.js` pins `yovoice` at export discovery, so the catalog,
+  search and report callables no longer disappear with a missing optional
+  secret. Message creation remains server-only. A coordinated Functions
+  deployment, installed Build 27 canary and production verification remain
+  outstanding.
+
+  Evidence: `flutter analyze --no-pub` clean; 22 GIF picker widget tests, 13
+  composer-panel tests, 15 catalog-service tests, 9 GIF view tests; Functions
+  emulator suites `gif_catalog` (19), `gif_moderation` (12),
+  `gif_cache_and_limits` (18) and `gif_giphy_adapter` (13, fixture-driven, no
+  key); `firestore-tests/rules.test.js` 559/559 including five new GIF cases;
+  four Moderation Center GIF cases; and rendered captures at 320 and 390 in
+  dark and Pearl under `test/.screenshots/gif-picker-*.png`, plus the reported-
+  GIF detail at 390 and 1440 under `gif-moderation-detail-*.png`, which caught
+  and drove fixes for a
+  truncated GIPHY mark, a zero-height trending grid and a clipped placeholder.
 
 - **Reel likes and comments, server-owned, with a Reel-comment moderation
   path** (2026-09-07, source commits `33c5f3e5` + `591b8840`, ADR-161/162;

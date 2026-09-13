@@ -183,14 +183,18 @@ before presenting, preventing a stale retry after sign-out/account change.
 
 `YoFloatingNavigationDock` is the only mobile shell navigation surface. The
 post-Build-20 Meniscus change replaces the fixed central YO action/rise with
-five destinations: **Home, Rooms, Chats, Your Moments, More**. Their stable
-content identities are `0, 3, 1, 5` and a More action; desktop slot identities
-and the full More menu stay intact. Rooms uses the real Discover root, with
-a visible Create room control preserving the Community/Broadcast chooser.
-Your Moments keeps the unified Voice/Reels feed; it is not an own-only filter.
+five destinations: **Home, Servers, Chats, Your Moments, More**. Their stable
+content identities are `0, 13, 1, 5` and a More action; desktop slot identities
+and the full More menu stay intact. Servers uses the current `ServersScreen`
+root and five-template selector. Your Moments keeps the unified Głos/Yeels
+feed; it is not an own-only filter.
 Its navigation label is localized in all 43 locales without renaming the
 existing YO Moments product heading. Mobile creation onboarding highlights
-the real Rooms control, including replay after scrolling and layout changes.
+the real Servers control, including replay after scrolling and layout changes.
+
+Build 27 changes only that Rooms-to-Servers destination identity. The Hub
+bar/dock's geometry, interaction model, animation and accessibility behavior
+remain the existing component contract.
 
 One circular bead and a continuous concave socket share a spring-driven
 position. The trailing shoulder length reacts to velocity; upright icons lift

@@ -465,6 +465,15 @@ Summary only — full detail, including the CI workflow's exact steps, is in
 - **PayPal** — an optional recurring payment method presented inside Stripe
   Checkout after the Stripe account is approved and enabled; YO Voice does not
   integrate a second entitlement authority.
+- **YO Voice Originals** — the active GIF catalog behind the composer's GIF
+  tab
+  ([ADR-172](Decisions.md#adr-172-gifs-are-a-server-proxied-hotlinked-g-only-surface-and-the-composer-grows-one-panel-with-two-tabs)).
+  Sixteen original G-rated animations ship in the Flutter bundle and use
+  canonical `asset://yovoice/gifs/...` references, so search, sending and
+  received-message rendering need no third-party credential or viewer network
+  request. The optional GIPHY adapter remains source-disabled; enabling it
+  later would restore the documented split proxy/hotlink trust boundary and
+  requires a reviewed source change, credential and privacy rollout.
 - **Vercel** — hosts `yovoice-website`.
 
 See [DEPENDENCIES.md](DEPENDENCIES.md) for why these specific services and

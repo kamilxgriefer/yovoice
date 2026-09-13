@@ -1110,6 +1110,21 @@ removed from the primary bottom navigation and easy to under-test.
 
 ## ADR-020: Service streams shared by more than one widget must be broadcast + replay
 
+**Amendment — 2026-09-13.** The provider and rollout status below describe the
+original third-party design and are superseded for the current release by
+**YO Voice Originals**. Sixteen original G-rated animations ship in the app at
+`assets/gifs/yovoice/`; the production adapter returns canonical
+`asset://yovoice/gifs/<id>.gif` references, and the client maps only that pinned
+scheme to bundle assets. Search supports the shipped English and Polish tags,
+including diacritic folding, and the direct, room, legacy club and Server text
+surfaces all use the same authoritative send pipeline. The current source pins
+the `yovoice` provider in `functions/index.js`, so all three callables are
+discoverable without an API secret. The GIPHY adapter remains available only
+as a dormant future option and none of its hotlink/privacy consequences apply
+while YO Voice Originals is selected. Changing to an external provider requires
+a reviewed source change, credential, smoke test, attribution and privacy
+rollout. Asset blocking remains non-retroactive for messages already sent.
+
 **Context.** `FriendService.watchFriends()` returned
 `StreamController<List<FriendUser>>().stream` — a single-subscription
 stream. `MessagesScreen` creates it once in `initState` and passes the same
@@ -3327,12 +3342,21 @@ startup surface makes landing and direct entry identical, while matching the
 HTML bootstrap and first Flutter loading frame prevents a second visual jump.
 No animation is allowed to become a minimum timer.
 
+**Build 27 amendment (2026-09-13).** The absolute no-minimum rule is superseded
+only by a bounded 1.4-second presentation window so the Voice Glass identity
+and launch status remain readable on a fast start. This is not an
+animation-completion gate: reduced motion may settle immediately, and real
+authentication/profile readiness may keep the surface visible longer. The
+removed 2.8-second web transition and four-second authenticated welcome delay
+remain retired.
+
 ### Consequences
 
 - Landing entry no longer waits 2.8 seconds before starting the app download.
 - Returning signed-in users no longer wait an additional four seconds.
-- On a fast start the animation may be brief; on a slow start it remains until
-  real initialization completes without claiming a percentage.
+- On a fast start Voice Glass remains readable for at least 1.4 seconds; on a
+  slow start it remains until real initialization completes without claiming a
+  percentage.
 - Web bootstrap removal is tied to the first Flutter `runApp`; Auth loading,
   error, logged-out and signed-in destinations keep their real state semantics.
 - iOS and Android own a matching #0D0618 native launch frame and centred mark;
@@ -9290,6 +9314,14 @@ counts and RMS values and raises the per-file bound to 160 KB (bundle
 build. The owner has not yet auditioned the pack; if the character is wrong,
 regenerate rather than hand-edit.
 
+**Build 27 amendment (2026-09-13).** **Prism Halo v5** supersedes Soft Bells
+v4 as the current generated product-sound family. It extends the deterministic
+asset/generator contract to outgoing, incoming and terminal direct-call states
+and the mapped semantic notification cues. Soft Bells v4 remains historical
+release context, not the asset family to select for Build 27. Physical-device
+loudness, audio focus and interruption behavior remain release acceptance
+checks rather than properties inferred from asset generation.
+
 ## ADR-149: Direct manipulation on the Reel canvas, a shared keyboard Done bar, list-level Remove friend / Unarchive, and a shorter mute busy window
 
 **Context.** Tester round 2 (2026-09-06): Reel text/link overlays could not
@@ -10539,13 +10571,16 @@ adversarial/code/visual reviews found and closed concrete regressions before
 any deployment.
 
 **Consequences.** The current tree has integrated source and local evidence,
-not production delivery. Provider signup/secret, live smoke, enabled export
-map, own-feed index readiness, TTL policies and mixed-device acceptance are
-separate gates. GIFs remain hotlinked and blocking is nonretroactive; account
-erasure/export and ranking effectiveness are not silently claimed solved.
+not production delivery. For the 2026-09-13 amendment, YO Voice Originals need
+no provider signup, secret or hotlink; the source-static export map,
+coordinated backend deployment, installed-build canary, own-feed index
+readiness, TTL policies and mixed-device acceptance remain separate gates. GIF
+blocking is nonretroactive; account erasure/export and ranking effectiveness
+are not silently claimed solved.
 Native audio-session/keyboard behavior and all-language human linguistic
 review cannot be inferred from widget/emulator tests. Current evidence is in
 [the integration session](Sessions/2026-09-10-claude-integration.md).
+
 
 ## ADR-174: Uncertain participant revocation is not a reclaimable live-session lease
 
@@ -10649,96 +10684,83 @@ remain separate work. Independent QA and final read-only review passed the
 bounded 78-case inventory/mapping gate; see [Testing](TESTING.md). No production
 data, mutation authority, SDK connection, deployment or release is implied.
 
-## ADR-176: Servers V1 registers behind one exact environment gate, dispatches its outbox read-only, and still has no activation writer
+## ADR-176: Servers V1 exports are static and activation is a server-owned runtime decision
 
-**Context (2026-09-11/12).** The reviewed Servers V1 factories — creation,
-channels, memberships, sessions, convergence, convergence runtime, session
-control — were held and unexported: `functions/index.js` imported none of them,
-so nothing could exercise them as endpoints, and the `serverControlOutbox` jobs
-they write had no durable consumer. The release check named "registration and
-durable dispatch" as a gate. At the same time every deployed client depends on
-today's export map, one `index.js` cold start serves every function, and
-[Servers.md](Servers.md) forbids activating a held server through anything but a
-reviewed path.
+**Status:** Accepted (2026-09-13). This supersedes the 2026-09-11/12 design
+that used `YOVOICE_SERVERS_V1` as a deploy-discovery gate.
 
-**Decision.** `YOVOICE_SERVERS_V1` in `functions/.env` is the only switch.
-Exactly `enabled` makes `index.js` require `functions/servers/registration.js`,
-which registers the sixteen V1 callables of the "Callable contract" plus the
-`serverControlOutbox/{operationId}` created-trigger and its every-five-minutes
-retry schedule. Absent and `disabled` register nothing and load no registration
-module. Any other value — including a whitespace or case variant such as
-`enabled ` — throws at require time, so it fails both deploy discovery and the
-cold start; the helper deliberately does not trim. Callables run in
-`europe-west1`, scale to zero, keep only `{uid, token}` from Auth and pass the
-exact payload to the same-named factory method; factory `HttpsError`s reach the
-client unchanged and anything else becomes `internal` with the message withheld.
-The dispatcher never writes: it reads a job, routes it by `kind` to the reviewed
-worker, and stops on lease, backoff, completion, busy or stalled state,
-`recoveryRequired`, `contentCleanupPending`, page and wall-clock budgets. It
-completes a job only on an explicit boolean "no work remains"; a result carrying
-no boolean is rejected as `invalid-worker-result` rather than assumed finished,
-and a job another lease holder settles mid-invocation is reported `busy`, not
-`completed`.
+**Context.** Firebase CLI evaluates `functions/index.js` to discover exports
+before it makes `functions/.env` values available to application code. The
+environment gate therefore produced an incomplete deploy plan even when the
+operator supplied the intended value. Servers need a stable, reviewable export
+surface that can be deployed inert, admitted to one tester cohort, opened more
+broadly and frozen again without changing the function manifest. Podcast
+recording has a separate provider credential and acceptance boundary, so it
+must not become a side effect of enabling the rest of Servers.
 
-**Reasoning.** A registration that is off by default keeps the export map and
-installed clients exactly as they are, and turns enabling into one reviewed,
-reversible `.env` change plus a deploy — the shape
-that already works for the Stripe and GIF exports (ADR-172/173). Reusing factory
-method names as export names makes a binding typo a deploy-time failure. A
-read-only dispatcher preserves the workers' own lease and idempotency semantics
-([ADR-174](#adr-174-uncertain-participant-revocation-is-not-a-reclaimable-live-session-lease))
-instead of adding a second state machine, and refusing to infer completion from a
-missing field keeps "never complete uncertain work" true at the integration layer.
-Activation is deliberately absent: it is the moment held anchors become
-discoverable and joinable by legacy queries and RTC consumers, so it needs
-staff-only authority, the global RTC adapters, Rules and indexes, and its own
-adversarial review before a single write path exists.
+**Decision.** `functions/index.js` always registers the **53 base Servers V1
+exports**: 48 callables, two outbox dispatch exports and three maintenance
+sweeps. `YOVOICE_SERVERS_V1` no longer controls registration or runtime access;
+legacy values are ignored and regression tests pin that result.
 
-**Consequences.** With the gate enabled, 18 endpoints deploy, all callables with
-`minInstances: 0`, so the warm set and its billing are unchanged. Absent and
-`disabled` are byte-for-byte the same cold start. **The gate is a deploy-discovery
-switch, not a runtime kill switch.** Removing the variable and redeploying does
-not delete the deployed functions: `firebase deploy --only functions` only
-*prompts* to delete what disappeared, so deletion needs that prompt confirmed,
-`--force`, or `firebase functions:delete` per name — and a non-interactive deploy
-aborts at the prompt, failing the whole functions release instead of rolling back.
-Until they are deleted the functions stay callable and their Eventarc trigger and
-Cloud Scheduler job keep firing, so anything needing an immediate stop needs a
-different mechanism. Registration activates nothing: every server created through
-these endpoints stays `serverActivationState: held`, because no activation writer
-exists. A gate value delivered through `functions/.env.<projectId>`,
-`.env.<alias>` or `.env.local` is invisible to the cold-start test's child
-environment, so `test/cold_start_module_graph.test.js` now guards those files
-directly. Rollback: remove the line (or set `disabled`), redeploy expecting the
-deletion prompt, and delete the 18 names explicitly when they must actually go.
+Every callable authenticates the request and then reads the exact server-owned
+Firestore document `appConfig/serversV1`. Every Server worker reads the same
+document but uses the independent `workersEnabled` field. Reads are deliberately
+uncached. The only valid persisted shape is:
 
-A measured correction to an earlier draft of this entry: the gate keeps the
-*registration module and the V1 runtime* off the cold start, not every
-`functions/servers` module. Three of them load on every cold start by design,
-because legacy consumers import them directly — `servers/rtc_binding.js` from
-`livekit/sessions.js`, `staff/voice_enforcement.js`,
-`achievements/livekit_http.js` and `rooms/liveness_sweeper.js`,
-`servers/contract.js` from `rtc_binding.js`, and `servers/capacity.js` from
-`clubs/quota.js`. They are pure and small, the export map is unchanged, and the
-cold-start test pins export names, the warm set and the SDK counts rather than
-the absence of those three.
+```json
+{
+  "schemaVersion": 1,
+  "callableAccess": "disabled | testers | all",
+  "testerUids": [],
+  "workersEnabled": false,
+  "revision": 1
+}
+```
 
-**Named activation preconditions, recorded 2026-09-12 and not yet discharged.**
-Two conditions are invisible to every suite that passes today, so neither can be
-closed by running tests. First, the `channelSessions.livekitRoomName`
-collection-group index is committed in `firestore.indexes.json` but its *deploy*
-is unverified; `resolveRtcBindingForLiveKitRoom` queries that collection group,
-and with no index the query throws `FAILED_PRECONDITION`. Revocation still
-happens, so the boundary stays fail-closed, but the enforcement event never
-reaches `completed`. Second, `staff/voice_enforcement.js` rethrows
-`unbound-live-generation` under a `retry: true` trigger with no ceiling and no
-dead-letter, and each attempt re-runs `findParticipantRooms`, which is one
-`listRooms()` plus one `getParticipant` per room. Together they turn one stalled
-event into an unbounded loop of O(all rooms) provider calls. Neither is reachable
-today, because V1 is unregistered and clients cannot write a versioned anchor,
-which is why both are recorded as preconditions on activation rather than
-hotfixed against a held feature. [Servers.md](Servers.md) carries the same two
-under "Named activation preconditions".
+`testerUids` contains at most 100 unique valid Auth UIDs and may be non-empty
+only when `callableAccess` is `testers`; `disabled` and `all` require an empty
+list. Missing configuration means disabled callables and paused workers.
+Unreadable, malformed, over-large, duplicated or internally inconsistent
+configuration fails closed. Callables return a bounded unavailable or
+failed-precondition error without running a product factory. Workers log a
+non-sensitive paused result and leave durable work for a later schedule.
+
+Podcast events and Q&A remain in the base template. The seven recording/Egress
+exports — start, stop, finalize, retry, publish, episode access and the
+reconciliation schedule — are source-disabled. While they are disabled,
+`PODCAST_EGRESS_GCP_CREDENTIALS` is not declared and the Egress, episode-storage
+and episode-service adapters are not constructed. Enabling those seven names is
+a later source change with its own credential, provider drill and review. App
+Check is likewise source-fixed to telemetry-only for the initial rollout.
+
+Deployment follows four reviewed phases: compatibility functions; inert worker
+infrastructure; indexes, Rules and non-creation callables; then
+`createServerV1`, still with callable access disabled. Only after read-back and
+negative probes may an operator change the document to `testers`. Migration of
+legacy roots remains a separate, explicitly authorized operation.
+
+**Reasoning.** Static discovery makes the CLI plan deterministic. Runtime
+configuration gives operators a real kill switch without relying on function
+deletion prompts, and the separate callable/worker controls let cleanup drain
+after new requests are frozen. The strict document and client-denied Rules keep
+cohort authority out of request payloads and user-writable data. Separating
+Podcast Egress prevents a missing provider secret from blocking the safe base
+surface.
+
+**Consequences.** A deployed export is not evidence that Servers are enabled.
+The initial document is created as disabled with workers paused; activation and
+every rollback are monotonic document revisions. A request admitted before a
+rollback may finish, so rollback freezes callables first, drains sessions and
+outbox work with workers still enabled, and pauses workers only after the drain.
+Rules and indexes remain in place unless a separate reviewed cleanup proves
+their removal safe.
+
+Static registration loads about 30 additional Server modules on a Functions
+cold start. The isolated benchmark measured roughly 1–2 MiB additional RSS;
+timing was too noisy to establish a latency regression. Monitor Cloud Run
+cold-start telemetry after rollout. A separate Functions codebase may isolate
+that module graph later, but it is not part of this activation change.
 
 ## ADR-177: A V1 live session reaches clients only as a server-owned liveness projection on the channel, and it carries no participant count
 

@@ -5,6 +5,61 @@ Update this whenever a bug is found or fixed. For "features not built
 yet," see [Roadmap.md](Roadmap.md) instead; this file is specifically
 about things that are broken, risky, or need verification.
 
+## PENDING VALIDATION — Yeels double-tap/autoplay and custom-audio synchronization (Build 27)
+
+Build 27 contains the current double-tap-like and feed-autoplay corrections,
+but their final regression result and release review are still outstanding.
+The video-plus-selected-audio path is under the same hold: its final playback
+synchronization check has not yet closed. Keep both items labelled **pending
+validation** in release notes and tester guidance until the owning engineer
+reports the exact focused gate and principal review. Source presence alone is
+not evidence that either playback path is fixed.
+
+## FIXED IN SOURCE — the desktop redesign preview drifted from the current app (Build 27)
+
+The local redesign preview now uses the same current Home, Servers, Chats,
+Friends and YO Moments destinations as the app at desktop widths. Its Servers
+destination uses production content slot 13, `ServersScreen` and the current
+repository wiring; the preview controls link directly to Servers, Chats and
+Friends. Responsive coverage includes 1280 and 1440 px, plus the 1100 px / 200%
+text Server workspace regression. The shared Hub bar/dock, its geometry,
+behavior and animation were not changed; its only retained cutover is the
+previously approved Rooms-to-Servers destination replacement.
+
+## FIXED IN SOURCE — Build 27 feed and chat state was visually ambiguous
+
+YO Moments now names its text selector **Głos** and **Yeels** across the shared
+responsive chrome. Photo Yeels omit the meaningless elapsed-time label, while
+video Yeels retain their time indicator. **Add friend** state is shared per
+author, so repeated cards for one creator converge together, and a refused
+request exposes retry instead of leaving a false success. In Chats, an unread
+conversation marks the complete row rather than relying on one small sublabel.
+
+## FIXED IN SOURCE — archive could duplicate intent after a lost acknowledgement
+
+Archive and unarchive now retry one ambiguous lost acknowledgement with the
+same `requestId`, allowing the server ledger to replay the original operation
+instead of creating a second intent. The Chats row keeps a visible busy state
+and disables the conflicting archive action while that bounded request is in
+flight, including a cold Function start. Permanent refusals are surfaced and
+are not retried.
+
+## FIXED IN SOURCE — startup art could disappear before it was readable (Build 27)
+
+The integrated startup flow keeps Voice Glass visible for at least 1.4 seconds.
+Authentication and profile provisioning may keep it on screen longer; the
+minimum does not replace either readiness gate. This supersedes the original
+startup-slice note that deliberately added no minimum display time.
+
+## FIXED IN SOURCE — call and semantic notification cues lacked one current sound language
+
+Build 27 carries the generated **Prism Halo v5** sound family for outgoing,
+incoming and terminal call states plus the mapped semantic notification cues.
+The deterministic generator and checked-in assets remain the source of truth.
+This source record does not claim a physical-device loudness or focus-mode
+acceptance run, and the pending Yeels custom-audio check above is a separate
+media-playback boundary.
+
 > **A pattern, named once here rather than four times below.** Between
 > 2026-08-19 and 2026-08-20, four features were found to exist in source,
 > pass their tests, and — where a backend was involved — be deployed and

@@ -41,7 +41,7 @@ focused sets exercise overlapping paths:
 | Global Storage Rules | **75/75** |
 | Dedicated Servers Rules | **67/67** |
 | Podcast lifecycle and cleanup | **8/8** |
-| Servers registration/export surface | **60/60**: 54 callables, 2 dispatchers and 4 sweeps |
+| Servers static registration/runtime gate | **56/56** under the Firestore emulator: 53 base exports discoverable, 7 Podcast recording/Egress exports absent, exact runtime document/cohort/worker/fail-closed cases |
 | Focused emulator after security fixes | **21/21** |
 | Related backend regression | **88/88** |
 | Membership authorization | **11/11** |
@@ -58,10 +58,24 @@ text. The known Flutter Web keyboard traversal debt in the unchanged dock and
 the lower-priority modal route-label warning remain recorded in
 [Bugs.md](Bugs.md).
 
+The Servers activation slice ran
+`servers_registration.test.js`,
+`servers_registration_independent_qa.test.js`,
+`optional_secret_discovery.test.js` and
+`servers_runtime_activation.test.js` together with one Firestore emulator and
+`--test-concurrency=1`; all 56 tests passed with no skip. The cold-start test
+separately pins the complete export map, the exact 33-file Server module graph,
+the 53 registered base Server names, absence of all seven Podcast
+recording/Egress names, absence of eager LiveKit/Storage/Stripe/media SDKs and
+the fact that late `YOVOICE_SERVERS_V1`, Podcast or GIF environment values do
+not alter source-static discovery.
+
 This is source, automated and local live-render evidence. It is not a physical
-native-device or production acceptance result. Production still has
-`YOVOICE_SERVERS_V1` absent, and the Servers V1 backend, Rules and indexes were
-not activated or deployed in this cutover. Reels voice replies therefore keep
+native-device or production acceptance result. Static source exports do not
+prove that the Server Functions, Rules or indexes are deployed, and a deployed
+export does not prove `appConfig/serversV1` admits any account. Production
+activation must be reported only after the phased deploy, read-backs, negative
+probes and tester canary in DEPLOYMENT.md. Reels voice replies likewise keep
 their honest unavailable state until their coordinated backend deployment.
 
 ## Build 19 tester-release evidence (2026-09-03)
@@ -700,6 +714,67 @@ suite, so isolated ports are real isolation rather than documentation only.
 > read-back for 4 failures and the hardcoded reason for 6, then reverted).
 > A count that only ever ran green proves less than a smaller count that was
 > shown to fail first.
+
+## GIFs: production originals plus isolated provider seams (ADR-172)
+
+The active GIF feature needs no API key. Sixteen YO Voice Originals are
+generated deterministically, checked byte-for-byte against the provider
+manifest and bundled in the Flutter asset tree. The remote and fixture seams
+remain isolated and tested so a later provider change cannot silently widen
+the trust boundary.
+
+**Server — the production provider is first-party.**
+`functions/media/gif/yovoice_provider.js` provides trending, bilingual
+EN/PL search with diacritic folding, paging and exact-id resolution without
+network or credentials. `functions/index.js` source-pins it so Firebase export
+discovery cannot omit `searchGifs` and `reportGifAsset` while `.env` loads.
+
+**Server — the provider adapter is injectable.**
+`functions/media/gif/fake_provider.js` implements the same interface as the
+GIPHY adapter, with ~40 deterministic assets and deliberately adversarial
+fixtures: a `pg`-rated asset that the response re-filter must drop, an unrated
+one, an empty title, and an over-long title. It is selected by
+`GIF_PROVIDER=fake` and **refused unless `FUNCTIONS_EMULATOR` /
+`FIRESTORE_EMULATOR_HOST` / `NODE_ENV=test` is set** — a fixture catalog can
+never reach a user, and a misconfigured environment throws rather than
+silently serving fixtures. Setting it in the local env also gives any developer
+a working GIF picker with no key at all.
+
+**Server — the HTTP client is injectable.** `createGiphyProvider({fetchImpl})`
+means the real adapter is tested against recorded fixture JSON
+(`functions/test/fixtures/giphy_search_response.json`) with no key and no
+network: parsing, normalization, title sanitation, URL pinning, rating mapping,
+paging, and the 401/403/429/timeout error mapping the circuit breaker depends on.
+
+**Client — the transport is an interface.** `GifTransport` /
+`FakeGifTransport` (`test/support/fake_gif_transport.dart`) makes every picker
+state reachable in a widget test: available, unavailable for each reason,
+loading, populated, empty, error, rate-limited, degraded and paged.
+
+| Suite | What it covers |
+|---|---|
+| `functions/test/gif_catalog.test.js` (19) | availability, kill switch, rating re-filter, shared cache, denylist, per-account limit, budget degradation, breaker — **against the real Firestore emulator**, with real read/write counts |
+| `functions/test/gif_moderation.test.js` (12) | report shape, idempotency, auto-suppression, blocking, `resolveGifAsset`, `moderateReport` triage, the achievement exclusion |
+| `functions/test/gif_cache_and_limits.test.js` (18) | URL pin, id grammar, cache keys, memo LRU, token bucket arithmetic, hourly budget |
+| `functions/test/gif_giphy_adapter.test.js` (13) | the real adapter, fixture-driven, no key |
+| `functions/test/gif_yovoice_provider.test.js` | all 16 production ids, bundle-path parity, bilingual search, paging and resolution |
+| `functions/test/optional_secret_discovery.test.js` | all three GIF exports are discoverable without `GIPHY_API_KEY`; dormant providers cannot change the map late |
+| `firestore-tests/rules.test.js` (5 GIF cases) | every GIF collection closed to clients and staff, a forged `gifAsset` report refused, a `gif` map refused on room and club messages |
+| `test/gif_picker_test.dart` (22) | search, trending, debounce, empty, error, rate-limited, degraded, disabled, report sheet, auto-load off, responsive columns, Polish |
+| `test/composer_panel_test.dart` (13) | the panel swap, insertion into the composer, **the two pickers are never both in the tree**, four viewport widths, 200% text scale, the room sheet's 260 px cap |
+| `test/gif_catalog_service_test.dart` (15) | debounce, minimum query length, in-flight cancellation, the session memo, failure mapping |
+| `test/gif_view_test.dart` | fixed height before load, clamping, text-scale cap, dead-URL placeholder, auto-load off, semantics, and local bundle rendering without a network fetch |
+| `test/gif_chat_surfaces_test.dart` | authoritative pick/send/retry/render on direct, room, legacy club and Server text channels |
+| `test/moderation_center_test.dart` (4 GIF cases) | a `gifAsset` report parses with no account blamed, the detail panel types it, previews the evidence and offers **Block GIF**, the confirmation states that already-sent GIFs stay visible, and `ReportService.report` refuses the server-only target type up front |
+
+**What this proves and what it does not.** Generator verification plus bundle
+parity proves the exact 16 local files exist for the current provider; widget
+tests prove they render without a network fetch. Emulator tests prove the
+catalog, moderation and authoritative writers work together. A real installed
+build and deployed callable canary are still required for release acceptance.
+The dormant GIPHY fixture tests do not prove its live CDN, rating or current
+terms; enabling that adapter still requires the separate provider smoke and
+privacy rollout in [DEPLOYMENT.md](DEPLOYMENT.md).
 
 ## The stated limitation: a green suite can coexist with a feature that cannot work
 

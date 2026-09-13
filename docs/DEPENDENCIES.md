@@ -33,6 +33,67 @@ permission-scoped-token model in
 [Backend.md](Backend.md#livekit-token-minting) straightforward to
 implement correctly.
 
+## GIFs
+
+**YO Voice Originals** is the active catalog behind the composer's GIF tab.
+Sixteen original 320×200, G-rated animations are generated deterministically
+by `tool/generate_yovoice_gifs.py`, committed under
+`assets/gifs/yovoice/`, and decoded by Flutter's built-in image support. It
+adds no Dart or npm package, no API credential and no third-party request.
+See [ADR-172](Decisions.md#adr-172-gifs-are-a-server-proxied-hotlinked-g-only-surface-and-the-composer-grows-one-panel-with-two-tabs).
+
+The provider abstraction still includes **GIPHY** as an optional HTTP adapter
+(`functions/media/gif/giphy_provider.js`, Node 22 global `fetch`). It is not
+selected by the current production source. Moving to it requires a reviewed
+source change, the `GIPHY_API_KEY` secret, a live provider smoke test and the
+privacy/attribution rollout below.
+
+The dormant GIPHY adapter was originally chosen over KLIPY (the
+Tenor-compatible alternative) because YO Voice is a
+consumer social product with a real moderation queue and plausible minor users:
+GIPHY's `g` rating is an editorially assigned, per-asset value with a decade of
+operational history and a staffed moderation team behind it, its non-English
+search relevance matters for a bilingual EN/PL product, and its API is a
+contractual product line rather than a free-tier growth channel that can be
+withdrawn the way Tenor's was. **KLIPY was not written as a second adapter**,
+deliberately: its endpoint and response shapes could not be verified from here,
+and a guessed adapter for an unverified API is fabrication, not a fallback. The
+seam is what makes it cheap to add — `createGifProvider` in
+`functions/media/gif/provider.js` plus one `GIF_PROVIDER` value.
+
+**Dormant external-provider constraints and activation checks.** The bullets
+below do not apply to the bundled YO Voice Originals catalog and are not a
+claim that all current provider terms are enforced by code.
+Account approval, current quotas, attribution and any pingback obligation
+must be checked with the provider before activation; the live smoke remains
+unrun without an owner-configured key.
+
+- **Attribution is mandatory.** "Powered by GIPHY" is rendered in the picker
+  footer wherever results are shown; there is no code path that hides it, and
+  it stacks above the rating line rather than truncating on a narrow screen.
+  Upgrading to the official logo needs no `pubspec.yaml` change —
+  `assets/images/` is already declared.
+- **Hotlinking is required and rehosting is forbidden.** We proxy metadata and
+  search; the device fetches image bytes from `media.giphy.com` directly. This
+  is why there is no Storage object and no egress line for GIFs — and why every
+  viewer's IP reaches GIPHY (see [SECURITY.md](SECURITY.md)).
+- **The content rating must be set.** `rating=g` is pinned inside the adapter
+  and is not a parameter of any callable.
+- **Rate limits.** A beta key is heavily capped per hour and per day; a
+  production key needs GIPHY app review. **Read the current numbers off the
+  developer portal at signup and record them here** — nothing in this repo
+  knows them. `DEFAULT_HOURLY_PROVIDER_BUDGET` in
+  `functions/media/gif/rate_limit.js` is a deliberately conservative 400/hour
+  until somebody does; the shared query cache is what makes a beta key viable
+  at all, with a target hit ratio above 80%.
+- **Check at signup:** whether an analytics/pingback obligation applies to
+  raw-API (non-SDK) integrations. If it does, it is issued **server-side from
+  the proxy**, never from the device, so the privacy property survives.
+
+If enabled, the API key lives only in Google Secret Manager
+(`GIPHY_API_KEY`, via `defineSecret`) and is read inside a request. It is never
+in the client, never in Firestore, never logged.
+
 ## State management
 
 **`flutter_riverpod` / `riverpod_generator`** are dependencies, but most

@@ -74,6 +74,7 @@ Top-level collections (from `firestore.rules`):
 | `creatorPinnedPosts/{creatorId}` (server-owned exact pointer) | — |
 | `directCalls/{callId}` (server-owned; two participants get only) | — |
 | `directCallLocks/{userId}` / `directCallControlOutbox/{callId}` (server-only) | — |
+| `appConfig/{configId}` (server-only runtime configuration; every client read/write denied) | — |
 
 Notable fields:
 
@@ -84,6 +85,18 @@ Notable fields:
   cleanup retryable. Clients cannot list arbitrary calls or write any of these
   collections. Scheduled expiry uses the composite index on
   `directCalls(status, expiresAt)`.
+
+- **Servers V1 activation (`appConfig/serversV1`, ADR-176)** — exact document
+  `{schemaVersion: 1, callableAccess, testerUids, workersEnabled, revision}`.
+  `callableAccess` is `disabled`, `testers` or `all`; only `testers` may carry
+  a non-empty list, bounded to 100 unique valid Auth UIDs. Missing data is
+  disabled. Unknown fields, malformed values, duplicates, an inconsistent
+  list or a read failure fails closed. Functions read it uncached: callables
+  use the authenticated UID and workers use the independent boolean. Clients
+  cannot read the cohort or mutate the gate because `match
+  /appConfig/{configId}` denies every client operation. The 53 base export
+  names are source-static and ignore `YOVOICE_SERVERS_V1`; the seven Podcast
+  recording/Egress exports remain source-disabled.
 
 - **Voice Moment lifecycle (ADR-115, deployed 2026-08-27)** — root create, publication,
   expiry and delete are Cloud Functions authority. Draft, expired and deleting
@@ -329,6 +342,13 @@ would be in production, on the first real channel list. It is recorded as a
 named activation precondition in [Servers.md](Servers.md) alongside the
 `channelSessions.livekitRoomName` collection-group override, which has the same
 committed-but-unverified status.
+
+Deploying the static 53-name Server surface does not discharge either index
+gate. Keep `appConfig/serversV1.callableAccess` disabled until both indexes
+report READY and the exact production queries succeed. Keep workers disabled
+during the inert infrastructure phase, then enable them in a revision-checked
+document replacement before the tester cohort. The complete order and rollback
+are in [DEPLOYMENT.md](DEPLOYMENT.md#servers-v1-static-registration-and-runtime-activation).
 
 The lesson generalizes: **a new server-side query is an index change until
 proven otherwise**, and the only place that proof exists is production.

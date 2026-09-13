@@ -6,8 +6,10 @@ Approved loading-screen artwork is now a Flutter composition, not a flattened
 picture containing UI. The latest user decision removes the old browser HTML
 splash completely. Before the Flutter engine is ready, the web page has only
 the matching `#0D0618` canvas. Native OS launch surfaces are separate and remain
-unchanged. No minimum loading time was added; authentication and profile
-provisioning still determine when the app opens.
+unchanged. The original isolated slice added no minimum loading time. The
+integrated Build 27 flow now keeps Voice Glass visible for at least 1.4 seconds;
+authentication and profile provisioning can keep it visible longer and still
+determine when the app is ready to open.
 
 The final hierarchy is a prominent YO VOICE wordmark (36 px; compact 28 px),
 with supporting localized copy (20/22 px; compact 18 px). Background art drifts
@@ -105,6 +107,14 @@ already registered; no pubspec asset entry is required.
   profile-bootstrap handoff. Existing functional boundaries and durations are
   preserved. A reviewer flagged possible duplicate entrance animation as a
   visual follow-up, not a demonstrated authentication defect.
+
+### Build 27 integration update
+
+The later Build 27 integration adds the 1.4-second minimum presentation window
+described above. It changes neither the four-headline selection nor the
+authentication/profile readiness conditions. The consolidated candidate status,
+including the held backend and tester-release boundaries, lives in
+[2026-09-13-build-27-internal-tester-candidate.md](2026-09-13-build-27-internal-tester-candidate.md).
 
 ## Integration handoff
 

@@ -437,6 +437,78 @@ keeps the microphone disabled ("coming soon").
 
 Deploy order and verification: [DEPLOYMENT.md](DEPLOYMENT.md#pending-not-yet-deployed-reel-voice-comments-adr-187-adr-191).
 
+## GIFs (`functions/media/gif/**`, ADR-172)
+
+Three source-static callables in `europe-west1`:
+
+| Callable | Secret | Registered when |
+|---|---|---|
+| `getGifCatalog()` | **none** | always |
+| `searchGifs({query, locale, cursor, limit})` | **none** for YO Voice Originals | always in the current source-pinned deployment |
+| `reportGifAsset({provider, gifId, reason, note?, contextPath?, requestId})` | **none** for YO Voice Originals | always in the current source-pinned deployment |
+
+`functions/index.js` pins the deployed provider to `yovoice`, rather than
+depending on `.env` during Firebase export discovery. All three exports are
+therefore discoverable without a secret. A future reviewed switch to `giphy`
+would bind `GIPHY_API_KEY` only to the endpoints that contact that provider.
+
+`appConfig/gif` is the server-owned runtime gate. In the current contract a
+missing document does **not** fail closed: absence is treated as enabled. The
+Build 27 production runbook therefore requires the operator to create or update
+the document to exact boolean `{enabled:false}` and read it back **before any
+Build 27 Functions deployment**. Keep the production value false through Rules
+deployment, Function read-back and the non-production two-account canary; see
+[DEPLOYMENT.md](DEPLOYMENT.md#gif-rollout--yo-voice-originals-adr-172173).
+Clients cannot read or write this document.
+
+**A blank query means trending.** Trending is not a second function and not a
+second cold start.
+
+**Module map.** `provider.js` is the adapter seam; `yovoice_provider.js` is the
+credential-free production catalog whose sixteen exact assets ship with the
+app; `giphy_provider.js` is the dormant external-provider adapter;
+`fake_provider.js` is a fixture catalog refused outside the emulator and
+`NODE_ENV=test`; `normalize.js` is pure (cache keys, title sanitation, rating
+mapping); `gif_ref.js` is the dependency-free URL/id/document-id contract shared
+with the client; `cache.js` is the shared query cache plus the capped
+suppression index; `rate_limit.js` is the per-account token bucket and the
+hourly provider budget; `denylist.js` is the pre-provider query filter;
+`moderation.js` files reports and blocks assets; `catalog.js` is the callables.
+
+**`resolveGifAsset()` (`functions/media/gif/index.js`) is the single send-time
+authority.** Every send path goes through it inside the publishing transaction:
+`gifAssets` must already contain the asset, otherwise the client must search
+again. There is no provider request inside a send transaction. The resolver's
+separate nontransactional mode can resolve a catalog miss. Both modes refuse
+blocked/non-`g` assets and derive the canonical local or remote reference from
+a pinned template. Dependency
+direction is one-way — messaging may require media/gif, never the reverse.
+
+**Rate limiting.** Per account: burst 10, refill 1 per 2 s, 120 per 10 min, 800
+per 24 h, charged BEFORE the cache is consulted so a cache hit is not
+detectably free. Globally: `gifProviderBudget/{yyyymmddhh}` is incremented only
+on a real external-provider call. YO Voice Originals bypass that global budget
+because they make no paid or network request, while the per-account limits stay
+active. For an external provider, an exhausted hour serves the freshest cached
+trending page with `degraded: true` rather than erroring.
+
+Safety reports have independent limits: 30 attempts/minute including denied
+attempts/replays, and 20 new reports per rolling day. Current active profile
+is required for search/report, but email verification does not prevent a
+safety report. See ADR-173 for transactional publishing/blocking/removal.
+
+**Failure modes.** A source-selected external provider with an absent or invalid
+key → `available:false`, disabled and labelled. Provider 5xx or >3 s → stale cache if present, else an empty state
+with retry. Provider 401/403/429 → an in-memory circuit breaker opens for the
+hour and `getGifCatalog` reports `provider_unavailable`. Per-account limit →
+`resource-exhausted` with `retryAfterSeconds`; the client keeps its results.
+
+**Achievements: a GIF earns no chat-message credit, deliberately.**
+`functions/achievements/sources.js` matches room and club messages with
+`hasExactKeys`, so an additive `gif` key drops credit automatically — consistent
+with the DM adapter, which already requires `type === "text"`. `sources.js`
+needs no change; the behaviour is pinned by `functions/test/gif_moderation.test.js`.
+
 ## Admin
 
 **Deployment status (verified against `firebase functions:list`,
@@ -551,11 +623,12 @@ bilateral friendship guards before returning a bounded projection.
 
 ## Deploying
 
-```bash
-firebase deploy --only functions --project yovoice-ec54a
-```
-
-No CI/CD path deploys functions automatically, and
-`functions/package.json`'s own `npm run deploy` only deploys one function,
-not all of them — see [DEPLOYMENT.md](DEPLOYMENT.md#cloud-functions-manual)
-before assuming otherwise.
+No CI/CD path deploys Functions automatically. For Build 27, blanket
+`firebase deploy`, `firebase deploy --only functions`, `npm run deploy` and
+`npm --prefix functions run deploy` commands are forbidden. The package script
+is itself a blanket Functions deployment; it does not select one function.
+Use only the frozen-Rules-first, exact non-Server waves and externally anchored
+Server phase selectors in the
+[Build 27 runbook](DEPLOYMENT.md#gif-rollout--yo-voice-originals-adr-172173).
+A production deployment still requires the maintainer's explicit
+authorization.

@@ -1,8 +1,10 @@
 # Servers and channels
 
 Working specification, 2026-09-10. The approved architectural direction is a
-Server domain facade over the existing `clubs` data graph. The user approved
-**up to 20 new servers without Premium**. All five templates remain in scope.
+Server domain facade over the existing `clubs` data graph. The current product
+limit is **5 owned Servers for a Free account and 30 for an active Premium
+account**. Joining Servers is unlimited for both account types. All five
+templates remain in scope.
 This document defines the implementation and acceptance contract; it does not
 declare that the implementation, migration, media integration or release is
 complete.
@@ -208,8 +210,42 @@ same atomic creation transaction. Request payloads cannot select this mode,
 and replay against an existing held or migrated graph returns it unchanged.
 Runtime authority still requires the exact `status: active` / activation
 `active` pair; unknown or mismatched pairs do not receive legacy fallback.
-The production environment does not set `YOVOICE_SERVERS_V1`, so this
-creation capability is not currently registered or deployed.
+
+Registration and use are separate boundaries. The reviewed source statically
+registers the 53 base Server exports so Firebase can discover them without an
+environment variable. A deployed callable still cannot reach this creation
+mode until the server-owned runtime gate below admits its authenticated UID.
+No production deploy or activation is implied by source registration.
+
+### Runtime deployment and activation boundary
+
+`YOVOICE_SERVERS_V1` is obsolete and has no effect. Every base callable reads
+`appConfig/serversV1` after authentication and before any product work; every
+maintenance/outbox worker reads its independent `workersEnabled` value. The
+document is server-only under Firestore Rules and has exactly these fields:
+
+| Field | Runtime contract |
+| --- | --- |
+| `schemaVersion` | Exactly `1` |
+| `callableAccess` | `disabled`, `testers` or `all` |
+| `testerUids` | At most 100 unique valid Auth UIDs; non-empty only for `testers` |
+| `workersEnabled` | Boolean independent of callable admission |
+| `revision` | Positive safe integer, incremented for every operator change |
+
+A missing document behaves as disabled with workers paused. Unknown keys,
+invalid values, duplicates, a non-empty tester list outside `testers`, read
+failure or malformed data fails closed. Reads are uncached so the next fresh
+invocation observes a rollout or rollback revision. An invocation admitted
+before a freeze may finish.
+
+The static base is 48 callables, two dispatcher exports and three maintenance
+sweeps. Podcast events, reminders, questions and voting are included. The six
+Podcast recording/Egress callables and
+`reconcileServerPodcastEgressSchedule` are source-disabled; while disabled,
+their provider credential is not declared and their Egress/episode services
+are not constructed. [ADR-176](Decisions.md#adr-176-servers-v1-exports-are-static-and-activation-is-a-server-owned-runtime-decision)
+and [DEPLOYMENT.md](DEPLOYMENT.md#servers-v1-static-registration-and-runtime-activation)
+own the decision and operator sequence.
 
 ### Channels and categories
 
@@ -417,6 +453,11 @@ replays the result; reusing a request ID for different input is refused.
 Charge target-independent attempt quotas before target-dependent reads.
 Never fall back to direct writes after a callable denies an action.
 
+The table contains all 54 callable contracts. The static base registers 48 of
+them. The six Podcast recording/Egress callables — start, stop, finalize,
+retry, publish and episode access — remain documented for the later provider
+slice but are absent from the current export map.
+
 | Callable | Request-specific input and result |
 | --- | --- |
 | `createServerV1` | `{requestId, serverType, templateVersion, name, description, privacy, defaultLanguage}`; returns `{serverId, defaultChannelId, channelIds, alreadyExisted}` |
@@ -521,10 +562,13 @@ carry position, never authorization; every page rechecks current access.
 
 ## Creation, ownership and capacity
 
-**Approved:** up to 20 new servers without Premium, across the five templates.
-There is no blanket legacy Club paywall on the new selector or hub. Existing
-paid entitlements and membership rights are preserved; joining and continuing
-to use an existing server do not require buying creation capacity again.
+**Approved:** a Free account may own up to 5 Servers and an active paid Premium
+account may own up to 30, across the five templates. A Family Server consumes
+one slot in this shared allowance and also keeps the separate maximum of one
+Family Server per owner. There is no blanket legacy Club paywall on the new
+selector or hub. Both account types may join an unlimited number of Servers;
+joining and continuing to use an existing server never consume creation
+capacity.
 
 Use an explicit server-owned policy such as `freeServersV1` for new servers,
 `legacyRoomV1` for adopted standalone room allocations,
@@ -1065,7 +1109,7 @@ microphone cleanup or shared-board synchronization.
 | Evidence category | Status at this document's creation |
 | --- | --- |
 | Source audit / facade decision | Completed locally; direction accepted for implementation |
-| New free capacity | User approved 20 servers without Premium |
+| Owned Server capacity | 5 for Free, 30 for active paid Premium; Family counts in the same allowance and remains max 1; joins unlimited |
 | Implementation and automated tests | In progress; no completion claimed by this document |
 | Reference comparison / accessibility | Required; no acceptance claimed by this document |
 | Firebase emulator migration/security | Required; no result claimed by this document |
@@ -1121,6 +1165,10 @@ direct terminal DeleteRoom follows durable revocation readiness. The extended
 runtime/bridge union passed 128/128 and a new independent terminal set passed
 11/11 twice, without skips. These overlap earlier focused counts and must not
 be added as a complete Functions total.
+
+The preceding paragraph records the 2026-09-11 checkpoint. Its environment
+registration design is superseded by ADR-176's static export/runtime-gate
+model; its runtime and dispatch evidence remains historical evidence only.
 
 The pure root/room mapping report passed independent 33/33 and final review.
 It reports partial V1 boundaries and owner conflicts, preserves IDs and
@@ -1178,32 +1226,44 @@ Prepare concrete deploy artifacts and reviewed migration reports before asking
 for the final production action. Follow [DEPLOYMENT.md](DEPLOYMENT.md); this
 sequence is a plan, not an instruction to deploy now.
 
-1. Finish compatible backend/rules/indexes, media grants, quotas, revocation
-   and control adapters; run emulators and independent security review.
-2. Verify provider recording/output configuration and platform capture support
-   in the authorized non-production environment; retain explicit unavailable
-   states until their actual dependencies are met.
-3. Validate migration fixtures, rollback and old/new client compatibility;
-   prepare the precise capability gate and migration manifest format.
-4. With separate authorization, deploy the compatible backend/indexes first,
-   verify active exports and actual index/query behavior, then release the
-   compatible client. Fingerprint the served web artifact.
-5. With separate production-data authorization, run and review the dry-run,
-   apply bounded idle mappings, reconcile references/counts and inspect the
-   required privacy and mixed-client outcomes.
-6. Complete two-client/physical acceptance before enabling the corresponding
-   advanced media features broadly. Retire old contracts only after the stated
-   client/traffic/data conditions are demonstrated.
+The production sequence must use the exact-SHA package generated by
+`tool/servers_activation_package.js`. Record its returned `manifestSha256` in
+an operator-controlled file outside both the clean source and package, pass the
+exact commit and external manifest hash to `--prepare-dependencies`, and run the
+same anchored `--verify` after preparation and immediately before every
+dry-run/deploy. Generic `firebase deploy`, `firebase deploy --only functions`,
+`npm run deploy` and `npm --prefix functions run deploy` commands are forbidden
+for this release. They can publish source-static Server exports outside the
+reviewed phases. A production deploy still requires the maintainer's explicit
+authorization.
 
-### Named activation preconditions — recorded 2026-09-12, not discharged
+1. Create `appConfig/serversV1` as `disabled`, with an empty tester list,
+   workers off and revision 1. Refuse to overwrite an existing document.
+2. After the exact Build 27 non-Server selectors, deploy and read back the
+   generated phase-0 compatibility selector, then the generated phase-1 inert
+   Server worker selector. `createRoom` belongs to phase 0 and must not also be
+   appended to the earlier non-Server batch. Keep callables disabled and
+   workers off.
+3. Deploy indexes and wait for READY; deploy Firestore/Storage Rules and the
+   generated phase-2 non-creation selector. Run cross-account and cross-server
+   negative probes.
+4. Enable workers only, verify a no-work pass, then deploy `createServerV1`.
+   It must be the sole target in the generated phase-3 selector. Prove an
+   intended tester is still refused while callable access is disabled.
+5. Atomically move to `testers` with the exact intended Auth UID list. Complete
+   one disposable Friends-server create/channel/message/session cleanup canary
+   and prove a non-allowlisted account remains refused.
+6. `callableAccess: all` is a later reviewed revision with an empty tester list.
+   Legacy-root migration and Podcast recording/Egress remain separate releases.
+
+### Named activation preconditions — updated 2026-09-13
 
 Activation is the moment held anchors become discoverable and joinable by legacy
-queries and RTC consumers. Three preconditions are named here because each is
-invisible to the emulator and to every suite that passes today, so none can
-be closed by running tests. None is reachable in production right now — the
-exact `YOVOICE_SERVERS_V1=enabled` registration boundary is absent from
-`functions/.env`, so clients cannot call the staged V1 exports — which is why
-they are preconditions rather than defects to hotfix.
+queries and RTC consumers. Four preconditions are named here because deployed
+indexes, deployed revisions and provider behavior are invisible to ordinary
+emulator tests. Static export discovery does not discharge any of them. Keep
+`appConfig/serversV1.callableAccess` disabled until the rollout read-backs and
+negative probes in DEPLOYMENT.md pass.
 
 1. **The `channelSessions.livekitRoomName` collection-group index must be
    verified as deployed, not merely committed.** The field override exists in
@@ -1254,6 +1314,12 @@ they are preconditions rather than defects to hotfix.
    Until then a misreport can only err on the side of leaving a stale badge
    in place: a provider error or any non-integer answer is treated as
    occupied, so the failure mode is honesty debt, never an evicted room.
+
+   **Preflight observed 2026-09-13:** the LiveKit Cloud canary passed and its
+   sanitized evidence was retained in the activation package. This closes the
+   provider observation for the current provider configuration; repeat it if
+   that configuration changes. It does not replace the production export,
+   index, Rules or runtime-gate read-backs above.
 
 The final handoff must state what actually works for each template, where to
 open the app and visual comparisons, test categories/results, migration

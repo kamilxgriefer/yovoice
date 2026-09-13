@@ -4,6 +4,72 @@ What deploys automatically, what's manual, and exactly how — for both
 deployables described in
 [ADR-014](Decisions.md#adr-014-two-deployables-one-firebase-project).
 
+## 2.0.0 (27) internal tester candidate — 2026-09-13
+
+Build 27 is scoped to the existing internal tester channels. This entry records
+the integrated candidate boundary; it is not signed-artifact, upload or store
+read-back evidence. The release owner must append the frozen commit, artifact
+digests and observed Play/TestFlight status before describing Build 27 as
+available to testers. No public-store rollout is authorized by this record.
+
+The client candidate includes:
+
+- desktop parity at 1280 and 1440 px in `lib/dev/redesign_preview.dart`, using
+  the current Home, slot-13 `ServersScreen`, Chats, Friends and YO Moments
+  components and direct preview navigation;
+- the unchanged Hub bar/dock, including its existing geometry, behavior and
+  animation; only the already-approved Rooms destination is represented as
+  Servers;
+- one text selector labelled **Głos / Yeels**, photo Yeels without an elapsed
+  time label and video Yeels with time retained;
+- shared per-author **Add friend** state with retry, full-row unread treatment,
+  and archive/unarchive lost-ack recovery that reuses the same `requestId`
+  while the Chats row exposes and protects its busy state;
+- a minimum 1.4-second Voice Glass startup presentation and the generated
+  **Prism Halo v5** call/semantic notification sound family; and
+- sixteen bundled, G-rated **YO Voice Originals**. These assets are local to
+  the signed app; the global production GIF catalog is still disabled until
+  its coordinated backend rollout succeeds.
+
+The focused Build 27 Yeels slice validates autoplay, double-tap like, selected
+custom-audio synchronization and the photo progress bar without a numeric timer.
+The combined desktop Home, progress, frame, phone-overlay and sound regression
+set passed **77/77** on runtime commit
+`7df3d69dab4b718982f819f5351107e8e7b5aeca`. Later committed compatibility,
+copy and shared Free-5/Premium-30 capacity fixes reached
+`9cadc1507acae13f4e39ae8eb5f5ddad0333920e`; the pending Creator UTC-calendar
+correction changes client bytes again. The complete final-SHA Flutter and
+Functions results, rebuilt signed artifacts and signed store read-backs remain
+release gates.
+
+The Android Build 27 AAB generated before the Creator UTC-calendar correction
+is **superseded and must not be uploaded or reused**. It is retained only as
+historical evidence: package `app.yovoice`, version `2.0.0`, version code `27`,
+126,999,267 B, SHA-256
+`3551fa2de019ae958248bf10bd59d0634cabdf94e04837c5c8adb626b1bcc1c4`.
+The final Android and iOS artifact identities, checksums and store read-backs
+remain `<PENDING AFTER FINAL SHA>`.
+
+**Production boundary remains held.** Servers V1 and the GIF callables/rules
+are prepared in source but are not deployed or activated in production. Follow
+the phased Servers and GIF runbooks below; a client build cannot turn either
+backend on. App Check also remains a known release concern: enforcement follows
+the documented telemetry-first rollout and is not yet a completed public-launch
+control for these surfaces. Auth, server-owned authorization and rate limits do
+not turn that staged concern into proof of App Check enforcement.
+
+Before any Build 27 Functions deployment, production must hold a server-written
+`appConfig/gif` document with `enabled: false`, and the operator must read that
+value back. A missing document currently means enabled. This release forbids a
+blanket Functions deploy: use the exact non-Server selectors and then the
+manifest-anchored Server phase selectors below. Production deployment remains a
+separate action requiring the maintainer's explicit authorization.
+
+Consolidated session record:
+[Build 27 internal tester candidate](Sessions/2026-09-13-build-27-internal-tester-candidate.md).
+Startup detail:
+[Voice Glass](Sessions/2026-09-13-startup-voice-glass.md).
+
 ## 2.0.0 (26) internal tester build — 2026-09-13
 
 Build 26 was produced from exact source commit
@@ -2246,12 +2312,21 @@ The response body carries the source with escaped newlines; extract the
 
 ## Cloud Functions (manual)
 
+**Build 27 exception:** neither command in this general section is valid for
+Build 27. That release has source-static Server exports and version-sensitive
+Premium privacy writers, so it must use the frozen-Rules-first exact
+non-Server waves and the SHA-and-manifest-anchored Server selectors in the
+[Build 27 backend runbook](#gif-rollout--yo-voice-originals-adr-172173). A bare
+or blanket Functions deploy, including the npm script, is forbidden there.
+
+For a different release that has been explicitly reviewed and authorized to
+redeploy every Function, the top-level command is:
+
 ```bash
 firebase deploy --only functions --project yovoice-ec54a
 ```
 
-`functions/package.json`'s deploy script is the same full deployment, so
-either command below is valid:
+`functions/package.json`'s deploy script is the same blanket deployment:
 
 ```json
 "scripts": {
@@ -2260,8 +2335,9 @@ either command below is valid:
 }
 ```
 
-Run the top-level command when an explicit `--project` is desirable; run
-`npm run deploy` from `functions/` only when the active Firebase project has
+Outside Build 27, run the top-level command when an explicit `--project` is
+desirable; use `npm run deploy` from `functions/` only when a full Functions
+deployment is explicitly authorized and the active Firebase project has
 already been verified with `firebase use`.
 
 ## Storage rules (manual)
@@ -3987,80 +4063,366 @@ Functions are deployed first. Restrictive Firestore/Storage Rules remain held
 until the private-media IAM, signed-read, migration, zero-token inventory and
 compatible-client adoption gates in [SECURITY.md](SECURITY.md) are complete.
 
-## GIF rollout — everything the maintainer has to do (ADR-172)
+## GIF rollout — YO Voice Originals (ADR-172/173)
 
-**Current state: `GIF_PROVIDER=none`.** `getGifCatalog` answers
-`{available:false, reason:"not_configured"}`, `searchGifs` and `reportGifAsset`
-are not registered at all, and every client renders the GIF tab disabled and
-labelled. Nothing below is urgent and nothing below is automatic.
+**Prepared source is not live availability.** The current source pins the
+credential-free `yovoice` provider during Firebase export discovery and ships
+16 exact animations in `assets/gifs/yovoice/`. Production still showed none of
+`getGifCatalog`, `searchGifs` or `reportGifAsset` in the read-only function list
+on 2026-09-13, so an installed build cannot use GIFs until the coordinated
+Functions deployment below succeeds. No GIPHY account, API key, hotlink or
+third-party terms acceptance is required for this rollout.
 
-**Claude does not and must not perform step 1** — it is a developer-account
-signup with terms acceptance.
+**Build 27 uses exact targets only.** Do not run `firebase deploy`,
+`firebase deploy --only functions`, `npm run deploy` or
+`npm --prefix functions run deploy` for this release. Those commands can
+publish unrelated exports and, because Server registration is source-static,
+can expose the Server endpoints outside their reviewed sequence. The only
+permitted Build 27 Functions commands are the literal non-Server selectors in
+this section and the generated, SHA-and-manifest-anchored selectors in the
+Servers section. None may run without explicit production-deploy authorization.
 
-1. **Create a GIPHY developer account** at `developers.giphy.com`, create an
-   app, copy the **API key**. Start on the beta key; request production
-   approval when volume justifies it — the design runs unchanged on either.
-   While you are there, read the current **rate limits** off the portal and
-   record them in [DEPENDENCIES.md](DEPENDENCIES.md); nothing in this repo
-   knows them, and `DEFAULT_HOURLY_PROVIDER_BUDGET` in
-   `functions/media/gif/rate_limit.js` is a conservative placeholder until you
-   do. Also check whether an analytics/pingback obligation applies to raw-API
-   integrations — if it does, it must be issued server-side from the proxy,
-   never from the device.
-2. **Store the key:**
-   `firebase functions:secrets:set GIPHY_API_KEY --project yovoice-ec54a`
-3. **Prove it works BEFORE enabling anything:**
-   `GIPHY_API_KEY=... node functions/scripts/gif_provider_smoke.js`
-   This is the gate on the whole design. It checks three things no test can
-   check without a key: that the key works, that `rating=g` is honoured on live
-   results, and — the critical one — that the pinned CDN URL template
-   `https://media.giphy.com/media/<id>/200h.gif` actually serves a 200 image.
-   Every send path derives that URL from the template
-   (`GIF_CDN_TEMPLATES` in `functions/media/gif/gif_ref.js`); if the template
-   does not hold, sends would be refused in production and nothing else would
-   have caught it. **If the script fails, do not proceed.**
-4. **Flip the provider in an explicitly authorized configuration change:**
-   `GIF_PROVIDER=none` to `GIF_PROVIDER=giphy`. This adds two exports
-   (`searchGifs`, `reportGifAsset`). Verify the enabled export/secret-binding
-   map as well as the existing provider-off cold-start gate; that gate clears
-   `GIF_PROVIDER` deliberately and must not be misread as enabled evidence.
-5. **Deploy `firestore.rules`, then the complete affected Functions set.**
-   Rules keep catalog/authority collections server-only and permit the new
-   author-removal tombstone. Admin SDK writes bypass Rules; the order protects
-   clients, not the Functions writer. Include all three message writers and
-   moderation paths, not only the catalog exports.
-6. **Create the Firestore TTL policy** on `gifQueryCache.expiresAt`
-   (Firestore console → TTL → Create policy). One manual step, not a scheduled
-   function. The read path already treats an expired document as a miss, so
-   correctness never depends on this — it only stops the collection growing.
-   **Do not** create a TTL policy on `gifAssets`: that collection is the
-   send-time authority and the moderation record, and expiring it would break
-   sending.
-7. **Publish a client containing ADR-173 integration after the gates pass.**
-   Those clients discover the enabled catalog on panel open. Old clients that
-   only contain the standalone picker do not gain a send path from config.
+1. **Freeze one exact source commit.** Set `PROJECT`, `SOURCE` and
+   `EXPECTED_SHA` to the same values used for the Server activation package,
+   then verify:
 
-**The send integration exists in source now (2026-09-10).** Direct, Room and
-Club composers use `GifMessageController` and existing server callables;
-clients submit `{provider,id}` only. Before activation, test actual send,
-receive, reply, retry, removal and blocked-asset refusal between two test
-accounts on both mobile platforms. Do not enter credentials into chat or
-commit them. A fake-provider or emulator pass is not a live-provider pass.
+   ```sh
+   PROJECT=yovoice-ec54a
+   SOURCE=/absolute/path/to/clean-detached-worktree
+   EXPECTED_SHA=<exact-40-character-commit-sha>
 
-**Kill switch, no deploy.** Set `appConfig/gif.enabled = false` (Admin SDK or
-the console — clients cannot read or write it). The feature goes
-disabled-and-labelled on the next catalog fetch, within 30 seconds of any
-instance's config cache expiring. Deeper rollback: `GIF_PROVIDER=none` and
-redeploy functions. Already-sent GIFs keep rendering either way, because they
-hotlink.
+   test "$(git -C "$SOURCE" rev-parse HEAD)" = "$EXPECTED_SHA"
+   test -z "$(git -C "$SOURCE" status --porcelain)"
+   ```
 
-**Watch after enabling.** `gif.search` log lines carry `cacheHit`,
-`providerLatencyMs`, `resultCount`, `degraded` and `deniedTerm`; `gif.provider_error`
-carries `status`. **Alert on `provider_unauthorized`** — that means the key was
-revoked and the feature is degrading silently. Watch the cache hit ratio
-(target >80%; below that a beta key is not viable), provider calls per hour
-against the portal's quota, the `resource-exhausted` rate, and the document
-count of `gifAssets`, which grows monotonically by design.
+   Also verify
+   `python3 tool/generate_yovoice_gifs.py --check`, the Flutter asset bundle,
+   the static export map and the full Flutter/Functions emulator gates. The
+   provider manifest and all 16 files must match exactly.
+2. **Close the GIF gate before deploying any Build 27 Function.** Through an
+   authenticated Admin SDK or console session, create `appConfig/gif` as
+   `{enabled:false}` if absent, or update that field to `false` if present.
+   Read the document back from the server and retain the result. Do not continue
+   if it is absent, unreadable or not exactly boolean `false`: absence is an
+   enabled state in the current runtime.
+3. **Deploy and read back the complete `firestore.rules` from the frozen
+   commit before the Function writers.** The `gifAssets`, cache, budget,
+   blocklist and config collections must be server-only before any Build 27
+   Function runs. This is an exact Rules deployment, not permission for a bare
+   `firebase deploy` command.
+
+   ```sh
+   (cd "$SOURCE" && firebase deploy --non-interactive \
+     --project "$PROJECT" --only firestore:rules)
+   ```
+4. **Deploy and read back the seven existing version-sensitive Premium privacy
+   writers and cleanup handler first.** Firebase selective deployment is not
+   an atomic revision swap. Updating every path that must enforce the preference
+   before publishing its setter prevents a newly enabled preference from
+   meeting an old writer:
+
+   ```sh
+   BUILD27_PRIVACY_WRITERS_ONLY='functions:markDirectConversationRead,functions:setDirectTyping,functions:sendDirectMessage,functions:finalizeDirectMessageAttachment,functions:setDirectConversationPreference,functions:deleteDirectConversationForMe,functions:onAuthUserDeleted'
+
+   (cd "$SOURCE" && firebase deploy --non-interactive \
+     --project "$PROJECT" --only "$BUILD27_PRIVACY_WRITERS_ONLY")
+   ```
+
+   Read all seven revisions back as ACTIVE before continuing. Publishing
+   `onAuthUserDeleted` in this first wave also closes Creator-age cleanup before
+   the Creator endpoints are exposed. The Build 27 client remains held.
+5. **Deploy and read back the exact 12-target supporting wave, while the GIF
+   gate remains false.** Matching frozen Rules and the seven compatibility
+   targets from step 4 must already be live:
+
+   ```sh
+   BUILD27_NON_SERVER_SUPPORT_ONLY='functions:getGifCatalog,functions:searchGifs,functions:reportGifAsset,functions:sendRoomMessage,functions:sendClubMessage,functions:confirmCreatorAdultEligibility,functions:setCreatorAudienceEnabled,functions:setFollow,functions:searchPublicProfiles,functions:onUserPrivacySourceChanged,functions:listReelsV2,functions:onNotificationCreated'
+
+   (cd "$SOURCE" && firebase deploy --non-interactive \
+     --project "$PROJECT" --only "$BUILD27_NON_SERVER_SUPPORT_ONLY")
+   ```
+
+   This wave contains the GIF catalog plus Room/legacy-Club send paths,
+   Creator/Follow entry points, Yeels ranking and the notification-sound
+   payload. Read all 12 revisions back as ACTIVE. The GIF surface and the
+   Premium privacy setter remain disabled/unpublished, and the Build 27 client
+   must not be released yet.
+6. **Confirm both managed TTL policies.** Read back
+   `gifQueryCache.expiresAt` and `reelViews.expiresAt` as enabled. Correctness
+   treats expired cache/view rows as misses, but absence of either policy blocks
+   this production rollout. Never add TTL to `gifAssets`, which is the send-time
+   authority and moderation record.
+
+   ```sh
+   gcloud firestore fields describe expiresAt \
+     --collection-group=gifQueryCache --project="$PROJECT"
+   gcloud firestore fields describe expiresAt \
+     --collection-group=reelViews --project="$PROJECT"
+   ```
+
+   If either read-back is missing or not enabled, enable that exact collection
+   group's TTL under the same production authorization and wait until a second
+   read-back confirms it before continuing.
+7. **Deploy the Premium privacy setter alone and last, then probe before client
+   release.** Do not combine this target with either earlier wave:
+
+   ```sh
+   BUILD27_PRIVACY_ENABLE_ONLY='functions:setPremiumMessagingPrivacyV1'
+
+   (cd "$SOURCE" && firebase deploy --non-interactive \
+     --project "$PROJECT" --only "$BUILD27_PRIVACY_ENABLE_ONLY")
+   ```
+
+   Read the setter back as ACTIVE, then complete the old/new privacy writer,
+   read-receipt and typing probes. Re-read all 20 non-Server targets at the
+   expected frozen revision and `appConfig/gif.enabled == false`. Only after
+   these checks pass may Build 27 be released to testers.
+
+   The three selectors together contain the reviewed 20 distinct non-Server
+   targets. `createRoom` is the twenty-first reviewed change, but is
+   deliberately omitted from all three: its shared free-5/Premium-30 capacity
+   cutover must deploy exactly once through the Server package's phase-0
+   compatibility selector. Do not append it manually when the Server sequence
+   follows.
+8. **Pass a two-account installed-Build-27 canary before production enablement.**
+   Because `appConfig/gif` is a global boolean rather than a tester allowlist,
+   run the complete enabled search/send/receive test in the authorized
+   non-production environment first. Search in English and Polish (including
+   diacritics), exercise direct chat, Room and retained legacy Club paths,
+   retry, removal and blocked-asset refusal, and confirm the recipient renders
+   from the app bundle with no remote image request. Server text-channel
+   coverage follows after the Server tester gate opens.
+9. **Enable production only after that canary and all read-backs pass.** Change
+   only `appConfig/gif.enabled` to boolean `true`, read it back, then repeat the
+   two-account flow on the production tester build. If production cannot be
+   limited to the intended test cohort, keep it false until that exposure is
+   acceptable.
+
+**Kill switch, no deploy.** Set `appConfig/gif.enabled = false` through an
+authorized Admin SDK/console operation. The catalog goes disabled after the
+short config cache expires. A deeper provider rollback requires a reviewed
+source change to the source-pinned provider and a selective redeploy of the
+exact affected catalog/send Functions; `GIF_PROVIDER` is not a runtime control.
+Already-sent local animations stay visible; the switch and asset
+blocklist prevent new discovery/sends.
+
+**Watch after enabling.** Monitor `gif.search` result count, cache behavior,
+denied terms and per-account `resource-exhausted` responses, plus growth of
+`gifAssets`. `provider_error` and external-provider quota/key alerts are dormant
+while YO Voice Originals is selected.
+
+## Servers V1 static registration and runtime activation
+
+**Prepared source and a passing dry-run are not production activation.** Use
+this runbook only from a new clean commit and an exact-SHA activation package
+that has passed the complete Functions/Rules gate and the required independent
+reviews. A production Firebase deploy still requires the maintainer's explicit
+authorization.
+
+The base manifest is source-static because Firebase discovers exports before
+loading `functions/.env`: 48 callables, two dispatcher exports and three
+maintenance sweeps, **53 exports total**. `YOVOICE_SERVERS_V1` is obsolete and
+cannot add, remove or enable them. The seven Podcast recording/Egress exports
+remain source-disabled, their credential is not declared, and their provider
+services are not constructed. Podcast recording is a separate release.
+
+Runtime authority is the client-denied Firestore document
+`appConfig/serversV1`:
+
+```json
+{
+  "schemaVersion": 1,
+  "callableAccess": "disabled",
+  "testerUids": [],
+  "workersEnabled": false,
+  "revision": 1
+}
+```
+
+The only other callable modes are `testers` and `all`. `testers` accepts at
+most 100 unique exact Auth UIDs; `disabled` and `all` require an empty list.
+Every operator update replaces the exact document in a transaction after
+checking the current revision, then increments it. Never merge arbitrary
+fields into this document. Missing or malformed data fails closed.
+
+Before any phase, verify one clean source identity and the package checksums:
+
+```sh
+PROJECT=yovoice-ec54a
+SOURCE=/absolute/path/to/clean-detached-worktree
+PKG=/absolute/path/to/exact-sha-activation-package
+EXPECTED_SHA=<exact-40-character-commit-sha>
+ANCHOR_JSON=/absolute/operator-controlled/servers-activation-generation.json
+
+test "$(git -C "$SOURCE" rev-parse HEAD)" = "$EXPECTED_SHA"
+test -z "$(git -C "$SOURCE" status --porcelain)"
+test ! -e "$PKG"
+test ! -e "$ANCHOR_JSON"
+(cd "$SOURCE" && node --test --test-concurrency=1 \
+  tool/test/servers_activation_package.test.js)
+node "$SOURCE/tool/servers_activation_package.js" \
+  --source "$SOURCE" \
+  --expected-sha "$EXPECTED_SHA" \
+  --output "$PKG" > "$ANCHOR_JSON"
+# ANCHOR_JSON must stay outside SOURCE and PKG. It is the external operator
+# record of the manifestSha256 returned by the one successful generation.
+EXPECTED_MANIFEST_SHA256="$(node -e 'const fs=require("node:fs");process.stdout.write(JSON.parse(fs.readFileSync(process.argv[1],"utf8")).manifestSha256)' "$ANCHOR_JSON")"
+node "$SOURCE/tool/servers_activation_package.js" \
+  --verify "$PKG" \
+  --expected-sha "$EXPECTED_SHA" \
+  --expected-manifest-sha256 "$EXPECTED_MANIFEST_SHA256"
+node "$SOURCE/tool/servers_activation_package.js" \
+  --prepare-dependencies "$PKG" \
+  --expected-sha "$EXPECTED_SHA" \
+  --expected-manifest-sha256 "$EXPECTED_MANIFEST_SHA256"
+# This is the final anchored verification after dependency preparation. Repeat
+# this exact command immediately before every dry-run and authorized deploy.
+node "$SOURCE/tool/servers_activation_package.js" \
+  --verify "$PKG" \
+  --expected-sha "$EXPECTED_SHA" \
+  --expected-manifest-sha256 "$EXPECTED_MANIFEST_SHA256"
+(cd "$PKG" && shasum -a 256 -c SHA256SUMS)
+```
+
+The output path must not exist and must be outside the source worktree. The
+anchor JSON path must also be outside both trees, operator-controlled and new
+for this generation; never recalculate the trusted manifest hash from package
+contents. The generator refuses a dirty worktree, a mismatched or abbreviated
+SHA, an in-worktree output and an existing output. It copies deployable files from the
+exact commit objects, emits the absolute package-local Firebase configuration,
+the four phase selectors and `SOURCE_COMMIT.txt`, then covers every package
+file with `SHA256SUMS`. The reviewed phase counts are 42 compatibility exports
+in phase 0, seven infrastructure exports in phase 1, 47 non-creation Server
+callables in phase 2 and only `createServerV1` in phase 3. Any count or export
+map drift stops generation. Dependency preparation runs the locked production
+install with lifecycle scripts disabled under exactly
+`source/functions/node_modules`; that operational subtree is excluded from the
+immutable manifest while `package-lock.json` remains covered. Preparation then
+loads the packaged Functions entrypoint and proves that the fresh locked export
+map exactly matches every generated phase selector. Re-run the anchored
+`--verify` command immediately before each dry-run and authorized deploy.
+
+Do not substitute `firebase deploy`, `firebase deploy --only functions`,
+`npm run deploy` or `npm --prefix functions run deploy` for any phase. Phase 0
+must consume `phase0CompatibilityGuards.firebase-only.txt`; phases 1–3 must
+consume their corresponding generated selector files from the same verified
+package. This keeps all 53 base Server exports covered exactly once and keeps
+all seven Podcast recording/Egress exports absent.
+
+Read `appConfig/serversV1` through an authenticated Admin environment. If it is
+absent, create the exact disabled revision-1 document above with `create()`,
+which refuses an overwrite. If it already exists, stop and reconcile its exact
+shape and revision; do not reset it blindly. For every phase, run the same
+command with `--dry-run`, review the target delta, then run it without
+`--dry-run` only under the production-deploy authorization.
+
+### Phase 0 — compatibility functions
+
+```sh
+firebase deploy --non-interactive --project "$PROJECT" \
+  --config "$PKG/generated/firebase.activation.json" \
+  --only "$(cat "$PKG/generated/phase0CompatibilityGuards.firebase-only.txt")"
+```
+
+Read every package-listed target back as ACTIVE. Confirm that the bounded
+`unbound-live-generation` retry reaches `needsReconciliation` rather than an
+unbounded Eventarc loop.
+
+### Phase 1 — inert Server infrastructure
+
+```sh
+firebase deploy --non-interactive --force --project "$PROJECT" \
+  --config "$PKG/generated/firebase.activation.json" \
+  --only "$(cat "$PKG/generated/phase1Infrastructure.firebase-only.txt")"
+```
+
+`--force` is allowed only for this reviewed selector: it acknowledges enabling
+retry on `onServerInviteWritten` and `onServerControlOutboxCreated`. It does
+not waive tests, selector review or read-back. With `workersEnabled: false`,
+Server workers must return paused results and must not process product state.
+
+### Phase 2 — indexes, Rules and non-creation callables
+
+```sh
+firebase deploy --non-interactive --project "$PROJECT" \
+  --config "$PKG/generated/firebase.activation.json" --only firestore:indexes
+```
+
+Wait until every package-listed Server composite and the collection-group
+override for `channelSessions.livekitRoomName` report READY. Probe the actual
+member-channel query (`accessMode == members`, `status == active`, ordered by
+`position`) and the collection-group session lookup.
+
+Immediately before the `storage.rules` deployment below, run the live
+[Cloud Storage service-agent IAM verification](#storage-rules-manual). Its
+policy read-back must print the exact Google-managed Storage service account
+with `roles/firebaserules.firestoreServiceAgent`, which supplies the Firestore
+entity-read permission used by `firestore.get()` and `firestore.exists()` in
+Storage Rules. An empty or mismatched result stops phase 2: do not deploy
+Storage Rules, enable workers or start the Server canary until the documented
+binding is restored, propagation has completed and the live read-back passes.
+An emulator pass or successful Storage deploy output is not evidence of this
+IAM prerequisite.
+
+```sh
+firebase deploy --non-interactive --project "$PROJECT" \
+  --config "$PKG/generated/firebase.activation.json" --only firestore:rules,storage
+firebase deploy --non-interactive --project "$PROJECT" \
+  --config "$PKG/generated/firebase.activation.json" \
+  --only "$(cat "$PKG/generated/phase2NonCreationCallables.firebase-only.txt")"
+```
+
+Read back the exact package-listed targets and run the cross-account,
+cross-server and malformed-grant negative probes while callable access remains
+disabled. Then transactionally replace revision 1 with revision 2, changing
+only `workersEnabled` to `true`. Verify scheduled no-work passes and confirm a
+Server callable still returns `failed-precondition`.
+
+### Phase 3 — creation endpoint, then tester canary
+
+```sh
+firebase deploy --non-interactive --project "$PROJECT" \
+  --config "$PKG/generated/firebase.activation.json" \
+  --only "$(cat "$PKG/generated/phase3CreationBlocked.firebase-only.txt")"
+```
+
+Read `createServerV1` back as ACTIVE. Before admitting anyone, call it from the
+intended tester account and require `failed-precondition`; endpoint presence is
+not runtime activation. Then atomically replace expected revision 2 with:
+
+```json
+{
+  "schemaVersion": 1,
+  "callableAccess": "testers",
+  "testerUids": ["<exact-intended-tester-auth-uid>"],
+  "workersEnabled": true,
+  "revision": 3
+}
+```
+
+From that UID, create one disposable Friends server and prove its template
+channels, membership, text mutation and one start/token/end/cleanup media
+generation. A verified non-allowlisted account must still receive
+`failed-precondition`. `callableAccess: "all"` is a later reviewed revision
+with an empty tester list. Do not activate or migrate held legacy roots as part
+of this canary.
+
+### Servers runtime rollback
+
+1. Transactionally set `callableAccess: "disabled"`, clear `testerUids`, keep
+   `workersEnabled: true` and increment the revision.
+2. Confirm a fresh callable invocation receives `failed-precondition`. A
+   request admitted before the revision change may still finish.
+3. Keep Rules, indexes and cleanup workers active. Drain pending/reconciliation
+   outbox rows and every active or ending V1 media generation; use the exact
+   canonical `srv_...` provider-room identity for an emergency disconnect.
+4. Verify there is no active provider room, live channel projection, active
+   voice mirror or pending/reconciliation outbox row.
+5. Transactionally set `workersEnabled: false` and increment the revision.
+
+Deleting `createServerV1` or other exports is an optional deeper rollback only
+after the runtime freeze and drain. Do not remove Server Rules or indexes during
+an incident unless a separate reviewed cleanup proves that removal safe.
 
 ## Club → Servers migration runbook (dry run only; production migration unauthorised)
 
@@ -4068,9 +4430,11 @@ Source: `functions/servers/migration_apply.js` (ADR-182),
 `functions/servers/migration_gate.js` (ADR-183), `docs/Servers.md`
 "Deterministic migration and compatibility". **Nothing in this section is a
 deploy instruction.** No production data has been migrated, no Firebase
-resource has been deployed for it, and `YOVOICE_SERVERS_V1` remains absent from
-`functions/.env`, so the fifty-four V1 callables, two dispatcher exports and
-four maintenance sweeps remain unregistered in production.
+resource has been deployed for migration by this runbook. Base Server export
+discovery is now source-static and independent of `YOVOICE_SERVERS_V1`; actual
+use remains controlled by `appConfig/serversV1`. The seven Podcast
+recording/Egress exports remain absent. Runtime activation does not authorize a
+legacy-root migration, and migration does not activate a held root.
 
 ### What the engine actually does, in one paragraph
 
@@ -4117,11 +4481,12 @@ its channels first.
 4. **Attest the gate.** Only when the census shows zero incompatible sessions,
    set `status: "satisfied"`, `attestedBy` (the attester's uid), `attestedAt`,
    and bump `revision`. Record the revision; every apply pins it.
-5. **Deploy the compatible backend first**, per the existing
-   "Authorized-later deployment order" in `docs/Servers.md`: Functions, then
-   `firestore.indexes.json` (and verify the `channels` and
-   `channelSessions.livekitRoomName` indexes are actually DEPLOYED, not merely
-   committed), then `firestore.rules` and `storage.rules`.
+5. **Deploy the compatible backend first** through the static-registration
+   phases above, keeping `callableAccess: "disabled"`: compatibility
+   Functions, inert workers, `firestore.indexes.json` (with the `channels` and
+   `channelSessions.livekitRoomName` indexes verified READY), then Rules and
+   the non-creation callables. Runtime tester access is unnecessary for a
+   read-only migration dry run and grants no migration authority.
 6. **Run the read-only dry run and review it by hand**:
 
    ```
@@ -4177,10 +4542,10 @@ this engine; it constructs no Storage client at all.
 
 ### Emergency LiveKit disconnect during a Servers V1 rollback
 
-Turning off `YOVOICE_SERVERS_V1` prevents new V1 endpoints from registering on
-the next Functions revision, but it does not disconnect WebSocket sessions
-that already reached LiveKit. Before removing any V1 control worker, enumerate
-active V1 session anchors and keep the provider control plane available until
+Setting `appConfig/serversV1.callableAccess` to `disabled` blocks the next fresh
+V1 callable invocation, but it does not cancel an invocation already admitted
+or disconnect WebSocket sessions that reached LiveKit. Keep
+`workersEnabled: true` while enumerating active V1 session anchors and until
 each immutable `srv_...` room is absent:
 
 1. Freeze new V1 admission first. Keep Firestore Rules fail-closed and leave the
@@ -4197,9 +4562,9 @@ each immutable `srv_...` room is absent:
    result for the immutable generation; the worker still commits its Firestore
    checkpoint and removes matching mirrors under its normal fences.
 5. Verify no active `srv_...` room, live channel projection, active voice-session
-   mirror or pending/reconciliation outbox row remains before removing the
-   control exports. A flag change or Functions rollback alone is not evidence
-   that provider connections ended.
+   mirror or pending/reconciliation outbox row remains before setting
+   `workersEnabled: false` or removing control exports. A runtime-gate or
+   Functions rollback alone is not evidence that provider connections ended.
 
 This checklist is prepared source guidance only. No production LiveKit room was
 listed or deleted in this work, and a real-provider drill remains an activation

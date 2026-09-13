@@ -246,6 +246,37 @@ production-shipped bug:
 
 Full schema and the exact current rules structure: [Firebase.md](Firebase.md).
 
+### Servers V1 runtime activation authority
+
+Servers export discovery is source-static; `YOVOICE_SERVERS_V1` is not an
+authorization control. The 53 base exports may exist while every product
+operation remains disabled. Callable admission comes only from the
+server-written `appConfig/serversV1` document after Firebase Auth identity has
+been bound. Firestore Rules deny every client read and write under
+`appConfig/{configId}`, so a user cannot enumerate the tester cohort, add their
+UID, enable workers or roll back an operator revision.
+
+The gate accepts exactly `schemaVersion`, `callableAccess`, `testerUids`,
+`workersEnabled` and `revision`. Unknown keys, invalid types, duplicate or more
+than 100 tester UIDs, a non-positive revision, a tester list outside `testers`,
+missing data or a Firestore read error all fail closed. Configuration reads are
+uncached. A callable checks the gate before its product factory; workers use the
+separate `workersEnabled` value and leave durable work pending while paused.
+
+Rollback must first set callable access to `disabled` while workers remain on.
+An already-admitted request can finish, so keep the restrictive Rules and
+cleanup authority deployed until every active media generation and outbox row
+has drained. Pause workers only after that evidence exists. Do not weaken
+`match /appConfig/{configId}` to expose an availability flag; clients learn
+availability through the authenticated callable result.
+
+Podcast questions and events use the base surface. Podcast recording/Egress is
+not part of it: seven exports are source-disabled, the dedicated credential is
+not declared, and the provider services are not constructed. A future source
+change that enables those names requires its own secret review, provider canary
+and deployment approval. See [ADR-176](Decisions.md#adr-176-servers-v1-exports-are-static-and-activation-is-a-server-owned-runtime-decision)
+and the [phased runbook](DEPLOYMENT.md#servers-v1-static-registration-and-runtime-activation).
+
 ## Storage rules
 
 Every upload path is size- and content-type-limited. Uploads tied to content
@@ -1108,3 +1139,89 @@ invisible** (with `isOnline:false`), so invisibility is decided server-side
 and cannot be probed through the projection. The projection's exact-schema
 read guard accepts only `available | away | busy | offline`.
 
+### GIF trust boundary: bundled originals by default (2026-09-13, ADR-172)
+
+**2026-09-10 integration hardening (ADR-173).** All three existing message
+writers accept exactly one of text or `{gif:{provider,id}}`. They derive the
+snapshot from server-owned authority and recheck blocking and feature state
+inside the publishing transaction. No client URL is accepted. Retries reuse
+the existing idempotency contract; GIFs cannot become attachment uploads or
+earn text-message achievements.
+
+Search and reporting require current active profiles. Reporting allows
+unverified users to seek safety help but enforces 30 attempts/minute and
+20 new reports/day; duplicate reports do not add votes. Report IDs are
+digests, and evidence is capped at 200 characters. Asset blocking, report
+resolution and protected audit commit together; discovery-cache suppression
+is best-effort and cannot replace the durable send-time block. The provider
+timeout bounds both headers and body. No sensitive provider response enters
+client errors.
+
+Author, Club moderator and owner removal clear the GIF snapshot. Canonical
+v2 DM removal preserves its exact null-based schema and commits the
+tombstone, conditional latest preview and protected audit atomically; a GIF
+hotlink never enters Firebase Storage deletion. The independent security
+review closed the current findings, backed by final Functions 1580/1580 and
+Rules 564/564 emulator gates. This is source evidence, not live activation.
+
+The Reel seen ledger also now checks active viewer/author, bilateral blocks,
+restrictions, published state and expiry. Existing legacy published Reels
+without sidecars remain compatible. Optional records are resource-null
+checked before `.data`, and the worst-case read budget is nine calls (tested
+with both restriction documents present). Owner history listing is capped
+at 100; write timestamps/retention stay server-bounded. Production TTL and
+account-data lifecycle remain explicit operational/privacy gates.
+
+**The active provider is first-party and credential-free.** YO Voice owns the
+sixteen generated animation files, ships them in the signed Flutter bundle and
+stores only a canonical `asset://yovoice/gifs/<id>.gif` reference in a message.
+The picker, sender and recipient read the bytes locally. No CDN, provider key,
+device IP, User-Agent or query leaves the device/backend boundary for the
+active catalog. Search still runs through authenticated callables so the same
+rate, moderation and authoritative-send contracts apply on every surface.
+
+The optional GIPHY adapter is source-disabled. If a future release selects it,
+its earlier split boundary returns: search metadata is proxied without a YO
+Voice uid/device identifier, image bytes are hotlinked by each viewer, and the
+auto-load preference becomes the recipient's network privacy control. That
+change requires a source review, secret binding, provider smoke test,
+attribution and updated privacy copy before activation.
+
+**Content safety is layered.** Every bundled item is authored for YO Voice and
+declared `g`; the catalog response is still re-filtered to exact `g`; the
+English/Polish query denylist runs before lookup; and `gifAssets.blocked`,
+driven by reports, prevents future results and sends. The external adapter, if
+ever selected, must also pin the provider's `rating=g` request. A modified
+client cannot widen the rating on either path.
+
+**Where the reference pin lives, and why it is not in `firestore.rules`.** A
+client-written `gif.url` could otherwise become an arbitrary remote-image
+tracking beacon. Room, club, direct and global message creation are all
+`allow create: if false`, so the operative pin lives in the server-owned
+`resolveGifAsset()` path. It derives either the exact
+`asset://yovoice/gifs/<id>.gif` reference or, for a future external provider,
+its allowlisted CDN template; refuses blocked/non-`g` assets; and rejects ids
+containing `/`, `?`, `#`, `@`, `%`, backslash or traversal forms.
+**If message creation is ever reopened to clients, the pin must be added to
+that rule in the same change** — the template is `GIF_CDN_TEMPLATES` in
+`functions/media/gif/gif_ref.js`, and there is a comment saying so beside the
+`gifAssets` block in `firestore.rules`.
+
+**Client access to the new collections is nil.** `gifAssets`, `gifQueryCache`,
+`gifRateLimits`, `gifProviderBudget`, `gifBlocklist` and `appConfig` are
+`allow read, write: if false` for every client including staff — the same
+posture `billingRateLimits` has, for the same reason: a limit a client can read
+is a limit it can plan around, and one it can write is not a limit. Staff being
+unable to read `gifAssets` is why a GIF report carries its own evidence
+(`targetTextSnapshot` and a server-written `targetMediaUrl`), mirroring the
+`reelComment` snapshot precedent. A client cannot forge a `gifAsset` report
+either: the `reports` create rule has no branch for that target type and no room
+in its field allowlist for `gifProvider`, `gifId`, `targetTextSnapshot` or
+`targetMediaUrl`. All of that is exercised by five cases in
+`firestore-tests/rules.test.js`.
+
+**Known limit, stated plainly.** Blocking an asset prevents future search
+results and future sends. It does **not** blank GIF bubbles already sent,
+because clients do not consult a blocklist at render time. The remedy for a
+specific message is the existing per-surface removal
+(`adminDeleteMessage`, `moderateClubMessage`).

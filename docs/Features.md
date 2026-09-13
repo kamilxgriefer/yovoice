@@ -135,9 +135,11 @@ by a moderator, and the Moderation Center does not yet render them correctly
 ## YO Moments
 
 YO Moments is one responsive destination with a shared title, visual language
-and top-level **Voice | Reels** switch. It uses an original content-stage and
-conversation design inspired by familiar short-form interaction patterns,
-without copying another product's branding, assets or exact layout.
+and top-level **Głos | Yeels** text selector. Internal models and source paths
+retain the established Reel naming for compatibility. It uses an original
+content-stage and conversation design inspired by familiar short-form
+interaction patterns, without copying another product's branding, assets or
+exact layout.
 
 The Voice format contains short (≤60s) recorded audio posts
 (`lib/features/moments/`): likes, text comments and recorded voice replies, a
@@ -147,11 +149,11 @@ public feed
 Studio. Like/comment counters are transactionally validated against the
 actual `likes` subcollection — not client-settable to an arbitrary value.
 
-Reels uses the same YO Moments chrome around an immersive video/photo stage.
+Yeels uses the same YO Moments chrome around an immersive video/photo stage.
 Its comment thread accepts text and voice replies. Recording opens an explicit
 composer and does not start the microphone before the user acts. Published
 voice replies have their own compact player and share one playback arbiter with
-the primary Voice Moment or Reel, so competing audio does not overlap. Reels
+the primary Voice Moment or Yeel, so competing audio does not overlap. Yeels
 voice publishing probes backend support and fails honestly when that coordinated
 backend is not yet deployed.
 
