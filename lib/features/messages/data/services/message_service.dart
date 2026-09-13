@@ -223,6 +223,47 @@ class MessageService {
     return _attachmentOutbox!;
   }
 
+  ({String ownerId, DirectAttachmentOutbox queue})
+  _captureAttachmentQueueOwner() {
+    final ownerId = _currentUserId;
+    final queue = attachmentOutbox;
+    if (queue.ownerId != ownerId) {
+      throw StateError('The attachment queue belongs to another account.');
+    }
+    return (ownerId: ownerId, queue: queue);
+  }
+
+  bool _stillOwnsAttachmentQueue(
+    ({String ownerId, DirectAttachmentOutbox queue}) capture,
+  ) =>
+      capture.queue.ownerId == capture.ownerId &&
+      _auth.currentUser?.uid == capture.ownerId;
+
+  void _requireAttachmentQueueOwner(
+    ({String ownerId, DirectAttachmentOutbox queue}) capture,
+  ) {
+    if (!_stillOwnsAttachmentQueue(capture)) {
+      throw StateError(
+        'The signed-in account changed while the attachment was being saved.',
+      );
+    }
+  }
+
+  Future<void> _rejectAttachmentAfterOwnerChange(
+    ({String ownerId, DirectAttachmentOutbox queue}) capture,
+    DirectAttachmentOutboxEntry entry, {
+    required bool created,
+  }) async {
+    if (created) {
+      // `complete` is the unconditional private-byte removal primitive. The
+      // user-facing `discard` action deliberately accepts failed entries only.
+      await capture.queue.complete(entry.id);
+    }
+    throw StateError(
+      'The signed-in account changed while the attachment was being saved.',
+    );
+  }
+
   FirebaseStorage get _storage => _storageOverride ?? FirebaseStorage.instance;
 
   /// Clears plaintext retry state at the account boundary. Sign-out calls this
@@ -1024,8 +1065,13 @@ class MessageService {
     final mediaQueue = attachmentOutbox;
     await mediaQueue.load();
     _listenForConnectivity();
-    await _flushOutbox(queue);
-    await _flushAttachmentOutbox(mediaQueue);
+    // These queues also drain independently when connectivity returns. A
+    // slow text callable must not hold every persisted attachment on restart.
+    // Each drain retains its own ordering, account and single-flight guards.
+    await Future.wait<void>([
+      _flushOutbox(queue),
+      _flushAttachmentOutbox(mediaQueue),
+    ]);
   }
 
   Future<void> _flushOutbox(MessageOutbox queue) async {
@@ -1110,30 +1156,78 @@ class MessageService {
     required String conversationId,
     required XFile image,
   }) async {
+    final (queue, entry) = await _queueImageMessage(
+      conversationId: conversationId,
+      image: image,
+    );
+    await _deliverAttachment(entry.id, queue: queue);
+  }
+
+  /// Persists a selected photo locally and returns as soon as it is safe.
+  /// Reserve, upload and finalize continue through the visible outbox card.
+  Future<String> enqueueImageMessage({
+    required String conversationId,
+    required XFile image,
+  }) async {
+    final (queue, entry) = await _queueImageMessage(
+      conversationId: conversationId,
+      image: image,
+    );
+    unawaited(
+      _deliverAttachment(entry.id, queue: queue).catchError((Object _) {}),
+    );
+    return entry.id;
+  }
+
+  Future<(DirectAttachmentOutbox, DirectAttachmentOutboxEntry)>
+  _queueImageMessage({
+    required String conversationId,
+    required XFile image,
+  }) async {
+    // Capture the account-scoped queue before the first platform/file await.
+    // A picker read that finishes after sign-out must never select the next
+    // account's queue simply because `attachmentOutbox` was resolved late.
+    final capture = _captureAttachmentQueueOwner();
+    await capture.queue.load();
+    _requireAttachmentQueueOwner(capture);
     final declaredLength = await image.length();
+    _requireAttachmentQueueOwner(capture);
     if (declaredLength < 128 || declaredLength > 8 * 1024 * 1024) {
       throw StateError('Choose a photo smaller than 8 MB.');
     }
-    final bytes = await image.readAsBytes();
-    if (bytes.lengthInBytes != declaredLength ||
-        bytes.lengthInBytes < 128 ||
-        bytes.lengthInBytes > 8 * 1024 * 1024) {
+    final source = DirectAttachmentPayloadSource.pickedFile(
+      image,
+      length: declaredLength,
+    );
+    final digest = await source.digest();
+    _requireAttachmentQueueOwner(capture);
+    if (digest.length != declaredLength ||
+        digest.length < 128 ||
+        digest.length > 8 * 1024 * 1024) {
       throw StateError('Choose a photo smaller than 8 MB.');
     }
     final contentType = _imageContentType(image);
-    final queue = attachmentOutbox;
-    final entry = await queue.enqueue(
-      fingerprint: sha256.convert(bytes).toString(),
+    _requireAttachmentQueueOwner(capture);
+    final queued = await capture.queue.enqueueSourceWithDisposition(
+      fingerprint: digest.fingerprint,
       conversationId: conversationId,
       type: MessageType.image,
       contentType: contentType,
       durationSeconds: null,
-      bytes: bytes,
+      source: source.verifiedAgainst(digest.fingerprint),
       reserveRequestId: _newRequestId(),
       finalizeRequestId: _newRequestId(),
     );
+    final entry = queued.entry;
+    if (!_stillOwnsAttachmentQueue(capture)) {
+      await _rejectAttachmentAfterOwnerChange(
+        capture,
+        entry,
+        created: queued.created,
+      );
+    }
     _listenForConnectivity();
-    await _deliverAttachment(entry.id, queue: queue);
+    return (capture.queue, entry);
   }
 
   /// Sends a short private video through the same server-reserved,
@@ -1143,32 +1237,81 @@ class MessageService {
     required XFile video,
     required int durationSeconds,
   }) async {
+    final (queue, entry) = await _queueVideoMessage(
+      conversationId: conversationId,
+      video: video,
+      durationSeconds: durationSeconds,
+    );
+    await _deliverAttachment(entry.id, queue: queue);
+  }
+
+  /// Persists a selected video locally and lets its visible outbox card own
+  /// the network work, so the composer is not locked for the whole upload.
+  Future<String> enqueueVideoMessage({
+    required String conversationId,
+    required XFile video,
+    required int durationSeconds,
+  }) async {
+    final (queue, entry) = await _queueVideoMessage(
+      conversationId: conversationId,
+      video: video,
+      durationSeconds: durationSeconds,
+    );
+    unawaited(
+      _deliverAttachment(entry.id, queue: queue).catchError((Object _) {}),
+    );
+    return entry.id;
+  }
+
+  Future<(DirectAttachmentOutbox, DirectAttachmentOutboxEntry)>
+  _queueVideoMessage({
+    required String conversationId,
+    required XFile video,
+    required int durationSeconds,
+  }) async {
     if (durationSeconds < 1 || durationSeconds > 60) {
       throw StateError('Videos must be between 1 and 60 seconds.');
     }
+    final capture = _captureAttachmentQueueOwner();
+    await capture.queue.load();
+    _requireAttachmentQueueOwner(capture);
     final declaredLength = await video.length();
+    _requireAttachmentQueueOwner(capture);
     if (declaredLength < 1024 || declaredLength > 64 * 1024 * 1024) {
       throw StateError('Choose a video smaller than 64 MB.');
     }
-    final bytes = await video.readAsBytes();
-    if (bytes.lengthInBytes != declaredLength ||
-        bytes.lengthInBytes < 1024 ||
-        bytes.lengthInBytes > 64 * 1024 * 1024) {
+    final source = DirectAttachmentPayloadSource.pickedFile(
+      video,
+      length: declaredLength,
+    );
+    final digest = await source.digest(prefixBytes: 4096);
+    _requireAttachmentQueueOwner(capture);
+    if (digest.length != declaredLength ||
+        digest.length < 1024 ||
+        digest.length > 64 * 1024 * 1024) {
       throw StateError('Choose a video smaller than 64 MB.');
     }
-    final queue = attachmentOutbox;
-    final entry = await queue.enqueue(
-      fingerprint: sha256.convert(bytes).toString(),
+    _requireAttachmentQueueOwner(capture);
+    final queued = await capture.queue.enqueueSourceWithDisposition(
+      fingerprint: digest.fingerprint,
       conversationId: conversationId,
       type: MessageType.video,
-      contentType: _videoContentType(video, bytes),
+      contentType: _videoContentType(video, digest.prefix),
       durationSeconds: durationSeconds,
-      bytes: bytes,
+      source: source.verifiedAgainst(digest.fingerprint),
       reserveRequestId: _newRequestId(),
       finalizeRequestId: _newRequestId(),
     );
+    final entry = queued.entry;
+    if (!_stillOwnsAttachmentQueue(capture)) {
+      await _rejectAttachmentAfterOwnerChange(
+        capture,
+        entry,
+        created: queued.created,
+      );
+    }
     _listenForConnectivity();
-    await _deliverAttachment(entry.id, queue: queue);
+    return (capture.queue, entry);
   }
 
   /// Copies a finished recording into the durable outbox and returns the queue
@@ -1192,9 +1335,13 @@ class MessageService {
     if (durationSeconds < 1 || durationSeconds > 60) {
       throw StateError('Voice messages must be between 1 and 60 seconds.');
     }
+    final capture = _captureAttachmentQueueOwner();
+    await capture.queue.load();
+    _requireAttachmentQueueOwner(capture);
     final contentType = normalizeAudioContentType(audio.contentType);
     final source = DirectAttachmentPayloadSource.recording(audio);
     final digest = await source.digest();
+    _requireAttachmentQueueOwner(capture);
     if (digest.length != audio.byteLength) {
       throw const VoiceRecordingException(
         VoiceRecordingProblem.recordingUnusable,
@@ -1202,19 +1349,27 @@ class MessageService {
         action: 'Record it again.',
       );
     }
-    final queue = attachmentOutbox;
-    final entry = await queue.enqueueSource(
+    _requireAttachmentQueueOwner(capture);
+    final queued = await capture.queue.enqueueSourceWithDisposition(
       fingerprint: digest.fingerprint,
       conversationId: conversationId,
       type: MessageType.voice,
       contentType: contentType,
       durationSeconds: durationSeconds,
-      source: source,
+      source: source.verifiedAgainst(digest.fingerprint),
       reserveRequestId: _newRequestId(),
       finalizeRequestId: _newRequestId(),
     );
+    final entry = queued.entry;
+    if (!_stillOwnsAttachmentQueue(capture)) {
+      await _rejectAttachmentAfterOwnerChange(
+        capture,
+        entry,
+        created: queued.created,
+      );
+    }
     _listenForConnectivity();
-    return (queue, entry);
+    return (capture.queue, entry);
   }
 
   /// Publishes an already-finished AAC/MP4 recording as a private voice DM and
@@ -1384,7 +1539,10 @@ class MessageService {
     String entryId, {
     required DirectAttachmentOutbox queue,
   }) async {
-    if (_auth.currentUser?.uid != queue.ownerId) return;
+    final ownerId = queue.ownerId;
+    bool stillOwnsQueue() =>
+        queue.ownerId == ownerId && _auth.currentUser?.uid == ownerId;
+    if (!stillOwnsQueue()) return;
     var entry = queue.entry(entryId);
     if (entry == null) return;
     attachmentDelivery.report(entryId, DirectAttachmentDeliveryStage.preparing);
@@ -1394,7 +1552,7 @@ class MessageService {
       // bytes never move and every new server input gets fresh idempotency IDs.
       for (var rotations = 0; rotations < 3; rotations++) {
         entry = queue.entry(entryId);
-        if (entry == null || _auth.currentUser?.uid != queue.ownerId) return;
+        if (entry == null || !stillOwnsQueue()) return;
 
         var reservation = entry.reservation == null
             ? null
@@ -1415,12 +1573,13 @@ class MessageService {
                 entryId,
                 DirectAttachmentDeliveryStage.finalizing,
               );
-              await _finalizeDirectAttachment(
+              final finalized = await _finalizeDirectAttachment(
                 reservation,
                 entry.generation!,
                 requestId: entry.finalizeRequestId,
+                ownerId: ownerId,
               );
-              if (_auth.currentUser?.uid != queue.ownerId) return;
+              if (!finalized || !stillOwnsQueue()) return;
               await queue.complete(entry.id);
               return;
             } on FirebaseFunctionsException catch (error) {
@@ -1472,11 +1631,12 @@ class MessageService {
             );
             continue;
           }
-          if (_auth.currentUser?.uid != queue.ownerId) return;
+          if (!stillOwnsQueue()) return;
           entry = (await queue.setReservation(
             entry.id,
             _reservationRecord(reservation, queue: queue),
           ))!;
+          if (!stillOwnsQueue()) return;
           if (queue.reservationNeedsRefresh(
             entry,
             safetyWindow: const Duration(seconds: 30),
@@ -1503,6 +1663,7 @@ class MessageService {
             generation = await _uploadDirectAttachment(
               reservation,
               contentType: entry.contentType,
+              ownerId: ownerId,
               upload: (reference, metadata) => queue.payloadStore.upload(
                 queue.accountNamespace,
                 entry!.id,
@@ -1515,6 +1676,7 @@ class MessageService {
                 ),
               ),
             );
+            if (generation == null) return;
           } catch (error) {
             if (_isAuthoritativeReservationInvalid(error)) {
               await queue.rotateRejectedReservation(
@@ -1534,8 +1696,9 @@ class MessageService {
             }
             continue;
           }
-          if (_auth.currentUser?.uid != queue.ownerId) return;
+          if (!stillOwnsQueue()) return;
           entry = (await queue.setGeneration(entry.id, generation))!;
+          if (!stillOwnsQueue()) return;
         }
 
         if (queue.reservationNeedsRefresh(
@@ -1553,16 +1716,19 @@ class MessageService {
         }
 
         entry = (await queue.markFinalizeAttempted(entry.id))!;
+        if (!stillOwnsQueue()) return;
         try {
           attachmentDelivery.report(
             entryId,
             DirectAttachmentDeliveryStage.finalizing,
           );
-          await _finalizeDirectAttachment(
+          final finalized = await _finalizeDirectAttachment(
             reservation,
             generation,
             requestId: entry.finalizeRequestId,
+            ownerId: ownerId,
           );
+          if (!finalized) return;
         } catch (error) {
           if (_isAuthoritativeReservationInvalid(error)) {
             await queue.rotateRejectedReservation(
@@ -1586,7 +1752,7 @@ class MessageService {
           }
           continue;
         }
-        if (_auth.currentUser?.uid != queue.ownerId) return;
+        if (!stillOwnsQueue()) return;
         await queue.complete(entry.id);
         return;
       }
@@ -1777,10 +1943,11 @@ class MessageService {
   SettableMetadata _attachmentMetadata(
     _DirectAttachmentReservation reservation, {
     required String contentType,
+    required String ownerId,
   }) {
     return SettableMetadata(
       contentType: contentType,
-      customMetadata: _attachmentCustomMetadata(reservation),
+      customMetadata: _attachmentCustomMetadata(reservation, ownerId: ownerId),
     );
   }
 
@@ -1789,9 +1956,10 @@ class MessageService {
   /// second path: first it asks Storage whether the exact object/metadata is
   /// already present, then it retries the same upload target. This avoids both
   /// duplicate messages and abandoned objects on ambiguous network failures.
-  Future<String> _uploadDirectAttachment(
+  Future<String?> _uploadDirectAttachment(
     _DirectAttachmentReservation reservation, {
     required String contentType,
+    required String ownerId,
     required Future<String> Function(
       Reference reference,
       SettableMetadata metadata,
@@ -1799,29 +1967,41 @@ class MessageService {
     upload,
   }) async {
     final reference = _storage.ref(reservation.storagePath);
-    final metadata = _attachmentMetadata(reservation, contentType: contentType);
+    final metadata = _attachmentMetadata(
+      reservation,
+      contentType: contentType,
+      ownerId: ownerId,
+    );
     Object? lastError;
 
     for (var attempt = 0; attempt < 3; attempt++) {
+      if (_auth.currentUser?.uid != ownerId) return null;
       try {
         final generation = await upload(reference, metadata);
+        if (_auth.currentUser?.uid != ownerId) return null;
         if (generation.isEmpty) {
           throw StateError('The uploaded attachment could not be verified.');
         }
         return generation;
       } catch (error) {
+        if (_auth.currentUser?.uid != ownerId) return null;
         lastError = error;
         try {
-          return await _committedAttachmentGeneration(
+          final committedGeneration = await _committedAttachmentGeneration(
             reference,
             reservation,
             contentType: contentType,
+            ownerId: ownerId,
           );
+          if (committedGeneration == null) return null;
+          return committedGeneration;
         } catch (_) {
+          if (_auth.currentUser?.uid != ownerId) return null;
           if (attempt == 2) throw error;
           await Future<void>.delayed(
             Duration(milliseconds: 250 * (attempt + 1)),
           );
+          if (_auth.currentUser?.uid != ownerId) return null;
         }
       }
     }
@@ -1829,13 +2009,16 @@ class MessageService {
     throw lastError ?? StateError('The attachment could not be uploaded.');
   }
 
-  Future<String> _committedAttachmentGeneration(
+  Future<String?> _committedAttachmentGeneration(
     Reference reference,
     _DirectAttachmentReservation reservation, {
     required String contentType,
+    required String ownerId,
   }) async {
+    if (_auth.currentUser?.uid != ownerId) return null;
     final stored = await reference.getMetadata();
-    final expected = _attachmentCustomMetadata(reservation);
+    if (_auth.currentUser?.uid != ownerId) return null;
+    final expected = _attachmentCustomMetadata(reservation, ownerId: ownerId);
     final actual = stored.customMetadata ?? const <String, String>{};
     final exactMetadata =
         actual.length == expected.length &&
@@ -1852,22 +2035,24 @@ class MessageService {
   }
 
   Map<String, String> _attachmentCustomMetadata(
-    _DirectAttachmentReservation reservation,
-  ) {
+    _DirectAttachmentReservation reservation, {
+    required String ownerId,
+  }) {
     return {
       'yovoiceConversationId': reservation.conversationId,
       'yovoiceMessageId': reservation.messageId,
       'yovoiceMessagePath':
           'conversations/${reservation.conversationId}/messages/${reservation.messageId}',
       'yovoiceMediaType': reservation.type.name,
-      'yovoiceOwnerUid': _currentUserId,
+      'yovoiceOwnerUid': ownerId,
     };
   }
 
-  Future<void> _finalizeDirectAttachment(
+  Future<bool> _finalizeDirectAttachment(
     _DirectAttachmentReservation reservation,
     String generation, {
     required String requestId,
+    required String ownerId,
   }) async {
     final functions = _functions;
     if (functions == null) {
@@ -1875,6 +2060,7 @@ class MessageService {
     }
     Object? lastError;
     for (var attempt = 0; attempt < 3; attempt++) {
+      if (_auth.currentUser?.uid != ownerId) return false;
       try {
         await functions.httpsCallable('finalizeDirectMessageAttachment').call({
           'conversationId': reservation.conversationId,
@@ -1882,13 +2068,15 @@ class MessageService {
           'objectGeneration': generation,
           'requestId': requestId,
         });
-        return;
+        return _auth.currentUser?.uid == ownerId;
       } catch (error) {
+        if (_auth.currentUser?.uid != ownerId) return false;
         lastError = error;
         if (_isAuthoritativeReservationInvalid(error)) rethrow;
         final retryable = _isAmbiguousTransportFailure(error);
         if (!retryable || attempt == 2) rethrow;
         await Future<void>.delayed(Duration(milliseconds: 250 * (attempt + 1)));
+        if (_auth.currentUser?.uid != ownerId) return false;
       }
     }
     throw lastError ?? StateError('The attachment could not be published.');

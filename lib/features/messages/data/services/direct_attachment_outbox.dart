@@ -459,7 +459,37 @@ class DirectAttachmentOutbox {
     required String reserveRequestId,
     required String finalizeRequestId,
   }) async {
-    final entry = await _serialize(() async {
+    final result = await enqueueSourceWithDisposition(
+      fingerprint: fingerprint,
+      conversationId: conversationId,
+      type: type,
+      contentType: contentType,
+      durationSeconds: durationSeconds,
+      source: source,
+      reserveRequestId: reserveRequestId,
+      finalizeRequestId: finalizeRequestId,
+    );
+    return result.entry;
+  }
+
+  /// The same durable enqueue plus an atomic answer about whether this call
+  /// created the entry or reused an existing identical operation.
+  ///
+  /// Account-boundary cleanup needs this disposition. Comparing a snapshot of
+  /// ids outside [_serialize] is racy: another concurrent enqueue can create
+  /// the deduplicated entry between that snapshot and this operation.
+  Future<({DirectAttachmentOutboxEntry entry, bool created})>
+  enqueueSourceWithDisposition({
+    required String fingerprint,
+    required String conversationId,
+    required MessageType type,
+    required String contentType,
+    required int? durationSeconds,
+    required DirectAttachmentPayloadSource source,
+    required String reserveRequestId,
+    required String finalizeRequestId,
+  }) async {
+    final result = await _serialize(() async {
       await _ensureLoaded();
       final existingIndex = _entries.indexWhere(
         (entry) =>
@@ -488,7 +518,7 @@ class DirectAttachmentOutbox {
           rethrow;
         }
         _notify();
-        return retried;
+        return (entry: retried, created: false);
       }
 
       final totalBytes = _entries.fold<int>(
@@ -523,7 +553,7 @@ class DirectAttachmentOutbox {
         await payloadStore.delete(accountNamespace, entry.id);
         rethrow;
       }
-      return entry;
+      return (entry: entry, created: true);
     });
     // Only now. A release before the manifest is durable would delete the
     // producer's copy of a recording this queue does not yet promise to send.
@@ -533,7 +563,7 @@ class DirectAttachmentOutbox {
       // The durable copy is committed; a producer that cannot clean up its own
       // temporary file must not fail an attachment that is already queued.
     }
-    return entry;
+    return result;
   }
 
   DirectAttachmentOutboxEntry? entry(String id) {

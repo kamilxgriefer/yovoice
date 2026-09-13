@@ -180,6 +180,136 @@ void main() {
     expect((player.lastSource! as UrlSource).url, url);
   });
 
+  for (final scenario in <({String label, String first, String second})>[
+    (label: 'private', first: _voiceOne, second: _voiceTwo),
+    (
+      label: 'https',
+      first: 'https://example.test/voice-one.m4a',
+      second: 'https://example.test/voice-two.m4a',
+    ),
+  ]) {
+    testWidgets(
+      'late ${scenario.label} voice play is stopped before replacement plays',
+      (tester) async {
+        final player = _FakeAudioPlayer();
+        final firstPlayGate = player.blockNextPlay();
+
+        Future<Uint8List?> loader(String? reference, int _) async =>
+            Uint8List.fromList(reference == scenario.first ? [1] : [2]);
+
+        Future<PreparedDirectVoiceSource> prepare(
+          Uint8List bytes,
+          String messageId,
+        ) async => PreparedDirectVoiceSource(
+          source: DeviceFileSource('/private/tmp/$messageId.m4a'),
+          dispose: () async {},
+        );
+
+        await _pumpBubble(
+          tester,
+          _voiceMessage(id: 'voice-one', mediaUrl: scenario.first),
+          loader: loader,
+          playerFactory: () => player,
+          voiceSourcePreparer: prepare,
+        );
+        await tester.tap(
+          find.byKey(const ValueKey<String>('direct-voice-voice-one')),
+        );
+        await tester.pump();
+        await tester.pump();
+        expect(player.playStarted.isCompleted, isTrue);
+        expect(player.commands, <String>['play-1:start']);
+
+        await _pumpBubble(
+          tester,
+          _voiceMessage(id: 'voice-two', mediaUrl: scenario.second),
+          loader: loader,
+          playerFactory: () => player,
+          voiceSourcePreparer: prepare,
+        );
+        await tester.pump();
+        await tester.tap(
+          find.byKey(const ValueKey<String>('direct-voice-voice-two')),
+        );
+        await tester.pump();
+
+        expect(player.playCount, 1);
+        expect(
+          player.commands.indexOf('stop'),
+          greaterThan(player.commands.indexOf('play-1:start')),
+          reason: 'message replacement should interrupt the pending play',
+        );
+
+        firstPlayGate.complete();
+        await tester.pump();
+        await tester.pump();
+        await tester.pump();
+
+        final oldComplete = player.commands.indexOf('play-1:complete');
+        final newStart = player.commands.indexOf('play-2:start');
+        expect(oldComplete, greaterThanOrEqualTo(0));
+        expect(newStart, greaterThan(oldComplete));
+        expect(
+          player.commands
+              .sublist(oldComplete + 1, newStart)
+              .where((command) => command == 'stop'),
+          isNotEmpty,
+          reason: 'a late old play must be stopped again before the new play',
+        );
+        expect(player.isPlaying, isTrue);
+        if (scenario.label == 'https') {
+          expect((player.lastSource! as UrlSource).url, scenario.second);
+        } else {
+          expect(
+            (player.lastSource! as DeviceFileSource).path,
+            '/private/tmp/voice-two.m4a',
+          );
+        }
+      },
+    );
+  }
+
+  testWidgets('closing chat stops a private voice play that completes late', (
+    tester,
+  ) async {
+    final player = _FakeAudioPlayer();
+    final playGate = player.blockNextPlay();
+    await _pumpBubble(
+      tester,
+      _voiceMessage(id: 'voice-closing', mediaUrl: _voiceOne),
+      loader: (_, _) async => Uint8List.fromList([1]),
+      playerFactory: () => player,
+      voiceSourcePreparer: (bytes, messageId) async =>
+          PreparedDirectVoiceSource(
+            source: DeviceFileSource('/private/tmp/$messageId.m4a'),
+            dispose: () async {},
+          ),
+    );
+    await tester.tap(
+      find.byKey(const ValueKey<String>('direct-voice-voice-closing')),
+    );
+    await tester.pump();
+    await tester.pump();
+    expect(player.playStarted.isCompleted, isTrue);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+    playGate.complete();
+    await tester.pump();
+    await tester.pump();
+    await tester.pump();
+
+    final playComplete = player.commands.indexOf('play-1:complete');
+    expect(playComplete, greaterThanOrEqualTo(0));
+    expect(
+      player.commands.skip(playComplete + 1),
+      contains('stop'),
+      reason: 'dispose must revoke a platform play that finishes afterward',
+    );
+    expect(player.isPlaying, isFalse);
+    expect(player.disposed, isTrue);
+  });
+
   testWidgets(
     'https photo uses its network reference, not private byte loader',
     (tester) async {
@@ -299,6 +429,380 @@ void main() {
     expect(find.byType(Image), findsOneWidget);
   });
 
+  testWidgets(
+    'a late private voice load never plays under a replacement message',
+    (tester) async {
+      final first = Completer<Uint8List?>();
+      final second = Completer<Uint8List?>();
+      final preparations = <({List<int> bytes, String messageId})>[];
+      final player = _FakeAudioPlayer();
+
+      Future<Uint8List?> loader(String? reference, int _) =>
+          reference == _voiceOne ? first.future : second.future;
+
+      await _pumpBubble(
+        tester,
+        _voiceMessage(id: 'voice-1', mediaUrl: _voiceOne),
+        loader: loader,
+        playerFactory: () => player,
+        voiceSourcePreparer: (bytes, messageId) async {
+          preparations.add((bytes: bytes.toList(), messageId: messageId));
+          return PreparedDirectVoiceSource(
+            source: BytesSource(bytes),
+            dispose: () async {},
+          );
+        },
+      );
+      await tester.tap(
+        find.byKey(const ValueKey<String>('direct-voice-voice-1')),
+      );
+      await tester.pump();
+
+      await _pumpBubble(
+        tester,
+        _voiceMessage(id: 'voice-2', mediaUrl: _voiceTwo),
+        loader: loader,
+        playerFactory: () => player,
+        voiceSourcePreparer: (bytes, messageId) async {
+          preparations.add((bytes: bytes.toList(), messageId: messageId));
+          return PreparedDirectVoiceSource(
+            source: BytesSource(bytes),
+            dispose: () async {},
+          );
+        },
+      );
+      await tester.pump();
+      await tester.tap(
+        find.byKey(const ValueKey<String>('direct-voice-voice-2')),
+      );
+      await tester.pump();
+
+      first.complete(Uint8List.fromList([1, 1, 1]));
+      await tester.pump();
+      await tester.pump();
+      expect(
+        preparations,
+        isEmpty,
+        reason: 'bytes authorized for the old message must be discarded',
+      );
+      expect(player.playCount, 0);
+
+      second.complete(Uint8List.fromList([2, 2, 2]));
+      await tester.pump();
+      await tester.pump();
+      expect(preparations, hasLength(1));
+      expect(preparations.single.bytes, <int>[2, 2, 2]);
+      expect(preparations.single.messageId, 'voice-2');
+      expect(player.playCount, 1);
+    },
+  );
+
+  testWidgets(
+    'account switch rejects late photo bytes for the same message reference',
+    (tester) async {
+      final first = Completer<Uint8List?>();
+      final second = Completer<Uint8List?>();
+      var loads = 0;
+      Future<Uint8List?> loader(String? _, int __) {
+        loads += 1;
+        return loads == 1 ? first.future : second.future;
+      }
+
+      final message = _imageMessage(id: 'same-photo', mediaUrl: _imageOne);
+      await _pumpBubble(
+        tester,
+        message,
+        currentUserId: 'account-a',
+        loader: loader,
+      );
+      expect(loads, 1);
+
+      await _pumpBubble(
+        tester,
+        message,
+        currentUserId: 'account-b',
+        loader: loader,
+      );
+      await tester.pump();
+      expect(loads, 2);
+
+      first.complete(_onePixelPng);
+      await tester.pump();
+      await tester.pump();
+      expect(
+        find.byType(Image),
+        findsNothing,
+        reason: 'account A bytes must not render after ownership changes',
+      );
+
+      second.complete(_onePixelPng);
+      await tester.pumpAndSettle();
+      expect(find.byType(Image), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'account switch rejects late voice bytes for the same message reference',
+    (tester) async {
+      final first = Completer<Uint8List?>();
+      final second = Completer<Uint8List?>();
+      var loads = 0;
+      final preparations = <List<int>>[];
+      final player = _FakeAudioPlayer();
+      Future<Uint8List?> loader(String? _, int __) {
+        loads += 1;
+        return loads == 1 ? first.future : second.future;
+      }
+
+      final message = _voiceMessage(id: 'same-voice', mediaUrl: _voiceOne);
+      await _pumpBubble(
+        tester,
+        message,
+        currentUserId: 'account-a',
+        loader: loader,
+        playerFactory: () => player,
+        voiceSourcePreparer: (bytes, _) async {
+          preparations.add(bytes.toList());
+          return PreparedDirectVoiceSource(
+            source: BytesSource(bytes),
+            dispose: () async {},
+          );
+        },
+      );
+      await tester.tap(
+        find.byKey(const ValueKey<String>('direct-voice-same-voice')),
+      );
+      await tester.pump();
+
+      await _pumpBubble(
+        tester,
+        message,
+        currentUserId: 'account-b',
+        loader: loader,
+        playerFactory: () => player,
+        voiceSourcePreparer: (bytes, _) async {
+          preparations.add(bytes.toList());
+          return PreparedDirectVoiceSource(
+            source: BytesSource(bytes),
+            dispose: () async {},
+          );
+        },
+      );
+      await tester.pump();
+      await tester.tap(
+        find.byKey(const ValueKey<String>('direct-voice-same-voice')),
+      );
+      await tester.pump();
+
+      first.complete(Uint8List.fromList([1, 1, 1]));
+      await tester.pump();
+      await tester.pump();
+      expect(preparations, isEmpty);
+      expect(player.playCount, 0);
+
+      second.complete(Uint8List.fromList([2, 2, 2]));
+      await tester.pump();
+      await tester.pump();
+      expect(preparations, <List<int>>[
+        <int>[2, 2, 2],
+      ]);
+      expect(player.playCount, 1);
+    },
+  );
+
+  testWidgets(
+    'account switch rejects late video bytes for the same message reference',
+    (tester) async {
+      final first = Completer<Uint8List?>();
+      final second = Completer<Uint8List?>();
+      var loads = 0;
+      final preparations = <List<int>>[];
+      Future<Uint8List?> loader(String? _, int __) {
+        loads += 1;
+        return loads == 1 ? first.future : second.future;
+      }
+
+      final message = _videoMessage(id: 'same-video', mediaUrl: _videoOne);
+      Future<PreparedDirectVideoSource> prepare(
+        Uint8List bytes,
+        String _,
+        String __,
+      ) async {
+        preparations.add(bytes.toList());
+        return _TestPreparedVideoSource(() {});
+      }
+
+      await _pumpBubble(
+        tester,
+        message,
+        currentUserId: 'account-a',
+        loader: loader,
+        videoSourcePreparer: prepare,
+      );
+      await tester.tap(
+        find.byKey(const ValueKey<String>('direct-video-same-video')),
+      );
+      await tester.pump();
+
+      await _pumpBubble(
+        tester,
+        message,
+        currentUserId: 'account-b',
+        loader: loader,
+        videoSourcePreparer: prepare,
+      );
+      await tester.pump();
+      await tester.tap(
+        find.byKey(const ValueKey<String>('direct-video-same-video')),
+      );
+      await tester.pump();
+
+      first.complete(Uint8List.fromList([1, 1, 1]));
+      await tester.pump();
+      await tester.pump();
+      expect(preparations, isEmpty);
+
+      second.complete(Uint8List.fromList([2, 2, 2]));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(preparations, <List<int>>[
+        <int>[2, 2, 2],
+      ]);
+    },
+  );
+
+  testWidgets(
+    'a late private video load never attaches to a replacement tile',
+    (tester) async {
+      final first = Completer<Uint8List?>();
+      final second = Completer<Uint8List?>();
+      final preparations =
+          <({List<int> bytes, String messageId, String reference})>[];
+
+      Future<Uint8List?> loader(String? reference, int _) =>
+          reference == _videoOne ? first.future : second.future;
+
+      Future<PreparedDirectVideoSource> preparer(
+        Uint8List bytes,
+        String messageId,
+        String reference,
+      ) async {
+        preparations.add((
+          bytes: bytes.toList(),
+          messageId: messageId,
+          reference: reference,
+        ));
+        return _TestPreparedVideoSource(() {});
+      }
+
+      await _pumpBubble(
+        tester,
+        _videoMessage(id: 'video-1', mediaUrl: _videoOne),
+        loader: loader,
+        videoSourcePreparer: preparer,
+      );
+      await tester.tap(
+        find.byKey(const ValueKey<String>('direct-video-video-1')),
+      );
+      await tester.pump();
+
+      await _pumpBubble(
+        tester,
+        _videoMessage(id: 'video-2', mediaUrl: _videoTwo),
+        loader: loader,
+        videoSourcePreparer: preparer,
+      );
+      await tester.pump();
+      await tester.tap(
+        find.byKey(const ValueKey<String>('direct-video-video-2')),
+      );
+      await tester.pump();
+
+      first.complete(Uint8List.fromList([1, 1, 1]));
+      await tester.pump();
+      await tester.pump();
+      expect(
+        preparations,
+        isEmpty,
+        reason: 'a reordered tile must not prepare the previous private file',
+      );
+
+      second.complete(Uint8List.fromList([2, 2, 2]));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(preparations, hasLength(1));
+      expect(preparations.single.bytes, <int>[2, 2, 2]);
+      expect(preparations.single.messageId, 'video-2');
+      expect(preparations.single.reference, _videoTwo);
+    },
+  );
+
+  testWidgets(
+    'closing the chat during a private voice load discards the late bytes',
+    (tester) async {
+      final load = Completer<Uint8List?>();
+      final player = _FakeAudioPlayer();
+      var prepareCalls = 0;
+      await _pumpBubble(
+        tester,
+        _voiceMessage(id: 'voice-before-logout', mediaUrl: _voiceOne),
+        loader: (_, _) => load.future,
+        playerFactory: () => player,
+        voiceSourcePreparer: (bytes, messageId) async {
+          prepareCalls += 1;
+          return PreparedDirectVoiceSource(
+            source: BytesSource(bytes),
+            dispose: () async {},
+          );
+        },
+      );
+      await tester.tap(
+        find.byKey(const ValueKey<String>('direct-voice-voice-before-logout')),
+      );
+      await tester.pump();
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+      load.complete(Uint8List.fromList([7, 7, 7]));
+      await tester.pump();
+      await tester.pump();
+
+      expect(prepareCalls, 0);
+      expect(player.playCount, 0);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'closing the chat during a private video load creates no stale decoder',
+    (tester) async {
+      final load = Completer<Uint8List?>();
+      var prepareCalls = 0;
+      await _pumpBubble(
+        tester,
+        _videoMessage(id: 'video-before-logout', mediaUrl: _videoOne),
+        loader: (_, _) => load.future,
+        videoSourcePreparer: (bytes, messageId, reference) async {
+          prepareCalls += 1;
+          return _TestPreparedVideoSource(() {});
+        },
+      );
+      await tester.tap(
+        find.byKey(const ValueKey<String>('direct-video-video-before-logout')),
+      );
+      await tester.pump();
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+      load.complete(Uint8List.fromList([8, 8, 8]));
+      await tester.pump();
+      await tester.pump();
+
+      expect(prepareCalls, 0);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets('voice bubble stays inside 320–1440 px at 200% text scale', (
     tester,
   ) async {
@@ -385,6 +889,7 @@ const _voiceTwo = 'gs://private/message_attachments/a/c/voice-2.m4a';
 const _imageOne = 'gs://private/message_attachments/a/c/image-1.jpg';
 const _imageTwo = 'gs://private/message_attachments/a/c/image-2.jpg';
 const _videoOne = 'gs://private/message_attachments/a/c/video-1.mp4';
+const _videoTwo = 'gs://private/message_attachments/a/c/video-2.mp4';
 
 final Uint8List _onePixelPng = base64Decode(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk'
@@ -444,6 +949,7 @@ Future<void> _pumpBubble(
   WidgetTester tester,
   Message message, {
   required Future<Uint8List?> Function(String? reference, int maxBytes) loader,
+  String currentUserId = 'viewer',
   AudioPlayer Function()? playerFactory,
   DirectVoiceSourcePreparer? voiceSourcePreparer,
   DirectVideoSourcePreparer? videoSourcePreparer,
@@ -455,7 +961,7 @@ Future<void> _pumpBubble(
       home: Scaffold(
         body: MessageBubble(
           message: message,
-          currentUserId: 'viewer',
+          currentUserId: currentUserId,
           onLongPress: () {},
           privateMediaLoader: loader,
           audioPlayerFactory: playerFactory,
@@ -488,7 +994,19 @@ class _FakeAudioPlayer implements AudioPlayer {
   int pauseCount = 0;
   int resumeCount = 0;
   int stopCount = 0;
+  bool isPlaying = false;
+  bool disposed = false;
+  final List<String> commands = [];
   Source? lastSource;
+  Completer<void> playStarted = Completer<void>();
+  Completer<void>? _nextPlayGate;
+
+  Completer<void> blockNextPlay() {
+    final gate = Completer<void>();
+    _nextPlayGate = gate;
+    playStarted = Completer<void>();
+    return gate;
+  }
 
   @override
   Stream<PlayerState> get onPlayerStateChanged => _states.stream;
@@ -503,30 +1021,46 @@ class _FakeAudioPlayer implements AudioPlayer {
     PlayerMode? mode,
   }) async {
     playCount += 1;
+    final call = playCount;
     lastSource = source;
+    commands.add('play-$call:start');
+    if (!playStarted.isCompleted) playStarted.complete();
+    final gate = _nextPlayGate;
+    _nextPlayGate = null;
+    await gate?.future;
+    isPlaying = true;
+    commands.add('play-$call:complete');
     _states.add(PlayerState.playing);
   }
 
   @override
   Future<void> pause() async {
     pauseCount += 1;
+    isPlaying = false;
+    commands.add('pause');
     _states.add(PlayerState.paused);
   }
 
   @override
   Future<void> resume() async {
     resumeCount += 1;
+    isPlaying = true;
+    commands.add('resume');
     _states.add(PlayerState.playing);
   }
 
   @override
   Future<void> stop() async {
     stopCount += 1;
+    isPlaying = false;
+    commands.add('stop');
     _states.add(PlayerState.stopped);
   }
 
   @override
   Future<void> dispose() async {
+    disposed = true;
+    commands.add('dispose');
     await _states.close();
   }
 

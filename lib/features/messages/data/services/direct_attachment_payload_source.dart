@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
+import 'package:image_picker/image_picker.dart';
 
 import 'package:yovoice/features/moments/data/services/recorded_audio.dart';
 
@@ -38,11 +39,29 @@ abstract class DirectAttachmentPayloadSource {
   const factory DirectAttachmentPayloadSource.recording(RecordedAudio audio) =
       _RecordedAudioPayloadSource;
 
+  /// A photo or video selected through the platform picker. Keeping the
+  /// picker handle lets native platforms stream large videos from disk instead
+  /// of first materialising the complete file in the Dart heap.
+  const factory DirectAttachmentPayloadSource.pickedFile(
+    XFile file, {
+    required int length,
+  }) = _PickedFilePayloadSource;
+
   /// The authoritative byte count, known before any read.
   int get length;
 
   /// Bounded, sequential read of the whole payload.
   Stream<List<int>> openRead();
+
+  /// Revalidates the bytes while the durable store consumes them.
+  ///
+  /// Fingerprinting and adoption are necessarily two reads for file-backed
+  /// sources. This wrapper hashes the adoption stream itself, so a producer
+  /// that changes between those reads cannot leave durable bytes under the
+  /// first read's identity. It adds no third read and never joins chunks into
+  /// one resident buffer.
+  DirectAttachmentPayloadSource verifiedAgainst(String fingerprint) =>
+      _VerifiedPayloadSource(this, fingerprint);
 
   /// Releases the producer's copy after the outbox has taken durable
   /// ownership. A no-op for resident bytes.
@@ -58,12 +77,26 @@ abstract class DirectAttachmentPayloadSource {
   /// The caller compares the count against the declared [length]; a recording
   /// that changed underneath the sheet is caught here rather than by a server
   /// that would refuse the finalize much later.
-  Future<DirectAttachmentPayloadDigest> digest() async {
+  Future<DirectAttachmentPayloadDigest> digest({int prefixBytes = 0}) async {
+    if (prefixBytes < 0) {
+      throw ArgumentError.value(prefixBytes, 'prefixBytes');
+    }
     final sink = _DigestSink();
     final input = sha256.startChunkedConversion(sink);
+    // This stays capped by [prefixBytes]. Copying the small prefix keeps it
+    // stable even if a platform stream reuses its chunk buffer.
+    final prefix = BytesBuilder(copy: true);
     var streamed = 0;
     try {
       await for (final chunk in openRead()) {
+        final prefixRemaining = prefixBytes - prefix.length;
+        if (prefixRemaining > 0) {
+          prefix.add(
+            chunk.length <= prefixRemaining
+                ? chunk
+                : chunk.sublist(0, prefixRemaining),
+          );
+        }
         streamed += chunk.length;
         input.add(chunk);
       }
@@ -77,6 +110,7 @@ abstract class DirectAttachmentPayloadSource {
     return DirectAttachmentPayloadDigest(
       fingerprint: digest.toString(),
       length: streamed,
+      prefix: prefix.takeBytes(),
     );
   }
 }
@@ -87,12 +121,16 @@ class DirectAttachmentPayloadDigest {
   const DirectAttachmentPayloadDigest({
     required this.fingerprint,
     required this.length,
+    required this.prefix,
   });
 
   /// Lowercase hex sha256, the exact shape the durable manifest validates.
   final String fingerprint;
 
   final int length;
+
+  /// An optional bounded prefix captured during the same read as the digest.
+  final Uint8List prefix;
 }
 
 class _DigestSink implements Sink<Digest> {
@@ -130,4 +168,49 @@ class _RecordedAudioPayloadSource extends DirectAttachmentPayloadSource {
 
   @override
   Future<void> release() => _audio.discard();
+}
+
+class _PickedFilePayloadSource extends DirectAttachmentPayloadSource {
+  const _PickedFilePayloadSource(this._file, {required this.length});
+
+  final XFile _file;
+
+  @override
+  final int length;
+
+  @override
+  Stream<List<int>> openRead() => _file.openRead();
+}
+
+class _VerifiedPayloadSource extends DirectAttachmentPayloadSource {
+  const _VerifiedPayloadSource(this._source, this._fingerprint);
+
+  final DirectAttachmentPayloadSource _source;
+  final String _fingerprint;
+
+  @override
+  int get length => _source.length;
+
+  @override
+  Stream<List<int>> openRead() async* {
+    final sink = _DigestSink();
+    final input = sha256.startChunkedConversion(sink);
+    var streamed = 0;
+    try {
+      await for (final chunk in _source.openRead()) {
+        streamed += chunk.length;
+        input.add(chunk);
+        yield chunk;
+      }
+    } finally {
+      input.close();
+    }
+    final digest = sink.value;
+    if (streamed != length || digest?.toString() != _fingerprint) {
+      throw StateError('The attachment changed while it was being saved.');
+    }
+  }
+
+  @override
+  Future<void> release() => _source.release();
 }

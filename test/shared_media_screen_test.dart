@@ -33,6 +33,7 @@ void main() {
     ],
     home: SharedMediaScreen(
       conversationId: 'conversation',
+      currentUserId: 'viewer',
       messagesStream: stream,
       privateMediaLoader: loader,
       audioPlayerFactory: playerFactory,
@@ -153,6 +154,7 @@ void main() {
         ],
         home: SharedMediaScreen(
           conversationId: 'conversation',
+          currentUserId: 'viewer',
           firstPageWatcher: (type) => Stream.value(
             SharedMediaPage(
               messages: type == MessageType.image ? [first] : const [],
@@ -205,6 +207,7 @@ void main() {
         ],
         home: SharedMediaScreen(
           conversationId: 'conversation',
+          currentUserId: 'viewer',
           firstPageWatcher: (type) => type == MessageType.image
               ? controller.stream
               : const Stream<SharedMediaPage>.empty(),

@@ -52,6 +52,11 @@ jobs:
       - name: Run Flutter tests
         run: flutter test
 
+      # Kept outside test/ while a separate redesign owns that directory.
+      # Invoke explicitly so these service regressions remain part of CI.
+      - name: Verify profile listener and outbox performance regressions
+        run: flutter test --no-pub --concurrency=1 tool/performance
+
       # Firestore security rules suite against the real emulator. Rules
       # DEPLOYS stay manual on purpose (see docs/DEPLOYMENT.md) — this
       # only proves the rules in the repo still pass their tests before

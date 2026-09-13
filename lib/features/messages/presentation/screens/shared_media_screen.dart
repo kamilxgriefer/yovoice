@@ -21,6 +21,7 @@ typedef SharedMediaPageLoader =
 class SharedMediaScreen extends StatefulWidget {
   const SharedMediaScreen({
     required this.conversationId,
+    required this.currentUserId,
     this.messageService,
     this.messagesStream,
     this.privateMediaLoader,
@@ -33,6 +34,7 @@ class SharedMediaScreen extends StatefulWidget {
   });
 
   final String conversationId;
+  final String currentUserId;
   final MessageService? messageService;
 
   /// Injection seam for deterministic loading/error/gallery tests.
@@ -125,6 +127,7 @@ class _SharedMediaScreenState extends State<SharedMediaScreen> {
                           _loadPage(MessageType.image, cursor),
                       builder: (context, messages, footer) => _PhotosTab(
                         messages: messages,
+                        currentUserId: widget.currentUserId,
                         privateMediaLoader: widget.privateMediaLoader,
                         paginationFooter: footer,
                       ),
@@ -139,6 +142,7 @@ class _SharedMediaScreenState extends State<SharedMediaScreen> {
                           _loadPage(MessageType.video, cursor),
                       builder: (context, messages, footer) => _VideosTab(
                         messages: messages,
+                        currentUserId: widget.currentUserId,
                         privateMediaLoader: widget.privateMediaLoader,
                         videoSourcePreparer: widget.videoSourcePreparer,
                         paginationFooter: footer,
@@ -154,6 +158,7 @@ class _SharedMediaScreenState extends State<SharedMediaScreen> {
                           _loadPage(MessageType.voice, cursor),
                       builder: (context, messages, footer) => _VoiceTab(
                         messages: messages,
+                        currentUserId: widget.currentUserId,
                         privateMediaLoader: widget.privateMediaLoader,
                         audioPlayerFactory: widget.audioPlayerFactory,
                         voiceSourcePreparer: widget.voiceSourcePreparer,
@@ -204,17 +209,20 @@ class _SharedMediaScreenState extends State<SharedMediaScreen> {
                       children: [
                         _PhotosTab(
                           messages: photos,
+                          currentUserId: widget.currentUserId,
                           privateMediaLoader: widget.privateMediaLoader,
                           paginationFooter: null,
                         ),
                         _VideosTab(
                           messages: videos,
+                          currentUserId: widget.currentUserId,
                           privateMediaLoader: widget.privateMediaLoader,
                           videoSourcePreparer: widget.videoSourcePreparer,
                           paginationFooter: null,
                         ),
                         _VoiceTab(
                           messages: voices,
+                          currentUserId: widget.currentUserId,
                           privateMediaLoader: widget.privateMediaLoader,
                           audioPlayerFactory: widget.audioPlayerFactory,
                           voiceSourcePreparer: widget.voiceSourcePreparer,
@@ -447,12 +455,14 @@ class _SharedMediaPaginationFooter extends StatelessWidget {
 class _VideosTab extends StatelessWidget {
   const _VideosTab({
     required this.messages,
+    required this.currentUserId,
     required this.privateMediaLoader,
     required this.videoSourcePreparer,
     required this.paginationFooter,
   });
 
   final List<Message> messages;
+  final String currentUserId;
   final Future<Uint8List?> Function(String? reference, int maxBytes)?
   privateMediaLoader;
   final DirectVideoSourcePreparer? videoSourcePreparer;
@@ -503,6 +513,7 @@ class _VideosTab extends StatelessWidget {
                 label: copy.text('Shared video', 'Udostępniony film'),
                 child: DirectMessageMediaPreview(
                   message: message,
+                  currentUserId: currentUserId,
                   photoWidth: double.infinity,
                   photoHeight: double.infinity,
                   privateMediaLoader: privateMediaLoader,
@@ -520,11 +531,13 @@ class _VideosTab extends StatelessWidget {
 class _PhotosTab extends StatelessWidget {
   const _PhotosTab({
     required this.messages,
+    required this.currentUserId,
     required this.privateMediaLoader,
     required this.paginationFooter,
   });
 
   final List<Message> messages;
+  final String currentUserId;
   final Future<Uint8List?> Function(String? reference, int maxBytes)?
   privateMediaLoader;
   final Widget? paginationFooter;
@@ -576,6 +589,7 @@ class _PhotosTab extends StatelessWidget {
                     color: context.appPalette.surfaceRaised,
                     child: DirectMessageMediaPreview(
                       message: message,
+                      currentUserId: currentUserId,
                       photoWidth: double.infinity,
                       photoHeight: double.infinity,
                       privateMediaLoader: privateMediaLoader,
@@ -594,6 +608,7 @@ class _PhotosTab extends StatelessWidget {
 class _VoiceTab extends StatelessWidget {
   const _VoiceTab({
     required this.messages,
+    required this.currentUserId,
     required this.privateMediaLoader,
     required this.audioPlayerFactory,
     required this.voiceSourcePreparer,
@@ -601,6 +616,7 @@ class _VoiceTab extends StatelessWidget {
   });
 
   final List<Message> messages;
+  final String currentUserId;
   final Future<Uint8List?> Function(String? reference, int maxBytes)?
   privateMediaLoader;
   final AudioPlayer Function()? audioPlayerFactory;
@@ -648,6 +664,7 @@ class _VoiceTab extends StatelessWidget {
               ),
               child: DirectMessageMediaPreview(
                 message: message,
+                currentUserId: currentUserId,
                 privateMediaLoader: privateMediaLoader,
                 audioPlayerFactory: audioPlayerFactory,
                 voiceSourcePreparer: voiceSourcePreparer,

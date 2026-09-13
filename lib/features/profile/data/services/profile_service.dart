@@ -199,8 +199,12 @@ class ProfileService {
           );
     };
     controller.onCancel = () async {
-      await subscription?.cancel();
+      // A new screen may subscribe while native cleanup is still pending.
+      // Detach this handle before awaiting so the old cancellation cannot
+      // erase the replacement listener's handle and leave it running.
+      final cancelling = subscription;
       subscription = null;
+      await cancelling?.cancel();
     };
 
     return Stream<UserProfile>.multi((subscriber) {

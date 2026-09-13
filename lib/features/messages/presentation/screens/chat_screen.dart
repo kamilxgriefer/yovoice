@@ -50,6 +50,10 @@ import 'package:yovoice/shared/widgets/profile/people_status_ring.dart';
 
 typedef DirectMessagePhotoPicker = Future<XFile?> Function(ImageSource source);
 typedef DirectMessageVideoPicker = Future<XFile?> Function(ImageSource source);
+typedef DirectMessageVoiceRecorderPresenter =
+    Future<void> Function(
+      Future<void> Function(RecordedAudio audio, int durationSeconds) onSend,
+    );
 
 enum DirectMessageMediaPickAction {
   takePhoto,
@@ -77,6 +81,7 @@ class ChatScreen extends StatefulWidget {
     this.photoPicker,
     this.videoPicker,
     this.videoInspector,
+    this.voiceRecorderPresenter,
     this.profilePreviewAction,
     this.gifService,
     this.gifMessageInvoker,
@@ -107,6 +112,7 @@ class ChatScreen extends StatefulWidget {
   final DirectMessagePhotoPicker? photoPicker;
   final DirectMessageVideoPicker? videoPicker;
   final DirectMessageVideoInspector? videoInspector;
+  final DirectMessageVoiceRecorderPresenter? voiceRecorderPresenter;
 
   /// Deterministic seam for navigation regression tests. Production leaves
   /// this null and opens the canonical profile preview.
@@ -203,6 +209,29 @@ class _ChatScreenState extends State<ChatScreen> {
   DateTime? _otherProfileUpdatedAt;
 
   String get _currentUserId => _auth.currentUser?.uid ?? '';
+
+  String? _captureMediaOwner() {
+    final ownerId = _auth.currentUser?.uid.trim() ?? '';
+    return ownerId.isEmpty ? null : ownerId;
+  }
+
+  bool _ownsMediaInteraction(String ownerId) =>
+      mounted && ownerId.isNotEmpty && _auth.currentUser?.uid.trim() == ownerId;
+
+  Future<void> _discardRecordingBestEffort(RecordedAudio audio) async {
+    try {
+      await audio.discard();
+    } catch (_) {
+      // Account isolation takes priority; cleanup is already idempotent.
+    }
+  }
+
+  Future<void> _rejectRecordingAfterOwnerChange(RecordedAudio audio) async {
+    await _discardRecordingBestEffort(audio);
+    throw StateError(
+      'The signed-in account changed before the voice message was saved.',
+    );
+  }
 
   @override
   void initState() {
@@ -1116,6 +1145,7 @@ class _ChatScreenState extends State<ChatScreen> {
         MaterialPageRoute<void>(
           builder: (_) => SharedMediaScreen(
             conversationId: widget.conversationId,
+            currentUserId: _currentUserId,
             messageService: _service,
           ),
         ),
@@ -1296,6 +1326,8 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _pickAttachment() async {
     if (_sendingMedia || _mediaPickerOpen) return;
+    final ownerId = _captureMediaOwner();
+    if (ownerId == null) return;
     _mediaPickerOpen = true;
     DirectMessageMediaPickAction? action;
     try {
@@ -1303,21 +1335,21 @@ class _ChatScreenState extends State<ChatScreen> {
     } finally {
       _mediaPickerOpen = false;
     }
-    if (action == null || !mounted) return;
+    if (action == null || !_ownsMediaInteraction(ownerId)) return;
     switch (action) {
       case DirectMessageMediaPickAction.takePhoto:
-        return _pickPhoto(ImageSource.camera);
+        return _pickPhoto(ImageSource.camera, ownerId: ownerId);
       case DirectMessageMediaPickAction.photoLibrary:
-        return _pickPhoto(ImageSource.gallery);
+        return _pickPhoto(ImageSource.gallery, ownerId: ownerId);
       case DirectMessageMediaPickAction.recordVideo:
-        return _pickVideo(ImageSource.camera);
+        return _pickVideo(ImageSource.camera, ownerId: ownerId);
       case DirectMessageMediaPickAction.videoLibrary:
-        return _pickVideo(ImageSource.gallery);
+        return _pickVideo(ImageSource.gallery, ownerId: ownerId);
     }
   }
 
-  Future<void> _pickPhoto(ImageSource source) async {
-    if (_sendingMedia) return;
+  Future<void> _pickPhoto(ImageSource source, {required String ownerId}) async {
+    if (_sendingMedia || !_ownsMediaInteraction(ownerId)) return;
     final picker = widget.photoPicker;
     final image = picker != null
         ? await picker(source)
@@ -1327,15 +1359,17 @@ class _ChatScreenState extends State<ChatScreen> {
             maxHeight: 2048,
             imageQuality: 88,
           );
-    if (image == null || !mounted) return;
+    if (image == null || !_ownsMediaInteraction(ownerId)) return;
     setState(() => _sendingMedia = true);
     try {
-      await _service.sendImageMessage(
+      if (!_ownsMediaInteraction(ownerId)) return;
+      await _service.enqueueImageMessage(
         conversationId: widget.conversationId,
         image: image,
       );
+      if (!_ownsMediaInteraction(ownerId)) return;
     } catch (error) {
-      if (mounted) {
+      if (mounted && _ownsMediaInteraction(ownerId)) {
         final copy = AppLocalizations.of(context);
         _showMessage(
           error is VoiceRecordingException
@@ -1354,8 +1388,8 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  Future<void> _pickVideo(ImageSource source) async {
-    if (_sendingMedia) return;
+  Future<void> _pickVideo(ImageSource source, {required String ownerId}) async {
+    if (_sendingMedia || !_ownsMediaInteraction(ownerId)) return;
     try {
       final picker = widget.videoPicker;
       final video = picker != null
@@ -1364,18 +1398,21 @@ class _ChatScreenState extends State<ChatScreen> {
               source: source,
               maxDuration: const Duration(seconds: 60),
             );
-      if (video == null || !mounted) return;
+      if (video == null || !_ownsMediaInteraction(ownerId)) return;
       setState(() => _sendingMedia = true);
       final duration =
           await (widget.videoInspector ?? inspectPickedDirectVideo)(video);
+      if (!_ownsMediaInteraction(ownerId)) return;
       final durationSeconds = (duration.inMilliseconds + 999) ~/ 1000;
-      await _service.sendVideoMessage(
+      if (!_ownsMediaInteraction(ownerId)) return;
+      await _service.enqueueVideoMessage(
         conversationId: widget.conversationId,
         video: video,
         durationSeconds: durationSeconds,
       );
+      if (!_ownsMediaInteraction(ownerId)) return;
     } catch (error) {
-      if (mounted) {
+      if (mounted && _ownsMediaInteraction(ownerId)) {
         final copy = AppLocalizations.of(context);
         _showMessage(
           intentionalOrFriendly(
@@ -1394,29 +1431,84 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _recordVoiceMessage() async {
     if (_sendingMedia) return;
-    await showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      showDragHandle: false,
-      constraints: ResponsiveContentFrame.adaptiveModalConstraints(
-        context,
-        maxWidth: 520,
-      ),
-      builder: (_) => _VoiceMessageRecorderSheet(
-        // Awaits the durable enqueue only. Once the bytes are in app-private
-        // storage and the manifest is persisted, the message cannot be lost,
-        // and the reserve/upload/finalize chain reports itself on the queued
-        // card in the thread instead of behind a modal.
-        onSend: (audio, durationSeconds) async {
-          await _service.enqueueVoiceMessage(
-            conversationId: widget.conversationId,
-            audio: audio,
-            durationSeconds: durationSeconds,
+    final ownerId = _captureMediaOwner();
+    if (ownerId == null) return;
+
+    Future<void> enqueue(RecordedAudio audio, int durationSeconds) async {
+      if (!_ownsMediaInteraction(ownerId)) {
+        return _rejectRecordingAfterOwnerChange(audio);
+      }
+      try {
+        await _service.enqueueVoiceMessage(
+          conversationId: widget.conversationId,
+          audio: audio,
+          durationSeconds: durationSeconds,
+        );
+      } catch (_) {
+        if (!_ownsMediaInteraction(ownerId)) {
+          await _discardRecordingBestEffort(audio);
+        }
+        rethrow;
+      }
+      if (!_ownsMediaInteraction(ownerId)) {
+        return _rejectRecordingAfterOwnerChange(audio);
+      }
+    }
+
+    final presenter = widget.voiceRecorderPresenter;
+    if (presenter != null) {
+      await presenter(enqueue);
+      return;
+    }
+
+    BuildContext? recorderContext;
+    var ownerRevoked = false;
+    var recorderClosing = false;
+    void closeRecorderForOwnerChange() {
+      if (recorderClosing) return;
+      final sheetContext = recorderContext;
+      if (sheetContext == null ||
+          !sheetContext.mounted ||
+          !(ModalRoute.of(sheetContext)?.isCurrent ?? false)) {
+        return;
+      }
+      recorderClosing = true;
+      Navigator.of(sheetContext).pop();
+    }
+
+    final ownerSubscription = _auth.userChanges().listen((user) {
+      if (user?.uid.trim() == ownerId) return;
+      ownerRevoked = true;
+      closeRecorderForOwnerChange();
+    });
+    try {
+      await showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        backgroundColor: Colors.transparent,
+        showDragHandle: false,
+        constraints: ResponsiveContentFrame.adaptiveModalConstraints(
+          context,
+          maxWidth: 520,
+        ),
+        builder: (sheetContext) {
+          recorderContext = sheetContext;
+          if (ownerRevoked || !_ownsMediaInteraction(ownerId)) {
+            ownerRevoked = true;
+            scheduleMicrotask(closeRecorderForOwnerChange);
+            return const SizedBox.shrink();
+          }
+          return _VoiceMessageRecorderSheet(
+            // Awaits the durable enqueue only. Once the bytes are in
+            // app-private storage and the manifest is persisted, the message
+            // cannot be lost, and the queued card owns the network work.
+            onSend: enqueue,
           );
         },
-      ),
-    );
+      );
+    } finally {
+      await ownerSubscription.cancel();
+    }
   }
 
   void _showMessage(String message) {

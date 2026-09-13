@@ -10,11 +10,13 @@ import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/preferences/app_preferences.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/messages/data/models/message.dart';
+import 'package:yovoice/features/messages/presentation/widgets/direct_media_fullscreen_viewer.dart';
 import 'package:yovoice/features/messages/presentation/widgets/direct_video_playback_source.dart';
 import 'package:yovoice/features/messages/presentation/widgets/direct_voice_playback_source.dart';
 import 'package:yovoice/features/messages/presentation/widgets/room_link_message_card.dart';
 import 'package:yovoice/features/rooms/data/room_links.dart';
 import 'package:yovoice/shared/widgets/interactions/accessible_context_action.dart';
+import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
 import 'package:yovoice/shared/widgets/media/yo_gif_view.dart';
 
 class MessageBubble extends StatelessWidget {
@@ -140,6 +142,7 @@ class MessageBubble extends StatelessWidget {
                       ),
                     _MessageContent(
                       message: message,
+                      currentUserId: currentUserId,
                       foregroundColor: bubbleForeground,
                       mutedForegroundColor: bubbleMuted,
                       errorForegroundColor: isMine
@@ -245,6 +248,7 @@ class MessageBubble extends StatelessWidget {
 class _MessageContent extends StatelessWidget {
   const _MessageContent({
     required this.message,
+    required this.currentUserId,
     required this.foregroundColor,
     required this.mutedForegroundColor,
     required this.errorForegroundColor,
@@ -258,6 +262,7 @@ class _MessageContent extends StatelessWidget {
   });
 
   final Message message;
+  final String currentUserId;
   final Color foregroundColor;
   final Color mutedForegroundColor;
   final Color errorForegroundColor;
@@ -309,6 +314,7 @@ class _MessageContent extends StatelessWidget {
       case MessageType.voice:
         return _VoiceMessageContent(
           message: message,
+          ownerId: currentUserId,
           foregroundColor: foregroundColor,
           mutedForegroundColor: mutedForegroundColor,
           errorForegroundColor: errorForegroundColor,
@@ -319,6 +325,7 @@ class _MessageContent extends StatelessWidget {
       case MessageType.image:
         return _ImageMessageContent(
           message: message,
+          ownerId: currentUserId,
           foregroundColor: foregroundColor,
           mutedForegroundColor: mutedForegroundColor,
           privateMediaLoader: privateMediaLoader,
@@ -326,6 +333,7 @@ class _MessageContent extends StatelessWidget {
       case MessageType.video:
         return _VideoMessageContent(
           message: message,
+          ownerId: currentUserId,
           foregroundColor: foregroundColor,
           mutedForegroundColor: mutedForegroundColor,
           errorForegroundColor: errorForegroundColor,
@@ -363,9 +371,71 @@ class _MessageContent extends StatelessWidget {
   }
 }
 
+typedef _DirectMediaSnapshot = ({
+  String ownerId,
+  String conversationId,
+  String messageId,
+  String reference,
+});
+
+class _StaleDirectMediaLoad implements Exception {
+  const _StaleDirectMediaLoad();
+}
+
+const _directVideoTeardownWait = Duration(seconds: 2);
+
+Future<bool> _settlesWithin(Future<void> operation, Duration timeout) {
+  final result = Completer<bool>();
+  final timer = Timer(timeout, () => result.complete(false));
+  operation.then<void>(
+    (_) {
+      if (!result.isCompleted) result.complete(true);
+    },
+    onError: (Object _, StackTrace __) {
+      if (!result.isCompleted) result.complete(true);
+    },
+  );
+  return result.future.whenComplete(timer.cancel);
+}
+
+Future<void> _pauseVideoControllerBestEffort(
+  VideoPlayerController controller,
+) async {
+  try {
+    await controller.pause();
+  } catch (_) {
+    // A revoked controller may already be closing on the platform side.
+  }
+}
+
+Future<void> _disposeVideoResources({
+  VideoPlayerController? controller,
+  PreparedDirectVideoSource? prepared,
+}) async {
+  await Future.wait<void>([
+    if (controller != null)
+      () async {
+        try {
+          await controller.dispose();
+        } catch (_) {
+          // The decoder may already have torn itself down.
+        }
+      }(),
+    if (prepared != null)
+      () async {
+        try {
+          await prepared.dispose();
+        } catch (_) {
+          // A best-effort temp-file cleanup must not escape disposal.
+        }
+      }(),
+  ]);
+}
+
 class _VoiceMessageContent extends StatefulWidget {
   const _VoiceMessageContent({
     required this.message,
+    required this.ownerId,
     required this.foregroundColor,
     required this.mutedForegroundColor,
     required this.errorForegroundColor,
@@ -375,6 +445,7 @@ class _VoiceMessageContent extends StatefulWidget {
   });
 
   final Message message;
+  final String ownerId;
   final Color foregroundColor;
   final Color mutedForegroundColor;
   final Color errorForegroundColor;
@@ -389,8 +460,10 @@ class _VoiceMessageContent extends StatefulWidget {
 
 class _VoiceMessageContentState extends State<_VoiceMessageContent> {
   late final AudioPlayer _player;
+  Future<void> _playerCommandTail = Future<void>.value();
   StreamSubscription<PlayerState>? _stateSubscription;
   Uint8List? _bytes;
+  int _mediaGeneration = 0;
   bool _loading = false;
   bool _playing = false;
   bool _paused = false;
@@ -413,67 +486,170 @@ class _VoiceMessageContentState extends State<_VoiceMessageContent> {
   @override
   void didUpdateWidget(covariant _VoiceMessageContent oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.message.id != widget.message.id ||
+    if (oldWidget.ownerId != widget.ownerId ||
+        oldWidget.message.conversationId != widget.message.conversationId ||
+        oldWidget.message.id != widget.message.id ||
         oldWidget.message.mediaUrl != widget.message.mediaUrl) {
+      _mediaGeneration += 1;
+      final prepared = _takePreparedSource();
       _bytes = null;
       _loading = false;
       _playing = false;
       _paused = false;
       _failed = false;
-      unawaited(_player.stop());
-      unawaited(_releasePreparedSource());
+      unawaited(_interruptPlayerAndDisposeSource(prepared));
     }
   }
 
   @override
   void dispose() {
+    _mediaGeneration += 1;
+    final prepared = _takePreparedSource();
     unawaited(_stateSubscription?.cancel());
-    unawaited(_player.dispose());
-    unawaited(_releasePreparedSource());
+    unawaited(_disposePlayerAndSource(prepared));
     super.dispose();
   }
 
-  Future<void> _releasePreparedSource() async {
+  PreparedDirectVoiceSource? _takePreparedSource() {
     final prepared = _preparedSource;
     _preparedSource = null;
-    await prepared?.dispose();
+    return prepared;
+  }
+
+  Future<void> _disposePreparedSource(
+    PreparedDirectVoiceSource? prepared,
+  ) async {
+    try {
+      await prepared?.dispose();
+    } catch (_) {
+      // Temporary playback files are best-effort cleanup resources.
+    }
+  }
+
+  Future<void> _runPlayerCommand(Future<void> Function() command) {
+    final operation = _playerCommandTail.then((_) => command());
+    _playerCommandTail = operation.then<void>(
+      (_) {},
+      onError: (Object _, StackTrace __) {},
+    );
+    return operation;
+  }
+
+  Future<void> _interruptPlayer() {
+    final immediateStop = _player.stop().catchError((Object _) {});
+    final previousCommands = _playerCommandTail;
+    final barrier = Future.wait<void>([
+      previousCommands,
+      immediateStop,
+    ]).then<void>((_) {});
+    _playerCommandTail = barrier;
+    return barrier;
+  }
+
+  Future<void> _interruptPlayerAndDisposeSource(
+    PreparedDirectVoiceSource? prepared,
+  ) async {
+    await _interruptPlayer();
+    await _disposePreparedSource(prepared);
+  }
+
+  Future<void> _disposePlayerAndSource(
+    PreparedDirectVoiceSource? prepared,
+  ) async {
+    await _interruptPlayer();
+    await _disposePreparedSource(prepared);
+    try {
+      await _runPlayerCommand(_player.dispose);
+    } catch (_) {
+      // The native player may already have been released by the platform.
+    }
+  }
+
+  _DirectMediaSnapshot get _mediaSnapshot => (
+    ownerId: widget.ownerId.trim(),
+    conversationId: widget.message.conversationId,
+    messageId: widget.message.id,
+    reference: widget.message.mediaUrl?.trim() ?? '',
+  );
+
+  bool _ownsMediaLoad(int generation, _DirectMediaSnapshot snapshot) =>
+      mounted &&
+      snapshot.ownerId.isNotEmpty &&
+      generation == _mediaGeneration &&
+      _mediaSnapshot == snapshot;
+
+  Future<void> _playOwnedSource(
+    Source source,
+    int generation,
+    _DirectMediaSnapshot snapshot,
+  ) {
+    return _runPlayerCommand(() async {
+      if (!_ownsMediaLoad(generation, snapshot)) return;
+      try {
+        await _player.play(source);
+      } finally {
+        if (!_ownsMediaLoad(generation, snapshot)) {
+          try {
+            await _player.stop();
+          } catch (_) {
+            // A superseded source must never survive a late platform play.
+          }
+        }
+      }
+    });
   }
 
   Future<void> _toggle() async {
     if (_loading) return;
     if (_playing) {
-      await _player.pause();
+      await _runPlayerCommand(_player.pause);
       return;
     }
     if (_paused) {
-      await _player.resume();
+      await _runPlayerCommand(_player.resume);
       return;
     }
+    final generation = ++_mediaGeneration;
+    final snapshot = _mediaSnapshot;
+    if (!_ownsMediaLoad(generation, snapshot)) return;
     try {
       setState(() {
         _loading = true;
         _failed = false;
       });
-      final reference = widget.message.mediaUrl?.trim() ?? '';
+      final reference = snapshot.reference;
       if (reference.startsWith('gs://')) {
-        _bytes ??=
+        final bytes =
+            _bytes ??
             await (widget.privateMediaLoader?.call(
                   reference,
                   12 * 1024 * 1024,
                 ) ??
                 _privateMediaBytes(reference, maxBytes: 12 * 1024 * 1024));
-        final bytes = _bytes;
+        if (!_ownsMediaLoad(generation, snapshot)) return;
         if (bytes == null || bytes.isEmpty) {
           throw StateError('Voice message unavailable');
         }
-        _preparedSource ??=
-            await (widget.voiceSourcePreparer ?? prepareDirectVoiceSource)(
-              bytes,
-              widget.message.id,
-            );
-        await _player.play(_preparedSource!.source);
+        _bytes = bytes;
+        var prepared = _preparedSource;
+        if (prepared == null) {
+          final created =
+              await (widget.voiceSourcePreparer ?? prepareDirectVoiceSource)(
+                bytes,
+                snapshot.messageId,
+              );
+          if (!_ownsMediaLoad(generation, snapshot)) {
+            await created.dispose();
+            return;
+          }
+          _preparedSource = created;
+          prepared = created;
+        }
+        if (!_ownsMediaLoad(generation, snapshot)) return;
+        await _playOwnedSource(prepared.source, generation, snapshot);
       } else if (reference.startsWith('https://')) {
-        await _player.play(UrlSource(reference));
+        if (!_ownsMediaLoad(generation, snapshot)) return;
+        await _playOwnedSource(UrlSource(reference), generation, snapshot);
       } else {
         throw StateError('Voice message unavailable');
       }
@@ -481,10 +657,17 @@ class _VoiceMessageContentState extends State<_VoiceMessageContent> {
       // A native temporary file may have been removed under memory pressure,
       // or a platform player may have rejected the first preparation. Retry
       // must rebuild the source instead of replaying a poisoned handle.
-      await _releasePreparedSource();
-      if (mounted) setState(() => _failed = true);
+      if (_ownsMediaLoad(generation, snapshot)) {
+        final prepared = _takePreparedSource();
+        await _interruptPlayerAndDisposeSource(prepared);
+        if (_ownsMediaLoad(generation, snapshot)) {
+          setState(() => _failed = true);
+        }
+      }
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (_ownsMediaLoad(generation, snapshot)) {
+        setState(() => _loading = false);
+      }
     }
   }
 
@@ -590,6 +773,7 @@ class _VoiceMessageContentState extends State<_VoiceMessageContent> {
 class _ImageMessageContent extends StatefulWidget {
   const _ImageMessageContent({
     required this.message,
+    required this.ownerId,
     required this.foregroundColor,
     required this.mutedForegroundColor,
     required this.privateMediaLoader,
@@ -598,6 +782,7 @@ class _ImageMessageContent extends StatefulWidget {
   });
 
   final Message message;
+  final String ownerId;
   final Color foregroundColor;
   final Color mutedForegroundColor;
   final Future<Uint8List?> Function(String? reference, int maxBytes)?
@@ -610,22 +795,93 @@ class _ImageMessageContent extends StatefulWidget {
 }
 
 class _ImageMessageContentState extends State<_ImageMessageContent> {
-  late Future<Uint8List?> _image = _load();
+  int _mediaGeneration = 0;
+  final ValueNotifier<int> _ownershipChanges = ValueNotifier<int>(0);
+  late Future<Uint8List?> _image = _beginLoad();
 
-  Future<Uint8List?> _load() =>
-      widget.privateMediaLoader?.call(
-        widget.message.mediaUrl,
-        8 * 1024 * 1024,
-      ) ??
-      _privateMediaBytes(widget.message.mediaUrl, maxBytes: 8 * 1024 * 1024);
+  _DirectMediaSnapshot get _mediaSnapshot => (
+    ownerId: widget.ownerId.trim(),
+    conversationId: widget.message.conversationId,
+    messageId: widget.message.id,
+    reference: widget.message.mediaUrl?.trim() ?? '',
+  );
+
+  bool _ownsMediaLoad(int generation, _DirectMediaSnapshot snapshot) =>
+      mounted &&
+      snapshot.ownerId.isNotEmpty &&
+      generation == _mediaGeneration &&
+      _mediaSnapshot == snapshot;
+
+  Future<Uint8List?> _beginLoad() {
+    final generation = _mediaGeneration;
+    final snapshot = _mediaSnapshot;
+    if (!_ownsMediaLoad(generation, snapshot)) {
+      return Future<Uint8List?>.value();
+    }
+    if (snapshot.reference.startsWith('https://')) {
+      return Future<Uint8List?>.value();
+    }
+    return _load(generation, snapshot);
+  }
+
+  Future<Uint8List?> _load(
+    int generation,
+    _DirectMediaSnapshot snapshot,
+  ) async {
+    final bytes =
+        await (widget.privateMediaLoader?.call(
+              snapshot.reference,
+              8 * 1024 * 1024,
+            ) ??
+            _privateMediaBytes(snapshot.reference, maxBytes: 8 * 1024 * 1024));
+    if (!_ownsMediaLoad(generation, snapshot)) {
+      throw const _StaleDirectMediaLoad();
+    }
+    return bytes;
+  }
+
+  void _revokeMediaIdentity() {
+    _mediaGeneration += 1;
+    final generation = _mediaGeneration;
+    scheduleMicrotask(() {
+      if (_ownershipChanges.value < generation) {
+        _ownershipChanges.value = generation;
+      }
+    });
+  }
+
+  void _open(BuildContext context, ImageProvider imageProvider) {
+    final generation = _mediaGeneration;
+    final snapshot = _mediaSnapshot;
+    unawaited(
+      showDirectImageFullscreenViewer(
+        context,
+        imageProvider: imageProvider,
+        ownershipChanges: _ownershipChanges,
+        ownershipIsCurrent: () => _ownsMediaLoad(generation, snapshot),
+      ),
+    );
+  }
 
   @override
   void didUpdateWidget(covariant _ImageMessageContent oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.message.id != widget.message.id ||
+    if (oldWidget.ownerId != widget.ownerId ||
+        oldWidget.message.conversationId != widget.message.conversationId ||
+        oldWidget.message.id != widget.message.id ||
         oldWidget.message.mediaUrl != widget.message.mediaUrl) {
-      _image = _load();
+      _revokeMediaIdentity();
+      _image = _beginLoad();
     }
+  }
+
+  @override
+  void dispose() {
+    _revokeMediaIdentity();
+    // A full-screen route can briefly outlive its source bubble. It owns the
+    // final listener lifetime, so this notifier must remain valid until that
+    // route observes revocation and closes.
+    super.dispose();
   }
 
   @override
@@ -648,21 +904,34 @@ class _ImageMessageContentState extends State<_ImageMessageContent> {
     }
 
     if (mediaUrl.startsWith('https://')) {
-      return ClipRRect(
-        borderRadius: BorderRadius.circular(14),
-        child: Image.network(
-          mediaUrl,
-          width: widget.width,
-          height: widget.height,
-          fit: BoxFit.cover,
-          semanticLabel: copy.text('Photo message', 'Wiadomość ze zdjęciem'),
-          errorBuilder: (_, _, _) => SizedBox(
-            width: widget.width,
-            height: widget.height,
-            child: Center(
-              child: Icon(
-                Icons.broken_image_outlined,
-                color: widget.mutedForegroundColor,
+      final imageProvider = NetworkImage(mediaUrl);
+      return AccessibleTapRegion(
+        key: ValueKey('direct-image-${widget.message.id}'),
+        onTap: () => _open(context, imageProvider),
+        semanticLabel: copy.text(
+          'Open photo full screen',
+          'Otwórz zdjęcie na pełnym ekranie',
+        ),
+        tooltip: copy.text('View photo', 'Wyświetl zdjęcie'),
+        borderRadius: 14,
+        focusContrastColor: Colors.black,
+        child: ExcludeSemantics(
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(14),
+            child: Image(
+              image: imageProvider,
+              width: widget.width,
+              height: widget.height,
+              fit: BoxFit.cover,
+              errorBuilder: (_, _, _) => SizedBox(
+                width: widget.width,
+                height: widget.height,
+                child: Center(
+                  child: Icon(
+                    Icons.broken_image_outlined,
+                    color: widget.mutedForegroundColor,
+                  ),
+                ),
               ),
             ),
           ),
@@ -689,7 +958,7 @@ class _ImageMessageContentState extends State<_ImageMessageContent> {
         final bytes = snapshot.data;
         if (snapshot.hasError || bytes == null || bytes.isEmpty) {
           return TextButton.icon(
-            onPressed: () => setState(() => _image = _load()),
+            onPressed: () => setState(() => _image = _beginLoad()),
             style: TextButton.styleFrom(
               foregroundColor: widget.foregroundColor,
             ),
@@ -702,17 +971,27 @@ class _ImageMessageContentState extends State<_ImageMessageContent> {
             ),
           );
         }
-        return Semantics(
-          image: true,
-          label: copy.text('Photo message', 'Wiadomość ze zdjęciem'),
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(14),
-            child: Image.memory(
-              bytes,
-              width: widget.width,
-              height: widget.height,
-              fit: BoxFit.cover,
-              gaplessPlayback: true,
+        final imageProvider = MemoryImage(bytes);
+        return AccessibleTapRegion(
+          key: ValueKey('direct-image-${widget.message.id}'),
+          onTap: () => _open(context, imageProvider),
+          semanticLabel: copy.text(
+            'Open photo full screen',
+            'Otwórz zdjęcie na pełnym ekranie',
+          ),
+          tooltip: copy.text('View photo', 'Wyświetl zdjęcie'),
+          borderRadius: 14,
+          focusContrastColor: Colors.black,
+          child: ExcludeSemantics(
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(14),
+              child: Image(
+                image: imageProvider,
+                width: widget.width,
+                height: widget.height,
+                fit: BoxFit.cover,
+                gaplessPlayback: true,
+              ),
             ),
           ),
         );
@@ -724,6 +1003,7 @@ class _ImageMessageContentState extends State<_ImageMessageContent> {
 class _VideoMessageContent extends StatefulWidget {
   const _VideoMessageContent({
     required this.message,
+    required this.ownerId,
     required this.foregroundColor,
     required this.mutedForegroundColor,
     required this.errorForegroundColor,
@@ -734,6 +1014,7 @@ class _VideoMessageContent extends StatefulWidget {
   });
 
   final Message message;
+  final String ownerId;
   final Color foregroundColor;
   final Color mutedForegroundColor;
   final Color errorForegroundColor;
@@ -749,17 +1030,25 @@ class _VideoMessageContent extends StatefulWidget {
 
 class _VideoMessageContentState extends State<_VideoMessageContent> {
   VideoPlayerController? _controller;
+  Future<VideoPlayerController>? _controllerLoad;
   PreparedDirectVideoSource? _preparedSource;
+  final Map<VideoPlayerController, Set<Future<void>>> _activePlays = {};
+  final ValueNotifier<int> _ownershipChanges = ValueNotifier<int>(0);
   Uint8List? _bytes;
+  int _mediaGeneration = 0;
   bool _loading = false;
   bool _failed = false;
 
   @override
   void didUpdateWidget(covariant _VideoMessageContent oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.message.id != widget.message.id ||
+    if (oldWidget.ownerId != widget.ownerId ||
+        oldWidget.message.conversationId != widget.message.conversationId ||
+        oldWidget.message.id != widget.message.id ||
         oldWidget.message.mediaUrl != widget.message.mediaUrl) {
+      _revokeMediaIdentity();
       unawaited(_release());
+      _controllerLoad = null;
       _bytes = null;
       _loading = false;
       _failed = false;
@@ -768,6 +1057,9 @@ class _VideoMessageContentState extends State<_VideoMessageContent> {
 
   @override
   void dispose() {
+    _revokeMediaIdentity();
+    _controllerLoad = null;
+    _bytes = null;
     unawaited(_release());
     super.dispose();
   }
@@ -777,23 +1069,218 @@ class _VideoMessageContentState extends State<_VideoMessageContent> {
     final prepared = _preparedSource;
     _controller = null;
     _preparedSource = null;
-    await Future.wait<void>([
-      if (controller != null) controller.dispose(),
-      if (prepared != null) prepared.dispose(),
-    ]);
+    // didUpdateWidget runs during build. Yield before controller commands,
+    // because video_player synchronously notifies its listeners on pause.
+    await Future<void>.value();
+    if (controller == null) {
+      await _disposeVideoResources(prepared: prepared);
+      return;
+    }
+    unawaited(_pauseVideoControllerBestEffort(controller));
+    final active = List<Future<void>>.of(
+      _activePlays[controller] ?? const <Future<void>>{},
+    );
+    if (active.isNotEmpty) {
+      final settled = Future.wait<void>(
+        active.map(
+          (play) =>
+              play.then<void>((_) {}, onError: (Object _, StackTrace __) {}),
+        ),
+      );
+      final completedInTime = await _settlesWithin(
+        settled,
+        _directVideoTeardownWait,
+      );
+      if (!completedInTime) {
+        _activePlays.remove(controller);
+        // Disposing video_player while its native play Future is unresolved
+        // can let the late continuation create an uncancellable position
+        // timer. Detach immediately, then finish cleanup once that command
+        // settles; the generation guard issues another pause at that point.
+        unawaited(
+          settled.then((_) async {
+            unawaited(_pauseVideoControllerBestEffort(controller));
+            await _disposeVideoResources(
+              controller: controller,
+              prepared: prepared,
+            );
+          }),
+        );
+        return;
+      }
+    }
+    _activePlays.remove(controller);
+    unawaited(_pauseVideoControllerBestEffort(controller));
+    await _disposeVideoResources(controller: controller, prepared: prepared);
+  }
+
+  _DirectMediaSnapshot get _mediaSnapshot => (
+    ownerId: widget.ownerId.trim(),
+    conversationId: widget.message.conversationId,
+    messageId: widget.message.id,
+    reference: widget.message.mediaUrl?.trim() ?? '',
+  );
+
+  bool _ownsMediaLoad(int generation, _DirectMediaSnapshot snapshot) =>
+      mounted &&
+      snapshot.ownerId.isNotEmpty &&
+      generation == _mediaGeneration &&
+      _mediaSnapshot == snapshot;
+
+  void _revokeMediaIdentity() {
+    _mediaGeneration += 1;
+    final generation = _mediaGeneration;
+    scheduleMicrotask(() {
+      if (_ownershipChanges.value < generation) {
+        _ownershipChanges.value = generation;
+      }
+    });
+  }
+
+  bool _ownsController(
+    VideoPlayerController controller,
+    int generation,
+    _DirectMediaSnapshot snapshot,
+  ) =>
+      _ownsMediaLoad(generation, snapshot) &&
+      identical(_controller, controller);
+
+  Future<void> _playOwnedController(
+    VideoPlayerController controller,
+    int generation,
+    _DirectMediaSnapshot snapshot,
+  ) {
+    late final Future<void> operation;
+    operation = () async {
+      if (!_ownsController(controller, generation, snapshot)) {
+        throw const _StaleDirectMediaLoad();
+      }
+      try {
+        await controller.play();
+      } finally {
+        if (!_ownsController(controller, generation, snapshot)) {
+          unawaited(_pauseVideoControllerBestEffort(controller));
+        }
+      }
+      if (!_ownsController(controller, generation, snapshot)) {
+        throw const _StaleDirectMediaLoad();
+      }
+    }();
+    final active = _activePlays.putIfAbsent(controller, () => {});
+    active.add(operation);
+    operation.then<void>(
+      (_) => _removeActivePlay(controller, operation),
+      onError: (Object _, StackTrace __) =>
+          _removeActivePlay(controller, operation),
+    );
+    return operation;
+  }
+
+  void _removeActivePlay(
+    VideoPlayerController controller,
+    Future<void> operation,
+  ) {
+    final active = _activePlays[controller];
+    active?.remove(operation);
+    if (active?.isEmpty ?? false) _activePlays.remove(controller);
+  }
+
+  Future<VideoPlayerController> _ensureController() {
+    final existing = _controller;
+    if (existing != null && existing.value.isInitialized) {
+      return Future.value(existing);
+    }
+    final pending = _controllerLoad;
+    if (pending != null) return pending;
+
+    final generation = _mediaGeneration;
+    final snapshot = _mediaSnapshot;
+    final operation = _initializeController(generation, snapshot);
+    _controllerLoad = operation;
+    operation.then<void>(
+      (_) {
+        if (identical(_controllerLoad, operation)) _controllerLoad = null;
+      },
+      onError: (Object _, StackTrace __) {
+        if (identical(_controllerLoad, operation)) _controllerLoad = null;
+      },
+    );
+    return operation;
+  }
+
+  Future<VideoPlayerController> _initializeController(
+    int generation,
+    _DirectMediaSnapshot snapshot,
+  ) async {
+    VideoPlayerController? controller;
+    PreparedDirectVideoSource? prepared;
+    try {
+      final reference = snapshot.reference;
+      if (reference.startsWith('https://')) {
+        controller = VideoPlayerController.networkUrl(Uri.parse(reference));
+      } else if (reference.startsWith('gs://')) {
+        final bytes =
+            _bytes ??
+            await (widget.privateMediaLoader?.call(
+                  reference,
+                  64 * 1024 * 1024,
+                ) ??
+                _privateMediaBytes(reference, maxBytes: 64 * 1024 * 1024));
+        if (!_ownsMediaLoad(generation, snapshot)) {
+          throw const _StaleDirectMediaLoad();
+        }
+        if (bytes == null || bytes.isEmpty) {
+          throw StateError('Video unavailable');
+        }
+        _bytes = bytes;
+        prepared =
+            await (widget.videoSourcePreparer ?? prepareDirectVideoSource)(
+              bytes,
+              snapshot.messageId,
+              reference,
+            );
+        if (!_ownsMediaLoad(generation, snapshot)) {
+          throw const _StaleDirectMediaLoad();
+        }
+        controller = prepared.createController();
+      } else {
+        throw StateError('Video unavailable');
+      }
+      await controller.initialize();
+      await controller.setLooping(false);
+      if (!_ownsMediaLoad(generation, snapshot)) {
+        throw const _StaleDirectMediaLoad();
+      }
+      _controller = controller;
+      _preparedSource = prepared;
+      setState(() {});
+      return controller;
+    } catch (_) {
+      await _disposeVideoResources(controller: controller, prepared: prepared);
+      rethrow;
+    }
   }
 
   Future<void> _toggle() async {
     if (_loading) return;
+    final generation = _mediaGeneration;
+    final snapshot = _mediaSnapshot;
+    if (!_ownsMediaLoad(generation, snapshot)) return;
     final existing = _controller;
     if (existing != null && existing.value.isInitialized) {
-      if (existing.value.isPlaying) {
-        await existing.pause();
-      } else {
-        if (existing.value.position >= existing.value.duration) {
-          await existing.seekTo(Duration.zero);
+      try {
+        if (existing.value.isPlaying) {
+          await existing.pause();
+        } else {
+          if (existing.value.position >= existing.value.duration) {
+            await existing.seekTo(Duration.zero);
+          }
+          await _playOwnedController(existing, generation, snapshot);
         }
-        await existing.play();
+      } catch (_) {
+        if (_ownsMediaLoad(generation, snapshot)) {
+          setState(() => _failed = true);
+        }
       }
       return;
     }
@@ -803,46 +1290,65 @@ class _VideoMessageContentState extends State<_VideoMessageContent> {
       _failed = false;
     });
     try {
-      final reference = widget.message.mediaUrl?.trim() ?? '';
-      late final VideoPlayerController controller;
-      if (reference.startsWith('https://')) {
-        controller = VideoPlayerController.networkUrl(Uri.parse(reference));
-      } else if (reference.startsWith('gs://')) {
-        _bytes ??=
-            await (widget.privateMediaLoader?.call(
-                  reference,
-                  64 * 1024 * 1024,
-                ) ??
-                _privateMediaBytes(reference, maxBytes: 64 * 1024 * 1024));
-        final bytes = _bytes;
-        if (bytes == null || bytes.isEmpty) {
-          throw StateError('Video unavailable');
-        }
-        _preparedSource ??=
-            await (widget.videoSourcePreparer ?? prepareDirectVideoSource)(
-              bytes,
-              widget.message.id,
-              reference,
-            );
-        controller = _preparedSource!.createController();
-      } else {
-        throw StateError('Video unavailable');
-      }
-      _controller = controller;
-      await controller.initialize();
-      await controller.setLooping(false);
-      if (!mounted) {
-        await _release();
-        return;
-      }
-      setState(() {});
-      await controller.play();
+      final controller = await _ensureController();
+      if (!_ownsMediaLoad(generation, snapshot)) return;
+      await _playOwnedController(controller, generation, snapshot);
     } catch (_) {
-      await _release();
-      if (mounted) setState(() => _failed = true);
+      if (_ownsMediaLoad(generation, snapshot)) {
+        setState(() => _failed = true);
+      }
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (_ownsMediaLoad(generation, snapshot)) {
+        setState(() => _loading = false);
+      }
     }
+  }
+
+  Future<VideoPlayerController> _controllerForFullscreen(
+    int generation,
+    _DirectMediaSnapshot snapshot,
+  ) async {
+    try {
+      if (!_ownsMediaLoad(generation, snapshot)) {
+        throw const _StaleDirectMediaLoad();
+      }
+      final controller = await _ensureController();
+      if (!_ownsMediaLoad(generation, snapshot)) {
+        throw const _StaleDirectMediaLoad();
+      }
+      setState(() => _failed = false);
+      return controller;
+    } catch (_) {
+      if (_ownsMediaLoad(generation, snapshot)) {
+        setState(() => _failed = true);
+      }
+      rethrow;
+    }
+  }
+
+  Future<void> _playControllerForFullscreen(
+    VideoPlayerController controller,
+    int generation,
+    _DirectMediaSnapshot snapshot,
+  ) async {
+    await _playOwnedController(controller, generation, snapshot);
+  }
+
+  void _openFullscreen() {
+    final generation = _mediaGeneration;
+    final snapshot = _mediaSnapshot;
+    unawaited(
+      showDirectVideoFullscreenViewer(
+        context,
+        controllerLoader: () => _controllerForFullscreen(generation, snapshot),
+        controllerPlayer: (controller) =>
+            _playControllerForFullscreen(controller, generation, snapshot),
+        controllerIsCurrent: (controller) =>
+            _ownsController(controller, generation, snapshot),
+        ownershipChanges: _ownershipChanges,
+        ownershipIsCurrent: () => _ownsMediaLoad(generation, snapshot),
+      ),
+    );
   }
 
   @override
@@ -941,6 +1447,30 @@ class _VideoMessageContentState extends State<_VideoMessageContent> {
                     ),
                   ),
                 ),
+                PositionedDirectional(
+                  top: 6,
+                  end: 6,
+                  child: Material(
+                    color: Colors.black.withValues(alpha: .56),
+                    shape: const CircleBorder(),
+                    child: IconButton(
+                      key: ValueKey(
+                        'direct-video-fullscreen-${widget.message.id}',
+                      ),
+                      tooltip: copy.text(
+                        'Open video full screen',
+                        'Otwórz film na pełnym ekranie',
+                      ),
+                      onPressed: _openFullscreen,
+                      constraints: const BoxConstraints.tightFor(
+                        width: 48,
+                        height: 48,
+                      ),
+                      color: Colors.white,
+                      icon: const Icon(Icons.fullscreen_rounded),
+                    ),
+                  ),
+                ),
               ],
             ),
           ),
@@ -958,6 +1488,7 @@ class _VideoMessageContentState extends State<_VideoMessageContent> {
 class DirectMessageMediaPreview extends StatelessWidget {
   const DirectMessageMediaPreview({
     required this.message,
+    required this.currentUserId,
     this.photoWidth = 210,
     this.photoHeight = 230,
     this.privateMediaLoader,
@@ -968,6 +1499,7 @@ class DirectMessageMediaPreview extends StatelessWidget {
   });
 
   final Message message;
+  final String currentUserId;
   final double photoWidth;
   final double photoHeight;
   final Future<Uint8List?> Function(String? reference, int maxBytes)?
@@ -983,6 +1515,7 @@ class DirectMessageMediaPreview extends StatelessWidget {
     return switch (message.type) {
       MessageType.image => _ImageMessageContent(
         message: message,
+        ownerId: currentUserId,
         foregroundColor: palette.textPrimary,
         mutedForegroundColor: palette.textSecondary,
         privateMediaLoader: privateMediaLoader,
@@ -991,6 +1524,7 @@ class DirectMessageMediaPreview extends StatelessWidget {
       ),
       MessageType.voice => _VoiceMessageContent(
         message: message,
+        ownerId: currentUserId,
         foregroundColor: palette.textPrimary,
         mutedForegroundColor: palette.textSecondary,
         errorForegroundColor: colors.error,
@@ -1000,6 +1534,7 @@ class DirectMessageMediaPreview extends StatelessWidget {
       ),
       MessageType.video => _VideoMessageContent(
         message: message,
+        ownerId: currentUserId,
         foregroundColor: palette.textPrimary,
         mutedForegroundColor: palette.textSecondary,
         errorForegroundColor: colors.error,

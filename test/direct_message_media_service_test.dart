@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:cloud_functions/cloud_functions.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:firebase_storage_mocks/firebase_storage_mocks.dart';
@@ -191,6 +192,412 @@ void main() {
       expect(functions.finalizePayloads, hasLength(1));
     },
   );
+
+  test('picked photos and videos stream without readAsBytes', () async {
+    const imageMessageId = 'm_streamedimage012345678901234567890123456';
+    const imageStoragePath =
+        'message_attachments/alice-uid/$conversationId/$imageMessageId.jpg';
+    final image = _StreamingGuardXFile(
+      Uint8List(4096),
+      mimeType: 'image/jpeg',
+      name: 'streamed.jpg',
+    );
+    final imageService = MessageService(
+      firestore: FakeFirebaseFirestore(),
+      auth: signedInAuth(),
+      functions: _AttachmentFunctions(
+        conversationId: conversationId,
+        messageId: imageMessageId,
+        storagePath: imageStoragePath,
+        mediaType: 'image',
+      ),
+      storage: MockFirebaseStorage(),
+      attachmentPayloadStore: payloadStore,
+    );
+    addTearDown(imageService.dispose);
+
+    await imageService.sendImageMessage(
+      conversationId: conversationId,
+      image: image,
+    );
+
+    expect(image.readAsBytesCalled, isFalse);
+    expect(image.openReadCalls, 2, reason: 'digest and durable streamed copy');
+
+    const videoMessageId = 'm_streamedvideo012345678901234567890123456';
+    const videoStoragePath =
+        'message_attachments/alice-uid/$conversationId/$videoMessageId.mp4';
+    final video = _StreamingGuardXFile(
+      _mp4BrandedVideoBytes(),
+      mimeType: 'video/mp4',
+      name: 'streamed.mp4',
+    );
+    final videoService = MessageService(
+      firestore: FakeFirebaseFirestore(),
+      auth: signedInAuth(),
+      functions: _AttachmentFunctions(
+        conversationId: conversationId,
+        messageId: videoMessageId,
+        storagePath: videoStoragePath,
+        mediaType: 'video',
+      ),
+      storage: MockFirebaseStorage(),
+      attachmentPayloadStore: payloadStore,
+    );
+    addTearDown(videoService.dispose);
+
+    await videoService.sendVideoMessage(
+      conversationId: conversationId,
+      video: video,
+      durationSeconds: 12,
+    );
+
+    expect(video.readAsBytesCalled, isFalse);
+    expect(
+      video.openReadCalls,
+      2,
+      reason: 'digest captures MIME prefix, then durable copy verifies it',
+    );
+  });
+
+  test(
+    'same-length picked-file mutation between digest and adoption is rejected',
+    () async {
+      final file = _MutatingXFile(
+        firstRead: Uint8List.fromList(List<int>.filled(4096, 1)),
+        laterReads: Uint8List.fromList(List<int>.filled(4096, 2)),
+        mimeType: 'image/jpeg',
+        name: 'changing.jpg',
+      );
+      final functions = _CountingFunctions();
+      final service = MessageService(
+        firestore: FakeFirebaseFirestore(),
+        auth: signedInAuth(),
+        functions: functions,
+        storage: MockFirebaseStorage(),
+        attachmentPayloadStore: payloadStore,
+      );
+      addTearDown(service.dispose);
+
+      await expectLater(
+        service.enqueueImageMessage(
+          conversationId: conversationId,
+          image: file,
+        ),
+        throwsStateError,
+      );
+
+      expect(
+        file.openReadCalls,
+        2,
+        reason:
+            'verification must share the durable copy, not add a third read',
+      );
+      expect(service.attachmentOutbox.entries, isEmpty);
+      expect(payloadStore.payloads, isEmpty);
+      expect(functions.calls, 0);
+    },
+  );
+
+  test('queued photo returns before its network upload finishes', () async {
+    const imageMessageId = 'm_queuedimage01234567890123456789012345678';
+    const imageStoragePath =
+        'message_attachments/alice-uid/$conversationId/$imageMessageId.jpg';
+    final functions = _AttachmentFunctions(
+      conversationId: conversationId,
+      messageId: imageMessageId,
+      storagePath: imageStoragePath,
+      mediaType: 'image',
+    );
+    payloadStore
+      ..uploadStarted = Completer<void>()
+      ..uploadGate = Completer<void>();
+    final service = MessageService(
+      firestore: FakeFirebaseFirestore(),
+      auth: signedInAuth(),
+      functions: functions,
+      storage: MockFirebaseStorage(),
+      attachmentPayloadStore: payloadStore,
+    );
+    addTearDown(service.dispose);
+
+    final entryId = await service.enqueueImageMessage(
+      conversationId: conversationId,
+      image: XFile.fromData(
+        Uint8List(4096),
+        mimeType: 'image/jpeg',
+        name: 'queued.jpg',
+      ),
+    );
+    await payloadStore.uploadStarted!.future;
+
+    expect(service.attachmentOutbox.entries.single.id, entryId);
+    expect(functions.finalizePayloads, isEmpty);
+    expect(payloadStore.uploadGate!.isCompleted, isFalse);
+
+    payloadStore.uploadGate!.complete();
+    await service.flushAttachmentOutbox();
+    expect(service.attachmentOutbox.entries, isEmpty);
+    expect(functions.finalizePayloads, hasLength(1));
+  });
+
+  test(
+    'account switch during a picked-file digest never selects the next account queue',
+    () async {
+      final auth = _MutableAuth(
+        MockUser(uid: 'alice-uid', email: 'alice@yovoice.app'),
+      );
+      final functions = _CountingFunctions();
+      final file = _GatedDigestXFile(
+        Uint8List(4096),
+        mimeType: 'image/jpeg',
+        name: 'account-a.jpg',
+      );
+      final service = MessageService(
+        firestore: FakeFirebaseFirestore(),
+        auth: auth,
+        functions: functions,
+        storage: MockFirebaseStorage(),
+        attachmentPayloadStore: payloadStore,
+      );
+      addTearDown(service.dispose);
+      final accountAQueue = service.attachmentOutbox;
+
+      final enqueue = service.enqueueImageMessage(
+        conversationId: conversationId,
+        image: file,
+      );
+      await file.digestStarted.future;
+      auth.currentUser = MockUser(
+        uid: 'charlie-uid',
+        email: 'charlie@yovoice.app',
+      );
+      file.releaseDigest();
+
+      await expectLater(enqueue, throwsStateError);
+      expect(accountAQueue.entries, isEmpty);
+      final accountBQueue = service.attachmentOutbox;
+      await accountBQueue.load();
+      expect(accountBQueue.ownerId, 'charlie-uid');
+      expect(accountBQueue.entries, isEmpty);
+      expect(payloadStore.payloads, isEmpty);
+      expect(functions.calls, 0);
+    },
+  );
+
+  test(
+    'account switch during durable adoption removes the new account-a payload',
+    () async {
+      final auth = _MutableAuth(
+        MockUser(uid: 'alice-uid', email: 'alice@yovoice.app'),
+      );
+      final functions = _CountingFunctions();
+      payloadStore
+        ..adoptStarted = Completer<void>()
+        ..adoptGate = Completer<void>();
+      final service = MessageService(
+        firestore: FakeFirebaseFirestore(),
+        auth: auth,
+        functions: functions,
+        storage: MockFirebaseStorage(),
+        attachmentPayloadStore: payloadStore,
+      );
+      addTearDown(service.dispose);
+      final accountAQueue = service.attachmentOutbox;
+
+      final enqueue = service.enqueueImageMessage(
+        conversationId: conversationId,
+        image: XFile.fromData(
+          Uint8List(4096),
+          mimeType: 'image/jpeg',
+          name: 'account-a.jpg',
+        ),
+      );
+      await payloadStore.adoptStarted!.future;
+      auth.currentUser = MockUser(
+        uid: 'charlie-uid',
+        email: 'charlie@yovoice.app',
+      );
+      payloadStore.adoptGate!.complete();
+
+      await expectLater(enqueue, throwsStateError);
+      expect(accountAQueue.entries, isEmpty);
+      final accountBQueue = service.attachmentOutbox;
+      await accountBQueue.load();
+      expect(accountBQueue.entries, isEmpty);
+      expect(payloadStore.payloads, isEmpty);
+      expect(functions.calls, 0);
+    },
+  );
+
+  test(
+    'account switch after a concurrent identical enqueue keeps the first durable payload',
+    () async {
+      const imageMessageId = 'm_concurrentimage012345678901234567890123456';
+      const imageStoragePath =
+          'message_attachments/alice-uid/$conversationId/$imageMessageId.jpg';
+      final auth = _MutableAuth(
+        MockUser(uid: 'alice-uid', email: 'alice@yovoice.app'),
+      );
+      final queue = _GatedDispositionOutbox(
+        ownerId: 'alice-uid',
+        payloadStore: payloadStore,
+      );
+      final firstFile = _GatedDigestXFile(
+        Uint8List.fromList(List<int>.filled(4096, 7)),
+        mimeType: 'image/jpeg',
+        name: 'same-a.jpg',
+      );
+      final secondFile = _GatedDigestXFile(
+        Uint8List.fromList(List<int>.filled(4096, 7)),
+        mimeType: 'image/jpeg',
+        name: 'same-b.jpg',
+      );
+      payloadStore
+        ..uploadStarted = Completer<void>()
+        ..uploadGate = Completer<void>();
+      final service = MessageService(
+        firestore: FakeFirebaseFirestore(),
+        auth: auth,
+        functions: _AttachmentFunctions(
+          conversationId: conversationId,
+          messageId: imageMessageId,
+          storagePath: imageStoragePath,
+          mediaType: 'image',
+        ),
+        storage: MockFirebaseStorage(),
+        attachmentOutbox: queue,
+      );
+      addTearDown(() {
+        firstFile.releaseDigest();
+        secondFile.releaseDigest();
+        queue.releaseSecondResult();
+        if (!(payloadStore.uploadGate?.isCompleted ?? true)) {
+          payloadStore.uploadGate!.complete();
+        }
+        service.dispose();
+      });
+
+      final firstEnqueue = service.enqueueImageMessage(
+        conversationId: conversationId,
+        image: firstFile,
+      );
+      await firstFile.digestStarted.future;
+      final secondEnqueue = service.enqueueImageMessage(
+        conversationId: conversationId,
+        image: secondFile,
+      );
+      await secondFile.digestStarted.future;
+
+      firstFile.releaseDigest();
+      final firstEntryId = await firstEnqueue;
+      await payloadStore.uploadStarted!.future;
+      secondFile.releaseDigest();
+      await queue.secondResultCommitted.future;
+
+      expect(queue.dispositions, <bool>[true, false]);
+      auth.currentUser = MockUser(
+        uid: 'charlie-uid',
+        email: 'charlie@yovoice.app',
+      );
+      queue.releaseSecondResult();
+
+      await expectLater(secondEnqueue, throwsStateError);
+      expect(queue.entries.map((entry) => entry.id), <String>[firstEntryId]);
+      expect(
+        payloadStore.payloads.keys,
+        <String>{'${queue.accountNamespace}:$firstEntryId'},
+        reason:
+            'the deduplicating call did not create these bytes and must not '
+            'delete the first sender operation on an account change',
+      );
+
+      payloadStore.uploadGate!.complete();
+      await Future<void>.delayed(Duration.zero);
+      expect(queue.entries.map((entry) => entry.id), <String>[firstEntryId]);
+      expect(payloadStore.payloads, hasLength(1));
+    },
+  );
+
+  for (final boundary in _DeliveryMutationBoundary.values) {
+    test(
+      'account switch during ${boundary.label} persistence stops account-a delivery',
+      () async {
+        const imageMessageId = 'm_ownerboundary0123456789012345678901234567';
+        const imageStoragePath =
+            'message_attachments/alice-uid/$conversationId/$imageMessageId.jpg';
+        final auth = _MutableAuth(
+          MockUser(uid: 'alice-uid', email: 'alice@yovoice.app'),
+        );
+        final queue = _GatedDeliveryMutationOutbox(
+          ownerId: 'alice-uid',
+          payloadStore: payloadStore,
+          boundary: boundary,
+        );
+        final functions = _AttachmentFunctions(
+          conversationId: conversationId,
+          messageId: imageMessageId,
+          storagePath: imageStoragePath,
+          mediaType: 'image',
+        );
+        final service = MessageService(
+          firestore: FakeFirebaseFirestore(),
+          auth: auth,
+          functions: functions,
+          storage: MockFirebaseStorage(),
+          attachmentOutbox: queue,
+        );
+        addTearDown(() {
+          queue.releaseMutation();
+          service.dispose();
+        });
+
+        final send = service.sendImageMessage(
+          conversationId: conversationId,
+          image: XFile.fromData(
+            Uint8List.fromList(List<int>.filled(4096, 19)),
+            mimeType: 'image/jpeg',
+            name: 'owner-a.jpg',
+          ),
+        );
+        await queue.mutationPersisted.future;
+
+        auth.currentUser = MockUser(
+          uid: 'charlie-uid',
+          email: 'charlie@yovoice.app',
+        );
+        queue.releaseMutation();
+        await send;
+
+        expect(functions.finalizePayloads, isEmpty);
+        if (boundary == _DeliveryMutationBoundary.reservation) {
+          expect(
+            payloadStore.uploadCount,
+            0,
+            reason:
+                'a changed account must be observed immediately after the '
+                'reservation manifest write and before upload',
+          );
+          expect(payloadStore.customMetadataAtUpload, isNull);
+        } else {
+          expect(payloadStore.uploadCount, 1);
+          expect(
+            payloadStore.customMetadataAtUpload?['yovoiceOwnerUid'],
+            'alice-uid',
+            reason:
+                'an account-a reservation must never acquire dynamic '
+                'account-b object metadata',
+          );
+        }
+        expect(
+          payloadStore.customMetadataAtUpload?['yovoiceOwnerUid'],
+          isNot('charlie-uid'),
+        );
+        expect(queue.entries, hasLength(1));
+        expect(payloadStore.payloads, hasLength(1));
+      },
+    );
+  }
 
   test(
     'iOS MOV with MP4-branded HEVC container reserves MP4 and retries finalize',
@@ -1156,6 +1563,114 @@ Uint8List _mp4BrandedVideoBytes() {
   return bytes;
 }
 
+class _GatedDispositionOutbox extends DirectAttachmentOutbox {
+  _GatedDispositionOutbox({
+    required super.ownerId,
+    required super.payloadStore,
+  });
+
+  final secondResultCommitted = Completer<void>();
+  final _secondResultGate = Completer<void>();
+  final List<bool> dispositions = <bool>[];
+  int _enqueueCalls = 0;
+
+  void releaseSecondResult() {
+    if (!_secondResultGate.isCompleted) _secondResultGate.complete();
+  }
+
+  @override
+  Future<({DirectAttachmentOutboxEntry entry, bool created})>
+  enqueueSourceWithDisposition({
+    required String fingerprint,
+    required String conversationId,
+    required MessageType type,
+    required String contentType,
+    required int? durationSeconds,
+    required DirectAttachmentPayloadSource source,
+    required String reserveRequestId,
+    required String finalizeRequestId,
+  }) async {
+    final call = ++_enqueueCalls;
+    final result = await super.enqueueSourceWithDisposition(
+      fingerprint: fingerprint,
+      conversationId: conversationId,
+      type: type,
+      contentType: contentType,
+      durationSeconds: durationSeconds,
+      source: source,
+      reserveRequestId: reserveRequestId,
+      finalizeRequestId: finalizeRequestId,
+    );
+    dispositions.add(result.created);
+    if (call == 2) {
+      if (!secondResultCommitted.isCompleted) {
+        secondResultCommitted.complete();
+      }
+      await _secondResultGate.future;
+    }
+    return result;
+  }
+}
+
+enum _DeliveryMutationBoundary {
+  reservation('reservation'),
+  generation('generation'),
+  finalizeAttempted('finalize-attempt');
+
+  const _DeliveryMutationBoundary(this.label);
+
+  final String label;
+}
+
+class _GatedDeliveryMutationOutbox extends DirectAttachmentOutbox {
+  _GatedDeliveryMutationOutbox({
+    required super.ownerId,
+    required super.payloadStore,
+    required this.boundary,
+  });
+
+  final _DeliveryMutationBoundary boundary;
+  final mutationPersisted = Completer<void>();
+  final _mutationGate = Completer<void>();
+
+  void releaseMutation() {
+    if (!_mutationGate.isCompleted) _mutationGate.complete();
+  }
+
+  Future<void> _gate(_DeliveryMutationBoundary reached) async {
+    if (boundary != reached) return;
+    if (!mutationPersisted.isCompleted) mutationPersisted.complete();
+    await _mutationGate.future;
+  }
+
+  @override
+  Future<DirectAttachmentOutboxEntry?> setReservation(
+    String id,
+    DirectAttachmentReservationRecord reservation,
+  ) async {
+    final result = await super.setReservation(id, reservation);
+    await _gate(_DeliveryMutationBoundary.reservation);
+    return result;
+  }
+
+  @override
+  Future<DirectAttachmentOutboxEntry?> setGeneration(
+    String id,
+    String generation,
+  ) async {
+    final result = await super.setGeneration(id, generation);
+    await _gate(_DeliveryMutationBoundary.generation);
+    return result;
+  }
+
+  @override
+  Future<DirectAttachmentOutboxEntry?> markFinalizeAttempted(String id) async {
+    final result = await super.markFinalizeAttempted(id);
+    await _gate(_DeliveryMutationBoundary.finalizeAttempted);
+    return result;
+  }
+}
+
 class _MemoryPayloadStore implements DirectAttachmentPayloadStore {
   final Map<String, Uint8List> payloads = <String, Uint8List>{};
   int uploadCount = 0;
@@ -1166,6 +1681,10 @@ class _MemoryPayloadStore implements DirectAttachmentPayloadStore {
   String? uploadPath;
   String? contentTypeAtUpload;
   Map<String, String>? customMetadataAtUpload;
+  Completer<void>? uploadStarted;
+  Completer<void>? uploadGate;
+  Completer<void>? adoptStarted;
+  Completer<void>? adoptGate;
 
   String _key(String namespace, String id) => '$namespace:$id';
 
@@ -1175,6 +1694,9 @@ class _MemoryPayloadStore implements DirectAttachmentPayloadStore {
     String id,
     DirectAttachmentPayloadSource source,
   ) async {
+    final started = adoptStarted;
+    if (started != null && !started.isCompleted) started.complete();
+    await adoptGate?.future;
     final builder = BytesBuilder(copy: false);
     await for (final chunk in source.openRead()) {
       builder.add(chunk);
@@ -1209,6 +1731,9 @@ class _MemoryPayloadStore implements DirectAttachmentPayloadStore {
     uploadPath = reference.fullPath;
     contentTypeAtUpload = metadata.contentType;
     customMetadataAtUpload = metadata.customMetadata;
+    final started = uploadStarted;
+    if (started != null && !started.isCompleted) started.complete();
+    await uploadGate?.future;
     if (uploadFailuresRemaining > 0) {
       uploadFailuresRemaining -= 1;
       throw uploadFailure ??
@@ -1790,6 +2315,142 @@ class _LengthGuardXFile implements XFile {
   Future<Uint8List> readAsBytes() async {
     readCalled = true;
     throw StateError('Oversized files must not be allocated.');
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _GatedDigestXFile implements XFile {
+  _GatedDigestXFile(this.bytes, {required this.mimeType, required this.name});
+
+  final Uint8List bytes;
+
+  @override
+  final String mimeType;
+
+  @override
+  final String name;
+
+  final digestStarted = Completer<void>();
+  final _digestGate = Completer<void>();
+  int _openReadCalls = 0;
+
+  void releaseDigest() {
+    if (!_digestGate.isCompleted) _digestGate.complete();
+  }
+
+  @override
+  Future<int> length() async => bytes.lengthInBytes;
+
+  @override
+  Stream<Uint8List> openRead([int? start, int? end]) async* {
+    _openReadCalls += 1;
+    if (_openReadCalls == 1) {
+      if (!digestStarted.isCompleted) digestStarted.complete();
+      await _digestGate.future;
+    }
+    final first = start ?? 0;
+    final last = end == null || end > bytes.lengthInBytes
+        ? bytes.lengthInBytes
+        : end;
+    yield Uint8List.sublistView(bytes, first, last);
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _MutableAuth implements FirebaseAuth {
+  _MutableAuth(this.currentUser);
+
+  @override
+  User? currentUser;
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _StreamingGuardXFile implements XFile {
+  _StreamingGuardXFile(
+    this.bytes, {
+    required this.mimeType,
+    required this.name,
+  });
+
+  final Uint8List bytes;
+
+  @override
+  final String mimeType;
+
+  @override
+  final String name;
+
+  int openReadCalls = 0;
+  bool readAsBytesCalled = false;
+
+  @override
+  Future<int> length() async => bytes.lengthInBytes;
+
+  @override
+  Stream<Uint8List> openRead([int? start, int? end]) async* {
+    openReadCalls += 1;
+    final first = start ?? 0;
+    final last = end == null || end > bytes.lengthInBytes
+        ? bytes.lengthInBytes
+        : end;
+    const chunkSize = 257;
+    for (var offset = first; offset < last; offset += chunkSize) {
+      final next = offset + chunkSize < last ? offset + chunkSize : last;
+      yield Uint8List.sublistView(bytes, offset, next);
+    }
+  }
+
+  @override
+  Future<Uint8List> readAsBytes() async {
+    readAsBytesCalled = true;
+    throw StateError('The streamed path must not allocate the whole file.');
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _MutatingXFile implements XFile {
+  _MutatingXFile({
+    required this.firstRead,
+    required this.laterReads,
+    required this.mimeType,
+    required this.name,
+  }) : assert(firstRead.lengthInBytes == laterReads.lengthInBytes);
+
+  final Uint8List firstRead;
+  final Uint8List laterReads;
+
+  @override
+  final String mimeType;
+
+  @override
+  final String name;
+
+  int openReadCalls = 0;
+
+  @override
+  Future<int> length() async => firstRead.lengthInBytes;
+
+  @override
+  Stream<Uint8List> openRead([int? start, int? end]) async* {
+    openReadCalls += 1;
+    final bytes = openReadCalls == 1 ? firstRead : laterReads;
+    final first = start ?? 0;
+    final last = end == null || end > bytes.lengthInBytes
+        ? bytes.lengthInBytes
+        : end;
+    const chunkSize = 257;
+    for (var offset = first; offset < last; offset += chunkSize) {
+      final next = offset + chunkSize < last ? offset + chunkSize : last;
+      yield Uint8List.sublistView(bytes, offset, next);
+    }
   }
 
   @override

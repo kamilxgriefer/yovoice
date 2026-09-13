@@ -20,6 +20,7 @@ import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/messages/presentation/screens/chat_screen.dart';
 import 'package:yovoice/features/messages/presentation/screens/shared_media_screen.dart';
 import 'package:yovoice/features/messages/presentation/widgets/direct_picked_video_inspector.dart';
+import 'package:yovoice/features/moments/data/services/recorded_audio.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
 import 'package:yovoice/shared/identity/public_identity_repository.dart';
 
@@ -56,6 +57,7 @@ void main() {
     DirectMessagePhotoPicker? photoPicker,
     DirectMessageVideoPicker? videoPicker,
     DirectMessageVideoInspector? videoInspector,
+    DirectMessageVoiceRecorderPresenter? voiceRecorderPresenter,
     Future<void> Function()? profilePreviewAction,
   }) => MaterialApp(
     theme: AppTheme.darkTheme,
@@ -78,6 +80,7 @@ void main() {
       photoPicker: photoPicker,
       videoPicker: videoPicker,
       videoInspector: videoInspector,
+      voiceRecorderPresenter: voiceRecorderPresenter,
       profilePreviewAction: profilePreviewAction,
     ),
   );
@@ -166,6 +169,135 @@ void main() {
     expect(sources, [ImageSource.camera, ImageSource.gallery]);
     expect(service.sentVideos, hasLength(2));
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('account switch during photo picker cannot enqueue into B', (
+    tester,
+  ) async {
+    final service = _ActionMessageService(firestore, auth);
+    final pickerStarted = Completer<void>();
+    final picked = Completer<XFile?>();
+    await tester.pumpWidget(
+      host(
+        service,
+        photoPicker: (_) {
+          pickerStarted.complete();
+          return picked.future;
+        },
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Add photo or video'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Photo library'));
+    await tester.pump();
+    expect(pickerStarted.isCompleted, isTrue);
+
+    auth.mockUser = MockUser(uid: 'account-b');
+    await auth.signInWithCredential(null);
+    picked.complete(
+      XFile.fromData(
+        Uint8List(256),
+        mimeType: 'image/jpeg',
+        name: 'account-a-photo.jpg',
+      ),
+    );
+    await tester.pump();
+    await tester.pumpAndSettle();
+
+    expect(service.sentImages, isEmpty);
+    expect(service.sentVideos, isEmpty);
+  });
+
+  testWidgets('account switch during video inspection cannot enqueue into B', (
+    tester,
+  ) async {
+    final service = _ActionMessageService(firestore, auth);
+    final inspectionStarted = Completer<void>();
+    final inspection = Completer<Duration>();
+    await tester.pumpWidget(
+      host(
+        service,
+        videoPicker: (_) async => XFile.fromData(
+          Uint8List(2048),
+          mimeType: 'video/mp4',
+          name: 'account-a-video.mp4',
+        ),
+        videoInspector: (_) {
+          inspectionStarted.complete();
+          return inspection.future;
+        },
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Add photo or video'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Video library'));
+    await tester.pump();
+    await tester.pump();
+    expect(inspectionStarted.isCompleted, isTrue);
+
+    auth.mockUser = MockUser(uid: 'account-b');
+    await auth.signInWithCredential(null);
+    inspection.complete(const Duration(seconds: 12));
+    await tester.pump();
+    await tester.pumpAndSettle();
+
+    expect(service.sentVideos, isEmpty);
+  });
+
+  testWidgets('account switch rejects and discards recorder callback audio', (
+    tester,
+  ) async {
+    final service = _ActionMessageService(firestore, auth);
+    final presenterOpened = Completer<void>();
+    final presenterClosed = Completer<void>();
+    late Future<void> Function(RecordedAudio, int) sendVoice;
+    await tester.pumpWidget(
+      host(
+        service,
+        voiceRecorderPresenter: (onSend) {
+          sendVoice = onSend;
+          presenterOpened.complete();
+          return presenterClosed.future;
+        },
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Record voice message'));
+    await tester.pump();
+    expect(presenterOpened.isCompleted, isTrue);
+
+    auth.mockUser = MockUser(uid: 'account-b');
+    await auth.signInWithCredential(null);
+    final audio = _TestRecordedAudio();
+    await expectLater(sendVoice(audio, 7), throwsStateError);
+
+    expect(service.sentVoices, isEmpty);
+    expect(audio.discardCalls, 1);
+    presenterClosed.complete();
+    await tester.pump();
+  });
+
+  testWidgets('live recorder sheet closes when its account changes', (
+    tester,
+  ) async {
+    final service = _ActionMessageService(firestore, auth);
+    await tester.pumpWidget(host(service));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Record voice message'));
+    await tester.pumpAndSettle();
+    expect(find.text('Record a voice message'), findsOneWidget);
+
+    auth.mockUser = MockUser(uid: 'account-b');
+    await auth.signInWithCredential(null);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Record a voice message'), findsNothing);
   });
 
   testWidgets('profile preview is single-flight across rapid repeated taps', (
@@ -413,6 +545,7 @@ class _ActionMessageService extends MessageService {
 
   final List<XFile> sentImages = [];
   final List<({XFile video, int durationSeconds})> sentVideos = [];
+  final List<({RecordedAudio audio, int durationSeconds})> sentVoices = [];
   final Stream<List<Message>> _messageStream;
 
   @override
@@ -446,6 +579,15 @@ class _ActionMessageService extends MessageService {
   }
 
   @override
+  Future<String> enqueueImageMessage({
+    required String conversationId,
+    required XFile image,
+  }) async {
+    sentImages.add(image);
+    return 'queued-image-${sentImages.length}';
+  }
+
+  @override
   Future<void> sendVideoMessage({
     required String conversationId,
     required XFile video,
@@ -453,6 +595,43 @@ class _ActionMessageService extends MessageService {
   }) async {
     sentVideos.add((video: video, durationSeconds: durationSeconds));
   }
+
+  @override
+  Future<String> enqueueVideoMessage({
+    required String conversationId,
+    required XFile video,
+    required int durationSeconds,
+  }) async {
+    sentVideos.add((video: video, durationSeconds: durationSeconds));
+    return 'queued-video-${sentVideos.length}';
+  }
+
+  @override
+  Future<String> enqueueVoiceMessage({
+    required String conversationId,
+    required RecordedAudio audio,
+    required int durationSeconds,
+  }) async {
+    sentVoices.add((audio: audio, durationSeconds: durationSeconds));
+    return 'queued-voice-${sentVoices.length}';
+  }
+}
+
+class _TestRecordedAudio extends RecordedAudio {
+  int discardCalls = 0;
+
+  @override
+  int get byteLength => 2048;
+
+  @override
+  String get contentType => 'audio/mp4';
+
+  @override
+  Future<void> discard() async => discardCalls += 1;
+
+  @override
+  Future<String> uploadTo(Reference reference, SettableMetadata metadata) =>
+      throw UnsupportedError('The owner-switch test never uploads audio.');
 }
 
 class _TestPayloadStore implements DirectAttachmentPayloadStore {
